@@ -64,7 +64,7 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
             qSamples[i] = qVal * SCALE;
         }
 
-        return new SDRconnectNativeBuffer(iSamples, qSamples, timestamp, getSamplesPerMillisecond());
+        return new SDRconnectNativeBuffer(iSamples, qSamples, timestamp);
     }
 
     /**
@@ -75,14 +75,12 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
         private final float[] mISamples;
         private final float[] mQSamples;
         private final long mTimestamp;
-        private final float mSamplesPerMillisecond;
 
-        public SDRconnectNativeBuffer(float[] iSamples, float[] qSamples, long timestamp, float samplesPerMillisecond)
+        public SDRconnectNativeBuffer(float[] iSamples, float[] qSamples, long timestamp)
         {
             mISamples = iSamples;
             mQSamples = qSamples;
             mTimestamp = timestamp;
-            mSamplesPerMillisecond = samplesPerMillisecond;
         }
 
         @Override

@@ -99,13 +99,15 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
             SDRconnectTunerController controller = getTuner().getController();
             getSampleRateLabel().setText(String.format("%.3f MHz", controller.getCurrentSampleRate() / 1e6));
-            getConnectionStatusLabel().setText("Connected");
+            getConnectionStatusLabel().setText(controller.isRunning() ? "Connected" : "Not Connected");
+            updateSelectedSampleRate((int)controller.getCurrentSampleRate());
         }
         else
         {
             getTunerIdLabel().setText("SDRconnect");
             getSampleRateLabel().setText("N/A");
             getConnectionStatusLabel().setText("Not Connected");
+            updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
         }
 
         String status = getDiscoveredTuner().getTunerStatus().toString();
@@ -253,10 +255,29 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                 rates[i] = String.format("%.0f MHz", SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[i] / 1e6);
             }
             mSampleRateCombo = new JComboBox<>(rates);
-            mSampleRateCombo.setSelectedIndex(3); // Default to 5 MHz
+            updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
             mSampleRateCombo.setToolTipText("Select sample rate for SDRconnect");
         }
         return mSampleRateCombo;
+    }
+
+    private void updateSelectedSampleRate(int sampleRate)
+    {
+        if(mSampleRateCombo == null)
+        {
+            return;
+        }
+
+        for(int i = 0; i < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length; i++)
+        {
+            if(SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[i] == sampleRate)
+            {
+                mSampleRateCombo.setSelectedIndex(i);
+                return;
+            }
+        }
+
+        mSampleRateCombo.setSelectedIndex(0);
     }
 
     /**

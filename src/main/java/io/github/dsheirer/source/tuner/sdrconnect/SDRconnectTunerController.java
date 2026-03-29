@@ -62,7 +62,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public static final String DEFAULT_DEVICE_NAME = "nRSP-ST 1";
     public static final String DEFAULT_NETWORK_MODE = "Full IQ";
     public static final long DEFAULT_FREQUENCY = 100000000L; // 100 MHz
-    public static final int DEFAULT_SAMPLE_RATE = 2000000; // 2 MHz
+    public static final int DEFAULT_SAMPLE_RATE = 5000000; // 5 MHz
 
     // Frequency limits for SDRplay devices
     public static final long MINIMUM_FREQUENCY = 1000L; // 1 kHz
@@ -159,6 +159,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public int getPort()
     {
         return mPort;
+    }
+
+    /**
+     * Indicates if the WebSocket/controller is currently running.
+     */
+    public boolean isRunning()
+    {
+        return mRunning.get();
     }
 
     /**

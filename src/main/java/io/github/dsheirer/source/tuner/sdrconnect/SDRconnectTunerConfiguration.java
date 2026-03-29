@@ -139,8 +139,7 @@ public class SDRconnectTunerConfiguration extends TunerConfiguration
      */
     public static SDRconnectTunerConfiguration create()
     {
-        return new SDRconnectTunerConfiguration("SDRconnect-" + System.currentTimeMillis(),
-            SDRconnectTunerController.DEFAULT_HOST, SDRconnectTunerController.DEFAULT_PORT,
+        return create(SDRconnectTunerController.DEFAULT_HOST, SDRconnectTunerController.DEFAULT_PORT,
             SDRconnectTunerController.DEFAULT_DEVICE_NAME);
     }
 
