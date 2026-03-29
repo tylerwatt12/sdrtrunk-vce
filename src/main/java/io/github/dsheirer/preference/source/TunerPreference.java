@@ -22,6 +22,7 @@ package io.github.dsheirer.preference.source;
 import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
+import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Listener;
 import java.util.prefs.Preferences;
 import org.slf4j.Logger;
@@ -33,6 +34,12 @@ import org.slf4j.LoggerFactory;
 public class TunerPreference extends Preference
 {
     private final static Logger mLog = LoggerFactory.getLogger(TunerPreference.class);
+    public static final String SDRCONNECT_HEADLESS_PATH_PROPERTY = "sdrconnect.headless.path";
+    public static final String SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY = "sdrconnect.headless.autostart";
+    public static final String SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY = "sdrconnect.headless.start.delay.ms";
+    public static final String DEFAULT_SDRCONNECT_HEADLESS_PATH =
+        "/Applications/SDRconnect.app/Contents/MacOS/SDRconnect_headless";
+    public static final int DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS = 15000;
     private Preferences mPreferences = Preferences.userNodeForPackage(TunerPreference.class);
     private static final String PREFERENCE_KEY_CHANNELIZER_TYPE = "channelizer.type";
     private static final String PREFERENCE_KEY_RSP_DUO_TUNER_MODE = "rsp.duo.tuner.mode";
@@ -120,6 +127,58 @@ public class TunerPreference extends Preference
     {
         mRspDuoSelectionMode = mode;
         mPreferences.put(PREFERENCE_KEY_RSP_DUO_TUNER_MODE, mRspDuoSelectionMode.name());
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates if local SDRconnect headless instances should be auto-started.
+     */
+    public boolean isSDRconnectHeadlessAutostartEnabled()
+    {
+        return SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY, true);
+    }
+
+    /**
+     * Sets the local SDRconnect headless auto-start preference.
+     */
+    public void setSDRconnectHeadlessAutostartEnabled(boolean enabled)
+    {
+        SystemProperties.getInstance().set(SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY, enabled);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Path to the SDRconnect headless executable.
+     */
+    public String getSDRconnectHeadlessPath()
+    {
+        return SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_PATH_PROPERTY, DEFAULT_SDRCONNECT_HEADLESS_PATH);
+    }
+
+    /**
+     * Sets the SDRconnect headless executable path.
+     */
+    public void setSDRconnectHeadlessPath(String path)
+    {
+        SystemProperties.getInstance().set(SDRCONNECT_HEADLESS_PATH_PROPERTY, path);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Maximum time to wait for SDRconnect headless readiness during startup.
+     */
+    public int getSDRconnectHeadlessStartDelayMs()
+    {
+        return SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY,
+            DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS);
+    }
+
+    /**
+     * Sets the SDRconnect headless readiness timeout.
+     */
+    public void setSDRconnectHeadlessStartDelayMs(int delayMs)
+    {
+        SystemProperties.getInstance().set(SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY, delayMs);
         notifyPreferenceUpdated();
     }
 }
