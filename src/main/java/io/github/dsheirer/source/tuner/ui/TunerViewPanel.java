@@ -200,11 +200,10 @@ public class TunerViewPanel extends JPanel
         editorScroller.setPreferredSize(new Dimension(200, 200));
 
         mSplitPane = new JideSplitPane();
-        mSplitPane.setOrientation(JideSplitPane.HORIZONTAL_SPLIT);
+        mSplitPane.setOrientation(JideSplitPane.VERTICAL_SPLIT);
+        mSplitPane.setShowGripper(true);
         mSplitPane.add(tunerTablePanel);
         mSplitPane.add(editorScroller);
-        mSplitPane.setProportionalLayout(true);
-        mSplitPane.setProportions(new double[]{0.5});
 
         add(mSplitPane);
     }
