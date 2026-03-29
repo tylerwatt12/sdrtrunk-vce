@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.source.tuner.manager;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.source.ChannelizerType;
@@ -50,9 +52,13 @@ import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
 import io.github.dsheirer.util.ThreadPool;
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -60,6 +66,8 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -569,7 +577,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             return;
         }
 
-        List<Integer> launchedPorts = new ArrayList<>();
+        Map<Integer, String> launchedPorts = new HashMap<>();
 
         for(TunerConfiguration tunerConfiguration: tunerConfigurations)
         {
@@ -579,24 +587,21 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             {
                 if(launchManagedSDRconnectProcess(sdrconnectConfig.getPort()))
                 {
-                    launchedPorts.add(sdrconnectConfig.getPort());
+                    launchedPorts.put(sdrconnectConfig.getPort(), sdrconnectConfig.getHost());
                 }
             }
         }
 
         if(!launchedPorts.isEmpty())
         {
-            int delayMs = SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY,
+            int timeoutMs = SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY,
                 DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS);
-            mLog.info("Waiting {} ms for SDRconnect headless startup on port(s) {}", delayMs, launchedPorts);
+            mLog.info("Waiting up to {} ms for SDRconnect headless readiness on port(s) {}", timeoutMs,
+                launchedPorts.keySet());
 
-            try
+            for(Map.Entry<Integer, String> entry : launchedPorts.entrySet())
             {
-                Thread.sleep(delayMs);
-            }
-            catch(InterruptedException ie)
-            {
-                Thread.currentThread().interrupt();
+                waitForReadySDRconnect(entry.getValue(), entry.getKey(), timeoutMs);
             }
         }
     }
@@ -666,11 +671,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     }
 
     /**
-     * Waits for an SDRconnect websocket port to become reachable.
+     * Waits for an SDRconnect websocket port to become ready for use.
      */
-    private boolean waitForSDRconnectPort(String host, int port)
+    private boolean waitForReadySDRconnect(String host, int port, int timeoutMs)
     {
-        long deadline = System.currentTimeMillis() + SDRCONNECT_HEADLESS_START_TIMEOUT_MS;
+        long deadline = System.currentTimeMillis() + Math.max(timeoutMs, SDRCONNECT_HEADLESS_START_TIMEOUT_MS);
 
         while(System.currentTimeMillis() < deadline)
         {
@@ -686,8 +691,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 return false;
             }
 
-            if(probeSDRconnect(host, port))
+            if(isSDRconnectReady(host, port))
             {
+                mLog.info("SDRconnect headless on port {} is ready", port);
                 return true;
             }
 
@@ -703,6 +709,47 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
 
         return false;
+    }
+
+    /**
+     * Indicates if SDRconnect is ready for use and no longer returning placeholder startup values.
+     */
+    private boolean isSDRconnectReady(String host, int port)
+    {
+        if(!probeSDRconnect(host, port))
+        {
+            return false;
+        }
+
+        SDRconnectReadyProbe probe = new SDRconnectReadyProbe();
+        WebSocket webSocket = null;
+
+        try
+        {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+            CompletableFuture<WebSocket> future = client.newWebSocketBuilder()
+                .buildAsync(URI.create("ws://" + host + ":" + port), probe);
+            webSocket = future.get(2, TimeUnit.SECONDS);
+            boolean ready = probe.awaitReady(2, TimeUnit.SECONDS);
+            return ready && probe.isReady();
+        }
+        catch(Exception e)
+        {
+            return false;
+        }
+        finally
+        {
+            if(webSocket != null)
+            {
+                try
+                {
+                    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "probe");
+                }
+                catch(Exception ignored)
+                {
+                }
+            }
+        }
     }
 
     /**
@@ -778,6 +825,83 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             {
                 mLog.warn("Unable to interrupt SDRconnect headless process [{}] on port {}", pid, port, e);
             }
+        }
+    }
+
+    /**
+     * Minimal readiness probe for SDRconnect headless startup.
+     */
+    private static class SDRconnectReadyProbe implements WebSocket.Listener
+    {
+        private final CountDownLatch mReady = new CountDownLatch(1);
+        private final StringBuilder mPartialText = new StringBuilder();
+        private volatile String mValidDevices = "";
+        private volatile String mActiveDevice = "";
+
+        @Override
+        public void onOpen(WebSocket webSocket)
+        {
+            webSocket.sendText("{\"event_type\":\"get_property\",\"property\":\"valid_devices\"}", true);
+            webSocket.sendText("{\"event_type\":\"get_property\",\"property\":\"active_device\"}", true);
+            webSocket.request(1);
+        }
+
+        @Override
+        public java.util.concurrent.CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last)
+        {
+            mPartialText.append(data);
+
+            if(last)
+            {
+                try
+                {
+                    JsonObject message = JsonParser.parseString(mPartialText.toString()).getAsJsonObject();
+                    String eventType = message.has("event_type") ? message.get("event_type").getAsString() : "";
+
+                    if("property_changed".equals(eventType) || "get_property_response".equals(eventType))
+                    {
+                        String property = message.has("property") ? message.get("property").getAsString() : "";
+                        String value = message.has("value") ? message.get("value").getAsString() : "";
+
+                        if("valid_devices".equals(property))
+                        {
+                            mValidDevices = value;
+                        }
+                        else if("active_device".equals(property))
+                        {
+                            mActiveDevice = value;
+                        }
+
+                        if(isReady())
+                        {
+                            mReady.countDown();
+                        }
+                    }
+                }
+                catch(Exception ignored)
+                {
+                }
+
+                mPartialText.setLength(0);
+            }
+
+            webSocket.request(1);
+            return null;
+        }
+
+        private boolean awaitReady(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return mReady.await(timeout, unit);
+        }
+
+        private boolean isReady()
+        {
+            return isReadyValue(mValidDevices) && isReadyValue(mActiveDevice);
+        }
+
+        private static boolean isReadyValue(String value)
+        {
+            return value != null && !value.isBlank() && !"Refreshing...".equalsIgnoreCase(value.trim());
         }
     }
 
