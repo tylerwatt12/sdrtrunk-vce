@@ -39,6 +39,7 @@ import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -105,6 +106,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private ByteBuffer mPartialBuffer;
     private StringBuilder mPartialTextBuffer;
     private final SDRconnectNativeBufferFactory mNativeBufferFactory;
+    private volatile CountDownLatch mDeviceDiscoveryLatch;
+    private volatile CountDownLatch mSettingsLatch;
+    private final AtomicBoolean mValidDevicesReceived = new AtomicBoolean(false);
+    private final AtomicBoolean mActiveDeviceReceived = new AtomicBoolean(false);
+    private final AtomicBoolean mFrequencyReceived = new AtomicBoolean(false);
+    private final AtomicBoolean mSampleRateReceived = new AtomicBoolean(false);
 
     /**
      * Constructs an instance
@@ -232,21 +239,22 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 mLog.info("Connected to SDRconnect WebSocket");
 
                 // Discover and select the expected device before enabling streaming.
+                prepareDeviceDiscoveryLatch();
                 queryProperty("valid_devices");
                 queryProperty("active_device");
-                Thread.sleep(300);
+                awaitLatch(mDeviceDiscoveryLatch, 2, TimeUnit.SECONDS,
+                    "SDRconnect device discovery");
 
                 selectPreferredDevice();
-                Thread.sleep(300);
 
                 // Query current SDRconnect settings
+                prepareSettingsLatch();
                 queryProperty("valid_devices");
                 queryProperty("active_device");
                 queryProperty("device_sample_rate");
                 queryProperty("device_center_frequency");
-
-                // Wait for responses
-                Thread.sleep(500);
+                awaitLatch(mSettingsLatch, 2, TimeUnit.SECONDS,
+                    "SDRconnect initial settings");
 
                 mLog.info("SDRconnect connected: {} MHz center, {} MHz sample rate",
                     String.format("%.3f", mCenterFrequency / 1e6),
@@ -254,6 +262,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 // Enable device stream first
                 sendCommand("device_stream_enable", "true");
+                // SDRconnect needs a brief courtesy delay between enabling the device stream and IQ streaming.
                 Thread.sleep(100);
 
                 // Enable IQ streaming
@@ -270,6 +279,83 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             {
                 mRunning.set(false);
                 throw new SourceException("Failed to connect to SDRconnect at " + mHost + ":" + mPort, e);
+            }
+        }
+    }
+
+    private void prepareDeviceDiscoveryLatch()
+    {
+        mValidDevicesReceived.set(false);
+        mActiveDeviceReceived.set(false);
+        mDeviceDiscoveryLatch = new CountDownLatch(2);
+    }
+
+    private void prepareSettingsLatch()
+    {
+        mFrequencyReceived.set(false);
+        mSampleRateReceived.set(false);
+        mSettingsLatch = new CountDownLatch(2);
+    }
+
+    private void awaitLatch(CountDownLatch latch, long timeout, TimeUnit unit, String description)
+        throws InterruptedException
+    {
+        if(latch != null && !latch.await(timeout, unit))
+        {
+            mLog.debug("{} did not fully complete within {} {}", description, timeout,
+                unit.name().toLowerCase());
+        }
+    }
+
+    private boolean isResolvedPropertyValue(String value)
+    {
+        return value != null && !value.isBlank() && !"Refreshing...".equalsIgnoreCase(value.trim());
+    }
+
+    private void markValidDevicesReceived(String value)
+    {
+        if(isResolvedPropertyValue(value) && mValidDevicesReceived.compareAndSet(false, true))
+        {
+            CountDownLatch latch = mDeviceDiscoveryLatch;
+            if(latch != null)
+            {
+                latch.countDown();
+            }
+        }
+    }
+
+    private void markActiveDeviceReceived(String value)
+    {
+        if(isResolvedPropertyValue(value) && mActiveDeviceReceived.compareAndSet(false, true))
+        {
+            CountDownLatch latch = mDeviceDiscoveryLatch;
+            if(latch != null)
+            {
+                latch.countDown();
+            }
+        }
+    }
+
+    private void markFrequencyReceived()
+    {
+        if(mFrequencyReceived.compareAndSet(false, true))
+        {
+            CountDownLatch latch = mSettingsLatch;
+            if(latch != null)
+            {
+                latch.countDown();
+            }
+        }
+    }
+
+    private void markSampleRateReceived()
+    {
+        if(mSampleRateReceived.compareAndSet(false, true))
+        {
+            CountDownLatch latch = mSettingsLatch;
+            if(latch != null)
+            {
+                latch.countDown();
             }
         }
     }
@@ -793,6 +879,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             {
                 case "device_center_frequency":
                     long newFrequency = Long.parseLong(value);
+                    markFrequencyReceived();
                     if(newFrequency != mCenterFrequency)
                     {
                         mLog.info("SDRconnect frequency changed: {} MHz", String.format("%.3f", newFrequency / 1e6));
@@ -810,6 +897,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 case "device_sample_rate":
                     int newSampleRate = Integer.parseInt(value);
+                    markSampleRateReceived();
                     if(newSampleRate != mSampleRate)
                     {
                         mLog.info("SDRconnect sample rate changed: {} MHz", String.format("%.1f", newSampleRate / 1e6));
@@ -860,10 +948,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 case "valid_devices":
                     mValidDevices = value;
+                    markValidDevicesReceived(value);
                     break;
 
                 case "active_device":
                     mActiveDevice = value;
+                    markActiveDeviceReceived(value);
                     break;
 
                 // Ignore high-frequency status updates to reduce log spam

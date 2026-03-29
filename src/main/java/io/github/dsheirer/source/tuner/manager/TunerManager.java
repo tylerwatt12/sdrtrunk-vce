@@ -515,7 +515,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 {
                     mLog.info("SDRconnect detected at {}:{} - auto-starting tuner", sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
                     discoveredTuner.setEnabled(true);
-                    discoveredTuner.start(); // Actually start the connection
                 }
                 else
                 {
@@ -525,6 +524,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                 mLog.info("SDRconnect Tuner Added: " + discoveredTuner);
                 mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
+
+                if(available)
+                {
+                    ThreadPool.CACHED.execute(discoveredTuner::start);
+                }
             }
         }
     }
