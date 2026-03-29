@@ -72,6 +72,13 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private static final int RECONNECT_INITIAL_DELAY_SECONDS = 5;
     private static final int RECONNECT_MAX_DELAY_SECONDS = 60;
     private static final int RECONNECT_MAX_ATTEMPTS = 10;
+    private static final AtomicBoolean APPLICATION_SHUTTING_DOWN = new AtomicBoolean(false);
+
+    static
+    {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> APPLICATION_SHUTTING_DOWN.set(true),
+            "sdrconnect-controller-shutdown"));
+    }
 
     private final String mHost;
     private final int mPort;
@@ -752,7 +759,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mWebSocket = null;
 
         // If this wasn't a normal closure and user wants us running, try to reconnect
-        if(statusCode != WebSocket.NORMAL_CLOSURE && mShouldBeRunning.get())
+        if(statusCode != WebSocket.NORMAL_CLOSURE && mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get())
         {
             mLog.warn("SDRconnect connection lost unexpectedly - will attempt to reconnect");
             scheduleReconnect();
@@ -770,12 +777,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mWebSocket = null;
 
         // If user wants us running, try to reconnect
-        if(mShouldBeRunning.get())
+        if(mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get())
         {
             mLog.warn("SDRconnect error - will attempt to reconnect");
             scheduleReconnect();
         }
-        else
+        else if(!APPLICATION_SHUTTING_DOWN.get())
         {
             setErrorMessage("SDRconnect error: " + error.getMessage());
         }
