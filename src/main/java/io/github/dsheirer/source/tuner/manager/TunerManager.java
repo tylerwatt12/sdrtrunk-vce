@@ -86,7 +86,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private static final String DEFAULT_SDRCONNECT_HEADLESS_PATH = "/Applications/SDRconnect.app/Contents/MacOS/SDRconnect_headless";
     private static final int SDRCONNECT_HEADLESS_START_TIMEOUT_MS = 10000;
     private static final int SDRCONNECT_HEADLESS_START_RETRY_INTERVAL_MS = 250;
-    private static final int DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS = 10000;
+    private static final int DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS = 8000;
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
