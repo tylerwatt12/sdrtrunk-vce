@@ -27,6 +27,7 @@ This repository is a personal experimental fork by W6BAZ and is not intended for
 
 Notable differences from upstream in this fork:
 - SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
+- Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target.
 - The current SDRconnect workflow expects device display names such as `nRSP-ST 1` and `nRSP-ST 2`. Serial-number-based device selection is not implemented in this fork yet.
 - Local `SDRconnect_headless` lifecycle management has been added as a convenience feature for local use. If enabled, sdrtrunk can start and stop local headless instances for configured ports. If disabled, sdrtrunk can still connect to SDRconnect instances that were started manually.
 - macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
