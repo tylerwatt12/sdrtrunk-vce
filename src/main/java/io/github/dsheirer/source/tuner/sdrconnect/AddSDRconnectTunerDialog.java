@@ -23,13 +23,14 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
+import io.github.dsheirer.util.ThreadPool;
 import net.miginfocom.swing.MigLayout;
 import org.apache.commons.lang3.Validate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.JButton;
-import javax.swing.JFrame;
+import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -37,12 +38,13 @@ import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import java.awt.Dimension;
+import java.awt.Window;
 import java.net.InetAddress;
 
 /**
  * Dialog to add an SDRconnect tuner by specifying host and port
  */
-public class AddSDRconnectTunerDialog extends JFrame
+public class AddSDRconnectTunerDialog extends JDialog
 {
     private static final Logger mLog = LoggerFactory.getLogger(AddSDRconnectTunerDialog.class);
 
@@ -58,9 +60,11 @@ public class AddSDRconnectTunerDialog extends JFrame
     private JButton mCancelButton;
     private JLabel mStatusLabel;
 
-    public AddSDRconnectTunerDialog(UserPreferences userPreferences, DiscoveredTunerModel discoveredTunerModel,
-                                     TunerConfigurationManager tunerConfigurationManager)
+    public AddSDRconnectTunerDialog(Window owner, UserPreferences userPreferences,
+                                    DiscoveredTunerModel discoveredTunerModel,
+                                    TunerConfigurationManager tunerConfigurationManager)
     {
+        super(owner, "Add SDRconnect Tuner", ModalityType.APPLICATION_MODAL);
         Validate.notNull(userPreferences, "UserPreferences cannot be null");
         Validate.notNull(discoveredTunerModel, "TunerModel cannot be null");
         Validate.notNull(tunerConfigurationManager, "TunerConfigurationManager cannot be null");
@@ -69,8 +73,7 @@ public class AddSDRconnectTunerDialog extends JFrame
         mDiscoveredTunerModel = discoveredTunerModel;
         mTunerConfigurationManager = tunerConfigurationManager;
 
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setTitle("Add SDRconnect Tuner");
+        setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
         setSize(new Dimension(450, 230));
 
         JPanel content = new JPanel();
@@ -111,7 +114,7 @@ public class AddSDRconnectTunerDialog extends JFrame
         content.add(mAddButton, "split 2");
 
         mCancelButton = new JButton("Cancel");
-        mCancelButton.addActionListener(e -> setVisible(false));
+        mCancelButton.addActionListener(e -> dispose());
         content.add(mCancelButton);
 
         setContentPane(content);
@@ -126,7 +129,7 @@ public class AddSDRconnectTunerDialog extends JFrame
         mTestButton.setEnabled(false);
 
         // Run test in background thread
-        new Thread(() -> {
+        ThreadPool.CACHED.execute(() -> {
             try
             {
                 // Try to resolve the host
@@ -149,7 +152,7 @@ public class AddSDRconnectTunerDialog extends JFrame
                     mTestButton.setEnabled(true);
                 });
             }
-        }).start();
+        });
     }
 
     private void addTuner()
@@ -190,10 +193,10 @@ public class AddSDRconnectTunerDialog extends JFrame
             discoveredTuner.setTunerConfiguration(config);
             mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
 
-            // Start the tuner to establish WebSocket connection
-            discoveredTuner.start();
+            // Start the tuner off the EDT so WebSocket setup doesn't block the dialog/UI.
+            ThreadPool.CACHED.execute(discoveredTuner::start);
 
-            setVisible(false);
+            dispose();
         }
         catch(Exception ex)
         {

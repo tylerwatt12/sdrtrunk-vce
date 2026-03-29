@@ -27,6 +27,7 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.util.ThreadPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -683,16 +684,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return null;
     }
 
-  // alb  private long mBinaryMessageCount = 0;
-  // alb  private long mLastBinaryLogTime = 0;
-
     @Override
     public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last)
     {
         try
         {
-         // alb   mBinaryMessageCount++;
-
             if(data.remaining() >= 2)
             {
                 // Handle partial messages
@@ -723,16 +719,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     // Process complete message
                     buffer.order(ByteOrder.LITTLE_ENDIAN);
                     int header = buffer.getShort() & 0xFFFF;
-
-                    // Log binary message stats periodically
-                    /* alb
-                    long now = System.currentTimeMillis();
-                    if(now - mLastBinaryLogTime > 10000)
-                    {
-                        mLog.info("SDRconnect binary messages: {}, header: 0x{}, size: {} bytes",
-                                  mBinaryMessageCount, String.format("%04X", header), buffer.remaining() + 2);
-                        mLastBinaryLogTime = now;
-                    }*/
 
                     if(header == HEADER_IQ)
                     {
@@ -830,8 +816,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     if(started && !mLastStartedState && mShouldBeRunning.get())
                     {
                         mLog.info("SDRconnect recovered - reinitializing tuner");
-                        // Use a separate thread to reinitialize after recovery
-                        new Thread(() -> {
+                        ThreadPool.CACHED.execute(() -> {
                             try
                             {
                                 // Wait for SDRconnect to fully initialize
@@ -857,7 +842,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                             {
                                 mLog.warn("Recovery interrupted");
                             }
-                        }).start();
+                        });
                     }
                     mLastStartedState = started;
                     break;
@@ -892,9 +877,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
- // alb    private long mIqBufferCount = 0;
- // alb  private long mLastIqLogTime = 0;
-
     /**
      * Process IQ data from SDRconnect
      */
@@ -911,16 +893,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             long timestamp = System.currentTimeMillis();
             INativeBuffer nativeBuffer = mNativeBufferFactory.getBuffer(copy, timestamp);
             broadcast(nativeBuffer);
-/* alb
-            // Log IQ data stats periodically
-            mIqBufferCount++;
-            if(timestamp - mLastIqLogTime > 5000)
-            {
-                mLog.info("SDRconnect IQ buffers received: {}, last buffer size: {} bytes",
-                          mIqBufferCount, copy.capacity());
-                mLastIqLogTime = timestamp;
-            }
-            */
         }
     }
 }

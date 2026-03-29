@@ -269,8 +269,9 @@ public class TunerViewPanel extends JPanel
             mAddSDRconnectButton = new JButton("Add SDRconnect");
             mAddSDRconnectButton.addActionListener(e ->
             {
-                AddSDRconnectTunerDialog dialog = new AddSDRconnectTunerDialog(mUserPreferences, mDiscoveredTunerModel,
-                        mTunerConfigurationManager);
+                AddSDRconnectTunerDialog dialog = new AddSDRconnectTunerDialog(
+                    javax.swing.SwingUtilities.getWindowAncestor(TunerViewPanel.this),
+                    mUserPreferences, mDiscoveredTunerModel, mTunerConfigurationManager);
                 dialog.setLocationRelativeTo(TunerViewPanel.this);
                 EventQueue.invokeLater(() -> dialog.setVisible(true));
             });

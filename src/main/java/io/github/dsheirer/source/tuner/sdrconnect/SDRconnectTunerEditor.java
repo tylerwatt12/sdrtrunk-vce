@@ -23,6 +23,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerEditor;
+import io.github.dsheirer.util.ThreadPool;
 import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -326,7 +327,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                 long freqHz = (long)(freqMHz * 1_000_000);
 
                 SDRconnectTunerController controller = getTuner().getController();
-                controller.forceSetFrequency(freqHz);
+                ThreadPool.CACHED.execute(() -> controller.forceSetFrequency(freqHz));
                 mLog.info("Requested SDRconnect tune to {} MHz ({} Hz)", freqMHz, freqHz);
             }
             catch(NumberFormatException ex)

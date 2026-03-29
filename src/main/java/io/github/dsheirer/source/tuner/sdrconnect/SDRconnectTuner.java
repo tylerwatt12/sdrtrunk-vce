@@ -31,8 +31,6 @@ import org.slf4j.LoggerFactory;
  */
 public class SDRconnectTuner extends Tuner
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SDRconnectTuner.class);
-
     /**
      * Constructs an instance
      * @param controller for the SDRconnect connection
