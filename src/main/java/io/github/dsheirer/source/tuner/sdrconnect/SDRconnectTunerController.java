@@ -825,7 +825,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 case "started":
                     boolean started = "true".equalsIgnoreCase(value);
-                    mLog.trace("SDRconnect streaming: {}", started ? "STARTED" : "STOPPED");
 
                     // Detect recovery: SDRconnect went from stopped to started
                     if(started && !mLastStartedState && mShouldBeRunning.get())
@@ -864,17 +863,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     break;
 
                 case "can_control":
-                    mLog.trace("SDRconnect can_control: {}", value);
                     break;
 
                 case "valid_devices":
                     mValidDevices = value;
-                    mLog.trace("SDRconnect valid_devices: {}", value);
                     break;
 
                 case "active_device":
                     mActiveDevice = value;
-                    mLog.trace("SDRconnect active_device: {}", value);
                     break;
 
                 // Ignore high-frequency status updates to reduce log spam
@@ -887,8 +883,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     break;
 
                 default:
-                    // Log other properties at trace level
-                    mLog.trace("SDRconnect property: {} = {}", property, value);
                     break;
             }
         }
