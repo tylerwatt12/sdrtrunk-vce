@@ -123,7 +123,7 @@ public class NowPlayingPanel extends JPanel
 
     private void init()
     {
-        setLayout( new MigLayout( "insets 0 0 0 0", "[grow,fill]", "[grow,fill]") );
+        setLayout( new MigLayout( "insets 0 10 10 10", "[grow,fill]", "[grow,fill]") );
         getSplitPane().add(mChannelMetadataPanel);
 
         if(mDetailTabsVisible)

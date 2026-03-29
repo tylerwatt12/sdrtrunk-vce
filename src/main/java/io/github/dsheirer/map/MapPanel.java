@@ -106,7 +106,7 @@ public class MapPanel extends JPanel implements IPlottableUpdateListener
 
     private void init()
     {
-        setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+        setLayout(new MigLayout("insets 0 10 10 10", "[grow,fill]", "[grow,fill]"));
         mMapService.addListener(this);
 
         JPanel cp = new JPanel();

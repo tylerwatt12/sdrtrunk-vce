@@ -88,7 +88,7 @@ public class TunerViewPanel extends JPanel
 
     private void init()
     {
-        setLayout(new MigLayout("insets 0 0 0 0", "[fill,grow]", "[fill,grow]"));
+        setLayout(new MigLayout("insets 0 10 10 10", "[fill,grow]", "[fill,grow]"));
 
         mRowSorter = new TableRowSorter<>(mDiscoveredTunerModel);
         List<RowSorter.SortKey> sortKeys = new ArrayList<>();
