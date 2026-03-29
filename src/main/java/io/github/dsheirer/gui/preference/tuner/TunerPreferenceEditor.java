@@ -277,7 +277,7 @@ public class TunerPreferenceEditor extends HBox
     {
         if(mSDRconnectTimeoutLabel == null)
         {
-            mSDRconnectTimeoutLabel = new Label("Startup Timeout (ms)");
+            mSDRconnectTimeoutLabel = new Label("Startup Timeout (seconds)");
         }
 
         return mSDRconnectTimeoutLabel;
@@ -287,13 +287,13 @@ public class TunerPreferenceEditor extends HBox
     {
         if(mSDRconnectTimeoutSpinner == null)
         {
-            mSDRconnectTimeoutSpinner = new Spinner<>(1000, 60000,
-                mTunerPreference.getSDRconnectHeadlessStartDelayMs(), 1000);
+            mSDRconnectTimeoutSpinner = new Spinner<>(1, 60,
+                Math.max(1, mTunerPreference.getSDRconnectHeadlessStartDelayMs() / 1000), 1);
             mSDRconnectTimeoutSpinner.setEditable(true);
             mSDRconnectTimeoutSpinner.valueProperty().addListener((observable, oldValue, newValue) -> {
                 if(newValue != null)
                 {
-                    mTunerPreference.setSDRconnectHeadlessStartDelayMs(newValue);
+                    mTunerPreference.setSDRconnectHeadlessStartDelayMs(newValue * 1000);
                 }
             });
         }
