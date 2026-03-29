@@ -57,6 +57,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ScheduledFuture;
@@ -92,6 +93,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
     private final Map<Integer, Process> mManagedSDRconnectProcesses = new HashMap<>();
+    private final Thread mManagedSDRconnectShutdownHook;
     private boolean mLibUsbInitialized = false;
     private SDRplay mSDRplay;
 
@@ -104,6 +106,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = new TunerConfigurationManager(userPreferences);
         mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager);
+        mManagedSDRconnectShutdownHook = new Thread(this::stopManagedSDRconnectProcesses,
+            "sdrconnect-headless-shutdown");
+        Runtime.getRuntime().addShutdownHook(mManagedSDRconnectShutdownHook);
     }
 
     /**
@@ -213,6 +218,15 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             mHotplugEventSupport.stop();
             LibUsb.exit(mLibUsbApplicationContext);
             mLibUsbInitialized = false;
+        }
+
+        try
+        {
+            Runtime.getRuntime().removeShutdownHook(mManagedSDRconnectShutdownHook);
+        }
+        catch(IllegalStateException ignored)
+        {
+            //JVM is already shutting down.
         }
     }
 
@@ -696,23 +710,16 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private void stopManagedSDRconnectProcesses()
     {
-        for(Map.Entry<Integer, Process> entry : mManagedSDRconnectProcesses.entrySet())
+        Map<Integer, Process> managedProcesses = new HashMap<>(mManagedSDRconnectProcesses);
+        mManagedSDRconnectProcesses.clear();
+
+        for(Map.Entry<Integer, Process> entry : managedProcesses.entrySet())
         {
             Process process = entry.getValue();
 
             if(process != null && process.isAlive())
             {
-                long pid = process.pid();
-
-                try
-                {
-                    new ProcessBuilder("/bin/kill", "-INT", Long.toString(pid)).start().waitFor(2, TimeUnit.SECONDS);
-                    process.waitFor(2, TimeUnit.SECONDS);
-                }
-                catch(Exception e)
-                {
-                    mLog.warn("Unable to interrupt SDRconnect headless process [{}] on port {}", pid, entry.getKey(), e);
-                }
+                interruptProcessTree(process, entry.getKey());
 
                 if(process.isAlive())
                 {
@@ -721,12 +728,57 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                 if(process.isAlive())
                 {
+                    try
+                    {
+                        process.waitFor(5, TimeUnit.SECONDS);
+                    }
+                    catch(InterruptedException ie)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+
+                if(process.isAlive())
+                {
                     process.destroyForcibly();
+                }
+
+                if(process.isAlive())
+                {
+                    try
+                    {
+                        process.waitFor(2, TimeUnit.SECONDS);
+                    }
+                    catch(InterruptedException ie)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
                 }
             }
         }
+    }
 
-        mManagedSDRconnectProcesses.clear();
+    /**
+     * Sends SIGINT to a launched process and any descendant processes it may have spawned.
+     */
+    private void interruptProcessTree(Process process, int port)
+    {
+        LinkedHashSet<Long> pids = new LinkedHashSet<>();
+        ProcessHandle handle = process.toHandle();
+        handle.descendants().map(ProcessHandle::pid).forEach(pids::add);
+        pids.add(handle.pid());
+
+        for(Long pid : pids)
+        {
+            try
+            {
+                new ProcessBuilder("/bin/kill", "-INT", Long.toString(pid)).start().waitFor(2, TimeUnit.SECONDS);
+            }
+            catch(Exception e)
+            {
+                mLog.warn("Unable to interrupt SDRconnect headless process [{}] on port {}", pid, port, e);
+            }
+        }
     }
 
     /**
