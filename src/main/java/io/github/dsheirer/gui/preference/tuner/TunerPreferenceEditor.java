@@ -99,6 +99,7 @@ public class TunerPreferenceEditor extends HBox
             mEditorPane.add(getSDRconnectPathField(), 1, row);
             mEditorPane.add(getSDRconnectTimeoutLabel(), 0, ++row);
             mEditorPane.add(getSDRconnectTimeoutSpinner(), 1, row);
+            updateSDRconnectHeadlessControls();
         }
 
         return mEditorPane;
@@ -222,7 +223,7 @@ public class TunerPreferenceEditor extends HBox
     {
         if(mSDRconnectSectionLabel == null)
         {
-            mSDRconnectSectionLabel = new Label("SDRconnect Headless");
+            mSDRconnectSectionLabel = new Label("SDRconnect");
         }
 
         return mSDRconnectSectionLabel;
@@ -234,8 +235,10 @@ public class TunerPreferenceEditor extends HBox
         {
             mSDRconnectAutostartCheckBox = new CheckBox("Auto-start local SDRconnect headless instances");
             mSDRconnectAutostartCheckBox.setSelected(mTunerPreference.isSDRconnectHeadlessAutostartEnabled());
-            mSDRconnectAutostartCheckBox.selectedProperty().addListener((observable, oldValue, newValue) ->
-                mTunerPreference.setSDRconnectHeadlessAutostartEnabled(newValue));
+            mSDRconnectAutostartCheckBox.selectedProperty().addListener((observable, oldValue, newValue) -> {
+                mTunerPreference.setSDRconnectHeadlessAutostartEnabled(newValue);
+                updateSDRconnectHeadlessControls();
+            });
         }
 
         return mSDRconnectAutostartCheckBox;
@@ -299,5 +302,14 @@ public class TunerPreferenceEditor extends HBox
         }
 
         return mSDRconnectTimeoutSpinner;
+    }
+
+    private void updateSDRconnectHeadlessControls()
+    {
+        boolean enabled = getSDRconnectAutostartCheckBox().isSelected();
+        getSDRconnectPathField().setDisable(!enabled);
+        getSDRconnectPathLabel().setDisable(!enabled);
+        getSDRconnectTimeoutSpinner().setDisable(!enabled);
+        getSDRconnectTimeoutLabel().setDisable(!enabled);
     }
 }
