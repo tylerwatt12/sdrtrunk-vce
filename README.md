@@ -22,6 +22,25 @@ sudo ln -s /opt/homebrew/Cellar/libusb/HEAD-9ceaa52/lib/libusb-1.0.0.dylib /opt/
 # sdrtrunk
 A cross-platform java application for decoding, monitoring, recording and streaming trunked mobile and related radio protocols using Software Defined Radios (SDR).
 
+## Fork Status
+This repository is a personal experimental fork by W6BAZ and is not intended for general public consumption or support. It is being used to prototype SDRconnect integration, macOS packaging behavior, and related workflow changes outside the upstream project.
+
+Notable differences from upstream in this fork:
+- SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
+- The current SDRconnect workflow expects device display names such as `nRSP-ST 1` and `nRSP-ST 2`. Serial-number-based device selection is not implemented in this fork yet.
+- Local `SDRconnect_headless` lifecycle management has been added as a convenience feature for local use. If enabled, sdrtrunk can start and stop local headless instances for configured ports. If disabled, sdrtrunk can still connect to SDRconnect instances that were started manually.
+- macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
+
+## Experimental Notes
+The SDRconnect work in this fork was inspired by, and partially based on, W2NJL's SDRconnect-related work here:
+
+- [W2NJL/sdrtrunk](https://github.com/W2NJL/sdrtrunk)
+
+Current assumptions and behavior for this fork:
+- SDRconnect tuners are configured per `host:port`, with device name used as selection metadata rather than as part of tuner identity.
+- For local loopback hosts, headless startup readiness is checked over the WebSocket API before tuner startup proceeds.
+- The convenience headless manager is optional. Users who already run SDRconnect or `SDRconnect_headless` themselves can leave auto-start disabled and sdrtrunk will simply attach to the configured endpoints if they are available.
+
 * [Help/Wiki Home Page](https://github.com/DSheirer/sdrtrunk/wiki)
 * [Getting Started](https://github.com/DSheirer/sdrtrunk/wiki/Getting-Started)
 * [User's Manual](https://github.com/DSheirer/sdrtrunk/wiki/User-Manual)
