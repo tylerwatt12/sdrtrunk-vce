@@ -141,7 +141,6 @@ public class MapPanel extends JPanel implements IPlottableUpdateListener
 //        cp.add(getTrackGeneratorToggle(), "span 3,wrap");
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-        splitPane.setDividerLocation(300);
         splitPane.add(cp);
         splitPane.add(getMapViewer());
         add(splitPane, "span");
