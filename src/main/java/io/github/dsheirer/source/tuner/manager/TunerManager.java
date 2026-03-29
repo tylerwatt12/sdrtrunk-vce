@@ -599,9 +599,18 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             mLog.info("Waiting up to {} ms for SDRconnect headless readiness on port(s) {}", timeoutMs,
                 launchedPorts.keySet());
 
+            List<CompletableFuture<Boolean>> readinessChecks = new ArrayList<>();
+
             for(Map.Entry<Integer, String> entry : launchedPorts.entrySet())
             {
-                waitForReadySDRconnect(entry.getValue(), entry.getKey(), timeoutMs);
+                readinessChecks.add(CompletableFuture.supplyAsync(
+                    () -> waitForReadySDRconnect(entry.getValue(), entry.getKey(), timeoutMs),
+                    ThreadPool.CACHED));
+            }
+
+            for(CompletableFuture<Boolean> readinessCheck : readinessChecks)
+            {
+                readinessCheck.join();
             }
         }
     }
@@ -675,7 +684,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private boolean waitForReadySDRconnect(String host, int port, int timeoutMs)
     {
-        long deadline = System.currentTimeMillis() + Math.max(timeoutMs, SDRCONNECT_HEADLESS_START_TIMEOUT_MS);
+        int effectiveTimeoutMs = Math.max(timeoutMs, SDRCONNECT_HEADLESS_START_TIMEOUT_MS);
+        long deadline = System.currentTimeMillis() + effectiveTimeoutMs;
 
         while(System.currentTimeMillis() < deadline)
         {
@@ -708,6 +718,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             }
         }
 
+        mLog.warn("Timed out waiting for SDRconnect headless on port {} readiness after {} ms", port,
+            effectiveTimeoutMs);
         return false;
     }
 
