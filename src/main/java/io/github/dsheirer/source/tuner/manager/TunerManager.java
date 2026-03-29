@@ -22,6 +22,7 @@ package io.github.dsheirer.source.tuner.manager;
 import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.source.ChannelizerType;
+import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -38,6 +39,8 @@ import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
+import io.github.dsheirer.source.tuner.sdrconnect.DiscoveredSDRconnectTuner;
+import io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
@@ -45,11 +48,17 @@ import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
 import io.github.dsheirer.util.ThreadPool;
+import java.io.File;
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -70,11 +79,19 @@ import org.usb4java.LibUsb;
 public class TunerManager implements IDiscoveredTunerStatusListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerManager.class);
+    private static final String SDRCONNECT_HEADLESS_PATH_PROPERTY = "sdrconnect.headless.path";
+    private static final String SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY = "sdrconnect.headless.autostart";
+    private static final String SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY = "sdrconnect.headless.start.delay.ms";
+    private static final String DEFAULT_SDRCONNECT_HEADLESS_PATH = "/Applications/SDRconnect.app/Contents/MacOS/SDRconnect_headless";
+    private static final int SDRCONNECT_HEADLESS_START_TIMEOUT_MS = 10000;
+    private static final int SDRCONNECT_HEADLESS_START_RETRY_INTERVAL_MS = 250;
+    private static final int DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS = 10000;
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
+    private final Map<Integer, Process> mManagedSDRconnectProcesses = new HashMap<>();
     private boolean mLibUsbInitialized = false;
     private SDRplay mSDRplay;
 
@@ -170,6 +187,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
 
         discoverRecordingTuners();
+        discoverSDRconnectTuners();
+        autoDiscoverSDRconnect(); // Auto-detect SDRconnect if no saved config
     }
 
     /**
@@ -179,6 +198,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     {
         //Stop all tuners
         mDiscoveredTunerModel.releaseDiscoveredTuners();
+        stopManagedSDRconnectProcesses();
 
         //Shutdown SDRplay API instance
         if(mSDRplay != null)
@@ -438,6 +458,309 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 mLog.info("Tuner Added: " + discoveredRecordingTuner);
                 mDiscoveredTunerModel.addDiscoveredTuner(discoveredRecordingTuner);
             }
+        }
+    }
+
+    /**
+     * Discover SDRconnect based tuners - connects to SDRplay devices via SDRconnect WebSocket API
+     */
+    private void discoverSDRconnectTuners()
+    {
+        ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
+        List<TunerConfiguration> tunerConfigurations = getTunerConfigurationManager().getTunerConfigurations(TunerType.SDRCONNECT);
+
+        if(tunerConfigurations.size() > 0)
+        {
+            mLog.info("Discovered [" + tunerConfigurations.size() + "] SDRconnect tuners from saved configurations");
+        }
+
+        prelaunchConfiguredSDRconnectProcesses(tunerConfigurations);
+
+        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
+        {
+            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig)
+            {
+                boolean available = ensureSDRconnectAvailable(sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+                DiscoveredSDRconnectTuner discoveredTuner =
+                        new DiscoveredSDRconnectTuner(sdrconnectConfig.getHost(), sdrconnectConfig.getPort(),
+                                sdrconnectConfig.getDeviceName(), channelizerType);
+
+                discoveredTuner.setTunerConfiguration(sdrconnectConfig);
+                discoveredTuner.addTunerStatusListener(this);
+
+                // Probe SDRconnect to see if it's available - if so, auto-start
+                if(available)
+                {
+                    mLog.info("SDRconnect detected at {}:{} - auto-starting tuner", sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+                    discoveredTuner.setEnabled(true);
+                    discoveredTuner.start(); // Actually start the connection
+                }
+                else
+                {
+                    mLog.info("SDRconnect not available at {}:{} - tuner disabled", sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+                    discoveredTuner.setEnabled(false);
+                }
+
+                mLog.info("SDRconnect Tuner Added: " + discoveredTuner);
+                mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
+            }
+        }
+    }
+
+    /**
+     * Probe SDRconnect to check if it's available
+     * @param host SDRconnect host
+     * @param port SDRconnect port
+     * @return true if SDRconnect responds
+     */
+    private boolean probeSDRconnect(String host, int port)
+    {
+        try (java.net.Socket socket = new java.net.Socket())
+        {
+            socket.connect(new java.net.InetSocketAddress(host, port), 2000);
+            return true;
+        }
+        catch(Exception e)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * Ensures SDRconnect is available on the specified host/port. For local loopback addresses, this can launch
+     * an SDRconnect_headless instance when the port is not already available.
+     */
+    private boolean ensureSDRconnectAvailable(String host, int port)
+    {
+        if(probeSDRconnect(host, port))
+        {
+            return true;
+        }
+
+        if(!isLocalSDRconnectHost(host))
+        {
+            return false;
+        }
+
+        return launchManagedSDRconnectProcess(port);
+    }
+
+    /**
+     * Launches any missing local SDRconnect headless processes for configured ports, then waits once for startup.
+     */
+    private void prelaunchConfiguredSDRconnectProcesses(List<TunerConfiguration> tunerConfigurations)
+    {
+        if(!SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY, true))
+        {
+            return;
+        }
+
+        List<Integer> launchedPorts = new ArrayList<>();
+
+        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
+        {
+            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig &&
+                isLocalSDRconnectHost(sdrconnectConfig.getHost()) &&
+                !probeSDRconnect(sdrconnectConfig.getHost(), sdrconnectConfig.getPort()))
+            {
+                if(launchManagedSDRconnectProcess(sdrconnectConfig.getPort()))
+                {
+                    launchedPorts.add(sdrconnectConfig.getPort());
+                }
+            }
+        }
+
+        if(!launchedPorts.isEmpty())
+        {
+            int delayMs = SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY,
+                DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS);
+            mLog.info("Waiting {} ms for SDRconnect headless startup on port(s) {}", delayMs, launchedPorts);
+
+            try
+            {
+                Thread.sleep(delayMs);
+            }
+            catch(InterruptedException ie)
+            {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Indicates if the host is a local loopback address we can manage.
+     */
+    private boolean isLocalSDRconnectHost(String host)
+    {
+        return "127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host) || "::1".equals(host);
+    }
+
+    /**
+     * Launches an SDRconnect_headless process for the specified websocket port if one is not already managed.
+     */
+    private boolean launchManagedSDRconnectProcess(int port)
+    {
+        if(!SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY, true))
+        {
+            return false;
+        }
+
+        Process existing = mManagedSDRconnectProcesses.get(port);
+
+        if(existing != null)
+        {
+            if(existing.isAlive())
+            {
+                return true;
+            }
+
+            mManagedSDRconnectProcesses.remove(port);
+        }
+
+        Path executable = Path.of(SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_PATH_PROPERTY,
+            DEFAULT_SDRCONNECT_HEADLESS_PATH));
+
+        if(!Files.isExecutable(executable))
+        {
+            mLog.warn("SDRconnect headless executable not found or not executable at [{}]", executable);
+            return false;
+        }
+
+        try
+        {
+            File logFile = mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog()
+                .resolve("sdrconnect_headless_" + port + ".log").toFile();
+
+            ProcessBuilder processBuilder = new ProcessBuilder(
+                executable.toString(),
+                "--websocket_port=" + port);
+            processBuilder.directory(executable.getParent().toFile());
+            processBuilder.redirectErrorStream(true);
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
+
+            Process process = processBuilder.start();
+            mManagedSDRconnectProcesses.put(port, process);
+            mLog.info("Started SDRconnect headless process on port {} using [{}]", port, executable);
+            return true;
+        }
+        catch(IOException ioe)
+        {
+            mLog.error("Unable to start SDRconnect headless on port {}", port, ioe);
+        }
+
+        return false;
+    }
+
+    /**
+     * Waits for an SDRconnect websocket port to become reachable.
+     */
+    private boolean waitForSDRconnectPort(String host, int port)
+    {
+        long deadline = System.currentTimeMillis() + SDRCONNECT_HEADLESS_START_TIMEOUT_MS;
+
+        while(System.currentTimeMillis() < deadline)
+        {
+            Process managed = mManagedSDRconnectProcesses.get(port);
+
+            if(managed != null && !managed.isAlive())
+            {
+                mLog.warn("SDRconnect headless on port {} exited early with code {}. See log [{}]",
+                    port, managed.exitValue(),
+                    mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog()
+                        .resolve("sdrconnect_headless_" + port + ".log"));
+                mManagedSDRconnectProcesses.remove(port);
+                return false;
+            }
+
+            if(probeSDRconnect(host, port))
+            {
+                return true;
+            }
+
+            try
+            {
+                Thread.sleep(SDRCONNECT_HEADLESS_START_RETRY_INTERVAL_MS);
+            }
+            catch(InterruptedException ie)
+            {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Stops any SDRconnect_headless processes that were launched by this application.
+     */
+    private void stopManagedSDRconnectProcesses()
+    {
+        for(Map.Entry<Integer, Process> entry : mManagedSDRconnectProcesses.entrySet())
+        {
+            Process process = entry.getValue();
+
+            if(process != null && process.isAlive())
+            {
+                long pid = process.pid();
+
+                try
+                {
+                    new ProcessBuilder("/bin/kill", "-INT", Long.toString(pid)).start().waitFor(2, TimeUnit.SECONDS);
+                    process.waitFor(2, TimeUnit.SECONDS);
+                }
+                catch(Exception e)
+                {
+                    mLog.warn("Unable to interrupt SDRconnect headless process [{}] on port {}", pid, entry.getKey(), e);
+                }
+
+                if(process.isAlive())
+                {
+                    process.destroy();
+                }
+
+                if(process.isAlive())
+                {
+                    process.destroyForcibly();
+                }
+            }
+        }
+
+        mManagedSDRconnectProcesses.clear();
+    }
+
+    /**
+     * Auto-discover SDRconnect on default port if no saved configuration exists
+     */
+    private void autoDiscoverSDRconnect()
+    {
+        // Check if we already have an SDRconnect tuner configured
+        List<TunerConfiguration> existing = getTunerConfigurationManager().getTunerConfigurations(TunerType.SDRCONNECT);
+        if(!existing.isEmpty())
+        {
+            return; // Already have saved config, don't auto-discover
+        }
+
+        // Probe default SDRconnect port
+        String defaultHost = "127.0.0.1";
+        int defaultPort = 5454;
+
+        if(probeSDRconnect(defaultHost, defaultPort))
+        {
+            mLog.info("Auto-discovered SDRconnect at {}:{}", defaultHost, defaultPort);
+
+            ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
+            SDRconnectTunerConfiguration config = SDRconnectTunerConfiguration.create(defaultHost, defaultPort);
+            getTunerConfigurationManager().addTunerConfiguration(config);
+
+            DiscoveredSDRconnectTuner discoveredTuner =
+                    new DiscoveredSDRconnectTuner(defaultHost, defaultPort, channelizerType);
+            discoveredTuner.setTunerConfiguration(config);
+            discoveredTuner.addTunerStatusListener(this);
+            discoveredTuner.setEnabled(true); // Auto-enable since we detected it
+
+            mLog.info("SDRconnect auto-discovered and enabled: " + discoveredTuner);
+            mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
         }
     }
 

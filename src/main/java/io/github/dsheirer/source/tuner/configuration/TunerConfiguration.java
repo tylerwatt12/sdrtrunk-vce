@@ -35,6 +35,7 @@ import io.github.dsheirer.source.tuner.rtl.e4k.E4KTunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.r8x.r820t.R820TTunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.r8x.r828d.R828DTunerConfiguration;
+import io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
 
 /**
@@ -54,6 +55,7 @@ import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
         @JsonSubTypes.Type(value = R820TTunerConfiguration.class, name = "r820TTunerConfiguration"),
         @JsonSubTypes.Type(value = R828DTunerConfiguration.class, name = "r828DTunerConfiguration"),
         @JsonSubTypes.Type(value = RspTunerConfiguration.class, name = "rspTunerConfiguration"),
+        @JsonSubTypes.Type(value = SDRconnectTunerConfiguration.class, name = "sdrconnectTunerConfiguration"),
 })
 @JacksonXmlRootElement(localName = "tuner_configuration")
 public abstract class TunerConfiguration
