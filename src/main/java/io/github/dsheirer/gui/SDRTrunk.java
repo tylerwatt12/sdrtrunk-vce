@@ -347,6 +347,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private void initGUI()
     {
         mMainGui.setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[grow,fill]0[shrink 0]"));
+        ApplicationIcon.apply(mMainGui);
 
         /**
          * Setup main JFrame window
@@ -937,6 +938,7 @@ public class SDRTrunk implements Listener<TunerEvent>
      */
     public static void main(String[] args)
     {
+        System.setProperty("apple.awt.application.name", "sdrtrunk");
         new SDRTrunk();
     }
 }

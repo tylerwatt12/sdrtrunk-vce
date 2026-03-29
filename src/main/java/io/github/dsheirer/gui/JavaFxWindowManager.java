@@ -149,6 +149,7 @@ public class JavaFxWindowManager extends Application
 
         //Register JavaFX icon fonts
         IconFontFX.register(jiconfont.icons.font_awesome.FontAwesome.getIconFont());
+        ApplicationIcon.applyTaskbarIcon();
 
         createJFXPanel();
     }
@@ -210,6 +211,7 @@ public class JavaFxWindowManager extends Application
             mRecordingViewerStage = new Stage();
             mRecordingViewerStage.setTitle("sdrtrunk - Message Recording Viewer (.bits)");
             mRecordingViewerStage.setScene(scene);
+            ApplicationIcon.apply(mRecordingViewerStage);
             mUserPreferences.getJavaFxPreferences().monitor(mRecordingViewerStage, STAGE_MONITOR_KEY_RECORDING_VIEWER);
         }
 
@@ -235,6 +237,7 @@ public class JavaFxWindowManager extends Application
             mIconManagerStage = new Stage();
             mIconManagerStage.setTitle("sdrtrunk - Icon Manager");
             mIconManagerStage.setScene(scene);
+            ApplicationIcon.apply(mIconManagerStage);
             mUserPreferences.getJavaFxPreferences().monitor(mIconManagerStage, STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR);
         }
 
@@ -283,6 +286,7 @@ public class JavaFxWindowManager extends Application
             mJmbeEditorStage = new Stage();
             mJmbeEditorStage.setTitle("sdrtrunk - JMBE Library Updater");
             mJmbeEditorStage.setScene(scene);
+            ApplicationIcon.apply(mJmbeEditorStage);
             mUserPreferences.getJavaFxPreferences().monitor(mJmbeEditorStage, STAGE_MONITOR_KEY_JMBE_EDITOR);
         }
 
@@ -324,6 +328,7 @@ public class JavaFxWindowManager extends Application
             mPlaylistStage = new Stage();
             mPlaylistStage.setTitle("sdrtrunk - Playlist Editor");
             mPlaylistStage.setScene(scene);
+            ApplicationIcon.apply(mPlaylistStage);
             mUserPreferences.getJavaFxPreferences().monitor(mPlaylistStage, STAGE_MONITOR_KEY_PLAYLIST_EDITOR);
         }
 
@@ -374,6 +379,7 @@ public class JavaFxWindowManager extends Application
             mUserPreferencesStage = new Stage();
             mUserPreferencesStage.setTitle("sdrtrunk - User Preferences");
             mUserPreferencesStage.setScene(scene);
+            ApplicationIcon.apply(mUserPreferencesStage);
             mUserPreferences.getJavaFxPreferences().monitor(mUserPreferencesStage, STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR);
         }
 
@@ -417,6 +423,7 @@ public class JavaFxWindowManager extends Application
             mChannelMapStage = new Stage();
             mChannelMapStage.setTitle("sdrtrunk - Channel Map Editor");
             mChannelMapStage.setScene(scene);
+            ApplicationIcon.apply(mChannelMapStage);
             mUserPreferences.getJavaFxPreferences().monitor(mChannelMapStage, STAGE_MONITOR_KEY_CHANNEL_MAP_EDITOR);
         }
 

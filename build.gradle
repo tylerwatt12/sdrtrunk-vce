@@ -159,6 +159,11 @@ def jvmArgsLinux =
          '--enable-native-access=javafx.graphics', //JDK24 - suppress restricted java.lang.System calls
          '--enable-native-access=ALL-UNNAMED'] //SDRPlay API library path
 
+/**
+ * JVM Arguments for running the application on macOS.
+ */
+def jvmArgsMac = jvmArgsLinux + ['-Xdock:name=sdrtrunk']
+
 application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
 
@@ -166,7 +171,7 @@ application {
         applicationDefaultJvmArgs = jvmArgsWindows
     }
     else {
-        applicationDefaultJvmArgs = jvmArgsLinux
+        applicationDefaultJvmArgs = os.isMacOsX() ? jvmArgsMac : jvmArgsLinux
     }
 }
 
@@ -175,7 +180,7 @@ test {
         jvmArgs = jvmArgsWindows
     }
     else {
-        jvmArgs = jvmArgsLinux
+        jvmArgs = os.isMacOsX() ? jvmArgsMac : jvmArgsLinux
     }
 }
 
@@ -213,6 +218,14 @@ String targetOsxAarch64 = 'osx-aarch64-v' + version
 String targetOsxX86_64 = 'osx-x86_64-v' + version
 String targetWindowsX86_64 = 'windows-x86_64-v' + version
 String targetWindowsAarch64 = 'windows-aarch64-v' + version
+String macAppIcon = file('src/main/packaging/macos/sdr-trunk.icns').absolutePath
+String rawMacAppVersion = version.toString().find(/^\d+(?:\.\d+){0,2}/) ?: '1.0.0'
+List<String> macAppVersionParts = rawMacAppVersion.tokenize('.')
+if(macAppVersionParts && macAppVersionParts[0] == '0')
+{
+    macAppVersionParts[0] = '1'
+}
+String macAppVersion = macAppVersionParts.join('.')
 
 /**
  * Optional pre-downloaded Java Development Kit (JDK) for each target OS and CPU.  These locations are hard-coded to the
@@ -244,36 +257,104 @@ def jdk_download_windows_aarch64 = jdk_download_base + "windows-aarch64-full.zip
  * @param jvmArgs to use (windows or linux)
  * @return configured task.
  */
-def configure(org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs) {
+def configureRuntime(def task, List<String> jvmArgs) {
     //Use the correct set of JVM arguments
-    rt.extension.launcherData.get().jvmArgs = jvmArgs
+    task.extension.launcherData.get().jvmArgs = jvmArgs
+    task.extension.launcherData.get().unixScriptTemplate = project.file('src/main/packaging/scripts/unixScriptTemplate.txt')
 
     //Additional modules to include with auto-detected modules.
     //jdk.crypto.ec - needed for HTTPS connections (broadcastify calls & map tile server)
     //jdk.incubator.vector - needed for Project Panama foreign function and vector apis
     //jdk.accessibility is used with assistive technologies like screen readers
     //java.management for JVM resource monitoring
-    rt.extension.addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management')
+    task.extension.addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management')
 
     //Use auto-detected modules and 'add' any specified modules.
-    rt.extension.additive.set(true)
+    task.extension.additive.set(true)
 
     //Recommended options for reducing/shrinking runtime target image size
-    rt.extension.addOptions('--strip-debug', '--compress', '2', '--no-header-files', '--no-man-pages')
+    task.extension.addOptions('--strip-debug', '--compress', '2', '--no-header-files', '--no-man-pages')
+}
+
+def configure(org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs) {
+    configureRuntime(rt, jvmArgs)
 
     //Runtime images have auto appended version in image zip name.  Override to include version in single target image.
     rt.extension.imageZip.set(file("$buildDir/image/sdr-trunk.zip"))
 }
 
+def patchMacInfoPlist(File appBundle, String displayName) {
+    File infoPlist = new File(appBundle, 'Contents/Info.plist')
+
+    if(!infoPlist.exists())
+    {
+        throw new GradleException("Unable to locate macOS app Info.plist: ${infoPlist}")
+    }
+
+    ['CFBundleName', 'CFBundleDisplayName', 'CFBundleExecutable'].each { key ->
+        ant.exec(executable: '/usr/libexec/PlistBuddy', failonerror: false, resultproperty: "plistDelete${key}") {
+            arg(value: '-c')
+            arg(value: "Delete :${key}")
+            arg(value: infoPlist.absolutePath)
+        }
+
+        ant.exec(executable: '/usr/libexec/PlistBuddy', failonerror: true) {
+            arg(value: '-c')
+            arg(value: "Add :${key} string ${displayName}")
+            arg(value: infoPlist.absolutePath)
+        }
+    }
+}
+
+runtime {
+    launcher {
+        jvmArgs = os.isWindows() ? jvmArgsWindows : (os.isMacOsX() ? jvmArgsMac : jvmArgsLinux)
+        unixScriptTemplate = project.file('src/main/packaging/scripts/unixScriptTemplate.txt')
+    }
+
+    addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management')
+    additive.set(true)
+    addOptions('--strip-debug', '--compress', '2', '--no-header-files', '--no-man-pages')
+
+    if(os.isMacOsX())
+    {
+        jpackage {
+            imageName = 'sdrtrunk'
+            imageOutputDir = file("$buildDir/jpackage")
+            installerName = 'sdrtrunk'
+            appVersion = macAppVersion
+            imageOptions = ['--icon', macAppIcon]
+        }
+    }
+}
+
 /**
  * Creates a release package for the current operating system.
  *
- * Note: you cannot create both Windows and Linux releases at the same time due to limitations of the Runtime plugin
+ * Note: macOS uses jpackage to build and zip a native .app bundle so the Dock name/icon come from the app bundle.
  *
  * Usage: gradle runtimeZipCurrent
  * Usage: gradlew runtimeZipCurrent   (windows - using gradlew)
- * Usage: ./gradlew runtimeZipCurrent   (linux - using gradlew)
+ * Usage: ./gradlew runtimeZipCurrent   (linux/macos - using gradlew)
  */
+if(os.isMacOsX())
+{
+    tasks.register('runtimeZipCurrent') {
+        dependsOn('jpackageImage')
+
+        doLast {
+            File zipFile = file("$buildDir/image/sdr-trunk.zip")
+            if(zipFile.exists())
+            {
+                zipFile.delete()
+            }
+
+            ant.zip(destfile: zipFile, basedir: file("$buildDir/jpackage"), includes: 'sdrtrunk.app/**')
+        }
+    }
+}
+else
+{
 tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
     def arch = System.properties.getProperty("os.arch")
     def javaHome = org.gradle.internal.jvm.Jvm.current().getJavaHome().toString()
@@ -297,15 +378,15 @@ tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
         }
         configure(rt, jvmArgsLinux)
     }
-    else if(os.isMacOsX())
-    {
-        if(arch.equals("amd64")) {
-            rt.extension.targetPlatform(targetOsxX86_64, javaHome)
         }
-        else if(arch.equals("aarch64")) {
-            rt.extension.targetPlatform(targetOsxAarch64, javaHome)
         }
-        configure(rt, jvmArgsLinux)
+
+if(os.isMacOsX())
+{
+    tasks.named('jpackageImage') {
+        doLast {
+            patchMacInfoPlist(file("$buildDir/jpackage/sdrtrunk.app"), 'sdrtrunk')
+        }
     }
 }
 
