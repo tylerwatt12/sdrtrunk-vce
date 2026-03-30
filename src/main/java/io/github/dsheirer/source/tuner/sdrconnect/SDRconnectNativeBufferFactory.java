@@ -27,6 +27,7 @@ import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 /**
  * Factory for creating native buffers from SDRconnect IQ data.
@@ -92,6 +93,11 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
                 @Override
                 public ComplexSamples next()
                 {
+                    if(!mHasNext)
+                    {
+                        throw new NoSuchElementException("No more complex samples available");
+                    }
+
                     mHasNext = false;
                     return new ComplexSamples(mISamples, mQSamples, mTimestamp);
                 }
@@ -114,6 +120,11 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
                 @Override
                 public InterleavedComplexSamples next()
                 {
+                    if(!mHasNext)
+                    {
+                        throw new NoSuchElementException("No more interleaved complex samples available");
+                    }
+
                     mHasNext = false;
 
                     // Interleave the samples
