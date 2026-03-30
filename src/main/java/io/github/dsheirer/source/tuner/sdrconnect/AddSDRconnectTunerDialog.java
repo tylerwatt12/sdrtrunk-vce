@@ -47,6 +47,7 @@ import java.net.InetAddress;
 public class AddSDRconnectTunerDialog extends JDialog
 {
     private static final Logger mLog = LoggerFactory.getLogger(AddSDRconnectTunerDialog.class);
+    private static final String SPAN2_WRAP = "span 2,wrap";
 
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerModel mDiscoveredTunerModel;
@@ -82,7 +83,7 @@ public class AddSDRconnectTunerDialog extends JDialog
         content.add(new JLabel("Host:"));
         mHostTextField = new JTextField(SDRconnectTunerController.DEFAULT_HOST);
         mHostTextField.setToolTipText("SDRconnect host address (e.g., 127.0.0.1 or hostname)");
-        content.add(mHostTextField, "span 2,wrap");
+        content.add(mHostTextField, SPAN2_WRAP);
 
         content.add(new JLabel("Port:"));
         SpinnerNumberModel model = new SpinnerNumberModel(
@@ -98,11 +99,11 @@ public class AddSDRconnectTunerDialog extends JDialog
         content.add(new JLabel("Device:"));
         mDeviceNameTextField = new JTextField(SDRconnectTunerController.DEFAULT_DEVICE_NAME);
         mDeviceNameTextField.setToolTipText("SDRconnect device display name (for example: nRSP-ST 1)");
-        content.add(mDeviceNameTextField, "span 2,wrap");
+        content.add(mDeviceNameTextField, SPAN2_WRAP);
 
         content.add(new JLabel("Status:"));
         mStatusLabel = new JLabel("Not tested");
-        content.add(mStatusLabel, "span 2,wrap");
+        content.add(mStatusLabel, SPAN2_WRAP);
 
         content.add(new JLabel(""));
         content.add(new JLabel(""), "wrap");
