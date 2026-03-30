@@ -17,7 +17,7 @@
  * ****************************************************************************
  */
 
-package io.github.dsheirer.source.tuner.manager;
+package io.github.dsheirer.source.tuner.sdrconnect;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -27,9 +27,8 @@ import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
-import io.github.dsheirer.source.tuner.sdrconnect.DiscoveredSDRconnectTuner;
-import io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerConfiguration;
-import io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerController;
+import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
+import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
 import io.github.dsheirer.util.ThreadPool;
 import java.io.File;
@@ -58,9 +57,9 @@ import org.slf4j.LoggerFactory;
  * Encapsulates SDRconnect-specific startup, readiness probing, device assignment, and optional headless lifecycle
  * management so that {@link TunerManager} only coordinates the high-level tuner workflow.
  */
-class SDRconnectTunerBootstrap
+public class SDRconnectTunerManager
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SDRconnectTunerBootstrap.class);
+    private static final Logger mLog = LoggerFactory.getLogger(SDRconnectTunerManager.class);
     private static final String SDRCONNECT_HEADLESS_PATH_PROPERTY = "sdrconnect.headless.path";
     private static final String SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY = "sdrconnect.headless.autostart";
     private static final String SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY = "sdrconnect.headless.start.delay.ms";
@@ -79,9 +78,9 @@ class SDRconnectTunerBootstrap
     private final HttpClient mSDRconnectReadyProbeHttpClient =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
 
-    SDRconnectTunerBootstrap(UserPreferences userPreferences, DiscoveredTunerModel discoveredTunerModel,
-                             TunerConfigurationManager tunerConfigurationManager,
-                             IDiscoveredTunerStatusListener tunerStatusListener)
+    public SDRconnectTunerManager(UserPreferences userPreferences, DiscoveredTunerModel discoveredTunerModel,
+                                  TunerConfigurationManager tunerConfigurationManager,
+                                  IDiscoveredTunerStatusListener tunerStatusListener)
     {
         mUserPreferences = userPreferences;
         mDiscoveredTunerModel = discoveredTunerModel;
@@ -92,7 +91,7 @@ class SDRconnectTunerBootstrap
         Runtime.getRuntime().addShutdownHook(mManagedSDRconnectShutdownHook);
     }
 
-    void discoverConfiguredTuners()
+    public void discoverConfiguredTuners()
     {
         ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
         List<TunerConfiguration> tunerConfigurations = mTunerConfigurationManager.getTunerConfigurations(TunerType.SDRCONNECT);
@@ -163,7 +162,7 @@ class SDRconnectTunerBootstrap
         }
     }
 
-    void autoDiscoverTuners()
+    public void autoDiscoverTuners()
     {
         List<TunerConfiguration> existing = mTunerConfigurationManager.getTunerConfigurations(TunerType.SDRCONNECT);
         if(!existing.isEmpty())
@@ -201,7 +200,7 @@ class SDRconnectTunerBootstrap
         }
     }
 
-    void stop()
+    public void stop()
     {
         stopManagedSDRconnectProcesses();
 
