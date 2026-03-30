@@ -590,6 +590,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
     /**
      * Determines the best matching device entry from the valid_devices list.
+     *
+     * SDRconnect advertises devices as a comma-separated list of full selection strings, for example:
+     * nRSP-ST (2405166650) (IQ Lite), nRSP-ST (2405166650) (Compact), nRSP-ST (2405166650) (Full IQ),
+     * nRSP-ST 1 (IQ Lite), nRSP-ST 1 (Compact), nRSP-ST 1 (Full IQ), IQ File
+     *
+     * The configured selector may be blank, a friendly name such as "nRSP-ST 1", or a serial token such as
+     * "2405166650". We resolve that selector to one of the advertised full strings and prefer the Full IQ variant
+     * when multiple advertised modes match.
      */
     private String getPreferredDeviceName()
     {
@@ -605,25 +613,25 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
 
         String fallback = mDeviceName;
+        String normalizedDeviceName = mDeviceName.trim();
 
         for(String device : devices)
         {
             String trimmed = device.trim();
 
-            if(trimmed.equalsIgnoreCase(mDeviceName))
+            if(trimmed.isEmpty())
+            {
+                continue;
+            }
+
+            if(matchesDeviceSelector(trimmed, normalizedDeviceName))
             {
                 fallback = trimmed;
-            }
 
-            if(trimmed.equalsIgnoreCase(mDeviceName + ":" + DEFAULT_NETWORK_MODE))
-            {
-                return trimmed;
-            }
-
-            if(trimmed.toLowerCase().contains(mDeviceName.toLowerCase()) &&
-                trimmed.toLowerCase().contains(DEFAULT_NETWORK_MODE.toLowerCase()))
-            {
-                return trimmed;
+                if(prefersDefaultNetworkMode(trimmed))
+                {
+                    return trimmed;
+                }
             }
         }
 
@@ -659,13 +667,43 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 fallback = trimmed;
             }
 
-            if(trimmed.endsWith("(" + DEFAULT_NETWORK_MODE + ")"))
+            if(prefersDefaultNetworkMode(trimmed))
             {
                 return trimmed;
             }
         }
 
         return fallback;
+    }
+
+    /**
+     * Indicates if an advertised SDRconnect device entry matches the configured selector by friendly name or serial.
+     */
+    private boolean matchesDeviceSelector(String advertisedDevice, String configuredSelector)
+    {
+        if(configuredSelector == null || configuredSelector.isBlank())
+        {
+            return false;
+        }
+
+        String normalizedAdvertised = advertisedDevice.trim().toLowerCase();
+        String normalizedSelector = configuredSelector.trim().toLowerCase();
+
+        if(normalizedAdvertised.equals(normalizedSelector))
+        {
+            return true;
+        }
+
+        return normalizedAdvertised.contains(normalizedSelector);
+    }
+
+    /**
+     * Indicates if an advertised SDRconnect entry matches the preferred network mode.
+     */
+    private boolean prefersDefaultNetworkMode(String advertisedDevice)
+    {
+        return advertisedDevice != null &&
+            advertisedDevice.toLowerCase().contains(DEFAULT_NETWORK_MODE.toLowerCase());
     }
 
     @Override

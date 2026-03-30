@@ -156,7 +156,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         add(new JLabel("Device:"));
         add(getDeviceNameField(), SPAN_2_WRAP);
         add(new JLabel(""));
-        add(new JLabel("Leave blank to use the first discovered device"), SPAN_2_WRAP);
+        add(new JLabel("Enter a device name or serial number, or leave blank to use the first discovered device"),
+            SPAN_2_WRAP);
 
         add(new JLabel("Sample Rate:"));
         add(getSampleRateLabel());
@@ -243,7 +244,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         if(mDeviceNameField == null)
         {
             mDeviceNameField = new JTextField(SDRconnectTunerController.DEFAULT_DEVICE_NAME);
-            mDeviceNameField.setToolTipText("SDRconnect device display name, or leave blank to use the first discovered device");
+            mDeviceNameField.setToolTipText("SDRconnect device name or serial number, or leave blank to use the first discovered device");
         }
         return mDeviceNameField;
     }

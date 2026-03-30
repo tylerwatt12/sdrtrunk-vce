@@ -28,7 +28,7 @@ This repository is a personal experimental fork by W6BAZ and is not intended for
 Notable differences from upstream in this fork:
 - SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
 - Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target.
-- The current SDRconnect workflow expects device display names such as `nRSP-ST 1` and `nRSP-ST 2`. Serial-number-based device selection is not implemented in this fork at present, and it may never be, since I find device names much easier to remember.
+- SDRconnect device selection can use a friendly device name such as `nRSP-ST 1`, a serial number token such as `2405166650`, or a blank value to select the first discovered device.
 - Optional local `SDRconnect_headless` lifecycle management has been added as a convenience feature. If enabled, sdrtrunk can start and stop local headless instances for configured ports. If disabled, sdrtrunk can still connect to SDRconnect instances that were started manually.
 - macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
 
@@ -53,8 +53,9 @@ The SDRconnect work in this fork was inspired by, and partially based on, W2NJL'
 - [W2NJL/sdrtrunk](https://github.com/W2NJL/sdrtrunk)
 
 Current assumptions and behavior for this fork:
-- SDRconnect tuners are configured per `host:port`, with device name used as selection metadata rather than as part of tuner identity.
+- SDRconnect tuners are configured per `host:port`, with the optional device field used as selection metadata rather than as part of tuner identity.
 - Configured SDRconnect endpoints are checked for WebSocket readiness before tuner startup proceeds, regardless of whether the corresponding SDRconnect instance was launched by sdrtrunk, started manually, or is running on another host.
+- If the device field is left blank, sdrtrunk selects the first advertised SDRconnect device and prefers the `Full IQ` variant when multiple advertised modes are available.
 - Local loopback endpoints can optionally be managed through `SDRconnect_headless`, but that convenience manager is not required. Users who already run SDRconnect or `SDRconnect_headless` themselves can leave auto-start disabled and sdrtrunk will simply attach to the configured endpoints if they are available and ready.
 - All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful,
 but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's
