@@ -64,6 +64,7 @@ public class SDRconnectTunerManager
     private static final String SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY = "sdrconnect.headless.autostart";
     private static final String SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY = "sdrconnect.headless.start.delay.ms";
     // macOS default; other platforms should configure the executable path explicitly via system properties/preferences.
+    @SuppressWarnings("java:S1075")
     private static final String DEFAULT_SDRCONNECT_HEADLESS_PATH = "/Applications/SDRconnect.app/Contents/MacOS/SDRconnect_headless";
     private static final int SDRCONNECT_HEADLESS_START_TIMEOUT_MS = 5000;
     private static final int SDRCONNECT_HEADLESS_START_RETRY_INTERVAL_MS = 250;
