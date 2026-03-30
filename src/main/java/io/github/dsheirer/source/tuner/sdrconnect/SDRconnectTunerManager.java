@@ -112,55 +112,88 @@ public class SDRconnectTunerManager
             {
                 SDRconnectEndpointReadiness readiness = readinessByEndpoint.get(
                     getSDRconnectEndpointKey(sdrconnectConfig.getHost(), sdrconnectConfig.getPort()));
-                boolean available = readiness != null && readiness.isReady();
-                boolean disabled = mTunerConfigurationManager.isDisabled(new DiscoveredSDRconnectTuner(
-                    sdrconnectConfig.getHost(), sdrconnectConfig.getPort(), sdrconnectConfig.getDeviceName(),
-                    channelizerType));
+                boolean available = isEndpointAvailable(readiness);
                 DiscoveredSDRconnectTuner discoveredTuner =
-                    new DiscoveredSDRconnectTuner(sdrconnectConfig.getHost(), sdrconnectConfig.getPort(),
-                        sdrconnectConfig.getDeviceName(), channelizerType);
+                    createConfiguredDiscoveredTuner(sdrconnectConfig, channelizerType, runtimeDeviceAssignments);
+                boolean disabled = isConfiguredTunerDisabled(discoveredTuner);
 
-                discoveredTuner.setTunerConfiguration(sdrconnectConfig);
-                discoveredTuner.setRuntimeDeviceName(runtimeDeviceAssignments.get(sdrconnectConfig.getUniqueID()));
-                discoveredTuner.addTunerStatusListener(mTunerStatusListener);
-
-                if(disabled)
-                {
-                    mLog.info("SDRconnect configured at {}:{} is disabled", sdrconnectConfig.getHost(),
-                        sdrconnectConfig.getPort());
-                    discoveredTuner.setEnabled(false);
-                }
-                else if(available)
-                {
-                    mLog.info("SDRconnect detected at {}:{} - auto-starting tuner", sdrconnectConfig.getHost(),
-                        sdrconnectConfig.getPort());
-                }
-                else
-                {
-                    mLog.warn("SDRconnect not available at {}:{} - tuner remains enabled and can be restarted from the UI",
-                        sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
-                }
+                updateConfiguredTunerAvailability(discoveredTuner, sdrconnectConfig, disabled, available);
 
                 mLog.info("SDRconnect Tuner Added: {}", discoveredTuner);
                 mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
 
-                if(!disabled && available)
-                {
-                    ThreadPool.CACHED.execute(() -> {
-                        discoveredTuner.start();
-
-                        if(discoveredTuner.hasTuner())
-                        {
-                            mDiscoveredTunerModel.tunerBecameAvailable(discoveredTuner);
-                        }
-                    });
-                }
-                else if(!disabled)
-                {
-                    discoveredTuner.setErrorMessage("SDRconnect is not available at " + sdrconnectConfig.getHost() +
-                        ":" + sdrconnectConfig.getPort());
-                }
+                handleConfiguredTunerStartup(discoveredTuner, sdrconnectConfig, disabled, available);
             }
+        }
+    }
+
+    private boolean isEndpointAvailable(SDRconnectEndpointReadiness readiness)
+    {
+        return readiness != null && readiness.isReady();
+    }
+
+    private DiscoveredSDRconnectTuner createConfiguredDiscoveredTuner(SDRconnectTunerConfiguration sdrconnectConfig,
+                                                                      ChannelizerType channelizerType,
+                                                                      Map<String, String> runtimeDeviceAssignments)
+    {
+        DiscoveredSDRconnectTuner discoveredTuner =
+            new DiscoveredSDRconnectTuner(sdrconnectConfig.getHost(), sdrconnectConfig.getPort(),
+                sdrconnectConfig.getDeviceName(), channelizerType);
+        discoveredTuner.setTunerConfiguration(sdrconnectConfig);
+        discoveredTuner.setRuntimeDeviceName(runtimeDeviceAssignments.get(sdrconnectConfig.getUniqueID()));
+        discoveredTuner.addTunerStatusListener(mTunerStatusListener);
+        return discoveredTuner;
+    }
+
+    private boolean isConfiguredTunerDisabled(DiscoveredSDRconnectTuner discoveredTuner)
+    {
+        return mTunerConfigurationManager.isDisabled(discoveredTuner);
+    }
+
+    private void updateConfiguredTunerAvailability(DiscoveredSDRconnectTuner discoveredTuner,
+                                                   SDRconnectTunerConfiguration sdrconnectConfig,
+                                                   boolean disabled, boolean available)
+    {
+        if(disabled)
+        {
+            mLog.info("SDRconnect configured at {}:{} is disabled", sdrconnectConfig.getHost(),
+                sdrconnectConfig.getPort());
+            discoveredTuner.setEnabled(false);
+        }
+        else if(available)
+        {
+            mLog.info("SDRconnect detected at {}:{} - auto-starting tuner", sdrconnectConfig.getHost(),
+                sdrconnectConfig.getPort());
+        }
+        else
+        {
+            mLog.warn("SDRconnect not available at {}:{} - tuner remains enabled and can be restarted from the UI",
+                sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+        }
+    }
+
+    private void handleConfiguredTunerStartup(DiscoveredSDRconnectTuner discoveredTuner,
+                                              SDRconnectTunerConfiguration sdrconnectConfig,
+                                              boolean disabled, boolean available)
+    {
+        if(!disabled && available)
+        {
+            ThreadPool.CACHED.execute(() -> startConfiguredTuner(discoveredTuner));
+        }
+        else if(!disabled)
+        {
+            discoveredTuner.setErrorMessage("SDRconnect is not available at " + sdrconnectConfig.getHost() +
+                ":" + sdrconnectConfig.getPort());
+        }
+    }
+
+    private void startConfiguredTuner(DiscoveredSDRconnectTuner discoveredTuner)
+    {
+        discoveredTuner.start();
+
+        if(discoveredTuner.hasTuner())
+        {
+            mDiscoveredTunerModel.tunerBecameAvailable(discoveredTuner);
         }
     }
 
