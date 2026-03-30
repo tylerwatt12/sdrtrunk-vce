@@ -313,6 +313,21 @@ public class SDRconnectTunerManager
                                                                              Map<String, SDRconnectEndpointReadiness> readinessByEndpoint)
     {
         Map<String, String> assignments = new HashMap<>();
+        Map<String, Integer> representativePortsByHost =
+            getRepresentativePortsByHost(tunerConfigurations, readinessByEndpoint);
+        Map<String, List<SDRconnectDeviceSlot>> slotsByHost =
+            getDeviceSlotsByHost(representativePortsByHost, readinessByEndpoint);
+        Map<String, Set<SDRconnectDeviceSlot>> claimedSlotsByHost = new HashMap<>();
+
+        assignExplicitConfiguredDevices(tunerConfigurations, slotsByHost, claimedSlotsByHost, assignments);
+        assignBlankConfiguredDevices(tunerConfigurations, slotsByHost, claimedSlotsByHost, assignments);
+
+        return assignments;
+    }
+
+    private Map<String, Integer> getRepresentativePortsByHost(List<TunerConfiguration> tunerConfigurations,
+                                                              Map<String, SDRconnectEndpointReadiness> readinessByEndpoint)
+    {
         Map<String, Integer> representativePortsByHost = new LinkedHashMap<>();
 
         for(TunerConfiguration tunerConfiguration: tunerConfigurations)
@@ -329,6 +344,12 @@ public class SDRconnectTunerManager
             }
         }
 
+        return representativePortsByHost;
+    }
+
+    private Map<String, List<SDRconnectDeviceSlot>> getDeviceSlotsByHost(Map<String, Integer> representativePortsByHost,
+                                                                         Map<String, SDRconnectEndpointReadiness> readinessByEndpoint)
+    {
         Map<String, List<SDRconnectDeviceSlot>> slotsByHost = new HashMap<>();
 
         for(Map.Entry<String, Integer> representative : representativePortsByHost.entrySet())
@@ -343,51 +364,67 @@ public class SDRconnectTunerManager
             }
         }
 
-        Map<String, Set<SDRconnectDeviceSlot>> claimedSlotsByHost = new HashMap<>();
+        return slotsByHost;
+    }
 
+    private void assignExplicitConfiguredDevices(List<TunerConfiguration> tunerConfigurations,
+                                                 Map<String, List<SDRconnectDeviceSlot>> slotsByHost,
+                                                 Map<String, Set<SDRconnectDeviceSlot>> claimedSlotsByHost,
+                                                 Map<String, String> assignments)
+    {
         for(TunerConfiguration tunerConfiguration: tunerConfigurations)
         {
-            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig &&
-                sdrconnectConfig.getDeviceName() != null && !sdrconnectConfig.getDeviceName().isBlank())
+            if(!(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig) ||
+                sdrconnectConfig.getDeviceName() == null || sdrconnectConfig.getDeviceName().isBlank())
             {
-                SDRconnectDeviceSlot slot = findMatchingDeviceSlot(slotsByHost.get(sdrconnectConfig.getHost()),
-                    sdrconnectConfig.getDeviceName());
+                continue;
+            }
 
-                if(slot != null)
+            SDRconnectDeviceSlot slot = findMatchingDeviceSlot(slotsByHost.get(sdrconnectConfig.getHost()),
+                sdrconnectConfig.getDeviceName());
+
+            if(slot != null)
+            {
+                assignments.put(sdrconnectConfig.getUniqueID(),
+                    slot.getPreferredSelection(sdrconnectConfig.getDeviceName()));
+                claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>()).add(slot);
+            }
+        }
+    }
+
+    private void assignBlankConfiguredDevices(List<TunerConfiguration> tunerConfigurations,
+                                              Map<String, List<SDRconnectDeviceSlot>> slotsByHost,
+                                              Map<String, Set<SDRconnectDeviceSlot>> claimedSlotsByHost,
+                                              Map<String, String> assignments)
+    {
+        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
+        {
+            if(!(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig) ||
+                (sdrconnectConfig.getDeviceName() != null && !sdrconnectConfig.getDeviceName().isBlank()))
+            {
+                continue;
+            }
+
+            List<SDRconnectDeviceSlot> slots = slotsByHost.get(sdrconnectConfig.getHost());
+
+            if(slots == null)
+            {
+                continue;
+            }
+
+            Set<SDRconnectDeviceSlot> claimed =
+                claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>());
+
+            for(SDRconnectDeviceSlot slot : slots)
+            {
+                if(!claimed.contains(slot))
                 {
-                    assignments.put(sdrconnectConfig.getUniqueID(),
-                        slot.getPreferredSelection(sdrconnectConfig.getDeviceName()));
-                    claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>()).add(slot);
+                    assignments.put(sdrconnectConfig.getUniqueID(), slot.getPreferredSelection(null));
+                    claimed.add(slot);
+                    break;
                 }
             }
         }
-
-        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
-        {
-            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig &&
-                (sdrconnectConfig.getDeviceName() == null || sdrconnectConfig.getDeviceName().isBlank()))
-            {
-                List<SDRconnectDeviceSlot> slots = slotsByHost.get(sdrconnectConfig.getHost());
-
-                if(slots != null)
-                {
-                    Set<SDRconnectDeviceSlot> claimed =
-                        claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>());
-
-                    for(SDRconnectDeviceSlot slot : slots)
-                    {
-                        if(!claimed.contains(slot))
-                        {
-                            assignments.put(sdrconnectConfig.getUniqueID(), slot.getPreferredSelection(null));
-                            claimed.add(slot);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        return assignments;
     }
 
     private String getSDRconnectEndpointKey(String host, int port)
