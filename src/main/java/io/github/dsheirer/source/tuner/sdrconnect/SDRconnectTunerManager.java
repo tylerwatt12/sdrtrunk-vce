@@ -210,6 +210,7 @@ public class SDRconnectTunerManager
         }
         catch(IllegalStateException ignored)
         {
+            // JVM shutdown is already in progress, so the hook cannot be removed.
         }
 
         if(mSDRconnectReadyProbeHttpClient instanceof AutoCloseable autoCloseable)
