@@ -37,13 +37,6 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
     // Scale factor to convert 16-bit signed to float (-1.0 to 1.0)
     private static final float SCALE = 1.0f / 32768.0f;
 
-    /**
-     * Constructs an instance
-     */
-    public SDRconnectNativeBufferFactory()
-    {
-    }
-
     @Override
     public INativeBuffer getBuffer(ByteBuffer buffer, long timestamp)
     {
