@@ -288,6 +288,13 @@ public class SDRconnectTunerManager
                         readinessCheck.getValue().get((long)timeoutMs + SDRCONNECT_HEADLESS_START_TIMEOUT_MS,
                             TimeUnit.MILLISECONDS));
                 }
+                catch(InterruptedException ie)
+                {
+                    Thread.currentThread().interrupt();
+                    readinessByEndpoint.put(readinessCheck.getKey(), SDRconnectEndpointReadiness.notReady());
+                    mLog.warn("Interrupted while waiting for SDRconnect readiness check to complete for {}",
+                        readinessCheck.getKey(), ie);
+                }
                 catch(Exception e)
                 {
                     readinessByEndpoint.put(readinessCheck.getKey(), SDRconnectEndpointReadiness.notReady());
@@ -599,6 +606,11 @@ public class SDRconnectTunerManager
             return ready && probe.isReady() ? SDRconnectEndpointReadiness.ready(probe.getValidDevices()) :
                 SDRconnectEndpointReadiness.notReady();
         }
+        catch(InterruptedException ie)
+        {
+            Thread.currentThread().interrupt();
+            return SDRconnectEndpointReadiness.notReady();
+        }
         catch(Exception e)
         {
             return SDRconnectEndpointReadiness.notReady();
@@ -680,6 +692,12 @@ public class SDRconnectTunerManager
             try
             {
                 new ProcessBuilder("/bin/kill", "-INT", Long.toString(pid)).start().waitFor(2, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException ie)
+            {
+                Thread.currentThread().interrupt();
+                mLog.warn("Interrupted while trying to interrupt SDRconnect headless process [{}] on port {}", pid,
+                    port, ie);
             }
             catch(Exception e)
             {
