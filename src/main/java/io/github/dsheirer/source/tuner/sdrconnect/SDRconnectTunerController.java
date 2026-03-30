@@ -249,8 +249,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 // Discover and select the expected device before enabling streaming.
                 prepareDeviceDiscoveryLatch();
-                queryProperty("valid_devices");
-                queryProperty("active_device");
+            queryProperty(PROPERTY_VALID_DEVICES);
+            queryProperty(PROPERTY_ACTIVE_DEVICE);
                 awaitLatch(mDeviceDiscoveryLatch, 2, TimeUnit.SECONDS,
                     "SDRconnect device discovery");
 
@@ -258,10 +258,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 // Query current SDRconnect settings
                 prepareSettingsLatch();
-                queryProperty("valid_devices");
-                queryProperty("active_device");
-                queryProperty("device_sample_rate");
-                queryProperty("device_center_frequency");
+            queryProperty(PROPERTY_VALID_DEVICES);
+            queryProperty(PROPERTY_ACTIVE_DEVICE);
+            queryProperty(PROPERTY_DEVICE_SAMPLE_RATE);
+            queryProperty(PROPERTY_DEVICE_CENTER_FREQUENCY);
                 awaitLatch(mSettingsLatch, 2, TimeUnit.SECONDS,
                     "SDRconnect initial settings");
 
