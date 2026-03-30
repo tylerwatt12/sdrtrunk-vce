@@ -399,32 +399,39 @@ public class SDRconnectTunerManager
     {
         for(TunerConfiguration tunerConfiguration: tunerConfigurations)
         {
-            if(!(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig) ||
-                (sdrconnectConfig.getDeviceName() != null && !sdrconnectConfig.getDeviceName().isBlank()))
+            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig &&
+                (sdrconnectConfig.getDeviceName() == null || sdrconnectConfig.getDeviceName().isBlank()))
             {
-                continue;
-            }
+                List<SDRconnectDeviceSlot> slots = slotsByHost.get(sdrconnectConfig.getHost());
 
-            List<SDRconnectDeviceSlot> slots = slotsByHost.get(sdrconnectConfig.getHost());
-
-            if(slots == null)
-            {
-                continue;
-            }
-
-            Set<SDRconnectDeviceSlot> claimed =
-                claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>());
-
-            for(SDRconnectDeviceSlot slot : slots)
-            {
-                if(!claimed.contains(slot))
+                if(slots != null)
                 {
-                    assignments.put(sdrconnectConfig.getUniqueID(), slot.getPreferredSelection(null));
-                    claimed.add(slot);
-                    break;
+                    Set<SDRconnectDeviceSlot> claimed =
+                        claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>());
+                    SDRconnectDeviceSlot slot = findFirstUnclaimedSlot(slots, claimed);
+
+                    if(slot != null)
+                    {
+                        assignments.put(sdrconnectConfig.getUniqueID(), slot.getPreferredSelection(null));
+                        claimed.add(slot);
+                    }
                 }
             }
         }
+    }
+
+    private SDRconnectDeviceSlot findFirstUnclaimedSlot(List<SDRconnectDeviceSlot> slots,
+                                                        Set<SDRconnectDeviceSlot> claimed)
+    {
+        for(SDRconnectDeviceSlot slot : slots)
+        {
+            if(!claimed.contains(slot))
+            {
+                return slot;
+            }
+        }
+
+        return null;
     }
 
     private String getSDRconnectEndpointKey(String host, int port)
