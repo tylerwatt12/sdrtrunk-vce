@@ -126,7 +126,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mHost = host;
         mPort = port;
         mNativeBufferFactory = new SDRconnectNativeBufferFactory();
-        mNativeBufferFactory.setSamplesPerMillisecond((float)mSampleRate / 1000.0f);
+        mNativeBufferFactory.setSamplesPerMillisecond(mSampleRate / 1000.0f);
 
         setMinimumFrequency(MINIMUM_FREQUENCY);
         setMaximumFrequency(MAXIMUM_FREQUENCY);
@@ -659,7 +659,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public void setSampleRate(int sampleRate)
     {
         mSampleRate = sampleRate;
-        mNativeBufferFactory.setSamplesPerMillisecond((float)sampleRate / 1000.0f);
+        mNativeBufferFactory.setSamplesPerMillisecond(sampleRate / 1000.0f);
         try
         {
             mFrequencyController.setSampleRate(sampleRate);
