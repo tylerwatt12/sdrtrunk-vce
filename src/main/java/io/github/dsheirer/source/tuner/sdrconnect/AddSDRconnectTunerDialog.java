@@ -36,6 +36,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
+import javax.swing.WindowConstants;
 import javax.swing.SpinnerNumberModel;
 import java.awt.Dimension;
 import java.awt.Window;
@@ -74,7 +75,7 @@ public class AddSDRconnectTunerDialog extends JDialog
         mDiscoveredTunerModel = discoveredTunerModel;
         mTunerConfigurationManager = tunerConfigurationManager;
 
-        setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         setSize(new Dimension(450, 230));
 
         JPanel content = new JPanel();
