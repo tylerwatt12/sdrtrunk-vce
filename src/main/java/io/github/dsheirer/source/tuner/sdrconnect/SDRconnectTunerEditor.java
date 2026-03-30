@@ -23,7 +23,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerEditor;
-import io.github.dsheirer.util.ThreadPool;
 import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,8 +52,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JComboBox<String> mSampleRateCombo;
     private JComboBox<String> mAntennaCombo;
     private JButton mApplySettingsButton;
-    private JTextField mTuneFrequencyField;
-    private JButton mTuneButton;
     private FrequencyPanel mSDRconnectFrequencyPanel;
 
     /**
@@ -102,6 +99,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getSampleRateLabel().setText(String.format("%.3f MHz", controller.getCurrentSampleRate() / 1e6));
             getConnectionStatusLabel().setText(controller.isRunning() ? "Connected" : "Not Connected");
             updateSelectedSampleRate((int)controller.getCurrentSampleRate());
+            getSampleRateCombo().setEnabled(!controller.isLockedSampleRate());
+            getApplySettingsButton().setEnabled(true);
         }
         else
         {
@@ -109,6 +108,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getSampleRateLabel().setText("N/A");
             getConnectionStatusLabel().setText("Not Connected");
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
+            getSampleRateCombo().setEnabled(false);
+            getApplySettingsButton().setEnabled(false);
         }
 
         String status = getDiscoveredTuner().getTunerStatus().toString();
@@ -163,10 +164,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         add(getApplySettingsButton(), "span 2,wrap");
 
         add(new JSeparator(), "span,growx");
-
-        add(new JLabel("Tune To (MHz):"));
-        add(getTuneFrequencyField());
-        add(getTuneButton(), "wrap");
 
         add(new JLabel("Connection:"));
         add(getConnectionStatusLabel(), "span 2,wrap");
@@ -332,61 +329,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     }
 
     /**
-     * Tune frequency text field
-     */
-    private JTextField getTuneFrequencyField()
-    {
-        if(mTuneFrequencyField == null)
-        {
-            mTuneFrequencyField = new JTextField("", 10);
-            mTuneFrequencyField.setToolTipText("Enter center frequency in MHz (e.g., 771.6375)");
-        }
-        return mTuneFrequencyField;
-    }
-
-    /**
-     * Tune button to force SDRconnect to a specific frequency
-     */
-    private JButton getTuneButton()
-    {
-        if(mTuneButton == null)
-        {
-            mTuneButton = new JButton("Tune SDRconnect");
-            mTuneButton.setToolTipText("Force SDRconnect to tune to the specified frequency");
-            mTuneButton.addActionListener(e -> tuneSDRconnect());
-        }
-        return mTuneButton;
-    }
-
-    /**
-     * Force tune SDRconnect to the specified frequency
-     */
-    private void tuneSDRconnect()
-    {
-        if(hasTuner())
-        {
-            try
-            {
-                String freqText = getTuneFrequencyField().getText().trim();
-                double freqMHz = Double.parseDouble(freqText);
-                long freqHz = (long)(freqMHz * 1_000_000);
-
-                SDRconnectTunerController controller = getTuner().getController();
-                ThreadPool.CACHED.execute(() -> controller.forceSetFrequency(freqHz));
-                mLog.info("Requested SDRconnect tune to {} MHz ({} Hz)", freqMHz, freqHz);
-            }
-            catch(NumberFormatException ex)
-            {
-                mLog.error("Invalid frequency: {}", getTuneFrequencyField().getText());
-            }
-        }
-        else
-        {
-            mLog.warn("Cannot tune - SDRconnect not connected");
-        }
-    }
-
-    /**
      * Apply the selected settings to SDRconnect
      */
     private void applySDRconnectSettings()
@@ -396,12 +338,19 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             SDRconnectTunerController controller = getTuner().getController();
 
             // Apply sample rate
-            int selectedIndex = getSampleRateCombo().getSelectedIndex();
-            if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length)
+            if(controller.isLockedSampleRate())
             {
-                int sampleRate = SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[selectedIndex];
-                controller.requestSampleRate(sampleRate);
-                mLog.info("Requested sample rate: {} Hz", sampleRate);
+                mLog.warn("Cannot apply SDRconnect sample rate while tuner channels are active and the sample rate is locked");
+            }
+            else
+            {
+                int selectedIndex = getSampleRateCombo().getSelectedIndex();
+                if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length)
+                {
+                    int sampleRate = SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[selectedIndex];
+                    controller.requestSampleRate(sampleRate);
+                    mLog.info("Requested sample rate: {} Hz", sampleRate);
+                }
             }
 
             // Apply antenna selection

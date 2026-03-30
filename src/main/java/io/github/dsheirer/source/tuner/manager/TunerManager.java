@@ -508,6 +508,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig)
             {
                 boolean available = ensureSDRconnectAvailable(sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+                boolean disabled = mTunerConfigurationManager.isDisabled(new DiscoveredSDRconnectTuner(
+                    sdrconnectConfig.getHost(), sdrconnectConfig.getPort(), sdrconnectConfig.getDeviceName(),
+                    channelizerType));
                 DiscoveredSDRconnectTuner discoveredTuner =
                         new DiscoveredSDRconnectTuner(sdrconnectConfig.getHost(), sdrconnectConfig.getPort(),
                                 sdrconnectConfig.getDeviceName(), channelizerType);
@@ -515,21 +518,26 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 discoveredTuner.setTunerConfiguration(sdrconnectConfig);
                 discoveredTuner.addTunerStatusListener(this);
 
-                // Probe SDRconnect to see if it's available - if so, auto-start
-                if(available)
+                if(disabled)
+                {
+                    mLog.info("SDRconnect configured at {}:{} is disabled", sdrconnectConfig.getHost(),
+                        sdrconnectConfig.getPort());
+                    discoveredTuner.setEnabled(false);
+                }
+                else if(available)
                 {
                     mLog.info("SDRconnect detected at {}:{} - auto-starting tuner", sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
                 }
                 else
                 {
-                    mLog.info("SDRconnect not available at {}:{} - tuner disabled", sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
-                    discoveredTuner.setEnabled(false);
+                    mLog.warn("SDRconnect not available at {}:{} - tuner remains enabled and can be restarted from the UI",
+                        sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
                 }
 
                 mLog.info("SDRconnect Tuner Added: " + discoveredTuner);
                 mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
 
-                if(available)
+                if(!disabled && available)
                 {
                     ThreadPool.CACHED.execute(() -> {
                         discoveredTuner.start();
@@ -539,6 +547,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                             mDiscoveredTunerModel.tunerBecameAvailable(discoveredTuner);
                         }
                     });
+                }
+                else if(!disabled)
+                {
+                    discoveredTuner.setErrorMessage("SDRconnect is not available at " + sdrconnectConfig.getHost() +
+                        ":" + sdrconnectConfig.getPort());
                 }
             }
         }

@@ -36,6 +36,7 @@ import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import javax.swing.SwingUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -170,25 +171,43 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
      */
     public void addDiscoveredTuner(DiscoveredTuner discoveredTuner)
     {
-        mLock.lock();
+        Runnable add = () -> {
+            mLock.lock();
 
-        try
-        {
-            if(!mDiscoveredTuners.contains(discoveredTuner))
+            try
             {
-                mDiscoveredTuners.add(discoveredTuner);
-                int index = mDiscoveredTuners.indexOf(discoveredTuner);
-                EventQueue.invokeLater(() -> fireTableRowsInserted(index, index));
-                if(discoveredTuner.hasTuner())
+                if(!mDiscoveredTuners.contains(discoveredTuner))
                 {
-                    discoveredTuner.getTuner().addTunerEventListener(this);
+                    mDiscoveredTuners.add(discoveredTuner);
+                    int index = mDiscoveredTuners.indexOf(discoveredTuner);
+                    fireTableRowsInserted(index, index);
+                    if(discoveredTuner.hasTuner())
+                    {
+                        discoveredTuner.getTuner().addTunerEventListener(this);
+                    }
+                    discoveredTuner.addTunerStatusListener(this);
                 }
-                discoveredTuner.addTunerStatusListener(this);
             }
-        }
-        finally
+            finally
+            {
+                mLock.unlock();
+            }
+        };
+
+        if(EventQueue.isDispatchThread())
         {
-            mLock.unlock();
+            add.run();
+        }
+        else
+        {
+            try
+            {
+                SwingUtilities.invokeAndWait(add);
+            }
+            catch(Exception e)
+            {
+                throw new RuntimeException("Error adding discovered tuner on EDT", e);
+            }
         }
     }
 
@@ -255,50 +274,44 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     public void removeDiscoveredTuner(DiscoveredTuner discoveredTuner)
     {
         mLog.info("Removing discovered tuner: " + discoveredTuner.getId());
-        mLock.lock();
+        Runnable remove = () -> {
+            mLock.lock();
 
-        try
-        {
-            if(mDiscoveredTuners.contains(discoveredTuner))
+            try
             {
-                int index = mDiscoveredTuners.indexOf(discoveredTuner);
-                mDiscoveredTuners.remove(discoveredTuner);
-
-                if(EventQueue.isDispatchThread())
+                if(mDiscoveredTuners.contains(discoveredTuner))
                 {
+                    int index = mDiscoveredTuners.indexOf(discoveredTuner);
+                    mDiscoveredTuners.remove(discoveredTuner);
+
                     try
                     {
                         fireTableRowsDeleted(index, index);
                     }
                     catch(Exception e)
                     {
-                        mLog.info("Exception firing table rows deleted for index [" + index + "] on calling event dispatch thread", e);
+                        mLog.info("Exception firing table rows deleted for index [" + index + "]", e);
                     }
+                    discoveredTuner.stop();
                 }
-                else
-                {
-                    EventQueue.invokeLater(() ->
-                    {
-                        try
-                        {
-                            fireTableRowsDeleted(index, index);
-                        }
-                        catch(Exception e)
-                        {
-                            mLog.info("Exception firing table rows deleted for index [" + index + "]", e);
-                        }
-                    });
-                }
-                discoveredTuner.stop();
             }
-        }
-        catch(Exception e)
+            catch(Exception e)
+            {
+                mLog.error("Unexpected error while shutting down discovered tuner", e);
+            }
+            finally
+            {
+                mLock.unlock();
+            }
+        };
+
+        if(EventQueue.isDispatchThread())
         {
-            mLog.error("Unexpected error while shutting down discovered tuner", e);
+            remove.run();
         }
-        finally
+        else
         {
-            mLock.unlock();
+            EventQueue.invokeLater(remove);
         }
     }
 

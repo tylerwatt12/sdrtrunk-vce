@@ -92,6 +92,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private final AtomicBoolean mIqStreamEnabled = new AtomicBoolean(false);
     private final AtomicBoolean mShouldBeRunning = new AtomicBoolean(false); // User intent - should we try to stay connected?
     private final AtomicBoolean mReconnecting = new AtomicBoolean(false);
+    private final AtomicBoolean mReconnectScheduledFromError = new AtomicBoolean(false);
     private final AtomicInteger mReconnectAttempts = new AtomicInteger(0);
     private ScheduledExecutorService mReconnectExecutor;
     private volatile boolean mLastStartedState = false; // Track SDRconnect's started state to detect recovery
@@ -715,6 +716,13 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
      */
     public void requestSampleRate(int sampleRate)
     {
+        if(mFrequencyController.isSampleRateLocked())
+        {
+            mLog.warn("Ignoring SDRconnect sample rate change to {} Hz while the tuner sample rate is locked",
+                sampleRate);
+            return;
+        }
+
         mLog.info("Requesting SDRconnect sample rate: {} Hz", sampleRate);
         setProperty("device_sample_rate", String.valueOf(sampleRate));
     }
@@ -862,10 +870,15 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mWebSocket = null;
 
         // If this wasn't a normal closure and user wants us running, try to reconnect
-        if(statusCode != WebSocket.NORMAL_CLOSURE && mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get())
+        if(statusCode != WebSocket.NORMAL_CLOSURE && mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get() &&
+            !mReconnectScheduledFromError.getAndSet(false))
         {
             mLog.warn("SDRconnect connection lost unexpectedly - will attempt to reconnect");
             scheduleReconnect();
+        }
+        else
+        {
+            mReconnectScheduledFromError.set(false);
         }
 
         return null;
@@ -882,6 +895,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         // If user wants us running, try to reconnect
         if(mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get())
         {
+            mReconnectScheduledFromError.set(true);
             mLog.warn("SDRconnect error - will attempt to reconnect");
             scheduleReconnect();
         }
