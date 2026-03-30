@@ -285,7 +285,7 @@ public class SDRconnectTunerManager
                 try
                 {
                     readinessByEndpoint.put(readinessCheck.getKey(),
-                        readinessCheck.getValue().get(timeoutMs + SDRCONNECT_HEADLESS_START_TIMEOUT_MS,
+                        readinessCheck.getValue().get((long)timeoutMs + SDRCONNECT_HEADLESS_START_TIMEOUT_MS,
                             TimeUnit.MILLISECONDS));
                 }
                 catch(Exception e)
