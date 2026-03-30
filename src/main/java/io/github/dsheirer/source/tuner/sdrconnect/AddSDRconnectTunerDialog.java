@@ -99,7 +99,7 @@ public class AddSDRconnectTunerDialog extends JDialog
 
         content.add(new JLabel("Device:"));
         mDeviceNameTextField = new JTextField(SDRconnectTunerController.DEFAULT_DEVICE_NAME);
-        mDeviceNameTextField.setToolTipText("SDRconnect device display name (for example: nRSP-ST 1)");
+        mDeviceNameTextField.setToolTipText("SDRconnect device display name, or leave blank to use the first discovered device");
         content.add(mDeviceNameTextField, SPAN2_WRAP);
 
         content.add(new JLabel("Status:"));

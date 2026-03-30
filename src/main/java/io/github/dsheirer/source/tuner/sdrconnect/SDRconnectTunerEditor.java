@@ -241,7 +241,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         if(mDeviceNameField == null)
         {
             mDeviceNameField = new JTextField(SDRconnectTunerController.DEFAULT_DEVICE_NAME);
-            mDeviceNameField.setToolTipText("SDRconnect device display name (for example: nRSP-ST 1)");
+            mDeviceNameField.setToolTipText("SDRconnect device display name, or leave blank to use the first discovered device");
         }
         return mDeviceNameField;
     }

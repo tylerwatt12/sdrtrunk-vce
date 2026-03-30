@@ -67,7 +67,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     // Default connection settings
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 5454;
-    public static final String DEFAULT_DEVICE_NAME = "nRSP-ST 1";
+    public static final String DEFAULT_DEVICE_NAME = "";
     public static final String DEFAULT_NETWORK_MODE = "Full IQ";
     public static final long DEFAULT_FREQUENCY = 100000000L; // 100 MHz
     public static final int DEFAULT_SAMPLE_RATE = 5000000; // 5 MHz
@@ -201,6 +201,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(deviceName != null && !deviceName.isBlank())
         {
             mDeviceName = deviceName.trim();
+        }
+        else
+        {
+            mDeviceName = DEFAULT_DEVICE_NAME;
         }
     }
 
@@ -595,6 +599,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
 
         String[] devices = mValidDevices.split(",");
+        if(isAutomaticDeviceSelection())
+        {
+            return getFirstAvailableDeviceName(devices);
+        }
+
         String fallback = mDeviceName;
 
         for(String device : devices)
@@ -613,6 +622,44 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
             if(trimmed.toLowerCase().contains(mDeviceName.toLowerCase()) &&
                 trimmed.toLowerCase().contains(DEFAULT_NETWORK_MODE.toLowerCase()))
+            {
+                return trimmed;
+            }
+        }
+
+        return fallback;
+    }
+
+    /**
+     * Indicates if the device selection should use the first advertised SDRconnect device.
+     */
+    private boolean isAutomaticDeviceSelection()
+    {
+        return mDeviceName == null || mDeviceName.isBlank();
+    }
+
+    /**
+     * Selects the first advertised device, preferring the configured network mode variant when available.
+     */
+    private String getFirstAvailableDeviceName(String[] devices)
+    {
+        String fallback = DEFAULT_DEVICE_NAME;
+
+        for(String device : devices)
+        {
+            String trimmed = device.trim();
+
+            if(trimmed.isEmpty())
+            {
+                continue;
+            }
+
+            if(fallback.isBlank())
+            {
+                fallback = trimmed;
+            }
+
+            if(trimmed.endsWith("(" + DEFAULT_NETWORK_MODE + ")"))
             {
                 return trimmed;
             }
