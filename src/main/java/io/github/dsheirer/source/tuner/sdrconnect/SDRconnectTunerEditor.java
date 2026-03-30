@@ -42,6 +42,9 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 {
     private static final long serialVersionUID = 1L;
     private static final Logger mLog = LoggerFactory.getLogger(SDRconnectTunerEditor.class);
+    private static final String CONNECTION_STATUS_CONNECTED = "Connected";
+    private static final String CONNECTION_STATUS_NOT_CONNECTED = "Not Connected";
+    private static final String SPAN_2_WRAP = "span 2,wrap";
 
     private JTextField mHostField;
     private JSpinner mPortSpinner;
@@ -96,7 +99,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
             SDRconnectTunerController controller = getTuner().getController();
             getSampleRateLabel().setText(String.format("%.3f MHz", controller.getCurrentSampleRate() / 1e6));
-            getConnectionStatusLabel().setText(controller.isRunning() ? "Connected" : "Not Connected");
+            getConnectionStatusLabel().setText(controller.isRunning() ?
+                CONNECTION_STATUS_CONNECTED : CONNECTION_STATUS_NOT_CONNECTED);
             updateSelectedSampleRate((int)controller.getCurrentSampleRate());
             getSampleRateCombo().setEnabled(!controller.isLockedSampleRate());
             getApplySettingsButton().setEnabled(true);
@@ -105,7 +109,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         {
             getTunerIdLabel().setText("SDRconnect");
             getSampleRateLabel().setText("N/A");
-            getConnectionStatusLabel().setText("Not Connected");
+            getConnectionStatusLabel().setText(CONNECTION_STATUS_NOT_CONNECTED);
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
             getSampleRateCombo().setEnabled(false);
             getApplySettingsButton().setEnabled(false);
@@ -136,42 +140,42 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                 "[][][][][][][][][][][][][][][][grow]"));
 
         add(new JLabel("Tuner:"));
-        add(getTunerIdLabel(), "span 2,wrap");
+        add(getTunerIdLabel(), SPAN_2_WRAP);
 
         add(new JLabel("Status:"));
-        add(getTunerStatusLabel(), "span 2,wrap");
+        add(getTunerStatusLabel(), SPAN_2_WRAP);
 
         add(new JSeparator(), "span,growx");
 
         add(new JLabel("Host:"));
-        add(getHostField(), "span 2,wrap");
+        add(getHostField(), SPAN_2_WRAP);
 
         add(new JLabel("Port:"));
-        add(getPortSpinner(), "span 2,wrap");
+        add(getPortSpinner(), SPAN_2_WRAP);
 
         add(new JLabel("Device:"));
-        add(getDeviceNameField(), "span 2,wrap");
+        add(getDeviceNameField(), SPAN_2_WRAP);
 
         add(new JLabel("Sample Rate:"));
         add(getSampleRateLabel());
         add(getSampleRateCombo(), "wrap");
 
         add(new JLabel("Antenna:"));
-        add(getAntennaCombo(), "span 2,wrap");
+        add(getAntennaCombo(), SPAN_2_WRAP);
 
         add(new JLabel(""));
-        add(getApplySettingsButton(), "span 2,wrap");
+        add(getApplySettingsButton(), SPAN_2_WRAP);
 
         add(new JSeparator(), "span,growx");
 
         add(new JLabel("Connection:"));
-        add(getConnectionStatusLabel(), "span 2,wrap");
+        add(getConnectionStatusLabel(), SPAN_2_WRAP);
 
         add(getButtonPanel(), "span,align left");
         add(new JSeparator(), "span,growx,push");
 
         add(new JLabel("Frequency (MHz):"));
-        add(getFrequencyPanel(), "span 2,wrap");
+        add(getFrequencyPanel(), SPAN_2_WRAP);
     }
 
     @Override
@@ -261,7 +265,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         if(mConnectionStatusLabel == null)
         {
-            mConnectionStatusLabel = new JLabel("Not Connected");
+            mConnectionStatusLabel = new JLabel(CONNECTION_STATUS_NOT_CONNECTED);
         }
         return mConnectionStatusLabel;
     }
