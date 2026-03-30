@@ -32,6 +32,21 @@ Notable differences from upstream in this fork:
 - Local `SDRconnect_headless` lifecycle management has been added as a convenience feature for local use. If enabled, sdrtrunk can start and stop local headless instances for configured ports. If disabled, sdrtrunk can still connect to SDRconnect instances that were started manually.
 - macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
 
+## Motivation
+I live in California, and as of this writing we're on the cusp of Fire Season, where seemingly half the state burns down.
+As a result of this, I become very interested in public service traffic, most notably, the fire services, as wildfire here
+doesn't give a lot of warning; as an example, the [Tubbs Fire](https://en.wikipedia.org/wiki/Tubbs_Fire), which is pretty
+much the stuff of nightmare.
+
+We have a mix of VHF voice (CalFire) in the 150MHz band, as the wildland fire folks like simple things that work under
+extreme abuse; VHF voice is not a big deal to handle. Practically everyone else is on a UHF P25 Phase 2 system, with the
+control channel on Phase 1 FDMA, and the working channels on Phase 2 TDMA. You've got to bring some decent equipment
+to decode the Phase 2 stuff, as PPM drift from the oscillators is going to result in CRC errors and bad decodes. I
+struggled with getting my usual junk drawer of RTL-SDR v4 dongles to work reliably with it, and ultimately decided
+to go with better radios, settling on SDRPlay nRSP-ST models.
+
+As with any of the RSP models, these network RSPs are communicated with via `SDRconnect`.
+
 ## Experimental Notes
 The SDRconnect work in this fork was inspired by, and partially based on, W2NJL's SDRconnect-related work here:
 
