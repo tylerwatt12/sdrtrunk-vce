@@ -272,11 +272,11 @@ public class SDRconnectTunerManager
 
             Map<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessChecks = new HashMap<>();
 
-            for(String endpointKey : endpointPorts.keySet())
+            for(Map.Entry<String, Integer> endpoint : endpointPorts.entrySet())
             {
-                String host = endpointHosts.get(endpointKey);
-                int port = endpointPorts.get(endpointKey);
-                readinessChecks.put(endpointKey, CompletableFuture.supplyAsync(
+                String host = endpointHosts.get(endpoint.getKey());
+                int port = endpoint.getValue();
+                readinessChecks.put(endpoint.getKey(), CompletableFuture.supplyAsync(
                     () -> waitForReadySDRconnect(host, port, timeoutMs), ThreadPool.CACHED));
             }
 
