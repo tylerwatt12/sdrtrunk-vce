@@ -123,12 +123,8 @@ public class P25P1MessageFramer
      */
     public void syncDetected()
     {
-        //Only allow sync detection processing if we're not currently assembling a message
-        if(mMessageAssembler == null)
-        {
-            mSyncDetected = true;
-            mNIDPointer = 0;
-        }
+        mSyncDetected = true;
+        mNIDPointer = 0;
     }
 
     /**
