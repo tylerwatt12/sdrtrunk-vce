@@ -288,6 +288,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 mRunning.set(false);
                 throw new SourceException("Timed out connecting to SDRconnect at " + mHost + ":" + mPort, te);
             }
+            catch(InterruptedException ie)
+            {
+                Thread.currentThread().interrupt();
+                mRunning.set(false);
+                throw new SourceException("Interrupted while connecting to SDRconnect at " + mHost + ":" + mPort, ie);
+            }
             catch(Exception e)
             {
                 mRunning.set(false);
@@ -933,6 +939,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                             }
                             catch(InterruptedException e)
                             {
+                                Thread.currentThread().interrupt();
                                 mLog.warn("Recovery interrupted");
                             }
                         });
