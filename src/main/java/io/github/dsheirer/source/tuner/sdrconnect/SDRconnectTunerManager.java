@@ -756,6 +756,7 @@ public class SDRconnectTunerManager
                 }
                 catch(Exception ignored)
                 {
+                    // Ignore malformed probe responses and continue waiting for a usable readiness payload.
                 }
 
                 mPartialText.setLength(0);
