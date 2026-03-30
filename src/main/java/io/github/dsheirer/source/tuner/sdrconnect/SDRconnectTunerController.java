@@ -105,7 +105,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private int mSampleRate = DEFAULT_SAMPLE_RATE;
     private long mCenterFrequency = DEFAULT_FREQUENCY;
     private String mValidDevices = "";
-    private String mActiveDevice = "";
     private String mDeviceName = DEFAULT_DEVICE_NAME;
     private final Gson mGson = new Gson();
 
@@ -952,7 +951,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     break;
 
                 case PROPERTY_ACTIVE_DEVICE:
-                    mActiveDevice = value;
                     markActiveDeviceReceived(value);
                     break;
 
