@@ -28,7 +28,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JSeparator;
 import javax.swing.JTextField;
@@ -188,8 +187,12 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                     super.updateControls();
                     getFrequencyCorrectionSpinner().setValue(0.0);
                     getFrequencyCorrectionSpinner().setEnabled(false);
+                    getFrequencyCorrectionSpinner().setToolTipText(
+                        "PPM correction is not available for SDRconnect - configure frequency correction in SDRconnect instead");
                     getAutoPPMCheckBox().setSelected(false);
                     getAutoPPMCheckBox().setEnabled(false);
+                    getAutoPPMCheckBox().setToolTipText(
+                        "PPM correction is not available for SDRconnect - configure frequency correction in SDRconnect instead");
                 }
             };
             mSDRconnectFrequencyPanel.setToolTipText("Tuner frequency controls for SDRconnect");
@@ -387,31 +390,4 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         }
     }
 
-    /**
-     * Override to disable auto-PPM for SDRconnect tuners.
-     * PPM correction should be configured in SDRconnect, not SDRTrunk.
-     */
-    @Override
-    protected JCheckBox getAutoPPMCheckBox()
-    {
-        JCheckBox checkBox = super.getAutoPPMCheckBox();
-        checkBox.setSelected(false);
-        checkBox.setEnabled(false);
-        checkBox.setToolTipText("PPM correction is not available for SDRconnect - configure frequency correction in SDRconnect instead");
-        return checkBox;
-    }
-
-    /**
-     * Override to disable the PPM spinner for SDRconnect tuners.
-     * PPM correction should be configured in SDRconnect, not SDRTrunk.
-     */
-    @Override
-    protected JSpinner getFrequencyCorrectionSpinner()
-    {
-        JSpinner spinner = super.getFrequencyCorrectionSpinner();
-        spinner.setValue(0.0);
-        spinner.setEnabled(false);
-        spinner.setToolTipText("PPM correction is not available for SDRconnect - configure frequency correction in SDRconnect instead");
-        return spinner;
-    }
 }

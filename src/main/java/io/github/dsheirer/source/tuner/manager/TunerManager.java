@@ -91,6 +91,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private static final String SDRCONNECT_HEADLESS_PATH_PROPERTY = "sdrconnect.headless.path";
     private static final String SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY = "sdrconnect.headless.autostart";
     private static final String SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY = "sdrconnect.headless.start.delay.ms";
+    // macOS default; other platforms should configure the executable path explicitly via system properties/preferences.
     private static final String DEFAULT_SDRCONNECT_HEADLESS_PATH = "/Applications/SDRconnect.app/Contents/MacOS/SDRconnect_headless";
     private static final int SDRCONNECT_HEADLESS_START_TIMEOUT_MS = 10000;
     private static final int SDRCONNECT_HEADLESS_START_RETRY_INTERVAL_MS = 250;
@@ -102,6 +103,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private final Context mLibUsbApplicationContext = new Context();
     private final Map<Integer, Process> mManagedSDRconnectProcesses = new HashMap<>();
     private final Thread mManagedSDRconnectShutdownHook;
+    private final HttpClient mSDRconnectReadyProbeHttpClient =
+        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     private boolean mLibUsbInitialized = false;
     private SDRplay mSDRplay;
 
@@ -240,6 +243,17 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         catch(IllegalStateException ignored)
         {
             //JVM is already shutting down.
+        }
+
+        if(mSDRconnectReadyProbeHttpClient instanceof AutoCloseable autoCloseable)
+        {
+            try
+            {
+                autoCloseable.close();
+            }
+            catch(Exception ignored)
+            {
+            }
         }
     }
 
@@ -638,7 +652,14 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
             for(CompletableFuture<Boolean> readinessCheck : readinessChecks)
             {
-                readinessCheck.join();
+                try
+                {
+                    readinessCheck.get(timeoutMs + SDRCONNECT_HEADLESS_START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                }
+                catch(Exception e)
+                {
+                    mLog.warn("Error waiting for SDRconnect headless readiness checks to complete", e);
+                }
             }
         }
     }
@@ -766,8 +787,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
         try
         {
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
-            CompletableFuture<WebSocket> future = client.newWebSocketBuilder()
+            CompletableFuture<WebSocket> future = mSDRconnectReadyProbeHttpClient.newWebSocketBuilder()
                 .buildAsync(URI.create("ws://" + host + ":" + port), probe);
             webSocket = future.get(2, TimeUnit.SECONDS);
             boolean ready = probe.awaitReady(2, TimeUnit.SECONDS);

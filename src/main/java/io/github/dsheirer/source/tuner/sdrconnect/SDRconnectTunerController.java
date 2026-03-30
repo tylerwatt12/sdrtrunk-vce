@@ -36,7 +36,6 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.ShortBuffer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -668,45 +667,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         catch(SourceException se)
         {
             mLog.error("Error setting sample rate on frequency controller", se);
-        }
-    }
-
-    /**
-     * Force set the frequency on SDRconnect, bypassing tolerance checks.
-     * Use this when the user explicitly wants to change the center frequency.
-     * SDRconnect may require stopping the stream before changing frequency.
-     * @param frequency in Hz
-     */
-    public void forceSetFrequency(long frequency)
-    {
-        if(frequency < MINIMUM_FREQUENCY || frequency > MAXIMUM_FREQUENCY)
-        {
-            mLog.error("Frequency {} Hz outside valid range", frequency);
-            return;
-        }
-
-        mLog.info("Tuning SDRconnect to {} MHz", String.format("%.3f", frequency / 1e6));
-
-        try
-        {
-            // Stop IQ stream before changing frequency (required by SDRconnect)
-            enableIqStream(false);
-            Thread.sleep(100);
-
-            // Change frequency
-            setProperty("device_center_frequency", String.valueOf(frequency));
-            Thread.sleep(200);
-
-            // Query to verify
-            queryProperty("device_center_frequency");
-            Thread.sleep(200);
-
-            // Restart IQ stream
-            enableIqStream(true);
-        }
-        catch(InterruptedException e)
-        {
-            mLog.warn("Interrupted during frequency change");
         }
     }
 

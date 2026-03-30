@@ -131,6 +131,7 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
                 SDRconnectTunerController controller = new SDRconnectTunerController(mHost, mPort, this);
                 if(hasTunerConfiguration())
                 {
+                    // Seed the preferred device before connecting so the SDRconnect handshake can select it.
                     controller.setDeviceName(getSDRconnectTunerConfiguration().getDeviceName());
                 }
                 mTuner = new SDRconnectTuner(controller, this, mChannelizerType);
