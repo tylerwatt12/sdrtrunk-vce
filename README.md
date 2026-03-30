@@ -25,13 +25,6 @@ A cross-platform java application for decoding, monitoring, recording and stream
 ## Fork Status
 This repository is a personal experimental fork by W6BAZ and is not intended for general public consumption or support. It is being used to prototype SDRconnect integration, macOS packaging behavior, and related workflow changes outside the upstream project.
 
-Notable differences from upstream in this fork:
-- SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
-- Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target.
-- SDRconnect device selection can use a friendly device name such as `nRSP-ST 1`, a serial number token such as `2405166650`, or a blank value to select the first discovered device.
-- Optional local `SDRconnect_headless` lifecycle management has been added as a convenience feature. If enabled, sdrtrunk can start and stop local headless instances for configured ports. If disabled, sdrtrunk can still connect to SDRconnect instances that were started manually.
-- macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
-
 ## Motivation
 I live in California, and as of this writing we're on the cusp of Fire Season, where seemingly half the state burns down.
 As a result of this, I become very interested in public service traffic, most notably, the fire services, as wildfire here
@@ -53,10 +46,15 @@ The SDRconnect work in this fork was inspired by, and partially based on, W2NJL'
 - [W2NJL/sdrtrunk](https://github.com/W2NJL/sdrtrunk)
 
 Current assumptions and behavior for this fork:
+- SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
+- Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target.
 - SDRconnect tuners are configured per `host:port`, with the optional device field used as selection metadata rather than as part of tuner identity.
 - Configured SDRconnect endpoints are checked for WebSocket readiness before tuner startup proceeds, regardless of whether the corresponding SDRconnect instance was launched by sdrtrunk, started manually, or is running on another host.
-- If the device field is left blank, sdrtrunk selects the first advertised SDRconnect device and prefers the `Full IQ` variant when multiple advertised modes are available.
+- SDRconnect device selection can use a friendly device name such as `nRSP-ST 1`, a serial number token such as `2405166650`, or a blank value.
+- If the device field is left blank, sdrtrunk treats that as automatic selection. For a single tuner, it selects the first advertised SDRconnect device and prefers the `Full IQ` variant when multiple advertised modes are available. If multiple SDRconnect tuners are configured against the same ready endpoint with blank device fields, this fork assigns distinct advertised devices to those tuner slots before startup rather than letting them all contend for the first device in the list.
 - Local loopback endpoints can optionally be managed through `SDRconnect_headless`, but that convenience manager is not required. Users who already run SDRconnect or `SDRconnect_headless` themselves can leave auto-start disabled and sdrtrunk will simply attach to the configured endpoints if they are available and ready.
+- SDRconnect now has its own tuner manager layer in this fork. That is not meant as a general pattern for every tuner type; it exists because SDRconnect has requirements the other tuner integrations do not, including WebSocket readiness checks, optional external process management, deferred startup, and pre-start device assignment when multiple advertised devices may be present behind one endpoint.
+- macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
 - All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful,
 but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's
 something you'd like to do, have at it; proper attribution to W2NJL's work and my meager efforts here would be apropos in that case.
