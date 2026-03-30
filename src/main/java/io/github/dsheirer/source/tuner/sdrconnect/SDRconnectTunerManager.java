@@ -914,12 +914,10 @@ public class SDRconnectTunerManager
                     namedFallback = entry;
                 }
 
-                if(entry.toLowerCase().contains(SDRconnectTunerController.DEFAULT_NETWORK_MODE.toLowerCase()))
+                if(entry.toLowerCase().contains(SDRconnectTunerController.DEFAULT_NETWORK_MODE.toLowerCase()) &&
+                    !entry.matches(".*\\(\\d+\\)\\s+\\([^)]*\\)$"))
                 {
-                    if(!entry.matches(".*\\(\\d+\\)\\s+\\([^)]*\\)$"))
-                    {
-                        return entry;
-                    }
+                    return entry;
                 }
             }
 
