@@ -47,7 +47,7 @@ The SDRconnect work in this fork was inspired by, and partially based on, W2NJL'
 
 Current assumptions and behavior for this fork:
 - SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
-- Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target.
+- Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target; I don't have any to test with, which presents a bit of a hurdle.
 - SDRconnect tuners are configured per `host:port`, with the optional device field used as selection metadata rather than as part of tuner identity.
 - Configured SDRconnect endpoints are checked for WebSocket readiness before tuner startup proceeds, regardless of whether the corresponding SDRconnect instance was launched by sdrtrunk, started manually, or is running on another host.
 - SDRconnect device selection can use a friendly device name such as `nRSP-ST 1`, a serial number token such as `2405166650`, or a blank value.
