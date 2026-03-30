@@ -24,16 +24,17 @@ The SDRconnect work in this fork was inspired by, and partially based on, W2NJL'
 
 - [W2NJL/sdrtrunk](https://github.com/W2NJL/sdrtrunk)
 
-Current assumptions and behavior for this fork:
+Current assumptions and behavior:
 - SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
-- Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target; I don't have any to test with, which presents a bit of a hurdle.
+- Current testing is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target; I don't have any to test with, which presents a bit of a hurdle.
 - SDRconnect tuners are configured per `host:port`, with the optional device field used as selection metadata rather than as part of tuner identity.
 - Configured SDRconnect endpoints are checked for WebSocket readiness before tuner startup proceeds, regardless of whether the corresponding SDRconnect instance was launched by sdrtrunk, started manually, or is running on another host.
 - SDRconnect device selection can use a friendly device name such as `nRSP-ST 1`, a serial number token such as `2405166650`, or a blank value.
 - If the device field is left blank, sdrtrunk treats that as automatic selection. For a single tuner, it selects the first advertised SDRconnect device and prefers the `Full IQ` variant when multiple advertised modes are available. If multiple SDRconnect tuners are configured against the same ready endpoint with blank device fields, different advertised devices are assigned to those tuner slots before startup so they do not all attach to the first device in the list.
 - Local loopback endpoints can optionally be managed through `SDRconnect_headless`. When auto-start is enabled, sdrtrunk can launch and later stop local headless instances for configured loopback ports that are not already up. When an endpoint is already reachable, sdrtrunk does not try to manage the process and instead checks that endpoint for readiness before tuner startup. If auto-start is disabled and a configured loopback endpoint is not already reachable, sdrtrunk leaves it unavailable rather than launching it. sdrtrunk only stops processes it launched itself — instances that were already running when sdrtrunk started, or that were started manually, are left running when sdrtrunk exits.
-- SDRconnect now has its own tuner manager layer in this fork. That is not meant as a general pattern for every tuner type; it exists because SDRconnect has requirements the other tuner integrations do not, including WebSocket readiness checks, optional external process management, deferred startup, and pre-start device assignment when multiple advertised devices may be present behind one endpoint.
-- macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
+- SDRconnect now has its own tuner manager layer, used by the main tuner manager. That is not meant as a general pattern for
+every tuner type; it exists because SDRconnect has requirements the other tuner integrations do not, including WebSocket readiness checks, optional external process management, deferred startup, and pre-start device assignment when multiple advertised devices may be present behind one endpoint.
+- macOS application packaging has only had a minimal work-in-progress pass. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
 - All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful,
 but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's
 something you'd like to do, have at it; proper attribution to W2NJL's work and my meager efforts here would be apropos in that case.
