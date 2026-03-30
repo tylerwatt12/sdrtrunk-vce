@@ -155,6 +155,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
         add(new JLabel("Device:"));
         add(getDeviceNameField(), SPAN_2_WRAP);
+        add(new JLabel(""));
+        add(new JLabel("Leave blank to use the first discovered device"), SPAN_2_WRAP);
 
         add(new JLabel("Sample Rate:"));
         add(getSampleRateLabel());

@@ -101,6 +101,8 @@ public class AddSDRconnectTunerDialog extends JDialog
         mDeviceNameTextField = new JTextField(SDRconnectTunerController.DEFAULT_DEVICE_NAME);
         mDeviceNameTextField.setToolTipText("SDRconnect device display name, or leave blank to use the first discovered device");
         content.add(mDeviceNameTextField, SPAN2_WRAP);
+        content.add(new JLabel(""));
+        content.add(new JLabel("Leave blank to use the first discovered device"), SPAN2_WRAP);
 
         content.add(new JLabel("Status:"));
         mStatusLabel = new JLabel("Not tested");
@@ -168,15 +170,6 @@ public class AddSDRconnectTunerDialog extends JDialog
             JOptionPane.showMessageDialog(this,
                     "Please provide a host address",
                     "Host Required",
-                    JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        if(deviceName.isEmpty())
-        {
-            JOptionPane.showMessageDialog(this,
-                    "Please provide a device name",
-                    "Device Name Required",
                     JOptionPane.ERROR_MESSAGE);
             return;
         }
