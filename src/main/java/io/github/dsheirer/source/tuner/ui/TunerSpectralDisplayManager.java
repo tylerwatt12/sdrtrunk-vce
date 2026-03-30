@@ -30,6 +30,7 @@ import io.github.dsheirer.spectrum.SpectrumFrame;
 import io.github.dsheirer.util.SwingUtils;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.List;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,8 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
     private PlaylistManager mPlaylistManager;
     private SettingsManager mSettingsManager;
     private DiscoveredTunerModel mDiscoveredTunerModel;
+    private volatile ScheduledFuture<?> mInitialSelectionFuture;
+    private volatile boolean mInitialSelectionComplete;
 
     /**
      * Constructs an instance
@@ -70,19 +73,74 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
         //Ensure spectral display is enabled before selecting first tuner
         if(SystemProperties.getInstance().get(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true))
         {
-            List<DiscoveredTuner> availableTuners = mDiscoveredTunerModel.getAvailableTuners();
+            Tuner tuner = getFirstAvailableTuner();
 
-            for(DiscoveredTuner discoveredTuner: availableTuners)
+            if(tuner != null)
             {
-                if(discoveredTuner.hasTuner())
-                {
-                    mSpectralDisplayPanel.showTuner(discoveredTuner.getTuner());
-                    return discoveredTuner.getTuner();
-                }
+                mInitialSelectionComplete = true;
+                mSpectralDisplayPanel.showTuner(tuner);
+                return tuner;
             }
         }
 
         return null;
+    }
+
+    private Tuner getFirstAvailableTuner()
+    {
+        List<DiscoveredTuner> availableTuners = mDiscoveredTunerModel.getAvailableTuners();
+
+        for(DiscoveredTuner discoveredTuner: availableTuners)
+        {
+            if(discoveredTuner.hasTuner())
+            {
+                return discoveredTuner.getTuner();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Retries initial tuner selection for a limited time so that delayed tuner startup does not leave the main
+     * spectral display empty at application launch.
+     */
+    public void retryShowFirstTuner(long interval, TimeUnit unit, int maxAttempts)
+    {
+        if(mInitialSelectionComplete || (mInitialSelectionFuture != null && !mInitialSelectionFuture.isDone()))
+        {
+            return;
+        }
+
+        final int[] attempts = new int[] {0};
+        mInitialSelectionFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(() -> {
+            if(mInitialSelectionComplete || attempts[0] >= maxAttempts)
+            {
+                ScheduledFuture<?> future = mInitialSelectionFuture;
+
+                if(future != null)
+                {
+                    future.cancel(false);
+                }
+
+                return;
+            }
+
+            attempts[0]++;
+            Tuner tuner = getFirstAvailableTuner();
+
+            if(tuner != null)
+            {
+                mDiscoveredTunerModel.broadcast(new TunerEvent(tuner, TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY));
+
+                ScheduledFuture<?> future = mInitialSelectionFuture;
+
+                if(future != null)
+                {
+                    future.cancel(false);
+                }
+            }
+        }, interval, interval, unit);
     }
 
     @Override
@@ -91,9 +149,11 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
         switch(event.getEvent())
         {
             case REQUEST_CLEAR_MAIN_SPECTRAL_DISPLAY:
+                mInitialSelectionComplete = false;
                 SwingUtils.run(() -> mSpectralDisplayPanel.clearTuner());
                 break;
             case REQUEST_MAIN_SPECTRAL_DISPLAY:
+                mInitialSelectionComplete = true;
                 if(SystemProperties.getInstance().get(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true))
                 {
                     SwingUtils.run(() -> mSpectralDisplayPanel.showTuner(event.getTuner()));
@@ -109,6 +169,7 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
                 {
                     SwingUtils.run(() ->
                     {
+                        mInitialSelectionComplete = false;
                         mSpectralDisplayPanel.clearTuner();
                         ThreadPool.SCHEDULED.schedule(() -> SwingUtils.run(() ->
                         {

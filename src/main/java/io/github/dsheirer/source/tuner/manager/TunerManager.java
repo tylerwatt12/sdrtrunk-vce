@@ -200,8 +200,13 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
 
         discoverRecordingTuners();
-        discoverSDRconnectTuners();
-        autoDiscoverSDRconnect(); // Auto-detect SDRconnect if no saved config
+
+        // SDRconnect startup can involve launching and waiting for headless instances, so defer it off the
+        // application startup path and let tuners appear shortly after launch.
+        ThreadPool.CACHED.execute(() -> {
+            discoverSDRconnectTuners();
+            autoDiscoverSDRconnect(); // Auto-detect SDRconnect if no saved config
+        });
     }
 
     /**
@@ -527,7 +532,14 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                 if(available)
                 {
-                    ThreadPool.CACHED.execute(discoveredTuner::start);
+                    ThreadPool.CACHED.execute(() -> {
+                        discoveredTuner.start();
+
+                        if(discoveredTuner.hasTuner())
+                        {
+                            mDiscoveredTunerModel.tunerBecameAvailable(discoveredTuner);
+                        }
+                    });
                 }
             }
         }

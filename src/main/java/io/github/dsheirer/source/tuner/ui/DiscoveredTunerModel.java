@@ -193,6 +193,37 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     }
 
     /**
+     * Notifies the model that a discovered tuner that was previously added without a constructed tuner instance now
+     * has an active tuner. This supports asynchronous tuner startup flows.
+     */
+    public void tunerBecameAvailable(DiscoveredTuner discoveredTuner)
+    {
+        if(discoveredTuner == null || !discoveredTuner.hasTuner())
+        {
+            return;
+        }
+
+        discoveredTuner.getTuner().addTunerEventListener(this);
+        int row;
+
+        mLock.lock();
+
+        try
+        {
+            row = mDiscoveredTuners.indexOf(discoveredTuner);
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        if(row >= 0)
+        {
+            EventQueue.invokeLater(() -> fireTableRowsUpdated(row, row));
+        }
+    }
+
+    /**
      * Stops and removes all discovered tuners, in preparation for shutdown.
      */
     public void releaseDiscoveredTuners()
@@ -365,9 +396,7 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     {
         if(current == TunerStatus.ENABLED && discoveredTuner.hasTuner())
         {
-            discoveredTuner.getTuner().addTunerEventListener(this);
-            int row = mDiscoveredTuners.indexOf(discoveredTuner);
-            EventQueue.invokeLater(() -> fireTableRowsUpdated(row, row));
+            tunerBecameAvailable(discoveredTuner);
             return;
         }
         else if(current == TunerStatus.DISABLED)

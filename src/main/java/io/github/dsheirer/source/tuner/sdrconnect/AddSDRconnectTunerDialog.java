@@ -194,7 +194,14 @@ public class AddSDRconnectTunerDialog extends JDialog
             mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
 
             // Start the tuner off the EDT so WebSocket setup doesn't block the dialog/UI.
-            ThreadPool.CACHED.execute(discoveredTuner::start);
+            ThreadPool.CACHED.execute(() -> {
+                discoveredTuner.start();
+
+                if(discoveredTuner.hasTuner())
+                {
+                    mDiscoveredTunerModel.tunerBecameAvailable(discoveredTuner);
+                }
+            });
 
             dispose();
         }

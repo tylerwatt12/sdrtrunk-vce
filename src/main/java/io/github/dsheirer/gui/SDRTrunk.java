@@ -276,6 +276,12 @@ public class SDRTrunk implements Listener<TunerEvent>
                     {
                         updateTitle(tuner.getPreferredName());
                     }
+                    else
+                    {
+                        // Allow a delayed tuner startup path, such as SDRconnect headless readiness, up to about
+                        // 20 seconds to populate the first main spectral display.
+                        tunerSpectralDisplayManager.retryShowFirstTuner(1, java.util.concurrent.TimeUnit.SECONDS, 20);
+                    }
                 }
 
                 if(calibrating && !GraphicsEnvironment.isHeadless())
