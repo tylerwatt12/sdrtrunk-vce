@@ -57,6 +57,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private static final int HEADER_AUDIO = 0x0001;
     private static final int HEADER_IQ = 0x0002;
     private static final int HEADER_SPECTRUM = 0x0003;
+    private static final String JSON_EVENT_TYPE = "event_type";
+    private static final String JSON_PROPERTY = "property";
+    private static final String JSON_VALUE = "value";
+    private static final String PROPERTY_VALID_DEVICES = "valid_devices";
+    private static final String PROPERTY_ACTIVE_DEVICE = "active_device";
+    private static final String PROPERTY_DEVICE_SAMPLE_RATE = "device_sample_rate";
+    private static final String PROPERTY_DEVICE_CENTER_FREQUENCY = "device_center_frequency";
+
     // Default connection settings
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 5454;
@@ -523,9 +531,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             // Some SDRconnect actions are command-style events rather than set_property updates.
             JsonObject msg = new JsonObject();
-            msg.addProperty("event_type", eventType);
-            msg.addProperty("property", ""); // API requires property field
-            msg.addProperty("value", value != null ? value : "");
+            msg.addProperty(JSON_EVENT_TYPE, eventType);
+            msg.addProperty(JSON_PROPERTY, ""); // API requires property field
+            msg.addProperty(JSON_VALUE, value != null ? value : "");
             String json = mGson.toJson(msg);
             mWebSocket.sendText(json, true);
         }
@@ -539,8 +547,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(mWebSocket != null)
         {
             JsonObject msg = new JsonObject();
-            msg.addProperty("event_type", "get_property");
-            msg.addProperty("property", property);
+            msg.addProperty(JSON_EVENT_TYPE, "get_property");
+            msg.addProperty(JSON_PROPERTY, property);
             String json = mGson.toJson(msg);
             mWebSocket.sendText(json, true);
         }
@@ -554,9 +562,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(mWebSocket != null)
         {
             JsonObject msg = new JsonObject();
-            msg.addProperty("event_type", "set_property");
-            msg.addProperty("property", property);
-            msg.addProperty("value", value);
+            msg.addProperty(JSON_EVENT_TYPE, "set_property");
+            msg.addProperty(JSON_PROPERTY, property);
+            msg.addProperty(JSON_VALUE, value);
             String json = mGson.toJson(msg);
             mLog.debug("SDRconnect set {} = {}", property, value);
             mWebSocket.sendText(json, true);
@@ -644,7 +652,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         // SDRconnect controls the actual frequency - we just request, it decides
         if(Math.abs(frequency - mCenterFrequency) > 100000)
         {
-            setProperty("device_center_frequency", String.valueOf(frequency));
+            setProperty(PROPERTY_DEVICE_CENTER_FREQUENCY, String.valueOf(frequency));
             mLog.info("Requested SDRconnect frequency: {} Hz (current: {} Hz)", frequency, mCenterFrequency);
         }
         else
@@ -690,7 +698,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
 
         mLog.info("Requesting SDRconnect sample rate: {} Hz", sampleRate);
-        setProperty("device_sample_rate", String.valueOf(sampleRate));
+        setProperty(PROPERTY_DEVICE_SAMPLE_RATE, String.valueOf(sampleRate));
     }
 
     /**
@@ -752,9 +760,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 JsonObject msg = JsonParser.parseString(json).getAsJsonObject();
 
-                String eventType = msg.has("event_type") ? msg.get("event_type").getAsString() : "";
-                String property = msg.has("property") ? msg.get("property").getAsString() : "";
-                String value = msg.has("value") ? msg.get("value").getAsString() : "";
+                String eventType = msg.has(JSON_EVENT_TYPE) ? msg.get(JSON_EVENT_TYPE).getAsString() : "";
+                String property = msg.has(JSON_PROPERTY) ? msg.get(JSON_PROPERTY).getAsString() : "";
+                String value = msg.has(JSON_VALUE) ? msg.get(JSON_VALUE).getAsString() : "";
                 if("property_changed".equals(eventType) || "get_property_response".equals(eventType))
                 {
                     handlePropertyUpdate(property, value);
@@ -880,7 +888,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             switch(property)
             {
-                case "device_center_frequency":
+                case PROPERTY_DEVICE_CENTER_FREQUENCY:
                     long newFrequency = Long.parseLong(value);
                     markFrequencyReceived();
                     if(newFrequency != mCenterFrequency)
@@ -898,7 +906,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     }
                     break;
 
-                case "device_sample_rate":
+                case PROPERTY_DEVICE_SAMPLE_RATE:
                     int newSampleRate = Integer.parseInt(value);
                     markSampleRateReceived();
                     if(newSampleRate != mSampleRate)
@@ -923,8 +931,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                                 // Re-query sample rate and frequency to update channelizer
                                 mLog.info("Querying SDRconnect settings after recovery...");
-                                queryProperty("device_sample_rate");
-                                queryProperty("device_center_frequency");
+                                queryProperty(PROPERTY_DEVICE_SAMPLE_RATE);
+                                queryProperty(PROPERTY_DEVICE_CENTER_FREQUENCY);
                                 Thread.sleep(500);
 
                                 // Enable device streaming
@@ -947,12 +955,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     mLastStartedState = started;
                     break;
 
-                case "valid_devices":
+                case PROPERTY_VALID_DEVICES:
                     mValidDevices = value;
                     markValidDevicesReceived(value);
                     break;
 
-                case "active_device":
+                case PROPERTY_ACTIVE_DEVICE:
                     mActiveDevice = value;
                     markActiveDeviceReceived(value);
                     break;
