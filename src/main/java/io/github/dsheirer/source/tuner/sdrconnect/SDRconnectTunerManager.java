@@ -278,69 +278,102 @@ public class SDRconnectTunerManager
     {
         Map<String, SDRconnectEndpointReadiness> readinessByEndpoint = new HashMap<>();
         Map<String, String> endpointHosts = new HashMap<>();
-        Map<String, Integer> endpointPorts = new HashMap<>();
-
-        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
-        {
-            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig)
-            {
-                String endpointKey = getSDRconnectEndpointKey(sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
-
-                if(probeSDRconnect(sdrconnectConfig.getHost(), sdrconnectConfig.getPort()))
-                {
-                    endpointHosts.put(endpointKey, sdrconnectConfig.getHost());
-                    endpointPorts.put(endpointKey, sdrconnectConfig.getPort());
-                }
-                else if(isLocalSDRconnectHost(sdrconnectConfig.getHost()) &&
-                    launchManagedSDRconnectProcess(sdrconnectConfig.getPort()))
-                {
-                    endpointHosts.put(endpointKey, sdrconnectConfig.getHost());
-                    endpointPorts.put(endpointKey, sdrconnectConfig.getPort());
-                }
-            }
-        }
+        Map<String, Integer> endpointPorts = getConfiguredEndpointPorts(tunerConfigurations, endpointHosts);
 
         if(!endpointPorts.isEmpty())
         {
             int timeoutMs = SystemProperties.getInstance().get(SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY,
                 DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS);
             mLog.info("Waiting up to {} ms for SDRconnect readiness on endpoint(s) {}", timeoutMs, endpointPorts.keySet());
-
-            Map<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessChecks = new HashMap<>();
-
-            for(Map.Entry<String, Integer> endpoint : endpointPorts.entrySet())
-            {
-                String host = endpointHosts.get(endpoint.getKey());
-                int port = endpoint.getValue();
-                readinessChecks.put(endpoint.getKey(), CompletableFuture.supplyAsync(
-                    () -> waitForReadySDRconnect(host, port, timeoutMs), ThreadPool.CACHED));
-            }
-
-            for(Map.Entry<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessCheck : readinessChecks.entrySet())
-            {
-                try
-                {
-                    readinessByEndpoint.put(readinessCheck.getKey(),
-                        readinessCheck.getValue().get((long)timeoutMs + SDRCONNECT_HEADLESS_START_TIMEOUT_MS,
-                            TimeUnit.MILLISECONDS));
-                }
-                catch(InterruptedException ie)
-                {
-                    Thread.currentThread().interrupt();
-                    readinessByEndpoint.put(readinessCheck.getKey(), SDRconnectEndpointReadiness.notReady());
-                    mLog.warn("Interrupted while waiting for SDRconnect readiness check to complete for {}",
-                        readinessCheck.getKey(), ie);
-                }
-                catch(Exception e)
-                {
-                    readinessByEndpoint.put(readinessCheck.getKey(), SDRconnectEndpointReadiness.notReady());
-                    mLog.warn("Error waiting for SDRconnect readiness check to complete for {}",
-                        readinessCheck.getKey(), e);
-                }
-            }
+            Map<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessChecks =
+                createEndpointReadinessChecks(endpointHosts, endpointPorts, timeoutMs);
+            collectEndpointReadiness(readinessByEndpoint, readinessChecks, timeoutMs);
         }
 
         return readinessByEndpoint;
+    }
+
+    private Map<String, Integer> getConfiguredEndpointPorts(List<TunerConfiguration> tunerConfigurations,
+                                                            Map<String, String> endpointHosts)
+    {
+        Map<String, Integer> endpointPorts = new HashMap<>();
+
+        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
+        {
+            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig)
+            {
+                registerConfiguredEndpoint(sdrconnectConfig, endpointHosts, endpointPorts);
+            }
+        }
+
+        return endpointPorts;
+    }
+
+    private void registerConfiguredEndpoint(SDRconnectTunerConfiguration sdrconnectConfig,
+                                            Map<String, String> endpointHosts,
+                                            Map<String, Integer> endpointPorts)
+    {
+        String endpointKey = getSDRconnectEndpointKey(sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+
+        if(isAvailableOrLaunchable(sdrconnectConfig))
+        {
+            endpointHosts.put(endpointKey, sdrconnectConfig.getHost());
+            endpointPorts.put(endpointKey, sdrconnectConfig.getPort());
+        }
+    }
+
+    private boolean isAvailableOrLaunchable(SDRconnectTunerConfiguration sdrconnectConfig)
+    {
+        return probeSDRconnect(sdrconnectConfig.getHost(), sdrconnectConfig.getPort()) ||
+            (isLocalSDRconnectHost(sdrconnectConfig.getHost()) && launchManagedSDRconnectProcess(sdrconnectConfig.getPort()));
+    }
+
+    private Map<String, CompletableFuture<SDRconnectEndpointReadiness>> createEndpointReadinessChecks(
+        Map<String, String> endpointHosts, Map<String, Integer> endpointPorts, int timeoutMs)
+    {
+        Map<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessChecks = new HashMap<>();
+
+        for(Map.Entry<String, Integer> endpoint : endpointPorts.entrySet())
+        {
+            String host = endpointHosts.get(endpoint.getKey());
+            int port = endpoint.getValue();
+            readinessChecks.put(endpoint.getKey(), CompletableFuture.supplyAsync(
+                () -> waitForReadySDRconnect(host, port, timeoutMs), ThreadPool.CACHED));
+        }
+
+        return readinessChecks;
+    }
+
+    private void collectEndpointReadiness(Map<String, SDRconnectEndpointReadiness> readinessByEndpoint,
+                                          Map<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessChecks,
+                                          int timeoutMs)
+    {
+        for(Map.Entry<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessCheck : readinessChecks.entrySet())
+        {
+            readinessByEndpoint.put(readinessCheck.getKey(),
+                getEndpointReadiness(readinessCheck.getKey(), readinessCheck.getValue(), timeoutMs));
+        }
+    }
+
+    private SDRconnectEndpointReadiness getEndpointReadiness(String endpointKey,
+                                                             CompletableFuture<SDRconnectEndpointReadiness> readinessCheck,
+                                                             int timeoutMs)
+    {
+        try
+        {
+            return readinessCheck.get((long)timeoutMs + SDRCONNECT_HEADLESS_START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        }
+        catch(InterruptedException ie)
+        {
+            Thread.currentThread().interrupt();
+            mLog.warn("Interrupted while waiting for SDRconnect readiness check to complete for {}", endpointKey, ie);
+        }
+        catch(Exception e)
+        {
+            mLog.warn("Error waiting for SDRconnect readiness check to complete for {}", endpointKey, e);
+        }
+
+        return SDRconnectEndpointReadiness.notReady();
     }
 
     private Map<String, String> resolveConfiguredSDRconnectDeviceAssignments(List<TunerConfiguration> tunerConfigurations,
