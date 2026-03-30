@@ -895,14 +895,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     {
                         mLog.info("SDRconnect frequency changed: {} MHz", String.format("%.3f", newFrequency / 1e6));
                         mCenterFrequency = newFrequency;
-                        try
-                        {
-                            mFrequencyController.setFrequency(newFrequency);
-                        }
-                        catch(SourceException se)
-                        {
-                            mLog.error("Error updating frequency controller", se);
-                        }
+                        updateFrequencyController(newFrequency);
                     }
                     break;
 
@@ -972,6 +965,21 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         catch(NumberFormatException e)
         {
             mLog.warn("Error parsing property {} = {}", property, value);
+        }
+    }
+
+    /**
+     * Updates the local frequency controller from an SDRconnect-reported center frequency.
+     */
+    private void updateFrequencyController(long frequency)
+    {
+        try
+        {
+            mFrequencyController.setFrequency(frequency);
+        }
+        catch(SourceException se)
+        {
+            mLog.error("Error updating frequency controller", se);
         }
     }
 
