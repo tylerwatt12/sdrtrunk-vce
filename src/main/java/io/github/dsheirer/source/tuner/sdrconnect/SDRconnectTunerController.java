@@ -45,6 +45,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SDRconnect tuner controller - connects to SDRconnect WebSocket API for IQ streaming
@@ -112,8 +113,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private ByteBuffer mPartialBuffer;
     private StringBuilder mPartialTextBuffer;
     private final SDRconnectNativeBufferFactory mNativeBufferFactory;
-    private volatile CountDownLatch mDeviceDiscoveryLatch;
-    private volatile CountDownLatch mSettingsLatch;
+    private final AtomicReference<CountDownLatch> mDeviceDiscoveryLatch = new AtomicReference<>();
+    private final AtomicReference<CountDownLatch> mSettingsLatch = new AtomicReference<>();
     private final AtomicBoolean mValidDevicesReceived = new AtomicBoolean(false);
     private final AtomicBoolean mActiveDeviceReceived = new AtomicBoolean(false);
     private final AtomicBoolean mFrequencyReceived = new AtomicBoolean(false);
@@ -248,7 +249,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 prepareDeviceDiscoveryLatch();
             queryProperty(PROPERTY_VALID_DEVICES);
             queryProperty(PROPERTY_ACTIVE_DEVICE);
-                awaitLatch(mDeviceDiscoveryLatch, 2, TimeUnit.SECONDS,
+                awaitLatch(mDeviceDiscoveryLatch.get(), 2, TimeUnit.SECONDS,
                     "SDRconnect device discovery");
 
                 selectPreferredDevice();
@@ -259,7 +260,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             queryProperty(PROPERTY_ACTIVE_DEVICE);
             queryProperty(PROPERTY_DEVICE_SAMPLE_RATE);
             queryProperty(PROPERTY_DEVICE_CENTER_FREQUENCY);
-                awaitLatch(mSettingsLatch, 2, TimeUnit.SECONDS,
+                awaitLatch(mSettingsLatch.get(), 2, TimeUnit.SECONDS,
                     "SDRconnect initial settings");
 
                 mLog.info("SDRconnect connected: {} MHz center, {} MHz sample rate",
@@ -311,14 +312,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         mValidDevicesReceived.set(false);
         mActiveDeviceReceived.set(false);
-        mDeviceDiscoveryLatch = new CountDownLatch(2);
+        mDeviceDiscoveryLatch.set(new CountDownLatch(2));
     }
 
     private void prepareSettingsLatch()
     {
         mFrequencyReceived.set(false);
         mSampleRateReceived.set(false);
-        mSettingsLatch = new CountDownLatch(2);
+        mSettingsLatch.set(new CountDownLatch(2));
     }
 
     private void awaitLatch(CountDownLatch latch, long timeout, TimeUnit unit, String description)
@@ -340,7 +341,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(isResolvedPropertyValue(value) && mValidDevicesReceived.compareAndSet(false, true))
         {
-            CountDownLatch latch = mDeviceDiscoveryLatch;
+            CountDownLatch latch = mDeviceDiscoveryLatch.get();
             if(latch != null)
             {
                 latch.countDown();
@@ -352,7 +353,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(isResolvedPropertyValue(value) && mActiveDeviceReceived.compareAndSet(false, true))
         {
-            CountDownLatch latch = mDeviceDiscoveryLatch;
+            CountDownLatch latch = mDeviceDiscoveryLatch.get();
             if(latch != null)
             {
                 latch.countDown();
@@ -364,7 +365,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(mFrequencyReceived.compareAndSet(false, true))
         {
-            CountDownLatch latch = mSettingsLatch;
+            CountDownLatch latch = mSettingsLatch.get();
             if(latch != null)
             {
                 latch.countDown();
@@ -376,7 +377,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(mSampleRateReceived.compareAndSet(false, true))
         {
-            CountDownLatch latch = mSettingsLatch;
+            CountDownLatch latch = mSettingsLatch.get();
             if(latch != null)
             {
                 latch.countDown();
