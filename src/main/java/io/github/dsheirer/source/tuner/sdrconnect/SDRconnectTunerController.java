@@ -54,9 +54,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private static final Logger mLog = LoggerFactory.getLogger(SDRconnectTunerController.class);
 
     // Binary message headers from SDRconnect
-    private static final int HEADER_AUDIO = 0x0001;
     private static final int HEADER_IQ = 0x0002;
-    private static final int HEADER_SPECTRUM = 0x0003;
     private static final String JSON_EVENT_TYPE = "event_type";
     private static final String JSON_PROPERTY = "property";
     private static final String JSON_VALUE = "value";
