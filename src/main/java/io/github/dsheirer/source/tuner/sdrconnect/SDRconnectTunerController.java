@@ -940,9 +940,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     mLastStartedState = started;
                     break;
 
-                case "can_control":
-                    break;
-
                 case "valid_devices":
                     mValidDevices = value;
                     markValidDevicesReceived(value);
@@ -951,15 +948,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 case "active_device":
                     mActiveDevice = value;
                     markActiveDeviceReceived(value);
-                    break;
-
-                // Ignore high-frequency status updates to reduce log spam
-                case "signal_power":
-                case "signal_snr":
-                case "rds_ps":
-                case "rds_pi":
-                case "rds_pty":
-                    // Silently ignore these frequent updates
                     break;
 
                 default:
