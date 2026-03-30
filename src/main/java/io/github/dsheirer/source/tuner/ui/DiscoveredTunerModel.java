@@ -28,6 +28,7 @@ import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
+import io.github.dsheirer.util.ThreadPool;
 import java.awt.EventQueue;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
@@ -275,6 +276,8 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     {
         mLog.info("Removing discovered tuner: " + discoveredTuner.getId());
         Runnable remove = () -> {
+            boolean removed = false;
+
             mLock.lock();
 
             try
@@ -292,7 +295,7 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
                     {
                         mLog.info("Exception firing table rows deleted for index [" + index + "]", e);
                     }
-                    discoveredTuner.stop();
+                    removed = true;
                 }
             }
             catch(Exception e)
@@ -302,6 +305,11 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
             finally
             {
                 mLock.unlock();
+            }
+
+            if(removed)
+            {
+                ThreadPool.CACHED.execute(discoveredTuner::stop);
             }
         };
 
