@@ -37,6 +37,7 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
     private final int mPort;
     private final String mDeviceName;
     private final ChannelizerType mChannelizerType;
+    private String mRuntimeDeviceName;
 
     /**
      * Constructs an instance
@@ -80,7 +81,20 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
 
     public String getDeviceName()
     {
-        return mDeviceName;
+        return getEffectiveDeviceName();
+    }
+
+    /**
+     * Sets the runtime-resolved device selection string without changing the persisted configuration.
+     */
+    public void setRuntimeDeviceName(String deviceName)
+    {
+        mRuntimeDeviceName = (deviceName == null || deviceName.isBlank()) ? null : deviceName.trim();
+    }
+
+    private String getEffectiveDeviceName()
+    {
+        return mRuntimeDeviceName != null ? mRuntimeDeviceName : mDeviceName;
     }
 
     /**
@@ -126,10 +140,14 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
         {
             try
             {
-                mLog.info("Starting SDRconnect tuner: {}:{} device [{}]", mHost, mPort, mDeviceName);
+                mLog.info("Starting SDRconnect tuner: {}:{} device [{}]", mHost, mPort, getEffectiveDeviceName());
 
                 SDRconnectTunerController controller = new SDRconnectTunerController(mHost, mPort, this);
-                if(hasTunerConfiguration())
+                if(mRuntimeDeviceName != null)
+                {
+                    controller.setDeviceName(mRuntimeDeviceName);
+                }
+                else if(hasTunerConfiguration())
                 {
                     // Seed the preferred device before connecting so the SDRconnect handshake can select it.
                     controller.setDeviceName(getSDRconnectTunerConfiguration().getDeviceName());
@@ -142,6 +160,13 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
                 if(hasTunerConfiguration())
                 {
                     mTuner.getTunerController().apply(getTunerConfiguration());
+
+                    if(mRuntimeDeviceName != null)
+                    {
+                        // Re-assert the runtime-assigned device label after apply() restores the persisted
+                        // configuration field, which may intentionally still be blank for auto-assigned tuners.
+                        controller.setDeviceName(mRuntimeDeviceName);
+                    }
                 }
                 mLog.info("SDRconnect tuner started successfully");
             }
@@ -156,6 +181,6 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
     @Override
     public String toString()
     {
-        return "SDRconnect [" + mHost + ":" + mPort + " " + mDeviceName + "]";
+        return "SDRconnect [" + mHost + ":" + mPort + " " + getEffectiveDeviceName() + "]";
     }
 }

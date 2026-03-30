@@ -62,10 +62,13 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
@@ -509,7 +512,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     {
         ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
         List<TunerConfiguration> tunerConfigurations = getTunerConfigurationManager().getTunerConfigurations(TunerType.SDRCONNECT);
-        Map<String, Boolean> readinessByEndpoint = prepareConfiguredSDRconnectEndpoints(tunerConfigurations);
+        Map<String, SDRconnectEndpointReadiness> readinessByEndpoint = prepareConfiguredSDRconnectEndpoints(tunerConfigurations);
+        Map<String, String> runtimeDeviceAssignments =
+            resolveConfiguredSDRconnectDeviceAssignments(tunerConfigurations, readinessByEndpoint);
 
         if(!tunerConfigurations.isEmpty())
         {
@@ -520,8 +525,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         {
             if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig)
             {
-                boolean available = Boolean.TRUE.equals(readinessByEndpoint.get(
-                    getSDRconnectEndpointKey(sdrconnectConfig.getHost(), sdrconnectConfig.getPort())));
+                SDRconnectEndpointReadiness readiness = readinessByEndpoint.get(
+                    getSDRconnectEndpointKey(sdrconnectConfig.getHost(), sdrconnectConfig.getPort()));
+                boolean available = readiness != null && readiness.isReady();
                 boolean disabled = mTunerConfigurationManager.isDisabled(new DiscoveredSDRconnectTuner(
                     sdrconnectConfig.getHost(), sdrconnectConfig.getPort(), sdrconnectConfig.getDeviceName(),
                     channelizerType));
@@ -530,6 +536,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                                 sdrconnectConfig.getDeviceName(), channelizerType);
 
                 discoveredTuner.setTunerConfiguration(sdrconnectConfig);
+                discoveredTuner.setRuntimeDeviceName(runtimeDeviceAssignments.get(sdrconnectConfig.getUniqueID()));
                 discoveredTuner.addTunerStatusListener(this);
 
                 if(disabled)
@@ -613,9 +620,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      * Prepares configured SDRconnect endpoints by launching any missing local loopback headless instances and then
      * checking readiness for all reachable configured endpoints, regardless of how they were started.
      */
-    private Map<String, Boolean> prepareConfiguredSDRconnectEndpoints(List<TunerConfiguration> tunerConfigurations)
+    private Map<String, SDRconnectEndpointReadiness> prepareConfiguredSDRconnectEndpoints(List<TunerConfiguration> tunerConfigurations)
     {
-        Map<String, Boolean> readinessByEndpoint = new HashMap<>();
+        Map<String, SDRconnectEndpointReadiness> readinessByEndpoint = new HashMap<>();
         Map<String, String> endpointHosts = new HashMap<>();
         Map<String, Integer> endpointPorts = new HashMap<>();
 
@@ -646,7 +653,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             mLog.info("Waiting up to {} ms for SDRconnect readiness on endpoint(s) {}", timeoutMs,
                 endpointPorts.keySet());
 
-            Map<String, CompletableFuture<Boolean>> readinessChecks = new HashMap<>();
+            Map<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessChecks = new HashMap<>();
 
             for(String endpointKey : endpointPorts.keySet())
             {
@@ -656,7 +663,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     () -> waitForReadySDRconnect(host, port, timeoutMs), ThreadPool.CACHED));
             }
 
-            for(Map.Entry<String, CompletableFuture<Boolean>> readinessCheck : readinessChecks.entrySet())
+            for(Map.Entry<String, CompletableFuture<SDRconnectEndpointReadiness>> readinessCheck : readinessChecks.entrySet())
             {
                 try
                 {
@@ -666,7 +673,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 }
                 catch(Exception e)
                 {
-                    readinessByEndpoint.put(readinessCheck.getKey(), false);
+                    readinessByEndpoint.put(readinessCheck.getKey(), SDRconnectEndpointReadiness.notReady());
                     mLog.warn("Error waiting for SDRconnect readiness check to complete for {}", readinessCheck.getKey(), e);
                 }
             }
@@ -675,9 +682,193 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         return readinessByEndpoint;
     }
 
+    /**
+     * Resolves runtime SDRconnect device assignments for configured tuners, ensuring that blank selectors on the same
+     * host are handed distinct devices when possible.
+     */
+    private Map<String, String> resolveConfiguredSDRconnectDeviceAssignments(List<TunerConfiguration> tunerConfigurations,
+                                                                             Map<String, SDRconnectEndpointReadiness> readinessByEndpoint)
+    {
+        Map<String, String> assignments = new HashMap<>();
+        Map<String, Integer> representativePortsByHost = new LinkedHashMap<>();
+
+        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
+        {
+            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig)
+            {
+                String endpointKey = getSDRconnectEndpointKey(sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+
+                SDRconnectEndpointReadiness readiness = readinessByEndpoint.get(endpointKey);
+
+                if(readiness != null && readiness.isReady())
+                {
+                    representativePortsByHost.putIfAbsent(sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
+                }
+            }
+        }
+
+        Map<String, List<SDRconnectDeviceSlot>> slotsByHost = new HashMap<>();
+
+        for(Map.Entry<String, Integer> representative : representativePortsByHost.entrySet())
+        {
+            String endpointKey = getSDRconnectEndpointKey(representative.getKey(), representative.getValue());
+            SDRconnectEndpointReadiness readiness = readinessByEndpoint.get(endpointKey);
+            String validDevices = readiness != null ? readiness.getValidDevices() : null;
+
+            if(validDevices != null && !validDevices.isBlank())
+            {
+                slotsByHost.put(representative.getKey(), parseSDRconnectDeviceSlots(validDevices));
+            }
+        }
+
+        Map<String, Set<SDRconnectDeviceSlot>> claimedSlotsByHost = new HashMap<>();
+
+        // Reserve explicit selectors first so blank selectors only consume the remaining devices.
+        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
+        {
+            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig &&
+                sdrconnectConfig.getDeviceName() != null && !sdrconnectConfig.getDeviceName().isBlank())
+            {
+                SDRconnectDeviceSlot slot = findMatchingDeviceSlot(slotsByHost.get(sdrconnectConfig.getHost()),
+                    sdrconnectConfig.getDeviceName());
+
+                if(slot != null)
+                {
+                    assignments.put(sdrconnectConfig.getUniqueID(), slot.getPreferredSelection(sdrconnectConfig.getDeviceName()));
+                    claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>()).add(slot);
+                }
+            }
+        }
+
+        for(TunerConfiguration tunerConfiguration: tunerConfigurations)
+        {
+            if(tunerConfiguration instanceof SDRconnectTunerConfiguration sdrconnectConfig &&
+                (sdrconnectConfig.getDeviceName() == null || sdrconnectConfig.getDeviceName().isBlank()))
+            {
+                List<SDRconnectDeviceSlot> slots = slotsByHost.get(sdrconnectConfig.getHost());
+
+                if(slots != null)
+                {
+                    Set<SDRconnectDeviceSlot> claimed =
+                        claimedSlotsByHost.computeIfAbsent(sdrconnectConfig.getHost(), key -> new HashSet<>());
+
+                    for(SDRconnectDeviceSlot slot : slots)
+                    {
+                        if(!claimed.contains(slot))
+                        {
+                            assignments.put(sdrconnectConfig.getUniqueID(), slot.getPreferredSelection(null));
+                            claimed.add(slot);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        return assignments;
+    }
+
     private String getSDRconnectEndpointKey(String host, int port)
     {
         return host + ":" + port;
+    }
+
+    /**
+     * Parses the advertised SDRconnect devices into assignable slots, pairing serial-based and friendly-name aliases
+     * when SDRconnect exposes both in the same ordered list.
+     *
+     * Note: the serial/named pairing is positional. This relies on SDRconnect currently advertising the serial-based
+     * groups and friendly-name groups in the same physical-device order.
+     */
+    private List<SDRconnectDeviceSlot> parseSDRconnectDeviceSlots(String validDevices)
+    {
+        Map<String, List<String>> groupedEntries = new LinkedHashMap<>();
+
+        for(String entry : validDevices.split(","))
+        {
+            String trimmed = entry.trim();
+
+            if(trimmed.isEmpty() || "IQ File".equalsIgnoreCase(trimmed))
+            {
+                continue;
+            }
+
+            String deviceKey = trimmed.replaceFirst("\\s+\\([^)]*\\)$", "");
+            groupedEntries.computeIfAbsent(deviceKey, key -> new ArrayList<>()).add(trimmed);
+        }
+
+        List<Map.Entry<String, List<String>>> serialGroups = new ArrayList<>();
+        List<Map.Entry<String, List<String>>> namedGroups = new ArrayList<>();
+
+        for(Map.Entry<String, List<String>> entry : groupedEntries.entrySet())
+        {
+            if(entry.getKey().matches(".*\\(\\d+\\)$"))
+            {
+                serialGroups.add(entry);
+            }
+            else
+            {
+                namedGroups.add(entry);
+            }
+        }
+
+        List<SDRconnectDeviceSlot> slots = new ArrayList<>();
+
+        if(!serialGroups.isEmpty() && serialGroups.size() == namedGroups.size())
+        {
+            for(int x = 0; x < serialGroups.size(); x++)
+            {
+                SDRconnectDeviceSlot slot = new SDRconnectDeviceSlot();
+                slot.addAlias(serialGroups.get(x).getKey());
+                slot.addEntries(serialGroups.get(x).getValue());
+                slot.addAlias(namedGroups.get(x).getKey());
+                slot.addEntries(namedGroups.get(x).getValue());
+                slots.add(slot);
+            }
+        }
+        else
+        {
+            for(Map.Entry<String, List<String>> entry : groupedEntries.entrySet())
+            {
+                SDRconnectDeviceSlot slot = new SDRconnectDeviceSlot();
+                slot.addAlias(entry.getKey());
+                slot.addEntries(entry.getValue());
+                slots.add(slot);
+            }
+        }
+
+        return slots;
+    }
+
+    /**
+     * Finds the best matching advertised SDRconnect device slot for a configured selector.
+     */
+    private SDRconnectDeviceSlot findMatchingDeviceSlot(List<SDRconnectDeviceSlot> slots, String selector)
+    {
+        if(slots == null || selector == null || selector.isBlank())
+        {
+            return null;
+        }
+
+        SDRconnectDeviceSlot fallback = null;
+
+        for(SDRconnectDeviceSlot slot : slots)
+        {
+            if(slot.matches(selector))
+            {
+                if(fallback == null)
+                {
+                    fallback = slot;
+                }
+
+                if(slot.prefersDefaultNetworkMode(selector))
+                {
+                    return slot;
+                }
+            }
+        }
+
+        return fallback;
     }
 
     /**
@@ -747,7 +938,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     /**
      * Waits for an SDRconnect websocket port to become ready for use.
      */
-    private boolean waitForReadySDRconnect(String host, int port, int timeoutMs)
+    private SDRconnectEndpointReadiness waitForReadySDRconnect(String host, int port, int timeoutMs)
     {
         int effectiveTimeoutMs = Math.max(timeoutMs, SDRCONNECT_HEADLESS_START_TIMEOUT_MS);
         long deadline = System.currentTimeMillis() + effectiveTimeoutMs;
@@ -763,13 +954,15 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog()
                         .resolve("sdrconnect_headless_" + port + ".log"));
                 mManagedSDRconnectProcesses.remove(port);
-                return false;
+                return SDRconnectEndpointReadiness.notReady();
             }
 
-            if(isSDRconnectReady(host, port))
+            SDRconnectEndpointReadiness readiness = isSDRconnectReady(host, port);
+
+            if(readiness.isReady())
             {
                 mLog.info("SDRconnect headless on port {} is ready", port);
-                return true;
+                return readiness;
             }
 
             try
@@ -779,23 +972,23 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             catch(InterruptedException ie)
             {
                 Thread.currentThread().interrupt();
-                return false;
+                return SDRconnectEndpointReadiness.notReady();
             }
         }
 
         mLog.warn("Timed out waiting for SDRconnect headless on port {} readiness after {} ms", port,
             effectiveTimeoutMs);
-        return false;
+        return SDRconnectEndpointReadiness.notReady();
     }
 
     /**
      * Indicates if SDRconnect is ready for use and no longer returning placeholder startup values.
      */
-    private boolean isSDRconnectReady(String host, int port)
+    private SDRconnectEndpointReadiness isSDRconnectReady(String host, int port)
     {
         if(!probeSDRconnect(host, port))
         {
-            return false;
+            return SDRconnectEndpointReadiness.notReady();
         }
 
         SDRconnectReadyProbe probe = new SDRconnectReadyProbe();
@@ -807,11 +1000,12 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 .buildAsync(URI.create("ws://" + host + ":" + port), probe);
             webSocket = future.get(2, TimeUnit.SECONDS);
             boolean ready = probe.awaitReady(2, TimeUnit.SECONDS);
-            return ready && probe.isReady();
+            return ready && probe.isReady() ? SDRconnectEndpointReadiness.ready(probe.getValidDevices()) :
+                SDRconnectEndpointReadiness.notReady();
         }
         catch(Exception e)
         {
-            return false;
+            return SDRconnectEndpointReadiness.notReady();
         }
         finally
         {
@@ -975,9 +1169,182 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             return isReadyValue(mValidDevices) && isReadyValue(mActiveDevice);
         }
 
+        private String getValidDevices()
+        {
+            return mValidDevices;
+        }
+
         private static boolean isReadyValue(String value)
         {
             return value != null && !value.isBlank() && !"Refreshing...".equalsIgnoreCase(value.trim());
+        }
+    }
+
+    /**
+     * Readiness result for an SDRconnect endpoint probe.
+     */
+    private static class SDRconnectEndpointReadiness
+    {
+        private final boolean mReady;
+        private final String mValidDevices;
+
+        private SDRconnectEndpointReadiness(boolean ready, String validDevices)
+        {
+            mReady = ready;
+            mValidDevices = validDevices;
+        }
+
+        private static SDRconnectEndpointReadiness ready(String validDevices)
+        {
+            return new SDRconnectEndpointReadiness(true, validDevices);
+        }
+
+        private static SDRconnectEndpointReadiness notReady()
+        {
+            return new SDRconnectEndpointReadiness(false, null);
+        }
+
+        private boolean isReady()
+        {
+            return mReady;
+        }
+
+        private String getValidDevices()
+        {
+            return mValidDevices;
+        }
+    }
+
+    /**
+     * Runtime representation of an assignable SDRconnect device and its advertised aliases.
+     */
+    private static class SDRconnectDeviceSlot
+    {
+        private final LinkedHashSet<String> mAliases = new LinkedHashSet<>();
+        private final LinkedHashSet<String> mAdvertisedEntries = new LinkedHashSet<>();
+
+        private void addAlias(String alias)
+        {
+            if(alias != null && !alias.isBlank())
+            {
+                mAliases.add(alias.trim());
+            }
+        }
+
+        private void addEntries(List<String> entries)
+        {
+            for(String entry : entries)
+            {
+                if(entry != null && !entry.isBlank())
+                {
+                    mAdvertisedEntries.add(entry.trim());
+                }
+            }
+        }
+
+        private boolean matches(String selector)
+        {
+            if(selector == null || selector.isBlank())
+            {
+                return false;
+            }
+
+            String normalizedSelector = selector.trim().toLowerCase();
+
+            for(String alias : mAliases)
+            {
+                if(alias.equalsIgnoreCase(selector) || alias.toLowerCase().contains(normalizedSelector))
+                {
+                    return true;
+                }
+            }
+
+            for(String entry : mAdvertisedEntries)
+            {
+                if(entry.equalsIgnoreCase(selector) || entry.toLowerCase().contains(normalizedSelector))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private boolean prefersDefaultNetworkMode(String selector)
+        {
+            return getPreferredSelection(selector).toLowerCase()
+                .contains(io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerController.DEFAULT_NETWORK_MODE
+                    .toLowerCase());
+        }
+
+        private String getPreferredSelection(String selector)
+        {
+            String matchedEntry = null;
+
+            if(selector != null && !selector.isBlank())
+            {
+                String normalizedSelector = selector.trim().toLowerCase();
+
+                for(String entry : mAdvertisedEntries)
+                {
+                    if(entry.equalsIgnoreCase(selector) || entry.toLowerCase().contains(normalizedSelector))
+                    {
+                        if(matchedEntry == null)
+                        {
+                            matchedEntry = entry;
+                        }
+
+                        if(entry.toLowerCase()
+                            .contains(io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerController.DEFAULT_NETWORK_MODE
+                                .toLowerCase()))
+                        {
+                            return entry;
+                        }
+                    }
+                }
+            }
+
+            if(matchedEntry != null)
+            {
+                return matchedEntry;
+            }
+
+            String namedFallback = null;
+
+            for(String entry : mAdvertisedEntries)
+            {
+                if(!entry.matches(".*\\(\\d+\\)\\s+\\([^)]*\\)$") && namedFallback == null)
+                {
+                    namedFallback = entry;
+                }
+
+                if(entry.toLowerCase()
+                    .contains(io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerController.DEFAULT_NETWORK_MODE
+                        .toLowerCase()))
+                {
+                    if(!entry.matches(".*\\(\\d+\\)\\s+\\([^)]*\\)$"))
+                    {
+                        return entry;
+                    }
+                }
+            }
+
+            if(namedFallback != null)
+            {
+                return namedFallback;
+            }
+
+            for(String entry : mAdvertisedEntries)
+            {
+                if(entry.toLowerCase()
+                    .contains(io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerController.DEFAULT_NETWORK_MODE
+                        .toLowerCase()))
+                {
+                    return entry;
+                }
+            }
+
+            return mAdvertisedEntries.iterator().next();
         }
     }
 
