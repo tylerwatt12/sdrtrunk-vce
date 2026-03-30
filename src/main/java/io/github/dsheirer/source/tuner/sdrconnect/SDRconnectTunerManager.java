@@ -690,40 +690,39 @@ public class SDRconnectTunerManager
             if(process != null && process.isAlive())
             {
                 interruptProcessTree(process, entry.getKey());
+                destroyManagedProcess(process);
+            }
+        }
+    }
 
-                if(process.isAlive())
-                {
-                    process.destroy();
-                }
+    private void destroyManagedProcess(Process process)
+    {
+        if(!process.isAlive())
+        {
+            return;
+        }
 
-                if(process.isAlive())
-                {
-                    try
-                    {
-                        process.waitFor(5, TimeUnit.SECONDS);
-                    }
-                    catch(InterruptedException ie)
-                    {
-                        Thread.currentThread().interrupt();
-                    }
-                }
+        process.destroy();
+        waitForProcessExit(process, 5, TimeUnit.SECONDS);
 
-                if(process.isAlive())
-                {
-                    process.destroyForcibly();
-                }
+        if(process.isAlive())
+        {
+            process.destroyForcibly();
+            waitForProcessExit(process, 2, TimeUnit.SECONDS);
+        }
+    }
 
-                if(process.isAlive())
-                {
-                    try
-                    {
-                        process.waitFor(2, TimeUnit.SECONDS);
-                    }
-                    catch(InterruptedException ie)
-                    {
-                        Thread.currentThread().interrupt();
-                    }
-                }
+    private void waitForProcessExit(Process process, long timeout, TimeUnit timeUnit)
+    {
+        if(process.isAlive())
+        {
+            try
+            {
+                process.waitFor(timeout, timeUnit);
+            }
+            catch(InterruptedException ie)
+            {
+                Thread.currentThread().interrupt();
             }
         }
     }
