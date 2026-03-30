@@ -775,41 +775,67 @@ public class SDRconnectTunerManager
 
             if(last)
             {
-                try
-                {
-                    JsonObject message = JsonParser.parseString(mPartialText.toString()).getAsJsonObject();
-                    String eventType = message.has("event_type") ? message.get("event_type").getAsString() : "";
-
-                    if("property_changed".equals(eventType) || "get_property_response".equals(eventType))
-                    {
-                        String property = message.has("property") ? message.get("property").getAsString() : "";
-                        String value = message.has("value") ? message.get("value").getAsString() : "";
-
-                        if("valid_devices".equals(property))
-                        {
-                            mValidDevices = value;
-                        }
-                        else if("active_device".equals(property))
-                        {
-                            mActiveDevice = value;
-                        }
-
-                        if(isReady())
-                        {
-                            mReady.countDown();
-                        }
-                    }
-                }
-                catch(Exception ignored)
-                {
-                    // Ignore malformed probe responses and continue waiting for a usable readiness payload.
-                }
-
-                mPartialText.setLength(0);
+                processCompletedTextMessage();
             }
 
             webSocket.request(1);
             return null;
+        }
+
+        private void processCompletedTextMessage()
+        {
+            try
+            {
+                JsonObject message = JsonParser.parseString(mPartialText.toString()).getAsJsonObject();
+
+                if(isPropertyMessage(message))
+                {
+                    updatePropertyState(message);
+                    countDownWhenReady();
+                }
+            }
+            catch(Exception ignored)
+            {
+                // Ignore malformed probe responses and continue waiting for a usable readiness payload.
+            }
+            finally
+            {
+                mPartialText.setLength(0);
+            }
+        }
+
+        private boolean isPropertyMessage(JsonObject message)
+        {
+            String eventType = getStringProperty(message, "event_type");
+            return "property_changed".equals(eventType) || "get_property_response".equals(eventType);
+        }
+
+        private void updatePropertyState(JsonObject message)
+        {
+            String property = getStringProperty(message, "property");
+            String value = getStringProperty(message, "value");
+
+            if("valid_devices".equals(property))
+            {
+                mValidDevices = value;
+            }
+            else if("active_device".equals(property))
+            {
+                mActiveDevice = value;
+            }
+        }
+
+        private void countDownWhenReady()
+        {
+            if(isReady())
+            {
+                mReady.countDown();
+            }
+        }
+
+        private String getStringProperty(JsonObject message, String property)
+        {
+            return message.has(property) ? message.get(property).getAsString() : "";
         }
 
         private boolean awaitReady(long timeout, TimeUnit unit) throws InterruptedException
