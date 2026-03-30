@@ -28,7 +28,7 @@ This repository is a personal experimental fork by W6BAZ and is not intended for
 Notable differences from upstream in this fork:
 - SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
 - Current testing in this fork is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target.
-- The current SDRconnect workflow expects device display names such as `nRSP-ST 1` and `nRSP-ST 2`. Serial-number-based device selection is not implemented in this fork yet.
+- The current SDRconnect workflow expects device display names such as `nRSP-ST 1` and `nRSP-ST 2`. Serial-number-based device selection is not implemented in this fork yet, and frankly might never be, as I find names much easier to remember.
 - Local `SDRconnect_headless` lifecycle management has been added as a convenience feature for local use. If enabled, sdrtrunk can start and stop local headless instances for configured ports. If disabled, sdrtrunk can still connect to SDRconnect instances that were started manually.
 - macOS application packaging has only had a minimal work-in-progress pass in this fork. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
 
@@ -56,6 +56,9 @@ Current assumptions and behavior for this fork:
 - SDRconnect tuners are configured per `host:port`, with device name used as selection metadata rather than as part of tuner identity.
 - For local loopback hosts, headless startup readiness is checked over the WebSocket API before tuner startup proceeds.
 - The convenience headless manager is optional. Users who already run SDRconnect or `SDRconnect_headless` themselves can leave auto-start disabled and sdrtrunk will simply attach to the configured endpoints if they are available.
+- All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful,
+but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's
+something you'd like to do, have at it; proper attribution to W2NJL's work and my meager efforts here would be apropos in that case.
 
 * [Help/Wiki Home Page](https://github.com/DSheirer/sdrtrunk/wiki)
 * [Getting Started](https://github.com/DSheirer/sdrtrunk/wiki/Getting-Started)
