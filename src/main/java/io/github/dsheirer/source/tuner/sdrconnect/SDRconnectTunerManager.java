@@ -40,6 +40,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -925,63 +926,105 @@ public class SDRconnectTunerManager
 
         private String getPreferredSelection(String selector)
         {
-            String matchedEntry = null;
-
             if(selector != null && !selector.isBlank())
             {
-                String normalizedSelector = selector.trim().toLowerCase();
+                String matchedSelection = findMatchedSelection(selector);
 
-                for(String entry : mAdvertisedEntries)
+                if(matchedSelection != null)
                 {
-                    if(entry.equalsIgnoreCase(selector) || entry.toLowerCase().contains(normalizedSelector))
-                    {
-                        if(matchedEntry == null)
-                        {
-                            matchedEntry = entry;
-                        }
-
-                        if(entry.toLowerCase().contains(SDRconnectTunerController.DEFAULT_NETWORK_MODE.toLowerCase()))
-                        {
-                            return entry;
-                        }
-                    }
+                    return matchedSelection;
                 }
             }
 
-            if(matchedEntry != null)
-            {
-                return matchedEntry;
-            }
-
-            String namedFallback = null;
-
-            for(String entry : mAdvertisedEntries)
-            {
-                if(!entry.matches(".*\\(\\d+\\)\\s+\\([^)]*\\)$") && namedFallback == null)
-                {
-                    namedFallback = entry;
-                }
-
-                if(entry.toLowerCase().contains(SDRconnectTunerController.DEFAULT_NETWORK_MODE.toLowerCase()) &&
-                    !entry.matches(".*\\(\\d+\\)\\s+\\([^)]*\\)$"))
-                {
-                    return entry;
-                }
-            }
+            String namedFallback = findNamedPreferredSelection();
 
             if(namedFallback != null)
             {
                 return namedFallback;
             }
 
+            String defaultModeSelection = findDefaultNetworkModeSelection(mAdvertisedEntries);
+
+            if(defaultModeSelection != null)
+            {
+                return defaultModeSelection;
+            }
+
+            return getFirstAdvertisedEntry();
+        }
+
+        private String findMatchedSelection(String selector)
+        {
+            String matchedEntry = null;
+            String normalizedSelector = selector.trim().toLowerCase();
+
             for(String entry : mAdvertisedEntries)
             {
-                if(entry.toLowerCase().contains(SDRconnectTunerController.DEFAULT_NETWORK_MODE.toLowerCase()))
+                if(entry.equalsIgnoreCase(selector) || entry.toLowerCase().contains(normalizedSelector))
+                {
+                    if(matchedEntry == null)
+                    {
+                        matchedEntry = entry;
+                    }
+
+                    if(prefersDefaultNetworkModeEntry(entry))
+                    {
+                        return entry;
+                    }
+                }
+            }
+
+            return matchedEntry;
+        }
+
+        private String findNamedPreferredSelection()
+        {
+            String namedFallback = null;
+
+            for(String entry : mAdvertisedEntries)
+            {
+                if(!isSerialBasedEntry(entry))
+                {
+                    if(namedFallback == null)
+                    {
+                        namedFallback = entry;
+                    }
+
+                    if(prefersDefaultNetworkModeEntry(entry))
+                    {
+                        return entry;
+                    }
+                }
+            }
+
+            return namedFallback;
+        }
+
+        private String findDefaultNetworkModeSelection(Collection<String> entries)
+        {
+            for(String entry : entries)
+            {
+                if(prefersDefaultNetworkModeEntry(entry))
                 {
                     return entry;
                 }
             }
 
+            return null;
+        }
+
+        private boolean prefersDefaultNetworkModeEntry(String entry)
+        {
+            return entry.toLowerCase().contains(SDRconnectTunerController.DEFAULT_NETWORK_MODE.toLowerCase());
+        }
+
+        private boolean isSerialBasedEntry(String entry)
+        {
+            return entry.matches(".*\\(\\d+\\)\\s+\\([^)]*\\)$");
+        }
+
+        private String getFirstAdvertisedEntry()
+        {
             return mAdvertisedEntries.iterator().next();
         }
     }
