@@ -35,7 +35,7 @@ Current assumptions and behavior:
 - SDRconnect now has its own tuner manager layer, used by the main tuner manager. That is not meant as a general pattern for
 every tuner type; it exists because SDRconnect has requirements the other tuner integrations do not, including WebSocket readiness checks, optional external process management, deferred startup, and pre-start device assignment when multiple advertised devices may be present behind one endpoint.
 - macOS application packaging has only had a minimal work-in-progress pass. It is good enough for local testing, but should not be treated as a polished or fully supported distribution path.
-- Note that 5MHz bandwidth, Full IQ is going to require almost exactly 20MBps (note, that's megabytes, not megabits) of bandwidth per RSP in play, so be cognizant of that in terms of your network setup; oodles of RSPs is going to require oodles of bandwidth. Ideally, keep everything on the same switch and don't cross a router, and I'd avoid using WiFi.
+- Note that 5MHz bandwidth, Full IQ is going to require almost exactly 20MBps (note, that's megabytes, not megabits) of network bandwidth per RSP in play, so be cognizant of that in terms of your network setup; oodles of RSPs is going to require oodles of bandwidth. Ideally, keep everything on the same switch and don't cross a router, and I'd avoid using WiFi.
 - All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful,
 but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's
 something you'd like to do, have at it; proper attribution to W2NJL's work and my meager efforts here would be apropos in that case.
