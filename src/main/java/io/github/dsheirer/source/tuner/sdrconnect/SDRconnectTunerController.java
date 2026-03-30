@@ -714,7 +714,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     /**
      * Common sample rates supported by SDRplay devices (in Hz)
      */
-    public static final int[] SUPPORTED_SAMPLE_RATES = {
+    protected static final int[] SUPPORTED_SAMPLE_RATES = {
         2000000,   // 2 MHz
         3000000,   // 3 MHz
         4000000,   // 4 MHz
@@ -729,7 +729,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     /**
      * Antenna options for SDRplay devices
      */
-    public static final String[] ANTENNA_OPTIONS = {"A", "B", "C", "Hi-Z"};
+    protected static final String[] ANTENNA_OPTIONS = {"A", "B", "C", "Hi-Z"};
 
     // WebSocket.Listener implementation
 
