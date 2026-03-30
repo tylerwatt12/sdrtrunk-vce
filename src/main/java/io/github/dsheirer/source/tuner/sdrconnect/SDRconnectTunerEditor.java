@@ -55,6 +55,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JButton mApplySettingsButton;
     private JTextField mTuneFrequencyField;
     private JButton mTuneButton;
+    private FrequencyPanel mSDRconnectFrequencyPanel;
 
     /**
      * Constructs an instance
@@ -175,6 +176,29 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
         add(new JLabel("Frequency (MHz):"));
         add(getFrequencyPanel(), "span 2,wrap");
+    }
+
+    @Override
+    protected FrequencyPanel getFrequencyPanel()
+    {
+        if(mSDRconnectFrequencyPanel == null)
+        {
+            mSDRconnectFrequencyPanel = new FrequencyPanel()
+            {
+                @Override
+                public void updateControls()
+                {
+                    super.updateControls();
+                    getFrequencyCorrectionSpinner().setValue(0.0);
+                    getFrequencyCorrectionSpinner().setEnabled(false);
+                    getAutoPPMCheckBox().setSelected(false);
+                    getAutoPPMCheckBox().setEnabled(false);
+                }
+            };
+            mSDRconnectFrequencyPanel.setToolTipText("Tuner frequency controls for SDRconnect");
+        }
+
+        return mSDRconnectFrequencyPanel;
     }
 
     /**
@@ -314,7 +338,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         if(mTuneFrequencyField == null)
         {
-            mTuneFrequencyField = new JTextField("771.6375", 10);
+            mTuneFrequencyField = new JTextField("", 10);
             mTuneFrequencyField.setToolTipText("Enter center frequency in MHz (e.g., 771.6375)");
         }
         return mTuneFrequencyField;

@@ -81,7 +81,8 @@ public class SDRconnectTuner extends Tuner
     public int getMaximumUSBBitsPerSecond()
     {
         // Network connection, not USB - return a high value
-        // 2 MHz * 4 bytes per sample * 8 bits = 64 Mbps
-        return 64000000;
+        // Maximum supported SDRconnect sample rate is 10 MHz:
+        // 10 MHz * 4 bytes per complex sample * 8 bits = 320 Mbps
+        return 320000000;
     }
 }

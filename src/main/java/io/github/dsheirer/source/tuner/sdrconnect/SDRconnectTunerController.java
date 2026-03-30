@@ -43,6 +43,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -93,7 +94,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private final AtomicBoolean mReconnecting = new AtomicBoolean(false);
     private final AtomicInteger mReconnectAttempts = new AtomicInteger(0);
     private ScheduledExecutorService mReconnectExecutor;
-    private boolean mLastStartedState = false; // Track SDRconnect's started state to detect recovery
+    private volatile boolean mLastStartedState = false; // Track SDRconnect's started state to detect recovery
 
     private int mSampleRate = DEFAULT_SAMPLE_RATE;
     private long mCenterFrequency = DEFAULT_FREQUENCY;
@@ -235,7 +236,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 CompletableFuture<WebSocket> future = mHttpClient.newWebSocketBuilder()
                         .buildAsync(uri, this);
 
-                mWebSocket = future.join();
+                mWebSocket = future.get(5, TimeUnit.SECONDS);
                 mLog.info("Connected to SDRconnect WebSocket");
 
                 // Discover and select the expected device before enabling streaming.
@@ -268,12 +269,24 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 // Enable IQ streaming
                 enableIqStream(true);
 
+                // Re-apply the configured center frequency now that the connection is established and the device
+                // selection handshake has completed.
+                if(mFrequencyController.getFrequency() != mCenterFrequency)
+                {
+                    setTunedFrequency(mFrequencyController.getFrequency());
+                }
+
                 // Reset reconnect state on successful connection
                 mReconnectAttempts.set(0);
                 mReconnecting.set(false);
                 mLastStartedState = true; // Assume started since we just enabled streaming
 
                 mLog.info("SDRconnect IQ streaming started");
+            }
+            catch(TimeoutException te)
+            {
+                mRunning.set(false);
+                throw new SourceException("Timed out connecting to SDRconnect at " + mHost + ":" + mPort, te);
             }
             catch(Exception e)
             {
@@ -393,6 +406,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     mWebSocket = null;
                 }
 
+                if(mHttpClient instanceof AutoCloseable autoCloseable)
+                {
+                    autoCloseable.close();
+                }
+
                 mHttpClient = null;
             }
             catch(Exception e)
@@ -444,7 +462,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 delaySeconds, attempts, RECONNECT_MAX_ATTEMPTS);
 
             stopReconnectExecutor();
-            mReconnectExecutor = Executors.newSingleThreadScheduledExecutor();
+            mReconnectExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread thread = new Thread(r, "sdrconnect-reconnect");
+                thread.setDaemon(true);
+                return thread;
+            });
             mReconnectExecutor.schedule(this::attemptReconnect, delaySeconds, TimeUnit.SECONDS);
         }
     }
@@ -493,6 +515,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(mWebSocket != null)
         {
+            // Some SDRconnect actions are command-style events rather than set_property updates.
             JsonObject msg = new JsonObject();
             msg.addProperty("event_type", eventType);
             msg.addProperty("property", ""); // API requires property field
@@ -666,7 +689,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         try
         {
             // Stop IQ stream before changing frequency (required by SDRconnect)
-            sendCommand("iq_stream_enable", "false");
+            enableIqStream(false);
             Thread.sleep(100);
 
             // Change frequency
@@ -678,7 +701,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             Thread.sleep(200);
 
             // Restart IQ stream
-            sendCommand("iq_stream_enable", "true");
+            enableIqStream(true);
         }
         catch(InterruptedException e)
         {

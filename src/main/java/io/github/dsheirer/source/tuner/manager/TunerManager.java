@@ -496,9 +496,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
         List<TunerConfiguration> tunerConfigurations = getTunerConfigurationManager().getTunerConfigurations(TunerType.SDRCONNECT);
 
-        if(tunerConfigurations.size() > 0)
+        if(!tunerConfigurations.isEmpty())
         {
-            mLog.info("Discovered [" + tunerConfigurations.size() + "] SDRconnect tuners from saved configurations");
+            mLog.info("Discovered [{}] SDRconnect tuners from saved configurations", tunerConfigurations.size());
         }
 
         prelaunchConfiguredSDRconnectProcesses(tunerConfigurations);
@@ -519,7 +519,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 if(available)
                 {
                     mLog.info("SDRconnect detected at {}:{} - auto-starting tuner", sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
-                    discoveredTuner.setEnabled(true);
                 }
                 else
                 {
@@ -961,10 +960,18 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     new DiscoveredSDRconnectTuner(defaultHost, defaultPort, channelizerType);
             discoveredTuner.setTunerConfiguration(config);
             discoveredTuner.addTunerStatusListener(this);
-            discoveredTuner.setEnabled(true); // Auto-enable since we detected it
 
-            mLog.info("SDRconnect auto-discovered and enabled: " + discoveredTuner);
+            mLog.info("SDRconnect auto-discovered and enabled: {}", discoveredTuner);
             mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
+
+            ThreadPool.CACHED.execute(() -> {
+                discoveredTuner.start();
+
+                if(discoveredTuner.hasTuner())
+                {
+                    mDiscoveredTunerModel.tunerBecameAvailable(discoveredTuner);
+                }
+            });
         }
     }
 

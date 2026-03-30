@@ -129,15 +129,19 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
                 mLog.info("Starting SDRconnect tuner: {}:{} device [{}]", mHost, mPort, mDeviceName);
 
                 SDRconnectTunerController controller = new SDRconnectTunerController(mHost, mPort, this);
+                if(hasTunerConfiguration())
+                {
+                    controller.setDeviceName(getSDRconnectTunerConfiguration().getDeviceName());
+                }
                 mTuner = new SDRconnectTuner(controller, this, mChannelizerType);
 
-                // Apply configuration if we have one
+                mTuner.start();
+
+                // Apply the remaining configuration after the WebSocket is connected.
                 if(hasTunerConfiguration())
                 {
                     mTuner.getTunerController().apply(getTunerConfiguration());
                 }
-
-                mTuner.start();
                 mLog.info("SDRconnect tuner started successfully");
             }
             catch(SourceException se)
