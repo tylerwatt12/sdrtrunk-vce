@@ -58,7 +58,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private static final String GROW_X = "growx";
     private static final int CONFIG_CONTROL_WIDTH = 100;
     private final DecimalFormat mMeasuredErrorPpmFormat = new DecimalFormat("0.0");
-    private Font mMeasuredErrorFont;
 
     private JTextField mHostField;
     private JSpinner mPortSpinner;
@@ -414,69 +413,13 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         component.setMaximumSize(size);
     }
 
-    private void updateMeasuredErrorDisplay(SDRconnectTunerController controller)
-    {
-        if(controller == null || controller.getMeasuredFrequencyError() == 0)
-        {
-            getMeasuredErrorHzLabel().setText("");
-            getMeasuredErrorPpmLabel().setText("");
-            return;
-        }
-
-        getMeasuredErrorHzLabel().setText(String.format("%+d Hz", controller.getMeasuredFrequencyError()));
-        getMeasuredErrorPpmLabel().setText(
-            mMeasuredErrorPpmFormat.format(Math.abs(controller.getPPMFrequencyError())) + " ppm");
-    }
-
-    private JPanel getMeasuredErrorPanel()
-    {
-        if(mMeasuredErrorPanel == null)
-        {
-            mMeasuredErrorPanel = new JPanel(new MigLayout("insets 0,wrap 1,gapy 0", "[right]", "[]0[]"));
-            mMeasuredErrorPanel.add(getMeasuredErrorHzLabel());
-            mMeasuredErrorPanel.add(getMeasuredErrorPpmLabel());
-        }
-
-        return mMeasuredErrorPanel;
-    }
-
-    private JLabel getMeasuredErrorHzLabel()
-    {
-        if(mMeasuredErrorHzLabel == null)
-        {
-            mMeasuredErrorHzLabel = new JLabel("");
-            mMeasuredErrorHzLabel.setFont(getMeasuredErrorFont());
-        }
-
-        return mMeasuredErrorHzLabel;
-    }
-
-    private JLabel getMeasuredErrorPpmLabel()
-    {
-        if(mMeasuredErrorPpmLabel == null)
-        {
-            mMeasuredErrorPpmLabel = new JLabel("");
-            mMeasuredErrorPpmLabel.setFont(getMeasuredErrorFont());
-        }
-
-        return mMeasuredErrorPpmLabel;
-    }
-
-    private Font getMeasuredErrorFont()
-    {
-        if(mMeasuredErrorFont == null)
-        {
-            mMeasuredErrorFont = getMeasuredPPMLabel().getFont().deriveFont(Font.ITALIC);
-        }
-
-        return mMeasuredErrorFont;
-    }
-
     /**
      * SDRconnect-specific frequency panel that omits the generic PPM controls, which do not apply to SDRconnect.
      */
     private class SDRconnectFrequencyPanel extends FrequencyPanel
     {
+        private Font mMeasuredErrorFont;
+
         SDRconnectFrequencyPanel()
         {
             removeAll();
@@ -543,6 +486,64 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         public void updatePPM()
         {
             // SDRconnect frequency error is managed in SDRconnect rather than through the generic PPM UI.
+        }
+
+        private void updateMeasuredErrorDisplay(SDRconnectTunerController controller)
+        {
+            if(controller == null || controller.getMeasuredFrequencyError() == 0)
+            {
+                getMeasuredErrorHzLabel().setText("");
+                getMeasuredErrorPpmLabel().setText("");
+                return;
+            }
+
+            getMeasuredErrorHzLabel().setText(String.format("%+d Hz", controller.getMeasuredFrequencyError()));
+            getMeasuredErrorPpmLabel().setText(
+                mMeasuredErrorPpmFormat.format(Math.abs(controller.getPPMFrequencyError())) + " ppm");
+        }
+
+        private JPanel getMeasuredErrorPanel()
+        {
+            if(mMeasuredErrorPanel == null)
+            {
+                mMeasuredErrorPanel = new JPanel(new MigLayout("insets 0,wrap 1,gapy 0", "[right]", "[]0[]"));
+                mMeasuredErrorPanel.add(getMeasuredErrorHzLabel());
+                mMeasuredErrorPanel.add(getMeasuredErrorPpmLabel());
+            }
+
+            return mMeasuredErrorPanel;
+        }
+
+        private JLabel getMeasuredErrorHzLabel()
+        {
+            if(mMeasuredErrorHzLabel == null)
+            {
+                mMeasuredErrorHzLabel = new JLabel("");
+                mMeasuredErrorHzLabel.setFont(getMeasuredErrorFont());
+            }
+
+            return mMeasuredErrorHzLabel;
+        }
+
+        private JLabel getMeasuredErrorPpmLabel()
+        {
+            if(mMeasuredErrorPpmLabel == null)
+            {
+                mMeasuredErrorPpmLabel = new JLabel("");
+                mMeasuredErrorPpmLabel.setFont(getMeasuredErrorFont());
+            }
+
+            return mMeasuredErrorPpmLabel;
+        }
+
+        private Font getMeasuredErrorFont()
+        {
+            if(mMeasuredErrorFont == null)
+            {
+                mMeasuredErrorFont = getMeasuredPPMLabel().getFont().deriveFont(Font.ITALIC);
+            }
+
+            return mMeasuredErrorFont;
         }
     }
 
