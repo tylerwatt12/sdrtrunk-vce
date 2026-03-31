@@ -404,7 +404,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         SDRconnectFrequencyPanel()
         {
             removeAll();
-            setLayout(new MigLayout("insets 0,fillx,wrap 1", "[grow,fill]", "[][][][]"));
+            setLayout(new MigLayout("insets 0,fillx,wrap 1", "[grow,fill]", "[][][]"));
             add(getFrequencyControl(), "align left");
 
             JPanel minMaxPanel = new JPanel(new MigLayout("insets 0", "[][][][][][grow,fill]", ""));
@@ -419,8 +419,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             measuredErrorPanel.add(new JLabel("Measured Error:"));
             measuredErrorPanel.add(getMeasuredPPMLabel());
             add(measuredErrorPanel, GROW_X);
-
-            add(getTunerLockedStatusLabel());
             setToolTipText("Tuner frequency controls for SDRconnect");
         }
 
@@ -434,7 +432,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getMinimumFrequencyTextField().setEnabled(hasTunerUnlocked);
             getMaximumFrequencyTextField().setEnabled(hasTunerUnlocked);
             getResetFrequenciesButton().setEnabled(hasTunerUnlocked);
-            getTunerLockedStatusLabel().setVisible(hasTuner() && getTuner().getTunerController().isLockedSampleRate());
 
             SDRconnectTuner tuner = getTuner();
 
@@ -483,8 +480,9 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         super.receive(tunerEvent);
         if(tunerEvent.getEvent() == TunerEvent.Event.UPDATE_LOCK_STATE && hasTuner())
         {
-            SwingUtilities.invokeLater(() ->
-                getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate()));
+            SDRconnectTunerController controller = getTuner().getController();
+            SwingUtilities.invokeLater(() -> getSampleRateCombo().setEnabled(hasTuner() &&
+                !controller.isLockedSampleRate()));
         }
     }
 
