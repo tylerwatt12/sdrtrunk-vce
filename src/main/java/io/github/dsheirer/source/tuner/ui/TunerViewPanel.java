@@ -49,6 +49,7 @@ import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowSorter;
 import javax.swing.SortOrder;
+import javax.swing.SwingUtilities;
 import javax.swing.event.TableModelEvent;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableCellRenderer;
@@ -270,7 +271,7 @@ public class TunerViewPanel extends JPanel
             mAddSDRconnectButton.addActionListener(e ->
             {
                 AddSDRconnectTunerDialog dialog = new AddSDRconnectTunerDialog(
-                    javax.swing.SwingUtilities.getWindowAncestor(TunerViewPanel.this),
+                    SwingUtilities.getWindowAncestor(TunerViewPanel.this),
                     mUserPreferences, mDiscoveredTunerModel, mTunerConfigurationManager);
                 dialog.setLocationRelativeTo(TunerViewPanel.this);
                 EventQueue.invokeLater(() -> dialog.setVisible(true));
