@@ -29,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.awt.Component;
+import java.awt.Dimension;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
@@ -51,6 +52,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private static final String CONNECTION_STATUS_CONNECTED = "Connected";
     private static final String CONNECTION_STATUS_NOT_CONNECTED = "Not Connected";
     private static final String WRAP = "wrap";
+    private static final int CONFIG_CONTROL_WIDTH = 100;
 
     private JTextField mHostField;
     private JSpinner mPortSpinner;
@@ -237,6 +239,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                     SDRconnectTunerController.DEFAULT_PORT, 1, 65535, 1);
             mPortSpinner = new JSpinner(model);
             mPortSpinner.setToolTipText("SDRconnect WebSocket port (default: 5454)");
+            setPreferredControlWidth(mPortSpinner);
         }
         return mPortSpinner;
     }
@@ -281,6 +284,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             mSampleRateCombo = new JComboBox<>(rates);
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
             mSampleRateCombo.setToolTipText("Select sample rate for SDRconnect");
+            setPreferredControlWidth(mSampleRateCombo);
             mSampleRateCombo.addActionListener(e -> onSampleRateSelected());
         }
         return mSampleRateCombo;
@@ -313,6 +317,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         if(mAntennaCombo == null)
         {
             mAntennaCombo = new JComboBox<>();
+            setPreferredControlWidth(mAntennaCombo);
             mAntennaCombo.setRenderer(new DefaultListCellRenderer()
             {
                 @Override
@@ -387,6 +392,15 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                 return;
             }
         }
+    }
+
+    private void setPreferredControlWidth(Component component)
+    {
+        Dimension preferredSize = component.getPreferredSize();
+        Dimension size = new Dimension(CONFIG_CONTROL_WIDTH, preferredSize.height);
+        component.setMinimumSize(size);
+        component.setPreferredSize(size);
+        component.setMaximumSize(size);
     }
 
     @Override
