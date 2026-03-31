@@ -872,42 +872,26 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         try
         {
-            if(data.remaining() >= 2)
+            if(!last)
             {
-                // Handle partial messages
-                ByteBuffer buffer;
-                if(mPartialBuffer != null)
-                {
-                    // Combine with previous partial data
-                    buffer = ByteBuffer.allocate(mPartialBuffer.remaining() + data.remaining());
-                    buffer.put(mPartialBuffer);
-                    buffer.put(data);
-                    buffer.flip();
-                    mPartialBuffer = null;
-                }
-                else
-                {
-                    buffer = data;
-                }
+                appendToPartialBuffer(data);
+            }
+            else
+            {
+                ByteBuffer buffer = getCompleteBinaryMessage(data);
 
-                if(!last)
+                if(buffer.remaining() >= 2)
                 {
-                    // Store partial message for later
-                    mPartialBuffer = ByteBuffer.allocate(buffer.remaining());
-                    mPartialBuffer.put(buffer);
-                    mPartialBuffer.flip();
-                }
-                else
-                {
-                    // Process complete message
                     buffer.order(ByteOrder.LITTLE_ENDIAN);
                     int header = buffer.getShort() & 0xFFFF;
 
-                    if(header == HEADER_IQ)
+                    if(header == HEADER_IQ && buffer.remaining() > 0)
                     {
-                        processIqData(buffer);
+                        broadcast(mNativeBufferFactory.getBuffer(buffer, System.currentTimeMillis()));
                     }
                 }
+
+                clearPartialBuffer();
             }
         }
         catch(Exception e)
@@ -917,6 +901,64 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         webSocket.request(1);
         return null;
+    }
+
+    private void appendToPartialBuffer(ByteBuffer data)
+    {
+        if(data == null || !data.hasRemaining())
+        {
+            return;
+        }
+
+        int requiredCapacity = data.remaining();
+
+        if(mPartialBuffer != null)
+        {
+            requiredCapacity += mPartialBuffer.position();
+        }
+
+        ensurePartialBufferCapacity(requiredCapacity);
+        mPartialBuffer.put(data);
+    }
+
+    private void ensurePartialBufferCapacity(int requiredCapacity)
+    {
+        if(mPartialBuffer == null)
+        {
+            mPartialBuffer = ByteBuffer.allocate(requiredCapacity);
+            return;
+        }
+
+        if(requiredCapacity <= mPartialBuffer.capacity())
+        {
+            return;
+        }
+
+        int newCapacity = Math.max(requiredCapacity, mPartialBuffer.capacity() * 2);
+        ByteBuffer expanded = ByteBuffer.allocate(newCapacity);
+        mPartialBuffer.flip();
+        expanded.put(mPartialBuffer);
+        mPartialBuffer = expanded;
+    }
+
+    private ByteBuffer getCompleteBinaryMessage(ByteBuffer data)
+    {
+        if(mPartialBuffer == null || mPartialBuffer.position() == 0)
+        {
+            return data.slice();
+        }
+
+        appendToPartialBuffer(data);
+        mPartialBuffer.flip();
+        return mPartialBuffer;
+    }
+
+    private void clearPartialBuffer()
+    {
+        if(mPartialBuffer != null)
+        {
+            mPartialBuffer.clear();
+        }
     }
 
     @Override
@@ -1066,22 +1108,4 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
-    /**
-     * Process IQ data from SDRconnect
-     */
-    private void processIqData(ByteBuffer buffer)
-    {
-        if(buffer.remaining() > 0)
-        {
-            // Create a copy of the buffer for the native buffer factory
-            ByteBuffer copy = ByteBuffer.allocate(buffer.remaining());
-            copy.put(buffer);
-            copy.flip();
-
-            // Create native buffer and broadcast to listeners
-            long timestamp = System.currentTimeMillis();
-            INativeBuffer nativeBuffer = mNativeBufferFactory.getBuffer(copy, timestamp);
-            broadcast(nativeBuffer);
-        }
-    }
 }
