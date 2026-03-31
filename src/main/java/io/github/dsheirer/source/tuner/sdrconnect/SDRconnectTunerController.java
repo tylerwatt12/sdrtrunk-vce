@@ -1052,11 +1052,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         private void append(ByteBuffer data)
         {
-            if(!data.hasRemaining())
-            {
-                return;
-            }
-
             int requiredCapacity = mBuffer.position() + data.remaining();
 
             if(requiredCapacity > mBuffer.capacity())
