@@ -187,7 +187,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         leftPanel.add(new JLabel("In Use:"));
         leftPanel.add(getAntennaLabel(), WRAP);
 
-        JPanel rightPanel = new JPanel(new MigLayout("fillx,wrap 1", "[grow,fill]", "[][]"));
+        JPanel rightPanel = new JPanel(new MigLayout("fillx,gapy 0,wrap 1", "[grow,fill]", "[][]"));
         rightPanel.add(getButtonPanel(), "shrink,align left");
         rightPanel.add(getFrequencyPanel(), "growx");
 
