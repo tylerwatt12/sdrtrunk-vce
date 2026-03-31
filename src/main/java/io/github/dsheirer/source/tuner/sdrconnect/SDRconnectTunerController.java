@@ -1075,11 +1075,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         private ByteBuffer complete(ByteBuffer finalFragment)
         {
-            if(mBuffer.position() == 0)
-            {
-                return finalFragment.slice();
-            }
-
             append(finalFragment);
             mBuffer.flip();
 
