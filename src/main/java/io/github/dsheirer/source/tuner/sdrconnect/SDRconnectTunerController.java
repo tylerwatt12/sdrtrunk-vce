@@ -38,6 +38,7 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -873,20 +874,18 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             }
             else
             {
-                ByteBuffer buffer = mBinaryMessageAccumulator.complete(data);
-
-                if(buffer.remaining() >= 2)
-                {
-                    buffer.order(ByteOrder.LITTLE_ENDIAN);
-                    int header = buffer.getShort() & 0xFFFF;
-
-                    if(header == HEADER_IQ && buffer.remaining() > 0)
+                mBinaryMessageAccumulator.complete(data, buffer -> {
+                    if(buffer.remaining() >= 2)
                     {
-                        broadcast(mNativeBufferFactory.getBuffer(buffer, System.currentTimeMillis()));
-                    }
-                }
+                        buffer.order(ByteOrder.LITTLE_ENDIAN);
+                        int header = buffer.getShort() & 0xFFFF;
 
-                mBinaryMessageAccumulator.clear();
+                        if(header == HEADER_IQ && buffer.remaining() > 0)
+                        {
+                            broadcast(mNativeBufferFactory.getBuffer(buffer, System.currentTimeMillis()));
+                        }
+                    }
+                });
             }
         }
         catch(Exception e)
@@ -1072,16 +1071,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             mBuffer.put(data);
         }
 
-        private ByteBuffer complete(ByteBuffer finalFragment)
+        private void complete(ByteBuffer finalFragment, Consumer<ByteBuffer> handler)
         {
             append(finalFragment);
             mBuffer.flip();
-
-            return mBuffer;
-        }
-
-        private void clear()
-        {
+            handler.accept(mBuffer);
             mBuffer.clear();
         }
     }
