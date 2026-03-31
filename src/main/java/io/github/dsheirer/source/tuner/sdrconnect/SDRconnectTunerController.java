@@ -1047,7 +1047,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
     private static class BinaryMessageAccumulator
     {
-        private ByteBuffer mBuffer;
+        private static final int INITIAL_CAPACITY = 4096;
+        private ByteBuffer mBuffer = ByteBuffer.allocate(INITIAL_CAPACITY);
 
         private void append(ByteBuffer data)
         {
@@ -1058,18 +1059,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
             int requiredCapacity = data.remaining();
 
-            if(mBuffer != null)
-            {
-                requiredCapacity += mBuffer.position();
-            }
-
+            requiredCapacity += mBuffer.position();
             ensureCapacity(requiredCapacity);
             mBuffer.put(data);
         }
 
         private ByteBuffer complete(ByteBuffer finalFragment)
         {
-            if(mBuffer == null || mBuffer.position() == 0)
+            if(mBuffer.position() == 0)
             {
                 return finalFragment.slice();
             }
@@ -1081,20 +1078,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         private void clear()
         {
-            if(mBuffer != null)
-            {
-                mBuffer.clear();
-            }
+            mBuffer.clear();
         }
 
         private void ensureCapacity(int requiredCapacity)
         {
-            if(mBuffer == null)
-            {
-                mBuffer = ByteBuffer.allocate(requiredCapacity);
-                return;
-            }
-
             if(requiredCapacity <= mBuffer.capacity())
             {
                 return;
