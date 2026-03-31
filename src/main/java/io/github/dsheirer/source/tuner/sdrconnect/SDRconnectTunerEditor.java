@@ -99,7 +99,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getTunerIdLabel().setText(getTuner().getPreferredName());
 
             SDRconnectTunerController controller = getTuner().getController();
-            getSampleRateLabel().setText(String.format("%.0f MHz",controller.getCurrentSampleRate() / 1e6));
+            getSampleRateLabel().setText(formatSampleRate(controller.getCurrentSampleRate()));
             updateSelectedSampleRate((int)controller.getCurrentSampleRate());
             getSampleRateCombo().setEnabled(!controller.isLockedSampleRate());
             updateAntennaOptions(controller.getValidAntennas());
@@ -169,7 +169,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         rightPanel.add(getFrequencyPanel(), "growx");
 
         add(leftPanel, "grow");
-        add(new JSeparator(JSeparator.VERTICAL), "growy");
+        add(new JSeparator(SwingConstants.VERTICAL), "growy");
         add(rightPanel, "grow");
     }
 
@@ -263,7 +263,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             String[] rates = new String[SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length];
             for(int i = 0; i < rates.length; i++)
             {
-                rates[i] = String.format("%.0f MHz", SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[i] / 1e6);
+                rates[i] = formatSampleRate(SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[i]);
             }
             mSampleRateCombo = new JComboBox<>(rates);
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
@@ -384,6 +384,11 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         }
     }
 
+    private static String formatSampleRate(double hz)
+    {
+        return String.format("%.0f MHz", hz / 1e6);
+    }
+
     private void onAntennaChanged(String antenna)
     {
         SwingUtilities.invokeLater(() -> {
@@ -395,7 +400,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private void onSampleRateChanged(int sampleRate)
     {
         SwingUtilities.invokeLater(() -> {
-            getSampleRateLabel().setText(String.format("%.0f MHz",sampleRate / 1e6));
+            getSampleRateLabel().setText(formatSampleRate(sampleRate));
             updateSelectedSampleRate(sampleRate);
             getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate());
         });
