@@ -99,7 +99,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getTunerIdLabel().setText(getTuner().getPreferredName());
 
             SDRconnectTunerController controller = getTuner().getController();
-            getSampleRateLabel().setText(String.format("%.3f MHz", controller.getCurrentSampleRate() / 1e6));
+            getSampleRateLabel().setText(String.format("%.0f MHz",controller.getCurrentSampleRate() / 1e6));
             updateSelectedSampleRate((int)controller.getCurrentSampleRate());
             getSampleRateCombo().setEnabled(!controller.isLockedSampleRate());
             updateAntennaOptions(controller.getValidAntennas());
@@ -145,23 +145,23 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         setLayout(new MigLayout("fill,insets 0", "[450!][1!][grow,fill]", "[fill]"));
 
-        JPanel leftPanel = new JPanel(new MigLayout("fillx,wrap 3", "[right][grow,fill][grow,fill]",
-            "[][][][][][][][][][]push"));
+        JPanel leftPanel = new JPanel(new MigLayout("fillx,wrap 4", "[right][pref!][right][grow,fill]",
+            "[][][][][][][][]push"));
         leftPanel.add(new JLabel("Tuner:"));
-        leftPanel.add(getTunerIdLabel(), "span 2,wrap");
+        leftPanel.add(getTunerIdLabel(), "span 3,wrap");
         leftPanel.add(new JLabel("Status:"));
-        leftPanel.add(getTunerStatusLabel(), "span 2,wrap");
+        leftPanel.add(getTunerStatusLabel(), "span 3,wrap");
         leftPanel.add(new JLabel("Host:"));
-        leftPanel.add(getHostField(), "span 2,wrap");
+        leftPanel.add(getHostField(), "span,grow,wrap");
         leftPanel.add(new JLabel("Port:"));
-        leftPanel.add(getPortSpinner(), "span 2,wrap");
+        leftPanel.add(getPortSpinner(), "align right");
         leftPanel.add(new JLabel("Device:"));
-        leftPanel.add(getDeviceNameField(), "span 2,wrap");
+        leftPanel.add(getDeviceNameField(), WRAP);
         leftPanel.add(new JLabel("Sample Rate:"));
-        leftPanel.add(getSampleRateLabel());
+        leftPanel.add(getSampleRateLabel(), "span 2");
         leftPanel.add(getSampleRateCombo(), WRAP);
         leftPanel.add(new JLabel("Antenna:"));
-        leftPanel.add(getAntennaLabel());
+        leftPanel.add(getAntennaLabel(), "span 2");
         leftPanel.add(getAntennaCombo(), WRAP);
 
         JPanel rightPanel = new JPanel(new MigLayout("fill,wrap 1", "[grow,fill]", "[][grow,push]"));
@@ -397,7 +397,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private void onSampleRateChanged(int sampleRate)
     {
         SwingUtilities.invokeLater(() -> {
-            getSampleRateLabel().setText(String.format("%.3f MHz", sampleRate / 1e6));
+            getSampleRateLabel().setText(String.format("%.0f MHz",sampleRate / 1e6));
             updateSelectedSampleRate(sampleRate);
             getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate());
         });
