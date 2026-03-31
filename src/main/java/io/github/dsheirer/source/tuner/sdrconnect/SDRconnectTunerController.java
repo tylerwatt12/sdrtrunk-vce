@@ -865,9 +865,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
      * Common sample rates supported by SDRplay devices (in Hz)
      */
     protected static final int[] SUPPORTED_SAMPLE_RATES = {
+        62500,     // 62.5 KHz
+        125000,    // 125 KHz
+        250000,    // 250 KHz
+        500000,    // 500 KHz
+        1000000,   // 1 MHz
         2000000,   // 2 MHz
-        3000000,   // 3 MHz
-        4000000,   // 4 MHz
         5000000,   // 5 MHz
         6000000,   // 6 MHz
         7000000,   // 7 MHz

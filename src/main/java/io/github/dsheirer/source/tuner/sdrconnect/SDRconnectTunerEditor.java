@@ -581,7 +581,14 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
     private static String formatSampleRate(double hz)
     {
-        return String.format("%.0f MHz", hz / 1e6);
+        if(hz >= 1_000_000)
+        {
+            double mhz = hz / 1e6;
+            return mhz == Math.rint(mhz) ? String.format("%.0f MHz", mhz) : String.format("%.1f MHz", mhz);
+        }
+
+        double khz = hz / 1e3;
+        return khz == Math.rint(khz) ? String.format("%.0f KHz", khz) : String.format("%.1f KHz", khz);
     }
 
     private static String formatAntenna(String antenna)
