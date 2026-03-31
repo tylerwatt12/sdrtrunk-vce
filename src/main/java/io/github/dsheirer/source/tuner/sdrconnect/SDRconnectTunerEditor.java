@@ -588,7 +588,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         }
 
         double khz = hz / 1e3;
-        return khz == Math.rint(khz) ? String.format("%.0f KHz", khz) : String.format("%.1f KHz", khz);
+        return khz == Math.rint(khz) ? String.format("%.0f kHz", khz) : String.format("%.1f kHz", khz);
     }
 
     private static String formatAntenna(String antenna)
