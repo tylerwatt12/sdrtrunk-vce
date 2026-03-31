@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Font;
 import java.text.DecimalFormat;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JComboBox;
@@ -430,6 +431,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             removeAll();
             setLayout(new MigLayout("insets 0,fillx,wrap 2", "[pref!][grow,fill]", "[][]"));
             add(getFrequencyControl(), "align left");
+            getMeasuredPPMLabel().setFont(getMeasuredPPMLabel().getFont().deriveFont(Font.ITALIC));
             add(getMeasuredPPMLabel(), "align left");
 
             JPanel minMaxPanel = new JPanel(new MigLayout("insets 0", "[][][][][][grow,fill]", ""));
