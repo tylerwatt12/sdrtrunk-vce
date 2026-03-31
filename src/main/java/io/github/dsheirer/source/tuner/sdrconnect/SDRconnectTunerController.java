@@ -1047,7 +1047,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
     private static class BinaryMessageAccumulator
     {
-        private static final int INITIAL_CAPACITY = 4096;
+        // Observed fragmented SDRconnect IQ payloads are consistently about 1,000,034 bytes, so start
+        // slightly above that steady-state size to avoid repeated growth on the fragmented binary path.
+        private static final int INITIAL_CAPACITY = 1_048_576;
         private ByteBuffer mBuffer = ByteBuffer.allocate(INITIAL_CAPACITY);
 
         private void append(ByteBuffer data)
@@ -1057,10 +1059,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 return;
             }
 
-            int requiredCapacity = data.remaining();
-
-            requiredCapacity += mBuffer.position();
-            ensureCapacity(requiredCapacity);
+            ensureCapacity(mBuffer.position() + data.remaining());
             mBuffer.put(data);
         }
 
@@ -1073,6 +1072,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
             append(finalFragment);
             mBuffer.flip();
+
             return mBuffer;
         }
 
