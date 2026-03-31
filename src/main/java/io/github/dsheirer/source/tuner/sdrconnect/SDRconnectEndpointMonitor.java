@@ -27,6 +27,8 @@ import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.util.ThreadPool;
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
@@ -38,6 +40,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -92,9 +95,9 @@ class SDRconnectEndpointMonitor
 
     boolean probe(String host, int port)
     {
-        try (java.net.Socket socket = new java.net.Socket())
+        try (Socket socket = new Socket())
         {
-            socket.connect(new java.net.InetSocketAddress(host, port), 2000);
+            socket.connect(new InetSocketAddress(host, port), 2000);
             return true;
         }
         catch(Exception e)
@@ -451,7 +454,7 @@ class SDRconnectEndpointMonitor
         }
 
         @Override
-        public java.util.concurrent.CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last)
+        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last)
         {
             mPartialText.append(data);
 

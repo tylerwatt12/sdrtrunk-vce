@@ -36,11 +36,14 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 import javax.swing.SpinnerNumberModel;
 import java.awt.Dimension;
 import java.awt.Window;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 
 /**
  * Dialog to add an SDRconnect tuner by specifying host and port
@@ -140,10 +143,10 @@ public class AddSDRconnectTunerDialog extends JDialog
                 InetAddress.getByName(host);
 
                 // Try to connect to the port
-                try (java.net.Socket socket = new java.net.Socket())
+                try (Socket socket = new Socket())
                 {
-                    socket.connect(new java.net.InetSocketAddress(host, port), 3000);
-                    javax.swing.SwingUtilities.invokeLater(() -> {
+                    socket.connect(new InetSocketAddress(host, port), 3000);
+                    SwingUtilities.invokeLater(() -> {
                         mStatusLabel.setText("Connection successful!");
                         mTestButton.setEnabled(true);
                     });
@@ -151,7 +154,7 @@ public class AddSDRconnectTunerDialog extends JDialog
             }
             catch(Exception e)
             {
-                javax.swing.SwingUtilities.invokeLater(() -> {
+                SwingUtilities.invokeLater(() -> {
                     mStatusLabel.setText("Connection failed: " + e.getMessage());
                     mTestButton.setEnabled(true);
                 });
