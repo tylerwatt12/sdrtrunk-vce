@@ -108,6 +108,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     protected void tunerStatusUpdated()
     {
         setLoading(true);
+        updateConnectionFieldEditState();
 
         if(hasTuner())
         {
@@ -161,6 +162,16 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         }
 
         setLoading(false);
+    }
+
+    private void updateConnectionFieldEditState()
+    {
+        boolean editable = !hasTuner();
+        getHostField().setEditable(editable);
+        getHostField().setEnabled(editable);
+        getPortSpinner().setEnabled(editable);
+        getDeviceNameField().setEditable(editable);
+        getDeviceNameField().setEnabled(editable);
     }
 
     private void init()
