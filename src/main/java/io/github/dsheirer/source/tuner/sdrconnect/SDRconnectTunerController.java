@@ -1054,16 +1054,18 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             int requiredCapacity = mBuffer.position() + data.remaining();
 
-            if(requiredCapacity > mBuffer.capacity())
+            if(requiredCapacity <= mBuffer.capacity())
             {
-                int newCapacity = Math.max(requiredCapacity, mBuffer.capacity() * 2);
-                ByteBuffer expanded = ByteBuffer.allocate(newCapacity);
-                mBuffer.flip();
-                expanded.put(mBuffer);
-                mBuffer = expanded;
+                mBuffer.put(data);
+                return;
             }
 
-            mBuffer.put(data);
+            int newCapacity = Math.max(requiredCapacity, mBuffer.capacity() * 2);
+            ByteBuffer expanded = ByteBuffer.allocate(newCapacity);
+            mBuffer.flip();
+            expanded.put(mBuffer);
+            expanded.put(data);
+            mBuffer = expanded;
         }
 
         private void complete(ByteBuffer finalFragment, Consumer<ByteBuffer> handler)
