@@ -20,6 +20,7 @@
 package io.github.dsheirer.source.tuner.sdrconnect;
 
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.source.ISourceEventProcessor;
 import io.github.dsheirer.source.tuner.TunerEvent;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -62,6 +63,13 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JLabel mAntennaLabel;
     private JComboBox<String> mAntennaCombo;
     private FrequencyPanel mSDRconnectFrequencyPanel;
+    private final ISourceEventProcessor mFrequencySaveListener = event ->
+    {
+        if(hasTuner() && !isLoading())
+        {
+            save();
+        }
+    };
 
     /**
      * Constructs an instance
@@ -193,23 +201,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         if(mSDRconnectFrequencyPanel == null)
         {
-            mSDRconnectFrequencyPanel = new FrequencyPanel()
-            {
-                @Override
-                public void updateControls()
-                {
-                    super.updateControls();
-                    getFrequencyCorrectionSpinner().setValue(0.0);
-                    getFrequencyCorrectionSpinner().setEnabled(false);
-                    getFrequencyCorrectionSpinner().setToolTipText(
-                        "PPM correction is not available for SDRconnect - configure frequency correction in SDRconnect instead");
-                    getAutoPPMCheckBox().setSelected(false);
-                    getAutoPPMCheckBox().setEnabled(false);
-                    getAutoPPMCheckBox().setToolTipText(
-                        "PPM correction is not available for SDRconnect - configure frequency correction in SDRconnect instead");
-                }
-            };
-            mSDRconnectFrequencyPanel.setToolTipText("Tuner frequency controls for SDRconnect");
+            mSDRconnectFrequencyPanel = new SDRconnectFrequencyPanel();
         }
 
         return mSDRconnectFrequencyPanel;
@@ -401,6 +393,87 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         component.setMinimumSize(size);
         component.setPreferredSize(size);
         component.setMaximumSize(size);
+    }
+
+    /**
+     * SDRconnect-specific frequency panel that omits the generic PPM controls, which do not apply to SDRconnect.
+     */
+    private class SDRconnectFrequencyPanel extends FrequencyPanel
+    {
+        SDRconnectFrequencyPanel()
+        {
+            removeAll();
+            setLayout(new MigLayout("insets 0,fillx,wrap 1", "[grow,fill]", "[][][][]"));
+            add(getFrequencyControl(), "align left");
+
+            JPanel minMaxPanel = new JPanel(new MigLayout("insets 0", "[][][][][][grow,fill]", ""));
+            minMaxPanel.add(new JLabel("Minimum:"));
+            minMaxPanel.add(getMinimumFrequencyTextField());
+            minMaxPanel.add(new JLabel("Maximum:"));
+            minMaxPanel.add(getMaximumFrequencyTextField());
+            minMaxPanel.add(getResetFrequenciesButton());
+            add(minMaxPanel, "growx");
+
+            JPanel measuredErrorPanel = new JPanel(new MigLayout("insets 0", "[][][grow,fill]", ""));
+            measuredErrorPanel.add(new JLabel("Measured Error:"));
+            measuredErrorPanel.add(getMeasuredPPMLabel());
+            add(measuredErrorPanel, "growx");
+
+            add(getTunerLockedStatusLabel());
+            setToolTipText("Tuner frequency controls for SDRconnect");
+        }
+
+        @Override
+        public void updateControls()
+        {
+            getFrequencyControl().clearListeners();
+            getFrequencyControl().addListener(mFrequencySaveListener);
+            boolean hasTunerUnlocked = hasTuner() && !getTuner().getTunerController().isLockedSampleRate();
+            getFrequencyControl().setEnabled(hasTunerUnlocked);
+            getMinimumFrequencyTextField().setEnabled(hasTunerUnlocked);
+            getMaximumFrequencyTextField().setEnabled(hasTunerUnlocked);
+            getResetFrequenciesButton().setEnabled(hasTunerUnlocked);
+            getTunerLockedStatusLabel().setVisible(hasTuner() && getTuner().getTunerController().isLockedSampleRate());
+
+            SDRconnectTuner tuner = getTuner();
+
+            if(tuner != null)
+            {
+                getFrequencyControl().setFrequency(tuner.getTunerController().getFrequency(), false);
+                getMinimumFrequencyTextField().setFrequency(tuner.getTunerController().getMinimumFrequency());
+                getMaximumFrequencyTextField().setFrequency(tuner.getTunerController().getMaximumFrequency());
+                getMeasuredPPMLabel().setText(tuner.getTunerController().getMeasuredErrorStatus());
+                getFrequencyControl().addListener(tuner.getTunerController());
+                tuner.getTunerController().addListener(getFrequencyControl());
+            }
+            else
+            {
+                getFrequencyControl().setFrequency(0, false);
+                getMeasuredPPMLabel().setText("");
+            }
+        }
+
+        @Override
+        public void updateFrequencyError()
+        {
+            SwingUtilities.invokeLater(() ->
+            {
+                if(hasTuner())
+                {
+                    getMeasuredPPMLabel().setText(getTuner().getTunerController().getMeasuredErrorStatus());
+                }
+                else
+                {
+                    getMeasuredPPMLabel().setText("");
+                }
+            });
+        }
+
+        @Override
+        public void updatePPM()
+        {
+            // SDRconnect frequency error is managed in SDRconnect rather than through the generic PPM UI.
+        }
     }
 
     @Override
