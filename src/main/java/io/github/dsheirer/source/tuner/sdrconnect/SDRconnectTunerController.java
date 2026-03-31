@@ -27,6 +27,7 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.util.ThreadPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -707,7 +708,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     }
 
     @Override
-    public void apply(io.github.dsheirer.source.tuner.configuration.TunerConfiguration config) throws SourceException
+    public void apply(TunerConfiguration config) throws SourceException
     {
         super.apply(config);
 
