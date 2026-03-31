@@ -169,13 +169,13 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         leftPanel.add(new JLabel("Device:"));
         leftPanel.add(getDeviceNameField(), WRAP);
         leftPanel.add(new JLabel("Sample Rate:"));
-        leftPanel.add(getSampleRateLabel());
-        leftPanel.add(new JLabel("Change:"));
-        leftPanel.add(getSampleRateCombo(), WRAP);
+        leftPanel.add(getSampleRateCombo());
+        leftPanel.add(new JLabel("In Use:"));
+        leftPanel.add(getSampleRateLabel(), WRAP);
         leftPanel.add(new JLabel("Antenna:"));
-        leftPanel.add(getAntennaLabel());
-        leftPanel.add(new JLabel("Change:"));
-        leftPanel.add(getAntennaCombo(), WRAP);
+        leftPanel.add(getAntennaCombo());
+        leftPanel.add(new JLabel("In Use:"));
+        leftPanel.add(getAntennaLabel(), WRAP);
 
         JPanel rightPanel = new JPanel(new MigLayout("fillx,wrap 1", "[grow,fill]", "[][]"));
         rightPanel.add(getButtonPanel(), "shrink,align left");
