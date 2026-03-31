@@ -20,6 +20,7 @@
 package io.github.dsheirer.source.tuner.sdrconnect;
 
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.source.tuner.TunerEvent;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerEditor;
@@ -27,8 +28,8 @@ import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.swing.JButton;
 import javax.swing.JLabel;
+import javax.swing.SwingUtilities;
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
 import javax.swing.JTextField;
@@ -52,8 +53,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JTextField mDeviceNameField;
     private JLabel mSampleRateLabel;
     private JComboBox<String> mSampleRateCombo;
+    private JLabel mAntennaLabel;
     private JComboBox<String> mAntennaCombo;
-    private JButton mApplySettingsButton;
     private FrequencyPanel mSDRconnectFrequencyPanel;
 
     /**
@@ -101,7 +102,13 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getSampleRateLabel().setText(String.format("%.3f MHz", controller.getCurrentSampleRate() / 1e6));
             updateSelectedSampleRate((int)controller.getCurrentSampleRate());
             getSampleRateCombo().setEnabled(!controller.isLockedSampleRate());
-            getApplySettingsButton().setEnabled(true);
+            updateAntennaOptions(controller.getValidAntennas());
+            String antenna = controller.getCurrentAntenna();
+            getAntennaLabel().setText(antenna.isEmpty() ? "N/A" : antenna);
+            updateSelectedAntenna(antenna);
+            getAntennaCombo().setEnabled(true);
+            controller.setAntennaChangeListener(this::onAntennaChanged);
+            controller.setSampleRateChangeListener(this::onSampleRateChanged);
         }
         else
         {
@@ -109,7 +116,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getSampleRateLabel().setText("N/A");
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
             getSampleRateCombo().setEnabled(false);
-            getApplySettingsButton().setEnabled(false);
+            getAntennaLabel().setText("N/A");
+            getAntennaCombo().setEnabled(false);
         }
 
         String status = getDiscoveredTuner().getTunerStatus().toString();
@@ -153,9 +161,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         leftPanel.add(getSampleRateLabel(), "split 2");
         leftPanel.add(getSampleRateCombo(), "wrap");
         leftPanel.add(new JLabel("Antenna:"));
+        leftPanel.add(getAntennaLabel(), "split 2");
         leftPanel.add(getAntennaCombo(), "wrap");
-        leftPanel.add(new JLabel(""));
-        leftPanel.add(getApplySettingsButton(), WRAP);
 
         JPanel rightPanel = new JPanel(new MigLayout("fill,wrap 1", "[grow,fill]", "[][grow,push]"));
         rightPanel.add(getButtonPanel(), "shrink,align left");
@@ -263,6 +270,24 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             mSampleRateCombo = new JComboBox<>(rates);
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
             mSampleRateCombo.setToolTipText("Select sample rate for SDRconnect");
+            mSampleRateCombo.addActionListener(e -> {
+                if(!isLoading() && hasTuner())
+                {
+                    SDRconnectTunerController controller = getTuner().getController();
+                    if(controller.isLockedSampleRate())
+                    {
+                        mLog.warn("Cannot change SDRconnect sample rate while tuner channels are active and the sample rate is locked");
+                        return;
+                    }
+                    int selectedIndex = getSampleRateCombo().getSelectedIndex();
+                    if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length)
+                    {
+                        int sampleRate = SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[selectedIndex];
+                        controller.requestSampleRate(sampleRate);
+                        mLog.info("Requested sample rate: {} Hz", sampleRate);
+                    }
+                }
+            });
         }
         return mSampleRateCombo;
     }
@@ -293,63 +318,89 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         if(mAntennaCombo == null)
         {
-            mAntennaCombo = new JComboBox<>(SDRconnectTunerController.ANTENNA_OPTIONS);
-            mAntennaCombo.setToolTipText("Select antenna input (A, B, C, or Hi-Z)");
+            mAntennaCombo = new JComboBox<>();
+            mAntennaCombo.setToolTipText("Select antenna input");
+            mAntennaCombo.addActionListener(e -> {
+                if(!isLoading() && hasTuner())
+                {
+                    String antenna = (String) getAntennaCombo().getSelectedItem();
+                    if(antenna != null)
+                    {
+                        getTuner().getController().requestAntenna(antenna);
+                        mLog.info("Requested antenna: {}", antenna);
+                    }
+                }
+            });
         }
         return mAntennaCombo;
     }
 
-    /**
-     * Apply settings button
-     */
-    private JButton getApplySettingsButton()
+    private JLabel getAntennaLabel()
     {
-        if(mApplySettingsButton == null)
+        if(mAntennaLabel == null)
         {
-            mApplySettingsButton = new JButton("Apply to SDRconnect");
-            mApplySettingsButton.setToolTipText("Send sample rate and antenna settings to SDRconnect");
-            mApplySettingsButton.addActionListener(e -> applySDRconnectSettings());
+            mAntennaLabel = new JLabel("N/A");
         }
-        return mApplySettingsButton;
+        return mAntennaLabel;
     }
 
-    /**
-     * Apply the selected settings to SDRconnect
-     */
-    private void applySDRconnectSettings()
+    private void updateAntennaOptions(String[] antennas)
     {
-        if(hasTuner())
+        if(mAntennaCombo == null)
         {
-            SDRconnectTunerController controller = getTuner().getController();
+            return;
+        }
 
-            // Apply sample rate
-            if(controller.isLockedSampleRate())
-            {
-                mLog.warn("Cannot apply SDRconnect sample rate while tuner channels are active and the sample rate is locked");
-            }
-            else
-            {
-                int selectedIndex = getSampleRateCombo().getSelectedIndex();
-                if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length)
-                {
-                    int sampleRate = SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[selectedIndex];
-                    controller.requestSampleRate(sampleRate);
-                    mLog.info("Requested sample rate: {} Hz", sampleRate);
-                }
-            }
+        mAntennaCombo.removeAllItems();
+        for(String antenna : antennas)
+        {
+            mAntennaCombo.addItem(antenna);
+        }
+    }
 
-            // Apply antenna selection
-            String antenna = (String) getAntennaCombo().getSelectedItem();
-            if(antenna != null)
+    private void updateSelectedAntenna(String antenna)
+    {
+        if(mAntennaCombo == null || antenna == null || antenna.isEmpty())
+        {
+            return;
+        }
+
+        for(int i = 0; i < mAntennaCombo.getItemCount(); i++)
+        {
+            if(mAntennaCombo.getItemAt(i).equals(antenna))
             {
-                controller.requestAntenna(antenna);
-                mLog.info("Requested antenna: {}", antenna);
+                mAntennaCombo.setSelectedIndex(i);
+                return;
             }
         }
-        else
+    }
+
+    @Override
+    public void receive(TunerEvent tunerEvent)
+    {
+        super.receive(tunerEvent);
+        if(tunerEvent.getEvent() == TunerEvent.Event.UPDATE_LOCK_STATE && hasTuner())
         {
-            mLog.warn("Cannot apply settings - tuner not connected");
+            SwingUtilities.invokeLater(() ->
+                getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate()));
         }
+    }
+
+    private void onAntennaChanged(String antenna)
+    {
+        SwingUtilities.invokeLater(() -> {
+            getAntennaLabel().setText(antenna.isEmpty() ? "N/A" : antenna);
+            updateSelectedAntenna(antenna);
+        });
+    }
+
+    private void onSampleRateChanged(int sampleRate)
+    {
+        SwingUtilities.invokeLater(() -> {
+            getSampleRateLabel().setText(String.format("%.3f MHz", sampleRate / 1e6));
+            updateSelectedSampleRate(sampleRate);
+            getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate());
+        });
     }
 
     @Override

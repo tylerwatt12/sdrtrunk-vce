@@ -37,6 +37,7 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.concurrent.CompletionStage;
@@ -65,6 +66,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private static final String PROPERTY_ACTIVE_DEVICE = "active_device";
     private static final String PROPERTY_DEVICE_SAMPLE_RATE = "device_sample_rate";
     private static final String PROPERTY_DEVICE_CENTER_FREQUENCY = "device_center_frequency";
+    private static final String PROPERTY_VALID_ANTENNAS = "valid_antennas";
+    private static final String PROPERTY_ACTIVE_ANTENNA = "active_antenna";
 
     // Default connection settings
     public static final String DEFAULT_HOST = "127.0.0.1";
@@ -109,6 +112,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private long mCenterFrequency = DEFAULT_FREQUENCY;
     private String mValidDevices = "";
     private String mDeviceName = DEFAULT_DEVICE_NAME;
+    private String mValidAntennas = "";
+    private String mCurrentAntenna = "";
+    private Consumer<String> mAntennaChangeListener;
+    private Consumer<Integer> mSampleRateChangeListener;
     private final Gson mGson = new Gson();
 
     // Buffer for accumulating partial WebSocket messages
@@ -266,6 +273,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 queryProperty(PROPERTY_ACTIVE_DEVICE);
                 queryProperty(PROPERTY_DEVICE_SAMPLE_RATE);
                 queryProperty(PROPERTY_DEVICE_CENTER_FREQUENCY);
+                queryProperty(PROPERTY_VALID_ANTENNAS);
+                queryProperty(PROPERTY_ACTIVE_ANTENNA);
                 awaitLatch(mSettingsLatch.get(), 2, TimeUnit.SECONDS,
                     "SDRconnect initial settings");
 
@@ -767,6 +776,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             mLog.error("Error setting sample rate on frequency controller", se);
         }
+        if(mSampleRateChangeListener != null)
+        {
+            mSampleRateChangeListener.accept(sampleRate);
+        }
     }
 
     /**
@@ -793,7 +806,34 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public void requestAntenna(String antenna)
     {
         mLog.info("Requesting SDRconnect antenna: {}", antenna);
-        setProperty("antenna_select", antenna);
+        setProperty(PROPERTY_ACTIVE_ANTENNA, antenna);
+    }
+
+    public String getCurrentAntenna()
+    {
+        return mCurrentAntenna;
+    }
+
+    public void setAntennaChangeListener(Consumer<String> listener)
+    {
+        mAntennaChangeListener = listener;
+    }
+
+    public void setSampleRateChangeListener(Consumer<Integer> listener)
+    {
+        mSampleRateChangeListener = listener;
+    }
+
+    public String[] getValidAntennas()
+    {
+        if(mValidAntennas == null || mValidAntennas.isBlank())
+        {
+            return new String[0];
+        }
+        return Arrays.stream(mValidAntennas.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .toArray(String[]::new);
     }
 
     /**
@@ -810,11 +850,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         9000000,   // 9 MHz
         10000000   // 10 MHz
     };
-
-    /**
-     * Antenna options for SDRplay devices
-     */
-    protected static final String[] ANTENNA_OPTIONS = {"A", "B", "C", "Hi-Z"};
 
     // WebSocket.Listener implementation
 
@@ -1008,6 +1043,20 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                         });
                     }
                     mLastStartedState = started;
+                    break;
+
+                case PROPERTY_VALID_ANTENNAS:
+                    mValidAntennas = value;
+                    mLog.info("SDRconnect valid antennas: {}", value);
+                    break;
+
+                case PROPERTY_ACTIVE_ANTENNA:
+                    mCurrentAntenna = value;
+                    mLog.info("SDRconnect active antenna: {}", value);
+                    if(mAntennaChangeListener != null)
+                    {
+                        mAntennaChangeListener.accept(value);
+                    }
                     break;
 
                 case PROPERTY_VALID_DEVICES:
