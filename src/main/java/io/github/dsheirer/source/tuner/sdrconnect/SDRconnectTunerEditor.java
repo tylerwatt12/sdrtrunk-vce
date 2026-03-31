@@ -29,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.JLabel;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
@@ -268,24 +269,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             mSampleRateCombo = new JComboBox<>(rates);
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
             mSampleRateCombo.setToolTipText("Select sample rate for SDRconnect");
-            mSampleRateCombo.addActionListener(e -> {
-                if(!isLoading() && hasTuner())
-                {
-                    SDRconnectTunerController controller = getTuner().getController();
-                    if(controller.isLockedSampleRate())
-                    {
-                        mLog.warn("Cannot change SDRconnect sample rate while tuner channels are active and the sample rate is locked");
-                        return;
-                    }
-                    int selectedIndex = getSampleRateCombo().getSelectedIndex();
-                    if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length)
-                    {
-                        int sampleRate = SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[selectedIndex];
-                        controller.requestSampleRate(sampleRate);
-                        mLog.info("Requested sample rate: {} Hz", sampleRate);
-                    }
-                }
-            });
+            mSampleRateCombo.addActionListener(e -> onSampleRateSelected());
         }
         return mSampleRateCombo;
     }
@@ -381,6 +365,26 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         {
             SwingUtilities.invokeLater(() ->
                 getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate()));
+        }
+    }
+
+    private void onSampleRateSelected()
+    {
+        if(!isLoading() && hasTuner())
+        {
+            SDRconnectTunerController controller = getTuner().getController();
+            if(controller.isLockedSampleRate())
+            {
+                mLog.warn("Cannot change SDRconnect sample rate while tuner channels are active and the sample rate is locked");
+                return;
+            }
+            int selectedIndex = getSampleRateCombo().getSelectedIndex();
+            if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length)
+            {
+                int sampleRate = SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[selectedIndex];
+                controller.requestSampleRate(sampleRate);
+                mLog.info("Requested sample rate: {} Hz", sampleRate);
+            }
         }
     }
 
