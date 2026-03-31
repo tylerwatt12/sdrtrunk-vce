@@ -53,6 +53,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private static final String CONNECTION_STATUS_CONNECTED = "Connected";
     private static final String CONNECTION_STATUS_NOT_CONNECTED = "Not Connected";
     private static final String WRAP = "wrap";
+    private static final String GROW_X = "growx";
     private static final int CONFIG_CONTROL_WIDTH = 100;
 
     private JTextField mHostField;
@@ -189,7 +190,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
         JPanel rightPanel = new JPanel(new MigLayout("fillx,gapy 0,wrap 1", "[grow,fill]", "[][]"));
         rightPanel.add(getButtonPanel(), "shrink,align left");
-        rightPanel.add(getFrequencyPanel(), "growx");
+        rightPanel.add(getFrequencyPanel(), GROW_X);
 
         add(leftPanel, "grow");
         add(new JSeparator(SwingConstants.VERTICAL), "growy");
@@ -412,12 +413,12 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             minMaxPanel.add(new JLabel("Maximum:"));
             minMaxPanel.add(getMaximumFrequencyTextField());
             minMaxPanel.add(getResetFrequenciesButton());
-            add(minMaxPanel, "growx");
+            add(minMaxPanel, GROW_X);
 
             JPanel measuredErrorPanel = new JPanel(new MigLayout("insets 0", "[][][grow,fill]", ""));
             measuredErrorPanel.add(new JLabel("Measured Error:"));
             measuredErrorPanel.add(getMeasuredPPMLabel());
-            add(measuredErrorPanel, "growx");
+            add(measuredErrorPanel, GROW_X);
 
             add(getTunerLockedStatusLabel());
             setToolTipText("Tuner frequency controls for SDRconnect");
