@@ -1049,8 +1049,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         // Observed fragmented SDRconnect IQ payloads are consistently about 1,000,034 bytes, so start
         // slightly above that steady-state size to avoid repeated growth on the fragmented binary path.
-        private static final int INITIAL_CAPACITY = 1_048_576;
-        private ByteBuffer mBuffer = ByteBuffer.allocate(INITIAL_CAPACITY);
+        private ByteBuffer mBuffer = ByteBuffer.allocate(1_048_576);
 
         private void append(ByteBuffer data)
         {
