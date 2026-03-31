@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import java.awt.Component;
 import java.awt.Dimension;
+import java.text.DecimalFormat;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
@@ -55,6 +56,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private static final String WRAP = "wrap";
     private static final String GROW_X = "growx";
     private static final int CONFIG_CONTROL_WIDTH = 100;
+    private final DecimalFormat mDriftPpmFormat = new DecimalFormat("0.0");
 
     private JTextField mHostField;
     private JSpinner mPortSpinner;
@@ -407,6 +409,17 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         component.setMaximumSize(size);
     }
 
+    private String formatMeasuredErrorStatus(SDRconnectTunerController controller)
+    {
+        if(controller == null || controller.getMeasuredFrequencyError() == 0)
+        {
+            return "";
+        }
+
+        return String.format("%+d Hz (%s ppm)", controller.getMeasuredFrequencyError(),
+            mDriftPpmFormat.format(Math.abs(controller.getPPMFrequencyError())));
+    }
+
     /**
      * SDRconnect-specific frequency panel that omits the generic PPM controls, which do not apply to SDRconnect.
      */
@@ -415,8 +428,9 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         SDRconnectFrequencyPanel()
         {
             removeAll();
-            setLayout(new MigLayout("insets 0,fillx,wrap 1", "[grow,fill]", "[][][]"));
+            setLayout(new MigLayout("insets 0,fillx,wrap 2", "[pref!][grow,fill]", "[][]"));
             add(getFrequencyControl(), "align left");
+            add(getMeasuredPPMLabel(), "align left");
 
             JPanel minMaxPanel = new JPanel(new MigLayout("insets 0", "[][][][][][grow,fill]", ""));
             minMaxPanel.add(new JLabel("Minimum:"));
@@ -424,12 +438,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             minMaxPanel.add(new JLabel("Maximum:"));
             minMaxPanel.add(getMaximumFrequencyTextField());
             minMaxPanel.add(getResetFrequenciesButton());
-            add(minMaxPanel, GROW_X);
-
-            JPanel measuredErrorPanel = new JPanel(new MigLayout("insets 0", "[][][grow,fill]", ""));
-            measuredErrorPanel.add(new JLabel("Measured Error:"));
-            measuredErrorPanel.add(getMeasuredPPMLabel());
-            add(measuredErrorPanel, GROW_X);
+            add(minMaxPanel, "span 2," + GROW_X);
             setToolTipText("Tuner frequency controls for SDRconnect");
         }
 
@@ -451,7 +460,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                 getFrequencyControl().setFrequency(tuner.getTunerController().getFrequency(), false);
                 getMinimumFrequencyTextField().setFrequency(tuner.getTunerController().getMinimumFrequency());
                 getMaximumFrequencyTextField().setFrequency(tuner.getTunerController().getMaximumFrequency());
-                getMeasuredPPMLabel().setText(tuner.getTunerController().getMeasuredErrorStatus());
+                getMeasuredPPMLabel().setText(formatMeasuredErrorStatus(tuner.getController()));
                 getFrequencyControl().addListener(tuner.getTunerController());
                 tuner.getTunerController().addListener(getFrequencyControl());
             }
@@ -469,7 +478,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             {
                 if(hasTuner())
                 {
-                    getMeasuredPPMLabel().setText(getTuner().getTunerController().getMeasuredErrorStatus());
+                    getMeasuredPPMLabel().setText(formatMeasuredErrorStatus(getTuner().getController()));
                 }
                 else
                 {
