@@ -114,6 +114,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private String mDeviceName = DEFAULT_DEVICE_NAME;
     private String mValidAntennas = "";
     private String mCurrentAntenna = "";
+    private int mConfiguredSampleRate = DEFAULT_SAMPLE_RATE;
+    private String mConfiguredAntenna = "";
     private Consumer<String> mAntennaChangeListener;
     private Consumer<Integer> mSampleRateChangeListener;
     private final Gson mGson = new Gson();
@@ -290,11 +292,19 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 // Enable IQ streaming
                 enableIqStream(true);
 
-                // Re-apply the configured center frequency now that the connection is established and the device
+                // Re-apply configured settings now that the connection is established and the device
                 // selection handshake has completed.
                 if(mFrequencyController.getFrequency() != mCenterFrequency)
                 {
                     setTunedFrequency(mFrequencyController.getFrequency());
+                }
+                if(mConfiguredSampleRate != mSampleRate)
+                {
+                    requestSampleRate(mConfiguredSampleRate);
+                }
+                if(!mConfiguredAntenna.isEmpty() && !mConfiguredAntenna.equals(mCurrentAntenna))
+                {
+                    requestAntenna(mConfiguredAntenna);
                 }
 
                 // Reset reconnect state on successful connection
@@ -725,6 +735,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(config instanceof SDRconnectTunerConfiguration sdrconnectConfig)
         {
             setDeviceName(sdrconnectConfig.getDeviceName());
+            mConfiguredSampleRate = sdrconnectConfig.getSampleRate();
+            mConfiguredAntenna = sdrconnectConfig.getAntenna();
         }
     }
 

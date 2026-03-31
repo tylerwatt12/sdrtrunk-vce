@@ -32,6 +32,8 @@ public class SDRconnectTunerConfiguration extends TunerConfiguration
     private String mHost = SDRconnectTunerController.DEFAULT_HOST;
     private int mPort = SDRconnectTunerController.DEFAULT_PORT;
     private String mDeviceName = SDRconnectTunerController.DEFAULT_DEVICE_NAME;
+    private int mSampleRate = SDRconnectTunerController.DEFAULT_SAMPLE_RATE;
+    private String mAntenna = "";
 
     /**
      * Jackson constructor
@@ -132,6 +134,34 @@ public class SDRconnectTunerConfiguration extends TunerConfiguration
     public void setDeviceName(String deviceName)
     {
         mDeviceName = deviceName;
+    }
+
+    /**
+     * Configured sample rate in Hz
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "sample_rate")
+    public int getSampleRate()
+    {
+        return mSampleRate;
+    }
+
+    public void setSampleRate(int sampleRate)
+    {
+        mSampleRate = sampleRate;
+    }
+
+    /**
+     * Configured antenna selection
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "antenna")
+    public String getAntenna()
+    {
+        return mAntenna;
+    }
+
+    public void setAntenna(String antenna)
+    {
+        mAntenna = antenna != null ? antenna : "";
     }
 
     /**

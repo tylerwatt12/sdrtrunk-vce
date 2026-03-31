@@ -134,9 +134,16 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
         if(hasConfiguration())
         {
-            getHostField().setText(getConfiguration().getHost());
-            getPortSpinner().setValue(getConfiguration().getPort());
-            getDeviceNameField().setText(getConfiguration().getDeviceName());
+            SDRconnectTunerConfiguration config = getConfiguration();
+            getHostField().setText(config.getHost());
+            getPortSpinner().setValue(config.getPort());
+            getDeviceNameField().setText(config.getDeviceName());
+
+            if(!hasTuner())
+            {
+                updateSelectedSampleRate(config.getSampleRate());
+                updateSelectedAntenna(config.getAntenna());
+            }
         }
 
         setLoading(false);
@@ -342,8 +349,17 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
     private void updateSelectedAntenna(String antenna)
     {
-        if(mAntennaCombo == null || antenna == null || antenna.isEmpty())
+        if(mAntennaCombo == null)
         {
+            return;
+        }
+
+        if(antenna == null || antenna.isEmpty())
+        {
+            if(mAntennaCombo.getItemCount() > 0)
+            {
+                mAntennaCombo.setSelectedIndex(0);
+            }
             return;
         }
 
@@ -398,6 +414,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         SwingUtilities.invokeLater(() -> {
             getAntennaLabel().setText(antenna.isEmpty() ? "N/A" : antenna);
             updateSelectedAntenna(antenna);
+            save();
         });
     }
 
@@ -407,6 +424,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getSampleRateLabel().setText(formatSampleRate(sampleRate));
             updateSelectedSampleRate(sampleRate);
             getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate());
+            save();
         });
     }
 
@@ -424,6 +442,17 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             config.setDeviceName(getDeviceNameField().getText().trim());
             config.setUniqueID(SDRconnectTunerConfiguration.getUniqueId(
                 config.getHost(), config.getPort()));
+            int selectedIndex = getSampleRateCombo().getSelectedIndex();
+            if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length
+                    && getSampleRateCombo().getItemCount() > 0)
+            {
+                config.setSampleRate(SDRconnectTunerController.SUPPORTED_SAMPLE_RATES[selectedIndex]);
+            }
+            String antenna = (String) getAntennaCombo().getSelectedItem();
+            if(antenna != null && getAntennaCombo().getItemCount() > 0)
+            {
+                config.setAntenna(antenna);
+            }
             // Force PPM to 0 - correction should be done in SDRconnect
             config.setFrequencyCorrection(0.0);
             saveConfiguration();
