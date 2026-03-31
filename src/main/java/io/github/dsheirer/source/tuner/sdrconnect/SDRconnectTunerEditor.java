@@ -310,6 +310,17 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         if(mAntennaCombo == null)
         {
             mAntennaCombo = new JComboBox<>();
+            mAntennaCombo.setRenderer(new javax.swing.DefaultListCellRenderer()
+            {
+                @Override
+                public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
+                    int index, boolean isSelected, boolean cellHasFocus)
+                {
+                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                    setText(formatAntenna((String) value));
+                    return this;
+                }
+            });
             mAntennaCombo.setToolTipText("Select antenna input");
             mAntennaCombo.addActionListener(e -> {
                 if(!isLoading() && hasTuner())
