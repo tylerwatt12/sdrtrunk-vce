@@ -1070,8 +1070,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             append(finalFragment);
             mBuffer.flip();
-            handler.accept(mBuffer);
-            mBuffer.clear();
+            try
+            {
+                handler.accept(mBuffer);
+            }
+            finally
+            {
+                mBuffer.clear();
+            }
         }
     }
 
