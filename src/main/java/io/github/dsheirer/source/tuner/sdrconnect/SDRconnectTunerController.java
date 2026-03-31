@@ -112,7 +112,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
     // Buffer for accumulating partial WebSocket messages
     private ByteBuffer mPartialBuffer;
-    private StringBuilder mPartialTextBuffer;
+    private final StringBuilder mPartialTextBuffer = new StringBuilder();
     private final SDRconnectNativeBufferFactory mNativeBufferFactory;
     private final AtomicReference<CountDownLatch> mDeviceDiscoveryLatch = new AtomicReference<>();
     private final AtomicReference<CountDownLatch> mSettingsLatch = new AtomicReference<>();
@@ -827,11 +827,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last)
     {
-        // Accumulate text data
-        if(mPartialTextBuffer == null)
-        {
-            mPartialTextBuffer = new StringBuilder();
-        }
         mPartialTextBuffer.append(data);
 
         // Only process when we have the complete message
@@ -840,7 +835,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             try
             {
                 String json = mPartialTextBuffer.toString();
-                mPartialTextBuffer = null;
+                mPartialTextBuffer.setLength(0);
 
                 JsonObject msg = JsonParser.parseString(json).getAsJsonObject();
 
@@ -859,7 +854,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             catch(Exception e)
             {
                 mLog.warn("Error parsing SDRconnect message: {}", e.getMessage());
-                mPartialTextBuffer = null;
+                mPartialTextBuffer.setLength(0);
             }
         }
 
