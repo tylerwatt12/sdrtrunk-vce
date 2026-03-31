@@ -111,7 +111,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private final Gson mGson = new Gson();
 
     // Buffer for accumulating partial WebSocket messages
-    private ByteBuffer mPartialBuffer;
+    private final BinaryMessageAccumulator mBinaryMessageAccumulator = new BinaryMessageAccumulator();
     private final StringBuilder mPartialTextBuffer = new StringBuilder();
     private final SDRconnectNativeBufferFactory mNativeBufferFactory;
     private final AtomicReference<CountDownLatch> mDeviceDiscoveryLatch = new AtomicReference<>();
@@ -869,11 +869,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             if(!last)
             {
-                appendToPartialBuffer(data);
+                mBinaryMessageAccumulator.append(data);
             }
             else
             {
-                ByteBuffer buffer = getCompleteBinaryMessage(data);
+                ByteBuffer buffer = mBinaryMessageAccumulator.complete(data);
 
                 if(buffer.remaining() >= 2)
                 {
@@ -886,7 +886,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     }
                 }
 
-                clearPartialBuffer();
+                mBinaryMessageAccumulator.clear();
             }
         }
         catch(Exception e)
@@ -896,64 +896,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         webSocket.request(1);
         return null;
-    }
-
-    private void appendToPartialBuffer(ByteBuffer data)
-    {
-        if(data == null || !data.hasRemaining())
-        {
-            return;
-        }
-
-        int requiredCapacity = data.remaining();
-
-        if(mPartialBuffer != null)
-        {
-            requiredCapacity += mPartialBuffer.position();
-        }
-
-        ensurePartialBufferCapacity(requiredCapacity);
-        mPartialBuffer.put(data);
-    }
-
-    private void ensurePartialBufferCapacity(int requiredCapacity)
-    {
-        if(mPartialBuffer == null)
-        {
-            mPartialBuffer = ByteBuffer.allocate(requiredCapacity);
-            return;
-        }
-
-        if(requiredCapacity <= mPartialBuffer.capacity())
-        {
-            return;
-        }
-
-        int newCapacity = Math.max(requiredCapacity, mPartialBuffer.capacity() * 2);
-        ByteBuffer expanded = ByteBuffer.allocate(newCapacity);
-        mPartialBuffer.flip();
-        expanded.put(mPartialBuffer);
-        mPartialBuffer = expanded;
-    }
-
-    private ByteBuffer getCompleteBinaryMessage(ByteBuffer data)
-    {
-        if(mPartialBuffer == null || mPartialBuffer.position() == 0)
-        {
-            return data.slice();
-        }
-
-        appendToPartialBuffer(data);
-        mPartialBuffer.flip();
-        return mPartialBuffer;
-    }
-
-    private void clearPartialBuffer()
-    {
-        if(mPartialBuffer != null)
-        {
-            mPartialBuffer.clear();
-        }
     }
 
     @Override
@@ -1100,6 +1042,69 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         catch(SourceException se)
         {
             mLog.error("Error updating frequency controller", se);
+        }
+    }
+
+    private static class BinaryMessageAccumulator
+    {
+        private ByteBuffer mBuffer;
+
+        private void append(ByteBuffer data)
+        {
+            if(data == null || !data.hasRemaining())
+            {
+                return;
+            }
+
+            int requiredCapacity = data.remaining();
+
+            if(mBuffer != null)
+            {
+                requiredCapacity += mBuffer.position();
+            }
+
+            ensureCapacity(requiredCapacity);
+            mBuffer.put(data);
+        }
+
+        private ByteBuffer complete(ByteBuffer finalFragment)
+        {
+            if(mBuffer == null || mBuffer.position() == 0)
+            {
+                return finalFragment.slice();
+            }
+
+            append(finalFragment);
+            mBuffer.flip();
+            return mBuffer;
+        }
+
+        private void clear()
+        {
+            if(mBuffer != null)
+            {
+                mBuffer.clear();
+            }
+        }
+
+        private void ensureCapacity(int requiredCapacity)
+        {
+            if(mBuffer == null)
+            {
+                mBuffer = ByteBuffer.allocate(requiredCapacity);
+                return;
+            }
+
+            if(requiredCapacity <= mBuffer.capacity())
+            {
+                return;
+            }
+
+            int newCapacity = Math.max(requiredCapacity, mBuffer.capacity() * 2);
+            ByteBuffer expanded = ByteBuffer.allocate(newCapacity);
+            mBuffer.flip();
+            expanded.put(mBuffer);
+            mBuffer = expanded;
         }
     }
 
