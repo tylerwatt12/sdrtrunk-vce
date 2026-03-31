@@ -143,14 +143,16 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
                 mLog.info("Starting SDRconnect tuner: {}:{} device [{}]", mHost, mPort, getEffectiveDeviceName());
 
                 SDRconnectTunerController controller = new SDRconnectTunerController(mHost, mPort, this);
+                if(hasTunerConfiguration())
+                {
+                    // Seed persisted SDRconnect-specific settings before connect so the initial handshake can
+                    // select the correct device and re-apply the configured sample rate/antenna immediately.
+                    controller.seedStartupConfiguration(getSDRconnectTunerConfiguration());
+                }
                 if(mRuntimeDeviceName != null)
                 {
+                    // Runtime assignment still wins for startup device selection without changing the saved config.
                     controller.setDeviceName(mRuntimeDeviceName);
-                }
-                else if(hasTunerConfiguration())
-                {
-                    // Seed the preferred device before connecting so the SDRconnect handshake can select it.
-                    controller.setDeviceName(getSDRconnectTunerConfiguration().getDeviceName());
                 }
                 mTuner = new SDRconnectTuner(controller, this, mChannelizerType);
 

@@ -219,6 +219,21 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
+    /**
+     * Seeds SDRconnect-specific startup settings that must be available before the initial connect sequence runs.
+     * This intentionally avoids the base apply() path because that restores frequency through setFrequency(), which
+     * requires a live WebSocket connection.
+     */
+    public void seedStartupConfiguration(SDRconnectTunerConfiguration config)
+    {
+        if(config != null)
+        {
+            setDeviceName(config.getDeviceName());
+            mConfiguredSampleRate = config.getSampleRate();
+            mConfiguredAntenna = config.getAntenna();
+        }
+    }
+
     @Override
     public TunerType getTunerType()
     {
@@ -734,9 +749,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         if(config instanceof SDRconnectTunerConfiguration sdrconnectConfig)
         {
-            setDeviceName(sdrconnectConfig.getDeviceName());
-            mConfiguredSampleRate = sdrconnectConfig.getSampleRate();
-            mConfiguredAntenna = sdrconnectConfig.getAntenna();
+            seedStartupConfiguration(sdrconnectConfig);
         }
     }
 
