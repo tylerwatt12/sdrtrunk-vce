@@ -57,7 +57,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private static final String WRAP = "wrap";
     private static final String GROW_X = "growx";
     private static final int CONFIG_CONTROL_WIDTH = 100;
-    private final DecimalFormat mDriftPpmFormat = new DecimalFormat("0.0");
+    private final DecimalFormat mMeasuredErrorPpmFormat = new DecimalFormat("0.0");
 
     private JTextField mHostField;
     private JSpinner mPortSpinner;
@@ -417,8 +417,13 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             return "";
         }
 
-        return String.format("%+d Hz (%s ppm)", controller.getMeasuredFrequencyError(),
-            mDriftPpmFormat.format(Math.abs(controller.getPPMFrequencyError())));
+        return String.format(
+            "<html><table cellpadding='0' cellspacing='0'>" +
+                "<tr><td align='right'>%+d</td><td>&nbsp;Hz</td></tr>" +
+                "<tr><td align='right'>%s</td><td>&nbsp;ppm</td></tr>" +
+            "</table></html>",
+            controller.getMeasuredFrequencyError(),
+            mMeasuredErrorPpmFormat.format(Math.abs(controller.getPPMFrequencyError())));
     }
 
     /**
