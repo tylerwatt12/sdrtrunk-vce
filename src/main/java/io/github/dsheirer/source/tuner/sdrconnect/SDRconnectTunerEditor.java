@@ -105,7 +105,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getSampleRateCombo().setEnabled(!controller.isLockedSampleRate());
             updateAntennaOptions(controller.getValidAntennas());
             String antenna = controller.getCurrentAntenna();
-            getAntennaLabel().setText(antenna.isEmpty() ? "N/A" : antenna);
+            getAntennaLabel().setText(formatAntenna(antenna));
             updateSelectedAntenna(antenna);
             getAntennaCombo().setEnabled(true);
             controller.setAntennaChangeListener(this::onAntennaChanged);
@@ -166,10 +166,12 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         leftPanel.add(new JLabel("Device:"));
         leftPanel.add(getDeviceNameField(), WRAP);
         leftPanel.add(new JLabel("Sample Rate:"));
-        leftPanel.add(getSampleRateLabel(), "span 2");
+        leftPanel.add(getSampleRateLabel());
+        leftPanel.add(new JLabel("Change:"));
         leftPanel.add(getSampleRateCombo(), WRAP);
         leftPanel.add(new JLabel("Antenna:"));
-        leftPanel.add(getAntennaLabel(), "span 2");
+        leftPanel.add(getAntennaLabel());
+        leftPanel.add(new JLabel("Change:"));
         leftPanel.add(getAntennaCombo(), WRAP);
 
         JPanel rightPanel = new JPanel(new MigLayout("fillx,wrap 1", "[grow,fill]", "[][]"));
@@ -409,10 +411,20 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         return String.format("%.0f MHz", hz / 1e6);
     }
 
+    private static String formatAntenna(String antenna)
+    {
+        if(antenna == null || antenna.isEmpty())
+        {
+            return "N/A";
+        }
+        String stripped = antenna.replaceFirst("(?i)^antenna\\s+", "");
+        return stripped.isEmpty() ? antenna : stripped;
+    }
+
     private void onAntennaChanged(String antenna)
     {
         SwingUtilities.invokeLater(() -> {
-            getAntennaLabel().setText(antenna.isEmpty() ? "N/A" : antenna);
+            getAntennaLabel().setText(formatAntenna(antenna));
             updateSelectedAntenna(antenna);
             save();
         });
