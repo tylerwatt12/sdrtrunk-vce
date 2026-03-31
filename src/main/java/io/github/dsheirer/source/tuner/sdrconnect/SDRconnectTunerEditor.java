@@ -28,15 +28,18 @@ import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.Component;
+import javax.swing.DefaultListCellRenderer;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
-import javax.swing.SwingConstants;
-import javax.swing.SwingUtilities;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
-import javax.swing.JTextField;
 import javax.swing.JSpinner;
-import javax.swing.JComboBox;
+import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 
 /**
  * SDRconnect tuner configuration editor
@@ -310,10 +313,10 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         if(mAntennaCombo == null)
         {
             mAntennaCombo = new JComboBox<>();
-            mAntennaCombo.setRenderer(new javax.swing.DefaultListCellRenderer()
+            mAntennaCombo.setRenderer(new DefaultListCellRenderer()
             {
                 @Override
-                public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
+                public Component getListCellRendererComponent(JList<?> list, Object value,
                     int index, boolean isSelected, boolean cellHasFocus)
                 {
                     super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
