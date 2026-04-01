@@ -1015,6 +1015,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             {
                 case PROPERTY_DEVICE_CENTER_FREQUENCY:
                     long newFrequency = Long.parseLong(value);
+                    if(newFrequency < MINIMUM_FREQUENCY)
+                    {
+                        mLog.debug("Ignoring transient SDRconnect center frequency: {} Hz", newFrequency);
+                        break;
+                    }
                     markFrequencyReceived();
                     if(newFrequency != mCenterFrequency)
                     {
