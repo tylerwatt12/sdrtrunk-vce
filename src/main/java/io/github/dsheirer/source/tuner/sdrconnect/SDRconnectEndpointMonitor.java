@@ -45,6 +45,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 
 class SDRconnectEndpointMonitor
@@ -58,15 +59,20 @@ class SDRconnectEndpointMonitor
     private static final int SDRCONNECT_HEADLESS_START_TIMEOUT_MS = 5000;
     private static final int SDRCONNECT_HEADLESS_START_RETRY_INTERVAL_MS = 250;
     private static final int DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS = 15000;
+    private static final int SDRCONNECT_HEADLESS_RESTART_INITIAL_DELAY_MS = 1000;
+    private static final int SDRCONNECT_HEADLESS_RESTART_MAX_DELAY_MS = 60000;
+    private static final int SDRCONNECT_HEADLESS_RESTART_STABLE_RESET_MS = 30000;
 
     private final Logger mLog;
     private final UserPreferences mUserPreferences;
     private final Map<Integer, Process> mManagedSDRconnectProcesses = new ConcurrentHashMap<>();
+    private final Map<Integer, Integer> mManagedProcessRestartAttempts = new ConcurrentHashMap<>();
     private final java.util.Set<Integer> mExpectedManagedProcessExits =
         Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Thread mManagedSDRconnectShutdownHook;
     private final HttpClient mSDRconnectReadyProbeHttpClient =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+    private final AtomicBoolean mStopped = new AtomicBoolean(false);
 
     SDRconnectEndpointMonitor(UserPreferences userPreferences, Logger log)
     {
@@ -112,6 +118,7 @@ class SDRconnectEndpointMonitor
 
     void stop()
     {
+        mStopped.set(true);
         stopManagedSDRconnectProcesses();
 
         try
@@ -265,6 +272,7 @@ class SDRconnectEndpointMonitor
             Process process = processBuilder.start();
             mManagedSDRconnectProcesses.put(port, process);
             registerUnexpectedExitLogger(port, process, logPath);
+            scheduleRestartAttemptReset(port, process);
             mLog.info("Started SDRconnect headless process on port {} using [{}]", port, executable);
             return true;
         }
@@ -463,12 +471,49 @@ class SDRconnectEndpointMonitor
 
             if(mExpectedManagedProcessExits.remove(port))
             {
+                mManagedProcessRestartAttempts.remove(port);
                 return;
             }
 
             mLog.error("Managed SDRconnect headless process on port {} exited unexpectedly with code {}. See log [{}]",
                 port, exitedProcess.exitValue(), logPath);
+            scheduleManagedProcessRestart(port);
         });
+    }
+
+    private void scheduleManagedProcessRestart(int port)
+    {
+        int attempts = mManagedProcessRestartAttempts.merge(port, 1, Integer::sum);
+        long delayMs = Math.min(SDRCONNECT_HEADLESS_RESTART_INITIAL_DELAY_MS * (1L << (attempts - 1)),
+            SDRCONNECT_HEADLESS_RESTART_MAX_DELAY_MS);
+        mLog.info("Scheduling managed SDRconnect headless restart on port {} in {} ms (attempt {})",
+            port, delayMs, attempts);
+
+        ThreadPool.SCHEDULED.schedule(() ->
+        {
+            if(mStopped.get() || mExpectedManagedProcessExits.contains(port))
+            {
+                return;
+            }
+
+            mLog.info("Attempting to restart managed SDRconnect headless process on port {}", port);
+            if(!launchManagedSDRconnectProcess(port))
+            {
+                mLog.warn("Unable to restart managed SDRconnect headless process on port {} - will retry", port);
+                scheduleManagedProcessRestart(port);
+            }
+        }, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void scheduleRestartAttemptReset(int port, Process process)
+    {
+        ThreadPool.SCHEDULED.schedule(() ->
+        {
+            if(mManagedSDRconnectProcesses.get(port) == process && process.isAlive())
+            {
+                mManagedProcessRestartAttempts.remove(port);
+            }
+        }, SDRCONNECT_HEADLESS_RESTART_STABLE_RESET_MS, TimeUnit.MILLISECONDS);
     }
 
     static class SDRconnectReadyProbe implements WebSocket.Listener
