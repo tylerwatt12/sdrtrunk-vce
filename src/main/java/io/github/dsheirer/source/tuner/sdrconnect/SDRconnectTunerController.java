@@ -1040,42 +1040,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     break;
 
                 case "started":
-                    boolean started = "true".equalsIgnoreCase(value);
-
-                    // Detect recovery: SDRconnect went from stopped to started
-                    if(started && !mLastStartedState && mShouldBeRunning.get())
-                    {
-                        mLog.info("SDRconnect recovered - reinitializing tuner");
-                        ThreadPool.CACHED.execute(() -> {
-                            try
-                            {
-                                // Wait for SDRconnect to fully initialize
-                                Thread.sleep(1000);
-
-                                // Re-query sample rate and frequency to update channelizer
-                                mLog.info("Querying SDRconnect settings after recovery...");
-                                queryProperty(PROPERTY_DEVICE_SAMPLE_RATE);
-                                queryProperty(PROPERTY_DEVICE_CENTER_FREQUENCY);
-                                Thread.sleep(500);
-
-                                // Enable device streaming
-                                sendCommand("device_stream_enable", "true");
-                                Thread.sleep(200);
-
-                                // Enable IQ streaming
-                                enableIqStream(true);
-                                Thread.sleep(100);
-
-                                mLog.info("SDRconnect recovery complete - IQ streaming re-enabled");
-                            }
-                            catch(InterruptedException e)
-                            {
-                                Thread.currentThread().interrupt();
-                                mLog.warn("Recovery interrupted");
-                            }
-                        });
-                    }
-                    mLastStartedState = started;
+                    handleStartedStateUpdate(value);
                     break;
 
                 case PROPERTY_VALID_ANTENNAS:
@@ -1124,6 +1089,47 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             mLog.error("Error updating frequency controller", se);
         }
+    }
+
+    private void handleStartedStateUpdate(String value)
+    {
+        boolean started = "true".equalsIgnoreCase(value);
+
+        if(started && !mLastStartedState && mShouldBeRunning.get())
+        {
+            scheduleRecoveryReinitialization();
+        }
+
+        mLastStartedState = started;
+    }
+
+    private void scheduleRecoveryReinitialization()
+    {
+        mLog.info("SDRconnect recovered - reinitializing tuner");
+        ThreadPool.CACHED.execute(() -> {
+            try
+            {
+                Thread.sleep(1000);
+
+                mLog.info("Querying SDRconnect settings after recovery...");
+                queryProperty(PROPERTY_DEVICE_SAMPLE_RATE);
+                queryProperty(PROPERTY_DEVICE_CENTER_FREQUENCY);
+                Thread.sleep(500);
+
+                sendCommand("device_stream_enable", "true");
+                Thread.sleep(200);
+
+                enableIqStream(true);
+                Thread.sleep(100);
+
+                mLog.info("SDRconnect recovery complete - IQ streaming re-enabled");
+            }
+            catch(InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                mLog.warn("Recovery interrupted");
+            }
+        });
     }
 
     private static class BinaryMessageAccumulator
