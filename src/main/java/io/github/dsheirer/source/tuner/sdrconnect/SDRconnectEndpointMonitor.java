@@ -35,6 +35,7 @@ import java.net.http.WebSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -42,6 +43,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 
@@ -59,7 +61,9 @@ class SDRconnectEndpointMonitor
 
     private final Logger mLog;
     private final UserPreferences mUserPreferences;
-    private final Map<Integer, Process> mManagedSDRconnectProcesses = new HashMap<>();
+    private final Map<Integer, Process> mManagedSDRconnectProcesses = new ConcurrentHashMap<>();
+    private final java.util.Set<Integer> mExpectedManagedProcessExits =
+        Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Thread mManagedSDRconnectShutdownHook;
     private final HttpClient mSDRconnectReadyProbeHttpClient =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
@@ -250,8 +254,8 @@ class SDRconnectEndpointMonitor
 
         try
         {
-            File logFile = mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog()
-                .resolve("sdrconnect_headless_" + port + ".log").toFile();
+            Path logPath = getManagedProcessLogPath(port);
+            File logFile = logPath.toFile();
 
             ProcessBuilder processBuilder = new ProcessBuilder(executable.toString(), "--websocket_port=" + port);
             processBuilder.directory(executable.getParent().toFile());
@@ -260,6 +264,7 @@ class SDRconnectEndpointMonitor
 
             Process process = processBuilder.start();
             mManagedSDRconnectProcesses.put(port, process);
+            registerUnexpectedExitLogger(port, process, logPath);
             mLog.info("Started SDRconnect headless process on port {} using [{}]", port, executable);
             return true;
         }
@@ -361,6 +366,7 @@ class SDRconnectEndpointMonitor
     private void stopManagedSDRconnectProcesses()
     {
         Map<Integer, Process> managedProcesses = new HashMap<>(mManagedSDRconnectProcesses);
+        mExpectedManagedProcessExits.addAll(managedProcesses.keySet());
         mManagedSDRconnectProcesses.clear();
 
         for(Map.Entry<Integer, Process> entry : managedProcesses.entrySet())
@@ -436,6 +442,33 @@ class SDRconnectEndpointMonitor
     private String getEndpointKey(String host, int port)
     {
         return host + ":" + port;
+    }
+
+    private Path getManagedProcessLogPath(int port)
+    {
+        return mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog()
+            .resolve("sdrconnect_headless_" + port + ".log");
+    }
+
+    private void registerUnexpectedExitLogger(int port, Process process, Path logPath)
+    {
+        process.onExit().thenAccept(exitedProcess ->
+        {
+            Process current = mManagedSDRconnectProcesses.get(port);
+
+            if(current == exitedProcess)
+            {
+                mManagedSDRconnectProcesses.remove(port, exitedProcess);
+            }
+
+            if(mExpectedManagedProcessExits.remove(port))
+            {
+                return;
+            }
+
+            mLog.error("Managed SDRconnect headless process on port {} exited unexpectedly with code {}. See log [{}]",
+                port, exitedProcess.exitValue(), logPath);
+        });
     }
 
     static class SDRconnectReadyProbe implements WebSocket.Listener
