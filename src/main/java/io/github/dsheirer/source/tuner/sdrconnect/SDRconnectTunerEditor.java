@@ -604,8 +604,10 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private void onAntennaChanged(String antenna)
     {
         SwingUtilities.invokeLater(() -> {
+            setLoading(true);
             getAntennaLabel().setText(formatAntenna(antenna));
             updateSelectedAntenna(antenna);
+            setLoading(false);
             save();
         });
     }
@@ -613,9 +615,11 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private void onSampleRateChanged(int sampleRate)
     {
         SwingUtilities.invokeLater(() -> {
+            setLoading(true);
             getSampleRateLabel().setText(formatSampleRate(sampleRate));
             updateSelectedSampleRate(sampleRate);
             getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate());
+            setLoading(false);
             save();
         });
     }
