@@ -526,8 +526,12 @@ class SDRconnectEndpointMonitor
         @Override
         public void onOpen(WebSocket webSocket)
         {
-            webSocket.sendText("{\"event_type\":\"get_property\",\"property\":\"valid_devices\"}", true);
-            webSocket.sendText("{\"event_type\":\"get_property\",\"property\":\"active_device\"}", true);
+            webSocket.sendText("{\"" + SDRconnectProtocol.JSON_EVENT_TYPE + "\":\"" +
+                SDRconnectProtocol.EVENT_GET_PROPERTY + "\",\"" + SDRconnectProtocol.JSON_PROPERTY + "\":\"" +
+                SDRconnectProtocol.PROPERTY_VALID_DEVICES + "\"}", true);
+            webSocket.sendText("{\"" + SDRconnectProtocol.JSON_EVENT_TYPE + "\":\"" +
+                SDRconnectProtocol.EVENT_GET_PROPERTY + "\",\"" + SDRconnectProtocol.JSON_PROPERTY + "\":\"" +
+                SDRconnectProtocol.PROPERTY_ACTIVE_DEVICE + "\"}", true);
             webSocket.request(1);
         }
 
@@ -570,7 +574,8 @@ class SDRconnectEndpointMonitor
         private boolean isPropertyMessage(JsonObject message)
         {
             String eventType = getStringProperty(message, "event_type");
-            return "property_changed".equals(eventType) || "get_property_response".equals(eventType);
+            return SDRconnectProtocol.EVENT_PROPERTY_CHANGED.equals(eventType) ||
+                SDRconnectProtocol.EVENT_GET_PROPERTY_RESPONSE.equals(eventType);
         }
 
         private void updatePropertyState(JsonObject message)
