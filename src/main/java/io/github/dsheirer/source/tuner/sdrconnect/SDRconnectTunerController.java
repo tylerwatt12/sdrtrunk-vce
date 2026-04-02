@@ -70,6 +70,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public static final long MINIMUM_FREQUENCY = 1000L; // 1 kHz
     public static final long MAXIMUM_FREQUENCY = 2000000000L; // 2 GHz
     public static final double USABLE_BANDWIDTH_PERCENT = 0.95;
+    // Retune tolerance: 1/50th of sample rate, floored at 1 kHz. At the narrowest supported rate (62.5 kHz)
+    // the divisor yields 1,250 Hz, so the floor is inert for all real sample rates.
+    private static final long MINIMUM_RETUNE_TOLERANCE_HZ = 1_000L;
+    private static final int RETUNE_TOLERANCE_DIVISOR = 50;
 
     // Auto-reconnection settings
     private static final int RECONNECT_INITIAL_DELAY_SECONDS = 5;
@@ -755,9 +759,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             throw new SourceException("Frequency " + frequency + " is outside valid range");
         }
 
-        // Only send request if we're not already at this frequency (within 100 kHz tolerance)
-        // SDRconnect controls the actual frequency - we just request, it decides
-        if(Math.abs(frequency - mCenterFrequency) > 100000)
+        long retuneTolerance = getRetuneToleranceHz();
+
+        // Only send a re-tune request when the requested center differs meaningfully from the current center.
+        // Scale the tolerance with sample rate so narrower SDRconnect bandwidths can re-center more precisely.
+        if(Math.abs(frequency - mCenterFrequency) > retuneTolerance)
         {
             setProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY, String.valueOf(frequency));
             mLog.info("{} Requested SDRconnect frequency: {} Hz (current: {} Hz)", mLogPrefix, frequency,
@@ -765,9 +771,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
         else
         {
-            mLog.debug("{} Frequency {} Hz close enough to current {} Hz, not re-tuning", mLogPrefix, frequency,
-                mCenterFrequency);
+            mLog.debug("{} Frequency {} Hz close enough to current {} Hz within {} Hz, not re-tuning",
+                mLogPrefix, frequency, mCenterFrequency, retuneTolerance);
         }
+    }
+
+    private long getRetuneToleranceHz()
+    {
+        return Math.max(MINIMUM_RETUNE_TOLERANCE_HZ, mSampleRate / RETUNE_TOLERANCE_DIVISOR);
     }
 
     @Override
