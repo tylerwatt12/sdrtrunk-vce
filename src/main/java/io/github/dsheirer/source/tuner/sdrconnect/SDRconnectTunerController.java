@@ -1026,6 +1026,18 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             }
 
             @Override
+            public String getValidAntennas()
+            {
+                return mValidAntennas;
+            }
+
+            @Override
+            public String getActiveAntenna()
+            {
+                return mCurrentAntenna;
+            }
+
+            @Override
             public void onValidDevicesChanged(String validDevices)
             {
                 mValidDevices = validDevices;

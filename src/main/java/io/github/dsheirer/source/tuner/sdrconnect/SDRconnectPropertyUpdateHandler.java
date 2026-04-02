@@ -52,12 +52,10 @@ class SDRconnectPropertyUpdateHandler
                     handleStartedStateUpdate(value);
                     break;
                 case SDRconnectProtocol.PROPERTY_VALID_ANTENNAS:
-                    mCallback.onValidAntennasChanged(value);
-                    mLog.info("SDRconnect valid antennas: {}", value);
+                    handleValidAntennasUpdate(value);
                     break;
                 case SDRconnectProtocol.PROPERTY_ACTIVE_ANTENNA:
-                    mCallback.onActiveAntennaChanged(value);
-                    mLog.info("SDRconnect active antenna: {}", value);
+                    handleActiveAntennaUpdate(value);
                     break;
                 case SDRconnectProtocol.PROPERTY_VALID_DEVICES:
                     mCallback.onValidDevicesChanged(value);
@@ -123,12 +121,32 @@ class SDRconnectPropertyUpdateHandler
         mLastStartedState = started;
     }
 
+    private void handleValidAntennasUpdate(String value)
+    {
+        if(!value.equals(mCallback.getValidAntennas()))
+        {
+            mCallback.onValidAntennasChanged(value);
+            mLog.info("SDRconnect valid antennas: {}", value);
+        }
+    }
+
+    private void handleActiveAntennaUpdate(String value)
+    {
+        if(!value.equals(mCallback.getActiveAntenna()))
+        {
+            mCallback.onActiveAntennaChanged(value);
+            mLog.info("SDRconnect active antenna: {}", value);
+        }
+    }
+
     interface Callback
     {
         long getCenterFrequency();
         void onCenterFrequencyChanged(long frequency);
         int getSampleRate();
         void onSampleRateChanged(int sampleRate);
+        String getValidAntennas();
+        String getActiveAntenna();
         void onValidDevicesChanged(String validDevices);
         void onActiveDeviceChanged(String activeDevice);
         void onValidAntennasChanged(String validAntennas);
