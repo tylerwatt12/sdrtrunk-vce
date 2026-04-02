@@ -771,15 +771,17 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         long retuneTolerance = getRetuneToleranceHz();
 
+        long frequencyDelta = Math.abs(frequency - mCenterFrequency);
+
         // Only send a re-tune request when the requested center differs meaningfully from the current center.
         // Scale the tolerance with sample rate so narrower SDRconnect bandwidths can re-center more precisely.
-        if(Math.abs(frequency - mCenterFrequency) > retuneTolerance)
+        if(frequencyDelta > retuneTolerance)
         {
             setProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY, String.valueOf(frequency));
             mLog.info("{} Requested SDRconnect frequency: {} Hz (current: {} Hz)", mLogPrefix, frequency,
                 mCenterFrequency);
         }
-        else
+        else if(frequencyDelta > 0)
         {
             mLog.debug("{} Frequency {} Hz close enough to current {} Hz within {} Hz, not re-tuning",
                 mLogPrefix, frequency, mCenterFrequency, retuneTolerance);
