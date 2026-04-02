@@ -140,7 +140,7 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
         {
             try
             {
-                mLog.info("Starting SDRconnect tuner: {}:{} device [{}]", mHost, mPort, getEffectiveDeviceName());
+                mLog.info("Starting tuner: {}:{} device [{}]", mHost, mPort, getEffectiveDeviceName());
 
                 SDRconnectTunerController controller = new SDRconnectTunerController(mHost, mPort, this);
                 if(hasTunerConfiguration())
@@ -170,7 +170,7 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
                         controller.setDeviceName(mRuntimeDeviceName);
                     }
                 }
-                mLog.info("SDRconnect tuner started successfully");
+                mLog.info("Tuner started successfully");
             }
             catch(SourceException se)
             {

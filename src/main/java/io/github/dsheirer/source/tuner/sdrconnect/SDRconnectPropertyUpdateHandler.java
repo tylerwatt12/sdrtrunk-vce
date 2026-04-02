@@ -82,7 +82,7 @@ class SDRconnectPropertyUpdateHandler
 
         if(newFrequency < SDRconnectTunerController.MINIMUM_FREQUENCY)
         {
-            mLog.debug("{} Ignoring transient SDRconnect center frequency: {} Hz", mLogPrefix, newFrequency);
+            mLog.debug("{} Ignoring transient center frequency: {} Hz", mLogPrefix, newFrequency);
             return;
         }
 
@@ -90,7 +90,7 @@ class SDRconnectPropertyUpdateHandler
 
         if(newFrequency != mCallback.getCenterFrequency())
         {
-            mLog.info("{} SDRconnect frequency changed: {} MHz", mLogPrefix, String.format("%.3f", newFrequency / 1e6));
+            mLog.info("{} Frequency changed: {} MHz", mLogPrefix, String.format("%.3f", newFrequency / 1e6));
             mCallback.onCenterFrequencyChanged(newFrequency);
         }
     }
@@ -102,7 +102,7 @@ class SDRconnectPropertyUpdateHandler
 
         if(newSampleRate != mCallback.getSampleRate())
         {
-            mLog.info("{} SDRconnect sample rate changed: {} MHz", mLogPrefix, String.format("%.1f", newSampleRate / 1e6));
+            mLog.info("{} Sample rate changed: {} MHz", mLogPrefix, String.format("%.1f", newSampleRate / 1e6));
             mCallback.onSampleRateChanged(newSampleRate);
         }
     }
@@ -131,7 +131,7 @@ class SDRconnectPropertyUpdateHandler
         if(!value.equals(mCallback.getValidAntennas()))
         {
             mCallback.onValidAntennasChanged(value);
-            mLog.info("{} SDRconnect valid antennas: {}", mLogPrefix, value);
+            mLog.info("{} Valid antennas: {}", mLogPrefix, value);
         }
     }
 
@@ -140,7 +140,7 @@ class SDRconnectPropertyUpdateHandler
         if(!value.equals(mCallback.getActiveAntenna()))
         {
             mCallback.onActiveAntennaChanged(value);
-            mLog.info("{} SDRconnect active antenna: {}", mLogPrefix, value);
+            mLog.info("{} Active antenna: {}", mLogPrefix, value);
         }
     }
 

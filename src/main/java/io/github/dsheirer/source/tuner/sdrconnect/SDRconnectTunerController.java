@@ -260,7 +260,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             try
             {
                 boolean reconnecting = mReconnecting.get();
-                mLog.info("{} Connecting to SDRconnect", mLogPrefix);
+                mLog.info("{} Connecting", mLogPrefix);
 
                 mHttpClient = HttpClient.newHttpClient();
                 URI uri = URI.create("ws://" + mHost + ":" + mPort);
@@ -269,7 +269,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                         .buildAsync(uri, this);
 
                 mWebSocket = future.get(5, TimeUnit.SECONDS);
-                mLog.info("{} Connected to SDRconnect WebSocket", mLogPrefix);
+                mLog.info("{} Connected to WebSocket", mLogPrefix);
 
                 // Discover and select the expected device before enabling streaming.
                 prepareDeviceDiscoveryLatch();
@@ -291,7 +291,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 awaitLatch(mSettingsLatch.get(), 2, TimeUnit.SECONDS,
                     "SDRconnect initial settings");
 
-                mLog.info("{} SDRconnect initial settings queried; applying startup configuration", mLogPrefix);
+                mLog.info("{} Initial settings queried; applying startup configuration", mLogPrefix);
 
                 // Enable device stream first
                 sendCommand(SDRconnectProtocol.EVENT_DEVICE_STREAM_ENABLE, "true");
@@ -319,7 +319,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 // Reset reconnect state on successful connection
                 mReconnectAttempts.set(0);
                 mReconnecting.set(false);
-                mLog.info("{} SDRconnect IQ streaming started", mLogPrefix);
+                mLog.info("{} IQ streaming started", mLogPrefix);
             }
             catch(TimeoutException te)
             {
@@ -565,8 +565,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             msg.addProperty(SDRconnectProtocol.JSON_EVENT_TYPE, eventType);
             msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, ""); // API requires property field
             msg.addProperty(SDRconnectProtocol.JSON_VALUE, value != null ? value : "");
-            String json = mGson.toJson(msg);
-            mWebSocket.sendText(json, true);
+            mWebSocket.sendText(mGson.toJson(msg), true);
         }
     }
 
@@ -580,8 +579,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             JsonObject msg = new JsonObject();
             msg.addProperty(SDRconnectProtocol.JSON_EVENT_TYPE, SDRconnectProtocol.EVENT_GET_PROPERTY);
             msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, property);
-            String json = mGson.toJson(msg);
-            mWebSocket.sendText(json, true);
+            mWebSocket.sendText(mGson.toJson(msg), true);
         }
     }
 
@@ -596,9 +594,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             msg.addProperty(SDRconnectProtocol.JSON_EVENT_TYPE, SDRconnectProtocol.EVENT_SET_PROPERTY);
             msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, property);
             msg.addProperty(SDRconnectProtocol.JSON_VALUE, value);
-            String json = mGson.toJson(msg);
-            mLog.debug("{} SDRconnect set {} = {}", mLogPrefix, property, value);
-            mWebSocket.sendText(json, true);
+            mWebSocket.sendText(mGson.toJson(msg), true);
         }
         else
         {
@@ -778,7 +774,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(frequencyDelta > retuneTolerance)
         {
             setProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY, String.valueOf(frequency));
-            mLog.info("{} Requested SDRconnect frequency: {} Hz (current: {} Hz)", mLogPrefix, frequency,
+            mLog.info("{} Requested frequency: {} Hz (current: {} Hz)", mLogPrefix, frequency,
                 mCenterFrequency);
         }
         else if(frequencyDelta > 0)
@@ -828,12 +824,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(mFrequencyController.isSampleRateLocked())
         {
-            mLog.warn("{} Ignoring SDRconnect sample rate change to {} Hz while the tuner sample rate is locked",
+            mLog.warn("{} Ignoring sample rate change to {} Hz while the tuner sample rate is locked",
                 mLogPrefix, sampleRate);
             return;
         }
 
-        mLog.info("{} Requesting SDRconnect sample rate: {} Hz", mLogPrefix, sampleRate);
+        mLog.info("{} Requesting sample rate: {} Hz", mLogPrefix, sampleRate);
         setProperty(SDRconnectProtocol.PROPERTY_DEVICE_SAMPLE_RATE, String.valueOf(sampleRate));
     }
 
@@ -843,7 +839,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
      */
     public void requestAntenna(String antenna)
     {
-        mLog.info("{} Requesting SDRconnect antenna: {}", mLogPrefix, antenna);
+        mLog.info("{} Requesting antenna: {}", mLogPrefix, antenna);
         setProperty(SDRconnectProtocol.PROPERTY_ACTIVE_ANTENNA, antenna);
     }
 
@@ -897,7 +893,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public void onOpen(WebSocket webSocket)
     {
-        mLog.info("{} SDRconnect WebSocket opened", mLogPrefix);
         webSocket.request(1);
     }
 
@@ -980,7 +975,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason)
     {
-        mLog.info("{} SDRconnect WebSocket closed: {} - {}", mLogPrefix, statusCode, reason);
+            mLog.info("{} WebSocket closed: {} - {}", mLogPrefix, statusCode, reason);
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         mWebSocket = null;
