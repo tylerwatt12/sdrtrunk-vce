@@ -618,11 +618,11 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 {
                     case BUTTON_STATUS_DISABLE:
                         mLog.info("Disabling " + getDiscoveredTuner().getTunerClass() + " tuner");
-                        getDiscoveredTuner().setEnabled(false);
+                        ThreadPool.CACHED.execute(() -> getDiscoveredTuner().setEnabled(false));
                         break;
                     case BUTTON_STATUS_ENABLE:
                         mLog.info("Enabling " + getDiscoveredTuner().getTunerClass() + " tuner");
-                        getDiscoveredTuner().setEnabled(true);
+                        ThreadPool.CACHED.execute(() -> getDiscoveredTuner().setEnabled(true));
                         break;
                     default:
                         mLog.info("None matched");
@@ -645,7 +645,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 if(!hasTuner() && getDiscoveredTuner().getTunerStatus() == TunerStatus.ERROR)
                 {
                     mLog.info("Restarting " + getDiscoveredTuner().getTunerClass() + " tuner");
-                    getDiscoveredTuner().restart();
+                    ThreadPool.CACHED.execute(() -> getDiscoveredTuner().restart());
                 }
             });
         }
