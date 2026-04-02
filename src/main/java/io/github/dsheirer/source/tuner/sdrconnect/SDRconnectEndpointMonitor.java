@@ -116,6 +116,45 @@ class SDRconnectEndpointMonitor
         }
     }
 
+    boolean prepareEndpointForStart(String host, int port)
+    {
+        if(probe(host, port))
+        {
+            return true;
+        }
+
+        if(!isLocalSDRconnectHost(host) || !launchManagedSDRconnectProcess(port))
+        {
+            return false;
+        }
+
+        return waitForReadySDRconnect(host, port, DEFAULT_SDRCONNECT_HEADLESS_START_DELAY_MS).isReady();
+    }
+
+    void stopManagedEndpoint(String host, int port)
+    {
+        if(!isLocalSDRconnectHost(host))
+        {
+            return;
+        }
+
+        Process process = mManagedSDRconnectProcesses.remove(port);
+
+        if(process == null)
+        {
+            return;
+        }
+
+        mExpectedManagedProcessExits.add(port);
+        mManagedProcessRestartAttempts.remove(port);
+
+        if(process.isAlive())
+        {
+            interruptProcessTree(process, port);
+            destroyManagedProcess(process);
+        }
+    }
+
     void stop()
     {
         mStopped.set(true);

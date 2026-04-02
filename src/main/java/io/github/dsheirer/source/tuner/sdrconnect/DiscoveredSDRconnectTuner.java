@@ -23,6 +23,7 @@ import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +39,8 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
     private final String mDeviceName;
     private final ChannelizerType mChannelizerType;
     private String mRuntimeDeviceName;
+    private BooleanSupplier mBeforeStartHook;
+    private Runnable mAfterStopHook;
 
     /**
      * Constructs an instance
@@ -92,6 +95,16 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
         mRuntimeDeviceName = (deviceName == null || deviceName.isBlank()) ? null : deviceName.trim();
     }
 
+    void setBeforeStartHook(BooleanSupplier beforeStartHook)
+    {
+        mBeforeStartHook = beforeStartHook;
+    }
+
+    void setAfterStopHook(Runnable afterStopHook)
+    {
+        mAfterStopHook = afterStopHook;
+    }
+
     private String getEffectiveDeviceName()
     {
         return mRuntimeDeviceName != null ? mRuntimeDeviceName : mDeviceName;
@@ -140,6 +153,12 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
         {
             try
             {
+                if(mBeforeStartHook != null && !mBeforeStartHook.getAsBoolean())
+                {
+                    setErrorMessage("SDRconnect is not available at " + mHost + ":" + mPort);
+                    return;
+                }
+
                 mLog.info("Starting tuner: {}:{} device [{}]", mHost, mPort, getEffectiveDeviceName());
 
                 SDRconnectTunerController controller = new SDRconnectTunerController(mHost, mPort, this);
@@ -177,6 +196,17 @@ public class DiscoveredSDRconnectTuner extends DiscoveredTuner
                 mLog.error("Error starting SDRconnect tuner", se);
                 setErrorMessage("Error - " + se.getMessage());
             }
+        }
+    }
+
+    @Override
+    public void stop()
+    {
+        super.stop();
+
+        if(mAfterStopHook != null)
+        {
+            mAfterStopHook.run();
         }
     }
 

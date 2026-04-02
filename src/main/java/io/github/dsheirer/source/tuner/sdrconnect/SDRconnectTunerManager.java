@@ -115,6 +115,7 @@ public class SDRconnectTunerManager
             DiscoveredSDRconnectTuner discoveredTuner = new DiscoveredSDRconnectTuner(defaultHost, defaultPort,
                 channelizerType);
             discoveredTuner.setTunerConfiguration(config);
+            configureLifecycleHooks(discoveredTuner, defaultHost, defaultPort);
             discoveredTuner.addTunerStatusListener(mTunerStatusListener);
 
             mLog.info("SDRconnect auto-discovered and enabled: {}", discoveredTuner);
@@ -143,8 +144,15 @@ public class SDRconnectTunerManager
                 sdrconnectConfig.getDeviceName(), channelizerType);
         discoveredTuner.setTunerConfiguration(sdrconnectConfig);
         discoveredTuner.setRuntimeDeviceName(runtimeDeviceAssignments.get(sdrconnectConfig.getUniqueID()));
+        configureLifecycleHooks(discoveredTuner, sdrconnectConfig.getHost(), sdrconnectConfig.getPort());
         discoveredTuner.addTunerStatusListener(mTunerStatusListener);
         return discoveredTuner;
+    }
+
+    private void configureLifecycleHooks(DiscoveredSDRconnectTuner discoveredTuner, String host, int port)
+    {
+        discoveredTuner.setBeforeStartHook(() -> mEndpointMonitor.prepareEndpointForStart(host, port));
+        discoveredTuner.setAfterStopHook(() -> mEndpointMonitor.stopManagedEndpoint(host, port));
     }
 
     private boolean isEndpointAvailable(Map<String, SDRconnectEndpointReadiness> readinessByEndpoint,
