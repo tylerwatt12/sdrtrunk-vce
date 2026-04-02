@@ -28,6 +28,7 @@ class SDRconnectPropertyUpdateHandler
 {
     private final Logger mLog;
     private final Callback mCallback;
+    private boolean mStartedStateInitialized;
     private boolean mLastStartedState;
 
     SDRconnectPropertyUpdateHandler(Logger log, Callback callback)
@@ -73,11 +74,6 @@ class SDRconnectPropertyUpdateHandler
         }
     }
 
-    void seedStartedState(boolean started)
-    {
-        mLastStartedState = started;
-    }
-
     private void handleCenterFrequencyUpdate(String value)
     {
         long newFrequency = Long.parseLong(value);
@@ -112,6 +108,13 @@ class SDRconnectPropertyUpdateHandler
     private void handleStartedStateUpdate(String value)
     {
         boolean started = "true".equalsIgnoreCase(value);
+
+        if(!mStartedStateInitialized)
+        {
+            mStartedStateInitialized = true;
+            mLastStartedState = started;
+            return;
+        }
 
         if(started && !mLastStartedState && mCallback.shouldScheduleRecoveryReinitialization())
         {

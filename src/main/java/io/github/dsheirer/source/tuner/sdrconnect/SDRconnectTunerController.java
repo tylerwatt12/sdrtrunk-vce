@@ -314,7 +314,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 // Reset reconnect state on successful connection
                 mReconnectAttempts.set(0);
                 mReconnecting.set(false);
-                mPropertyUpdateHandler.seedStartedState(true);
                 mLog.info("SDRconnect IQ streaming started");
             }
             catch(TimeoutException te)
