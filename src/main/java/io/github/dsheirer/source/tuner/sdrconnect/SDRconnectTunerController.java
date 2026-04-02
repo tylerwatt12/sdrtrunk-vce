@@ -286,9 +286,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 awaitLatch(mSettingsLatch.get(), 2, TimeUnit.SECONDS,
                     "SDRconnect initial settings");
 
-                mLog.info("{} SDRconnect connected: {} MHz center, {} MHz sample rate",
-                    mLogPrefix, String.format("%.3f", mCenterFrequency / 1e6),
-                    String.format("%.1f", mSampleRate / 1e6));
+                mLog.info("{} SDRconnect initial settings queried; applying startup configuration", mLogPrefix);
 
                 // Enable device stream first
                 sendCommand(SDRconnectProtocol.EVENT_DEVICE_STREAM_ENABLE, "true");
