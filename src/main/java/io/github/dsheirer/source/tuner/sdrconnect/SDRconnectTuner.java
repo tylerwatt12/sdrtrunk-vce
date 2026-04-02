@@ -23,8 +23,6 @@ import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * SDRconnect Tuner - connects to SDRplay devices via SDRconnect WebSocket API

@@ -22,7 +22,6 @@ package io.github.dsheirer.source.tuner.sdrconnect;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.TunerController;

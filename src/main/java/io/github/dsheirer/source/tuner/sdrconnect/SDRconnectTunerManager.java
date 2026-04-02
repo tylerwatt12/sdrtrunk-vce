@@ -25,7 +25,6 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
-import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.List;
