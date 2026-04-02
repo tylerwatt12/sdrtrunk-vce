@@ -259,6 +259,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             try
             {
+                boolean reconnecting = mReconnecting.get();
                 mLog.info("{} Connecting to SDRconnect", mLogPrefix);
 
                 mHttpClient = HttpClient.newHttpClient();
@@ -302,7 +303,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 // Re-apply configured settings now that the connection is established and the device
                 // selection handshake has completed.
-                if(mFrequencyController.getFrequency() != mCenterFrequency)
+                if(reconnecting && mFrequencyController.getFrequency() != mCenterFrequency)
                 {
                     setTunedFrequency(mFrequencyController.getFrequency());
                 }
@@ -737,12 +738,21 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public void apply(TunerConfiguration config) throws SourceException
     {
+        // Force auto-PPM off before the base apply() path runs, so the FrequencyErrorCorrectionManager
+        // is never enabled for SDRconnect regardless of what the stored config says.
+        config.setAutoPPMCorrectionEnabled(false);
         super.apply(config);
 
         if(config instanceof SDRconnectTunerConfiguration sdrconnectConfig)
         {
             seedStartupConfiguration(sdrconnectConfig);
         }
+    }
+
+    @Override
+    public void setFrequencyCorrection(double correction) throws SourceException
+    {
+        // SDRconnect manages frequency correction internally; PPM correction is not applied here.
     }
 
     @Override
