@@ -85,6 +85,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
     private final String mHost;
     private final int mPort;
+    private final String mLogPrefix;
 
     private WebSocket mWebSocket;
     private HttpClient mHttpClient;
@@ -130,6 +131,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         super(tunerErrorListener);
         mHost = host;
         mPort = port;
+        mLogPrefix = "[" + mHost + ":" + mPort + "]";
         mNativeBufferFactory = new SDRconnectNativeBufferFactory();
         mPropertyUpdateHandler = createPropertyUpdateHandler();
         mNativeBufferFactory.setSamplesPerMillisecond(mSampleRate / 1000.0f);
@@ -146,7 +148,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
         catch(SourceException se)
         {
-            mLog.error("Error setting initial sample rate", se);
+            mLog.error("{} Error setting initial sample rate", mLogPrefix, se);
         }
     }
 
@@ -253,7 +255,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             try
             {
-                mLog.info("Connecting to SDRconnect at {}:{}", mHost, mPort);
+                mLog.info("{} Connecting to SDRconnect", mLogPrefix);
 
                 mHttpClient = HttpClient.newHttpClient();
                 URI uri = URI.create("ws://" + mHost + ":" + mPort);
@@ -262,7 +264,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                         .buildAsync(uri, this);
 
                 mWebSocket = future.get(5, TimeUnit.SECONDS);
-                mLog.info("Connected to SDRconnect WebSocket");
+                mLog.info("{} Connected to SDRconnect WebSocket", mLogPrefix);
 
                 // Discover and select the expected device before enabling streaming.
                 prepareDeviceDiscoveryLatch();
@@ -284,8 +286,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 awaitLatch(mSettingsLatch.get(), 2, TimeUnit.SECONDS,
                     "SDRconnect initial settings");
 
-                mLog.info("SDRconnect connected: {} MHz center, {} MHz sample rate",
-                    String.format("%.3f", mCenterFrequency / 1e6),
+                mLog.info("{} SDRconnect connected: {} MHz center, {} MHz sample rate",
+                    mLogPrefix, String.format("%.3f", mCenterFrequency / 1e6),
                     String.format("%.1f", mSampleRate / 1e6));
 
                 // Enable device stream first
@@ -314,7 +316,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 // Reset reconnect state on successful connection
                 mReconnectAttempts.set(0);
                 mReconnecting.set(false);
-                mLog.info("SDRconnect IQ streaming started");
+                mLog.info("{} SDRconnect IQ streaming started", mLogPrefix);
             }
             catch(TimeoutException te)
             {
@@ -354,7 +356,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(latch != null && !latch.await(timeout, unit))
         {
-            mLog.debug("{} did not fully complete within {} {}", description, timeout,
+            mLog.debug("{} {} did not fully complete within {} {}", mLogPrefix, description, timeout,
                 unit.name().toLowerCase());
         }
     }
@@ -428,7 +430,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(mRunning.compareAndSet(true, false))
         {
-            mLog.info("Disconnecting from SDRconnect");
+            mLog.info("{} Disconnecting from SDRconnect", mLogPrefix);
 
             try
             {
@@ -454,7 +456,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             }
             catch(Exception e)
             {
-                mLog.error("Error disconnecting from SDRconnect", e);
+                mLog.error("{} Error disconnecting from SDRconnect", mLogPrefix, e);
             }
         }
     }
@@ -478,7 +480,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(!mShouldBeRunning.get())
         {
-            mLog.debug("Not scheduling reconnect - tuner was stopped by user");
+            mLog.debug("{} Not scheduling reconnect - tuner was stopped by user", mLogPrefix);
             return;
         }
 
@@ -488,7 +490,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
             if(attempts > RECONNECT_MAX_ATTEMPTS)
             {
-                mLog.error("SDRconnect reconnection failed after {} attempts - giving up", RECONNECT_MAX_ATTEMPTS);
+                mLog.error("{} SDRconnect reconnection failed after {} attempts - giving up", mLogPrefix,
+                    RECONNECT_MAX_ATTEMPTS);
                 mReconnecting.set(false);
                 setErrorMessage("SDRconnect reconnection failed after " + RECONNECT_MAX_ATTEMPTS + " attempts");
                 return;
@@ -497,8 +500,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             // Exponential backoff: 5s, 10s, 20s, 40s, 60s (capped)
             int delaySeconds = Math.min(RECONNECT_INITIAL_DELAY_SECONDS * (1 << (attempts - 1)), RECONNECT_MAX_DELAY_SECONDS);
 
-            mLog.info("SDRconnect connection lost - reconnecting in {} seconds (attempt {}/{})",
-                delaySeconds, attempts, RECONNECT_MAX_ATTEMPTS);
+            mLog.info("{} SDRconnect connection lost - reconnecting in {} seconds (attempt {}/{})",
+                mLogPrefix, delaySeconds, attempts, RECONNECT_MAX_ATTEMPTS);
 
             stopReconnectExecutor();
             mReconnectExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -517,21 +520,21 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(!mShouldBeRunning.get())
         {
-            mLog.debug("Aborting reconnect - tuner was stopped by user");
+            mLog.debug("{} Aborting reconnect - tuner was stopped by user", mLogPrefix);
             mReconnecting.set(false);
             return;
         }
 
-        mLog.info("Attempting to reconnect to SDRconnect...");
+        mLog.info("{} Attempting to reconnect to SDRconnect...", mLogPrefix);
 
         try
         {
             doConnect();
-            mLog.info("SDRconnect reconnection successful!");
+            mLog.info("{} SDRconnect reconnection successful!", mLogPrefix);
         }
         catch(SourceException e)
         {
-            mLog.warn("SDRconnect reconnection failed: {}", e.getMessage());
+            mLog.warn("{} SDRconnect reconnection failed: {}", mLogPrefix, e.getMessage());
             mReconnecting.set(false);
             // Schedule another attempt
             scheduleReconnect();
@@ -591,12 +594,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, property);
             msg.addProperty(SDRconnectProtocol.JSON_VALUE, value);
             String json = mGson.toJson(msg);
-            mLog.debug("SDRconnect set {} = {}", property, value);
+            mLog.debug("{} SDRconnect set {} = {}", mLogPrefix, property, value);
             mWebSocket.sendText(json, true);
         }
         else
         {
-            mLog.warn("Cannot set {} - not connected", property);
+            mLog.warn("{} Cannot set {} - not connected", mLogPrefix, property);
         }
     }
 
@@ -607,8 +610,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         String preferredDevice = getPreferredDeviceName();
         sendCommand(SDRconnectProtocol.EVENT_SELECTED_DEVICE_NAME, preferredDevice);
-        mLog.trace("Requested SDRconnect active device: {} (preferred mode: {})",
-            preferredDevice, DEFAULT_NETWORK_MODE);
+        mLog.trace("{} Requested SDRconnect active device: {} (preferred mode: {})",
+            mLogPrefix, preferredDevice, DEFAULT_NETWORK_MODE);
     }
 
     /**
@@ -759,11 +762,13 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(Math.abs(frequency - mCenterFrequency) > 100000)
         {
             setProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY, String.valueOf(frequency));
-            mLog.info("Requested SDRconnect frequency: {} Hz (current: {} Hz)", frequency, mCenterFrequency);
+            mLog.info("{} Requested SDRconnect frequency: {} Hz (current: {} Hz)", mLogPrefix, frequency,
+                mCenterFrequency);
         }
         else
         {
-            mLog.debug("Frequency {} Hz close enough to current {} Hz, not re-tuning", frequency, mCenterFrequency);
+            mLog.debug("{} Frequency {} Hz close enough to current {} Hz, not re-tuning", mLogPrefix, frequency,
+                mCenterFrequency);
         }
     }
 
@@ -786,7 +791,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
         catch(SourceException se)
         {
-            mLog.error("Error setting sample rate on frequency controller", se);
+            mLog.error("{} Error setting sample rate on frequency controller", mLogPrefix, se);
         }
         if(mSampleRateChangeListener != null)
         {
@@ -802,12 +807,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(mFrequencyController.isSampleRateLocked())
         {
-            mLog.warn("Ignoring SDRconnect sample rate change to {} Hz while the tuner sample rate is locked",
-                sampleRate);
+            mLog.warn("{} Ignoring SDRconnect sample rate change to {} Hz while the tuner sample rate is locked",
+                mLogPrefix, sampleRate);
             return;
         }
 
-        mLog.info("Requesting SDRconnect sample rate: {} Hz", sampleRate);
+        mLog.info("{} Requesting SDRconnect sample rate: {} Hz", mLogPrefix, sampleRate);
         setProperty(SDRconnectProtocol.PROPERTY_DEVICE_SAMPLE_RATE, String.valueOf(sampleRate));
     }
 
@@ -817,7 +822,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
      */
     public void requestAntenna(String antenna)
     {
-        mLog.info("Requesting SDRconnect antenna: {}", antenna);
+        mLog.info("{} Requesting SDRconnect antenna: {}", mLogPrefix, antenna);
         setProperty(SDRconnectProtocol.PROPERTY_ACTIVE_ANTENNA, antenna);
     }
 
@@ -871,7 +876,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public void onOpen(WebSocket webSocket)
     {
-        mLog.info("SDRconnect WebSocket opened");
+        mLog.info("{} SDRconnect WebSocket opened", mLogPrefix);
         webSocket.request(1);
     }
 
@@ -903,12 +908,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 }
                 else if(SDRconnectProtocol.EVENT_ERROR.equals(eventType))
                 {
-                    mLog.error("SDRconnect error: {}", json);
+                    mLog.error("{} SDRconnect error: {}", mLogPrefix, json);
                 }
             }
             catch(Exception e)
             {
-                mLog.warn("Error parsing SDRconnect message: {}", e.getMessage());
+                mLog.warn("{} Error parsing SDRconnect message: {}", mLogPrefix, e.getMessage());
                 mPartialTextBuffer.setLength(0);
             }
         }
@@ -944,7 +949,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
         catch(Exception e)
         {
-            mLog.warn("Error processing SDRconnect binary data: {}", e.getMessage());
+            mLog.warn("{} Error processing SDRconnect binary data: {}", mLogPrefix, e.getMessage());
         }
 
         webSocket.request(1);
@@ -954,7 +959,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason)
     {
-        mLog.info("SDRconnect WebSocket closed: {} - {}", statusCode, reason);
+        mLog.info("{} SDRconnect WebSocket closed: {} - {}", mLogPrefix, statusCode, reason);
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         mWebSocket = null;
@@ -963,7 +968,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(statusCode != WebSocket.NORMAL_CLOSURE && mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get() &&
             !mReconnectScheduledFromError.getAndSet(false))
         {
-            mLog.warn("SDRconnect connection lost unexpectedly - will attempt to reconnect");
+            mLog.warn("{} SDRconnect connection lost unexpectedly - will attempt to reconnect", mLogPrefix);
             scheduleReconnect();
         }
         else
@@ -977,7 +982,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public void onError(WebSocket webSocket, Throwable error)
     {
-        mLog.error("SDRconnect WebSocket error: {}", error.getMessage());
+        mLog.error("{} SDRconnect WebSocket error: {}", mLogPrefix, error.getMessage());
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         mWebSocket = null;
@@ -986,7 +991,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get())
         {
             mReconnectScheduledFromError.set(true);
-            mLog.warn("SDRconnect error - will attempt to reconnect");
+            mLog.warn("{} SDRconnect error - will attempt to reconnect", mLogPrefix);
             scheduleReconnect();
         }
         else if(!APPLICATION_SHUTTING_DOWN.get())
@@ -997,7 +1002,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
     private SDRconnectPropertyUpdateHandler createPropertyUpdateHandler()
     {
-        return new SDRconnectPropertyUpdateHandler(mLog, new SDRconnectPropertyUpdateHandler.Callback()
+        return new SDRconnectPropertyUpdateHandler(mLog, mLogPrefix, new SDRconnectPropertyUpdateHandler.Callback()
         {
             @Override
             public long getCenterFrequency()
@@ -1100,19 +1105,19 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
         catch(SourceException se)
         {
-            mLog.error("Error updating frequency controller", se);
+            mLog.error("{} Error updating frequency controller", mLogPrefix, se);
         }
     }
 
     private void scheduleRecoveryReinitialization()
     {
-        mLog.info("SDRconnect recovered - reinitializing tuner");
+        mLog.info("{} SDRconnect recovered - reinitializing tuner", mLogPrefix);
         ThreadPool.CACHED.execute(() -> {
             try
             {
                 Thread.sleep(1000);
 
-                mLog.info("Querying SDRconnect settings after recovery...");
+                mLog.info("{} Querying SDRconnect settings after recovery...", mLogPrefix);
                 queryProperty(SDRconnectProtocol.PROPERTY_DEVICE_SAMPLE_RATE);
                 queryProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY);
                 Thread.sleep(500);
@@ -1123,12 +1128,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 enableIqStream(true);
                 Thread.sleep(100);
 
-                mLog.info("SDRconnect recovery complete - IQ streaming re-enabled");
+                mLog.info("{} SDRconnect recovery complete - IQ streaming re-enabled", mLogPrefix);
             }
             catch(InterruptedException e)
             {
                 Thread.currentThread().interrupt();
-                mLog.warn("Recovery interrupted");
+                mLog.warn("{} Recovery interrupted", mLogPrefix);
             }
         });
     }
