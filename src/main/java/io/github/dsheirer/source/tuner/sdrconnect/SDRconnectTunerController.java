@@ -366,8 +366,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         if(latch != null && !latch.await(timeout, unit))
         {
-            mLog.debug("{} {} did not fully complete within {} {}", mLogPrefix, description, timeout,
-                unit.name().toLowerCase());
+            if(mLog.isDebugEnabled())
+            {
+                mLog.debug("{} {} did not fully complete within {} {}", mLogPrefix, description, timeout,
+                    unit.name().toLowerCase());
+            }
         }
     }
 
