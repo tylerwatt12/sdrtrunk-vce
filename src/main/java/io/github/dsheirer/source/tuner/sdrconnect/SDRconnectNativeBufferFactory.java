@@ -32,6 +32,10 @@ import java.util.NoSuchElementException;
 /**
  * Factory for creating native buffers from SDRconnect IQ data.
  * SDRconnect sends 16-bit signed integer I/Q samples in little-endian format.
+ *
+ * Samples are stored in interleaved form (IQIQ…) because the primary consumer — the polyphase
+ * channelizer — always calls iteratorInterleaved().  Storing interleaved avoids a per-call
+ * allocation in that hot path.  iterator() (split ComplexSamples) de-interleaves lazily on demand.
  */
 public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
 {
@@ -43,37 +47,36 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
     {
         buffer.order(ByteOrder.LITTLE_ENDIAN);
 
-        // Calculate number of complex samples (4 bytes per sample: 2 for I, 2 for Q)
+        // 4 bytes per complex sample (2 for I, 2 for Q); store interleaved (IQIQ…)
         int sampleCount = buffer.remaining() / 4;
+        float[] interleaved = new float[sampleCount * 2];
 
-        // Convert to float arrays
-        float[] iSamples = new float[sampleCount];
-        float[] qSamples = new float[sampleCount];
-
-        for(int i = 0; i < sampleCount; i++)
+        for(int i = 0; i < interleaved.length; i += 2)
         {
-            short iVal = buffer.getShort();
-            short qVal = buffer.getShort();
-            iSamples[i] = iVal * SCALE;
-            qSamples[i] = qVal * SCALE;
+            interleaved[i]     = buffer.getShort() * SCALE;
+            interleaved[i + 1] = buffer.getShort() * SCALE;
         }
 
-        return new SDRconnectNativeBuffer(iSamples, qSamples, timestamp);
+        return new SDRconnectNativeBuffer(interleaved, timestamp);
     }
 
     /**
-     * Native buffer implementation for SDRconnect IQ data
+     * Native buffer implementation for SDRconnect IQ data.
+     * Internally holds a single interleaved float[] (IQIQ…) allocated once per packet.
+     *
+     * iteratorInterleaved() returns a view backed by this same array — no copy is made.
+     * Callers MUST NOT mutate the samples() array of the returned InterleavedComplexSamples.
+     * All current framework consumers (polyphase channelizer, wave recorder, spectrum display)
+     * are read-only and satisfy this contract.
      */
     public static class SDRconnectNativeBuffer implements INativeBuffer
     {
-        private final float[] mISamples;
-        private final float[] mQSamples;
+        private final float[] mInterleaved;
         private final long mTimestamp;
 
-        public SDRconnectNativeBuffer(float[] iSamples, float[] qSamples, long timestamp)
+        public SDRconnectNativeBuffer(float[] interleaved, long timestamp)
         {
-            mISamples = iSamples;
-            mQSamples = qSamples;
+            mInterleaved = interleaved;
             mTimestamp = timestamp;
         }
 
@@ -99,7 +102,19 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
                     }
 
                     mHasNext = false;
-                    return new ComplexSamples(mISamples, mQSamples, mTimestamp);
+
+                    // De-interleave into split I/Q arrays for consumers that require ComplexSamples
+                    int count = mInterleaved.length / 2;
+                    float[] i = new float[count];
+                    float[] q = new float[count];
+
+                    for(int idx = 0; idx < count; idx++)
+                    {
+                        i[idx] = mInterleaved[idx * 2];
+                        q[idx] = mInterleaved[idx * 2 + 1];
+                    }
+
+                    return new ComplexSamples(i, q, mTimestamp);
                 }
             };
         }
@@ -126,16 +141,8 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
                     }
 
                     mHasNext = false;
-
-                    // Interleave the samples
-                    float[] interleaved = new float[mISamples.length * 2];
-                    for(int i = 0; i < mISamples.length; i++)
-                    {
-                        interleaved[i * 2] = mISamples[i];
-                        interleaved[i * 2 + 1] = mQSamples[i];
-                    }
-
-                    return new InterleavedComplexSamples(interleaved, mTimestamp);
+                    // Return the pre-computed interleaved array directly — no allocation
+                    return new InterleavedComplexSamples(mInterleaved, mTimestamp);
                 }
             };
         }
@@ -143,7 +150,7 @@ public class SDRconnectNativeBufferFactory extends AbstractNativeBufferFactory
         @Override
         public int sampleCount()
         {
-            return mISamples.length;
+            return mInterleaved.length / 2;
         }
 
         @Override
