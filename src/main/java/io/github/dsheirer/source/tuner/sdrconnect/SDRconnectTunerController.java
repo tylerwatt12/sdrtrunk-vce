@@ -364,13 +364,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private void awaitLatch(CountDownLatch latch, long timeout, TimeUnit unit, String description)
         throws InterruptedException
     {
-        if(latch != null && !latch.await(timeout, unit))
+        if(latch != null && !latch.await(timeout, unit) && mLog.isDebugEnabled())
         {
-            if(mLog.isDebugEnabled())
-            {
-                mLog.debug("{} {} did not fully complete within {} {}", mLogPrefix, description, timeout,
-                    unit.name().toLowerCase());
-            }
+            mLog.debug("{} {} did not fully complete within {} {}", mLogPrefix, description, timeout,
+                unit.name().toLowerCase());
         }
     }
 
