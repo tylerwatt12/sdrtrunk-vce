@@ -222,11 +222,9 @@ public class ChannelModel implements Listener<ChannelEvent>
     {
         if(event.getChannel().getChannelType() == ChannelType.STANDARD)
         {
-            int index;
             switch(event.getEvent())
             {
-                case NOTIFICATION_CONFIGURATION_CHANGE:
-                case NOTIFICATION_SELECTION_CHANGE:
+                case NOTIFICATION_CONFIGURATION_CHANGE, NOTIFICATION_SELECTION_CHANGE:
                     //rebroadcast this event to any listeners
                     mChannelEventBroadcaster.broadcast(event);
                     break;
