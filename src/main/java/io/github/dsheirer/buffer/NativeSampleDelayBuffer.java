@@ -20,8 +20,6 @@ package io.github.dsheirer.buffer;
 
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.LinkedTransferQueue;
 
@@ -45,8 +43,6 @@ import java.util.concurrent.LinkedTransferQueue;
  */
 public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(NativeSampleDelayBuffer.class);
-
     private Broadcaster<INativeBuffer> mBroadcaster = new Broadcaster<>();
     private LinkedTransferQueue<ActionRequest> mActionQueue = new LinkedTransferQueue<>();
     private INativeBuffer[] mDelayBuffer;
