@@ -48,8 +48,6 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.Collections;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Channel state tracks the overall state of all processing modules and decoders configured for the channel and
@@ -81,8 +79,6 @@ import org.slf4j.LoggerFactory;
 public class SingleChannelState extends AbstractChannelState implements IDecoderStateEventListener, ISourceEventListener,
     IdentifierUpdateListener, IStateMachineListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SingleChannelState.class);
-
     public static final long FADE_TIMEOUT_DELAY = 1200;
     public static final long RESET_TIMEOUT_DELAY = 2000;
 
@@ -125,11 +121,11 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         else
         {
             final DecodeConfiguration decodeConfig = channel.getDecodeConfiguration();
-            final int fadeTimeoutSeconds = decodeConfig instanceof WithCallTimeout
-                ? ((WithCallTimeout) decodeConfig).getCallTimeoutSeconds()
+            final int fadeTimeoutSeconds = decodeConfig instanceof WithCallTimeout withcalltimeout
+                ? withcalltimeout.getCallTimeoutSeconds()
                 : DecodeConfiguration.DEFAULT_CALL_TIMEOUT_DELAY_SECONDS;
 
-            mStateMachine.setFadeTimeoutBufferMilliseconds(fadeTimeoutSeconds * 1000);
+            mStateMachine.setFadeTimeoutBufferMilliseconds((long)fadeTimeoutSeconds * 1000);
         }
     }
 
@@ -244,7 +240,7 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         {
             List<Long> frequencies = ((SourceConfigTunerMultipleFrequency)channel.getSourceConfiguration()).getFrequencies();
 
-            if(frequencies.size() > 0)
+            if(!frequencies.isEmpty())
             {
                 mIdentifierCollection.update(FrequencyConfigurationIdentifier.create(frequencies.get(0)));
             }
@@ -421,9 +417,8 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
                         mSquelchController.setSquelchLock(true);
                         break;
                     case REQUEST_CHANGE_CALL_TIMEOUT:
-                        if(event instanceof ChangeChannelTimeoutEvent)
+                        if(event instanceof ChangeChannelTimeoutEvent timeout)
                         {
-                            ChangeChannelTimeoutEvent timeout = (ChangeChannelTimeoutEvent)event;
                             mStateMachine.setFadeTimeoutBufferMilliseconds(timeout.getCallTimeoutMilliseconds());
                         }
                     case CONTINUATION:
