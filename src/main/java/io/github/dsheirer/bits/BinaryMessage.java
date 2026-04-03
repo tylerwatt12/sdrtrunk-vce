@@ -20,20 +20,17 @@ package io.github.dsheirer.bits;
 
 import io.github.dsheirer.edac.CRC;
 import java.io.UnsupportedEncodingException;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
+import java.util.Locale;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class BinaryMessage extends BitSet
 {
     private static final long serialVersionUID = 1L;
-    private static final Logger LOGGER = LoggerFactory.getLogger(BinaryMessage.class);
-    private static final int[] CHARACTER_7_BIT = new int[]{0, 1, 2, 3, 4, 5, 6};
     private static final int[] CHARACTER_8_BIT = new int[]{0, 1, 2, 3, 4, 5, 6, 7};
-    private static final String UTF_8 = "UTF-8";
     private static final String GB2312 = "GB2312";
 
 
@@ -121,6 +118,28 @@ public class BinaryMessage extends BitSet
     public BinaryMessage(byte[] data)
     {
         this(BitSet.valueOf(data), data.length * 8);
+    }
+
+    @Override
+    public boolean equals(Object object)
+    {
+        if(this == object)
+        {
+            return true;
+        }
+
+        if(!(object instanceof BinaryMessage other))
+        {
+            return false;
+        }
+
+        return mSize == other.mSize && super.equals(other);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return (31 * super.hashCode()) + mSize;
     }
 
     /**
@@ -305,6 +324,7 @@ public class BinaryMessage extends BitSet
         set(mPointer++, bit2);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();
@@ -362,6 +382,7 @@ public class BinaryMessage extends BitSet
      *
      * @return little endian message byte array
      */
+    @Override
     public byte[] toByteArray()
     {
         int length = size() / 8;
@@ -840,7 +861,7 @@ public class BinaryMessage extends BitSet
      */
     public byte[] getBytes()
     {
-        byte[] bytes = new byte[(int)FastMath.ceil((double)size() / 8.0)];
+        byte[] bytes = new byte[(int)FastMath.ceil(size() / 8.0)];
 
         for(int x = 0; x < bytes.length; x++)
         {
@@ -994,7 +1015,7 @@ public class BinaryMessage extends BitSet
     public String getHex(IntField field)
     {
         int width = Math.ceilDiv(field.width(), 4);
-        return String.format("%0" + width + "X", getInt(field));
+        return leftPadHex(Integer.toHexString(getInt(field)).toUpperCase(Locale.US), width);
     }
 
     /**
@@ -1025,19 +1046,24 @@ public class BinaryMessage extends BitSet
         {
             int value = getInt(bits);
 
-            return String.format("%0" + digitDisplayCount + "X", value);
+            return leftPadHex(Integer.toHexString(value).toUpperCase(Locale.US), digitDisplayCount);
         }
         else if(bits.length <= 64)
         {
             long value = getLong(bits);
 
-            return String.format("%0" + digitDisplayCount + "X", value);
+            return leftPadHex(Long.toHexString(value).toUpperCase(Locale.US), digitDisplayCount);
         }
         else
         {
             throw new IllegalArgumentException("BitSetBuffer.getHex() "
                     + "maximum array length is 63 bits");
         }
+    }
+
+    private String leftPadHex(String value, int width)
+    {
+        return StringUtils.leftPad(value, width, '0');
     }
 
     /**
@@ -1071,7 +1097,6 @@ public class BinaryMessage extends BitSet
                 if(get(x))
                 {
                     value++;
-                    ;
                 }
             }
         }
@@ -1084,7 +1109,6 @@ public class BinaryMessage extends BitSet
                 if(get(x))
                 {
                     value++;
-                    ;
                 }
             }
         }
@@ -1508,7 +1532,7 @@ public class BinaryMessage extends BitSet
             bytes[x] = getByte(CHARACTER_8_BIT, x * 8 + offset);
         }
 
-        return new String(bytes, UTF_8);
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /**
@@ -1547,7 +1571,7 @@ public class BinaryMessage extends BitSet
             bytes[x] = getByte(CHARACTER_8_BIT, x * 8 + offset);
         }
 
-        return new String(bytes, Charset.forName("UTF-16"));
+        return new String(bytes, StandardCharsets.UTF_16);
     }
 
     /**
