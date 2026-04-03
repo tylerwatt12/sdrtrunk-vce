@@ -44,7 +44,7 @@ import java.util.concurrent.LinkedTransferQueue;
 public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
 {
     private Broadcaster<INativeBuffer> mBroadcaster = new Broadcaster<>();
-    private LinkedTransferQueue<ActionRequest> mActionQueue = new LinkedTransferQueue<>();
+    private LinkedTransferQueue<ActionRequest<INativeBuffer>> mActionQueue = new LinkedTransferQueue<>();
     private INativeBuffer[] mDelayBuffer;
     private int mDelayBufferPointer = 0;
     private long mBufferDuration;
@@ -73,7 +73,7 @@ public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
     public void clear()
     {
         //Submit a clear buffer request to be processed upon the next buffer that arrives
-        mActionQueue.offer(new ActionRequest());
+        mActionQueue.offer(new ActionRequest<>());
     }
 
     /**
@@ -92,7 +92,7 @@ public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
     @Override
     public synchronized void receive(INativeBuffer samples)
     {
-        ActionRequest actionRequest = mActionQueue.poll();
+        ActionRequest<INativeBuffer> actionRequest = mActionQueue.poll();
 
         while(actionRequest != null)
         {
@@ -133,7 +133,7 @@ public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
      * Processes any newly added listeners by checking all buffers in the delay queue and pre-loading the
      * listeners with any buffers that occur on or after the listener's requested start timestamp.
      */
-    private void processNewListener(ActionRequest listenerToAdd)
+    private void processNewListener(ActionRequest<INativeBuffer> listenerToAdd)
     {
         INativeBuffer toEvaluate;
 
@@ -169,7 +169,7 @@ public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
      */
     public void addListener(Listener<INativeBuffer> listener, long timestamp)
     {
-        mActionQueue.add(new ActionRequest(listener, timestamp));
+        mActionQueue.add(new ActionRequest<>(listener, timestamp));
     }
 
     /**
@@ -177,10 +177,10 @@ public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
      */
     public void removeListener(Listener<INativeBuffer> listener)
     {
-        mActionQueue.add(new ActionRequest(listener));
+        mActionQueue.add(new ActionRequest<>(listener));
     }
 
-    private enum Action{ADD_LISTENER, REMOVE_LISTENER, CLEAR_BUFFER};
+    private enum Action{ADD_LISTENER, REMOVE_LISTENER, CLEAR_BUFFER}
 
     /**
      * Actions that must be completed on the incoming sample stream thread.
