@@ -40,7 +40,7 @@ public abstract class TimeslotDecoderState extends DecoderState
      * Constructs an instance
      * @param timeslot to monitor/maintain state.
      */
-    public TimeslotDecoderState(int timeslot)
+    protected TimeslotDecoderState(int timeslot)
     {
         super(new MutableIdentifierCollection(timeslot));
         mTimeslot = timeslot;
@@ -85,13 +85,13 @@ public abstract class TimeslotDecoderState extends DecoderState
                 {
                     Identifier identifier = identifierUpdateNotification.getIdentifier();
 
-                    if(identifier instanceof ChannelDescriptorConfigurationIdentifier)
+                    if(identifier instanceof ChannelDescriptorConfigurationIdentifier channelDescriptorConfigurationIdentifier)
                     {
-                        setCurrentChannel(((ChannelDescriptorConfigurationIdentifier)identifier).getValue());
+                    setCurrentChannel(channelDescriptorConfigurationIdentifier.getValue());
                     }
-                    else if(identifier instanceof IChannelDescriptor)
+                    else if(identifier instanceof IChannelDescriptor iChannelDescriptor)
                     {
-                        setCurrentChannel((IChannelDescriptor)identifier);
+                        setCurrentChannel(iChannelDescriptor);
                     }
                     else if(identifier instanceof FrequencyConfigurationIdentifier fci)
                     {
