@@ -34,4 +34,7 @@
   <!-- Apache Mina TCP/HTTP library -->
   <logger name="org.apache.mina" level="INFO" />
 
+  <!-- Java-WebSocket library - suppress internal TCP chunk/frame trace logging -->
+  <logger name="org.java_websocket" level="WARN" />
+
 </configuration>

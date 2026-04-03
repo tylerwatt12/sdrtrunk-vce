@@ -44,6 +44,8 @@ class SDRconnectProtocol
     static final String PROPERTY_VALID_ANTENNAS = "valid_antennas";
     static final String PROPERTY_ACTIVE_ANTENNA = "active_antenna";
     static final String PROPERTY_STARTED = "started";
+    static final String PROPERTY_SIGNAL_POWER = "signal_power";
+    static final String PROPERTY_SIGNAL_SNR = "signal_snr";
 
     private SDRconnectProtocol()
     {

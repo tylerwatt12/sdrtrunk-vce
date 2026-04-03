@@ -28,33 +28,32 @@ import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.util.ThreadPool;
+import org.java_websocket.client.WebSocketClient;
+import org.java_websocket.handshake.ServerHandshake;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
- * SDRconnect tuner controller - connects to SDRconnect WebSocket API for IQ streaming
+ * SDRconnect tuner controller - connects to SDRconnect WebSocket API for IQ streaming.
+ * Uses Java-WebSocket (org.java-websocket) for reliable long-lived connection handling,
+ * including automatic ping/pong keep-alive and proper close/error surfacing.
  */
-public class SDRconnectTunerController extends TunerController implements WebSocket.Listener
+public class SDRconnectTunerController extends TunerController
 {
     private static final Logger mLog = LoggerFactory.getLogger(SDRconnectTunerController.class);
 
@@ -96,11 +95,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private final int mPort;
     private final String mLogPrefix;
 
-    private WebSocket mWebSocket;
-    private HttpClient mHttpClient;
+    private SDRconnectWebSocketClient mWebSocket;
     private final AtomicBoolean mRunning = new AtomicBoolean(false);
     private final AtomicBoolean mIqStreamEnabled = new AtomicBoolean(false);
-    private final AtomicBoolean mShouldBeRunning = new AtomicBoolean(false); // User intent - should we try to stay connected?
+    private final AtomicBoolean mShouldBeRunning = new AtomicBoolean(false);
     private final AtomicBoolean mReconnecting = new AtomicBoolean(false);
     private final AtomicBoolean mReconnectScheduledFromError = new AtomicBoolean(false);
     private final AtomicBoolean mIqStallRecoveryInProgress = new AtomicBoolean(false);
@@ -118,15 +116,13 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private Consumer<Integer> mSampleRateChangeListener;
     private final Gson mGson = new Gson();
     private final AtomicLong mLastBinaryPacketTimestamp = new AtomicLong(System.currentTimeMillis());
-    private final AtomicLong mLastTextMessageTimestamp = new AtomicLong(0);
+    private final AtomicLong mLastTextFrameTimestamp = new AtomicLong(0);    // any text frame received
+    private final AtomicLong mLastTextMessageTimestamp = new AtomicLong(0);  // last meaningful (parsed) text message
     private final AtomicReference<String> mLastTextSummary = new AtomicReference<>("");
     private final AtomicLong mBinaryPacketCount = new AtomicLong();
     private ScheduledFuture<?> mIqLivenessMonitorFuture;
 
-    // Buffer for accumulating partial WebSocket messages
-    private final BinaryMessageAccumulator mBinaryMessageAccumulator = new BinaryMessageAccumulator();
     private final SDRconnectPropertyUpdateHandler mPropertyUpdateHandler;
-    private final StringBuilder mPartialTextBuffer = new StringBuilder();
     private final SDRconnectNativeBufferFactory mNativeBufferFactory;
     private final AtomicReference<CountDownLatch> mDeviceDiscoveryLatch = new AtomicReference<>();
     private final AtomicReference<CountDownLatch> mSettingsLatch = new AtomicReference<>();
@@ -156,7 +152,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         setMiddleUnusableHalfBandwidth(0);
         setUsableBandwidthPercentage(USABLE_BANDWIDTH_PERCENT);
 
-        // Initialize the frequency controller with the default sample rate
         try
         {
             mFrequencyController.setSampleRate(mSampleRate);
@@ -176,33 +171,21 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         this(DEFAULT_HOST, DEFAULT_PORT, tunerErrorListener);
     }
 
-    /**
-     * Host address for SDRconnect
-     */
     public String getHost()
     {
         return mHost;
     }
 
-    /**
-     * Port for SDRconnect WebSocket
-     */
     public int getPort()
     {
         return mPort;
     }
 
-    /**
-     * Indicates if the WebSocket/controller is currently running.
-     */
     public boolean isRunning()
     {
         return mRunning.get();
     }
 
-    /**
-     * Unique identifier for this tuner
-     */
     public String getUniqueId()
     {
         return "SDRconnect-" + mHost + ":" + mPort;
@@ -256,7 +239,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public void start() throws SourceException
     {
-        mShouldBeRunning.set(true); // User wants us running
+        mShouldBeRunning.set(true);
         mReconnectAttempts.set(0);
         doConnect();
     }
@@ -273,13 +256,17 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 boolean reconnecting = mReconnecting.get();
                 mLog.info("{} Connecting", mLogPrefix);
 
-                mHttpClient = HttpClient.newHttpClient();
                 URI uri = URI.create("ws://" + mHost + ":" + mPort);
+                mWebSocket = new SDRconnectWebSocketClient(uri);
+                // Java-WebSocket automatic ping/pong keep-alive — detects dead connections and fires onClose
+                mWebSocket.setConnectionLostTimeout(30);
 
-                CompletableFuture<WebSocket> future = mHttpClient.newWebSocketBuilder()
-                        .buildAsync(uri, this);
+                if(!mWebSocket.connectBlocking(5, TimeUnit.SECONDS))
+                {
+                    mRunning.set(false);
+                    throw new SourceException("Timed out connecting to SDRconnect at " + mHost + ":" + mPort);
+                }
 
-                mWebSocket = future.get(5, TimeUnit.SECONDS);
                 mLog.info("{} Connected to WebSocket", mLogPrefix);
 
                 // Discover and select the expected device before enabling streaming.
@@ -334,10 +321,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 mIqStallRecoveryInProgress.set(false);
                 mLog.info("{} IQ streaming started", mLogPrefix);
             }
-            catch(TimeoutException te)
+            catch(SourceException se)
             {
-                mRunning.set(false);
-                throw new SourceException("Timed out connecting to SDRconnect at " + mHost + ":" + mPort, te);
+                throw se;
             }
             catch(InterruptedException ie)
             {
@@ -430,11 +416,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
-
     @Override
     public void stop()
     {
-        mShouldBeRunning.set(false); // User wants us stopped - don't reconnect
+        mShouldBeRunning.set(false);
         mIqStallRecoveryInProgress.set(false);
         stopReconnectExecutor();
         doDisconnect();
@@ -452,36 +437,25 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
             try
             {
-                // Disable IQ streaming
                 if(mIqStreamEnabled.get())
                 {
                     enableIqStream(false);
                 }
 
-                // Close WebSocket
                 if(mWebSocket != null)
                 {
-                    mWebSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Shutdown");
+                    mWebSocket.closeBlocking();
                     mWebSocket = null;
                 }
-
-                if(mHttpClient instanceof AutoCloseable autoCloseable)
-                {
-                    autoCloseable.close();
-                }
-
-                mHttpClient = null;
             }
             catch(Exception e)
             {
                 mLog.error("{} Error disconnecting from SDRconnect", mLogPrefix, e);
+                mWebSocket = null;
             }
         }
     }
 
-    /**
-     * Stop the reconnect executor if running
-     */
     private void stopReconnectExecutor()
     {
         if(mReconnectExecutor != null && !mReconnectExecutor.isShutdown())
@@ -506,11 +480,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 if(binaryAgeMs >= IQ_PACKET_STALL_WARNING_MS)
                 {
                     long lastBroadcastAgeMs = now - getLastNativeBufferBroadcastTimestamp();
-                    long lastTextTimestamp = mLastTextMessageTimestamp.get();
-                    String textInfo = lastTextTimestamp == 0 ? "no text received"
-                        : (now - lastTextTimestamp) + " ms ago [" + mLastTextSummary.get() + "]";
-                    mLog.warn("{} No IQ binary packets received for {} ms while connected (packets received: {}, last native buffer broadcast {} ms ago, last text message: {})",
-                        mLogPrefix, binaryAgeMs, mBinaryPacketCount.get(), lastBroadcastAgeMs, textInfo);
+                    long lastFrameTimestamp = mLastTextFrameTimestamp.get();
+                    long lastMsgTimestamp = mLastTextMessageTimestamp.get();
+                    String frameInfo = lastFrameTimestamp == 0 ? "no text frame received"
+                        : (now - lastFrameTimestamp) + " ms ago";
+                    String msgInfo = lastMsgTimestamp == 0 ? "no parsed message"
+                        : (now - lastMsgTimestamp) + " ms ago [" + mLastTextSummary.get() + "]";
+                    mLog.warn("{} No IQ binary packets received for {} ms while connected (packets received: {}, last broadcast {} ms ago, last text frame: {}, last parsed message: {})",
+                        mLogPrefix, binaryAgeMs, mBinaryPacketCount.get(), lastBroadcastAgeMs, frameInfo, msgInfo);
 
                     if(binaryAgeMs >= IQ_PACKET_STALL_RECOVERY_MS)
                     {
@@ -541,7 +518,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 }
                 finally
                 {
-                    // If reconnect scheduling did not take ownership, allow future stall recovery attempts.
                     if(!mReconnecting.get())
                     {
                         mIqStallRecoveryInProgress.set(false);
@@ -560,9 +536,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
-    /**
-     * Schedule a reconnection attempt
-     */
     private void scheduleReconnect()
     {
         if(!mShouldBeRunning.get())
@@ -600,9 +573,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
-    /**
-     * Attempt to reconnect to SDRconnect
-     */
     private void attemptReconnect()
     {
         if(!mShouldBeRunning.get())
@@ -623,62 +593,51 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             mLog.warn("{} SDRconnect reconnection failed: {}", mLogPrefix, e.getMessage());
             mReconnecting.set(false);
-            // Schedule another attempt
             scheduleReconnect();
         }
     }
 
-    /**
-     * Enable or disable IQ streaming
-     */
     public void enableIqStream(boolean enable)
     {
         sendCommand(SDRconnectProtocol.EVENT_IQ_STREAM_ENABLE, enable ? "true" : "false");
         mIqStreamEnabled.set(enable);
     }
 
-    /**
-     * Send a command to SDRconnect
-     */
     private void sendCommand(String eventType, String value)
     {
-        if(mWebSocket != null)
+        SDRconnectWebSocketClient ws = mWebSocket;
+        if(ws != null && ws.isOpen())
         {
-            // Some SDRconnect actions are command-style events rather than set_property updates.
             JsonObject msg = new JsonObject();
             msg.addProperty(SDRconnectProtocol.JSON_EVENT_TYPE, eventType);
-            msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, ""); // API requires property field
+            msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, "");
             msg.addProperty(SDRconnectProtocol.JSON_VALUE, value != null ? value : "");
-            mWebSocket.sendText(mGson.toJson(msg), true);
+            ws.send(mGson.toJson(msg));
         }
     }
 
-    /**
-     * Query a property from SDRconnect
-     */
     private void queryProperty(String property)
     {
-        if(mWebSocket != null)
+        SDRconnectWebSocketClient ws = mWebSocket;
+        if(ws != null && ws.isOpen())
         {
             JsonObject msg = new JsonObject();
             msg.addProperty(SDRconnectProtocol.JSON_EVENT_TYPE, SDRconnectProtocol.EVENT_GET_PROPERTY);
             msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, property);
-            mWebSocket.sendText(mGson.toJson(msg), true);
+            ws.send(mGson.toJson(msg));
         }
     }
 
-    /**
-     * Set a property on SDRconnect
-     */
     private void setProperty(String property, String value)
     {
-        if(mWebSocket != null)
+        SDRconnectWebSocketClient ws = mWebSocket;
+        if(ws != null && ws.isOpen())
         {
             JsonObject msg = new JsonObject();
             msg.addProperty(SDRconnectProtocol.JSON_EVENT_TYPE, SDRconnectProtocol.EVENT_SET_PROPERTY);
             msg.addProperty(SDRconnectProtocol.JSON_PROPERTY, property);
             msg.addProperty(SDRconnectProtocol.JSON_VALUE, value);
-            mWebSocket.sendText(mGson.toJson(msg), true);
+            ws.send(mGson.toJson(msg));
         }
         else
         {
@@ -686,9 +645,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
-    /**
-     * Selects the preferred SDRconnect device entry, preferring Full IQ mode when advertised.
-     */
     private void selectPreferredDevice()
     {
         String preferredDevice = getPreferredDeviceName();
@@ -747,17 +703,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return fallback;
     }
 
-    /**
-     * Indicates if the device selection should use the first advertised SDRconnect device.
-     */
     private boolean isAutomaticDeviceSelection()
     {
         return mDeviceName == null || mDeviceName.isBlank();
     }
 
-    /**
-     * Selects the first advertised device, preferring the configured network mode variant when available.
-     */
     private String getFirstAvailableDeviceName(String[] devices)
     {
         String fallback = DEFAULT_DEVICE_NAME;
@@ -785,9 +735,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return fallback;
     }
 
-    /**
-     * Indicates if an advertised SDRconnect device entry matches the configured selector by friendly name or serial.
-     */
     private boolean matchesDeviceSelector(String advertisedDevice, String configuredSelector)
     {
         if(configuredSelector == null || configuredSelector.isBlank())
@@ -806,9 +753,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return normalizedAdvertised.contains(normalizedSelector);
     }
 
-    /**
-     * Indicates if an advertised SDRconnect entry matches the preferred network mode.
-     */
     private boolean prefersDefaultNetworkMode(String advertisedDevice)
     {
         return advertisedDevice != null &&
@@ -850,11 +794,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
 
         long retuneTolerance = getRetuneToleranceHz();
-
         long frequencyDelta = Math.abs(frequency - mCenterFrequency);
 
-        // Only send a re-tune request when the requested center differs meaningfully from the current center.
-        // Scale the tolerance with sample rate so narrower SDRconnect bandwidths can re-center more precisely.
         if(frequencyDelta > retuneTolerance)
         {
             setProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY, String.valueOf(frequency));
@@ -879,9 +820,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return mSampleRate;
     }
 
-    /**
-     * Sets the sample rate (called when SDRconnect reports the rate)
-     */
     public void setSampleRate(int sampleRate)
     {
         mSampleRate = sampleRate;
@@ -900,10 +838,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
     }
 
-    /**
-     * Request a sample rate change from SDRconnect
-     * @param sampleRate in Hz (e.g., 2000000 for 2 MHz)
-     */
     public void requestSampleRate(int sampleRate)
     {
         if(mFrequencyController.isSampleRateLocked())
@@ -917,10 +851,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         setProperty(SDRconnectProtocol.PROPERTY_DEVICE_SAMPLE_RATE, String.valueOf(sampleRate));
     }
 
-    /**
-     * Request antenna selection from SDRconnect
-     * @param antenna selection (e.g., "A", "B", "C", or "Hi-Z")
-     */
     public void requestAntenna(String antenna)
     {
         mLog.info("{} Requesting antenna: {}", mLogPrefix, antenna);
@@ -954,9 +884,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             .toArray(String[]::new);
     }
 
-    /**
-     * Common sample rates supported by SDRplay devices (in Hz)
-     */
     protected static final int[] SUPPORTED_SAMPLE_RATES = {
         62500,     // 62.5 KHz
         125000,    // 125 KHz
@@ -972,110 +899,89 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         10000000   // 10 MHz
     };
 
-    // WebSocket.Listener implementation
+    private static final String SKIP_SIGNAL_POWER = "\"property\":\"" + SDRconnectProtocol.PROPERTY_SIGNAL_POWER + "\"";
+    private static final String SKIP_SIGNAL_SNR   = "\"property\":\"" + SDRconnectProtocol.PROPERTY_SIGNAL_SNR + "\"";
 
-    @Override
-    public void onOpen(WebSocket webSocket)
+    private void handleTextMessage(String json)
     {
-        webSocket.request(1);
-    }
+        // Update raw transport liveness before any early-exit
+        mLastTextFrameTimestamp.set(System.currentTimeMillis());
 
-    @Override
-    public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last)
-    {
-        mPartialTextBuffer.append(data);
-
-        // Only process when we have the complete message
-        if(last)
+        // signal_power and signal_snr arrive with every IQ packet and have no consumer — skip full parse
+        if(json.contains(SKIP_SIGNAL_POWER) || json.contains(SKIP_SIGNAL_SNR))
         {
-            try
-            {
-                String json = mPartialTextBuffer.toString();
-                mPartialTextBuffer.setLength(0);
-
-                JsonObject msg = JsonParser.parseString(json).getAsJsonObject();
-
-                String eventType = msg.has(SDRconnectProtocol.JSON_EVENT_TYPE) ?
-                    msg.get(SDRconnectProtocol.JSON_EVENT_TYPE).getAsString() : "";
-                String property = msg.has(SDRconnectProtocol.JSON_PROPERTY) ?
-                    msg.get(SDRconnectProtocol.JSON_PROPERTY).getAsString() : "";
-
-                mLastTextMessageTimestamp.set(System.currentTimeMillis());
-                mLastTextSummary.set(property.isEmpty() ? eventType : eventType + "/" + property);
-                String value = msg.has(SDRconnectProtocol.JSON_VALUE) ?
-                    msg.get(SDRconnectProtocol.JSON_VALUE).getAsString() : "";
-                if(SDRconnectProtocol.EVENT_PROPERTY_CHANGED.equals(eventType) ||
-                    SDRconnectProtocol.EVENT_GET_PROPERTY_RESPONSE.equals(eventType))
-                {
-                    mPropertyUpdateHandler.handle(property, value);
-                }
-                else if(SDRconnectProtocol.EVENT_ERROR.equals(eventType))
-                {
-                    mLog.error("{} SDRconnect error: {}", mLogPrefix, json);
-                }
-            }
-            catch(Exception e)
-            {
-                mLog.warn("{} Error parsing SDRconnect message: {}", mLogPrefix, e.getMessage());
-                mPartialTextBuffer.setLength(0);
-            }
+            return;
         }
 
-        webSocket.request(1);
-        return null;
-    }
-
-    @Override
-    public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last)
-    {
         try
         {
-            mIqStallRecoveryInProgress.set(false);
-            mLastBinaryPacketTimestamp.set(System.currentTimeMillis());
-            mBinaryPacketCount.incrementAndGet();
+            JsonObject msg = JsonParser.parseString(json).getAsJsonObject();
 
-            if(!last)
+            String eventType = msg.has(SDRconnectProtocol.JSON_EVENT_TYPE) ?
+                msg.get(SDRconnectProtocol.JSON_EVENT_TYPE).getAsString() : "";
+            String property = msg.has(SDRconnectProtocol.JSON_PROPERTY) ?
+                msg.get(SDRconnectProtocol.JSON_PROPERTY).getAsString() : "";
+
+            mLastTextMessageTimestamp.set(System.currentTimeMillis());
+            mLastTextSummary.set(property.isEmpty() ? eventType : eventType + "/" + property);
+
+            String value = msg.has(SDRconnectProtocol.JSON_VALUE) ?
+                msg.get(SDRconnectProtocol.JSON_VALUE).getAsString() : "";
+
+            if(SDRconnectProtocol.EVENT_PROPERTY_CHANGED.equals(eventType) ||
+                SDRconnectProtocol.EVENT_GET_PROPERTY_RESPONSE.equals(eventType))
             {
-                mBinaryMessageAccumulator.append(data);
+                mPropertyUpdateHandler.handle(property, value);
             }
-            else
+            else if(SDRconnectProtocol.EVENT_ERROR.equals(eventType))
             {
-                mBinaryMessageAccumulator.complete(data, buffer -> {
-                    if(buffer.remaining() >= 2)
-                    {
-                        buffer.order(ByteOrder.LITTLE_ENDIAN);
-                        int header = buffer.getShort() & 0xFFFF;
+                mLog.error("{} SDRconnect error: {}", mLogPrefix, json);
+            }
+        }
+        catch(Exception e)
+        {
+            mLog.warn("{} Error parsing SDRconnect message: {}", mLogPrefix, e.getMessage());
+        }
+    }
 
-                        if(header == HEADER_IQ && buffer.remaining() > 0)
-                        {
-                            broadcast(mNativeBufferFactory.getBuffer(buffer, System.currentTimeMillis()));
-                        }
-                    }
-                });
+    private void handleBinaryMessage(ByteBuffer buffer)
+    {
+        mIqStallRecoveryInProgress.set(false);
+        mLastBinaryPacketTimestamp.set(System.currentTimeMillis());
+        mBinaryPacketCount.incrementAndGet();
+
+        try
+        {
+            if(buffer.remaining() >= 2)
+            {
+                buffer.order(ByteOrder.LITTLE_ENDIAN);
+                int header = buffer.getShort() & 0xFFFF;
+
+                if(header == HEADER_IQ && buffer.remaining() > 0)
+                {
+                    broadcast(mNativeBufferFactory.getBuffer(buffer, System.currentTimeMillis()));
+                }
             }
         }
         catch(Exception e)
         {
             mLog.warn("{} Error processing SDRconnect binary data: {}", mLogPrefix, e.getMessage());
         }
-
-        webSocket.request(1);
-        return null;
     }
 
-    @Override
-    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason)
+    private void handleClose(int code, String reason, boolean remote)
     {
-        mLog.info("{} WebSocket closed: {} - {}", mLogPrefix, statusCode, reason);
+        mLog.info("{} WebSocket closed: {} - {} (remote: {})", mLogPrefix, code, reason, remote);
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         stopIqLivenessMonitor();
         mWebSocket = null;
         mIqStallRecoveryInProgress.set(false);
 
-        // If this wasn't a normal closure and user wants us running, try to reconnect
-        if(statusCode != WebSocket.NORMAL_CLOSURE && mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get() &&
-            !mReconnectScheduledFromError.getAndSet(false))
+        // 1000 = normal closure initiated by us; reconnect on any other code if user wants running
+        if(code != org.java_websocket.framing.CloseFrame.NORMAL && mShouldBeRunning.get()
+            && !APPLICATION_SHUTTING_DOWN.get()
+            && !mReconnectScheduledFromError.getAndSet(false))
         {
             mLog.warn("{} SDRconnect connection lost unexpectedly - will attempt to reconnect", mLogPrefix);
             scheduleReconnect();
@@ -1084,20 +990,17 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             mReconnectScheduledFromError.set(false);
         }
-
-        return null;
     }
 
-    @Override
-    public void onError(WebSocket webSocket, Throwable error)
+    private void handleError(Exception ex)
     {
-        mLog.error("{} SDRconnect WebSocket error: {}", mLogPrefix, error.getMessage());
+        mLog.error("{} SDRconnect WebSocket error: {}", mLogPrefix,
+            ex != null ? ex.getMessage() : "unknown");
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         mWebSocket = null;
         mIqStallRecoveryInProgress.set(false);
 
-        // If user wants us running, try to reconnect
         if(mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get())
         {
             mReconnectScheduledFromError.set(true);
@@ -1106,7 +1009,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         }
         else if(!APPLICATION_SHUTTING_DOWN.get())
         {
-            setErrorMessage("SDRconnect error: " + error.getMessage());
+            setErrorMessage("SDRconnect error: " + (ex != null ? ex.getMessage() : "unknown"));
         }
     }
 
@@ -1248,43 +1151,46 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         });
     }
 
-    private static class BinaryMessageAccumulator
+    /**
+     * Java-WebSocket client inner class. Delegates all callbacks to the enclosing controller's
+     * handle* methods, keeping the WebSocket library boundary contained here.
+     */
+    private class SDRconnectWebSocketClient extends WebSocketClient
     {
-        // Observed fragmented SDRconnect IQ payloads are consistently about 1,000,034 bytes, so start
-        // slightly above that steady-state size to avoid repeated growth on the fragmented binary path.
-        private ByteBuffer mBuffer = ByteBuffer.allocate(1_048_576);
-
-        private void append(ByteBuffer data)
+        SDRconnectWebSocketClient(URI serverUri)
         {
-            int requiredCapacity = mBuffer.position() + data.remaining();
-
-            if(requiredCapacity <= mBuffer.capacity())
-            {
-                mBuffer.put(data);
-                return;
-            }
-
-            int newCapacity = Math.max(requiredCapacity, mBuffer.capacity() * 2);
-            ByteBuffer expanded = ByteBuffer.allocate(newCapacity);
-            mBuffer.flip();
-            expanded.put(mBuffer);
-            expanded.put(data);
-            mBuffer = expanded;
+            super(serverUri);
         }
 
-        private void complete(ByteBuffer finalFragment, Consumer<ByteBuffer> handler)
+        @Override
+        public void onOpen(ServerHandshake handshake)
         {
-            append(finalFragment);
-            mBuffer.flip();
-            try
-            {
-                handler.accept(mBuffer);
-            }
-            finally
-            {
-                mBuffer.clear();
-            }
+            // Connection is established; doConnect() continues after connectBlocking() returns.
+        }
+
+        @Override
+        public void onMessage(String message)
+        {
+            handleTextMessage(message);
+        }
+
+        @Override
+        public void onMessage(ByteBuffer bytes)
+        {
+            // Java-WebSocket delivers fully reassembled binary messages — no accumulator needed.
+            handleBinaryMessage(bytes);
+        }
+
+        @Override
+        public void onClose(int code, String reason, boolean remote)
+        {
+            handleClose(code, reason, remote);
+        }
+
+        @Override
+        public void onError(Exception ex)
+        {
+            handleError(ex);
         }
     }
-
 }
