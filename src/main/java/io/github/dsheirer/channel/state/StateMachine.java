@@ -23,8 +23,6 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -35,8 +33,6 @@ import java.util.List;
  */
 public class StateMachine
 {
-    private final static Logger mLog = LoggerFactory.getLogger(StateMachine.class);
-
     protected State mState = State.IDLE;
     protected long mFadeTimeout;
     protected long mFadeTimeoutBufferMilliseconds = 0;
