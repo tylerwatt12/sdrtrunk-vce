@@ -25,8 +25,8 @@ import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.sample.Listener;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * State machine for tracking a channel state.
@@ -39,7 +39,7 @@ public class StateMachine
     protected long mEndTimeout;
     protected long mEndTimeoutBufferMilliseconds = 0;
     private int mTimeslot;
-    private EnumSet<State> mActiveStates;
+    private Set<State> mActiveStates;
     private Channel.ChannelType mChannelType = Channel.ChannelType.STANDARD;
     private List<IStateMachineListener> mStateMachineListeners = new ArrayList<>();
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateListener;
@@ -50,7 +50,7 @@ public class StateMachine
      * @param timeslot for this state machine
      * @param activeStates set of states considered active for updating the fade timeout
      */
-    public StateMachine(int timeslot, EnumSet<State> activeStates)
+    public StateMachine(int timeslot, Set<State> activeStates)
     {
         mTimeslot = timeslot;
         mActiveStates = activeStates;
