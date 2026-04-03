@@ -543,9 +543,9 @@ public class Alias
 
         for(AliasID aliasID: mAliasIDs)
         {
-            if(aliasID instanceof Priority priority)
+            if(aliasID instanceof Priority existingPriority)
             {
-                priorityID = priority;
+                priorityID = existingPriority;
             }
         }
 
