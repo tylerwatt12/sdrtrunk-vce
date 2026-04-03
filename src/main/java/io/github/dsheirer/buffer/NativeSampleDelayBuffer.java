@@ -73,7 +73,10 @@ public class NativeSampleDelayBuffer implements Listener<INativeBuffer>
     public void clear()
     {
         //Submit a clear buffer request to be processed upon the next buffer that arrives
-        mActionQueue.offer(new ActionRequest<>());
+        if(!mActionQueue.offer(new ActionRequest<>()))
+        {
+            throw new IllegalStateException("Unable to enqueue clear buffer request");
+        }
     }
 
     /**
