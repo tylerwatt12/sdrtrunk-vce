@@ -334,8 +334,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             {
                 if(request.isPersistentAttempt())
                 {
+                    DelayedChannelStartTask delayedChannelStartTask = new DelayedChannelStartTask(request);
                     ScheduledFuture<?> future = ThreadPool.SCHEDULED
-                        .schedule(new DelayedChannelStartTask(request), 500, TimeUnit.MILLISECONDS);
+                        .schedule(delayedChannelStartTask, 500, TimeUnit.MILLISECONDS);
+                    delayedChannelStartTask.setScheduledFuture(future);
                     mDelayedChannelStartTasks.add(future);
                 }
             }
@@ -813,10 +815,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public class DelayedChannelStartTask implements Runnable
     {
         private ChannelStartProcessingRequest mRequest;
+        private ScheduledFuture<?> mScheduledFuture;
 
         public DelayedChannelStartTask(ChannelStartProcessingRequest request)
         {
             mRequest = request;
+        }
+
+        public void setScheduledFuture(ScheduledFuture<?> scheduledFuture)
+        {
+            mScheduledFuture = scheduledFuture;
         }
 
         @Override
@@ -824,7 +832,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             try
             {
-                mDelayedChannelStartTasks.remove(this);
+                mDelayedChannelStartTasks.remove(mScheduledFuture);
                 startChannelRequest(mRequest);
             }
             catch(Exception _)
