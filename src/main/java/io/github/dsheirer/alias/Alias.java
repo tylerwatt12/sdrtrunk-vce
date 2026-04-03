@@ -273,16 +273,8 @@ public class Alias
         boolean isEmptyArgument = aliasList == null || aliasList.isEmpty() || aliasList.contentEquals(AliasModel.NO_ALIAS_LIST);
         boolean isEmptyThis = getAliasListName() == null || getAliasListName().isEmpty();
 
-        if(isEmptyArgument && isEmptyThis)
-        {
-            return true;
-        }
-        else if(!isEmptyArgument && !isEmptyThis && aliasList.contentEquals(getAliasListName()))
-        {
-            return true;
-        }
-
-        return false;
+        return (isEmptyArgument && isEmptyThis) ||
+            (!isEmptyArgument && !isEmptyThis && aliasList.contentEquals(getAliasListName()));
     }
 
     /**
