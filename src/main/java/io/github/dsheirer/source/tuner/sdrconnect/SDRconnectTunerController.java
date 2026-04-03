@@ -43,10 +43,12 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -79,6 +81,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private static final int RECONNECT_INITIAL_DELAY_SECONDS = 5;
     private static final int RECONNECT_MAX_DELAY_SECONDS = 60;
     private static final int RECONNECT_MAX_ATTEMPTS = 10;
+    private static final long IQ_LIVENESS_CHECK_INTERVAL_MS = 5_000;
+    private static final long IQ_PACKET_STALL_WARNING_MS = 5_000;
+    private static final long IQ_PACKET_STALL_RECOVERY_MS = 15_000;
     private static final AtomicBoolean APPLICATION_SHUTTING_DOWN = new AtomicBoolean(false);
 
     static
@@ -98,6 +103,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private final AtomicBoolean mShouldBeRunning = new AtomicBoolean(false); // User intent - should we try to stay connected?
     private final AtomicBoolean mReconnecting = new AtomicBoolean(false);
     private final AtomicBoolean mReconnectScheduledFromError = new AtomicBoolean(false);
+    private final AtomicBoolean mIqStallRecoveryInProgress = new AtomicBoolean(false);
     private final AtomicInteger mReconnectAttempts = new AtomicInteger(0);
     private ScheduledExecutorService mReconnectExecutor;
     private int mSampleRate = DEFAULT_SAMPLE_RATE;
@@ -111,6 +117,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private Consumer<String> mAntennaChangeListener;
     private Consumer<Integer> mSampleRateChangeListener;
     private final Gson mGson = new Gson();
+    private final AtomicLong mLastBinaryPacketTimestamp = new AtomicLong(System.currentTimeMillis());
+    private final AtomicLong mBinaryPacketCount = new AtomicLong();
+    private ScheduledFuture<?> mIqLivenessMonitorFuture;
 
     // Buffer for accumulating partial WebSocket messages
     private final BinaryMessageAccumulator mBinaryMessageAccumulator = new BinaryMessageAccumulator();
@@ -300,6 +309,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
                 // Enable IQ streaming
                 enableIqStream(true);
+                startIqLivenessMonitor();
 
                 // Re-apply configured settings now that the connection is established and the device
                 // selection handshake has completed.
@@ -319,6 +329,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 // Reset reconnect state on successful connection
                 mReconnectAttempts.set(0);
                 mReconnecting.set(false);
+                mIqStallRecoveryInProgress.set(false);
                 mLog.info("{} IQ streaming started", mLogPrefix);
             }
             catch(TimeoutException te)
@@ -422,6 +433,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public void stop()
     {
         mShouldBeRunning.set(false); // User wants us stopped - don't reconnect
+        mIqStallRecoveryInProgress.set(false);
         stopReconnectExecutor();
         doDisconnect();
     }
@@ -434,6 +446,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(mRunning.compareAndSet(true, false))
         {
             mLog.info("{} Disconnecting from SDRconnect", mLogPrefix);
+            stopIqLivenessMonitor();
 
             try
             {
@@ -473,6 +486,72 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             mReconnectExecutor.shutdownNow();
             mReconnectExecutor = null;
+        }
+    }
+
+    private void startIqLivenessMonitor()
+    {
+        stopIqLivenessMonitor();
+        mLastBinaryPacketTimestamp.set(System.currentTimeMillis());
+
+        mIqLivenessMonitorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(() -> {
+            if(mRunning.get() && mIqStreamEnabled.get())
+            {
+                long now = System.currentTimeMillis();
+                long lastBinaryTimestamp = mLastBinaryPacketTimestamp.get();
+                long binaryAgeMs = now - lastBinaryTimestamp;
+
+                if(binaryAgeMs >= IQ_PACKET_STALL_WARNING_MS)
+                {
+                    long lastBroadcastAgeMs = now - getLastNativeBufferBroadcastTimestamp();
+                    mLog.warn("{} No IQ binary packets received for {} ms while connected (packets received: {}, last native buffer broadcast {} ms ago)",
+                        mLogPrefix, binaryAgeMs, mBinaryPacketCount.get(), lastBroadcastAgeMs);
+
+                    if(binaryAgeMs >= IQ_PACKET_STALL_RECOVERY_MS)
+                    {
+                        triggerIqStallRecovery(binaryAgeMs);
+                    }
+                }
+            }
+        }, IQ_LIVENESS_CHECK_INTERVAL_MS, IQ_LIVENESS_CHECK_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void triggerIqStallRecovery(long binaryAgeMs)
+    {
+        if(!mShouldBeRunning.get() || APPLICATION_SHUTTING_DOWN.get())
+        {
+            return;
+        }
+
+        if(mIqStallRecoveryInProgress.compareAndSet(false, true))
+        {
+            mLog.error("{} IQ stream stalled for {} ms while connection remains open - forcing reconnect",
+                mLogPrefix, binaryAgeMs);
+
+            ThreadPool.CACHED.execute(() -> {
+                try
+                {
+                    doDisconnect();
+                    scheduleReconnect();
+                }
+                finally
+                {
+                    // If reconnect scheduling did not take ownership, allow future stall recovery attempts.
+                    if(!mReconnecting.get())
+                    {
+                        mIqStallRecoveryInProgress.set(false);
+                    }
+                }
+            });
+        }
+    }
+
+    private void stopIqLivenessMonitor()
+    {
+        if(mIqLivenessMonitorFuture != null)
+        {
+            mIqLivenessMonitorFuture.cancel(false);
+            mIqLivenessMonitorFuture = null;
         }
     }
 
@@ -943,6 +1022,10 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     {
         try
         {
+            mIqStallRecoveryInProgress.set(false);
+            mLastBinaryPacketTimestamp.set(System.currentTimeMillis());
+            mBinaryPacketCount.incrementAndGet();
+
             if(!last)
             {
                 mBinaryMessageAccumulator.append(data);
@@ -975,10 +1058,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     @Override
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason)
     {
-            mLog.info("{} WebSocket closed: {} - {}", mLogPrefix, statusCode, reason);
+        mLog.info("{} WebSocket closed: {} - {}", mLogPrefix, statusCode, reason);
         mRunning.set(false);
         mIqStreamEnabled.set(false);
+        stopIqLivenessMonitor();
         mWebSocket = null;
+        mIqStallRecoveryInProgress.set(false);
 
         // If this wasn't a normal closure and user wants us running, try to reconnect
         if(statusCode != WebSocket.NORMAL_CLOSURE && mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get() &&
@@ -1002,6 +1087,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         mWebSocket = null;
+        mIqStallRecoveryInProgress.set(false);
 
         // If user wants us running, try to reconnect
         if(mShouldBeRunning.get() && !APPLICATION_SHUTTING_DOWN.get())
