@@ -26,16 +26,13 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Base audio module implementation.
  */
 public abstract class AbstractAudioModule extends Module implements IAudioSegmentProvider, IdentifierUpdateListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AbstractAudioModule.class);
-    public static final long DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH = 60 * 8000; // 1 minute @ 8kHz
+    public static final long DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH = 60L * 8000; // 1 minute @ 8kHz
     public static final int DEFAULT_TIMESLOT = 0;
     private final int mMaxSegmentAudioSampleLength;
     private Listener<AudioSegment> mAudioSegmentListener;
@@ -53,7 +50,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
      * @param aliasList for aliasing identifiers
      * @param maxSegmentAudioSampleLength in milliseconds
      */
-    public AbstractAudioModule(AliasList aliasList, int timeslot, long maxSegmentAudioSampleLength)
+    protected AbstractAudioModule(AliasList aliasList, int timeslot, long maxSegmentAudioSampleLength)
     {
         mAliasList = aliasList;
         mMaxSegmentAudioSampleLength = (int)(maxSegmentAudioSampleLength * 8); //Convert milliseconds to samples
@@ -65,7 +62,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
     /**
      * Constructs an abstract audio module with a default maximum audio segment length and a default timeslot 0.
      */
-    public AbstractAudioModule(AliasList aliasList)
+    protected AbstractAudioModule(AliasList aliasList)
     {
         this(aliasList, DEFAULT_TIMESLOT, DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH);
     }
@@ -153,7 +150,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
             audioSegment.addAudio(audioBuffer);
             mAudioSampleCount += audioBuffer.length;
         }
-        catch(Exception e)
+        catch(Exception _)
         {
             closeAudioSegment();
         }
