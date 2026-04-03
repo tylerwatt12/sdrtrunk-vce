@@ -88,11 +88,13 @@ public class AudioProviderStereo extends AudioProvider
         {
             return SILENCE;
         }
-        else if(left == null)
+
+        if(left == null)
         {
             left = new float[AudioChannel.SAMPLES_PER_INTERVAL];
         }
-        else if(right == null)
+
+        if(right == null)
         {
             right = new float[AudioChannel.SAMPLES_PER_INTERVAL];
         }
