@@ -70,7 +70,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JLabel mMeasuredErrorHzLabel;
     private JLabel mMeasuredErrorPpmLabel;
     private FrequencyPanel mSDRconnectFrequencyPanel;
-    private final ISourceEventProcessor mFrequencySaveListener = event ->
+    private final transient ISourceEventProcessor mFrequencySaveListener = event ->
     {
         if(hasTuner() && !isLoading())
         {

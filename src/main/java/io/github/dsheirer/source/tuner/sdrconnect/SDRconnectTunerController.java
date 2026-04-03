@@ -50,6 +50,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 
 /**
  * SDRconnect tuner controller - connects to SDRconnect WebSocket API for IQ streaming
@@ -120,7 +121,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private int mConfiguredSampleRate = DEFAULT_SAMPLE_RATE;
     private String mConfiguredAntenna = "";
     private Consumer<String> mAntennaChangeListener;
-    private Consumer<Integer> mSampleRateChangeListener;
+    private IntConsumer mSampleRateChangeListener;
     private final Gson mGson = new Gson();
     private final AtomicLong mLastBinaryPacketTimestamp = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong mLastTextFrameTimestamp = new AtomicLong(0);    // any text frame received
@@ -873,7 +874,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mAntennaChangeListener = listener;
     }
 
-    public void setSampleRateChangeListener(Consumer<Integer> listener)
+    public void setSampleRateChangeListener(IntConsumer listener)
     {
         mSampleRateChangeListener = listener;
     }
