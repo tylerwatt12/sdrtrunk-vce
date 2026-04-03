@@ -75,7 +75,7 @@ import org.slf4j.LoggerFactory;
 public class ChannelProcessingManager implements Listener<ChannelEvent>
 {
     private static final String DIVIDER = "-------------------------------------------------------------------------\n";
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
     private static final String TUNER_UNAVAILABLE_DESCRIPTION = "TUNER UNAVAILABLE";
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
@@ -247,47 +247,45 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     }
                     catch(ChannelException ce)
                     {
-                        if(channel.getSourceConfiguration() instanceof SourceConfigTuner)
+                        if(channel.getSourceConfiguration() instanceof SourceConfigTuner sourceconfigtuner)
                         {
-                            long frequency = ((SourceConfigTuner)channel.getSourceConfiguration()).getFrequency();
+                            long frequency = sourceconfigtuner.getFrequency();
 
                             if(!mLoggedFrequencies.contains(frequency))
                             {
                                 mLoggedFrequencies.add(frequency);
-                                mLog.error("Error starting requested channel [" + channel.getName() + ":" + frequency +
-                                    "] - " + ce.getMessage());
+                                mLog.error("Error starting requested channel [{}:{}] - {}", channel.getName(), frequency,
+                                    ce.getMessage());
                             }
                         }
-                        else if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency)
+                        else if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sourceConfigTunerMultipleFrequency)
                         {
-                            List<Long> frequencies = ((SourceConfigTunerMultipleFrequency)channel
-                                .getSourceConfiguration()).getFrequencies();
+                            List<Long> frequencies = sourceConfigTunerMultipleFrequency.getFrequencies();
 
-                            if(frequencies.size() > 0 && !mLoggedFrequencies.contains(frequencies.get(0)))
+                            if(!frequencies.isEmpty() && !mLoggedFrequencies.contains(frequencies.get(0)))
                             {
                                 mLoggedFrequencies.add(frequencies.get(0));
-                                mLog.error("Error starting requested channel [" + channel.getName() + ":" + frequencies +
-                                    "] - " + ce.getMessage());
+                                mLog.error("Error starting requested channel [{}:{}] - {}", channel.getName(), frequencies,
+                                    ce.getMessage());
                             }
                         }
                         else
                         {
-                            mLog.error("Error starting requested channel [" + channel.getName() + "] - " + ce.getMessage());
+                            mLog.error("Error starting requested channel [{}] - {}", channel.getName(), ce.getMessage());
                         }
                     }
                 }
                 break;
-            case REQUEST_DISABLE:
-            case NOTIFICATION_DELETE:
+            case REQUEST_DISABLE, NOTIFICATION_DELETE:
                 if(channel != null)
                 {
                     try
                     {
                         stopProcessing(channel);
                     }
-                    catch(Throwable t)
+                    catch(Exception e)
                     {
-                        mLog.error("Error stopping channel [" + channel + "]", t);
+                        mLog.error("Error stopping channel [" + channel + "]", e);
                     }
                 }
                 else
@@ -332,7 +330,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             {
                 startProcessing(request);
             }
-            catch(ChannelException ce)
+            catch(ChannelException _)
             {
                 if(request.isPersistentAttempt())
                 {
@@ -537,9 +535,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             {
                 processingChain.start();
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                mLog.error("Error caught during processing chain startup - continuing", t);
+                mLog.error("Error caught during processing chain startup - continuing", e);
             }
 
             if(GraphicsEnvironment.isHeadless())
@@ -556,7 +554,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
         else
         {
-            mLog.warn("Channel [" + channel.getName() + "] processing chain not added because it already exists");
+            mLog.warn("Channel [{}] processing chain not added because it already exists", channel.getName());
             processingChain.removeEventLoggingModules();
             processingChain.removeRecordingModules();
             processingChain.removeFrequencyChangeListener(channel);
@@ -577,25 +575,25 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     private boolean addProcessingChain(Channel channel, ProcessingChain processingChain)
     {
-        boolean added = false;
+        boolean[] added = new boolean[1];
 
         mLock.lock();
 
         try
         {
-            if(!mProcessingChainsMap.containsKey(channel))
-            {
-                added = true;
-                mProcessingChainsMap.put(channel, processingChain);
-                getChannelMetadataModel().add(new ChannelAndMetadata(channel, processingChain.getChannelState().getChannelMetadata()));
-            }
+            mProcessingChainsMap.computeIfAbsent(channel, key -> {
+                added[0] = true;
+                getChannelMetadataModel().add(new ChannelAndMetadata(key,
+                    processingChain.getChannelState().getChannelMetadata()));
+                return processingChain;
+            });
         }
         finally
         {
             mLock.unlock();
         }
 
-        return added;
+        return added[0];
     }
 
     /**
@@ -664,7 +662,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                         }
                     });
                 }
-                catch(IllegalStateException e)
+                catch(IllegalStateException _)
                 {
                     channel.setProcessing(false);
                 }
@@ -719,7 +717,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             }
             catch(ChannelException ce)
             {
-                mLog.error("Error stopping channel [" + channel.getName() + "] - " + ce.getMessage());
+                mLog.error("Error stopping channel [{}] - {}", channel.getName(), ce.getMessage());
             }
         }
     }
@@ -829,7 +827,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 mDelayedChannelStartTasks.remove(this);
                 startChannelRequest(mRequest);
             }
-            catch(Throwable t)
+            catch(Exception _)
             {
                 mLog.error("Error executing persistent channel start task");
             }
@@ -870,11 +868,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 {
                     if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_ERROR_STATE)
                     {
-                        mLog.warn("Channel source error detected - stopping channel [" + toShutdown.getName() + "]");
+                        mLog.warn("Channel source error detected - stopping channel [{}]", toShutdown.getName());
                     }
                     else
                     {
-                        mLog.warn("Source event error - stopping channel [" + toShutdown.getName() + "]");
+                        mLog.warn("Source event error - stopping channel [{}]", toShutdown.getName());
                     }
 
                     try
@@ -883,12 +881,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     }
                     catch(ChannelException ce)
                     {
-                        mLog.error("Error stopping channel [" + (toShutdown != null ? toShutdown.getName() : "unknown") +
-                                "] with source error - " + ce.getMessage());
+                        mLog.error("Error stopping channel [{}] with source error - {}", toShutdown.getName(),
+                                ce.getMessage());
                     }
-                    catch(Throwable t)
+                    catch(Exception e)
                     {
-                        mLog.error("Error stopping channel [" + toShutdown + "]", t);
+                        mLog.error("Error stopping channel [" + toShutdown + "]", e);
                     }
                 }
             }
@@ -912,8 +910,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             try
             {
                 Channel channel = entry.getKey();
-                sb.append("\tChannel: " + channel).append("\n");
-                sb.append("\t\tSource Configuration: " + channel.getSourceConfiguration()).append("\n");
+                sb.append("\tChannel: ").append(channel).append("\n");
+                sb.append("\t\tSource Configuration: ").append(channel.getSourceConfiguration()).append("\n");
                 ProcessingChain chain = entry.getValue();
                 sb.append("\tProcessing Chain - Processing: ").append(chain.isProcessing()).append("\n");
                 AbstractChannelState state = chain.getChannelState();
@@ -929,7 +927,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
                 if(source != null)
                 {
-                    sb.append("Channel Source Class: " + source.getClass()).append("\n");
+                    sb.append("Channel Source Class: ").append(source.getClass()).append("\n");
                     sb.append("\t\tTo String:").append(source).append("\n");
                     sb.append("\t\tHash:").append(Integer.toHexString(source.hashCode()).toUpperCase()).append("\n");
                 }
@@ -938,9 +936,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     sb.append("Channel Source: (null)\n");
                 }
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                sb.append("\tError while logging diagnostics of map entry - " + t.getMessage()).append("\n");
+                sb.append("\tError while logging diagnostics of map entry - ").append(e.getMessage()).append("\n");
             }
         }
 
