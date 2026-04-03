@@ -481,31 +481,49 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         stopIqLivenessMonitor();
         mLastBinaryPacketTimestamp.set(System.currentTimeMillis());
 
-        mIqLivenessMonitorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(() -> {
-            if(mRunning.get() && mIqStreamEnabled.get())
-            {
-                long now = System.currentTimeMillis();
-                long lastBinaryTimestamp = mLastBinaryPacketTimestamp.get();
-                long binaryAgeMs = now - lastBinaryTimestamp;
+        mIqLivenessMonitorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(this::checkIqLiveness,
+            IQ_LIVENESS_CHECK_INTERVAL_MS, IQ_LIVENESS_CHECK_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
 
-                if(binaryAgeMs >= IQ_PACKET_STALL_WARNING_MS)
-                {
-                    long lastFrameTimestamp = mLastTextFrameTimestamp.get();
-                    long lastMsgTimestamp = mLastTextMessageTimestamp.get();
-                    String frameInfo = lastFrameTimestamp == 0 ? "no text frame received"
-                        : (now - lastFrameTimestamp) + " ms ago";
-                    String msgInfo = lastMsgTimestamp == 0 ? "no parsed message"
-                        : (now - lastMsgTimestamp) + " ms ago [" + mLastTextSummary.get() + "]";
-                    mLog.warn("{} No IQ binary packets received for {} ms while connected (packets received: {}, last text frame: {}, last parsed message: {})",
-                        mLogPrefix, binaryAgeMs, mBinaryPacketCount.get(), frameInfo, msgInfo);
+    private void checkIqLiveness()
+    {
+        if(!mRunning.get() || !mIqStreamEnabled.get())
+        {
+            return;
+        }
 
-                    if(binaryAgeMs >= IQ_PACKET_STALL_RECOVERY_MS)
-                    {
-                        triggerIqStallRecovery(binaryAgeMs);
-                    }
-                }
-            }
-        }, IQ_LIVENESS_CHECK_INTERVAL_MS, IQ_LIVENESS_CHECK_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        long now = System.currentTimeMillis();
+        long binaryAgeMs = now - mLastBinaryPacketTimestamp.get();
+
+        if(binaryAgeMs < IQ_PACKET_STALL_WARNING_MS)
+        {
+            return;
+        }
+
+        if(mLog.isWarnEnabled())
+        {
+            mLog.warn("{} No IQ binary packets received for {} ms while connected (packets received: {}, last text frame: {}, last parsed message: {})",
+                mLogPrefix, binaryAgeMs, mBinaryPacketCount.get(), formatLastTextFrameAge(now),
+                formatLastParsedMessageAge(now));
+        }
+
+        if(binaryAgeMs >= IQ_PACKET_STALL_RECOVERY_MS)
+        {
+            triggerIqStallRecovery(binaryAgeMs);
+        }
+    }
+
+    private String formatLastTextFrameAge(long now)
+    {
+        long lastFrameTimestamp = mLastTextFrameTimestamp.get();
+        return lastFrameTimestamp == 0 ? "no text frame received" : (now - lastFrameTimestamp) + " ms ago";
+    }
+
+    private String formatLastParsedMessageAge(long now)
+    {
+        long lastMessageTimestamp = mLastTextMessageTimestamp.get();
+        return lastMessageTimestamp == 0 ? "no parsed message"
+            : (now - lastMessageTimestamp) + " ms ago [" + mLastTextSummary.get() + "]";
     }
 
     private void triggerIqStallRecovery(long binaryAgeMs)
@@ -921,49 +939,61 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         if(last)
         {
-            String json = mPartialTextBuffer.toString();
+            handleCompletedTextMessage(mPartialTextBuffer.toString());
             mPartialTextBuffer.setLength(0);
-
-            // Update raw transport liveness before any early-exit
-            mLastTextFrameTimestamp.set(System.currentTimeMillis());
-
-            // signal_power and signal_snr arrive with every IQ packet and have no consumer — skip full parse
-            if(!json.contains(SKIP_SIGNAL_POWER) && !json.contains(SKIP_SIGNAL_SNR))
-            {
-                try
-                {
-                    JsonObject msg = JsonParser.parseString(json).getAsJsonObject();
-
-                    String eventType = msg.has(SDRconnectProtocol.JSON_EVENT_TYPE) ?
-                        msg.get(SDRconnectProtocol.JSON_EVENT_TYPE).getAsString() : "";
-                    String property = msg.has(SDRconnectProtocol.JSON_PROPERTY) ?
-                        msg.get(SDRconnectProtocol.JSON_PROPERTY).getAsString() : "";
-
-                    mLastTextMessageTimestamp.set(System.currentTimeMillis());
-                    mLastTextSummary.set(property.isEmpty() ? eventType : eventType + "/" + property);
-
-                    String value = msg.has(SDRconnectProtocol.JSON_VALUE) ?
-                        msg.get(SDRconnectProtocol.JSON_VALUE).getAsString() : "";
-
-                    if(SDRconnectProtocol.EVENT_PROPERTY_CHANGED.equals(eventType) ||
-                        SDRconnectProtocol.EVENT_GET_PROPERTY_RESPONSE.equals(eventType))
-                    {
-                        mPropertyUpdateHandler.handle(property, value);
-                    }
-                    else if(SDRconnectProtocol.EVENT_ERROR.equals(eventType))
-                    {
-                        mLog.error("{} SDRconnect error: {}", mLogPrefix, json);
-                    }
-                }
-                catch(Exception e)
-                {
-                    mLog.warn("{} Error parsing SDRconnect message: {}", mLogPrefix, e.getMessage());
-                }
-            }
         }
 
         webSocket.request(1);
         return null;
+    }
+
+    private void handleCompletedTextMessage(String json)
+    {
+        mLastTextFrameTimestamp.set(System.currentTimeMillis());
+
+        if(isIgnoredTelemetryMessage(json))
+        {
+            return;
+        }
+
+        try
+        {
+            processTextMessage(json, JsonParser.parseString(json).getAsJsonObject());
+        }
+        catch(Exception e)
+        {
+            mLog.warn("{} Error parsing SDRconnect message: {}", mLogPrefix, e.getMessage());
+        }
+    }
+
+    private boolean isIgnoredTelemetryMessage(String json)
+    {
+        return json.contains(SKIP_SIGNAL_POWER) || json.contains(SKIP_SIGNAL_SNR);
+    }
+
+    private void processTextMessage(String json, JsonObject message)
+    {
+        String eventType = getJsonString(message, SDRconnectProtocol.JSON_EVENT_TYPE);
+        String property = getJsonString(message, SDRconnectProtocol.JSON_PROPERTY);
+        String value = getJsonString(message, SDRconnectProtocol.JSON_VALUE);
+
+        mLastTextMessageTimestamp.set(System.currentTimeMillis());
+        mLastTextSummary.set(property.isEmpty() ? eventType : eventType + "/" + property);
+
+        if(SDRconnectProtocol.EVENT_PROPERTY_CHANGED.equals(eventType) ||
+            SDRconnectProtocol.EVENT_GET_PROPERTY_RESPONSE.equals(eventType))
+        {
+            mPropertyUpdateHandler.handle(property, value);
+        }
+        else if(SDRconnectProtocol.EVENT_ERROR.equals(eventType))
+        {
+            mLog.error("{} SDRconnect error: {}", mLogPrefix, json);
+        }
+    }
+
+    private String getJsonString(JsonObject message, String property)
+    {
+        return message.has(property) ? message.get(property).getAsString() : "";
     }
 
     @Override
