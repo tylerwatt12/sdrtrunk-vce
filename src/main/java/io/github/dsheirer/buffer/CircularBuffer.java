@@ -16,10 +16,10 @@
 package io.github.dsheirer.buffer;
 
 import io.github.dsheirer.sample.Listener;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 public class CircularBuffer<T> implements Listener<T>
 {
@@ -39,7 +39,7 @@ public class CircularBuffer<T> implements Listener<T>
     public CircularBuffer(int size)
     {
         mSize = size;
-        mElements = new ArrayList<T>();
+        mElements = new ArrayList<>();
     }
 
     /**
@@ -52,7 +52,7 @@ public class CircularBuffer<T> implements Listener<T>
      * @param index - element index
      * @return element or null
      */
-    public T get(int index)
+    public @Nullable T get(int index)
     {
         if(index < mElements.size())
         {
@@ -75,7 +75,7 @@ public class CircularBuffer<T> implements Listener<T>
     @Override
     public void receive(T element)
     {
-        T previous = null;
+        @Nullable T previous = null;
 
         if(mElements.size() > mPointer)
         {
