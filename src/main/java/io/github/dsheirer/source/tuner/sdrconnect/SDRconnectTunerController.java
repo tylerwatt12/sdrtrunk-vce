@@ -118,6 +118,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private Consumer<Integer> mSampleRateChangeListener;
     private final Gson mGson = new Gson();
     private final AtomicLong mLastBinaryPacketTimestamp = new AtomicLong(System.currentTimeMillis());
+    private final AtomicLong mLastTextMessageTimestamp = new AtomicLong(0);
+    private final AtomicReference<String> mLastTextSummary = new AtomicReference<>("");
     private final AtomicLong mBinaryPacketCount = new AtomicLong();
     private ScheduledFuture<?> mIqLivenessMonitorFuture;
 
@@ -504,8 +506,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 if(binaryAgeMs >= IQ_PACKET_STALL_WARNING_MS)
                 {
                     long lastBroadcastAgeMs = now - getLastNativeBufferBroadcastTimestamp();
-                    mLog.warn("{} No IQ binary packets received for {} ms while connected (packets received: {}, last native buffer broadcast {} ms ago)",
-                        mLogPrefix, binaryAgeMs, mBinaryPacketCount.get(), lastBroadcastAgeMs);
+                    long lastTextTimestamp = mLastTextMessageTimestamp.get();
+                    String textInfo = lastTextTimestamp == 0 ? "no text received"
+                        : (now - lastTextTimestamp) + " ms ago [" + mLastTextSummary.get() + "]";
+                    mLog.warn("{} No IQ binary packets received for {} ms while connected (packets received: {}, last native buffer broadcast {} ms ago, last text message: {})",
+                        mLogPrefix, binaryAgeMs, mBinaryPacketCount.get(), lastBroadcastAgeMs, textInfo);
 
                     if(binaryAgeMs >= IQ_PACKET_STALL_RECOVERY_MS)
                     {
@@ -994,6 +999,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                     msg.get(SDRconnectProtocol.JSON_EVENT_TYPE).getAsString() : "";
                 String property = msg.has(SDRconnectProtocol.JSON_PROPERTY) ?
                     msg.get(SDRconnectProtocol.JSON_PROPERTY).getAsString() : "";
+
+                mLastTextMessageTimestamp.set(System.currentTimeMillis());
+                mLastTextSummary.set(property.isEmpty() ? eventType : eventType + "/" + property);
                 String value = msg.has(SDRconnectProtocol.JSON_VALUE) ?
                     msg.get(SDRconnectProtocol.JSON_VALUE).getAsString() : "";
                 if(SDRconnectProtocol.EVENT_PROPERTY_CHANGED.equals(eventType) ||
