@@ -59,8 +59,6 @@ import org.slf4j.LoggerFactory;
 @JacksonXmlRootElement(localName = "alias")
 public class Alias
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Alias.class);
-
     private BooleanProperty mRecordable = new SimpleBooleanProperty();
     private BooleanProperty mStreamable = new SimpleBooleanProperty();
     private BooleanProperty mOverlap = new SimpleBooleanProperty();
@@ -84,9 +82,8 @@ public class Alias
         mName.set(name);
 
         //Bind the non-audio identifier count property to the size of a filtered list of alias identifiers
-        mNonAudioIdentifierCount.bind(Bindings.size(new FilteredList<>(mAliasIDs, aliasID -> {
-            return aliasID != null && !aliasID.isAudioIdentifier();
-        })));
+        mNonAudioIdentifierCount.bind(Bindings.size(new FilteredList<>(mAliasIDs,
+            aliasID -> aliasID != null && !aliasID.isAudioIdentifier())));
     }
 
     /**
@@ -439,9 +436,9 @@ public class Alias
     {
         for(AliasID aliasID: mAliasIDs)
         {
-            if(aliasID instanceof Priority)
+            if(aliasID instanceof Priority priority)
             {
-                mPriority.set(((Priority)aliasID).getPriority());
+                mPriority.set(priority.getPriority());
                 return;
             }
         }
@@ -546,9 +543,9 @@ public class Alias
 
         for(AliasID aliasID: mAliasIDs)
         {
-            if(aliasID instanceof Priority)
+            if(aliasID instanceof Priority priority)
             {
-                priorityID = aliasID;
+                priorityID = priority;
             }
         }
 
@@ -634,14 +631,11 @@ public class Alias
 
         for(AliasID id : getAliasIdentifiers())
         {
-            if(id instanceof BroadcastChannel)
+            if(id instanceof BroadcastChannel broadcastChannel &&
+                broadcastChannel.getChannelName() != null &&
+                broadcastChannel.getChannelName().contentEquals(channel))
             {
-                BroadcastChannel broadcastChannel = (BroadcastChannel)id;
-
-                if(broadcastChannel.getChannelName() != null && broadcastChannel.getChannelName().contentEquals(channel))
-                {
-                    return true;
-                }
+                return true;
             }
         }
 
@@ -662,8 +656,8 @@ public class Alias
 
         for(AliasID aliasID: getAliasIdentifiers())
         {
-            if(aliasID instanceof BroadcastChannel &&
-                ((BroadcastChannel)aliasID).getChannelName().contentEquals(channel))
+            if(aliasID instanceof BroadcastChannel broadcastChannel &&
+                broadcastChannel.getChannelName().contentEquals(channel))
             {
                 toRemove.add(aliasID);
             }

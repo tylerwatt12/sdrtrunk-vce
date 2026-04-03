@@ -49,6 +49,10 @@ public class AliasFactory
 {
     private static final Logger mLog = LoggerFactory.getLogger(AliasFactory.class);
 
+    private AliasFactory()
+    {
+    }
+
     public static AliasID copyOf(AliasID id)
     {
         switch(id.getType())
@@ -144,15 +148,10 @@ public class AliasFactory
                 return copyUnitStatusID;
 
             //Legacy identifiers ... not supported
-            case FLEETSYNC:
-            case LEGACY_TALKGROUP:
-            case LTR_NET_UID:
-            case MDC1200:
-            case MPT1327:
-            case NON_RECORDABLE:
+            case FLEETSYNC, LEGACY_TALKGROUP, LTR_NET_UID, MDC1200, MPT1327, NON_RECORDABLE:
                 return null;
             default:
-                mLog.warn("Unrecognized Alias ID Type [" + id.getType() + "] cannot make copy of instance");
+                mLog.warn("Unrecognized Alias ID Type [{}] cannot make copy of instance", id.getType());
                 break;
         }
 
@@ -161,26 +160,23 @@ public class AliasFactory
 
     public static AliasAction copyOf(AliasAction action)
     {
-        if(action instanceof BeepAction)
+        if(action instanceof BeepAction original)
         {
-            BeepAction original = (BeepAction)action;
             BeepAction copyBeep = new BeepAction();
             copyBeep.setInterval(original.getInterval());
             copyBeep.setPeriod(original.getPeriod());
             return copyBeep;
         }
-        else if(action instanceof ClipAction)
+        else if(action instanceof ClipAction originalClip)
         {
-            ClipAction originalClip = (ClipAction)action;
             ClipAction copyClip = new ClipAction();
             copyClip.setInterval(originalClip.getInterval());
             copyClip.setPath(originalClip.getPath());
             copyClip.setPeriod(originalClip.getPeriod());
             return copyClip;
         }
-        else if(action instanceof ScriptAction)
+        else if(action instanceof ScriptAction originalScript)
         {
-            ScriptAction originalScript = (ScriptAction)action;
             ScriptAction copyScript = new ScriptAction();
             copyScript.setInterval(originalScript.getInterval());
             copyScript.setPeriod(originalScript.getPeriod());

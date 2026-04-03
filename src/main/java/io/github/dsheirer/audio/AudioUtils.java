@@ -24,15 +24,16 @@ import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.lang.Float;
-import java.lang.Math;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.List;
 
 public class AudioUtils
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioUtils.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AudioUtils.class);
+
+    private AudioUtils()
+    {
+    }
 
     /**
      * Converts the audio packets into a byte array of 16-bit, little-endian audio samples
@@ -50,7 +51,7 @@ public class AudioUtils
                 stream.write(buffer.array());
             }
         }
-        catch(IOException e)
+        catch(IOException _)
         {
             mLog.error("Error writing converted PCM bytes to output stream");
         }
@@ -74,7 +75,7 @@ public class AudioUtils
                 stream.write(buffer.array());
             }
         }
-        catch(IOException e)
+        catch(IOException _)
         {
             mLog.error("Error writing converted PCM bytes to output stream");
         }
