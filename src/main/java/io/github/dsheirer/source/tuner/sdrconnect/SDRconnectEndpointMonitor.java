@@ -110,7 +110,7 @@ class SDRconnectEndpointMonitor
             socket.connect(new InetSocketAddress(host, port), 2000);
             return true;
         }
-        catch(Exception e)
+        catch(Exception _)
         {
             return false;
         }
@@ -164,7 +164,7 @@ class SDRconnectEndpointMonitor
         {
             Runtime.getRuntime().removeShutdownHook(mManagedSDRconnectShutdownHook);
         }
-        catch(IllegalStateException ignored)
+        catch(IllegalStateException _)
         {
             // JVM shutdown is already in progress, so the hook cannot be removed.
         }
@@ -354,7 +354,7 @@ class SDRconnectEndpointMonitor
             {
                 Thread.sleep(SDRCONNECT_HEADLESS_START_RETRY_INTERVAL_MS);
             }
-            catch(InterruptedException ie)
+            catch(InterruptedException _)
             {
                 Thread.currentThread().interrupt();
                 return SDRconnectEndpointReadiness.notReady();
@@ -385,12 +385,12 @@ class SDRconnectEndpointMonitor
             return ready && probe.isReady() ? SDRconnectEndpointReadiness.ready(probe.getValidDevices()) :
                 SDRconnectEndpointReadiness.notReady();
         }
-        catch(InterruptedException ie)
+        catch(InterruptedException _)
         {
             Thread.currentThread().interrupt();
             return SDRconnectEndpointReadiness.notReady();
         }
-        catch(Exception e)
+        catch(Exception _)
         {
             return SDRconnectEndpointReadiness.notReady();
         }
@@ -402,7 +402,7 @@ class SDRconnectEndpointMonitor
                 {
                     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "probe");
                 }
-                catch(Exception ignored)
+                catch(Exception _)
                 {
                     // Ignore malformed probe responses and continue waiting for a usable readiness payload.
                 }
@@ -453,7 +453,7 @@ class SDRconnectEndpointMonitor
             {
                 process.waitFor(timeout, timeUnit);
             }
-            catch(InterruptedException ie)
+            catch(InterruptedException _)
             {
                 Thread.currentThread().interrupt();
             }
@@ -600,7 +600,7 @@ class SDRconnectEndpointMonitor
                     countDownWhenReady();
                 }
             }
-            catch(Exception ignored)
+            catch(Exception _)
             {
                 // Ignore malformed probe responses and continue waiting for a usable readiness payload.
             }

@@ -1143,7 +1143,7 @@ public class SDRconnectTunerController extends TunerController
 
                 mLog.info("{} SDRconnect recovery complete - IQ streaming re-enabled", mLogPrefix);
             }
-            catch(InterruptedException e)
+            catch(InterruptedException _)
             {
                 Thread.currentThread().interrupt();
                 mLog.warn("{} Recovery interrupted", mLogPrefix);
