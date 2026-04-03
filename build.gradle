@@ -55,6 +55,10 @@ repositories {
     maven { url = "https://jitpack.io" }
 }
 
+def javafxVersion = "25.0.1"
+def javafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ? "win" :
+    (org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isMacOsX() ? "mac" : "linux")
+
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
@@ -75,6 +79,12 @@ test {
 }
 
 dependencies {
+    // JavaFX is used directly in public APIs and UI code, so declare it explicitly instead of
+    // relying on a specific JDK distribution to bundle the modules.
+    implementation "org.openjfx:javafx-base:${javafxVersion}:${javafxPlatform}"
+    implementation "org.openjfx:javafx-graphics:${javafxVersion}:${javafxPlatform}"
+    implementation "org.openjfx:javafx-controls:${javafxVersion}:${javafxPlatform}"
+    implementation "org.openjfx:javafx-swing:${javafxVersion}:${javafxPlatform}"
 
     // JUnit Tests
     testImplementation(platform("org.junit:junit-bom:6.0.1"))
