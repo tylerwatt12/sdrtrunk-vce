@@ -56,6 +56,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
@@ -83,7 +84,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private ChannelSourceEventErrorListener mSourceErrorListener = new ChannelSourceEventErrorListener();
     private List<Listener<AudioSegment>> mAudioSegmentListeners = new CopyOnWriteArrayList<>();
     private List<Listener<IDecodeEvent>> mDecodeEventListeners = new CopyOnWriteArrayList<>();
-    private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster();
+    private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
     private ChannelMapModel mChannelMapModel;
     private ChannelMetadataModel mChannelMetadataModel;
@@ -467,9 +468,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate
         //their processor method with @Subscribe to receive each specific preload data content class.
-        for(PreloadDataContent preloadDataContent: request.getPreloadDataContents())
+        for(PreloadDataContent<?> preloadDataContent: request.getPreloadDataContents())
         {
-            processingChain.getEventBus().post(preloadDataContent);
+            Object preloadEvent = Objects.requireNonNull(preloadDataContent);
+            processingChain.getEventBus().post(preloadEvent);
         }
 
         //Setup event logging
@@ -501,7 +503,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     processingChain.getChannelState().updateChannelStateIdentifiers(notification);
 
                     //Inject scramble parameters
-                    for(Identifier scrambleParameters: request.getIdentifierCollection()
+                    for(Identifier<?> scrambleParameters: request.getIdentifierCollection()
                         .getIdentifiers(Form.SCRAMBLE_PARAMETERS))
                     {
                         //Broadcast scramble parameters to both timeslots
@@ -512,7 +514,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 }
             }
 
-            for(Identifier userIdentifier : request.getIdentifierCollection().getIdentifiers(IdentifierClass.USER))
+            for(Identifier<?> userIdentifier : request.getIdentifierCollection().getIdentifiers(IdentifierClass.USER))
             {
                 if(request.getChannelDescriptor().getTimeslotCount() > 1)
                 {
