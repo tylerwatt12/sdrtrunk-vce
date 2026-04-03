@@ -70,8 +70,8 @@ java {
 }
 
 sourceSets {
-    main.java.srcDirs 'src/main'
-    test.java.srcDirs 'src/test'
+    main.java.srcDirs 'src/main/java'
+    test.java.srcDirs 'src/test/java'
 }
 
 test {
