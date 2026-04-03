@@ -636,7 +636,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             config.setHost(getHostField().getText().trim());
             config.setPort((Integer) getPortSpinner().getValue());
             config.setDeviceName(getDeviceNameField().getText().trim());
-            config.setUniqueID(SDRconnectTunerConfiguration.getUniqueId(
+            config.setUniqueID(SDRconnectTunerConfiguration.createUniqueId(
                 config.getHost(), config.getPort()));
             int selectedIndex = getSampleRateCombo().getSelectedIndex();
             if(selectedIndex >= 0 && selectedIndex < SDRconnectTunerController.SUPPORTED_SAMPLE_RATES.length

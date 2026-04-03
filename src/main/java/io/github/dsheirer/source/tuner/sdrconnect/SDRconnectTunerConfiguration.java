@@ -178,7 +178,7 @@ public class SDRconnectTunerConfiguration extends TunerConfiguration
      */
     public static SDRconnectTunerConfiguration create(String host, int port, String deviceName)
     {
-        return new SDRconnectTunerConfiguration(getUniqueId(host, port), host, port, deviceName);
+        return new SDRconnectTunerConfiguration(createUniqueId(host, port), host, port, deviceName);
     }
 
     /**
@@ -192,7 +192,7 @@ public class SDRconnectTunerConfiguration extends TunerConfiguration
     /**
      * Creates a stable unique identifier for an SDRconnect tuner configuration.
      */
-    public static String getUniqueId(String host, int port)
+    public static String createUniqueId(String host, int port)
     {
         return "SDRconnect-" + host + ":" + port;
     }
