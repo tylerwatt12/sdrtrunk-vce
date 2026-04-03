@@ -522,7 +522,19 @@ class SDRconnectEndpointMonitor
 
     private void scheduleManagedProcessRestart(int port)
     {
-        int attempts = mManagedProcessRestartAttempts.merge(port, 1, Integer::sum);
+        Integer previousAttempts = mManagedProcessRestartAttempts.putIfAbsent(port, 1);
+        int attempts;
+
+        if(previousAttempts == null)
+        {
+            attempts = 1;
+        }
+        else
+        {
+            attempts = previousAttempts + 1;
+            mManagedProcessRestartAttempts.put(port, attempts);
+        }
+
         long delayMs = Math.min(SDRCONNECT_HEADLESS_RESTART_INITIAL_DELAY_MS * (1L << (attempts - 1)),
             SDRCONNECT_HEADLESS_RESTART_MAX_DELAY_MS);
         mLog.info("Scheduling managed SDRconnect headless restart on port {} in {} ms (attempt {})",
@@ -565,13 +577,17 @@ class SDRconnectEndpointMonitor
         @Override
         public void onOpen(WebSocket webSocket)
         {
-            webSocket.sendText("{\"" + SDRconnectProtocol.JSON_EVENT_TYPE + "\":\"" +
-                SDRconnectProtocol.EVENT_GET_PROPERTY + "\",\"" + SDRconnectProtocol.JSON_PROPERTY + "\":\"" +
-                SDRconnectProtocol.PROPERTY_VALID_DEVICES + "\"}", true);
-            webSocket.sendText("{\"" + SDRconnectProtocol.JSON_EVENT_TYPE + "\":\"" +
-                SDRconnectProtocol.EVENT_GET_PROPERTY + "\",\"" + SDRconnectProtocol.JSON_PROPERTY + "\":\"" +
-                SDRconnectProtocol.PROPERTY_ACTIVE_DEVICE + "\"}", true);
+            webSocket.sendText(createGetPropertyMessage(SDRconnectProtocol.PROPERTY_VALID_DEVICES), true);
+            webSocket.sendText(createGetPropertyMessage(SDRconnectProtocol.PROPERTY_ACTIVE_DEVICE), true);
             webSocket.request(1);
+        }
+
+        private String createGetPropertyMessage(String property)
+        {
+            JsonObject message = new JsonObject();
+            message.addProperty(SDRconnectProtocol.JSON_EVENT_TYPE, SDRconnectProtocol.EVENT_GET_PROPERTY);
+            message.addProperty(SDRconnectProtocol.JSON_PROPERTY, property);
+            return message.toString();
         }
 
         @Override
