@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.controller;
 
-import io.github.dsheirer.util.ThreadPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,26 +30,20 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class NamingThreadFactory implements ThreadFactory 
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ThreadPool.class);
+    private static final Logger mLog = LoggerFactory.getLogger(NamingThreadFactory.class);
 
-    private static final AtomicInteger mPoolNumber = new AtomicInteger(1);
-    
-    private final ThreadGroup mThreadGroup;
-    
     private final AtomicInteger mThreadNumber = new AtomicInteger(1);
     
     private final String mNamePrefix;
 
     public NamingThreadFactory( String prefix ) 
     {
-        mThreadGroup = Thread.currentThread().getThreadGroup();
         mNamePrefix = prefix + " thread ";
     }
 
     public Thread newThread( Runnable runnable ) 
     {
-        Thread thread = new Thread(mThreadGroup, runnable,
-              mNamePrefix + mThreadNumber.getAndIncrement(), 0 );
+        Thread thread = new Thread(runnable, mNamePrefix + mThreadNumber.getAndIncrement());
         
         if( thread.isDaemon() )
         {
@@ -62,14 +55,8 @@ public class NamingThreadFactory implements ThreadFactory
             thread.setPriority( Thread.NORM_PRIORITY );
         }
 
-        thread.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler()
-        {
-            @Override
-            public void uncaughtException(Thread t, Throwable e)
-            {
-                mLog.error("Error while executing runnable in scheduled thread pool [" + t.getName() + "]", e);
-            }
-        });
+        thread.setUncaughtExceptionHandler((t, e) ->
+            mLog.error("Error while executing runnable in scheduled thread pool [" + t.getName() + "]", e));
 
         return thread;
     }
