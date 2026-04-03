@@ -308,7 +308,8 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
                     if((mInputFrames == null || !mInputFrames.hasNextFrame()) && timeSent < PROCESSOR_RUN_INTERVAL_MS)
                     {
-                        AudioFrames silenceFrames = mSilenceGenerator.generate(PROCESSOR_RUN_INTERVAL_MS - mTimeOverrun - timeSent);
+                        long silenceDurationMs = (long)PROCESSOR_RUN_INTERVAL_MS - mTimeOverrun - timeSent;
+                        AudioFrames silenceFrames = mSilenceGenerator.generate(silenceDurationMs);
                         while(silenceFrames.hasNextFrame())
                         {
                             silenceFrames.nextFrame();
