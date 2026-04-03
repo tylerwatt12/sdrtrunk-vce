@@ -42,6 +42,7 @@ public class Dispatcher<E> implements Listener<E>
 {
     private final static Logger mLog = LoggerFactory.getLogger(Dispatcher.class);
     private final LinkedTransferQueue<E> mQueue = new LinkedTransferQueue<>();
+    private final List<E> mDrainBuffer = new ArrayList<>();
     private Listener<E> mListener;
     private final AtomicBoolean mRunning = new AtomicBoolean();
     private String mThreadName;
@@ -214,11 +215,9 @@ public class Dispatcher<E> implements Listener<E>
      */
     private void process()
     {
-        List<E> elements = new ArrayList<>();
+        mQueue.drainTo(mDrainBuffer);
 
-        mQueue.drainTo(elements);
-
-        for(E element: elements)
+        for(E element: mDrainBuffer)
         {
             if(mRunning.get() && mListener != null)
             {
@@ -233,6 +232,8 @@ public class Dispatcher<E> implements Listener<E>
                 }
             }
         }
+
+        mDrainBuffer.clear();
     }
 
     /**
