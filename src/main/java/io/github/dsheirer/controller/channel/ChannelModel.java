@@ -37,7 +37,7 @@ public class ChannelModel implements Listener<ChannelEvent>
 {
     private ObservableList<Channel> mChannels = FXCollections.observableArrayList(Channel.extractor());
     private ObservableList<Channel> mTrafficChannels = FXCollections.observableArrayList(Channel.extractor());
-    private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster();
+    private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
     private AliasModel mAliasModel;
 
     public ChannelModel(AliasModel aliasModel)

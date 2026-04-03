@@ -83,7 +83,7 @@ public abstract class TimeslotDecoderState extends DecoderState
 
                 if(identifierUpdateNotification.getOperation() == IdentifierUpdateNotification.Operation.ADD)
                 {
-                    Identifier identifier = identifierUpdateNotification.getIdentifier();
+                    Identifier<?> identifier = identifierUpdateNotification.getIdentifier();
 
                     if(identifier instanceof ChannelDescriptorConfigurationIdentifier channelDescriptorConfigurationIdentifier)
                     {
