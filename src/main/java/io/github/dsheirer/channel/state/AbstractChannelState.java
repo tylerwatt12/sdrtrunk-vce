@@ -36,15 +36,11 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public abstract class AbstractChannelState extends Module implements IChannelEventProvider, IDecodeEventProvider,
     IDecoderStateEventProvider, ISourceEventProvider, IHeartbeatListener, ISquelchStateProvider,
     IdentifierUpdateProvider, IOverflowListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AbstractChannelState.class);
-
     protected Listener<ChannelEvent> mChannelEventListener;
     protected Listener<IDecodeEvent> mDecodeEventListener;
     protected Listener<DecoderStateEvent> mDecoderStateListener;
@@ -61,7 +57,7 @@ public abstract class AbstractChannelState extends Module implements IChannelEve
      * Constructs an instance
      * @param channel configuration
      */
-    public AbstractChannelState(Channel channel)
+    protected AbstractChannelState(Channel channel)
     {
         mChannel = channel;
     }
