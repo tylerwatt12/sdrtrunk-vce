@@ -339,7 +339,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 throw new IllegalStateException("Polyphase Channelizer cannot be changed to a new sample rate while " +
                     "channels are currently sourced.  Ensure you remove all tuner channels before changing tuner " +
                     "sample rate.  Current channel count:" +
-                    (mPolyphaseChannelizer != null ? mPolyphaseChannelizer.getRegisteredChannelCount() : "0"));
+                    mPolyphaseChannelizer.getRegisteredChannelCount());
             }
 
             try
