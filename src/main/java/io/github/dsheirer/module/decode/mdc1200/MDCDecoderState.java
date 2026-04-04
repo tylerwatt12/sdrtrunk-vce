@@ -73,21 +73,6 @@ public class MDCDecoderState extends DecoderState
 
             MDCMessageType type = mdc.getMessageType();
 
-            StringBuilder sb = new StringBuilder();
-
-            sb.append("OPCODE ");
-            sb.append(mdc.getOpcode());
-
-            if(mdc.isBOT())
-            {
-                sb.append(" TYPE:BOT");
-            }
-
-            if(mdc.isEOT())
-            {
-                sb.append(" TYPE:EOT");
-            }
-
             MutableIdentifierCollection ic = new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());
             ic.remove(IdentifierClass.USER);
             ic.update(message.getIdentifiers());
