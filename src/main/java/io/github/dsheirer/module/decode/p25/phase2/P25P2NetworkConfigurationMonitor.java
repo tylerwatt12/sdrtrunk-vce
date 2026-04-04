@@ -211,6 +211,7 @@ public class P25P2NetworkConfigurationMonitor
                 {
                     mNeighborSitesExtended.put((int)asbe.getSite().getValue(), asbe);
                 }
+                break;
             case PHASE1_FE_ADJACENT_STATUS_BROADCAST_EXTENDED_EXPLICIT:
                 if(mac instanceof AdjacentStatusBroadcastExtendedExplicit a)
                 {
