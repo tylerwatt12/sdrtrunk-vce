@@ -169,6 +169,9 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
                     mStateMachine.setState(State.RESET);
                 }
                 break;
+            default:
+                // Other states only update identifiers/metadata above and require no additional action here.
+                break;
         }
     }
 
@@ -396,6 +399,9 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
                         broadcast(SourceEvent.frequencyErrorMeasurementSyncLocked(sourceEvent.getValue().longValue(),
                             getChannel().getChannelType().name()));
                     }
+                    break;
+                default:
+                    // Other source events are not relevant to single-channel state handling.
                     break;
             }
         }
