@@ -33,7 +33,6 @@ import java.util.function.Function;
 public class MacOpcodeMessageFilter extends Filter<IMessage, MacOpcode>
 {
     private KeyExtractor mKeyExtractor = new KeyExtractor();
-    private Collection<MacOpcode> mOpcodes;
 
     /**
      * Constructs an instance
@@ -43,8 +42,6 @@ public class MacOpcodeMessageFilter extends Filter<IMessage, MacOpcode>
     public MacOpcodeMessageFilter(String name, Collection<MacOpcode> opcodes)
     {
         super(name);
-
-        mOpcodes = opcodes;
 
         for(MacOpcode opcode: opcodes)
         {

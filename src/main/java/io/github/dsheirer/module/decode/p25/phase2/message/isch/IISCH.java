@@ -72,7 +72,6 @@ public class IISCH extends P25P2Message
         sb.append(" ").append(getLCHFlagMeaning());
         sb.append(" ").append(getSuperframeSequence());
         sb.append(" ").append(getIschSequence());
-//        sb.append(" MSG:").append(getMessage().toHexString());
 
         return sb.toString();
     }

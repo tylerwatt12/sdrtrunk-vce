@@ -22,19 +22,15 @@ package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harr
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import java.text.DecimalFormat;
-import java.text.SimpleDateFormat;
-import java.util.TimeZone;
 
 /**
  * Utility class to parse L3Harris GPS data from P25 Phase 1 and Phase 2 messages.
  */
 public class L3HarrisGPS
 {
-    public static final SimpleDateFormat SDF = new SimpleDateFormat("HH:mm:ss");
-    static {
-        SDF.setTimeZone(TimeZone.getTimeZone("UTC"));
+    private L3HarrisGPS()
+    {
     }
-    private static final DecimalFormat GPS_FORMAT = new DecimalFormat("0.000000");
 
     //Bits 0 & 1 not set in sample data - seems unused for a 1/10000th of a minute number system
     private static final IntField LAT_MINUTES_FRACTIONAL = IntField.range(0, 15);

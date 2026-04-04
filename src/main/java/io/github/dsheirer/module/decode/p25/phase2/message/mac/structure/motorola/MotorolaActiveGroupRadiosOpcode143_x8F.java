@@ -68,10 +68,8 @@ import java.util.List;
 public class MotorolaActiveGroupRadiosOpcode143_x8F extends MacStructureVendor
 {
     private static final IntField STATUS = IntField.length8(OCTET_4_BIT_24);
-    private static final IntField SEPARATOR_1 = IntField.length8(OCTET_5_BIT_32);
     private static final IntField RADIO_1 = IntField.length24(OCTET_6_BIT_40);
     private static final IntField RADIO_2 = IntField.length24(OCTET_9_BIT_64);
-    private static final IntField SEPARATOR_2 = IntField.length8(OCTET_12_BIT_88);
     private static final IntField RADIO_3 = IntField.length24(OCTET_13_BIT_96);
     private static final IntField RADIO_4 = IntField.length24(OCTET_16_BIT_120);
     private RadioIdentifier mRadio1;
