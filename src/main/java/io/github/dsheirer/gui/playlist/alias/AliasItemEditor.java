@@ -65,7 +65,7 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.IntegerFormat;
 import io.github.dsheirer.protocol.Protocol;
-import java.util.HashMap;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -159,11 +159,11 @@ public class AliasItemEditor extends Editor<Alias>
     private TextField mStreamAsTalkgroupField;
     private TextFormatter<Integer> mStreamAsIntegerTextFormatter = new IntegerFormatter(1,0xFFFF);
 
-    private Map<AliasIDType,IdentifierEditor> mIdentifierEditorMap = new HashMap<>();
+    private Map<AliasIDType,IdentifierEditor> mIdentifierEditorMap = new EnumMap<>(AliasIDType.class);
     private EmptyIdentifierEditor mEmptyIdentifierEditor = new EmptyIdentifierEditor();
     private IdentifierEditor mIdentifierEditor;
 
-    private Map<AliasActionType,ActionEditor> mActionEditorMap = new HashMap<>();
+    private Map<AliasActionType,ActionEditor> mActionEditorMap = new EnumMap<>(AliasActionType.class);
     private EmptyActionEditor mEmptyActionEditor = new EmptyActionEditor();
     private ActionEditor mActionEditor;
 
@@ -308,8 +308,8 @@ public class AliasItemEditor extends Editor<Alias>
                 }
                 else
                 {
-                    mLog.warn("Unable to create copy of alias action [" + original.getType() +
-                        "] for alias [" + alias.getName() + "] - action will be lost if alias is saved");
+                    mLog.warn("Unable to create copy of alias action [{}] for alias [{}] - action will be lost if alias is saved",
+                        original.getType(), alias.getName());
                 }
             }
         }
@@ -384,7 +384,7 @@ public class AliasItemEditor extends Editor<Alias>
                     }
                     else
                     {
-                        mLog.warn("Unable to create a copy of alias ID: " + aliasID);
+                        mLog.warn("Unable to create a copy of alias ID: {}", aliasID);
                     }
                 }
 
@@ -1568,7 +1568,7 @@ public class AliasItemEditor extends Editor<Alias>
         @Override
         public void changed(ObservableValue<? extends Boolean> observable, Boolean oldValue, Boolean newValue)
         {
-            if(newValue)
+            if(Boolean.TRUE.equals(newValue))
             {
                 modifiedProperty().set(true);
             }
@@ -1583,7 +1583,7 @@ public class AliasItemEditor extends Editor<Alias>
         @Override
         public void changed(ObservableValue<? extends Boolean> observable, Boolean oldValue, Boolean newValue)
         {
-            if(newValue)
+            if(Boolean.TRUE.equals(newValue))
             {
                 modifiedProperty().set(true);
             }
