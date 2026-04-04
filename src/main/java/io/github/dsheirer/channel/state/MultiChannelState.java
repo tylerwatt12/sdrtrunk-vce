@@ -71,7 +71,7 @@ import org.slf4j.LoggerFactory;
 public class MultiChannelState extends AbstractChannelState implements IDecoderStateEventListener, ISourceEventListener,
     IdentifierUpdateListener, IStateMachineListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MultiChannelState.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MultiChannelState.class);
 
     public static final long FADE_TIMEOUT_DELAY = 1200;
     public static final long RESET_TIMEOUT_DELAY = 2000;
@@ -175,6 +175,9 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
                     mStateMachineMap.get(timeslot).setState(State.RESET);
                 }
                 break;
+            default:
+                // Other states only update identifiers/metadata above and require no additional action here.
+                break;
         }
     }
 
@@ -210,9 +213,9 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
                 {
                     broadcast(new ChannelEvent(getChannel(), ChannelEvent.Event.REQUEST_DISABLE));
                 }
-                catch(Throwable t)
+                catch(Exception e)
                 {
-                    mLog.error("Error broadcasting shutdown channel event", t);
+                    mLog.error("Error broadcasting shutdown channel event", e);
                 }
 
                 mTeardownSequenceStarted = true;
@@ -226,7 +229,7 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
             }
         }
         //If one timeslot is teardown but the other is still active, reset the teardown timeslot to IDLE
-        else if(teardown && active)
+        else if(teardown)
         {
             for(StateMachine stateMachine: mStateMachineMap.values())
             {
@@ -297,7 +300,7 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
             {
                 List<Long> frequencies = ((SourceConfigTunerMultipleFrequency)channel.getSourceConfiguration()).getFrequencies();
 
-                if(frequencies.size() > 0)
+                if(!frequencies.isEmpty())
                 {
                     identifierCollection.update(FrequencyConfigurationIdentifier.create(frequencies.get(0)));
                 }
@@ -537,6 +540,9 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
                         }
                     }
                     break;
+                default:
+                    // Other source events are not relevant to multi-channel state handling.
+                    break;
             }
         }
     }
@@ -557,15 +563,12 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
                         mSquelchControllerMap.get(event.getTimeslot()).setSquelchLock(true);
                         break;
                     case REQUEST_CHANGE_CALL_TIMEOUT:
-                        if(event instanceof ChangeChannelTimeoutEvent)
+                        if(event instanceof ChangeChannelTimeoutEvent timeout)
                         {
-                            ChangeChannelTimeoutEvent timeout = (ChangeChannelTimeoutEvent)event;
                             mStateMachineMap.get(event.getTimeslot()).setFadeTimeoutBufferMilliseconds(timeout.getCallTimeoutMilliseconds());
                         }
                         break;
-                    case CONTINUATION:
-                    case DECODE:
-                    case START:
+                    case CONTINUATION, DECODE, START:
                         if(State.MULTI_CHANNEL_ACTIVE_STATES.contains(event.getState()))
                         {
                             mStateMachineMap.get(event.getTimeslot()).setState(event.getState());
