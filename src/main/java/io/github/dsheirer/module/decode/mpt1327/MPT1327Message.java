@@ -33,6 +33,12 @@ import java.util.List;
 
 public class MPT1327Message extends Message
 {
+    private static final String UNKNOWN_LABEL = "UNKNOWN";
+    private static final String RESERVED_LABEL = "RESERVED";
+    private static final String CHANNEL_LABEL = " CHAN:";
+    private static final String SYSTEM_LABEL = " SYSTEM:";
+    private static final String FROM_LABEL = " FROM:";
+
     private static String[] TELEX_LETTERS = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "\n", "\n", "", "", " ", " "};
     private static String[] TELEX_FIGURES = {"-", "?", ":", "WRU", "3", "{6}", "{7}", "{8}", "8", "{BEEP}", "(", ")", ".", ",", "9", "0", "1", "4", "'", "5", "7", "=", "2", "/", "6", "+", "\n", "\n", "", "", " ", " "};
     private static String[] BCD = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", " ", "*", "#"};
@@ -458,7 +464,7 @@ public class MPT1327Message extends Message
 
                 if(hasFromID())
                 {
-                    sb.append(" FROM:");
+                    sb.append(FROM_LABEL);
                     sb.append(getFromID());
                 }
 
@@ -476,7 +482,7 @@ public class MPT1327Message extends Message
 
                 if(hasFromID())
                 {
-                    sb.append(" FROM:");
+                    sb.append(FROM_LABEL);
                     sb.append(getFromID());
                 }
 
@@ -489,14 +495,14 @@ public class MPT1327Message extends Message
                 sb.append("**********************************");
                 break;
             case ACKQ:
-                sb.append(" SYSTEM:");
+                sb.append(SYSTEM_LABEL);
                 sb.append(getSiteID());
 
                 sb.append(" CALL QUEUED FROM:");
 
                 if(hasFromID())
                 {
-                    sb.append(" FROM:");
+                    sb.append(FROM_LABEL);
                     sb.append(getFromID());
                 }
 
@@ -507,14 +513,14 @@ public class MPT1327Message extends Message
                 }
                 break;
             case ACKX:
-                sb.append(" SYSTEM:");
+                sb.append(SYSTEM_LABEL);
                 sb.append(getSiteID());
 
                 sb.append(" MESSAGE REJECTED FROM:");
 
                 if(hasFromID())
                 {
-                    sb.append(" FROM:");
+                    sb.append(FROM_LABEL);
                     sb.append(getFromID());
                 }
 
@@ -538,7 +544,7 @@ public class MPT1327Message extends Message
 
                 if(hasFromID())
                 {
-                    sb.append(" FROM:");
+                    sb.append(FROM_LABEL);
                     sb.append(getFromID());
                 }
 
@@ -551,7 +557,7 @@ public class MPT1327Message extends Message
                 sb.append(getStatusMessage());
                 break;
             case ALH, ALHD, ALHS, ALHE, ALHR, ALHX, ALHF:
-                sb.append(" SYSTEM:");
+                sb.append(SYSTEM_LABEL);
                 sb.append(getSiteID());
 
                 if(hasToID())
@@ -570,7 +576,7 @@ public class MPT1327Message extends Message
                 sb.append(getAlohaN());
                 break;
             case BCAST:
-                sb.append(" SYSTEM:");
+                sb.append(SYSTEM_LABEL);
                 sb.append(getSiteID());
 
                 SystemDefinition sysdef = getSystemDefinition();
@@ -581,11 +587,11 @@ public class MPT1327Message extends Message
                 switch(sysdef)
                 {
                     case ANNOUNCE_CONTROL_CHANNEL, WITHDRAW_CONTROL_CHANNEL:
-                        sb.append(" CHAN:");
+                        sb.append(CHANNEL_LABEL);
                         sb.append(getChannel());
                         break;
                     case BROADCAST_ADJACENT_SITE_CONTROL_CHANNEL_NUMBER:
-                        sb.append(" CHAN:");
+                        sb.append(CHANNEL_LABEL);
                         sb.append(getChannel());
                         sb.append(" SER:");
                         sb.append(getAdjacentSiteSerialNumber());
@@ -613,7 +619,7 @@ public class MPT1327Message extends Message
             case GTC:
                 if(hasFromID())
                 {
-                    sb.append(" FROM:");
+                    sb.append(FROM_LABEL);
                     sb.append(getFromID());
                 }
 
@@ -623,7 +629,7 @@ public class MPT1327Message extends Message
                     sb.append(getToID());
                 }
 
-                sb.append(" CHAN:");
+                sb.append(CHANNEL_LABEL);
                 sb.append(getChannel());
                 break;
             case MAINT:
@@ -1373,12 +1379,12 @@ public class MPT1327Message extends Message
         PSTNSI14("PSTN OR NETWORK 14"),
         PSTNSI15("PSTN OR NETWORK 15"),
         REGI("REGISTRATION"),
-        RESERVED("RESERVED"),
+        RESERVED(RESERVED_LABEL),
         SDMI("SHORT DATA MESSAGE"),
         SPARE("SPARE"),
         TSCI("SYSTEM CONTROLLER"),
         USER("COMMON-PREFIX IDENT"),
-        UNKNOWN("UNKNOWN");
+        UNKNOWN(UNKNOWN_LABEL);
 
         private String mLabel;
 
@@ -1473,14 +1479,14 @@ public class MPT1327Message extends Message
         DESC0("EXTENDED ADDRESSING INFORMATION",
             "ESN",
             "SINGLE SEGMENT TRANSACTIONS (SST) ONLY"),
-        DESC1("PSTN DIALED DIGITS", "RESERVED", "N/A"),
-        DESC2("PABX EXTENSION", "RESERVED", "N/A"),
+        DESC1("PSTN DIALED DIGITS", RESERVED_LABEL, "N/A"),
+        DESC2("PABX EXTENSION", RESERVED_LABEL, "N/A"),
         DESC3("N/A", "N/A", "N/A"),
         DESC4("N/A", "N/A", "FIRST MST SEGMENT OR SINGLE SST"),
         DESC5("N/A", "N/A", "SECOND MST SEGMENT OR SINGLE SST"),
         DESC6("N/A", "N/A", "THIRD MST SEGMENT OR SINGLE SST"),
-        DESC7("RESERVED", "RESERVED", "FOURTH MST SEGMENT OR SINGLE SST"),
-        UNKNOWN("UNKNOWN", "UNKNOWN", "UNKNOWN");
+        DESC7(RESERVED_LABEL, RESERVED_LABEL, "FOURTH MST SEGMENT OR SINGLE SST"),
+        UNKNOWN(UNKNOWN_LABEL, UNKNOWN_LABEL, UNKNOWN_LABEL);
 
         private String mMode1Label;
         private String mMode2Label;
@@ -1542,11 +1548,11 @@ public class MPT1327Message extends Message
      */
     public enum Slots
     {
-        SLOTS_0("RESERVED"),
+        SLOTS_0(RESERVED_LABEL),
         SLOTS_1("ADDRESS CODEWORD ONLY"),
         SLOTS_2("ADDRESS CODEWORD & 1-2 DATA CODEWORDS"),
         SLOTS_3("ADDRESS CODEWORD & 3-4 DATA CODEWORDS"),
-        UNKNOWN("UNKNOWN");
+        UNKNOWN(UNKNOWN_LABEL);
 
         private String mLabel;
 
@@ -1581,7 +1587,7 @@ public class MPT1327Message extends Message
 
     public enum SystemDefinition
     {
-        UNKNOWN("UNKNOWN"),
+        UNKNOWN(UNKNOWN_LABEL),
         ANNOUNCE_CONTROL_CHANNEL("ANNOUNCE CONTROL CHANNEL"),
         WITHDRAW_CONTROL_CHANNEL("WITHDRAW CONTROL CHANNEL"),
         SPECIFY_CALL_MAINTENANCE_PARAMETERS("CALL MAINT PARAMETERS"),
