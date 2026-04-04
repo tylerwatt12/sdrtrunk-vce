@@ -39,7 +39,6 @@ public class MotorolaDenyResponse extends VendorOSPMessage
     //true = motorola custom reason code, false = standard reason code
     private static final int RC = 16;
     //true = non-motorola service type, false = motorola service type (ie opcode)
-    private static final int STP = 17;
     private static final int[] SERVICE_TYPE = {18, 19, 20, 21, 22, 23};
     private static final int[] REASON = {24, 25, 26, 27, 28, 29, 30, 31};
     private static final int[] ADDITIONAL_INFO = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
@@ -69,11 +68,6 @@ public class MotorolaDenyResponse extends VendorOSPMessage
         sb.append(" REASON:").append(getDenyReason());
         sb.append(" INFO:").append(getAdditionalInfo());
         return sb.toString();
-    }
-
-    private boolean hasAdditionalInformation()
-    {
-        return getMessage().get(RC);
     }
 
     public String getAdditionalInfo()

@@ -35,16 +35,16 @@ import java.util.List;
 
 public class MotorolaBaseStationId extends OSPMessage implements IFrequencyBandReceiver
 {
-    public static final int[] CHARACTER_1 = {16, 17, 18, 19, 20, 21};
-    public static final int[] CHARACTER_2 = {22, 23, 24, 25, 26, 27};
-    public static final int[] CHARACTER_3 = {28, 29, 30, 31, 32, 33};
-    public static final int[] CHARACTER_4 = {34, 35, 36, 37, 38, 39};
-    public static final int[] CHARACTER_5 = {40, 41, 42, 43, 44, 45};
-    public static final int[] CHARACTER_6 = {46, 47, 48, 49, 50, 51};
-    public static final int[] CHARACTER_7 = {52, 53, 54, 55, 56, 57};
-    public static final int[] CHARACTER_8 = {58, 59, 60, 61, 62, 63};
-    public static final int[] FREQUENCY_BAND = {64, 65, 66, 67};
-    public static final int[] CHANNEL_NUMBER = {68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final int[] CHARACTER_1 = {16, 17, 18, 19, 20, 21};
+    private static final int[] CHARACTER_2 = {22, 23, 24, 25, 26, 27};
+    private static final int[] CHARACTER_3 = {28, 29, 30, 31, 32, 33};
+    private static final int[] CHARACTER_4 = {34, 35, 36, 37, 38, 39};
+    private static final int[] CHARACTER_5 = {40, 41, 42, 43, 44, 45};
+    private static final int[] CHARACTER_6 = {46, 47, 48, 49, 50, 51};
+    private static final int[] CHARACTER_7 = {52, 53, 54, 55, 56, 57};
+    private static final int[] CHARACTER_8 = {58, 59, 60, 61, 62, 63};
+    private static final int[] FREQUENCY_BAND = {64, 65, 66, 67};
+    private static final int[] CHANNEL_NUMBER = {68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
 
     private String mCWID;
     private IChannelDescriptor mChannel;
@@ -134,6 +134,6 @@ public class MotorolaBaseStationId extends OSPMessage implements IFrequencyBandR
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }
