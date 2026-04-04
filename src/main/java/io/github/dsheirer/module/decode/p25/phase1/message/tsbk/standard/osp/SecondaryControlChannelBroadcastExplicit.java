@@ -45,7 +45,6 @@ public class SecondaryControlChannelBroadcastExplicit extends OSPMessage impleme
     private static final int[] SITE = {24, 25, 26, 27, 28, 29, 30, 31};
     private static final int[] TRANSMIT_FREQUENCY_BAND = {32, 33, 34, 35};
     private static final int[] TRANSMIT_CHANNEL_NUMBER = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] RESERVED = {48, 49, 50, 51, 52, 53, 54, 55};
     private static final int[] RECEIVE_FREQUENCY_BAND = {56, 57, 58, 59};
     private static final int[] RECEIVE_CHANNEL_NUMBER = {60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71};
     private static final int[] SYSTEM_SERVICE_CLASS = {72, 73, 74, 75, 76, 77, 78, 79};

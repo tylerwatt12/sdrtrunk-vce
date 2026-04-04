@@ -39,8 +39,6 @@ import java.util.List;
  */
 public class GroupDataChannelAnnouncementExplicit extends OSPMessage implements IFrequencyBandReceiver
 {
-    private static final int[] SERVICE_OPTIONS = {16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] RESERVED = {24, 25, 26, 27, 28, 29, 30, 31};
     private static final int[] DOWNLINK_FREQUENCY_BAND = {32, 33, 34, 35};
     private static final int[] DOWNLINK_CHANNEL_NUMBER = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
     private static final int[] UPLINK_FREQUENCY_BAND = {48, 49, 50, 51};

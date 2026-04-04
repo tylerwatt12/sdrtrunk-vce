@@ -141,6 +141,6 @@ public class FrequencyBandUpdate extends OSPMessage implements IFrequencyBand
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

@@ -37,23 +37,22 @@ import java.util.TimeZone;
  */
 public class SynchronizationBroadcast extends OSPMessage
 {
-    public static final int[] RESERVED = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28};
     public static final int SYSTEM_TIME_NOT_LOCKED_TO_EXTERNAL_REFERENCE_FLAG = 29;
     public static final int MICRO_SLOTS_TO_MINUTE_ROLLOVER_UNLOCKED_FLAG = 30;
-    public static final int[] LEAP_SECOND_CORRECTION = {31, 32};
+    private static final int[] LEAP_SECOND_CORRECTION = {31, 32};
     public static final int LOCAL_TIME_OFFSET_VALID_FLAG = 33;
     public static final int LOCAL_TIME_OFFSET_SIGN = 34;
-    public static final int[] LOCAL_TIME_OFFSET_HOURS = {35, 36, 37, 38};
+    private static final int[] LOCAL_TIME_OFFSET_HOURS = {35, 36, 37, 38};
     public static final int LOCAL_TIME_OFFSET_HALF_HOUR = 39;
-    public static final int[] YEAR = {40, 41, 42, 43, 44, 45, 46};
-    public static final int[] MONTH = {47, 48, 49, 50};
-    public static final int[] DAY = {51, 52, 53, 54, 55};
-    public static final int[] HOURS = {56, 57, 58, 59, 60};
-    public static final int[] MINUTES = {61, 62, 63, 65, 65, 66};
-    public static final int[] MICRO_SLOTS = {67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final int[] YEAR = {40, 41, 42, 43, 44, 45, 46};
+    private static final int[] MONTH = {47, 48, 49, 50};
+    private static final int[] DAY = {51, 52, 53, 54, 55};
+    private static final int[] HOURS = {56, 57, 58, 59, 60};
+    private static final int[] MINUTES = {61, 62, 63, 65, 65, 66};
+    private static final int[] MICRO_SLOTS = {67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
 
-    private static final DateFormat TIME_FORMATTER = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z");
     private static final TimeZone NO_TIME_ZONE = new SimpleTimeZone(0, "NONE");
+    private final DateFormat mTimeFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z");
 
     /**
      * Constructs a TSBK from the binary message sequence.
@@ -73,8 +72,8 @@ public class SynchronizationBroadcast extends OSPMessage
             sb.append(" UNLOCKED");
         }
         sb.append(":");
-        TIME_FORMATTER.setTimeZone(getTimeZone());
-        sb.append(" ").append(TIME_FORMATTER.format(new Date(getSystemTime())));
+        mTimeFormatter.setTimeZone(getTimeZone());
+        sb.append(" ").append(mTimeFormatter.format(new Date(getSystemTime())));
         sb.append(" LEAP-SECOND CORRECTION:").append(getLeapSecondCorrection()).append("mS");
         if(isMicroslotsLockedToMinuteRollover())
         {
@@ -232,7 +231,7 @@ public class SynchronizationBroadcast extends OSPMessage
      */
     public int getMilliSeconds()
     {
-        return (int)((double)getMicroSlots() * 7.5);
+        return (int)(getMicroSlots() * 7.5);
     }
 
     /**
@@ -265,6 +264,6 @@ public class SynchronizationBroadcast extends OSPMessage
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

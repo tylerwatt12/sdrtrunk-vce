@@ -40,7 +40,6 @@ import java.util.List;
  */
 public class LocationRegistrationResponse extends OSPMessage
 {
-    private static final int[] RESERVED = {16, 17, 18, 19, 20, 21};
     private static final int[] RESPONSE = {22, 23};
     private static final int[] GROUP_ADDRESS = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
     private static final int[] RFSS = {40, 41, 42, 43, 44, 45, 46, 47};

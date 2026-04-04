@@ -40,7 +40,6 @@ import java.util.List;
 public class GroupAffiliationResponse extends OSPMessage
 {
     private static final int GLOBAL_LOCAL_FLAG = 16;
-    private static final int[] RESERVED = {16, 17, 18, 19, 20, 21, 22, 23};
     private static final int[] RESPONSE = {22, 23};
     private static final int[] ANNOUNCEMENT_GROUP_ADDRESS = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
             39};

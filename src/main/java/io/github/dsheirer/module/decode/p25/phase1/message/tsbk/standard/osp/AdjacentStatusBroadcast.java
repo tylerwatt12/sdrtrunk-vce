@@ -129,7 +129,7 @@ public class AdjacentStatusBroadcast extends OSPMessage implements IFrequencyBan
     }
 
     /**
-     * Indicates if the site informaiton is valid
+     * Indicates if the site information is valid
      */
     public boolean isValidSiteInformation()
     {

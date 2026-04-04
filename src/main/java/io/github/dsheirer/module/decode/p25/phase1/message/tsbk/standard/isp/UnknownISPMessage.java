@@ -51,6 +51,6 @@ public class UnknownISPMessage extends ISPMessage
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

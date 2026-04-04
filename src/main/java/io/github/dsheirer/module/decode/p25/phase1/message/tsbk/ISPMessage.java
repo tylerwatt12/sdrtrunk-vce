@@ -37,7 +37,7 @@ public abstract class ISPMessage extends TSBKMessage
      * @param nac decoded from the NID
      * @param timestamp for the message
      */
-    public ISPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
+    protected ISPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(dataUnitID, message, nac, timestamp);
     }

@@ -155,6 +155,6 @@ public class FrequencyBandUpdateTDMA extends OSPMessage implements IFrequencyBan
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

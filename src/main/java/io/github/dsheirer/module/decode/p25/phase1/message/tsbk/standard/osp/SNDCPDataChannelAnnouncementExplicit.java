@@ -114,18 +114,6 @@ public class SNDCPDataChannelAnnouncementExplicit extends OSPMessage implements 
         return mChannel;
     }
 
-    /**
-     * Indicates if the channel is an explicit channel, meaning that there are separate downlink
-     * and uplink channel numbers included.  When false, the channel number is the same for both
-     * uplink and downlink.
-     *
-     * @return true if this is an explicit channel.
-     */
-    private boolean isExplicitChannel()
-    {
-        return getMessage().getInt(UPLINK_CHANNEL_NUMBER) != 4095;
-    }
-
     public int getDataAccessControl()
     {
         return getMessage().getInt(DATA_ACCESS_CONTROL);
@@ -134,7 +122,7 @@ public class SNDCPDataChannelAnnouncementExplicit extends OSPMessage implements 
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     @Override

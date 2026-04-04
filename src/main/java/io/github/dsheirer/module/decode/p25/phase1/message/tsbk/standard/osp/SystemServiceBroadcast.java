@@ -34,12 +34,10 @@ import java.util.List;
  */
 public class SystemServiceBroadcast extends OSPMessage
 {
-    private static final int[] RESERVED = {16, 17, 18, 19, 20, 21, 22, 23};
     private static final int[] AVAILABLE_SERVICES = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
         41, 42, 43, 44, 45, 46, 47};
     private static final int[] SUPPORTED_SERVICES = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
         65, 66, 67, 68, 69, 70, 71};
-    private static final int[] REQUEST_PRIORITY_LEVEL = {72, 73, 74, 75, 76, 77, 78, 79};
 
     private List<Service> mAvailableServices;
     private List<Service> mSupportedServices;
@@ -85,6 +83,6 @@ public class SystemServiceBroadcast extends OSPMessage
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

@@ -37,12 +37,12 @@ import java.util.List;
  */
 public class MotorolaGroupRegroupChannelUpdate extends OSPMessage implements IFrequencyBandReceiver
 {
-    public static final int[] FREQUENCY_BAND_1 = {16, 17, 18, 19};
-    public static final int[] CHANNEL_NUMBER_1 = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    public static final int[] PATCH_GROUP_1 = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    public static final int[] FREQUENCY_BAND_2 = {48, 49, 50, 51};
-    public static final int[] CHANNEL_NUMBER_2 = {52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
-    public static final int[] PATCH_GROUP_2 = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final int[] FREQUENCY_BAND_1 = {16, 17, 18, 19};
+    private static final int[] CHANNEL_NUMBER_1 = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    private static final int[] PATCH_GROUP_1 = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
+    private static final int[] FREQUENCY_BAND_2 = {48, 49, 50, 51};
+    private static final int[] CHANNEL_NUMBER_2 = {52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
+    private static final int[] PATCH_GROUP_2 = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
 
     private PatchGroupIdentifier mPatchGroup1;
     private PatchGroupIdentifier mPatchGroup2;
