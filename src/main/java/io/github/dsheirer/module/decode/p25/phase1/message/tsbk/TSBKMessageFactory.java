@@ -147,7 +147,7 @@ public class TSBKMessageFactory
     public static CorrectedBinaryMessage deinterleaveViterbiAndCrc(CorrectedBinaryMessage raw)
     {
         //Get deinterleaved header chunk
-        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveChunk(P25P1Interleave.DATA_DEINTERLEAVE, raw);
+        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveDataChunk(raw);
 
         //Decode 1/2 rate trellis encoded PDU header
         CorrectedBinaryMessage message = VITERBI_HALF_RATE_DECODER.decode(deinterleaved);

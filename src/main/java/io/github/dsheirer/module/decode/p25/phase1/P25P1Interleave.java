@@ -30,8 +30,11 @@ import java.util.BitSet;
  */
 public class P25P1Interleave
 {
+    private P25P1Interleave()
+    {
+    }
 
-    public static int[] DATA_INTERLEAVE = new int[]{0, 1, 2, 3, 52, 53, 54, 55, 100,
+    private static final int[] DATA_INTERLEAVE = new int[]{0, 1, 2, 3, 52, 53, 54, 55, 100,
         101, 102, 103, 148, 149, 150, 151, 4, 5, 6, 7, 56, 57, 58, 59, 104, 105, 106, 107, 152, 153,
         154, 155, 8, 9, 10, 11, 60, 61, 62, 63, 108, 109, 110, 111, 156, 157, 158, 159, 12, 13, 14,
         15, 64, 65, 66, 67, 112, 113, 114, 115, 160, 161, 162, 163, 16, 17, 18, 19, 68, 69, 70, 71,
@@ -43,7 +46,7 @@ public class P25P1Interleave
         189, 190, 191, 44, 45, 46, 47, 96, 97, 98, 99, 144, 145, 146, 147, 192, 193, 194, 195, 48,
         49, 50, 51};
 
-    public static int[] DATA_DEINTERLEAVE = new int[]{0, 1, 2, 3, 16, 17, 18, 19, 32,
+    private static final int[] DATA_DEINTERLEAVE = new int[]{0, 1, 2, 3, 16, 17, 18, 19, 32,
         33, 34, 35, 48, 49, 50, 51, 64, 65, 66, 67, 80, 81, 82, 83, 96, 97, 98, 99, 112, 113, 114, 115,
         128, 129, 130, 131, 144, 145, 146, 147, 160, 161, 162, 163, 176, 177, 178, 179, 192, 193,
         194, 195, 4, 5, 6, 7, 20, 21, 22, 23, 36, 37, 38, 39, 52, 53, 54, 55, 68, 69, 70, 71, 84, 85,
@@ -55,7 +58,7 @@ public class P25P1Interleave
         111, 124, 125, 126, 127, 140, 141, 142, 143, 156, 157, 158, 159, 172, 173, 174, 175, 188,
         189, 190, 191};
 
-    public static int[] VOICE_INTERLEAVE = new int[]{0, 24, 48, 72, 96, 120, 25,
+    private static final int[] VOICE_INTERLEAVE = new int[]{0, 24, 48, 72, 96, 120, 25,
         1, 73, 49, 121, 97, 2, 26, 50, 74, 98, 122, 27, 3, 75, 51, 123, 99, 4, 28, 52, 76, 100, 124,
         29, 5, 77, 53, 125, 101, 6, 30, 54, 78, 102, 126, 31, 7, 79, 55, 127, 103, 8, 32, 56, 80, 104,
         128, 33, 9, 81, 57, 129, 105, 10, 34, 58, 82, 106, 130, 35, 11, 83, 59, 131, 107, 12, 36, 60,
@@ -64,7 +67,7 @@ public class P25P1Interleave
         67, 139, 115, 20, 44, 68, 92, 116, 140, 45, 21, 93, 69, 141, 117, 22, 46, 70, 94, 119, 142,
         47, 23, 95, 71, 143, 118};
 
-    public static int[] VOICE_DEINTERLEAVE = new int[]{0, 7, 12, 19, 24, 31, 36, 43,
+    private static final int[] VOICE_DEINTERLEAVE = new int[]{0, 7, 12, 19, 24, 31, 36, 43,
         48, 55, 60, 67, 72, 79, 84, 91, 96, 103, 108, 115, 120, 127, 132, 139, 1, 6, 13, 18, 25, 30,
         37, 42, 49, 54, 61, 66, 73, 78, 85, 90, 97, 102, 109, 114, 121, 126, 133, 138, 2, 9, 14, 21,
         26, 33, 38, 45, 50, 57, 62, 69, 74, 81, 86, 93, 98, 105, 110, 117, 122, 129, 134, 141, 3, 8,
@@ -92,6 +95,11 @@ public class P25P1Interleave
                                                   int start, int end)
     {
         return deinterleave(VOICE_DEINTERLEAVE, message, start, end);
+    }
+
+    public static CorrectedBinaryMessage deinterleaveDataChunk(BitSet interleaved)
+    {
+        return deinterleaveChunk(DATA_DEINTERLEAVE, interleaved);
     }
 
     public static BinaryMessage deinterleave(int[] pattern, BinaryMessage message,

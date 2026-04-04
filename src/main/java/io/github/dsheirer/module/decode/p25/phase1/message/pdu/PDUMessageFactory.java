@@ -142,7 +142,7 @@ public class PDUMessageFactory
      */
     public static DataBlock createConfirmedDataBlock(CorrectedBinaryMessage interleaved)
     {
-        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveChunk(P25P1Interleave.DATA_DEINTERLEAVE, interleaved);
+        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveDataChunk(interleaved);
         return new ConfirmedDataBlock(deinterleaved);
     }
 
@@ -151,7 +151,7 @@ public class PDUMessageFactory
      */
     public static DataBlock createUnconfirmedDataBlock(CorrectedBinaryMessage interleaved)
     {
-        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveChunk(P25P1Interleave.DATA_DEINTERLEAVE, interleaved);
+        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveDataChunk(interleaved);
         return new UnconfirmedDataBlock(deinterleaved);
     }
 
