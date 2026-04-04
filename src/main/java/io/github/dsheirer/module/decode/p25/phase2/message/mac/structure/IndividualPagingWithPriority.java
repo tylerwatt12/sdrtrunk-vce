@@ -32,6 +32,8 @@ import java.util.List;
  */
 public class IndividualPagingWithPriority extends MacStructureVariableLength
 {
+    private static final String HIGH_PRIORITY_LABEL = "-HIGH PRIORITY";
+    private static final String LOW_PRIORITY_LABEL = "-LOW PRIORITY";
     private static final int PRIORITY_ID_1 = 8;
     private static final int PRIORITY_ID_2 = 9;
     private static final int PRIORITY_ID_3 = 10;
@@ -100,11 +102,11 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
 
         if(isTalkgroupPriority1())
         {
-            sb.append("-HIGH PRIORITY");
+            sb.append(HIGH_PRIORITY_LABEL);
         }
         else
         {
-            sb.append("-LOW PRIORITY");
+            sb.append(LOW_PRIORITY_LABEL);
         }
 
         int count = getCount();
@@ -115,11 +117,11 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
 
             if(isTalkgroupPriority2())
             {
-                sb.append("-HIGH PRIORITY");
+                sb.append(HIGH_PRIORITY_LABEL);
             }
             else
             {
-                sb.append("-LOW PRIORITY");
+                sb.append(LOW_PRIORITY_LABEL);
             }
 
             if(count > 2)
@@ -128,11 +130,11 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
 
                 if(isTalkgroupPriority3())
                 {
-                    sb.append("-HIGH PRIORITY");
+                    sb.append(HIGH_PRIORITY_LABEL);
                 }
                 else
                 {
-                    sb.append("-LOW PRIORITY");
+                    sb.append(LOW_PRIORITY_LABEL);
                 }
 
                 if(count > 3)
@@ -141,11 +143,11 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
 
                     if(isTalkgroupPriority4())
                     {
-                        sb.append("-HIGH PRIORITY");
+                        sb.append(HIGH_PRIORITY_LABEL);
                     }
                     else
                     {
-                        sb.append("-LOW PRIORITY");
+                        sb.append(LOW_PRIORITY_LABEL);
                     }
                 }
             }
@@ -187,6 +189,8 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
                 return 11;
             case 4:
                 return 14;
+            default:
+                break;
         }
 
         return 5;

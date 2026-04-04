@@ -50,8 +50,8 @@ public class SynchronizationBroadcast extends MacStructure
     private static final IntField HOURS = IntField.range(48, 52);
     private static final IntField MINUTES = IntField.range(53, 58);
     private static final IntField MICRO_SLOTS = IntField.range(59, 71);
-    private static final DateFormat TIME_FORMATTER = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z");
     private static final TimeZone NO_TIME_ZONE = new SimpleTimeZone(0, "NONE");
+    private final DateFormat mTimeFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z");
 
     /**
      * Constructs the message
@@ -62,6 +62,7 @@ public class SynchronizationBroadcast extends MacStructure
     public SynchronizationBroadcast(CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
+        mTimeFormatter.setTimeZone(getTimeZone());
     }
 
     /**
@@ -77,8 +78,8 @@ public class SynchronizationBroadcast extends MacStructure
             sb.append(" UNLOCKED");
         }
         sb.append(":");
-        TIME_FORMATTER.setTimeZone(getTimeZone());
-        sb.append(" ").append(TIME_FORMATTER.format(new Date(getSystemTime())));
+        mTimeFormatter.setTimeZone(getTimeZone());
+        sb.append(" ").append(mTimeFormatter.format(new Date(getSystemTime())));
         sb.append(" LEAP-SECOND CORRECTION:").append(getLeapSecondCorrection()).append("mS");
         if(isMicroslotsLockedToMinuteRollover())
         {
@@ -235,7 +236,7 @@ public class SynchronizationBroadcast extends MacStructure
      */
     public int getMilliSeconds()
     {
-        return (int)((double)getMicroSlots() * 7.5);
+        return (int)(getMicroSlots() * 7.5);
     }
 
     /**
@@ -267,6 +268,6 @@ public class SynchronizationBroadcast extends MacStructure
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

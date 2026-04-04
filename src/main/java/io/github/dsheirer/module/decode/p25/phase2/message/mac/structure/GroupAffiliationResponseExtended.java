@@ -34,7 +34,6 @@ import java.util.List;
  */
 public class GroupAffiliationResponseExtended extends MacStructure
 {
-    private static final int LOCAL_OR_GLOBAL_AFFILIATION_FLAG = 16;
     private static final IntField RESPONSE = IntField.range(22, 23);
     private static final IntField ANNOUNCEMENT_GROUP_ADDRESS = IntField.length16(OCTET_4_BIT_24);
     private static final IntField GROUP_ADDRESS = IntField.length16(OCTET_6_BIT_40);

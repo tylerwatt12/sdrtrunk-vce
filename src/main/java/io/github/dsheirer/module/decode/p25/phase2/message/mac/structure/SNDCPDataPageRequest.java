@@ -31,7 +31,6 @@ import java.util.List;
  */
 public class SNDCPDataPageRequest extends MacStructureDataService
 {
-    private static final IntField DATA_ACCESS_CONTROL = IntField.length16(OCTET_3_BIT_16);
     private static final IntField TARGET_ADDRESS = IntField.length24(OCTET_5_BIT_32);
     private List<Identifier> mIdentifiers;
     private Identifier mTargetAddress;

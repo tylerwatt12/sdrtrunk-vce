@@ -54,7 +54,6 @@ public class UnitToUnitVoiceServiceChannelGrantExtendedLCCH extends MacStructure
     private static final IntField FRAGMENT_0_FULLY_QUALIFIED_TARGET_WACN = IntField.range(OCTET_6_BIT_40, OCTET_6_BIT_40 + 20);
     private static final IntField FRAGMENT_0_FULLY_QUALIFIED_TARGET_SYSTEM = IntField.range(60, 71);
     private static final IntField FRAGMENT_0_FULLY_QUALIFIED_TARGET_RADIO = IntField.length24(OCTET_10_BIT_72);
-    private static final IntField FRAGMENT_0_MULTI_FRAGMENT_CRC = IntField.range(96, 111);
 
     private ServiceOptions mServiceOptions;
     private APCO25Channel mChannel;

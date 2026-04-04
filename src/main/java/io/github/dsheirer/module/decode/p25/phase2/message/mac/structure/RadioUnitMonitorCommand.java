@@ -35,7 +35,6 @@ public abstract class RadioUnitMonitorCommand extends MacStructure
     private static final IntField TRANSMIT_MULTIPLIER = IntField.range(30, 31);
     private static final IntField TARGET_ADDRESS = IntField.length24(OCTET_5_BIT_32);
 
-    private List<Identifier> mIdentifiers;
     private Identifier mTargetAddress;
 
     /**
@@ -44,7 +43,7 @@ public abstract class RadioUnitMonitorCommand extends MacStructure
      * @param message containing the message bits
      * @param offset into the message for this structure
      */
-    public RadioUnitMonitorCommand(CorrectedBinaryMessage message, int offset)
+    protected RadioUnitMonitorCommand(CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
     }

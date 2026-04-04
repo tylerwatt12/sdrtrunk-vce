@@ -36,7 +36,6 @@ import java.util.List;
  */
 public class EndPushToTalk extends MacStructure
 {
-    private static final int SYSTEM_CONTROLLER = 16777215;
     private static final IntField COLOR_CODE = IntField.length12(OCTET_2_BIT_8 + 4);
     private static final IntField SOURCE_ADDRESS = IntField.length24(OCTET_14_BIT_104);
     private static final IntField GROUP_ADDRESS = IntField.length16(OCTET_17_BIT_128);

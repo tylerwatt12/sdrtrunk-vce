@@ -42,7 +42,7 @@ public abstract class MessageUpdate extends MacStructure
      * @param message containing the message bits
      * @param offset into the message for this structure
      */
-    public MessageUpdate(CorrectedBinaryMessage message, int offset)
+    protected MessageUpdate(CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
     }

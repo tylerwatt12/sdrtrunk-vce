@@ -38,7 +38,7 @@ public abstract class MacStructureGroupVoiceService extends MacStructureVoiceSer
      * @param message containing the message bits
      * @param offset into the message for this structure
      */
-    public MacStructureGroupVoiceService(CorrectedBinaryMessage message, int offset)
+    protected MacStructureGroupVoiceService(CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
     }

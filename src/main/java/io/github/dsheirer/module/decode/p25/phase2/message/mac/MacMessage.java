@@ -37,7 +37,6 @@ public class MacMessage extends P25P2Message
 {
     private static final IntField PDU_TYPE = IntField.range(0, 2);
     private static final IntField OFFSET_TO_NEXT_VOICE_4V_START = IntField.range(3, 5);
-    private static final IntField RESERVED = IntField.range(6, 7);
     private DataUnitID mDataUnitID;
     private MacStructure mMacStructure;
     private Identifier mNAC;

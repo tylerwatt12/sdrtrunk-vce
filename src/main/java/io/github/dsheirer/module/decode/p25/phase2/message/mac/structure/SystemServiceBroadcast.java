@@ -114,6 +114,6 @@ public class SystemServiceBroadcast extends MacStructure
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

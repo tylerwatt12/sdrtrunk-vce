@@ -42,7 +42,7 @@ public abstract class SecondaryControlChannelBroadcast extends MacStructure
      * @param message containing the message bits
      * @param offset into the message for this structure
      */
-    public SecondaryControlChannelBroadcast(CorrectedBinaryMessage message, int offset)
+    protected SecondaryControlChannelBroadcast(CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
     }

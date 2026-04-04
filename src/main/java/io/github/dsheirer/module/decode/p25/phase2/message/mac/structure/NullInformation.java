@@ -52,6 +52,6 @@ public class NullInformation extends MacStructure
 
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

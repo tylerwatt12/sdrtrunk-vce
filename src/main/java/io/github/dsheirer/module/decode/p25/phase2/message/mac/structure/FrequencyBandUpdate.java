@@ -142,6 +142,6 @@ public class FrequencyBandUpdate extends MacStructure implements IFrequencyBand
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

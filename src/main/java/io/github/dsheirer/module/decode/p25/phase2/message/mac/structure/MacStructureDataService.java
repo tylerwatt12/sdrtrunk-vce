@@ -37,7 +37,7 @@ public abstract class MacStructureDataService extends MacStructure
      * @param message containing the message bits
      * @param offset into the message for this structure
      */
-    public MacStructureDataService(CorrectedBinaryMessage message, int offset)
+    protected MacStructureDataService(CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
     }

@@ -46,16 +46,12 @@ import java.util.List;
  */
 public class MotorolaTDMADataChannel extends MacStructureVendor implements IFrequencyBandReceiver
 {
-    private static final IntField UNKNOWN_1 = IntField.length8(OCTET_4_BIT_24);
     private static final IntField FREQUENCY_BAND_1 = IntField.length4(OCTET_5_BIT_32);
     private static final IntField CHANNEL_NUMBER_1 = IntField.length12(OCTET_5_BIT_32 + 4);
-    private static final IntField UNKNOWN_2 = IntField.length8(OCTET_7_BIT_48);
     private static final IntField FREQUENCY_BAND_2 = IntField.length4(OCTET_8_BIT_56);
     private static final IntField CHANNEL_NUMBER_2 = IntField.length12(OCTET_8_BIT_56 + 4);
-    private static final IntField UNKNOWN_3 = IntField.length8(OCTET_10_BIT_72);
     private static final IntField FREQUENCY_BAND_3 = IntField.length4(OCTET_11_BIT_80);
     private static final IntField CHANNEL_NUMBER_3 = IntField.length12(OCTET_11_BIT_80 + 4);
-    private static final IntField UNKNOWN_4 = IntField.length8(OCTET_13_BIT_96);
     private static final IntField FREQUENCY_BAND_4 = IntField.length4(OCTET_14_BIT_104);
     private static final IntField CHANNEL_NUMBER_4 = IntField.length12(OCTET_14_BIT_104 + 4);
 

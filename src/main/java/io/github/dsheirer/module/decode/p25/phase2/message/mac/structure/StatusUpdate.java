@@ -44,7 +44,7 @@ public abstract class StatusUpdate extends MacStructure
      * @param message containing the message bits
      * @param offset into the message for this structure
      */
-    public StatusUpdate(CorrectedBinaryMessage message, int offset)
+    protected StatusUpdate(CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
     }

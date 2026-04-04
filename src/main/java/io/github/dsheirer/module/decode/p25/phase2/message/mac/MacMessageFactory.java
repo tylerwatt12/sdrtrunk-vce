@@ -158,6 +158,10 @@ public class MacMessageFactory
 {
     public static final int DEFAULT_MAC_STRUCTURE_INDEX = 8;
 
+    private MacMessageFactory()
+    {
+    }
+
 
     /**
      * Creates a set of MAC messages
