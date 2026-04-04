@@ -58,7 +58,7 @@ import org.slf4j.LoggerFactory;
 @JacksonXmlRootElement(localName = "channel")
 public class Channel extends Configuration implements Listener<SourceEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Channel.class);
+    private static final Logger mLog = LoggerFactory.getLogger(Channel.class);
 
     // Standard channels are persisted and traffic channels are temporary
     public enum ChannelType

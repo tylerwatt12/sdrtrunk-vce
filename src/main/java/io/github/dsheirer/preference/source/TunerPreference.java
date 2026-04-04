@@ -25,15 +25,12 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Listener;
 import java.util.prefs.Preferences;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Tuner preferences
  */
 public class TunerPreference extends Preference
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TunerPreference.class);
     public static final String SDRCONNECT_HEADLESS_PATH_PROPERTY = "sdrconnect.headless.path";
     public static final String SDRCONNECT_HEADLESS_AUTOSTART_PROPERTY = "sdrconnect.headless.autostart";
     public static final String SDRCONNECT_HEADLESS_START_DELAY_MS_PROPERTY = "sdrconnect.headless.start.delay.ms";

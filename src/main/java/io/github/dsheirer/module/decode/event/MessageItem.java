@@ -35,7 +35,7 @@ import java.util.Date;
  */
 public class MessageItem
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MessageItem.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MessageItem.class);
     private IMessage mMessage;
     private String mTimestamp;
     private String mProtocol;

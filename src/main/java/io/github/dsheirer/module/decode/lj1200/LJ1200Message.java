@@ -34,7 +34,7 @@ import java.util.List;
 
 public class LJ1200Message extends Message
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LJ1200Message.class);
+    private static final Logger mLog = LoggerFactory.getLogger(LJ1200Message.class);
 
     public static final String[] REPLY_CODE = {"0", "1", "2", "3", "4", "5", "6", "7",
         "8", "9", "A", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "P", "Q", "R", "S",

@@ -23,12 +23,9 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.Message;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class Tait1200ANIMessageProcessor implements Listener<CorrectedBinaryMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Tait1200ANIMessageProcessor.class);
     private Listener<IMessage> mMessageListener;
 
     public Tait1200ANIMessageProcessor()

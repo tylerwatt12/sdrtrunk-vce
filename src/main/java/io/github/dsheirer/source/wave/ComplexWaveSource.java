@@ -44,7 +44,7 @@ import javax.sound.sampled.UnsupportedAudioFileException;
 
 public class ComplexWaveSource extends Source implements IControllableFileSource, AutoCloseable
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ComplexWaveSource.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ComplexWaveSource.class);
 
     private IFrameLocationListener mFrameLocationListener;
     private int mBufferSampleCount = 65536; //Complex samples per buffer

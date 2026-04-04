@@ -46,7 +46,7 @@ import org.slf4j.LoggerFactory;
  */
 public class BinaryRecorder extends Module implements IByteBufferListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BinaryRecorder.class);
+    private static final Logger mLog = LoggerFactory.getLogger(BinaryRecorder.class);
     private static final int MAX_RECORDING_BYTE_SIZE = 524288;  //500 kB
 
     private Dispatcher<ByteBuffer> mBufferProcessor = new Dispatcher<>("sdrtrunk binary recorder", 250);

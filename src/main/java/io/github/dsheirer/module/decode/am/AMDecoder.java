@@ -54,7 +54,7 @@ public class AMDecoder extends SquelchControlDecoder implements ISourceEventList
         IComplexSamplesListener, Listener<ComplexSamples>, IRealBufferProvider,
         IDecoderStateEventProvider, INoiseSquelchController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AMDecoder.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AMDecoder.class);
     private static final float DEMODULATOR_GAIN = 150.0f;
     private static final float SQUELCH_ALPHA_DECAY = 0.0004f;
     private static final float MINIMUM_GAIN = 0.5f;

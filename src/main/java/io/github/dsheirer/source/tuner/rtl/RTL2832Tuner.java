@@ -23,15 +23,12 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * RTL-2832 Tuner
  */
 public class RTL2832Tuner extends Tuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RTL2832Tuner.class);
 
     /**
      * Constructs an instance

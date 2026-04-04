@@ -43,7 +43,7 @@ import org.slf4j.LoggerFactory;
  */
 public class HeterodyneChannelSourceManager extends ChannelSourceManager
 {
-    private final static Logger mLog = LoggerFactory.getLogger(HeterodyneChannelSourceManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(HeterodyneChannelSourceManager.class);
 
     private final static int DELAY_BUFFER_DURATION_MILLISECONDS = 2000;
 

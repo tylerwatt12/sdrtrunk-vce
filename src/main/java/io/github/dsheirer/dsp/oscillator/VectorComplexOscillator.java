@@ -25,8 +25,6 @@ import java.util.Arrays;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Complex oscillator that uses JDK17 SIMD vector operations to generate complex sample arrays.
@@ -37,7 +35,6 @@ import org.slf4j.LoggerFactory;
  */
 public class VectorComplexOscillator extends AbstractOscillator implements IComplexOscillator
 {
-    private static final Logger mLog = LoggerFactory.getLogger(VectorComplexOscillator.class);
     private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_PREFERRED;
 
     private float[] mPreviousInphases;

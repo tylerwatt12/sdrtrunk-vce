@@ -45,7 +45,7 @@ import javax.usb.UsbException;
  */
 public class AirspyTunerController extends USBTunerController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AirspyTunerController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AirspyTunerController.class);
     public static final Gain LINEARITY_GAIN_DEFAULT = Gain.LINEARITY_14;
     public static final Gain SENSITIVITY_GAIN_DEFAULT = Gain.SENSITIVITY_10;
     public static final int GAIN_MIN = 1;

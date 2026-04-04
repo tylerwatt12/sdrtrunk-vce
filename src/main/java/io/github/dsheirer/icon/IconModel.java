@@ -48,7 +48,7 @@ import javax.swing.ImageIcon;
 
 public class IconModel
 {
-    private final static Logger mLog = LoggerFactory.getLogger(IconModel.class);
+    private static final Logger mLog = LoggerFactory.getLogger(IconModel.class);
     public static final int DEFAULT_ICON_SIZE = 12;
     public static final String DEFAULT_ICON = "No Icon";
 

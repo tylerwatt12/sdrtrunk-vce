@@ -49,7 +49,7 @@ import org.slf4j.LoggerFactory;
  */
 public class MBECallSequenceConverter
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MBECallSequenceConverter.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MBECallSequenceConverter.class);
 
     /**
      * Converts the input MBE file to PCM audio and writes to the output wave file.

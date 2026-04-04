@@ -22,15 +22,12 @@ package io.github.dsheirer.gui.control;
 import java.util.function.UnaryOperator;
 import javafx.scene.control.TextFormatter;
 import javafx.util.converter.LongStringConverter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Text formatter for long values that constrains values to specified minimum and maximum valid values.
  */
 public class LongFormatter extends TextFormatter<Long>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(LongFormatter.class);
 
     /**
      * Constructs an instance

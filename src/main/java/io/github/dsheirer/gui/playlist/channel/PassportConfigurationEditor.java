@@ -42,15 +42,12 @@ import javafx.geometry.Insets;
 import javafx.scene.control.Label;
 import javafx.scene.control.TitledPane;
 import javafx.scene.layout.VBox;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Passport channel configuration editor
  */
 public class PassportConfigurationEditor extends ChannelConfigurationEditor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PassportConfigurationEditor.class);
     private TitledPane mAuxDecoderPane;
     private TitledPane mDecoderPane;
     private TitledPane mEventLogPane;

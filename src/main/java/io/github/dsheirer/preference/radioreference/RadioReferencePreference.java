@@ -28,8 +28,6 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.rrapi.type.AuthorizationInformation;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.service.radioreference.RadioReference;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.prefs.Preferences;
 
@@ -38,7 +36,6 @@ import java.util.prefs.Preferences;
  */
 public class RadioReferencePreference extends Preference
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RadioReferencePreference.class);
     public static final int INVALID_ID = -1;
     private Preferences mPreferences = Preferences.userNodeForPackage(RadioReferencePreference.class);
     private static final String STORE_CREDENTIALS = "store.credentials";

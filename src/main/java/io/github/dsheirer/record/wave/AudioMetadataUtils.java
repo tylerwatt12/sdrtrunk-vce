@@ -49,7 +49,7 @@ import org.slf4j.LoggerFactory;
 
 public class AudioMetadataUtils
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioMetadataUtils.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AudioMetadataUtils.class);
 
     private static final SimpleDateFormat SDF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
     private static final SimpleDateFormat YEAR_SDF = new SimpleDateFormat("yyyy");

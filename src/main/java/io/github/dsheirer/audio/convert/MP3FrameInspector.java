@@ -25,7 +25,7 @@ import java.util.List;
 
 public class MP3FrameInspector
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MP3FrameInspector.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MP3FrameInspector.class);
 
     public static void inspect(List<byte[]> frames)
     {

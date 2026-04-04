@@ -41,8 +41,6 @@ import javafx.scene.layout.VBox;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 import org.controlsfx.control.textfield.TextFields;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -50,7 +48,6 @@ import java.util.function.Predicate;
 
 public class AliasViewByRecordingEditor extends VBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AliasViewByRecordingEditor.class);
 
     private PlaylistManager mPlaylistManager;
     private ComboBox<String> mAliasListNameComboBox;

@@ -22,8 +22,6 @@ package io.github.dsheirer.preference.calibration;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.prefs.Preferences;
 
@@ -35,7 +33,6 @@ public class VectorCalibrationPreference extends Preference
     private static final String PREFERENCE_KEY_HIDE_CALIBRATION_DIALOG = "hide.calibration.dialog";
     private static final String PREFERENCE_KEY_VECTOR_ENABLED = "vector.enabled";
 
-    private final static Logger mLog = LoggerFactory.getLogger(VectorCalibrationPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(VectorCalibrationPreference.class);
     private Boolean mVectorEnabled;
     private Boolean mHideCalibrationDialog;

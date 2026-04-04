@@ -28,8 +28,6 @@ import io.github.dsheirer.source.tuner.fcd.FCDCommand;
 import io.github.dsheirer.source.tuner.fcd.FCDTunerController;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.sound.sampled.TargetDataLine;
 import javax.usb.UsbClaimException;
@@ -40,7 +38,6 @@ import javax.usb.UsbException;
  */
 public class FCD1TunerController extends FCDTunerController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FCD1TunerController.class);
     public static final int MINIMUM_TUNABLE_FREQUENCY_HZ = 64000000;
     public static final int MAXIMUM_TUNABLE_FREQUENCY_HZ = 1700000000;
     public static final int SAMPLE_RATE = 96000;

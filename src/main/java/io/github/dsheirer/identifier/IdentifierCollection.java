@@ -35,7 +35,7 @@ import org.slf4j.LoggerFactory;
  */
 public class IdentifierCollection
 {
-    private final static Logger mLog = LoggerFactory.getLogger(IdentifierCollection.class);
+    private static final Logger mLog = LoggerFactory.getLogger(IdentifierCollection.class);
     protected List<Identifier> mIdentifiers = new CopyOnWriteArrayList<>();
     protected AliasListConfigurationIdentifier mAliasListConfigurationIdentifier;
     private int mTimeslot = 0;

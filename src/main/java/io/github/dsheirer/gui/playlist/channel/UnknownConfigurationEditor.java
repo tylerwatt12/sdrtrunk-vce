@@ -29,15 +29,12 @@ import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import javafx.scene.control.TitledPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Unknown protocol channel configuration editor
  */
 public class UnknownConfigurationEditor extends ChannelConfigurationEditor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(UnknownConfigurationEditor.class);
     private TitledPane mDecoderPane;
 
     /**

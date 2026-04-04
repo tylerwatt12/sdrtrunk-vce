@@ -25,8 +25,6 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.Message;
 import io.github.dsheirer.module.decode.tait.identifier.TaitIdentifier;
 import io.github.dsheirer.protocol.Protocol;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -34,7 +32,6 @@ import java.util.List;
 
 public class Tait1200ANIMessage extends Message
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Tait1200ANIMessage.class);
 
     public static int[] REVS_1 = {0, 1, 2, 3};
     public static int[] SYNC = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};

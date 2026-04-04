@@ -38,7 +38,7 @@ import java.util.Arrays;
 
 public class RealWaveSource extends Source implements IControllableFileSource, AutoCloseable
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RealWaveSource.class);
+    private static final Logger mLog = LoggerFactory.getLogger(RealWaveSource.class);
     private IFrameLocationListener mFrameLocationListener;
     private int mBytesPerFrame;
     private int mFrameCounter = 0;

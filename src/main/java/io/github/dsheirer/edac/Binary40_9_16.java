@@ -26,15 +26,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * P25 Phase 2 Binary (40, 9, 16) Code for IISCH in the Super Frame Fragment.
  */
 public class Binary40_9_16
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Binary40_9_16.class);
     private static final long[] CHECKSUMS = {0x8816CE36D7l, 0x201DFD4F64l, 0x100F4B1758l, 0x0C00DED18El, 0x020807F7FFl,
             0x09048D9B72l, 0x009DA3A171l, 0x0058CBAA4El, 0x00343D8597l};
     private static final long CODE_WORD_OFFSET = 0x184229d461l;

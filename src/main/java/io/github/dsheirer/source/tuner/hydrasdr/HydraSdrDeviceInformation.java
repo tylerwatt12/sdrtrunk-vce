@@ -7,7 +7,7 @@ import java.util.Arrays;
 
 public class HydraSdrDeviceInformation
 {
-	private final static Logger mLog =
+	private static final Logger mLog =
 			LoggerFactory.getLogger( HydraSdrDeviceInformation.class );
 
 	private HydraSdrTunerController.BoardID mBoardID = HydraSdrTunerController.BoardID.UNKNOWN;

@@ -50,7 +50,7 @@ import javax.swing.event.ChangeListener;
 public class AirspyTunerEditor extends TunerEditor<AirspyTuner, AirspyTunerConfiguration>
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(AirspyTunerEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AirspyTunerEditor.class);
     private JButton mTunerInfoButton;
     private JComboBox<AirspySampleRate> mSampleRateCombo;
     private JComboBox<GainMode> mGainModeCombo;

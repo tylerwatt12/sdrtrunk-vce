@@ -20,8 +20,6 @@
 
 package io.github.dsheirer.preference.swing;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.awt.Dimension;
 import java.awt.GraphicsDevice;
@@ -34,7 +32,6 @@ import java.util.prefs.Preferences;
  */
 public class SwingPreference
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SwingPreference.class);
 
     private static final String LOCATION_X = ".x";
     private static final String LOCATION_Y = ".y";

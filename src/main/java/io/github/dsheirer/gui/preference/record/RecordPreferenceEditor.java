@@ -30,8 +30,6 @@ import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 /**
@@ -39,7 +37,6 @@ import org.slf4j.LoggerFactory;
  */
 public class RecordPreferenceEditor extends HBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RecordPreferenceEditor.class);
     private RecordPreference mRecordPreference;
     private GridPane mEditorPane;
     private ComboBox<RecordFormat> mRecordFormatComboBox;

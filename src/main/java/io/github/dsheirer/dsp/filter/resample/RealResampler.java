@@ -21,8 +21,6 @@ package io.github.dsheirer.dsp.filter.resample;
 import com.laszlosystems.libresample4j.Resampler;
 import com.laszlosystems.libresample4j.SampleBuffers;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
@@ -34,7 +32,6 @@ import java.util.List;
  */
 public class RealResampler
 {
-    protected static final Logger mLog = LoggerFactory.getLogger(RealResampler.class);
 
     private Resampler mResampler;
     private Listener<float[]> mResampledListener;

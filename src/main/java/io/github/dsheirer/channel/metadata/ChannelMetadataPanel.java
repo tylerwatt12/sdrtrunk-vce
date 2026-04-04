@@ -47,8 +47,6 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import net.miginfocom.swing.MigLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
@@ -63,7 +61,6 @@ import javax.swing.table.DefaultTableCellRenderer;
 
 public class ChannelMetadataPanel extends JPanel implements ListSelectionListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelMetadataPanel.class);
 
     private static final String TABLE_PREFERENCE_KEY = "channel.metadata.panel";
     private ChannelModel mChannelModel;

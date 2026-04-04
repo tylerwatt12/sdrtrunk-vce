@@ -23,8 +23,6 @@ package io.github.dsheirer.dsp.psk.pll;
 
 import io.github.dsheirer.sample.complex.Complex;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Costas Loop - phase locked loop designed to automatically synchronize to the incoming carrier frequency in order to
@@ -37,7 +35,6 @@ import org.slf4j.LoggerFactory;
  */
 public class CostasLoop implements IPhaseLockedLoop
 {
-    private final static Logger mLog = LoggerFactory.getLogger(CostasLoop.class);
 
     public static final double TWO_PI = 2.0 * FastMath.PI;
 

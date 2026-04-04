@@ -23,8 +23,6 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerEditor;
 import net.miginfocom.swing.MigLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JLabel;
 import javax.swing.JSeparator;
@@ -35,7 +33,6 @@ import javax.swing.JSeparator;
 public class RecordingTunerEditor extends TunerEditor<RecordingTuner,RecordingTunerConfiguration>
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(RecordingTunerEditor.class);
     private JLabel mRecordingPath;
 
     /**

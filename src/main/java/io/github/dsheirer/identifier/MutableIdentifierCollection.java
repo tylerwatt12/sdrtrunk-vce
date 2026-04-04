@@ -26,8 +26,6 @@ import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Identifier collection with methods for changing or updating managed identifiers
@@ -35,7 +33,6 @@ import org.slf4j.LoggerFactory;
 public class MutableIdentifierCollection extends IdentifierCollection implements IdentifierUpdateProvider,
     Listener<IdentifierUpdateNotification>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MutableIdentifierCollection.class);
     private Listener<IdentifierUpdateNotification> mListener;
 
     public MutableIdentifierCollection(int timeslot)

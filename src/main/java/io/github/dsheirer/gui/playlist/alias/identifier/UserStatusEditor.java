@@ -28,15 +28,12 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for user status alias identifiers
  */
 public class UserStatusEditor extends IdentifierEditor<UserStatusID>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(UserStatusEditor.class);
 
     private TextField mUserStatusField;
     private TextFormatter<Integer> mIntegerTextFormatter;

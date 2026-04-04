@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
 
 public class BinaryReader implements Iterator<ByteBuffer>, AutoCloseable
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BinaryReader.class);
+    private static final Logger mLog = LoggerFactory.getLogger(BinaryReader.class);
     private int mBufferSize;
     private InputStream mInputStream;
     private Path mPath;

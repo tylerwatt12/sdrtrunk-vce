@@ -109,7 +109,7 @@ import javax.swing.plaf.metal.MetalLookAndFeel;
 
 public class SDRTrunk implements Listener<TunerEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SDRTrunk.class);
+    private static final Logger mLog = LoggerFactory.getLogger(SDRTrunk.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
 
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";

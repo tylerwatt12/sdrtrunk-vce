@@ -16,12 +16,9 @@
 package io.github.dsheirer.dsp.fsk;
 
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SampleBuffer
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SampleBuffer.class);
 
     protected boolean[] mDelayLine;
     protected int mDelayLinePointer = 0;

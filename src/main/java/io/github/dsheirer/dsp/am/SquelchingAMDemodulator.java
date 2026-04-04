@@ -155,7 +155,10 @@ public class SquelchingAMDemodulator implements ISquelchingDemodulator, Listener
             case REQUEST_CHANGE_SQUELCH_AUTO_TRACK:
             {
                 mAdaptiveSquelch.receive(sourceEvent);
+                break;
             }
+            default:
+                break;
         }
     }
 }

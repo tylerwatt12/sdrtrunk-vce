@@ -44,7 +44,7 @@ import javax.swing.JTable;
 
 public class ChannelAutoStartFrame extends JFrame
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelAutoStartFrame.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelAutoStartFrame.class);
 
     private Listener<ChannelEvent> mChannelEventListener;
     private List<Channel> mChannels;

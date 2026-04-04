@@ -10,7 +10,7 @@ import java.text.NumberFormat;
 
 public class ChannelMemoryLogger implements Runnable, ChannelEventListener
 {
-	private final static Logger mLog = LoggerFactory.getLogger( ChannelMemoryLogger.class );
+	private static final Logger mLog = LoggerFactory.getLogger( ChannelMemoryLogger.class );
 
 	public int mChannelCount;
 	public int mChannelProcessingCount;

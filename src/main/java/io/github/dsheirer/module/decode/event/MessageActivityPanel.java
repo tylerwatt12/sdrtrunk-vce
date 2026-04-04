@@ -29,8 +29,6 @@ import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.List;
 import net.miginfocom.swing.MigLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -45,7 +43,6 @@ import javax.swing.table.TableRowSorter;
 public class MessageActivityPanel extends JPanel implements Listener<ProcessingChain>
 {
     private static final long serialVersionUID = 1L;
-    private static final Logger mLog = LoggerFactory.getLogger(MessageActivityPanel.class);
     private final String TABLE_PREFERENCE_KEY = "message.activity.panel";
     private MessageActivityModel mMessageModel = new MessageActivityModel();
     private MessageHistory mCurrentMessageHistory;

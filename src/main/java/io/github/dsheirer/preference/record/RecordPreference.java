@@ -35,7 +35,7 @@ public class RecordPreference extends Preference
 {
     private static final String PREFERENCE_KEY_AUDIO_RECORD_FORMAT = "audio.record.format";
     private static final RecordFormat DEFAULT_RECORD_FORMAT = RecordFormat.MP3;
-    private final static Logger mLog = LoggerFactory.getLogger(RecordPreference.class);
+    private static final Logger mLog = LoggerFactory.getLogger(RecordPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(RecordPreference.class);
     private RecordFormat mAudioRecordFormat;
 

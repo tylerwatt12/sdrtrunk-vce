@@ -21,15 +21,12 @@ package io.github.dsheirer.gui.playlist.alias.identifier;
 
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.preference.UserPreferences;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating JavaFX editors for alias identifiers
  */
 public class IdentifierEditorFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(IdentifierEditorFactory.class);
 
     public static IdentifierEditor getEditor(AliasIDType type, UserPreferences userPreferences)
     {

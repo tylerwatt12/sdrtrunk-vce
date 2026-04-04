@@ -36,7 +36,7 @@ import javax.sound.sampled.UnsupportedAudioFileException;
  */
 public class RecordingTunerController extends TunerController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RecordingTunerController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(RecordingTunerController.class);
 
     public static final int DC_NOISE_BANDWIDTH = 0;
     public static final double USABLE_BANDWIDTH_PERCENTAGE = 1.00;

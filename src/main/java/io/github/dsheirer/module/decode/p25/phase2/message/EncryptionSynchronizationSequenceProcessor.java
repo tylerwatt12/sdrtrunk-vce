@@ -25,8 +25,6 @@ import io.github.dsheirer.edac.ReedSolomon_44_16_29_P25;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractVoiceTimeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Voice2Timeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Voice4Timeslot;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * APCO25 Phase II Encryption Synchronization Sequence (ESS).  Provides encryption algorithm, key ID and message
@@ -41,7 +39,6 @@ import org.slf4j.LoggerFactory;
  */
 public class EncryptionSynchronizationSequenceProcessor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(EncryptionSynchronizationSequenceProcessor.class);
 
     private BinaryMessage mESSA;
     private BinaryMessage mESSB1;

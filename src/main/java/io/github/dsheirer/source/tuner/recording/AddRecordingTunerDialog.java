@@ -49,7 +49,7 @@ import javax.swing.filechooser.FileFilter;
  */
 public class AddRecordingTunerDialog extends JFrame
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AddRecordingTunerDialog.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AddRecordingTunerDialog.class);
     private static final String SELECT_A_FILE = "Please select a recording file";
     private static final String LAST_FILE_BROWSE_LOCATION_KEY = "AddRecordingTunerDialog.lastBrowseLocation";
     private UserPreferences mUserPreferences;

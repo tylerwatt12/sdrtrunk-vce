@@ -39,15 +39,12 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.prefs.Preferences;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Specifies and applies user preferences for formatting identifiers
  */
 public class TalkgroupFormatPreference extends Preference
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TalkgroupFormatPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(TalkgroupFormatPreference.class);
 
     public static final String TALKGROUP_FORMAT_PROPERTY = "talkgroup.format.";

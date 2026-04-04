@@ -24,7 +24,7 @@ import org.slf4j.LoggerFactory;
 
 public class SourceEventListenerToProcessorAdapter implements Listener<SourceEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SourceEventListenerToProcessorAdapter.class);
+    private static final Logger mLog = LoggerFactory.getLogger(SourceEventListenerToProcessorAdapter.class);
 
     private ISourceEventProcessor mSourceEventProcessor;
 

@@ -26,15 +26,12 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for LoJack Function and ID alias identifiers
  */
 public class LojackEditor extends IdentifierEditor<LoJackFunctionAndID>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(LojackEditor.class);
     private ComboBox<LJ1200Message.Function> mFunctionComboBox;
     private TextField mIdentifierField;
 

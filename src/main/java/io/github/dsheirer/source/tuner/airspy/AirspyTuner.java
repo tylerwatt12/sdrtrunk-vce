@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  */
 public class AirspyTuner extends Tuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AirspyTuner.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AirspyTuner.class);
 
     /**
      * Constructs an instance

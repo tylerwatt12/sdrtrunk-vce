@@ -39,8 +39,6 @@ import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * DMR AMBE Frame recorder generates call sequence recordings containing JSON representations of audio
@@ -48,7 +46,6 @@ import org.slf4j.LoggerFactory;
  */
 public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRCallSequenceRecorder.class);
     private static final String PROTOCOL = "DMR";
     private TimeslotProcessor mTimeslotProcessor1 = new TimeslotProcessor();
     private TimeslotProcessor mTimeslotProcessor2 = new TimeslotProcessor();

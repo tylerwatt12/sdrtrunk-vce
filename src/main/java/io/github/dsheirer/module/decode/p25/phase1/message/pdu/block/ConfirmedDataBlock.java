@@ -25,12 +25,9 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.edac.CRCP25;
 import io.github.dsheirer.edac.trellis.ViterbiDecoder_3_4_P25;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class ConfirmedDataBlock extends DataBlock
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ConfirmedDataBlock.class);
 
     public static final int[] SEQUENCE_NUMBER = {0, 1, 2, 3, 4, 5, 6};
     public static final int PAYLOAD_START = 16;

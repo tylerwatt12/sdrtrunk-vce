@@ -19,13 +19,9 @@ package io.github.dsheirer.dsp.gain;
 
 import io.github.dsheirer.sample.real.RealSampleListener;
 import org.apache.commons.lang3.Validate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class DirectGainControl implements GainController, RealSampleListener
 {
-	private final static Logger mLog = 
-			LoggerFactory.getLogger( DirectGainControl.class );
 
 	private float mDefaultGain;
 	private float mGain;

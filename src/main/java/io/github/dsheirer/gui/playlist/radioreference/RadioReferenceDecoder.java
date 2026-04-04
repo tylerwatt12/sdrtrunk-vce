@@ -45,15 +45,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Utility class for decoding type, flavor and voice for systems and formatting talkgroups according to user preferences.
  */
 public class RadioReferenceDecoder
 {
-    private static final Logger mLog = LoggerFactory.getLogger(RadioReferenceDecoder.class);
 
     private UserPreferences mUserPreferences;
     private Map<Integer,Flavor> mFlavorMap;

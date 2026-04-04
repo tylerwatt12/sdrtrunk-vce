@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  */
 public class HydraSdrTuner extends Tuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(HydraSdrTuner.class);
+    private static final Logger mLog = LoggerFactory.getLogger(HydraSdrTuner.class);
 
     /**
      * Constructs an instance

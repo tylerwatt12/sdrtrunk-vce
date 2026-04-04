@@ -70,15 +70,12 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.util.Callback;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * DMR Viewer panel
  */
 public class DmrViewer extends VBox
 {
-    private static final Logger mLog = LoggerFactory.getLogger(DmrViewer.class);
     private static final KeyCodeCombination KEY_CODE_COPY = new KeyCodeCombination(KeyCode.C, KeyCombination.CONTROL_ANY);
     private static final String LAST_SELECTED_DIRECTORY = "last.selected.directory.dmr";
     private final Preferences mPreferences = Preferences.userNodeForPackage(DmrViewer.class);

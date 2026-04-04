@@ -52,7 +52,7 @@ import javax.swing.JTextField;
 public class JFrequencyControl extends JPanel implements ISourceEventProcessor
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(JFrequencyControl.class);
+    private static final Logger mLog = LoggerFactory.getLogger(JFrequencyControl.class);
     private List<ISourceEventProcessor> mProcessors = new ArrayList<>();
     private Color mHighlightColor = Color.YELLOW;
     private long mFrequency;

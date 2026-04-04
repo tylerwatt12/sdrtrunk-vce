@@ -69,7 +69,7 @@ import org.slf4j.LoggerFactory;
  */
 public class FilterFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FilterFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FilterFactory.class);
     private static final double PERFECT_RECONSTRUCTION_GAIN_AT_BAND_EDGE = -6.020599842071533; //decibel(0.5, 0.0)
     private static final double MARGIN_OF_ERROR = 0.0003;
 

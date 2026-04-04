@@ -31,15 +31,12 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * P25 Packet Data Unit header
  */
 public class PDUHeader implements IBitErrorProvider, IMessage
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PDUHeader.class);
 
     public static final int CONFIRMATION_REQUIRED_INDICATOR = 1;
     public static final int PACKET_DIRECTION_INDICATOR = 2;

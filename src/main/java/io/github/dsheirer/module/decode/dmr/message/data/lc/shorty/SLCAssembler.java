@@ -25,15 +25,12 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.module.decode.dmr.bptc.BPTC_68_36;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.LCMessageFactory;
 import io.github.dsheirer.module.decode.dmr.message.type.LCSS;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Reassembles fragments into Short Link Control Messages
  */
 public class SLCAssembler
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SLCAssembler.class);
     private CorrectedBinaryMessage mAssemblingMessage;
     private int mFragmentCount = 0;
     private long mTimestamp;

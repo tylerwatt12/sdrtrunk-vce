@@ -23,8 +23,6 @@ package io.github.dsheirer.preference.source;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.prefs.Preferences;
 
@@ -33,7 +31,6 @@ import java.util.prefs.Preferences;
  */
 public class ChannelMultiFrequencyPreference extends Preference
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelMultiFrequencyPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(ChannelMultiFrequencyPreference.class);
     private static final String PREFERENCE_KEY_ROTATION_DELAY = "rotation.delay";
     private static final long DEFAULT_ROTATION_DELAY = 5000; //5 seconds

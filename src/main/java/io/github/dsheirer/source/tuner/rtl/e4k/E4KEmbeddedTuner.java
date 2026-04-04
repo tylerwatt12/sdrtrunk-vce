@@ -24,8 +24,6 @@ import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.EmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerController;
 import java.util.EnumSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.usb4java.LibUsb;
 import org.usb4java.LibUsbException;
 
@@ -36,7 +34,6 @@ import javax.usb.UsbException;
  */
 public class E4KEmbeddedTuner extends EmbeddedTuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(E4KEmbeddedTuner.class);
 
     public static final long MINIMUM_TUNABLE_FREQUENCY_HZ = 52000000;
     public static final long MAXIMUM_TUNABLE_FREQUENCY_HZ = 2200000000l;

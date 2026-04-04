@@ -52,7 +52,7 @@ import java.util.regex.Pattern;
  */
 public class PlaylistUpdater
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PlaylistUpdater.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PlaylistUpdater.class);
     private static final String APCO25_RADIO_ID = "[A-Fa-f\\d\\*]{6}";
     private static final String APCO25_TALKGROUP = "[A-Fa-f\\d\\*]{4}";
     private static final String FLEETSYNC_TALKGROUP = "(\\d{3})-(\\d{4})";

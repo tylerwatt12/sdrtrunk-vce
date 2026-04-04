@@ -19,8 +19,6 @@
 
 package io.github.dsheirer.audio.convert;
 
-import io.github.dsheirer.audio.convert.MPEGLayer;
-import io.github.dsheirer.audio.convert.MPEGVersion;
 import org.apache.commons.math3.util.FastMath;
 
 /**

@@ -40,7 +40,7 @@ import javax.swing.SpinnerNumberModel;
  */
 public class FCD2TunerEditor extends TunerEditor<FCDTuner, FCD2TunerConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FCD2TunerEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FCD2TunerEditor.class);
     private static final long serialVersionUID = 1L;
     private JButton mTunerInfoButton;
     private JCheckBox mLnaGainCheckBox;

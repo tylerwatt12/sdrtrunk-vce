@@ -59,7 +59,7 @@ import org.usb4java.LibUsbException;
  */
 public class FC0013EmbeddedTuner extends EmbeddedTuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FC0013EmbeddedTuner.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FC0013EmbeddedTuner.class);
     private DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.000000");
     public static final long MINIMUM_TUNABLE_FREQUENCY_HZ = 13_500_000;
     public static final long MAXIMUM_TUNABLE_FREQUENCY_HZ = 1_907_999_890l;

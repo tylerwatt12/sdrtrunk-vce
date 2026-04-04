@@ -31,8 +31,6 @@ import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.Gain;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.IfMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.LoMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.TunerParameters;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Abstract RSP device tuner
@@ -40,7 +38,6 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class RspTuner<D extends DeviceParameters, T extends TunerParameters>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(RspTuner.class);
     private final SDRplay mSDRplay;
     private final Device mDevice;
     private final TunerSelect mTunerSelect;

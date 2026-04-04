@@ -23,9 +23,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * Multi-Sync pattern matcher.  Accepts multiple sync detector objects for
  * comparision against the incoming bit stream.
@@ -38,7 +35,6 @@ import org.slf4j.LoggerFactory;
 @Deprecated //remove after P25P2 decoder is updated
 public class MultiSyncPatternMatcher
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MultiSyncPatternMatcher.class);
 
     private ISyncDetectListener mSyncDetectListener;
     private int mSyncLossThreshold;

@@ -58,7 +58,7 @@ import java.nio.file.Path;
  */
 public class JmbeLibraryPreferenceEditor extends VBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(JmbeLibraryPreferenceEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(JmbeLibraryPreferenceEditor.class);
 
     private static final String PATH_NOT_SET = "(not set)";
     private static final String CREATE_LIBRARY = "Create Library";

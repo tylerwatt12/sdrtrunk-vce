@@ -46,15 +46,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Tracks the network configuration details of a DMR network from the broadcast messages
  */
 public class DMRNetworkConfigurationMonitor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRNetworkConfigurationMonitor.class);
     private static final String BRAND_HYTERA = "Hytera";
     private static final String BRAND_MOTOROLA_CAPACITY_PLUS = "Motorola Capacity+";
     private static final String BRAND_MOTOROLA_CONNECT_PLUS = "Motorola Connect+";

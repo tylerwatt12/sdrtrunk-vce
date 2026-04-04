@@ -49,15 +49,12 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import org.controlsfx.control.ToggleSwitch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * P25 Phase 2 channel configuration editor
  */
 public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2ConfigurationEditor.class);
     private TitledPane mDecoderPane;
     private TitledPane mEventLogPane;
     private TitledPane mRecordPane;

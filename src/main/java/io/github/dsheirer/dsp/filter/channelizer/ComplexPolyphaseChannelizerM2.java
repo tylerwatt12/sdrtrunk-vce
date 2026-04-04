@@ -59,7 +59,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChannelizer
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ComplexPolyphaseChannelizerM2.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ComplexPolyphaseChannelizerM2.class);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.0");
     private static final int DEFAULT_MINIMUM_CHANNEL_BANDWIDTH = 25000;
 

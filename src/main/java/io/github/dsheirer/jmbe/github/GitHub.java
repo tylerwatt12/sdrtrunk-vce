@@ -39,7 +39,7 @@ import java.nio.file.StandardOpenOption;
  */
 public class GitHub
 {
-    private final static Logger mLog = LoggerFactory.getLogger(GitHub.class);
+    private static final Logger mLog = LoggerFactory.getLogger(GitHub.class);
 
     private GitHub()
     {

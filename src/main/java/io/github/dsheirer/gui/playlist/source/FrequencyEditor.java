@@ -42,8 +42,6 @@ import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -54,7 +52,6 @@ import java.util.List;
  */
 public class FrequencyEditor extends SourceConfigurationEditor<SourceConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FrequencyEditor.class);
     private static final String NONE = "(none)           ";
     private TunerManager mTunerManager;
     private FrequencyBox mPrimaryFrequencyBox;

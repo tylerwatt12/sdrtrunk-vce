@@ -23,15 +23,12 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Recording tuner configuration for using baseband I/Q recordings as a tuner source
  */
 public class RecordingTunerConfiguration extends TunerConfiguration
 {
-    private static final Logger mLog = LoggerFactory.getLogger(RecordingTunerConfiguration.class);
     private String mPath;
 
     /**

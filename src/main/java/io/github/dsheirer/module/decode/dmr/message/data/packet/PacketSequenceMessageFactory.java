@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
  */
 public class PacketSequenceMessageFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PacketSequenceMessageFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PacketSequenceMessageFactory.class);
 
     /**
      * Creates a message from a packet sequence

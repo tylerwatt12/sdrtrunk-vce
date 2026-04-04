@@ -33,15 +33,12 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import org.controlsfx.control.ToggleSwitch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Preference settings for audio call management for duplicate calls and patch group streaming.
  */
 public class CallManagementPreferenceEditor extends HBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(CallManagementPreferenceEditor.class);
     private CallManagementPreference mPreference;
     private GridPane mEditorPane;
     private ToggleSwitch mDetectDuplicateTalkgroups;

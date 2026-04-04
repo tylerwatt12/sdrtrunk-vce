@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  */
 public class HackRFTuner extends Tuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(HackRFTuner.class);
+    private static final Logger mLog = LoggerFactory.getLogger(HackRFTuner.class);
 
     /**
      * Constructs an instance

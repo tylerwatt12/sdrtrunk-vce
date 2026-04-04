@@ -22,15 +22,12 @@ package io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.util.Flag;
 import io.github.dsheirer.source.tuner.sdrplay.api.v3_07.sdrplay_api_GainT;
 import java.lang.foreign.MemorySegment;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Gain structure (sdrplay_api_GainT)
  */
 public class Gain
 {
-    private static final Logger mLog = LoggerFactory.getLogger(Gain.class);
 
     private final MemorySegment mMemorySegment;
     private final GainValues mGainValues;

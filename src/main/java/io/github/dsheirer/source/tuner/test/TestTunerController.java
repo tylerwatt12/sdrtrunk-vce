@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
 
 public class TestTunerController extends TunerController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TestTunerController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(TestTunerController.class);
 
     public static final long MINIMUM_FREQUENCY = 1l;
     public static final long MAXIMUM_FREQUENCY = 1_000_000_000l;

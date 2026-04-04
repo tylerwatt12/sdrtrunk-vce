@@ -37,7 +37,7 @@ import javax.sound.sampled.AudioFormat;
 
 public class WaveWriter implements AutoCloseable
 {
-    private final static Logger mLog = LoggerFactory.getLogger(WaveWriter.class);
+    private static final Logger mLog = LoggerFactory.getLogger(WaveWriter.class);
 
     public static final String RIFF_ID = "RIFF";
     public static final int INITIAL_TOTAL_LENGTH = 4;

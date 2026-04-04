@@ -43,7 +43,7 @@ import java.util.Date;
  */
 public abstract class MBECallSequenceRecorder extends Module implements IMessageListener, Listener<IMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MBECallSequenceRecorder.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MBECallSequenceRecorder.class);
 
     protected static final String CALL_TYPE_GROUP = "GROUP";
     protected static final String CALL_TYPE_INDIVIDUAL = "INDIVIDUAL";

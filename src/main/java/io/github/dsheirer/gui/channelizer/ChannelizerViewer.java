@@ -57,7 +57,7 @@ import javax.swing.event.ChangeListener;
 
 public class ChannelizerViewer extends JFrame
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelizerViewer.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelizerViewer.class);
 
     private static final int CHANNEL_BANDWIDTH = 12500;
     private static final int CHANNEL_FFT_FRAME_RATE = 20;

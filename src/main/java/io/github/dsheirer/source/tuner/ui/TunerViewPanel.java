@@ -61,7 +61,7 @@ import javax.swing.table.TableRowSorter;
 public class TunerViewPanel extends JPanel
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(TunerViewPanel.class);
+    private static final Logger mLog = LoggerFactory.getLogger(TunerViewPanel.class);
     private static final String TABLE_PREFERENCE_KEY = "tuner.view.panel";
 
     private UserPreferences mUserPreferences;

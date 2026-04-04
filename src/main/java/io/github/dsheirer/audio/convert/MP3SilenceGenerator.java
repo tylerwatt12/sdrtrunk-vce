@@ -19,16 +19,10 @@
 package io.github.dsheirer.audio.convert;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.apache.commons.math3.util.FastMath;
 
 public class MP3SilenceGenerator implements ISilenceGenerator
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MP3SilenceGenerator.class);
-
     private MP3AudioConverter mMP3AudioConverter;
     private InputAudioFormat mInputAudioFormat;
     private byte[] mSilenceFrame;

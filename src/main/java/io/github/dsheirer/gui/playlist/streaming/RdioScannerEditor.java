@@ -28,15 +28,12 @@ import javafx.geometry.Insets;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * RdioScanner calls API configuration editor
  */
 public class RdioScannerEditor extends AbstractBroadcastEditor<RdioScannerConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RdioScannerEditor.class);
     private static final String API_PATH = "/api/call-upload";
     private IntegerTextField mSystemIdTextField;
     private IntegerTextField mMaxAgeTextField;

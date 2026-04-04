@@ -50,7 +50,7 @@ import javax.usb.UsbException;
  */
 public class E4KTunerEditor extends TunerEditor<RTL2832Tuner, E4KTunerConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(E4KTunerEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(E4KTunerEditor.class);
     private static final long serialVersionUID = 1L;
     private JButton mTunerInfoButton;
     private JToggleButton mBiasTButton;

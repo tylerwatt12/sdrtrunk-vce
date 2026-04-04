@@ -29,15 +29,12 @@ import io.github.dsheirer.module.decode.dmr.message.voice.VoiceEMBMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.protocol.Protocol;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * DMR Message Factory class for creating messages from DMR bursts.
  */
 public class DMRMessageFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRMessageFactory.class);
     private DMRDataMessageFactory mDataMessageFactory;
 
     /**

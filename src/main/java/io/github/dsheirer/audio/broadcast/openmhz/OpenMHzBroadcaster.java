@@ -67,7 +67,7 @@ import org.slf4j.LoggerFactory;
   */
  public class OpenMHzBroadcaster extends AbstractAudioBroadcaster<OpenMHzConfiguration>
  {
-     private final static Logger mLog = LoggerFactory.getLogger(OpenMHzBroadcaster.class);
+     private static final Logger mLog = LoggerFactory.getLogger(OpenMHzBroadcaster.class);
 
      private static final String ENCODING_TYPE_MP3 = "mp3";
      private static final String MULTIPART_TYPE = "multipart";

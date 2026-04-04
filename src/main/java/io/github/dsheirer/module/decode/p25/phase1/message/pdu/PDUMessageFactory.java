@@ -69,12 +69,9 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.response.Response
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.umbtc.isp.UMBTCTelephoneInterconnectRequestExplicitDialing;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessageFactory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class PDUMessageFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PDUMessageFactory.class);
     private static final int[] BLOCK_0_UMBTC_OPCODE = {2, 3, 4, 5, 6, 7};
 
     /**

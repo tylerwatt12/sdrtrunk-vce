@@ -103,7 +103,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ProcessingChain implements Listener<ChannelEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ProcessingChain.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ProcessingChain.class);
 
     private Broadcaster<float[]> mDemodulatedAudioBufferBroadcaster = new Broadcaster();
     private Broadcaster<ComplexSamples> mBasebandComplexSamplesBroadcaster = new Broadcaster<>();

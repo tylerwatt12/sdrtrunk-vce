@@ -19,12 +19,9 @@
 package io.github.dsheirer.source;
 
 import java.util.EnumSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SourceEvent
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SourceEvent.class);
 
     public enum Event
     {

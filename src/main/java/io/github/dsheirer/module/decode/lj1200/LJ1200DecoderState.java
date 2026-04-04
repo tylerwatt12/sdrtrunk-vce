@@ -34,12 +34,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class LJ1200DecoderState extends DecoderState
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LJ1200DecoderState.class);
 
     private Set<String> mAddresses = new TreeSet<String>();
 

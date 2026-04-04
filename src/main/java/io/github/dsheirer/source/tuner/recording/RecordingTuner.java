@@ -28,15 +28,12 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.HeterodyneChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.PassThroughSourceManager;
 import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Tuner that replays a recorded I/Q baseband recording
  */
 public class RecordingTuner extends Tuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RecordingTuner.class);
     private static int mInstanceCounter = 1;
     private final int mInstanceID = mInstanceCounter++;
     private UserPreferences mUserPreferences;

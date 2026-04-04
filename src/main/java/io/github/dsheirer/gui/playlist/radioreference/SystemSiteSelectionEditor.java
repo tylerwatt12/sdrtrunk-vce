@@ -40,8 +40,6 @@ import javafx.scene.control.TableView;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.Comparator;
@@ -53,7 +51,6 @@ import java.util.List;
  */
 public class SystemSiteSelectionEditor extends GridPane
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SystemSiteSelectionEditor.class);
 
     private UserPreferences mUserPreferences;
     private PlaylistManager mPlaylistManager;

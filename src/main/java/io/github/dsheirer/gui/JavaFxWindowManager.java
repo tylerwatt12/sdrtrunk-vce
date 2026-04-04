@@ -61,7 +61,7 @@ import org.slf4j.LoggerFactory;
  */
 public class JavaFxWindowManager extends Application
 {
-    private final static Logger mLog = LoggerFactory.getLogger(JavaFxWindowManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(JavaFxWindowManager.class);
 
     public static final String CHANNEL_MAP_EDITOR = "channelmap";
     public static final String ICON_MANAGER = "iconmanager";

@@ -62,7 +62,7 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdateListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2DecoderHDQPSK.class);
+    private static final Logger mLog = LoggerFactory.getLogger(P25P2DecoderHDQPSK.class);
     protected static final float SYMBOL_TIMING_GAIN = 0.1f;
     protected InterpolatingSampleBuffer mInterpolatingSampleBuffer;
     protected DQPSKGardnerDemodulator mQPSKDemodulator;

@@ -22,8 +22,6 @@ package io.github.dsheirer.preference.swing;
 
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.util.ThreadPool;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.awt.EventQueue;
 import javax.swing.JTable;
@@ -41,7 +39,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class JTableColumnWidthMonitor
 {
-    private static final Logger mLog = LoggerFactory.getLogger(JTableColumnWidthMonitor.class);
     private UserPreferences mUserPreferences;
     private JTable mTable;
     private String mKey;

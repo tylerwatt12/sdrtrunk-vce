@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ChannelStateIdentifier extends Identifier<State>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelStateIdentifier.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelStateIdentifier.class);
 
     public static final ChannelStateIdentifier ACTIVE = new ChannelStateIdentifier(State.ACTIVE);
     public static final ChannelStateIdentifier CALL = new ChannelStateIdentifier(State.CALL);

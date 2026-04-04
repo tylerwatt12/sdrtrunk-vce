@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
 
 public class RdioScannerFeedConfiguration extends IcecastTCPConfiguration
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RdioScannerFeedConfiguration.class);
+    private static final Logger mLog = LoggerFactory.getLogger(RdioScannerFeedConfiguration.class);
 
     private int mFeedID;
 

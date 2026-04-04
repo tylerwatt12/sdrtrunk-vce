@@ -49,15 +49,12 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import org.controlsfx.control.SegmentedButton;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * LTR-Net channel configuration editor
  */
 public class LTRNetConfigurationEditor extends ChannelConfigurationEditor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LTRNetConfigurationEditor.class);
     private TitledPane mAuxDecoderPane;
     private TitledPane mDecoderPane;
     private TitledPane mEventLogPane;

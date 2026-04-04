@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
 
 public class OpenMHzFeedConfiguration extends IcecastTCPConfiguration
 {
-    private final static Logger mLog = LoggerFactory.getLogger(OpenMHzFeedConfiguration.class);
+    private static final Logger mLog = LoggerFactory.getLogger(OpenMHzFeedConfiguration.class);
 
     private int mFeedID;
 

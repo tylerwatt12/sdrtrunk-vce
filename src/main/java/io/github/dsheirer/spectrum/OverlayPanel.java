@@ -50,15 +50,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JPanel;
 
 public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISourceEventProcessor, SettingChangeListener
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(OverlayPanel.class);
     private final DecimalFormat PPM_FORMATTER = new DecimalFormat( "#.0" );
 
     private final static RenderingHints RENDERING_HINTS = new RenderingHints(RenderingHints.KEY_ANTIALIASING,

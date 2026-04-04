@@ -66,12 +66,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class LTRNetDecoderState extends DecoderState
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LTRNetDecoderState.class);
 
     private ChannelMapHigh mChannelMapHigh;
     private ChannelMapLow mChannelMapLow;

@@ -22,8 +22,6 @@ package io.github.dsheirer.spectrum;
 import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.sample.OverflowableTransferQueue;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.FloatBuffer;
@@ -32,7 +30,6 @@ import java.util.LinkedList;
 
 public class OverflowableBufferStream<T extends INativeBuffer> extends OverflowableTransferQueue<T>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(OverflowableBufferStream.class);
 
     private int mFlushCount = 0;
     private Iterator<InterleavedComplexSamples> mCurrentNativeBufferIterator;

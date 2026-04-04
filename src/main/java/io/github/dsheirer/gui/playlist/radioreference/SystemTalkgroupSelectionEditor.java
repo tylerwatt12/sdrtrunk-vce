@@ -74,12 +74,9 @@ import javafx.scene.layout.Priority;
 import javafx.util.Duration;
 import javafx.util.StringConverter;
 import org.controlsfx.control.textfield.TextFields;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SystemTalkgroupSelectionEditor extends GridPane
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SystemTalkgroupSelectionEditor.class);
 
     private final TalkgroupCategory ALL_TALKGROUPS = new TalkgroupCategory();
     private UserPreferences mUserPreferences;

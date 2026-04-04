@@ -22,15 +22,12 @@ package io.github.dsheirer.module.decode.p25.phase1.sync;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating P25 Phase 1 Soft Sync Detectors
  */
 public class P25P1SoftSyncDetectorFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(P25P1SoftSyncDetectorFactory.class);
 
     /**
      * Creates the implementation using calibration data to select the optimal

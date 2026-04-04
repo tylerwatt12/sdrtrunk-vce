@@ -20,8 +20,6 @@
 
 package io.github.dsheirer.module.decode.p25.reference;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public enum ChannelType
 {
@@ -46,7 +44,6 @@ public enum ChannelType
         mVocoder = vocoder;
     }
 
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelType.class);
 
     public String toString()
     {

@@ -33,8 +33,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Multiple-frequency tuner channel source.  Provides a wrapper around a tuner channel source and listens for external
@@ -43,7 +41,6 @@ import org.slf4j.LoggerFactory;
  */
 public class MultiFrequencyTunerChannelSource extends TunerChannelSource
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MultiFrequencyTunerChannelSource.class);
 
     private TunerManager mTunerManager;
     private TunerChannelSource mTunerChannelSource;

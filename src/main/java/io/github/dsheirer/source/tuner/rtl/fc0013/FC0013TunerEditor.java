@@ -45,7 +45,7 @@ import javax.swing.SpinnerNumberModel;
  */
 public class FC0013TunerEditor extends TunerEditor<RTL2832Tuner, FC0013TunerConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FC0013TunerEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FC0013TunerEditor.class);
     private static final long serialVersionUID = 1L;
     private static final FC0013EmbeddedTuner.LNAGain DEFAULT_LNA_GAIN = FC0013EmbeddedTuner.LNAGain.G14;
     private JButton mTunerInfoButton;

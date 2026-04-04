@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
 
 public class FrequencyController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FrequencyController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FrequencyController.class);
 
     private Tunable mTunable;
     private long mFrequency = 101100000;

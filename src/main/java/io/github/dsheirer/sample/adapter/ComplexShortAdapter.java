@@ -22,15 +22,12 @@ import io.github.dsheirer.buffer.FloatNativeBuffer;
 import io.github.dsheirer.buffer.INativeBuffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Converts 16-bit/2-byte little endian byte data into a reusable buffer of complex float sample data
  */
 public class ComplexShortAdapter implements ISampleAdapter<INativeBuffer>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ComplexShortAdapter.class);
     private ByteOrder mByteOrder = ByteOrder.LITTLE_ENDIAN;
     private ByteBuffer mByteBuffer;
 

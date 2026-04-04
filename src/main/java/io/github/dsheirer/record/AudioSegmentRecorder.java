@@ -37,15 +37,12 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Recording utility for audio segments
  */
 public class AudioSegmentRecorder
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioSegmentRecorder.class);
 
     public static final int MP3_BIT_RATE = 16;
     public static final boolean CONSTANT_BIT_RATE = false;

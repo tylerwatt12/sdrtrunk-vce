@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory;
  */
 public class FacchTimeslot extends AbstractSignalingTimeslot
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FacchTimeslot.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FacchTimeslot.class);
     private static final int MAX_OCTET_INDEX = 144; //156-12 = message length minus CRC-12 checksum.
 
     private static final IntField INFO_1 = IntField.range(2, 7);

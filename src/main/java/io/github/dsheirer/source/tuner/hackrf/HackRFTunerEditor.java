@@ -45,7 +45,7 @@ import javax.usb.UsbException;
 public class HackRFTunerEditor extends TunerEditor<HackRFTuner,HackRFTunerConfiguration>
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(HackRFTunerEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(HackRFTunerEditor.class);
     private JButton mTunerInfo;
     private JComboBox<HackRFSampleRate> mSampleRateCombo;
     private JToggleButton mAmplifier;

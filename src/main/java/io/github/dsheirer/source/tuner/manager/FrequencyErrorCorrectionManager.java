@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
  */
 public class FrequencyErrorCorrectionManager
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FrequencyErrorCorrectionManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FrequencyErrorCorrectionManager.class);
 
     private static final double FREQUENCY_CORRECTION_ERROR_THRESHOLD = 0.4;
     private static final long AUTO_CORRECTION_OBSERVATION_PERIOD_MILLISECONDS = 30 * 1000; //30 seconds

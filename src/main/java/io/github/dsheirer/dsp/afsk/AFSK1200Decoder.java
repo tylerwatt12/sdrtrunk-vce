@@ -25,8 +25,6 @@ import io.github.dsheirer.dsp.oscillator.IRealOscillator;
 import io.github.dsheirer.dsp.oscillator.OscillatorFactory;
 import io.github.dsheirer.sample.Listener;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Audio Frequency Shift Keying (AFSK) 1200-baud correlation decoder for decoding 8 kHz FM-demodulated audio samples.
@@ -39,7 +37,6 @@ import org.slf4j.LoggerFactory;
  */
 public class AFSK1200Decoder implements Listener<float[]>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AFSK1200Decoder.class);
 
     public enum Output
     {

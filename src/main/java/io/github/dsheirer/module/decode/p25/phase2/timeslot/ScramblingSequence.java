@@ -23,8 +23,6 @@ import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
 import java.util.ArrayList;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * APCO-25 Phase II scrambling sequence utility that provides scrambling sequence snippets for each of the 12 timeslots
@@ -32,7 +30,6 @@ import org.slf4j.LoggerFactory;
  */
 public class ScramblingSequence
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ScramblingSequence.class);
 
     private LinearFeedbackShiftRegister mShiftRegister = new LinearFeedbackShiftRegister();
     private List<BinaryMessage> mScramblingSegments = new ArrayList<>();

@@ -76,7 +76,7 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class ChannelConfigurationEditor extends Editor<Channel>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelConfigurationEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelConfigurationEditor.class);
 
     private PlaylistManager mPlaylistManager;
     protected TunerManager mTunerManager;

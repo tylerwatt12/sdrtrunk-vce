@@ -76,7 +76,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ChannelEditor extends SplitPane implements IFilterProcessor, IAliasListRefreshListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelEditor.class);
     private PlaylistManager mPlaylistManager;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;

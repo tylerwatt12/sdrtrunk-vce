@@ -125,15 +125,12 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.unknown.isp.Unkn
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.unknown.osp.UnknownVendorOSPMessage;
 import io.github.dsheirer.module.decode.p25.reference.Direction;
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating Trunking Signalling Block (TSBK) message parser classes
  */
 public class TSBKMessageFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TSBKMessageFactory.class);
     private static final ViterbiDecoder_1_2_P25 VITERBI_HALF_RATE_DECODER = new ViterbiDecoder_1_2_P25();
     public static final int CRC_FAIL = -1;
 

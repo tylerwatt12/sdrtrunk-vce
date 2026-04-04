@@ -62,7 +62,7 @@ import org.slf4j.LoggerFactory;
  */
 public class PlaylistManager implements Listener<ChannelEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PlaylistManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PlaylistManager.class);
 
     public static final int PLAYLIST_CURRENT_VERSION = 4;
 

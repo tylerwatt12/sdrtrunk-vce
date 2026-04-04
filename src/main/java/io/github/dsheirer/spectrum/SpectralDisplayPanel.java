@@ -60,8 +60,6 @@ import java.util.ArrayList;
 import java.util.Hashtable;
 import net.miginfocom.swing.MigLayout;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
@@ -85,7 +83,6 @@ public class SpectralDisplayPanel extends JPanel
 {
     private static final long serialVersionUID = 1L;
 
-    private final static Logger mLog = LoggerFactory.getLogger(SpectralDisplayPanel.class);
 
     public static final String FFT_SIZE_PROPERTY = "spectral.display.dft.size";
     public static final String SPECTRAL_DISPLAY_ENABLED = "spectral.display.enabled";

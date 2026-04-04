@@ -36,8 +36,6 @@ import io.github.dsheirer.module.decode.p25.phase2.timeslot.Timeslot;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * APCO25 Phase 2 super-frame fragment detector uses a pair of sync pattern detectors and a circular dibit buffer to
@@ -49,7 +47,6 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2SuperFrameDetector.class);
 
     /**
      * Number of dibits that we use to oversize the fragment delay buffer where the total oversize is 2x this quantity

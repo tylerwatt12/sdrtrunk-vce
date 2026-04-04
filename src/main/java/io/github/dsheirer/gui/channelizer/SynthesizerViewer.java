@@ -51,7 +51,7 @@ import javax.swing.event.ChangeListener;
 
 public class SynthesizerViewer extends JFrame
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SynthesizerViewer.class);
+    private static final Logger mLog = LoggerFactory.getLogger(SynthesizerViewer.class);
 
     private static final int CHANNEL_BANDWIDTH = 12500;
     private static final int CHANNEL_SAMPLE_RATE = 25000;

@@ -22,12 +22,9 @@ package io.github.dsheirer.module.decode.mpt1327;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class MPT1327MessageProcessor implements Listener<CorrectedBinaryMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MPT1327MessageProcessor.class);
 
     private Listener<IMessage> mMessageListener;
 

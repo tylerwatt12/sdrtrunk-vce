@@ -50,7 +50,7 @@ import javax.swing.event.ChangeListener;
 public class HydraSdrTunerEditor extends TunerEditor<HydraSdrTuner, HydraSdrTunerConfiguration>
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(HydraSdrTunerEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(HydraSdrTunerEditor.class);
     private JButton mTunerInfoButton;
     private JComboBox<HydraSdrSampleRate> mSampleRateCombo;
     private JComboBox<GainMode> mGainModeCombo;

@@ -21,8 +21,6 @@ package io.github.dsheirer.gui.control;
 
 import javafx.scene.control.TextFormatter;
 import javafx.util.StringConverter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.function.UnaryOperator;
 
@@ -32,7 +30,6 @@ import java.util.function.UnaryOperator;
  */
 public class HexFormatter extends TextFormatter<Integer>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(HexFormatter.class);
 
     /**
      * Constructs an instance

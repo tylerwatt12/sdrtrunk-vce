@@ -1,8 +1,6 @@
 package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /*******************************************************************************
  *     SDR Trunk 
@@ -32,7 +30,6 @@ import org.slf4j.LoggerFactory;
  */
 public class Golay18
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Golay18.class);
 
     /**
      * Performs error detection and correction.

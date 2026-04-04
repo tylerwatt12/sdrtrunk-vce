@@ -22,8 +22,6 @@ package io.github.dsheirer.sample.complex;
 import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Simple module that can be added live to a processing chain to tap into the stream of ComplexSamples buffers and
@@ -31,7 +29,6 @@ import org.slf4j.LoggerFactory;
  */
 public class ComplexSamplesToNativeBufferModule extends Module implements IComplexSamplesListener, Listener<ComplexSamples>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(ComplexSamplesToNativeBufferModule.class);
     private Listener<INativeBuffer> mNativeBufferListener;
 
     public ComplexSamplesToNativeBufferModule()

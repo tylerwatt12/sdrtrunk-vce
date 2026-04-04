@@ -32,15 +32,12 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for P25 fully qualified radio alias identifiers
  */
 public class P25FullyQualifiedRadioIdEditor extends IdentifierEditor<P25FullyQualifiedRadio>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(P25FullyQualifiedRadioIdEditor.class);
 
     private UserPreferences mUserPreferences;
     private Label mProtocolLabel;

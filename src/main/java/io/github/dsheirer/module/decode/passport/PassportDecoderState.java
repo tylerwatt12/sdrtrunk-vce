@@ -42,12 +42,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class PassportDecoderState extends DecoderState
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PassportDecoderState.class);
 
     private Set<PassportTalkgroup> mTalkgroupsFirstHeard = new HashSet<>();
     private Set<PassportTalkgroup> mTalkgroups = new TreeSet<>();

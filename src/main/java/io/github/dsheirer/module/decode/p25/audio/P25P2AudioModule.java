@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
 
 public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2AudioModule.class);
+    private static final Logger mLog = LoggerFactory.getLogger(P25P2AudioModule.class);
 
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateNotificationListener;
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();

@@ -58,15 +58,12 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.text.TextAlignment;
 import org.controlsfx.control.SegmentedButton;
 import org.controlsfx.control.ToggleSwitch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * AM channel configuration editor
  */
 public class AMConfigurationEditor extends ChannelConfigurationEditor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AMConfigurationEditor.class);
     private TitledPane mSourcePane;
     private TitledPane mDecoderPane;
     private TitledPane mRecordPane;

@@ -70,7 +70,7 @@ import org.slf4j.LoggerFactory;
 
 public class ShoutcastV2AudioStreamingBroadcaster extends AudioStreamingBroadcaster implements IBroadcastMetadataUpdater
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ShoutcastV2AudioStreamingBroadcaster.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ShoutcastV2AudioStreamingBroadcaster.class);
     private static final long RECONNECT_INTERVAL_MILLISECONDS = 30000; //30 seconds
     private int mMaxPayloadSize = 16377;
 

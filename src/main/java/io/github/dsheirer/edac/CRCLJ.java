@@ -44,7 +44,7 @@ import java.util.BitSet;
  */
 public class CRCLJ
 {
-	private final static Logger mLog = LoggerFactory.getLogger( CRCLJ.class );
+	private static final Logger mLog = LoggerFactory.getLogger( CRCLJ.class );
 	
 	private static final int MESSAGE_START = 32;
 	private static final int CRC_START = 64;

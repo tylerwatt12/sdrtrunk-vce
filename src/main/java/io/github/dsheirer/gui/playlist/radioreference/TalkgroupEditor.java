@@ -36,12 +36,9 @@ import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class TalkgroupEditor extends GridPane
 {
-    private static final Logger mLog = LoggerFactory.getLogger(TalkgroupEditor.class);
     private UserPreferences mUserPreferences;
     private PlaylistManager mPlaylistManager;
     private TextField mAlphaTagTextField;

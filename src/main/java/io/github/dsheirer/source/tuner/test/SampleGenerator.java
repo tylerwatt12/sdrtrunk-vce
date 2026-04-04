@@ -29,12 +29,9 @@ import io.github.dsheirer.util.ThreadPool;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SampleGenerator
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SampleGenerator.class);
 
     private Broadcaster<INativeBuffer> mNativeBufferBroadcaster = new Broadcaster<>();
     private IComplexOscillator mComplexOscillator;

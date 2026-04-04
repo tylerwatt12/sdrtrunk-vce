@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ISCHDecoder
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ISCHDecoder.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ISCHDecoder.class);
     private static final IntField CHANNEL_NUMBER = IntField.range(2, 3);
     private static final IntField ISCH_LOCATION = IntField.range(4, 5);
 

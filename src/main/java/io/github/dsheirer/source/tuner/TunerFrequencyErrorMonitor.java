@@ -26,8 +26,6 @@ import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Monitors frequency error measurements received from certain decoders (e.g. P25) and averages those
@@ -36,7 +34,6 @@ import org.slf4j.LoggerFactory;
  */
 public class TunerFrequencyErrorMonitor implements Listener<SourceEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TunerFrequencyErrorMonitor.class);
     private static final int PROCESSING_INTERVAL_SECONDS = 5;
     private LinkedTransferQueue<Integer> mMeasurementsQueue = new LinkedTransferQueue<>();
     private List<Integer> mProcessingMeasurements = new ArrayList();

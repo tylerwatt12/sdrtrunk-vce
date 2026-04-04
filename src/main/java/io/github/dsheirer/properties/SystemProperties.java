@@ -42,7 +42,7 @@ import org.slf4j.LoggerFactory;
  */
 public class SystemProperties
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SystemProperties.class);
+    private static final Logger mLog = LoggerFactory.getLogger(SystemProperties.class);
 
     private static String DEFAULT_APP_ROOT = "SDRTrunk";
     private static String PROPERTIES_FILENAME = "SDRTrunk.properties";

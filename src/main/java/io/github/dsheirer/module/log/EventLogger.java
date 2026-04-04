@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
 
 public abstract class EventLogger extends Module
 {
-    private final static Logger mLog = LoggerFactory.getLogger(EventLogger.class);
+    private static final Logger mLog = LoggerFactory.getLogger(EventLogger.class);
 
     private Path mLogDirectory;
     private String mFileNameSuffix;

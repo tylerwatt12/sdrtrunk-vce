@@ -43,7 +43,7 @@ import org.slf4j.LoggerFactory;
  */
 public class PassThroughSourceManager extends ChannelSourceManager
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PassThroughSourceManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PassThroughSourceManager.class);
     private TunerController mTunerController;
     private SortedSet<TunerChannel> mTunerChannels = new TreeSet<>();
     private List<TunerChannelSource> mTunerChannelSources = new CopyOnWriteArrayList<>();

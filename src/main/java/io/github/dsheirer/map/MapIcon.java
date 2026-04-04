@@ -31,7 +31,7 @@ import java.net.URL;
 
 public class MapIcon extends Setting implements Comparable<MapIcon>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MapIcon.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MapIcon.class);
 
     private static final int sMAX_IMAGE_DIMENSION = 48;
     private String mPath;

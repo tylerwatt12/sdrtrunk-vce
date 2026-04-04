@@ -20,8 +20,6 @@ package io.github.dsheirer.sample.adapter;
 
 import io.github.dsheirer.source.mixer.MixerChannel;
 import org.apache.commons.lang3.Validate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -31,7 +29,6 @@ import java.nio.ByteOrder;
  */
 public class RealChannelShortAdapter extends RealSampleAdapter
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RealChannelShortAdapter.class);
     private ByteOrder mByteOrder = ByteOrder.LITTLE_ENDIAN;
     private MixerChannel mMixerChannel;
     private ByteBuffer mByteBuffer;

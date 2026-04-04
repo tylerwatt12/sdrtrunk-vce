@@ -27,8 +27,6 @@ import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import net.miginfocom.swing.MigLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -39,7 +37,6 @@ import javax.swing.JScrollPane;
 public class DiscoveredTunerEditor extends Editor<DiscoveredTuner> implements IDiscoveredTunerStatusListener
 {
     private static final long serialVersionUID = 1L;
-    private static final Logger mLog = LoggerFactory.getLogger(DiscoveredTunerEditor.class);
     private UserPreferences mUserPreferences;
     private TunerManager mTunerManager;
     private JPanel mEmptyEditor = new EmptyTunerEditor();

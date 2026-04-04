@@ -36,8 +36,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -47,7 +45,6 @@ import java.nio.file.Path;
  */
 public class JmbeEditor extends VBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(JmbeEditor.class);
     private UserPreferences mUserPreferences;
     private Release mCurrentRelease;
     private Label mCurrentVersionLabel;

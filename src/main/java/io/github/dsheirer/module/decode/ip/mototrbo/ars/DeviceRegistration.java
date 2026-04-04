@@ -26,15 +26,12 @@ import io.github.dsheirer.module.decode.ip.mototrbo.ars.identifier.ARSPassword;
 import io.github.dsheirer.module.decode.ip.mototrbo.ars.identifier.ARSUser;
 import java.util.ArrayList;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Automatic Registration Service - Device Registration
  */
 public class DeviceRegistration extends ARSHeader
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DeviceRegistration.class);
 
     private static final int SECOND_HEADER_EXTENSION_FLAG = 24;
     private static final int[] EVENT = {25, 26};

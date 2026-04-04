@@ -36,7 +36,7 @@ import org.slf4j.LoggerFactory;
  */
 public class LcchTimeslot extends AbstractSignalingTimeslot
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LcchTimeslot.class);
+    private static final Logger mLog = LoggerFactory.getLogger(LcchTimeslot.class);
     private static final int MAX_OCTET_INDEX = 152; //180-16-12 = message length minus CRC-16 checksum minus 12-bit NAC.
 
     private static final IntField INFO_1 = IntField.range(2, 7);

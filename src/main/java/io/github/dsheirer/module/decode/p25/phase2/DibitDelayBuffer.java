@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DibitDelayBuffer
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DibitDelayBuffer.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DibitDelayBuffer.class);
 
     protected Dibit[] mBuffer;
     protected int mPointer;

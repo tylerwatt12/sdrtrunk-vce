@@ -25,14 +25,11 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import org.apache.commons.math3.util.FastMath;
 import org.jtransforms.fft.FloatFFT_1D;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.URL;
 
 public class FilterView extends BorderPane
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FilterView.class);
 
     private CurveFittedAreaChart mImpulseChart;
     private NumberAxis mImpulseXAxis;

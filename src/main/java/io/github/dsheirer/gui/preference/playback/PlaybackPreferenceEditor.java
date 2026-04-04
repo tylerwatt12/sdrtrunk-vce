@@ -40,8 +40,6 @@ import javafx.scene.paint.Color;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 import org.controlsfx.control.ToggleSwitch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 /**
@@ -49,7 +47,6 @@ import org.slf4j.LoggerFactory;
  */
 public class PlaybackPreferenceEditor extends HBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PlaybackPreferenceEditor.class);
     private final PlaybackPreference mPlaybackPreference;
     private GridPane mEditorPane;
     private ComboBox<AudioPlaybackDeviceDescriptor> mAudioPlaybackDevicesCombo;

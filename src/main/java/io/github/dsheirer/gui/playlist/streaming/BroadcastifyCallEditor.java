@@ -32,8 +32,6 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.controlsfx.control.ToggleSwitch;
 
 /**
@@ -41,7 +39,6 @@ import org.controlsfx.control.ToggleSwitch;
  */
 public class BroadcastifyCallEditor extends AbstractBroadcastEditor<BroadcastifyCallConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BroadcastifyCallEditor.class);
     private IntegerTextField mSystemIdTextField;
     private Button mTestButton;
     private IntegerTextField mMaxAgeTextField;

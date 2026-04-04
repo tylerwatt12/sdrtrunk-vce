@@ -22,15 +22,12 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.adapter.ISampleAdapter;
 import io.github.dsheirer.source.SourceEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.TargetDataLine;
 
 public class ComplexMixer
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ComplexMixer.class);
     private MixerReader<INativeBuffer> mMixerReader;
     private String mName;
 

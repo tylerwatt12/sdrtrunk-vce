@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ShoutcastV1AudioBroadcaster extends AudioStreamingBroadcaster
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ShoutcastV1AudioBroadcaster.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ShoutcastV1AudioBroadcaster.class);
     private static final long RECONNECT_INTERVAL_MILLISECONDS = 30000; //30 seconds
 
     private NioSocketConnector mSocketConnector;

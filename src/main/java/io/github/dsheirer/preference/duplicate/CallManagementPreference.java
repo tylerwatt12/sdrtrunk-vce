@@ -24,8 +24,6 @@ import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 import java.util.prefs.Preferences;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * User preferences for call management
@@ -39,7 +37,6 @@ public class CallManagementPreference extends Preference implements ICallManagem
     private static final String PREFERENCE_KEY_SUPPRESS_DUPLICATE_STREAMING = "suppress.duplicate.audio.streaming";
     private static final String PREFERENCE_KEY_PATCHGROUP_STREAMING = "patchgroup.streaming";
 
-    private final static Logger mLog = LoggerFactory.getLogger(CallManagementPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(CallManagementPreference.class);
     private Boolean mDuplicateCallDetectionByTalkgroupEnabled;
     private Boolean mDuplicateCallDetectionByRadioEnabled;

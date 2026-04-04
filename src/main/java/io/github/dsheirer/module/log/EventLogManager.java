@@ -26,8 +26,6 @@ import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.util.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -35,7 +33,6 @@ import java.util.List;
 
 public class EventLogManager
 {
-    private final static Logger mLog = LoggerFactory.getLogger(EventLogManager.class);
 
     private UserPreferences mUserPreferences;
     private AliasModel mAliasModel;

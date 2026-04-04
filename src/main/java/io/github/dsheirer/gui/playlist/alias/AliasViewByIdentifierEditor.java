@@ -47,8 +47,6 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.util.Callback;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,7 +55,6 @@ import java.util.function.Predicate;
 
 public class AliasViewByIdentifierEditor extends VBox
 {
-    private static final Logger mLog = LoggerFactory.getLogger(AliasViewByIdentifierEditor.class);
     private PlaylistManager mPlaylistManager;
     private ComboBox<String> mAliasListNameComboBox;
     private ComboBox<AliasIDType> mAliasIDTypeComboBox;

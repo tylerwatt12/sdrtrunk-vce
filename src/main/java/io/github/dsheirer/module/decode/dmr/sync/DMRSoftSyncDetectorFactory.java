@@ -22,15 +22,12 @@ package io.github.dsheirer.module.decode.dmr.sync;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating DMR Soft Sync Detectors
  */
 public class DMRSoftSyncDetectorFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(DMRSoftSyncDetectorFactory.class);
 
     /**
      * Creates the implementation using calibration data to select the optimal

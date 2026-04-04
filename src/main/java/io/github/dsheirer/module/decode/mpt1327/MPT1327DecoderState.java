@@ -38,12 +38,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.TreeSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class MPT1327DecoderState extends DecoderState
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MPT1327DecoderState.class);
 
     private TreeSet<String> mIdents = new TreeSet<String>();
     private HashMap<String,ArrayList<String>> mGroups = new HashMap<String,ArrayList<String>>();

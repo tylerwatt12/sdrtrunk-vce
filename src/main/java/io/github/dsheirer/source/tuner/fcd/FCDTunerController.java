@@ -49,7 +49,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public abstract class FCDTunerController extends TunerController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FCDTunerController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FCDTunerController.class);
     private static final double USABLE_BANDWIDTH_PERCENT = 1.0;
     private static final int DC_SPIKE_AVOID_HALF_BANDWIDTH = 5000;
     private final static byte FCD_INTERFACE = (byte) 0x2;

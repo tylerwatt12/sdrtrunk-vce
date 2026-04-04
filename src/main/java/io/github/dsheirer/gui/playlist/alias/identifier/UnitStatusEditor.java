@@ -35,15 +35,12 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for unit status alias identifiers
  */
 public class UnitStatusEditor extends IdentifierEditor<UnitStatusID>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(UnitStatusEditor.class);
 
     private TextField mUnitStatusField;
     private TextFormatter<Integer> mIntegerTextFormatter;

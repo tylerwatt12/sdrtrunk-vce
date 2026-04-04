@@ -64,15 +64,12 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.util.Callback;
 import org.controlsfx.control.ToggleSwitch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * DMR channel configuration editor
  */
 public class DMRConfigurationEditor extends ChannelConfigurationEditor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRConfigurationEditor.class);
     private TitledPane mDecoderPane;
     private TitledPane mEventLogPane;
     private TitledPane mRecordPane;

@@ -26,8 +26,6 @@ import io.github.dsheirer.module.decode.Decoder;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.real.IRealBufferListener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * LTR Decoder
@@ -35,7 +33,6 @@ import org.slf4j.LoggerFactory;
 public class LTRStandardDecoder extends Decoder implements IRealBufferListener, Listener<float[]>
 {
     public static final int LTR_STANDARD_MESSAGE_LENGTH = 40;
-    private static final Logger mLog = LoggerFactory.getLogger(LTRStandardDecoder.class);
     private LTRDecoder mLTRDecoder;
     private MessageFramer mLTRMessageFramer;
     private LTRStandardMessageProcessor mLTRMessageProcessor;

@@ -26,12 +26,9 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class HDUMessage extends P25P1Message
 {
-    private final static Logger mLog = LoggerFactory.getLogger(HDUMessage.class);
 
     private static final int[] GOLAY_WORD_STARTS = {0, 18, 36, 54, 72, 90, 108, 126, 144, 162, 180, 198, 216, 234, 252,
         270, 288, 306, 324, 342, 360, 278, 396, 414, 432, 450, 468, 486, 504, 522, 540, 558, 576, 594, 612, 630};

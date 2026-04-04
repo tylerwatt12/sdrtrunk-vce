@@ -47,7 +47,7 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2CallSequenceRecorder.class);
+    private static final Logger mLog = LoggerFactory.getLogger(P25P2CallSequenceRecorder.class);
 
     private static final String PROTOCOL = "APCO25-PHASE2";
 

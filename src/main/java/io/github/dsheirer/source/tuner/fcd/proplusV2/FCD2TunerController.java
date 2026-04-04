@@ -38,7 +38,7 @@ import javax.sound.sampled.TargetDataLine;
  */
 public class FCD2TunerController extends FCDTunerController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FCD2TunerController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FCD2TunerController.class);
 
     public static final int MINIMUM_TUNABLE_FREQUENCY_HZ = 150000;
     public static final int MAXIMUM_TUNABLE_FREQUENCY_HZ = 2050000000;

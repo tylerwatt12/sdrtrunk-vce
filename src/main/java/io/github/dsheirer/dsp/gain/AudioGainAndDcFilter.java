@@ -20,8 +20,6 @@
 package io.github.dsheirer.dsp.gain;
 
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Audio gain that normalizes audio amplitude against an objective amplitude value where the audio amplitude values
@@ -38,7 +36,6 @@ import org.slf4j.LoggerFactory;
  */
 public class AudioGainAndDcFilter
 {
-    private static final Logger mLog = LoggerFactory.getLogger(AudioGainAndDcFilter.class);
     private static final float MAX_AMPLITUDE = 0.95f;
     private static final float GAIN_LOOP_BANDWIDTH = 0.0015f;
     private float mMinGain;

@@ -48,7 +48,7 @@ public class PlaybackPreference extends Preference
     private static final String PREFERENCE_KEY_AUDIO_CHANNEL_COUNT = "audio.playback.channel.count";
     public static final int TONE_LENGTH_SAMPLES = 160;
 
-    private final static Logger mLog = LoggerFactory.getLogger(PlaybackPreference.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PlaybackPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(PlaybackPreference.class);
     private Boolean mUseAudioSegmentStartTone;
     private Boolean mUseAudioSegmentDropTone;

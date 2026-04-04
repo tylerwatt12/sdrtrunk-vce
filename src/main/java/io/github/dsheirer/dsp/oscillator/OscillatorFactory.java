@@ -22,8 +22,6 @@ package io.github.dsheirer.dsp.oscillator;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory class for creating real and complex oscillators.
@@ -32,7 +30,6 @@ import org.slf4j.LoggerFactory;
  */
 public class OscillatorFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(OscillatorFactory.class);
 
     /**
      * Constructs an optimal implementation of a real sample oscillator using calibration data when available.

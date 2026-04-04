@@ -55,8 +55,6 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import static io.github.dsheirer.module.decode.config.DecodeConfiguration.CALL_TIMEOUT_MAXIMUM;
 import static io.github.dsheirer.module.decode.config.DecodeConfiguration.CALL_TIMEOUT_MINIMUM;
@@ -66,7 +64,6 @@ import static io.github.dsheirer.module.decode.config.DecodeConfiguration.CALL_T
  */
 public class MPT1327ConfigurationEditor extends ChannelConfigurationEditor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MPT1327ConfigurationEditor.class);
     private TitledPane mDecoderPane;
     private TitledPane mEventLogPane;
     private TitledPane mRecordPane;

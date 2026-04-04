@@ -31,7 +31,7 @@ import java.text.ParseException;
  */
 public abstract class AbstractIntegerFormatter
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AbstractIntegerFormatter.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AbstractIntegerFormatter.class);
 
     public static String toHex(int value)
     {

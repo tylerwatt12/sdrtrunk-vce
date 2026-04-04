@@ -58,7 +58,7 @@ import org.slf4j.LoggerFactory;
 
 public class LDU1Message extends LDUMessage implements IFrequencyBandReceiver
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LDU1Message.class);
+    private static final Logger mLog = LoggerFactory.getLogger(LDU1Message.class);
 
     private static final int[] GOLAY_WORD_STARTS = {288, 298, 308, 318, 472, 482, 492, 502, 656, 666, 676, 686,
         840, 850, 860, 870, 1024, 1034, 1044, 1054, 1208, 1218, 1228, 1238};

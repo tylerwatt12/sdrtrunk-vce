@@ -48,7 +48,7 @@ import org.slf4j.LoggerFactory;
 public class FMDemodulatorModule extends Module implements ISourceEventListener, ISourceEventProvider,
         IComplexSamplesListener, Listener<ComplexSamples>, IRealBufferProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FMDemodulatorModule.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FMDemodulatorModule.class);
     private static final double DEMODULATED_AUDIO_SAMPLE_RATE = 8000.0;
     private IRealFilter mIBasebandFilter;
     private IRealFilter mQBasebandFilter;

@@ -22,15 +22,12 @@ package io.github.dsheirer.dsp.magnitude;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating magnitude implementations
  */
 public class MagnitudeFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(MagnitudeFactory.class);
 
     /**
      * Creates a magnitude implementation using calibration data to select the optimal

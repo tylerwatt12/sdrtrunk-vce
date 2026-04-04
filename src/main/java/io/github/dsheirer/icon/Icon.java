@@ -40,7 +40,7 @@ import java.util.Objects;
 @JacksonXmlRootElement(localName = "icon")
 public class Icon implements Comparable<Icon>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Icon.class);
+    private static final Logger mLog = LoggerFactory.getLogger(Icon.class);
     private static final int ICON_HEIGHT_JAVAFX = 16;
     private StringProperty mName = new SimpleStringProperty();
     private StringProperty mPath = new SimpleStringProperty();

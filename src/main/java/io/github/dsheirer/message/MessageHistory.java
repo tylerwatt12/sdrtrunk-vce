@@ -22,15 +22,12 @@ package io.github.dsheirer.message;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.module.HistoryModule;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Decode event history module.  Maintains a history of decode events and constrains the total history size.
  */
 public class MessageHistory extends HistoryModule<IMessage> implements IMessageListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MessageHistory.class);
 
     /**
      * Constructs an instance

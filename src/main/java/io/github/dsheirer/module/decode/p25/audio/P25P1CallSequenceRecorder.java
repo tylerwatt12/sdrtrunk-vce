@@ -43,8 +43,6 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDULCMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDUMessage;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * P25 Phase 1 IMBE Frame recorder generates P25 call sequence recordings containing JSON representations of audio
@@ -52,7 +50,6 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P1CallSequenceRecorder extends MBECallSequenceRecorder
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P1CallSequenceRecorder.class);
 
     public static final String PROTOCOL = "APCO25-PHASE1";
 

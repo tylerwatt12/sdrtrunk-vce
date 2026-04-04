@@ -69,7 +69,7 @@ import org.slf4j.LoggerFactory;
  */
 public class StreamingEditor extends SplitPane
 {
-    private final static Logger mLog = LoggerFactory.getLogger(StreamingEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(StreamingEditor.class);
 
     private final PlaylistManager mPlaylistManager;
     private TableView<ConfiguredBroadcast> mConfiguredBroadcastTableView;

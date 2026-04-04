@@ -70,15 +70,12 @@ import jiconfont.IconCode;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 import org.controlsfx.control.textfield.TextFields;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for aliases
  */
 public class AliasConfigurationEditor extends SplitPane implements IAliasListRefreshListener
 {
-    private static final Logger mLog = LoggerFactory.getLogger(AliasConfigurationEditor.class);
 
     private PlaylistManager mPlaylistManager;
     private UserPreferences mUserPreferences;

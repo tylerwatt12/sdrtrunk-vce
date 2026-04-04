@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DirectoryPreference extends Preference
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DirectoryPreference.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DirectoryPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(DirectoryPreference.class);
 
     private static final int DEFAULT_USAGE_THRESHOLD_RECORDINGS_MB = 2000;

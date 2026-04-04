@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
 
 public abstract class TunerChannelSource extends ComplexSource implements ISourceEventProcessor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TunerChannelSource.class);
+    private static final Logger mLog = LoggerFactory.getLogger(TunerChannelSource.class);
     protected static final long HEARTBEAT_INTERVAL_MS = 100;
     private SourceEventListenerToProcessorAdapter mConsumerSourceEventListenerAdapter;
     protected TunerChannel mTunerChannel;

@@ -46,8 +46,6 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import net.miginfocom.swing.MigLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
@@ -62,7 +60,6 @@ import javax.swing.table.TableRowSorter;
 public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain>
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(DecodeEventPanel.class);
     private static final String TABLE_PREFERENCE_KEY = "decode.event.panel";
 
     private JTable mTable;

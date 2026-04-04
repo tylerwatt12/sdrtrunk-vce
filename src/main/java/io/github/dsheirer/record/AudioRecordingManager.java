@@ -50,7 +50,7 @@ import org.slf4j.LoggerFactory;
  */
 public class AudioRecordingManager implements Listener<AudioSegment>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioRecordingManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AudioRecordingManager.class);
     private LinkedTransferQueue<AudioSegment> mCompletedAudioSegmentQueue = new LinkedTransferQueue<>();
     private ScheduledFuture<?> mQueueProcessorHandle;
     private UserPreferences mUserPreferences;

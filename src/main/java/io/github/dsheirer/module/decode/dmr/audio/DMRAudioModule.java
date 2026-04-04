@@ -56,7 +56,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRAudioModule.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DMRAudioModule.class);
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private ToneMetadataProcessor mToneMetadataProcessor = new ToneMetadataProcessor();
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateNotificationListener;

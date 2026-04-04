@@ -22,15 +22,12 @@ package io.github.dsheirer.dsp.fm;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * FM demodulator that uses JDK 17+ SIMD vector intrinsics
  */
 public class VectorFMDemodulator512 extends VectorFMDemodulator
 {
-    private static final Logger mLog = LoggerFactory.getLogger(VectorFMDemodulator512.class);
     protected static final float ZERO = 0.0f;
     private static final int BUFFER_OVERLAP = 1;
     private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_512;

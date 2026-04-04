@@ -22,8 +22,6 @@
 package io.github.dsheirer.sample.complex;
 
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.Serializable;
 
@@ -32,7 +30,6 @@ import java.io.Serializable;
  */
 public class Complex implements Serializable
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Complex.class);
 
     private static final long serialVersionUID = 1L;
 

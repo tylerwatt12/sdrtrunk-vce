@@ -26,8 +26,6 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.afsk.AbstractAFSKDecoder;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.buffer.IByteBufferProvider;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 
@@ -36,7 +34,6 @@ import java.nio.ByteBuffer;
  */
 public class MPT1327Decoder extends AbstractAFSKDecoder implements IBinarySymbolProcessor, IByteBufferProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MPT1327Decoder.class);
 
     /* Message length -- longest possible message is:
      *   4xREVS + 16xSYNC + 64xADD1 + 64xDCW1 + 64xDCW2 + 64xDCW3 + 64xDCW4 */

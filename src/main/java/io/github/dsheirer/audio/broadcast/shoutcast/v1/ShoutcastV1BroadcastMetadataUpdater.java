@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
 
 public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUpdater
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ShoutcastV1BroadcastMetadataUpdater.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ShoutcastV1BroadcastMetadataUpdater.class);
     private final static String UTF8 = "UTF-8";
 
     private ShoutcastV1Configuration mShoutcastV1Configuration;

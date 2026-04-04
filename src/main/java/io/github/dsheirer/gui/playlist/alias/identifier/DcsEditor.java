@@ -24,15 +24,12 @@ import io.github.dsheirer.module.decode.dcs.DCSCode;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for Digital Coded Squelch (DCS) alias identifiers
  */
 public class DcsEditor extends IdentifierEditor<Dcs>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(DcsEditor.class);
     private ComboBox<DCSCode> mDCSCodeComboBox;
 
     /**

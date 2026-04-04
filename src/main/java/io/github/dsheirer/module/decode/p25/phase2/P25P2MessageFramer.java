@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P2MessageFramer implements Listener<Dibit>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2MessageFramer.class);
+    private static final Logger mLog = LoggerFactory.getLogger(P25P2MessageFramer.class);
     private P25P2SuperFrameDetector mSuperFrameDetector;
 
     /**

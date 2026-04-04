@@ -29,15 +29,12 @@ import javafx.beans.value.ObservableValue;
 import javafx.collections.ObservableList;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Manages user preferences for JavaFX elements (e.g. stages).
  */
 public class JavaFxPreferences
 {
-    private final static Logger mLog = LoggerFactory.getLogger(JmbeLibraryPreference.class);
     private static final String PREFERENCE_STAGE_HEIGHT_PREFIX = "stage.height.";
     private static final String PREFERENCE_STAGE_WIDTH_PREFIX = "stage.width.";
     private static final String PREFERENCE_STAGE_X_PREFIX = "stage.x.";

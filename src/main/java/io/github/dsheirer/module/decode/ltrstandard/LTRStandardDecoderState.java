@@ -51,7 +51,7 @@ import org.slf4j.LoggerFactory;
 
 public class LTRStandardDecoderState extends DecoderState
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LTRStandardDecoderState.class);
+    private static final Logger mLog = LoggerFactory.getLogger(LTRStandardDecoderState.class);
 
     private Map<Integer,DecodeEvent> mActiveCalls = new HashMap<>();
     private Set<LTRTalkgroup> mTalkgroupsFirstHeard = new HashSet<>();

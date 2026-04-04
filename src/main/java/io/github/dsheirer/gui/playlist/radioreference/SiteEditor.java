@@ -79,12 +79,9 @@ import javafx.scene.layout.Priority;
 import javafx.util.Callback;
 import javafx.util.Duration;
 import org.controlsfx.control.SegmentedButton;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SiteEditor extends GridPane
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SiteEditor.class);
 
     private static final String ALTERNATE_CONTROL_CHANNEL = "a";
     private static final String PRIMARY_CONTROL_CHANNEL = "d";

@@ -26,8 +26,6 @@ import io.github.dsheirer.jmbe.github.Version;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,7 +39,6 @@ import java.util.regex.Pattern;
  */
 public class JmbeLibraryPreference extends Preference
 {
-    private final static Logger mLog = LoggerFactory.getLogger(JmbeLibraryPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(JmbeLibraryPreference.class);
 
     private static final String PREFERENCE_KEY_PATH_JMBE_LIBRARY = "path.jmbe.library.1.0.0";

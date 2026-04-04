@@ -45,7 +45,7 @@ import javax.sound.sampled.TargetDataLine;
  */
 public class MixerManager
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MixerManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MixerManager.class);
 
     public MixerManager()
     {

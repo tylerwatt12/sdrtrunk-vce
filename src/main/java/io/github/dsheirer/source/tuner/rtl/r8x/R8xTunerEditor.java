@@ -45,7 +45,7 @@ import javax.usb.UsbException;
  */
 public class R8xTunerEditor extends TunerEditor<RTL2832Tuner, R8xTunerConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(R8xTunerEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(R8xTunerEditor.class);
     private static final long serialVersionUID = 1L;
     private static final R8xEmbeddedTuner.MasterGain DEFAULT_GAIN = R8xEmbeddedTuner.MasterGain.GAIN_279;
     private JButton mTunerInfoButton;

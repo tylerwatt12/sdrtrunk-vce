@@ -26,15 +26,12 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.dsp.fsk.LTRDecoder;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.real.IRealBufferListener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * LTR-Net decoder
  */
 public class LTRNetDecoder extends Decoder implements IRealBufferListener, Listener<float[]>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(LTRNetDecoder.class);
     public static final int LTR_NET_MESSAGE_LENGTH = 40;
     protected LTRDecoder mLTRDecoder;
     private MessageFramer mLTRMessageFramer;

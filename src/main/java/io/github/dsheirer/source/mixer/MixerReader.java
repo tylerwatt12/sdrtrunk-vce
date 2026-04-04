@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class MixerReader<T>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MixerReader.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MixerReader.class);
     private TargetDataLine mTargetDataLine;
     private int mBufferSize;
     private AtomicBoolean mRunning = new AtomicBoolean();

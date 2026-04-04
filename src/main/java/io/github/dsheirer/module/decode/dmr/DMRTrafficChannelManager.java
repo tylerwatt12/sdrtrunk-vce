@@ -88,7 +88,7 @@ import org.slf4j.LoggerFactory;
 public class DMRTrafficChannelManager extends TrafficChannelManager implements IChannelEventListener,
     IChannelEventProvider, IDecodeEventProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRTrafficChannelManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DMRTrafficChannelManager.class);
     public static final String CHANNEL_START_REJECTED = " REJECTED - NO TUNER";
     public static final String DATA_CALL_IGNORED = "DATA CALL IGNORED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
@@ -727,6 +727,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             {
                 broadcast(new ChannelEvent(channel, Event.REQUEST_DISABLE));
             }
+
         }
         finally
         {

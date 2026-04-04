@@ -19,8 +19,6 @@
 package io.github.dsheirer.sample;
 
 import io.github.dsheirer.source.Source;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.concurrent.LinkedTransferQueue;
@@ -29,7 +27,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class OverflowableTransferQueue<E>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(OverflowableTransferQueue.class);
 
     public enum State {NORMAL, OVERFLOW};
     private IOverflowListener mOverflowListener;

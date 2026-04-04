@@ -58,7 +58,7 @@ import java.util.Date;
  */
 public class LoginDialog extends Dialog<AuthorizationInformation>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LoginDialog.class);
+    private static final Logger mLog = LoggerFactory.getLogger(LoginDialog.class);
     private UserPreferences mUserPreferences;
     private TextField mUserNameText;
     private PasswordField mPasswordField;

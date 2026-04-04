@@ -63,7 +63,7 @@ import org.slf4j.LoggerFactory;
  */
 public class LCMessageFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LCMessageFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(LCMessageFactory.class);
     private static final int TERMINATOR_LINK_CONTROL_CRC_MASK = 0x99;
     private static final int VOICE_LINK_CONTROL_CRC_MASK = 0x96;
     private final DMRCrcMaskManager mMaskManager;

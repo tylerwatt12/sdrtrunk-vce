@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  */
 public class PolyphaseChannelSourceManager extends ChannelSourceManager
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PolyphaseChannelSourceManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PolyphaseChannelSourceManager.class);
     private PolyphaseChannelManager mPolyphaseChannelManager;
     private TunerController mTunerController;
 

@@ -24,15 +24,12 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.recording.RecordingTuner;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Discovered tuner for recording tuner type.
  */
 public class DiscoveredRecordingTuner extends DiscoveredTuner
 {
-    private static final Logger mLog = LoggerFactory.getLogger(DiscoveredRecordingTuner.class);
     private UserPreferences mUserPreferences;
 
     /**

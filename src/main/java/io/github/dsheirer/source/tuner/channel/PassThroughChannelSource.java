@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
 public class PassThroughChannelSource extends TunerChannelSource implements ISourceEventListener,
         Listener<INativeBuffer>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PassThroughChannelSource.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PassThroughChannelSource.class);
     private TunerController mTunerController;
     private Dispatcher<INativeBuffer> mBufferDispatcher;
     private Listener<ComplexSamples> mBufferListener;

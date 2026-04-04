@@ -65,7 +65,7 @@ import org.slf4j.LoggerFactory;
  */
 public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScannerConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RdioScannerBroadcaster.class);
+    private static final Logger mLog = LoggerFactory.getLogger(RdioScannerBroadcaster.class);
 
     private static final String ENCODING_TYPE_MP3 = "mp3";
     private static final String MULTIPART_TYPE = "multipart";

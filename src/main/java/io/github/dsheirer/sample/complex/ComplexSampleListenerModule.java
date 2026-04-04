@@ -23,15 +23,12 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Module that receives and rebroadcasts complex samples.
  */
 public class ComplexSampleListenerModule extends Module implements IComplexSamplesListener, Listener<ComplexSamples>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(ComplexSampleListenerModule.class);
     private Broadcaster<INativeBuffer> mBroadcaster = new Broadcaster<>();
 
     /**

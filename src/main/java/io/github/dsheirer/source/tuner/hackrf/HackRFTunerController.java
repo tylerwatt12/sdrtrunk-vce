@@ -39,7 +39,7 @@ import javax.usb.UsbException;
 
 public class HackRFTunerController extends USBTunerController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(HackRFTunerController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(HackRFTunerController.class);
 
     public final static long USB_TIMEOUT_US = 1000000l; //uSeconds
     public static final int USB_TRANSFER_BUFFER_SIZE = 262144;

@@ -32,15 +32,12 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for P25 fully qualified talkgroup alias identifiers
  */
 public class P25FullyQualifiedTalkgroupEditor extends IdentifierEditor<P25FullyQualifiedTalkgroup>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(P25FullyQualifiedTalkgroupEditor.class);
 
     private UserPreferences mUserPreferences;
     private Label mProtocolLabel;

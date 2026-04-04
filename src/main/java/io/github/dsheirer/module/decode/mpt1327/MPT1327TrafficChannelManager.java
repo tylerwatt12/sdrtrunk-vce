@@ -51,7 +51,7 @@ import org.slf4j.LoggerFactory;
 public class MPT1327TrafficChannelManager extends TrafficChannelManager implements IDecodeEventProvider,
     IChannelEventListener, IChannelEventProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MPT1327TrafficChannelManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(MPT1327TrafficChannelManager.class);
 
     public static final String CHANNEL_START_REJECTED = "CHANNEL START REJECTED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";

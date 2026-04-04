@@ -1,12 +1,9 @@
 package io.github.dsheirer.spectrum.converter;
 
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class RealDecibelConverter extends DFTResultsConverter
 {
-	private static final Logger mLog = LoggerFactory.getLogger( RealDecibelConverter.class );
 
 	public RealDecibelConverter()
 	{

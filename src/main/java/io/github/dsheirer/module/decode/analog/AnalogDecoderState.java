@@ -31,15 +31,12 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventListener;
 import io.github.dsheirer.source.SourceEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Abstract analog decoder channel state - provides the minimum channel state functionality
  */
 public abstract class AnalogDecoderState extends DecoderState implements ISourceEventListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AnalogDecoderState.class);
     private Listener<SourceEvent> mSourceEventListener = new SourceEventListener();
     private DecodeEvent mDecodeEvent;
     private IChannelDescriptor mChannelDescriptor = null;

@@ -43,12 +43,9 @@ import io.github.dsheirer.sample.Listener;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class P25P2MessageProcessor implements Listener<IMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2MessageProcessor.class);
 
     private EncryptionSynchronizationSequenceProcessor mESSProcessor1 = new EncryptionSynchronizationSequenceProcessor(P25P2Message.TIMESLOT_1);
     private EncryptionSynchronizationSequenceProcessor mESSProcessor2 = new EncryptionSynchronizationSequenceProcessor(P25P2Message.TIMESLOT_2);

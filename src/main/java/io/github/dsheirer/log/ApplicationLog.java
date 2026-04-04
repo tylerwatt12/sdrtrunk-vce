@@ -44,7 +44,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ApplicationLog
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ApplicationLog.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ApplicationLog.class);
 
     private static final String APPLICATION_LOG_FILENAME = "sdrtrunk_app.log";
     private static final int APPLICATION_LOG_MAX_HISTORY = 10;

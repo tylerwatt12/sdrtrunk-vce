@@ -55,7 +55,7 @@ import java.util.List;
  */
 public class VectorCalibrationPreferenceEditor extends HBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(VectorCalibrationPreferenceEditor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(VectorCalibrationPreferenceEditor.class);
     private VectorCalibrationPreference mPreference;
     private GridPane mEditorPane;
     private ToggleSwitch mHideDialogSwitch;

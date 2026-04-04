@@ -42,7 +42,7 @@ import javax.sound.sampled.AudioFormat;
 public class ComplexSamplesWaveRecorder extends Module implements IComplexSamplesListener,
         Listener<ComplexSamples>, ISourceEventListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ComplexSamplesWaveRecorder.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ComplexSamplesWaveRecorder.class);
 
     private Dispatcher<ComplexSamples> mBufferProcessor = new Dispatcher<>("sdrtrunk complex wave recorder", 250);
     private AtomicBoolean mRunning = new AtomicBoolean();

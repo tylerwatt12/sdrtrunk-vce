@@ -22,15 +22,12 @@ import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Airspy HF+Tuner
  */
 public class AirspyHfTuner extends Tuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AirspyHfTuner.class);
 
     /**
      * Constructs an instance

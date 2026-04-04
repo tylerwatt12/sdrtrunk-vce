@@ -34,15 +34,12 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for ESN alias identifiers
  */
 public class EsnEditor extends IdentifierEditor<Esn>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(EsnEditor.class);
     private TextField mEsnField;
 
     /**

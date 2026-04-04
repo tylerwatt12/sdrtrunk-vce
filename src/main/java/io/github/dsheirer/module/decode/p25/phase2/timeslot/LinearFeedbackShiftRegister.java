@@ -21,8 +21,6 @@ package io.github.dsheirer.module.decode.p25.phase2.timeslot;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.BitSetFullException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * APCO-25 Phase II Linear Feedback Shift Register for generating the scrambling sequence for descrambling
@@ -30,7 +28,6 @@ import org.slf4j.LoggerFactory;
  */
 public class LinearFeedbackShiftRegister
 {
-    private final static Logger mLog = LoggerFactory.getLogger(LinearFeedbackShiftRegister.class);
 
     private static long MASK = 0xFFFFFFFFFFFl;
     private static long TAP_43 = (1l << 43);

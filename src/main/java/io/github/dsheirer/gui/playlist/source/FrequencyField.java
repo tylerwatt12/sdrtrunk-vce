@@ -25,8 +25,6 @@ package io.github.dsheirer.gui.playlist.source;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.util.converter.DoubleStringConverter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.text.DecimalFormat;
 import java.util.function.UnaryOperator;
@@ -38,7 +36,6 @@ import java.util.function.UnaryOperator;
  */
 public class FrequencyField extends TextField
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FrequencyField.class);
     private DecimalFormat mDecimalFormat = new DecimalFormat("0.000000");
     private static final double CONVERT_HZ_TO_MHZ = 0.000001;
     private static final double CONVERT_MHZ_TO_HZ = 1000000;

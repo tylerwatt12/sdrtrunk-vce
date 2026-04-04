@@ -26,12 +26,9 @@ import io.github.dsheirer.module.decode.ip.mototrbo.ars.identifier.ARSPassword;
 import io.github.dsheirer.module.decode.ip.mototrbo.ars.identifier.ARSUser;
 import java.util.ArrayList;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class UserRegistration extends ARSHeader
 {
-    private final static Logger mLog = LoggerFactory.getLogger(UserRegistration.class);
     private static final int HEADER_EXTENSION_FLAG = 24;
     private static final int[] EVENT = {25, 26};
     private static final int[] ENCODING = {27, 28, 29, 30, 31};

@@ -42,12 +42,9 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class TonesEditor extends IdentifierEditor<TonesID>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TonesEditor.class);
 
     private ListView<Tone> mToneListView;
     private ComboBox<AmbeTone> mAmbeToneComboBox;

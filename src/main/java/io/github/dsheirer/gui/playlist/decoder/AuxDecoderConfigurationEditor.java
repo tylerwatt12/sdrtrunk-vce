@@ -30,8 +30,6 @@ import javafx.geometry.Insets;
 import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
 import org.controlsfx.control.ToggleSwitch;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,7 +41,6 @@ import java.util.List;
  */
 public class AuxDecoderConfigurationEditor extends Editor<AuxDecodeConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AuxDecoderConfigurationEditor.class);
 
     private List<AuxDecoderControl> mControls = new ArrayList<>();
 

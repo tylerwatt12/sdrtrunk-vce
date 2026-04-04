@@ -119,7 +119,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DMRDecoderState extends TimeslotDecoderState
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRDecoderState.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DMRDecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
     private static final long MAX_VALID_CALL_DURATION_MS = 30000;
     private static final AddChannelRotationActiveStateRequest CAPACITY_PLUS_ACTIVE_STATE_REQUEST =

@@ -63,7 +63,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DMRMessageProcessor implements Listener<IMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRMessageProcessor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DMRMessageProcessor.class);
     private final DecodeConfigDMR mConfigDMR;
     private final VoiceSuperFrameProcessor mSuperFrameProcessor1 = new VoiceSuperFrameProcessor();
     private final VoiceSuperFrameProcessor mSuperFrameProcessor2 = new VoiceSuperFrameProcessor();

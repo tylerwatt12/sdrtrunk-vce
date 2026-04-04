@@ -25,8 +25,6 @@ import io.github.dsheirer.source.tuner.sdrplay.api.v3_07.sdrplay_api_StreamCbPar
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * I/Q sample stream callback adapter.  Implements the native interface and transfers the native callback data to an
@@ -34,7 +32,6 @@ import org.slf4j.LoggerFactory;
  */
 public class StreamCallbackAdapter implements sdrplay_api_StreamCallback_t.Function
 {
-    private static final Logger mLog = LoggerFactory.getLogger(StreamCallbackAdapter.class);
     private IStreamListener mStreamListener;
     private IStreamCallbackListener mStreamCallbackListener;
 

@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SettingsManager implements Listener<TunerConfigurationEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SettingsManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(SettingsManager.class);
 
     private Settings mSettings = new Settings();
     private List<SettingChangeListener> mListeners = new ArrayList<>();

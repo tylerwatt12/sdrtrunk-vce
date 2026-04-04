@@ -41,8 +41,6 @@ import io.github.dsheirer.sample.Listener;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * APCO25 Phase 1 Message Processor.
@@ -51,7 +49,6 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P1MessageProcessor implements Listener<IMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P1MessageProcessor.class);
 
     /**
      * Downstream message listener

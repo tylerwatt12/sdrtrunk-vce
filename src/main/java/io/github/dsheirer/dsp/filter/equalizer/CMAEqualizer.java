@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 
 public class CMAEqualizer implements Listener<Complex>
 {
-	private final static Logger mLog = LoggerFactory.getLogger( CMAEqualizer.class );
+	private static final Logger mLog = LoggerFactory.getLogger( CMAEqualizer.class );
 
 	public static final int TAP_COUNT = 11;
 	

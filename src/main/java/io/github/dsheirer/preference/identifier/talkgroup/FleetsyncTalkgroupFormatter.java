@@ -23,8 +23,6 @@ package io.github.dsheirer.preference.identifier.talkgroup;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.fleetsync2.identifier.FleetsyncIdentifier;
 import io.github.dsheirer.preference.identifier.IntegerFormat;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.text.ParseException;
 import java.util.regex.Matcher;
@@ -35,7 +33,6 @@ import java.util.regex.Pattern;
  */
 public class FleetsyncTalkgroupFormatter extends AbstractIntegerFormatter
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FleetsyncTalkgroupFormatter.class);
     private static final int IDENTIFIER_DECIMAL_WIDTH = 7;
     private static final int IDENTIFIER_HEXADECIMAL_WIDTH = 5;
     private static final int FLEET_DECIMAL_WIDTH = 3;

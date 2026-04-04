@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  */
 public class MP3AudioConverter implements IAudioConverter
 {
-    private final static Logger mLog = LoggerFactory.getLogger( MP3AudioConverter.class );
+    private static final Logger mLog = LoggerFactory.getLogger( MP3AudioConverter.class );
     public static final int AUDIO_QUALITY = Lame.QUALITY_LOW;
     private LameEncoder mEncoder;
     private RealResampler mResampler;

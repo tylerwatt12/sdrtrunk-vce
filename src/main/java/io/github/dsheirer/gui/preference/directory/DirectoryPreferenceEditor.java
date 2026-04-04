@@ -38,8 +38,6 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 /**
@@ -47,7 +45,6 @@ import org.slf4j.LoggerFactory;
  */
 public class DirectoryPreferenceEditor extends HBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DirectoryPreferenceEditor.class);
 
     private DirectoryPreference mDirectoryPreference;
     private GridPane mEditorPane;

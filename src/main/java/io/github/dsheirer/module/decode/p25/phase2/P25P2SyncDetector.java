@@ -27,12 +27,9 @@ import io.github.dsheirer.dsp.symbol.FrameSync;
 import io.github.dsheirer.dsp.symbol.ISyncDetectListener;
 import io.github.dsheirer.sample.Listener;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class P25P2SyncDetector implements Listener<Dibit>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P2SyncDetector.class);
 
     /* Determines the threshold for sync pattern soft matching */
     private static final int SYNC_MATCH_THRESHOLD = 4;

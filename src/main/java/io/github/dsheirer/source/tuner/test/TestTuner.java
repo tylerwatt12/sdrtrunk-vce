@@ -23,8 +23,6 @@ import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.TestPolyphaseChannelSourceManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Testing tuner that implements an internal oscillator to output a unity gain tone at a specified frequency offset
@@ -32,7 +30,6 @@ import org.slf4j.LoggerFactory;
  */
 public class TestTuner extends Tuner
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TestTuner.class);
     private static int mInstanceCounter = 1;
     private final int mInstanceID = mInstanceCounter++;
 

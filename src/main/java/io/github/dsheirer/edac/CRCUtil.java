@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
 
 public class CRCUtil
 {
-    private final static Logger mLog = LoggerFactory.getLogger(CRCUtil.class);
+    private static final Logger mLog = LoggerFactory.getLogger(CRCUtil.class);
 
     public static long[] generate(int messageSize,
                                   int crcSize,

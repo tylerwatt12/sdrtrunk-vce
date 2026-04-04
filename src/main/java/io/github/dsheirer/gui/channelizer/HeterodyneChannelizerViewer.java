@@ -58,7 +58,7 @@ import javax.swing.event.ChangeListener;
 
 public class HeterodyneChannelizerViewer extends JFrame
 {
-    private final static Logger mLog = LoggerFactory.getLogger(HeterodyneChannelizerViewer.class);
+    private static final Logger mLog = LoggerFactory.getLogger(HeterodyneChannelizerViewer.class);
 
     private static final int CHANNEL_BANDWIDTH = 12500;
     private static final int CHANNEL_FFT_FRAME_RATE = 20;

@@ -21,8 +21,6 @@ package io.github.dsheirer.dsp.psk.pll;
 import io.github.dsheirer.dsp.symbol.ISyncDetectListener;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.source.SourceEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Monitors decode sync events to adaptively control frequency correction broadcasts.
@@ -30,7 +28,6 @@ import org.slf4j.LoggerFactory;
 @Deprecated //Remove after P25P2 decoder gets updated
 public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFrequencyErrorProcessor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FrequencyCorrectionSyncMonitor.class);
 
     private static final int MAX_SYNC_COUNT = PLLBandwidth.BW_200.getRangeEnd();
     private FeedbackDecoder mFeedbackDecoder;

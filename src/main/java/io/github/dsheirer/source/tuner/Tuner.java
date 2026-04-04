@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Tuner.class);
+    private static final Logger mLog = LoggerFactory.getLogger(Tuner.class);
 
     private Broadcaster<TunerEvent> mTunerEventBroadcaster = new Broadcaster<>();
     private ChannelSourceManager mChannelSourceManager;

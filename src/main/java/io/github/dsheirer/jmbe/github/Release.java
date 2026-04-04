@@ -22,8 +22,6 @@ package io.github.dsheirer.jmbe.github;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,7 +31,6 @@ import java.util.List;
  */
 public class Release
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Release.class);
 
     private Version mVersion;
     private JsonObject mJsonObject;

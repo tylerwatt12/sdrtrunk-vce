@@ -48,7 +48,7 @@ import org.slf4j.LoggerFactory;
 public abstract class TunerController implements Tunable, ISourceEventProcessor, ISourceEventListener,
         INativeBufferProvider, Listener<INativeBuffer>, ITunerErrorListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TunerController.class);
+    private static final Logger mLog = LoggerFactory.getLogger(TunerController.class);
 
     //Protects access to the native buffer broadcaster for adding, removing or checking for listener count.
     private ReentrantLock mBufferListenerLock = new ReentrantLock();

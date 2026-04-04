@@ -43,15 +43,12 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Preferences editor dialog
  */
 public class UserPreferencesEditor extends BorderPane
 {
-    private final static Logger mLog = LoggerFactory.getLogger(UserPreferencesEditor.class);
 
     private Map<PreferenceEditorType,Node> mEditors = new EnumMap<>(PreferenceEditorType.class);
     private UserPreferences mUserPreferences;

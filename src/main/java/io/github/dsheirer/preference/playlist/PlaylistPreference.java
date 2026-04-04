@@ -28,8 +28,6 @@ import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,7 +41,6 @@ import java.util.prefs.Preferences;
  */
 public class PlaylistPreference extends Preference
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PlaylistPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(PlaylistPreference.class);
 
     private static final String FILE_PLAYLIST = "default.xml";

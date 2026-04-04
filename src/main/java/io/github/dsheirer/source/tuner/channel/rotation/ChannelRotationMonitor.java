@@ -48,7 +48,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     public static final int CHANNEL_ROTATION_DELAY_DEFAULT = 500;
     public static final int CHANNEL_ROTATION_DELAY_MAXIMUM = 2000;
 
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelRotationMonitor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelRotationMonitor.class);
     private UserPreferences mUserPreferences;
     private Collection<State> mActiveStates;
     private ScheduledFuture<?> mScheduledFuture;

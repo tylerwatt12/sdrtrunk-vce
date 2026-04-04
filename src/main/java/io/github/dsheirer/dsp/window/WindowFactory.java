@@ -30,7 +30,7 @@ import java.util.Arrays;
  */
 public class WindowFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(WindowFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(WindowFactory.class);
 
     private static final float PI = (float)FastMath.PI;
     private static final float TWO_PI = (float)FastMath.PI * 2.0f;

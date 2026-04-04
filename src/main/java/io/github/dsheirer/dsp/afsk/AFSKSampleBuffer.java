@@ -15,14 +15,10 @@
  ******************************************************************************/
 package io.github.dsheirer.dsp.afsk;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class AFSKSampleBuffer
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AFSKSampleBuffer.class);
 
-    private final static float SYMBOL_SAMPLE_THRESHOLD = 1.0f;
+    private static final float SYMBOL_SAMPLE_THRESHOLD = 1.0f;
     protected boolean[] mDelayLine;
     protected int mDelayLinePointer = 0;
 

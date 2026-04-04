@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
 
 public class InterpolatorScalar extends Interpolator
 {
-    private final static Logger mLog = LoggerFactory.getLogger(InterpolatorScalar.class);
+    private static final Logger mLog = LoggerFactory.getLogger(InterpolatorScalar.class);
 
     private float mGain;
 

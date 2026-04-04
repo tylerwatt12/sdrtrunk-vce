@@ -2,15 +2,12 @@ package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Hamming (10,6,3) error detection and correction utility.  This is a truncated version of the Hamming15 class.
  */
 public class Hamming10
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Hamming10.class);
 
     private static int[] CHECKSUMS = new int[]{0xE, 0xD, 0xB, 0X7, 0x3, 0xC};
 

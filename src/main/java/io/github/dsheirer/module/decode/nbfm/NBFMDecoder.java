@@ -54,7 +54,7 @@ import org.slf4j.LoggerFactory;
 public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventListener, IComplexSamplesListener,
         Listener<ComplexSamples>, IRealBufferProvider, IDecoderStateEventProvider, INoiseSquelchController
 {
-    private final static Logger mLog = LoggerFactory.getLogger(NBFMDecoder.class);
+    private static final Logger mLog = LoggerFactory.getLogger(NBFMDecoder.class);
     private static final double DEMODULATED_AUDIO_SAMPLE_RATE = 8000.0;
     private final IDemodulator mDemodulator = FmDemodulatorFactory.getFmDemodulator();
     private final SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();

@@ -15,12 +15,9 @@
  ******************************************************************************/
 package io.github.dsheirer.dsp.oscillator;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class FS4UpConverter
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FS4UpConverter.class);
 
     private int mPointer = 0;
 

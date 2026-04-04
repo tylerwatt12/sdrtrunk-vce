@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
 
 public class OneChannelOutputProcessor extends ChannelOutputProcessor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(OneChannelOutputProcessor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(OneChannelOutputProcessor.class);
     private final OneChannelMixerAssembler mMixerAssembler;
     private int mChannelOffset;
 

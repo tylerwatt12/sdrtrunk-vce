@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  */
 public class P25MessageFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25MessageFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(P25MessageFactory.class);
 
     /**
      * Creates a P25 message for known message types.

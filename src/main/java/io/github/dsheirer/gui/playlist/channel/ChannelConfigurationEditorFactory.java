@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ChannelConfigurationEditorFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelConfigurationEditorFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelConfigurationEditorFactory.class);
     private static List<DecoderType> mLoggedUnrecognizedTypes = new ArrayList<>();
 
     /**

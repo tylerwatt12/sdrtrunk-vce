@@ -63,7 +63,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DMRDataMessageFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DMRDataMessageFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DMRDataMessageFactory.class);
     private static final ViterbiDecoder_3_4_DMR VITERBI_DECODER = new ViterbiDecoder_3_4_DMR();
     private final LCMessageFactory mLinkControlMessageFactory;
 

@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
  */
 public class BerlekempMassey
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BerlekempMassey.class);
+    private static final Logger mLog = LoggerFactory.getLogger(BerlekempMassey.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
 
     /* Golay field size GF( 2 ** MM ) */

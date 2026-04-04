@@ -41,7 +41,6 @@
   */
  public class OpenMHzEditor extends AbstractBroadcastEditor<OpenMHzConfiguration>
  {
-     private final static Logger mLog = LoggerFactory.getLogger(OpenMHzEditor.class);
      private TextField mSystemNameTextField;
      private IntegerTextField mMaxAgeTextField;
      private TextField mApiKeyTextField;

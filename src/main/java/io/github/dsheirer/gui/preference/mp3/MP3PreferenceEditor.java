@@ -32,8 +32,6 @@ import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 /**
@@ -41,7 +39,6 @@ import org.slf4j.LoggerFactory;
  */
 public class MP3PreferenceEditor extends HBox
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MP3PreferenceEditor.class);
     private MP3Preference mMP3Preference;
     private GridPane mEditorPane;
     private ComboBox<MP3Setting> mMP3SettingComboBox;

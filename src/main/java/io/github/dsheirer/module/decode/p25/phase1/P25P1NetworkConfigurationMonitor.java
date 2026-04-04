@@ -54,15 +54,12 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Tracks the network configuration details of a P25 Phase 1 network from the broadcast messages
  */
 public class P25P1NetworkConfigurationMonitor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(P25P1NetworkConfigurationMonitor.class);
 
     private Map<Integer,IFrequencyBand> mFrequencyBandMap = new HashMap<>();
 

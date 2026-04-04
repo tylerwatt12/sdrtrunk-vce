@@ -23,12 +23,9 @@ import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class MapService implements Listener<IDecodeEvent>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(MapService.class);
     private IconModel mIconModel;
     private PlottableEntityModel mPlottableEntityModel;
 

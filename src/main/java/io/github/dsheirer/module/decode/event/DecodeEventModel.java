@@ -25,8 +25,6 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 import java.awt.EventQueue;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Decode event table model
@@ -34,7 +32,6 @@ import org.slf4j.LoggerFactory;
 public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implements Listener<IDecodeEvent>
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(DecodeEventModel.class);
     public static final int COLUMN_TIME = 0;
     public static final int COLUMN_DURATION = 1;
     public static final int COLUMN_EVENT = 2;

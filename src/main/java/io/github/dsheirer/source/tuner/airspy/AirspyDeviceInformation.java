@@ -7,7 +7,7 @@ import java.util.Arrays;
 
 public class AirspyDeviceInformation
 {
-	private final static Logger mLog = 
+	private static final Logger mLog = 
 			LoggerFactory.getLogger( AirspyDeviceInformation.class );
 
 	private AirspyTunerController.BoardID mBoardID = AirspyTunerController.BoardID.UNKNOWN;

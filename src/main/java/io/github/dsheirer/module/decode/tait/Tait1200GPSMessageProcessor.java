@@ -22,12 +22,9 @@ package io.github.dsheirer.module.decode.tait;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class Tait1200GPSMessageProcessor implements Listener<CorrectedBinaryMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Tait1200GPSMessageProcessor.class);
 
     private Listener<IMessage> mMessageListener;
 

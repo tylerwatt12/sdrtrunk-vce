@@ -150,8 +150,6 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.motorol
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import java.util.ArrayList;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Message factory for creating Encoded MAC Information (EMI) message parser instances.
@@ -160,7 +158,6 @@ public class MacMessageFactory
 {
     public static final int DEFAULT_MAC_STRUCTURE_INDEX = 8;
 
-    private final static Logger mLog = LoggerFactory.getLogger(MacMessageFactory.class);
 
     /**
      * Creates a set of MAC messages
