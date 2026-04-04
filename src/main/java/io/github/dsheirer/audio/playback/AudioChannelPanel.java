@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.audio.playback;
 
+import com.google.common.base.Joiner;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
@@ -43,7 +44,6 @@ import java.awt.EventQueue;
 import java.awt.Font;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import net.miginfocom.swing.MigLayout;
