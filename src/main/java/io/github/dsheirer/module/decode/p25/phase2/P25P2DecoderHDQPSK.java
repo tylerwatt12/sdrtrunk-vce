@@ -73,7 +73,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     protected IRealFilter mIBasebandFilter;
     protected IRealFilter mQBasebandFilter;
     private DecodeConfigP25Phase2 mDecodeConfigP25Phase2;
-    private FrequencyCorrectionSyncMonitor mFrequencyCorrectionSyncMonitor;
 
     public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2)
     {
@@ -129,8 +128,9 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
             mMessageFramer.setScrambleParameters(mDecodeConfigP25Phase2.getScrambleParameters());
         }
 
-        mFrequencyCorrectionSyncMonitor = new FrequencyCorrectionSyncMonitor(mCostasLoop, this);
-        mMessageFramer.setSyncDetectListener(mFrequencyCorrectionSyncMonitor);
+        FrequencyCorrectionSyncMonitor frequencyCorrectionSyncMonitor =
+                new FrequencyCorrectionSyncMonitor(mCostasLoop, this);
+        mMessageFramer.setSyncDetectListener(frequencyCorrectionSyncMonitor);
         mMessageFramer.setListener(getMessageProcessor());
         mMessageFramer.setSampleRate(sampleRate);
 
@@ -200,16 +200,15 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     @Override
     protected void process(SourceEvent sourceEvent)
     {
-        switch(sourceEvent.getEvent())
+        if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_SAMPLE_RATE_CHANGE)
         {
-            case NOTIFICATION_SAMPLE_RATE_CHANGE:
-                mCostasLoop.reset();
-                setSampleRate(sourceEvent.getValue().doubleValue());
-                break;
-            case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
-                //Reset the PLL if/when the tuner PPM changes so that we can re-lock
-                mCostasLoop.reset();
-                break;
+            mCostasLoop.reset();
+            setSampleRate(sourceEvent.getValue().doubleValue());
+        }
+        else if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CORRECTION_CHANGE)
+        {
+            //Reset the PLL if/when the tuner PPM changes so that we can re-lock
+            mCostasLoop.reset();
         }
     }
 
@@ -237,122 +236,5 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
                 }
             }
         };
-    }
-
-    public static void main(String[] args)
-    {
-        UserPreferences userPreferences = new UserPreferences();
-        userPreferences.getJmbeLibraryPreference().setPathJmbeLibrary(Path.of("/home/denny/SDRTrunk/jmbe/jmbe-1.0.9.jar"));
-
-        Channel channel = new Channel("Phase 2 Test", Channel.ChannelType.TRAFFIC);
-        DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
-        channel.setDecodeConfiguration(config);
-
-        Path path = Paths.get("/home/denny/temp/20240309_054833_855787500_Duke_Energy_Monroe_Dicks_Creek_Site_201-24_1_baseband.wav");
-//        ScrambleParameters scrambleParameters = new ScrambleParameters(0x91F14, 0x201, 0x00A);
-//        config.setScrambleParameters(scrambleParameters);
-
-//        Path path = Paths.get("/home/denny/temp/PA-STARNet_ECEN_TRAFFIC_10_baseband_20220610_104744.wav");
-//        ScrambleParameters scrambleParameters = new ScrambleParameters(781824, 2370, 2369);
-//        config.setScrambleParameters(scrambleParameters);
-
-//        Path path = Paths.get("/home/denny/temp/20240303_203244_859412500_Duke_Energy_P25_Lake_Control_28_baseband.wav");
-//        ScrambleParameters scrambleParameters = new ScrambleParameters(0x91F14, 0x2D7, 0x00A);
-//        config.setScrambleParameters(scrambleParameters);
-
-        AliasList aliasList = new AliasList("bogus");
-        ProcessingChain processingChain = new ProcessingChain(channel, new AliasModel());
-        P25TrafficChannelManager trafficChannelManager = new P25TrafficChannelManager(channel);
-        PatchGroupManager patchGroupManager = new PatchGroupManager();
-        P25P2DecoderState ds1 = new P25P2DecoderState(channel, P25P2Message.TIMESLOT_1, trafficChannelManager,
-                patchGroupManager);
-//        Listener<IDecodeEvent> listener = event -> mLog.info("\n>>>>>>> Event: " + event + "\n");
-//        ds1.addDecodeEventListener(listener);
-        ds1.start();
-        P25P2DecoderState ds2 = new P25P2DecoderState(channel, P25P2Message.TIMESLOT_2, trafficChannelManager,
-                patchGroupManager);
-//        ds2.addDecodeEventListener(listener);
-        ds2.start();
-        processingChain.addModule(ds1);
-        processingChain.addModule(ds2);
-        P25P2AudioModule am1 = new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_1, aliasList);
-        am1.start();
-        P25P2AudioModule am2 = new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_2, aliasList);
-        am2.start();
-        processingChain.addModule(am1);
-        processingChain.addModule(am2);
-//        processingChain.addAudioSegmentListener(audioSegment -> mLog.info("**** Audio Segment *** " + audioSegment));
-        MultiChannelState multiChannelState = new MultiChannelState(channel, null, config.getTimeslots());
-        multiChannelState.start();
-//        Broadcaster<SquelchStateEvent> squelchBroadcaster = new Broadcaster<>();
-//        multiChannelState.setSquelchStateListener(squelchBroadcaster);
-//        squelchBroadcaster.addListener(am1.getSquelchStateListener());
-//        squelchBroadcaster.addListener(am2.getSquelchStateListener());
-
-        try(ComplexWaveSource source = new ComplexWaveSource(path.toFile(), false))
-        {
-            P25P2DecoderHDQPSK decoder = new P25P2DecoderHDQPSK(config);
-            decoder.setMessageListener(message -> {
-                mLog.info(message.toString());
-
-                if(message.getTimeslot() == P25P2Message.TIMESLOT_1)
-                {
-                    ds1.receive(message);
-                    am1.receive(message);
-                }
-                else
-                {
-                    ds2.receive(message);
-                    am2.receive(message);
-                }
-
-                if(message.toString().contains("GPS LOCATION"))
-                {
-                    if(message instanceof MacMessage mac)
-                    {
-                        mLog.warn("Mac Structure Class: " + mac.getMacStructure().getClass());
-                        mLog.warn("Opcode:" + mac.getMacStructure().getOpcode().name());
-                    }
-                    else
-                    {
-                        mLog.warn("Class: " + message.getClass());
-                    }
-                }
-            });
-            source.setSourceEventListener(decoder.getSourceEventListener());
-
-            source.setListener(iNativeBuffer -> {
-                Iterator<ComplexSamples> it = iNativeBuffer.iterator();
-                while(it.hasNext())
-                {
-                    ComplexSamples samples = it.next();
-                    decoder.receive(samples);
-                }
-            });
-
-            source.open();
-            decoder.setSampleRate(source.getSampleRate());
-            decoder.start();
-
-            while(true)
-            {
-                source.next(2048, true);
-            }
-        }
-        catch(IOException ioe)
-        {
-            if(ioe.getMessage().contains("End of file reached"))
-            {
-                mLog.info("End of file");
-            }
-            else
-            {
-                mLog.error("I/O Error", ioe);
-            }
-        }
-        catch(Exception ioe)
-        {
-            mLog.error("Error", ioe);
-        }
     }
 }

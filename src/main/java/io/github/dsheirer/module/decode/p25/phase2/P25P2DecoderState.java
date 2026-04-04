@@ -52,9 +52,11 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.MotorolaTalkerAliasComplete;
+import io.github.dsheirer.module.decode.p25.reference.ExtendedFunction;
 import io.github.dsheirer.module.decode.p25.phase2.message.EncryptionSynchronizationSequence;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.IP25ChannelGrantDetailProvider;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacPduType;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.AcknowledgeResponseFNEAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.AcknowledgeResponseFNEExtended;
@@ -304,7 +306,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 processEndPushToTalk(message, mac);
                 break;
             case TDMA_00_NULL_INFORMATION_MESSAGE:
-                processNullInformation(message, mac);
+                processNullInformation(message);
                 break;
             case TDMA_01_GROUP_VOICE_CHANNEL_USER_ABBREVIATED:
             case TDMA_02_UNIT_TO_UNIT_VOICE_CHANNEL_USER_ABBREVIATED:
@@ -693,7 +695,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 }
                 break;
             case PHASE1_4A_TELEPHONE_INTERCONNECT_ANSWER_RESPONSE:
-                if(mac instanceof TelephoneInterconnectAnswerRequest tiar)
+                if(mac instanceof TelephoneInterconnectAnswerRequest)
                 {
                     broadcast(message, mac, getCurrentChannel(), DecodeEventType.REQUEST,
                             "TELEPHONE INTERCONNECT ANSWER REQUEST");
@@ -1047,28 +1049,26 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(getCurrentChannel() == null &&
                 getCurrentFrequency() > 0 &&
-                channelDescriptor.getDownlinkFrequency() == getCurrentFrequency())
+                channelDescriptor.getDownlinkFrequency() == getCurrentFrequency() &&
+                channelDescriptor instanceof APCO25Channel p25)
         {
-            if(channelDescriptor instanceof APCO25Channel p25)
+            if(p25.getTimeslot() == getTimeslot())
             {
-                if(p25.getTimeslot() == getTimeslot())
-                {
-                    setCurrentChannel(channelDescriptor);
-                }
-                else if(getTimeslot() == P25P1Message.TIMESLOT_1)
-                {
-                    APCO25Channel timeslot1 = APCO25Channel.create(p25.getValue().getDownlinkBandIdentifier(),
-                            p25.getValue().getDownlinkChannelNumber() - 1);
-                    timeslot1.setFrequencyBand(p25.getValue().getFrequencyBand());
-                    setCurrentChannel(timeslot1);
-                }
-                else
-                {
-                    APCO25Channel timeslot2 = APCO25Channel.create(p25.getValue().getDownlinkBandIdentifier(),
-                            p25.getValue().getDownlinkChannelNumber() + 1);
-                    timeslot2.setFrequencyBand(p25.getValue().getFrequencyBand());
-                    setCurrentChannel(timeslot2);
-                }
+                setCurrentChannel(channelDescriptor);
+            }
+            else if(getTimeslot() == P25P1Message.TIMESLOT_1)
+            {
+                APCO25Channel timeslot1 = APCO25Channel.create(p25.getValue().getDownlinkBandIdentifier(),
+                        p25.getValue().getDownlinkChannelNumber() - 1);
+                timeslot1.setFrequencyBand(p25.getValue().getFrequencyBand());
+                setCurrentChannel(timeslot1);
+            }
+            else
+            {
+                APCO25Channel timeslot2 = APCO25Channel.create(p25.getValue().getDownlinkBandIdentifier(),
+                        p25.getValue().getDownlinkChannelNumber() + 1);
+                timeslot2.setFrequencyBand(p25.getValue().getFrequencyBand());
+                setCurrentChannel(timeslot2);
             }
         }
     }
@@ -1196,21 +1196,17 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 }
                 break;
             case MOTOROLA_81_GROUP_REGROUP_ADD:
-                if(mac instanceof MotorolaGroupRegroupAddCommand mgrac)
+                if(mac instanceof MotorolaGroupRegroupAddCommand mgrac &&
+                        mPatchGroupManager.addPatchGroup(mgrac.getPatchGroup(), message.getTimestamp()))
                 {
-                    if(mPatchGroupManager.addPatchGroup(mgrac.getPatchGroup(), message.getTimestamp()))
-                    {
-                        broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "ACTIVATE " + mgrac.getPatchGroup());
-                    }
+                    broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "ACTIVATE " + mgrac.getPatchGroup());
                 }
                 break;
             case MOTOROLA_89_GROUP_REGROUP_DELETE:
-                if(mac instanceof MotorolaGroupRegroupDeleteCommand mgrdc)
+                if(mac instanceof MotorolaGroupRegroupDeleteCommand mgrdc &&
+                        mPatchGroupManager.removePatchGroup(mgrdc.getPatchGroup()))
                 {
-                    if(mPatchGroupManager.removePatchGroup(mgrdc.getPatchGroup()))
-                    {
-                        broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "DEACTIVATE " + mgrdc.getPatchGroup());
-                    }
+                    broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "DEACTIVATE " + mgrdc.getPatchGroup());
                 }
                 break;
         }
@@ -1242,7 +1238,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mEndPttOnFacchCounter > 1 && mChannel.isTrafficChannel())
                 {
                     broadcast(new DecoderStateEvent(this, Event.END, State.TEARDOWN, getTimeslot()));
-                    return; //don't issue a reset state after this.
                 }
             }
         }
@@ -1265,22 +1260,15 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processDeny(MacMessage message, MacStructure mac)
     {
-        switch(mac.getOpcode())
+        if(mac.getOpcode() == MacOpcode.PHASE1_67_DENY_RESPONSE && mac instanceof DenyResponse dr)
         {
-            case PHASE1_67_DENY_RESPONSE:
-                if(mac instanceof DenyResponse dr)
-                {
-                    broadcast(message, mac, DecodeEventType.RESPONSE, "DENY: " + dr.getDeniedServiceType() + " REASON:" +
-                            dr.getDenyReason() + " ADDL:" + dr.getAdditionalInfo());
-                }
-                break;
-            case MOTOROLA_A7_DENY_RESPONSE:
-                if(mac instanceof MotorolaDenyResponse dr)
-                {
-                    broadcast(message, mac, DecodeEventType.RESPONSE, "DENY: " + dr.getDeniedServiceType() + " REASON:" +
-                            dr.getDenyReason() + (dr.hasAdditionalInformation() ? " ADDL:" + dr.getAdditionalInfo() : ""));
-                }
-                break;
+            broadcast(message, mac, DecodeEventType.RESPONSE, "DENY: " + dr.getDeniedServiceType() + " REASON:" +
+                    dr.getDenyReason() + " ADDL:" + dr.getAdditionalInfo());
+        }
+        else if(mac.getOpcode() == MacOpcode.MOTOROLA_A7_DENY_RESPONSE && mac instanceof MotorolaDenyResponse dr)
+        {
+            broadcast(message, mac, DecodeEventType.RESPONSE, "DENY: " + dr.getDeniedServiceType() + " REASON:" +
+                    dr.getDenyReason() + (dr.hasAdditionalInformation() ? " ADDL:" + dr.getAdditionalInfo() : ""));
         }
     }
 
@@ -1315,14 +1303,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case MOTOROLA_84_GROUP_REGROUP_EXTENDED_FUNCTION_COMMAND:
                 if(mac instanceof MotorolaGroupRegroupExtendedFunctionCommand efc)
                 {
-                    switch(efc.getExtendedFunction())
+                    if(efc.getExtendedFunction() == ExtendedFunction.GROUP_REGROUP_CANCEL_SUPERGROUP)
                     {
-                        case GROUP_REGROUP_CANCEL_SUPERGROUP:
-                            broadcast(message, mac, DecodeEventType.COMMAND, "CANCEL SUPER GROUP FOR RADIO");
-                            break;
-                        case GROUP_REGROUP_CREATE_SUPERGROUP:
-                            broadcast(message, mac, DecodeEventType.COMMAND, "CREATE SUPER GROUP ADD RADIO" +
-                                    efc.getTargetAddress());
+                        broadcast(message, mac, DecodeEventType.COMMAND, "CANCEL SUPER GROUP FOR RADIO");
+                    }
+                    else if(efc.getExtendedFunction() == ExtendedFunction.GROUP_REGROUP_CREATE_SUPERGROUP)
+                    {
+                        broadcast(message, mac, DecodeEventType.COMMAND, "CREATE SUPER GROUP ADD RADIO" +
+                                efc.getTargetAddress());
                     }
                 }
                 break;
@@ -1363,20 +1351,13 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processRoamingAddress(MacMessage message, MacStructure mac)
     {
-        switch(mac.getOpcode())
+        if(mac.getOpcode() == MacOpcode.PHASE1_76_ROAMING_ADDRESS_COMMAND && mac instanceof RoamingAddressCommand rac)
         {
-            case PHASE1_76_ROAMING_ADDRESS_COMMAND:
-                if(mac instanceof RoamingAddressCommand rac)
-                {
-                    broadcast(message, mac, DecodeEventType.COMMAND, rac.getStackOperation() + " ROAMING ADDRESS STACK");
-                }
-                break;
-            case PHASE1_77_ROAMING_ADDRESS_UPDATE:
-                if(mac instanceof RoamingAddressUpdate rau)
-                {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "ROAMING ADDRESS UPDATE");
-                }
-                break;
+            broadcast(message, mac, DecodeEventType.COMMAND, rac.getStackOperation() + " ROAMING ADDRESS STACK");
+        }
+        else if(mac.getOpcode() == MacOpcode.PHASE1_77_ROAMING_ADDRESS_UPDATE && mac instanceof RoamingAddressUpdate)
+        {
+            broadcast(message, mac, DecodeEventType.COMMAND, "ROAMING ADDRESS UPDATE");
         }
     }
 
@@ -1385,27 +1366,20 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processQueued(MacMessage message, MacStructure mac)
     {
-        switch(mac.getOpcode())
+        if(mac.getOpcode() == MacOpcode.PHASE1_61_QUEUED_RESPONSE && mac instanceof QueuedResponse qr)
         {
-            case PHASE1_61_QUEUED_RESPONSE:
-                if(mac instanceof QueuedResponse qr)
-                {
-                    broadcast(message, mac, DecodeEventType.RESPONSE, "QUEUED - " + qr.getQueuedResponseServiceType() + " REASON:" + qr.getQueuedResponseReason() + " ADDL:" + qr.getAdditionalInfo());
-                }
-                break;
-            case MOTOROLA_A6_QUEUED_RESPONSE:
-                if(mac instanceof MotorolaQueuedResponse qr)
-                {
-                    broadcast(message, mac, DecodeEventType.RESPONSE, "QUEUED - " + qr.getQueuedResponseServiceType() + " REASON:" + qr.getQueuedResponseReason() + " ADDL:" + qr.getAdditionalInfo());
-                }
-                break;
+            broadcast(message, mac, DecodeEventType.RESPONSE, "QUEUED - " + qr.getQueuedResponseServiceType() + " REASON:" + qr.getQueuedResponseReason() + " ADDL:" + qr.getAdditionalInfo());
+        }
+        else if(mac.getOpcode() == MacOpcode.MOTOROLA_A6_QUEUED_RESPONSE && mac instanceof MotorolaQueuedResponse qr)
+        {
+            broadcast(message, mac, DecodeEventType.RESPONSE, "QUEUED - " + qr.getQueuedResponseServiceType() + " REASON:" + qr.getQueuedResponseReason() + " ADDL:" + qr.getAdditionalInfo());
         }
     }
 
     /**
      * Null Information and Null Avoid Zero Bias
      */
-    private void processNullInformation(MacMessage message, MacStructure mac)
+    private void processNullInformation(MacMessage message)
     {
         /**
          * Notionally, we should close out any current call event here, but that causes timing problems because if the
@@ -1498,14 +1472,10 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processLocationRegistration(MacMessage message, MacStructure mac)
     {
-        switch(mac.getOpcode())
+        if(mac.getOpcode() == MacOpcode.PHASE1_6B_LOCATION_REGISTRATION_RESPONSE &&
+                mac instanceof LocationRegistrationResponse lrr)
         {
-            case PHASE1_6B_LOCATION_REGISTRATION_RESPONSE:
-                if(mac instanceof LocationRegistrationResponse lrr)
-                {
-                    broadcast(message, mac, DecodeEventType.RESPONSE, "LOCATION REGISTRATION " + lrr.getResponse());
-                }
-                break;
+            broadcast(message, mac, DecodeEventType.RESPONSE, "LOCATION REGISTRATION " + lrr.getResponse());
         }
     }
 
