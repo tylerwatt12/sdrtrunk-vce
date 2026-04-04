@@ -81,8 +81,8 @@ import org.slf4j.LoggerFactory;
  * The DMRMessageProcessor processes messages from the message framer to extract and reassemble link control and
  * embedded link control parameters.
  */
-public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener, ISourceEventListener,
-                Listener<ComplexSamples>
+public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener,
+                ISourceEventListener, Listener<ComplexSamples>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(DMRDecoder.class);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");

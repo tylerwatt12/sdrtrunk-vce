@@ -31,8 +31,8 @@ import javax.swing.table.AbstractTableModel;
 public abstract class ClearableHistoryModel<T> extends AbstractTableModel
 {
     public static final int DEFAULT_HISTORY_SIZE = 200;
-    private LinkedList<T> mItems = new LinkedList<>();
-    private int mHistorySize = DEFAULT_HISTORY_SIZE;
+    private transient LinkedList<T> mItems = new LinkedList<>();
+    private transient int mHistorySize = DEFAULT_HISTORY_SIZE;
 
     /**
      * Access an item/row by the model index value.

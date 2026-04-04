@@ -20,12 +20,10 @@
 package io.github.dsheirer.dsp.gain;
 
 import io.github.dsheirer.buffer.FloatCircularBuffer;
-import io.github.dsheirer.source.wave.RealWaveSource;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 
 /**
  * Audio automatic gain control.
