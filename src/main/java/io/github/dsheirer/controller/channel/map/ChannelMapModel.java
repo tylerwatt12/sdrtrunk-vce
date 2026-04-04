@@ -37,11 +37,7 @@ public class ChannelMapModel extends AbstractListModel<ChannelMap>
     private static final long serialVersionUID = 1L;
 
     private ObservableList<ChannelMap> mChannelMaps = FXCollections.observableArrayList(ChannelMap.extractor());
-    private Broadcaster<ChannelMapEvent> mEventBroadcaster = new Broadcaster<>();
-
-    public ChannelMapModel()
-    {
-    }
+    private transient Broadcaster<ChannelMapEvent> mEventBroadcaster = new Broadcaster<>();
 
     /**
      * Removes all channel maps from this model and broadcasts a remove/delete event for each.
