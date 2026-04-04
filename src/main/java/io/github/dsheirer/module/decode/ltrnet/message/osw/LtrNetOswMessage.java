@@ -28,17 +28,9 @@ public abstract class LtrNetOswMessage extends LtrNetMessage
 {
     private static final int CHANNEL_FREQUENCY_MESSAGE_TYPE_BIT = 20;
     private static final int CHANNEL_MAP_MESSAGE_TYPE_BIT = 17;
-    private static final int HOME_DIRECTED_GROUP_CALL = 29;
-    private static final int HOME_CHANNEL_IN_USE_MUTE_AUDIO = 30;
-    private static final int GROUP_DO_NOTHING = 253;
-    private static final int GROUP_CWID = 254;
     private static final int GROUP_CHANNEL_IDLE = 255;
 
-    private static final int FREE_ALL_CHANNELS_BUSY = 0;
-    private static final int FREE_LTR_GROUP_CALL = 30;
-    private static final int FREE_LTRNET_GROUP_CALL = 31;
-
-    public LtrNetOswMessage(CorrectedBinaryMessage message, long timestamp)
+    protected LtrNetOswMessage(CorrectedBinaryMessage message, long timestamp)
     {
         super(message, MessageDirection.OSW, timestamp);
     }
@@ -88,6 +80,8 @@ public abstract class LtrNetOswMessage extends LtrNetMessage
                     }
                 case 31:
                     return LtrNetMessageType.OSW_CALL_END;
+                default:
+                    break;
             }
         }
         else

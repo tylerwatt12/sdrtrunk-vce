@@ -60,10 +60,6 @@ public class LTRStandardDecoderState extends DecoderState
     private DecodeEvent mCurrentCallEvent;
     private LTRTalkgroup mCurrentTalkgroup;
 
-    public LTRStandardDecoderState()
-    {
-    }
-
     @Override
     public DecoderType getDecoderType()
     {
@@ -73,9 +69,9 @@ public class LTRStandardDecoderState extends DecoderState
     @Override
     public void receive(IMessage message)
     {
-        if(message.isValid() && message instanceof LTRMessage)
+        if(message.isValid() && message instanceof LTRMessage ltrmessage)
         {
-            switch(((LTRMessage)message).getMessageType())
+            switch(ltrmessage.getMessageType())
             {
                 case CALL:
                     if(message instanceof Call start)
@@ -141,6 +137,7 @@ public class LTRStandardDecoderState extends DecoderState
     /**
      * Performs a full reset
      */
+    @Override
     public void reset()
     {
         super.reset();
@@ -153,11 +150,15 @@ public class LTRStandardDecoderState extends DecoderState
     }
 
     @Override
-    public void init() {}
+    public void init()
+    {
+        // No additional LTR-specific initialization is required.
+    }
 
     /**
      * Performs a temporal reset following a call or other decode event
      */
+    @Override
     protected void resetState()
     {
         super.resetState();
@@ -187,12 +188,12 @@ public class LTRStandardDecoderState extends DecoderState
 
             LtrChannel ltrChannel = new LtrChannel(mLCNTracker.getCurrentChannel());
 
-            Identifier identifier = getIdentifierCollection().getIdentifier(IdentifierClass.CONFIGURATION,
+            Identifier<?> identifier = getIdentifierCollection().getIdentifier(IdentifierClass.CONFIGURATION,
                 Form.CHANNEL_FREQUENCY, Role.ANY);
 
-            if(identifier instanceof FrequencyConfigurationIdentifier)
+            if(identifier instanceof FrequencyConfigurationIdentifier frequencyconfigurationidentifier)
             {
-                ltrChannel.setDownlink(((FrequencyConfigurationIdentifier)identifier).getValue());
+                ltrChannel.setDownlink(frequencyconfigurationidentifier.getValue());
             }
 
             setCurrentChannel(ltrChannel);
@@ -202,11 +203,9 @@ public class LTRStandardDecoderState extends DecoderState
     @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == Event.REQUEST_RESET)
         {
-            case REQUEST_RESET:
-                resetState();
-                break;
+            resetState();
         }
     }
 
@@ -236,7 +235,7 @@ public class LTRStandardDecoderState extends DecoderState
 
         List<Integer> lcns = mLCNTracker.getActiveLCNs();
 
-        if(lcns.size() > 0)
+        if(!lcns.isEmpty())
         {
             sb.append(mLCNTracker.getActiveLCNs());
         }
@@ -290,16 +289,16 @@ public class LTRStandardDecoderState extends DecoderState
         {
             for(int x = 1; x <= 20; x++)
             {
-                mLog.debug("Call " + x + ": " + mCallLCNCounts[x]);
+                mLog.debug("Call {}: {}", x, mCallLCNCounts[x]);
             }
-            mLog.debug("Call Highest Count: " + mCallHighestCount);
+            mLog.debug("Call Highest Count: {}", mCallHighestCount);
             for(int x = 1; x <= 20; x++)
             {
-                mLog.debug("Free " + x + ": " + mFreeLCNCounts[x]);
+                mLog.debug("Free {}: {}", x, mFreeLCNCounts[x]);
             }
-            mLog.debug("Free Highest Count: " + mFreeHighestCount);
+            mLog.debug("Free Highest Count: {}", mFreeHighestCount);
 
-            mLog.debug("Current LCN: " + mCurrentLCN);
+            mLog.debug("Current LCN: {}", mCurrentLCN);
         }
 
         public void reset()
@@ -346,7 +345,7 @@ public class LTRStandardDecoderState extends DecoderState
 
             int count = mFreeLCNCounts[channel];
 
-            int threshold = (int)((double)mFreeHighestCount * 0.2);
+            int threshold = (int)(mFreeHighestCount * 0.2);
 
             return count >= threshold;
         }
@@ -386,11 +385,7 @@ public class LTRStandardDecoderState extends DecoderState
             {
                 for(int x = 1; x <= 20; x++)
                 {
-                    if(mCurrentLCN != 0 && isCurrentChannel(x))
-                    {
-                        active.add(x);
-                    }
-                    else if(isValidChannel(x))
+                    if((mCurrentLCN != 0 && isCurrentChannel(x)) || isValidChannel(x))
                     {
                         active.add(x);
                     }

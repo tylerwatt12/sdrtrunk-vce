@@ -62,54 +62,51 @@ public class LTRNetMessageProcessor implements Listener<CorrectedBinaryMessage>
             switch(message.getLtrNetMessageType())
             {
                 case OSW_TRANSMIT_FREQUENCY_HIGH:
-                    if(message instanceof TransmitFrequencyHigh)
+                    if(message instanceof TransmitFrequencyHigh transmitFrequencyHigh)
                     {
-                        TransmitFrequencyHigh transmitFrequencyHigh = (TransmitFrequencyHigh)message;
                         mTransmitHighMessageMap.put(transmitFrequencyHigh.getChannel(), transmitFrequencyHigh);
                         transmitFrequencyHigh.setFrequencyLow(mTransmitLowMessageMap.get(transmitFrequencyHigh.getChannel()));
                     }
                     break;
                 case OSW_TRANSMIT_FREQUENCY_LOW:
-                    if(message instanceof TransmitFrequencyLow)
+                    if(message instanceof TransmitFrequencyLow transmitFrequencyLow)
                     {
-                        TransmitFrequencyLow transmitFrequencyLow = (TransmitFrequencyLow)message;
                         mTransmitLowMessageMap.put(transmitFrequencyLow.getChannel(), transmitFrequencyLow);
                         transmitFrequencyLow.setFrequencyHigh(mTransmitHighMessageMap.get(transmitFrequencyLow.getChannel()));
                     }
                     break;
                 case OSW_RECEIVE_FREQUENCY_HIGH:
-                    if(message instanceof ReceiveFrequencyHigh)
+                    if(message instanceof ReceiveFrequencyHigh receiveFrequencyHigh)
                     {
-                        ReceiveFrequencyHigh receiveFrequencyHigh = (ReceiveFrequencyHigh)message;
                         mReceiveHighMessageMap.put(receiveFrequencyHigh.getChannel(), receiveFrequencyHigh);
                         receiveFrequencyHigh.setFrequencyLow(mReceiveLowMessageMap.get(receiveFrequencyHigh.getChannel()));
                     }
                     break;
                 case OSW_RECEIVE_FREQUENCY_LOW:
-                    if(message instanceof ReceiveFrequencyLow)
+                    if(message instanceof ReceiveFrequencyLow receiveFrequencyLow)
                     {
-                        ReceiveFrequencyLow receiveFrequencyLow = (ReceiveFrequencyLow)message;
                         mReceiveLowMessageMap.put(receiveFrequencyLow.getChannel(), receiveFrequencyLow);
                         receiveFrequencyLow.setFrequencyHigh(mReceiveHighMessageMap.get(receiveFrequencyLow.getChannel()));
                     }
                     break;
                 case ISW_REGISTRATION_REQUEST_ESN_HIGH:
-                    if(message instanceof RegistrationRequestEsnHigh)
+                    if(message instanceof RegistrationRequestEsnHigh registrationRequestEsnHigh)
                     {
-                        ((RegistrationRequestEsnHigh)message).setEsnLowMessage(mRegistrationRequestEsnLowMessage);
+                        registrationRequestEsnHigh.setEsnLowMessage(mRegistrationRequestEsnLowMessage);
                     }
                     break;
                 case ISW_REGISTRATION_REQUEST_ESN_LOW:
-                    if(message instanceof RegistrationRequestEsnLow)
+                    if(message instanceof RegistrationRequestEsnLow registrationRequestEsnLow)
                     {
-                        ((RegistrationRequestEsnLow)message).setESNHighMessage(mRegistrationRequestEsnHighMessage);
+                        registrationRequestEsnLow.setESNHighMessage(mRegistrationRequestEsnHighMessage);
                     }
                     break;
-                case ISW_CALL_START:
-                case ISW_CALL_END:
+                case ISW_CALL_START, ISW_CALL_END:
                     //Reset the esn messages
                     mRegistrationRequestEsnHighMessage = null;
                     mRegistrationRequestEsnLowMessage = null;
+                    break;
+                default:
                     break;
             }
 
