@@ -81,21 +81,15 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
     @Override
     public void receive(IMessage message)
     {
-        if(message instanceof P25P2Message)
+        if(message instanceof P25P2Message p25p2 && p25p2.isValid())
         {
-            P25P2Message p25p2 = (P25P2Message)message;
-
-            if(p25p2.isValid())
+            if(p25p2.getTimeslot() == 1)
             {
-                switch(p25p2.getTimeslot())
-                {
-                    case 1:
-                        mTimeslot1Processor.process(p25p2);
-                        break;
-                    case 2:
-                        mTimeslot2Processor.process(p25p2);
-                        break;
-                }
+                mTimeslot1Processor.process(p25p2);
+            }
+            else if(p25p2.getTimeslot() == 2)
+            {
+                mTimeslot2Processor.process(p25p2);
             }
         }
     }
@@ -142,17 +136,17 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
          */
         public void process(P25P2Message message)
         {
-            if(message instanceof AbstractVoiceTimeslot)
+            if(message instanceof AbstractVoiceTimeslot abstractvoicetimeslot)
             {
-                process((AbstractVoiceTimeslot)message);
+                process(abstractvoicetimeslot);
             }
-            else if(message instanceof MacMessage)
+            else if(message instanceof MacMessage macmessage)
             {
-                process((MacMessage)message);
+                process(macmessage);
             }
-            else if (message instanceof EncryptionSynchronizationSequence)
+            else if(message instanceof EncryptionSynchronizationSequence encryptionsynchronizationsequence)
             {
-                processEss((EncryptionSynchronizationSequence)message);
+                processEss(encryptionsynchronizationsequence);
             }
         }
 
@@ -186,16 +180,16 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
         {
             switch(macMessage.getMacPduType())
             {
-                case MAC_1_PTT:
-                case MAC_4_ACTIVE:
+                case MAC_1_PTT, MAC_4_ACTIVE:
                     process(macMessage.getMacStructure(), true);
                     break;
-                case MAC_2_END_PTT:
-                case MAC_6_HANGTIME:
+                case MAC_2_END_PTT, MAC_6_HANGTIME:
                     process(macMessage.getMacStructure(), false);
                     break;
                 case MAC_3_IDLE:
                     flush();
+                    break;
+                default:
                     break;
             }
 
@@ -240,6 +234,8 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
                     case TDMA_22_UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
                         processUTUVCUE(mac);
                         break;
+                    default:
+                        break;
                 }
 
                 if(!isActive)
@@ -251,9 +247,8 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
         }
 
         private void processUTUVCUE(MacStructure mac) {
-            if(mac instanceof UnitToUnitVoiceChannelUserExtended)
+            if(mac instanceof UnitToUnitVoiceChannelUserExtended uuvcue)
             {
-                UnitToUnitVoiceChannelUserExtended uuvcue = (UnitToUnitVoiceChannelUserExtended)mac;
                 mCallSequence.setFromIdentifier(uuvcue.getSource().toString());
                 mCallSequence.setToIdentifier(uuvcue.getTargetAddress().toString());
                 mCallSequence.setCallType(CALL_TYPE_INDIVIDUAL);
@@ -264,14 +259,13 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
             }
             else
             {
-                mLog.warn("Expected unit-2-unit voice channel user extended but found: " + mac.getClass());
+                mLog.warn("Expected unit-2-unit voice channel user extended but found: {}", mac.getClass());
             }
         }
 
         private void processGVCUE(MacStructure mac) {
-            if(mac instanceof GroupVoiceChannelUserExtended)
+            if(mac instanceof GroupVoiceChannelUserExtended gvcue)
             {
-                GroupVoiceChannelUserExtended gvcue = (GroupVoiceChannelUserExtended)mac;
                 mCallSequence.setFromIdentifier(gvcue.getSource().toString());
                 mCallSequence.setToIdentifier(gvcue.getGroupAddress().toString());
                 mCallSequence.setCallType(CALL_TYPE_GROUP);
@@ -282,14 +276,13 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
             }
             else
             {
-                mLog.warn("Expected group voice channel user extended but found: " + mac.getClass());
+                mLog.warn("Expected group voice channel user extended but found: {}", mac.getClass());
             }
         }
 
         private void processTIVCU(MacStructure mac) {
-            if(mac instanceof TelephoneInterconnectVoiceChannelUser)
+            if(mac instanceof TelephoneInterconnectVoiceChannelUser tivcu)
             {
-                TelephoneInterconnectVoiceChannelUser tivcu = (TelephoneInterconnectVoiceChannelUser)mac;
                 mCallSequence.setToIdentifier(tivcu.getTargetAddress().toString());
                 mCallSequence.setCallType(CALL_TYPE_TELEPHONE_INTERCONNECT);
                 if(tivcu.getServiceOptions().isEncrypted())
@@ -299,14 +292,13 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
             }
             else
             {
-                mLog.warn("Expected telephone interconnect voice channel user abbreviated but found: " + mac.getClass());
+                mLog.warn("Expected telephone interconnect voice channel user abbreviated but found: {}", mac.getClass());
             }
         }
 
         private void processUTUVCU(MacStructure mac) {
-            if(mac instanceof UnitToUnitVoiceChannelUserAbbreviated)
+            if(mac instanceof UnitToUnitVoiceChannelUserAbbreviated uuvcua)
             {
-                UnitToUnitVoiceChannelUserAbbreviated uuvcua = (UnitToUnitVoiceChannelUserAbbreviated)mac;
                 mCallSequence.setFromIdentifier(uuvcua.getSourceAddress().toString());
                 mCallSequence.setToIdentifier(uuvcua.getTargetAddress().toString());
                 mCallSequence.setCallType(CALL_TYPE_INDIVIDUAL);
@@ -317,14 +309,13 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
             }
             else
             {
-                mLog.warn("Expected unit-2-unit voice channel user abbreviated but found: " + mac.getClass());
+                mLog.warn("Expected unit-2-unit voice channel user abbreviated but found: {}", mac.getClass());
             }
         }
 
         private void processGVCUA(MacStructure mac) {
-            if(mac instanceof GroupVoiceChannelUserAbbreviated)
+            if(mac instanceof GroupVoiceChannelUserAbbreviated gvcua)
             {
-                GroupVoiceChannelUserAbbreviated gvcua = (GroupVoiceChannelUserAbbreviated)mac;
                 mCallSequence.setFromIdentifier(gvcua.getSourceAddress().toString());
                 mCallSequence.setToIdentifier(gvcua.getGroupAddress().toString());
                 mCallSequence.setCallType(CALL_TYPE_GROUP);
@@ -335,15 +326,13 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
             }
             else
             {
-                mLog.warn("Expected group voice channel user abbreviated but found: " + mac.getClass());
+                mLog.warn("Expected group voice channel user abbreviated but found: {}", mac.getClass());
             }
         }
 
         private void processEndPTT(MacStructure mac) {
-            if(mac instanceof EndPushToTalk)
+            if(mac instanceof EndPushToTalk eptt)
             {
-                EndPushToTalk eptt = (EndPushToTalk)mac;
-
                 String source = eptt.getSourceAddress().toString();
 
                 if(source != null && !source.contentEquals("16777215"))
@@ -356,15 +345,13 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
             }
             else
             {
-                mLog.warn("Expected End push-to-talk structure but found: " + mac.getClass());
+                mLog.warn("Expected End push-to-talk structure but found: {}", mac.getClass());
             }
         }
 
         private void processPTT(MacStructure mac) {
-            if(mac instanceof PushToTalk)
+            if(mac instanceof PushToTalk ptt)
             {
-                PushToTalk ptt = (PushToTalk)mac;
-
                 if(mCallSequence == null)
                 {
                     mCallSequence = new MBECallSequence(PROTOCOL);
@@ -380,7 +367,7 @@ public class P25P2CallSequenceRecorder extends MBECallSequenceRecorder
             }
             else
             {
-                mLog.warn("Expected push-to-talk structure but found: " + mac.getClass());
+                mLog.warn("Expected push-to-talk structure but found: {}", mac.getClass());
             }
         }
 
