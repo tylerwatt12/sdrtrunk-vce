@@ -64,7 +64,7 @@ public class MotorolaExtendedFunctionResponse extends VendorISPMessage
         StringBuilder sb = new StringBuilder();
         sb.append(getMessageStub());
         sb.append(" ").append(getDescription());
-        return super.toString();
+        return sb.toString();
     }
 
     public String getDescription()
