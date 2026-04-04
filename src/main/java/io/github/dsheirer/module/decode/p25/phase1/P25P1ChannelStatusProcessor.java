@@ -20,9 +20,9 @@
 
 package io.github.dsheirer.module.decode.p25.phase1;
 
-import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.module.decode.p25.reference.Direction;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.dsp.symbol.Dibit;
 
 /**
  * Processes P25 status dibits to determine if the channel being monitored is the output of a repeater or if
@@ -34,49 +34,11 @@ import io.github.dsheirer.sample.Listener;
  */
 public class P25P1ChannelStatusProcessor implements Listener<Dibit>
 {
-    private int mSubscriberCount = 0;
-    private int mRepeaterCount = 0;
     private Direction mDirection = Direction.OUTBOUND;
 
     public void receive(Dibit status)
     {
-        switch(status)
-        {
-            case D00_PLUS_1:
-                mSubscriberCount++;
-                break;
-            case D01_PLUS_3:
-            case D11_MINUS_3:
-                mRepeaterCount++;
-                break;
-        }
-
-        update();
-    }
-
-    private void update()
-    {
-        //This doesn't appear to be reliable and sometimes it fails on Harris systems.
-//        if(mRepeaterCount > mSubscriberCount)
-//        {
-//            mDirection = Direction.OUTBOUND;
-//
-//            if(mRepeaterCount == Integer.MAX_VALUE)
-//            {
-//                mRepeaterCount = 1000;
-//                mSubscriberCount = 0;
-//            }
-//        }
-//        else
-//        {
-//            mDirection = Direction.INBOUND;
-//
-//            if(mSubscriberCount == Integer.MAX_VALUE)
-//            {
-//                mSubscriberCount = 1000;
-//                mRepeaterCount = 0;
-//            }
-//        }
+        // Status dibits are intentionally ignored. The inbound/outbound heuristic proved unreliable on some systems.
     }
 
     public Direction getDirection()

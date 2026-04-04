@@ -640,7 +640,7 @@ public class P25P1DemodulatorC4FM
         /**
          * Additional offset adjustment based on the location of the triggering sync detector.  The primary sync
          * detector has no additional offset, but a lagging sync detector has a lagging offset.
-         * @return addtional offset from lagging sync detector.
+         * @return additional offset from lagging sync detector.
          */
         public double getAdditionalOffset()
         {

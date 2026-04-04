@@ -86,7 +86,7 @@ public class P25P1NetworkConfigurationMonitor
     private LCNetworkStatusBroadcast mLCNetworkStatusBroadcast;
     private LCNetworkStatusBroadcastExplicit mLCNetworkStatusBroadcastExplicit;
 
-    //Current Site Status Messagese
+    //Current Site Status Messages
     private RFSSStatusBroadcast mTSBKRFSSStatusBroadcast;
     private AMBTCRFSSStatusBroadcast mAMBTCRFSSStatusBroadcast;
     private LCRFSSStatusBroadcast mLCRFSSStatusBroadcast;
