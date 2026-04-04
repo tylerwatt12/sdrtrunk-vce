@@ -27,9 +27,9 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
 
 public class ResponseHeader extends PDUHeader
 {
-    public static final int[] RESPONSE = {8,9,10,11,12,13,14,15};
+    private static final int[] RESPONSE = {8,9,10,11,12,13,14,15};
     public static final int SOURCE_LLID_FLAG = 48;
-    public static final int[] SOURCE_LOGICAL_LINK_ID = {56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79};
+    private static final int[] SOURCE_LOGICAL_LINK_ID = {56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79};
     private Identifier mSourceLLID;
 
     public ResponseHeader(CorrectedBinaryMessage message, boolean passesCRC)

@@ -24,13 +24,13 @@ import io.github.dsheirer.module.decode.p25.reference.ServiceAccessPoint;
 
 public class PacketHeader extends PDUHeader
 {
-    public static final int[] SAP_ID = {10, 11, 12, 13, 14, 15};
+    private static final int[] SAP_ID = {10, 11, 12, 13, 14, 15};
     public static final int FULL_MESSAGE_FLAG = 48;
-    public static final int[] PAD_OCTET_COUNT = {59, 60, 61, 62, 63};
+    private static final int[] PAD_OCTET_COUNT = {59, 60, 61, 62, 63};
     public static final int SYNCHRONIZE_FLAG = 64;
-    public static final int[] PACKET_SEQUENCE_NUMBER = {65,66};
-    public static final int[] MESSAGE_FRAGMENT_SEQUENCE_NUMBER = {67,68,69};
-    public static final int[] DATA_HEADER_OFFSET = {74, 75, 76, 77, 78, 79};
+    private static final int[] PACKET_SEQUENCE_NUMBER = {65,66};
+    private static final int[] MESSAGE_FRAGMENT_SEQUENCE_NUMBER = {67,68,69};
+    private static final int[] DATA_HEADER_OFFSET = {74, 75, 76, 77, 78, 79};
 
     public PacketHeader(CorrectedBinaryMessage message, boolean passesCRC)
     {

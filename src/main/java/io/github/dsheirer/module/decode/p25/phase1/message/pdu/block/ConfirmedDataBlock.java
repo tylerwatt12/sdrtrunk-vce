@@ -29,7 +29,7 @@ import io.github.dsheirer.edac.trellis.ViterbiDecoder_3_4_P25;
 public class ConfirmedDataBlock extends DataBlock
 {
 
-    public static final int[] SEQUENCE_NUMBER = {0, 1, 2, 3, 4, 5, 6};
+    private static final int[] SEQUENCE_NUMBER = {0, 1, 2, 3, 4, 5, 6};
     public static final int PAYLOAD_START = 16;
     public static final int PAYLOAD_END = 144;
 

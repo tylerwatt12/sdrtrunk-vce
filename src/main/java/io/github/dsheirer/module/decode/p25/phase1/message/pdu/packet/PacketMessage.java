@@ -41,8 +41,6 @@ import java.util.List;
  */
 public class PacketMessage extends P25P1Message
 {
-//    private static final Logger mLog = LoggerFactory.getLogger(PacketMessage.class);
-
     private PDUSequence mPDUSequence;
     private BinaryMessage mPayload;
     private CorrectedBinaryMessage mPacketMessage;

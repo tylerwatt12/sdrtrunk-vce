@@ -24,6 +24,10 @@ import io.github.dsheirer.module.decode.p25.reference.PDUType;
 
 public class SNDCPMessageFactory
 {
+    private SNDCPMessageFactory()
+    {
+    }
+
     public static SNDCPMessage create(BinaryMessage binaryMessage, boolean outbound)
     {
         PDUType pduType = SNDCPMessage.getPDUType(binaryMessage, outbound);

@@ -159,7 +159,7 @@ public class ActivateTdsContextRequest extends SNDCPMessage
     }
 
     /**
-     * Number of concurrent UDP/IP compressed connnections when UDP/IP header compression is being used.
+     * Number of concurrent UDP/IP compressed connections when UDP/IP header compression is being used.
      */
     public int getUDPIPStateSlots()
     {

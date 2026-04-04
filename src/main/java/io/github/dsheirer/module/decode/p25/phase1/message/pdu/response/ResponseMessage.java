@@ -138,7 +138,7 @@ public class ResponseMessage extends PDUSequenceMessage
             return missingBlockNumbers;
         }
 
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     /**

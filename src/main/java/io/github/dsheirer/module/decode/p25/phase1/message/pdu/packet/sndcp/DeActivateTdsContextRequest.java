@@ -88,11 +88,11 @@ public class DeActivateTdsContextRequest extends SNDCPMessage
             return thisNSAPI;
         }
 
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }
