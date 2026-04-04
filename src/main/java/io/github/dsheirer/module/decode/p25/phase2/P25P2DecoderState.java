@@ -144,6 +144,11 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P2DecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
+    private static final String GROUP_AFFILIATION_LABEL = "GROUP AFFILIATION";
+    private static final String GROUP_PAGE_LABEL = "GROUP PAGE - TALKGROUP IS ACTIVE ON SITE";
+    private static final String STATUS_LABEL = "STATUS";
+    private static final String UNIT_REGISTRATION_LABEL = "UNIT REGISTRATION";
+    private static final String USER_PAGE_RETURN_LABEL = "USER PAGE-RETURN TO CONTROL CHANNEL";
     private Channel mChannel;
     private PatchGroupManager mPatchGroupManager;
     private P25P2NetworkConfigurationMonitor mNetworkConfigurationMonitor = new P25P2NetworkConfigurationMonitor();
@@ -667,14 +672,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_E8_GROUP_AFFILIATION_RESPONSE_EXTENDED:
                 if(mac instanceof GroupAffiliationResponseAbbreviated || mac instanceof GroupAffiliationResponseExtended)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.RESPONSE, "GROUP AFFILIATION");
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.RESPONSE, GROUP_AFFILIATION_LABEL);
                 }
                 break;
             case PHASE1_6A_GROUP_AFFILIATION_QUERY_ABBREVIATED:
             case PHASE1_EA_GROUP_AFFILIATION_QUERY_EXTENDED:
                 if(mac instanceof GroupAffiliationQueryAbbreviated || mac instanceof GroupAffiliationQueryExtended)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, "GROUP AFFILIATION");
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, GROUP_AFFILIATION_LABEL);
                 }
                 break;
         }
@@ -1553,19 +1558,19 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         if(mac instanceof IndividualPagingWithPriority ip)
         {
             boolean p1 = ip.isTalkgroupPriority1();
-            broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
-                    .channel(getCurrentChannel())
-                    .details(p1 ? "PRIORITY " : "" + "USER PAGE-RETURN TO CONTROL CHANNEL")
-                    .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress1(), message.getTimestamp()))
-                    .timeslot(getTimeslot())
-                    .build());
+                    broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
+                            .channel(getCurrentChannel())
+                            .details((p1 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
+                            .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress1(), message.getTimestamp()))
+                            .timeslot(getTimeslot())
+                            .build());
 
             if(ip.getCount() > 1)
             {
                 boolean p2 = ip.isTalkgroupPriority2();
                 broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                         .channel(getCurrentChannel())
-                        .details(p2 ? "PRIORITY " : "" + "USER PAGE-RETURN TO CONTROL CHANNEL")
+                        .details((p2 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
                         .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress2(), message.getTimestamp()))
                         .timeslot(getTimeslot())
                         .build());
@@ -1575,7 +1580,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     boolean p3 = ip.isTalkgroupPriority3();
                     broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                             .channel(getCurrentChannel())
-                            .details(p3 ? "PRIORITY " : "" + "USER PAGE-RETURN TO CONTROL CHANNEL")
+                            .details((p3 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
                             .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress3(), message.getTimestamp()))
                             .timeslot(getTimeslot())
                             .build());
@@ -1585,7 +1590,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         boolean p4 = ip.isTalkgroupPriority4();
                         broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                                 .channel(getCurrentChannel())
-                                .details(p4 ? "PRIORITY " : "" + "USER PAGE-RETURN TO CONTROL CHANNEL")
+                                .details((p4 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
                                 .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress4(), message.getTimestamp()))
                                 .timeslot(getTimeslot())
                                 .build());
@@ -1597,7 +1602,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                     .channel(getCurrentChannel())
-                    .details("GROUP PAGE - TALKGROUP IS ACTIVE ON SITE")
+                    .details(GROUP_PAGE_LABEL)
                     .identifiers(getIdentifierCollectionForUser(igp.getTargetGroup1(), message.getTimestamp()))
                     .timeslot(getTimeslot())
                     .build());
@@ -1606,7 +1611,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             {
                 broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                         .channel(getCurrentChannel())
-                        .details("GROUP PAGE - TALKGROUP IS ACTIVE ON SITE")
+                        .details(GROUP_PAGE_LABEL)
                         .identifiers(getIdentifierCollectionForUser(igp.getTargetGroup2(), message.getTimestamp()))
                         .timeslot(getTimeslot())
                         .build());
@@ -1615,7 +1620,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 {
                     broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                             .channel(getCurrentChannel())
-                            .details("GROUP PAGE - TALKGROUP IS ACTIVE ON SITE")
+                            .details(GROUP_PAGE_LABEL)
                             .identifiers(getIdentifierCollectionForUser(igp.getTargetGroup3(), message.getTimestamp()))
                             .timeslot(getTimeslot())
                             .build());
@@ -1624,7 +1629,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                                 .channel(getCurrentChannel())
-                                .details("GROUP PAGE - TALKGROUP IS ACTIVE ON SITE")
+                                .details(GROUP_PAGE_LABEL)
                                 .identifiers(getIdentifierCollectionForUser(igp.getTargetGroup4(), message.getTimestamp()))
                                 .timeslot(getTimeslot())
                                 .build());
@@ -1650,7 +1655,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_5A_STATUS_QUERY_ABBREVIATED:
                 if(mac instanceof StatusQueryAbbreviated)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, "STATUS");
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, STATUS_LABEL);
                 }
                 break;
             case PHASE1_D8_STATUS_UPDATE_EXTENDED_VCH:
@@ -1668,13 +1673,13 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_DA_STATUS_QUERY_EXTENDED_VCH:
                 if(mac instanceof StatusQueryExtendedVCH)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, "STATUS");
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, STATUS_LABEL);
                 }
                 break;
             case PHASE1_DB_STATUS_QUERY_EXTENDED_LCCH:
                 if(mac instanceof StatusQueryExtendedLCCH)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, "STATUS");
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.QUERY, STATUS_LABEL);
                 }
                 break;
         }
@@ -1712,7 +1717,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             case PHASE1_6C_UNIT_REGISTRATION_RESPONSE_ABBREVIATED:
             case PHASE1_EC_UNIT_REGISTRATION_RESPONSE_EXTENDED:
-                broadcast(message, mac, getCurrentChannel(), DecodeEventType.RESPONSE, "UNIT REGISTRATION");
+                broadcast(message, mac, getCurrentChannel(), DecodeEventType.RESPONSE, UNIT_REGISTRATION_LABEL);
                 break;
             case PHASE1_6D_UNIT_REGISTRATION_COMMAND_ABBREVIATED:
                 broadcast(message, mac, getCurrentChannel(), DecodeEventType.COMMAND, "UNIT REGISTER");
