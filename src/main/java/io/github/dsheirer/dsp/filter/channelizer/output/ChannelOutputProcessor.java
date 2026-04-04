@@ -28,7 +28,7 @@ import org.slf4j.LoggerFactory;
 
 public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputProcessor
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelOutputProcessor.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelOutputProcessor.class);
 
     private Dispatcher<List<float[]>> mChannelResultsDispatcher;
     private HeartbeatManager mHeartbeatManager;
@@ -44,20 +44,20 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
      * @param heartbeatManager to receive pings on the dispatcher thread
      * @param threadName for the dispatcher
      */
-    public ChannelOutputProcessor(int inputChannelCount, HeartbeatManager heartbeatManager, String threadName)
+    protected ChannelOutputProcessor(int inputChannelCount, HeartbeatManager heartbeatManager, String threadName)
     {
         mInputChannelCount = inputChannelCount;
         //Process 1/10th of the sample rate per second at a rate of 20 times a second (200% of anticipated rate)
         mHeartbeatManager = heartbeatManager;
-        mChannelResultsDispatcher = new Dispatcher(threadName,50, mHeartbeatManager);
+        mChannelResultsDispatcher = new Dispatcher<>(threadName,50, mHeartbeatManager);
         mChannelResultsDispatcher.setListener(floats -> {
             try
             {
                 process(floats);
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                mLog.error("Error processing channel results", t);
+                mLog.error("Error processing channel results", e);
             }
         });
     }
@@ -118,6 +118,6 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
     @Override
     public int getInputChannelCount()
     {
-        return mInputChannelCount;
+        return getPolyphaseChannelIndexCount();
     }
 }

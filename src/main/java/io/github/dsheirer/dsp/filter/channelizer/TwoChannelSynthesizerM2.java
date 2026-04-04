@@ -143,7 +143,7 @@ public class TwoChannelSynthesizerM2
 
             //Note: in order to use Java's ability to leverage SIMD intrinsics, we perform filtering in two steps
             //(multiply then accumulate) since our filter and data are structured with I and Q vectors interleaved.
-            //This approach allows the Hotspot compiler to more easily recognize the scalor operations.
+            //This approach allows the Hotspot compiler to more easily recognize the scalar operations.
 
             //Multiply data samples by the I/Q interleaved filter to form the vector product
             for(int y = 0; y < mSerpentineDataBuffer.length; y++)
