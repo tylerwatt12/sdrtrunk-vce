@@ -79,6 +79,7 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
         return mHeaders.length;
     }
 
+    @Override
     public String getColumnName(int column)
     {
         return mHeaders[column];
@@ -147,17 +148,11 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
     {
         switch(columnIndex)
         {
-            case COLUMN_DURATION:
-            case COLUMN_TIME:
+            case COLUMN_DURATION, COLUMN_TIME:
                 return Long.class;
-            case COLUMN_DETAILS:
-            case COLUMN_EVENT:
+            case COLUMN_DETAILS, COLUMN_EVENT:
                 return String.class;
-            case COLUMN_FREQUENCY:
-            case COLUMN_FROM_ALIAS:
-            case COLUMN_FROM_ID:
-            case COLUMN_TO_ALIAS:
-            case COLUMN_TO_ID:
+            case COLUMN_FREQUENCY, COLUMN_FROM_ALIAS, COLUMN_FROM_ID, COLUMN_TO_ALIAS, COLUMN_TO_ID:
                 return IdentifierCollection.class;
             case COLUMN_CHANNEL:
                 return String.class;
