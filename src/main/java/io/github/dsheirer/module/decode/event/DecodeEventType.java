@@ -21,6 +21,8 @@ package io.github.dsheirer.module.decode.event;
 
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.Set;
+import org.jspecify.annotations.NonNull;
 
 /**
  * Enumeration of event types for decoded events.
@@ -89,54 +91,54 @@ public enum DecodeEventType
     /**
      * Encrypted voice call event types for filtering
      */
-    public static final EnumSet<DecodeEventType> VOICE_CALLS_ENCRYPTED = EnumSet.of(DecodeEventType.CALL_ENCRYPTED,
+    public static final Set<@NonNull DecodeEventType> VOICE_CALLS_ENCRYPTED = Set.copyOf(EnumSet.of(DecodeEventType.CALL_ENCRYPTED,
         DecodeEventType.CALL_GROUP_ENCRYPTED, DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED,
-        DecodeEventType.CALL_INTERCONNECT_ENCRYPTED, DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED);
+        DecodeEventType.CALL_INTERCONNECT_ENCRYPTED, DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED));
 
     /**
      * Voice call event types for filtering
      */
-    public static final EnumSet<DecodeEventType> VOICE_CALLS = EnumSet.of(DecodeEventType.CALL, DecodeEventType.CALL_GROUP,
+    public static final Set<@NonNull DecodeEventType> VOICE_CALLS = Set.copyOf(EnumSet.of(DecodeEventType.CALL, DecodeEventType.CALL_GROUP,
             DecodeEventType.CALL_PATCH_GROUP, DecodeEventType.CALL_ALERT, DecodeEventType.CALL_DETECT,
             DecodeEventType.CALL_DO_NOT_MONITOR, DecodeEventType.CALL_END, DecodeEventType.CALL_INTERCONNECT,
             DecodeEventType.CALL_UNIQUE_ID, DecodeEventType.CALL_UNIT_TO_UNIT, DecodeEventType.CALL_NO_TUNER,
-            DecodeEventType.CALL_TIMEOUT);
+            DecodeEventType.CALL_TIMEOUT));
 
     /**
      * Command event types for filtering
      */
-    public static final EnumSet<DecodeEventType> COMMANDS = EnumSet.of(DecodeEventType.ANNOUNCEMENT,
+    public static final Set<@NonNull DecodeEventType> COMMANDS = Set.copyOf(EnumSet.of(DecodeEventType.ANNOUNCEMENT,
             DecodeEventType.STATION_ID, DecodeEventType.ACKNOWLEDGE, DecodeEventType.PAGE, DecodeEventType.QUERY,
             DecodeEventType.RADIO_CHECK, DecodeEventType.STATUS, DecodeEventType.COMMAND, DecodeEventType.EMERGENCY,
-            DecodeEventType.NOTIFICATION, DecodeEventType.FUNCTION, DecodeEventType.DYNAMIC_REGROUP);
+            DecodeEventType.NOTIFICATION, DecodeEventType.FUNCTION, DecodeEventType.DYNAMIC_REGROUP));
 
     /**
      * Data call event types for filtering
      */
-    public static final EnumSet<DecodeEventType> DATA_CALLS = EnumSet.of(DecodeEventType.DATA_CALL,
+    public static final Set<@NonNull DecodeEventType> DATA_CALLS = Set.copyOf(EnumSet.of(DecodeEventType.DATA_CALL,
             DecodeEventType.DATA_CALL_ENCRYPTED, DecodeEventType.DATA_PACKET, DecodeEventType.GPS,
             DecodeEventType.IP_PACKET, DecodeEventType.UDP_PACKET, DecodeEventType.SDM, DecodeEventType.ID_ANI,
-            DecodeEventType.ID_UNIQUE);
+            DecodeEventType.ID_UNIQUE));
 
     /**
      * Registration event types for filtering
      */
-    public static final EnumSet<DecodeEventType> REGISTRATION = EnumSet.of(DecodeEventType.AFFILIATE,
+    public static final Set<@NonNull DecodeEventType> REGISTRATION = Set.copyOf(EnumSet.of(DecodeEventType.AFFILIATE,
             DecodeEventType.AUTOMATIC_REGISTRATION_SERVICE, DecodeEventType.REGISTER, DecodeEventType.REGISTER_ESN,
-            DecodeEventType.DEREGISTER, DecodeEventType.REQUEST, DecodeEventType.RESPONSE, DecodeEventType.RESPONSE_PACKET);
+            DecodeEventType.DEREGISTER, DecodeEventType.REQUEST, DecodeEventType.RESPONSE, DecodeEventType.RESPONSE_PACKET));
 
     /**
      * All other event types of this enumeration that are not included in the groupings above.
      */
-    public static final EnumSet<DecodeEventType> OTHERS = EnumSet.copyOf(Arrays.stream(DecodeEventType.values())
-            .filter(decodeEventType -> !decodeEventType.isGrouped()).toList());
+    public static final Set<@NonNull DecodeEventType> OTHERS = Set.copyOf(EnumSet.copyOf(Arrays.stream(DecodeEventType.values())
+            .filter(decodeEventType -> !decodeEventType.isGrouped()).toList()));
 
     /**
      * Voice call event types.
      */
-    public static final EnumSet<DecodeEventType> VOICE_CALL_EVENTS = EnumSet.of(CALL, CALL_ENCRYPTED, CALL_GROUP,
+    public static final Set<@NonNull DecodeEventType> VOICE_CALL_EVENTS = Set.copyOf(EnumSet.of(CALL, CALL_ENCRYPTED, CALL_GROUP,
             CALL_GROUP_ENCRYPTED, CALL_PATCH_GROUP, CALL_PATCH_GROUP_ENCRYPTED, CALL_INTERCONNECT,
-            CALL_INTERCONNECT_ENCRYPTED, CALL_UNIT_TO_UNIT, CALL_UNIT_TO_UNIT_ENCRYPTED);
+            CALL_INTERCONNECT_ENCRYPTED, CALL_UNIT_TO_UNIT, CALL_UNIT_TO_UNIT_ENCRYPTED));
 
     /**
      * Constructor
@@ -178,6 +180,7 @@ public enum DecodeEventType
     /**
      * Uses label as the default string value.
      */
+    @Override
     public String toString()
     {
         return mLabel;
