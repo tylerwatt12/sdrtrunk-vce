@@ -266,12 +266,9 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
 
                     for(Identifier identifier2: identifiers2)
                     {
-                        if(identifier2 instanceof TalkgroupIdentifier tgId2 && tgId2.getValue() == talkgroup1)
-                        {
-                            return true;
-                        }
-                        else if(identifier2 instanceof PatchGroupIdentifier pgId2 &&
-                                pgId2.getValue().getPatchGroup().getValue() == talkgroup1)
+                        if((identifier2 instanceof TalkgroupIdentifier tgId2 && tgId2.getValue() == talkgroup1) ||
+                            (identifier2 instanceof PatchGroupIdentifier pgId2 &&
+                                pgId2.getValue().getPatchGroup().getValue() == talkgroup1))
                         {
                             return true;
                         }
