@@ -71,9 +71,6 @@ public class UMBTCTelephoneInterconnectRequestExplicitDialing extends UMBTCMessa
     {
         if(mVoiceServiceOptions == null && hasDataBlock(0))
         {
-            ;
-        }
-        {
             mVoiceServiceOptions = new VoiceServiceOptions(getDataBlock(0).getMessage().getInt(BLOCK_0_SERVICE_OPTIONS));
         }
 
@@ -124,13 +121,10 @@ public class UMBTCTelephoneInterconnectRequestExplicitDialing extends UMBTCMessa
                 return getDataBlock(0).getMessage().getInt(startIndex, startIndex + 3);
             }
         }
-        else if(digit <= 34)             //Block 1
+        else if(digit <= 34 && hasDataBlock(1))             //Block 1
         {
-            if(hasDataBlock(1))
-            {
-                int startIndex = 0 + ((digit - 19) * 4);
-                return getDataBlock(0).getMessage().getInt(startIndex, startIndex + 3);
-            }
+            int startIndex = (digit - 19) * 4;
+            return getDataBlock(1).getMessage().getInt(startIndex, startIndex + 3);
         }
 
         return -1;
