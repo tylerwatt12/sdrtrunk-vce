@@ -126,7 +126,8 @@ public class P25P1DemodulatorC4FM
         int symbolsSinceLastSync = mSymbolsSinceLastSync;
 
         int samplesPointer = 0;
-        float softSymbol, scorePrimary;
+        float softSymbol;
+        float scorePrimary;
         Dibit delayedSymbol;
         Correction correctionCandidate;
 
@@ -159,15 +160,12 @@ public class P25P1DemodulatorC4FM
             while(bufferPointer < bufferReloadThreshold)
             {
                 bufferPointer++;
-                samplePoint--;
+                samplePoint -= 1.0f;
 
                 if(samplePoint < 1)
                 {
                     symbolsSinceLastSync++;
                     softSymbol = mEqualizer.getEqualizedSymbol(mBuffer[bufferPointer], mBuffer[bufferPointer + 1], samplePoint);
-
-                    //Debug utility for viewing demodulation process
-//                    getSyncResultsViewer().symbol(softSymbol);
 
                     //Broadcast the decoded soft symbol to an optionally registered listener (ie Symbol view in channel panel).
                     mFeedbackDecoder.broadcast(softSymbol);
@@ -1126,8 +1124,6 @@ public class P25P1DemodulatorC4FM
             float balanceCorrection = (balancePlus3Symbols + balanceMinus3Symbols) / 2f;
             balanceCorrection = Math.min(balanceCorrection, SOFT_SYMBOL_QUADRANT_BOUNDARY);
             balanceCorrection = Math.max(balanceCorrection, -SOFT_SYMBOL_QUADRANT_BOUNDARY);
-
-            //            System.out.println("Balance [" + balanceAverage + "] Plus3 [" + balancePlus3Symbols + "] Minus3 [" + balanceMinus3Symbols + "]");
             gainAccumulator /= (24.0f * Dibit.D01_PLUS_3.getIdealPhase());
 
             //Recalculate the optimization score using the adjusted equalizer settings
