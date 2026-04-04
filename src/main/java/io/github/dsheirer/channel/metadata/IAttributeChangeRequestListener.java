@@ -22,5 +22,5 @@ import io.github.dsheirer.sample.Listener;
 
 public interface IAttributeChangeRequestListener
 {
-    public Listener<AttributeChangeRequest> getAttributeChangeRequestListener();
+    public Listener<AttributeChangeRequest<?>> getAttributeChangeRequestListener();
 }

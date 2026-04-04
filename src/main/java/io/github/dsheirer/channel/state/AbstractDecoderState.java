@@ -31,14 +31,11 @@ import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-public abstract class AbstractDecoderState extends Module implements ActivitySummaryProvider, Listener<IMessage>,
+public abstract class AbstractDecoderState extends Module implements ActivitySummaryProvider,
     IDecodeEventProvider, IDecoderStateEventListener, IDecoderStateEventProvider, IMessageListener,
     IdentifierUpdateProvider, IdentifierUpdateListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AbstractDecoderState.class);
     protected String DIVIDER1 = "======================================================\n";
     protected String DIVIDER2 = "------------------------------------------------------\n";
     /* This has to be a broadcaster in order for references to persist */
@@ -96,11 +93,6 @@ public abstract class AbstractDecoderState extends Module implements ActivitySum
      * reset events.
      */
     public abstract void receiveDecoderStateEvent(DecoderStateEvent event);
-
-    /**
-     * Activity Summary - textual summary of activity observed by the channel state.
-     */
-    public abstract String getActivitySummary();
 
     /**
      * Broadcasts a decode event to any registered listeners

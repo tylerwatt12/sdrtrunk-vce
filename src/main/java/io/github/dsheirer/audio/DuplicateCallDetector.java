@@ -51,9 +51,9 @@ import org.slf4j.LoggerFactory;
  */
 public class DuplicateCallDetector implements Listener<AudioSegment>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DuplicateCallDetector.class);
+    private static final Logger mLog = LoggerFactory.getLogger(DuplicateCallDetector.class);
     private ICallManagementProvider mCallManagementProvider;
-    private Map<String,SystemDuplicateCallDetector> mDetectorMap = new HashMap();
+    private Map<String,SystemDuplicateCallDetector> mDetectorMap = new HashMap<>();
     protected Listener<AudioSegment> mDuplicateCallDetectionListener;
 
     /**
@@ -91,19 +91,14 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
             Identifier identifier = audioSegment.getIdentifierCollection()
                 .getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
 
-            if(identifier instanceof SystemConfigurationIdentifier)
+            if(identifier instanceof SystemConfigurationIdentifier systemconfigurationidentifier)
             {
-                String system = ((SystemConfigurationIdentifier)identifier).getValue();
+                String system = systemconfigurationidentifier.getValue();
 
                 synchronized(mDetectorMap)
                 {
-                    SystemDuplicateCallDetector detector = mDetectorMap.get(system);
-
-                    if(detector == null)
-                    {
-                        detector = new SystemDuplicateCallDetector(mCallManagementProvider, system);
-                        mDetectorMap.put(system, detector);
-                    }
+                    SystemDuplicateCallDetector detector = mDetectorMap.computeIfAbsent(system,
+                        key -> new SystemDuplicateCallDetector(mCallManagementProvider, key));
 
                     detector.add(audioSegment);
                 }
@@ -390,10 +385,9 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
                     ThreadPool.CACHED.submit(this::stopMonitoring);
                 }
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                mLog.error("Unknown error while processing audio segments for duplicate call detection.  Please report " +
-                    "this to the developer.", t);
+                mLog.error("Unknown error while processing audio segments for duplicate call detection.  Please report this to the developer.", e);
             }
             finally
             {
