@@ -40,10 +40,9 @@ import java.util.List;
  */
 public class RS_12_9_DMR
 {
-    /**
-     * Primitive polynomial used to generate the EXPONENTS_TABLE and LOG_TABLE values. See p.142, B.14
-     */
-    private static final int PRIMITIVE_POLYNOMIAL = 0x11D;
+    private RS_12_9_DMR()
+    {
+    }
 
     // See DMR AI. spec. page 142, Table B.19
     private static final int[] EXPONENTS_TABLE = {
@@ -261,14 +260,10 @@ public class RS_12_9_DMR
     {
         int[] eep = new int[POLYNOMIAL_MAXIMUM_DEGREE];
         int[] product = multiplyPolynomials(elp, syndrome);
-        int i;
 
-        for (i = 0; i < CHECKSUM_SIZE; i++)
-        {
-            eep[i] = product[i];
-        }
+        System.arraycopy(product, 0, eep, 0, CHECKSUM_SIZE);
 
-        for (; i < POLYNOMIAL_MAXIMUM_DEGREE; i++)
+        for (int i = CHECKSUM_SIZE; i < POLYNOMIAL_MAXIMUM_DEGREE; i++)
         {
             eep[i] = 0;
         }
@@ -345,10 +340,7 @@ public class RS_12_9_DMR
                 }
 
                 // error_locator_poly = psi2
-                for (i = 0; i < POLYNOMIAL_MAXIMUM_DEGREE; i++)
-                {
-                    elp[i] = psi2[i];
-                }
+                System.arraycopy(psi2, 0, elp, 0, POLYNOMIAL_MAXIMUM_DEGREE);
             }
 
             multiplyPolynomialByZ(bigD);
@@ -403,7 +395,8 @@ public class RS_12_9_DMR
 
         int[] syndrome = new int[POLYNOMIAL_MAXIMUM_DEGREE];
 
-        int i, temp;
+        int i;
+        int temp;
 
         for(int j = 0; j < 3;  j++)
         {
@@ -448,7 +441,8 @@ public class RS_12_9_DMR
         int i;
         int j;
         int errorMask;
-        int num, denom;
+        int num;
+        int denom;
 
         //Error Locator Polynomial (ELP)
         int[] elp = calculateELP(syndrome);
@@ -475,36 +469,29 @@ public class RS_12_9_DMR
                 }
             }
 
-            int errorsCorrected = 0;
-
             // Evaluates rs_12_9_error_evaluator_poly/rs_12_9_error_locator_poly' at the roots
             // alpha^(-i) for error locs i.
-            for (r = 0; r < roots.size(); r++)
+            i = roots.get(0);
+
+            // Evaluate rs_12_9_error_evaluator_poly at alpha^(-i)
+            num = 0;
+            for (j = 0; j < POLYNOMIAL_MAXIMUM_DEGREE; j++)
             {
-                i = roots.get(r);
-
-                // Evaluate rs_12_9_error_evaluator_poly at alpha^(-i)
-                num = 0;
-                for (j = 0; j < POLYNOMIAL_MAXIMUM_DEGREE; j++)
-                {
-                    num ^= galoisMultiplication(eep[j], EXPONENTS_TABLE[((255 - i) * j) % 255]);
-                }
-
-                // Evaluate rs_12_9_error_evaluator_poly' (derivative) at alpha^(-i). All odd powers disappear.
-                denom = 0;
-
-                for (j = 1; j < POLYNOMIAL_MAXIMUM_DEGREE; j += 2)
-                {
-                    denom ^= galoisMultiplication(elp[j], EXPONENTS_TABLE[((255-i)*(j-1)) % 255]);
-                }
-
-                errorMask = galoisMultiplication(num, galoisInverse(denom));
-                int index = CODEWORD_SIZE - i - 1;
-                codeword[index] ^= errorMask;
-                return index;
+                num ^= galoisMultiplication(eep[j], EXPONENTS_TABLE[((255 - i) * j) % 255]);
             }
 
-            return errorsCorrected;
+            // Evaluate rs_12_9_error_evaluator_poly' (derivative) at alpha^(-i). All odd powers disappear.
+            denom = 0;
+
+            for (j = 1; j < POLYNOMIAL_MAXIMUM_DEGREE; j += 2)
+            {
+                denom ^= galoisMultiplication(elp[j], EXPONENTS_TABLE[((255-i)*(j-1)) % 255]);
+            }
+
+            errorMask = galoisMultiplication(num, galoisInverse(denom));
+            int index = CODEWORD_SIZE - i - 1;
+            codeword[index] ^= errorMask;
+            return index;
         }
 
         return ERRORS_CANT_BE_CORRECTED;
