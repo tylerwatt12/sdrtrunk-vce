@@ -71,7 +71,7 @@ import org.slf4j.LoggerFactory;
  */
 public class AliasList
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AliasList.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AliasList.class);
     private EnumMap<@NonNull Protocol,TalkgroupAliasList> mTalkgroupProtocolMap = new EnumMap<>(Protocol.class);
     private EnumMap<@NonNull Protocol,RadioAliasList> mRadioProtocolMap = new EnumMap<>(Protocol.class);
     private EnumMap<@NonNull DCSCode,Alias> mDCSCodeAliasMap = new EnumMap<>(DCSCode.class);
@@ -107,10 +107,12 @@ public class AliasList
      */
     public void addAlias(Alias alias)
     {
-        if(alias != null)
+        if(alias == null)
         {
-            alias.getAliasIdentifiers().stream().forEach(aliasID -> addAliasID(aliasID, alias));
+            return;
         }
+
+        alias.getAliasIdentifiers().forEach(aliasID -> addAliasID(aliasID, alias));
 
         if(alias.hasActions())
         {
