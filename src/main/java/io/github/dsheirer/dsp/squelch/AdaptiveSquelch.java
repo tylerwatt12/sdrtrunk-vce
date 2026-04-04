@@ -24,8 +24,6 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceEvent;
 import java.time.Duration;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Adaptive squelch control that optionally tracks the noise floor and auto-adjusts squelch threshold.
@@ -34,7 +32,6 @@ import org.slf4j.LoggerFactory;
  */
 public class AdaptiveSquelch implements Listener<SourceEvent>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(AdaptiveSquelch.class);
     private static final long AUTO_ADJUST_PERIOD_MS = Duration.ofSeconds(5).toMillis();
     private SinglePoleIirFilter mFilter;
     private float mPower = 0.0f;
@@ -314,7 +311,7 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
                 broadcast(SourceEvent.squelchThreshold(null, getSquelchThreshold()));
                 break;
             case REQUEST_CHANGE_SQUELCH_AUTO_TRACK:
-                setSquelchAutoTrack(sourceEvent.getValue().intValue() == 1 ? true : false);
+                setSquelchAutoTrack(sourceEvent.getValue().intValue() == 1);
                 break;
             case REQUEST_CURRENT_SQUELCH_AUTO_TRACK:
                 broadcast(SourceEvent.squelchAutoTrack(getSquelchAutoTrack()));
