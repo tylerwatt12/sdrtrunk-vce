@@ -143,7 +143,7 @@ public class MBECallSequence
      * Sets the from radio identifier
      * @param identifier for from entity
      */
-    public void setFromIdentifier(Identifier identifier)
+    public void setFromIdentifier(Identifier<?> identifier)
     {
         if(identifier != null)
         {
@@ -179,7 +179,7 @@ public class MBECallSequence
      * Sets the TO identifier
      * @param identifier for the TO entity
      */
-    public void setToIdentifier(Identifier identifier)
+    public void setToIdentifier(Identifier<?> identifier)
     {
         if(identifier != null)
         {

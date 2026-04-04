@@ -52,9 +52,9 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
     private static final List<String> mLibraryLoadStatusLogged = new ArrayList<>();
     private IAudioCodec mAudioCodec;
     private final UserPreferences mUserPreferences;
-    private static Class sLoadedJmbeAudioConverterClass;
+    private static Class<?> sLoadedJmbeAudioConverterClass;
 
-    public JmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
+    protected JmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
     {
         super(aliasList, timeslot, DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH);
         mUserPreferences = userPreferences;
@@ -135,7 +135,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
             {
                 if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY))
                 {
-                    mLog.info("Loading JMBE library from [" + path + "]");
+                    mLog.info("Loading JMBE library from [{}]", path);
                 }
 
                 try
@@ -143,25 +143,25 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
                     URLClassLoader childClassLoader = new URLClassLoader(new URL[]{path.toUri().toURL()},
                             this.getClass().getClassLoader());
 
-                    sLoadedJmbeAudioConverterClass = Class.forName("jmbe.JMBEAudioLibrary", true, childClassLoader);
+                    setLoadedJmbeAudioConverterClass(Class.forName("jmbe.JMBEAudioLibrary", true, childClassLoader));
                 }
                 catch(IllegalArgumentException iae)
                 {
                     if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY + getCodecName()))
                     {
-                        mLog.error("Couldn't load JMBE audio conversion library - " + iae.getMessage());
+                        mLog.error("Couldn't load JMBE audio conversion library - {}", iae.getMessage());
                         mLibraryLoadStatusLogged.add(JMBE_AUDIO_LIBRARY + getCodecName());
                     }
                 }
-                catch(MalformedURLException mue)
+                catch(MalformedURLException _)
                 {
                     if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY))
                     {
-                        mLog.error("Couldn't load JMBE audio conversion library from path [" + path + "]");
+                        mLog.error("Couldn't load JMBE audio conversion library from path [{}]", path);
                         mLibraryLoadStatusLogged.add(JMBE_AUDIO_LIBRARY);
                     }
                 }
-                catch(ClassNotFoundException e1)
+                catch(ClassNotFoundException _)
                 {
                     if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY))
                     {
@@ -187,7 +187,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
 
                         if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY))
                         {
-                            mLog.info("JMBE audio conversion library loaded: " + library.getVersion());
+                            mLog.info("JMBE audio conversion library loaded: {}", library.getVersion());
                             mLibraryLoadStatusLogged.add(JMBE_AUDIO_LIBRARY);
                         }
                     }
@@ -195,7 +195,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
                     {
                         if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY))
                         {
-                            mLog.warn("JMBE library version 1.0.0 or higher is required - found: " + library.getVersion());
+                            mLog.warn("JMBE library version 1.0.0 or higher is required - found: {}", library.getVersion());
                             mLibraryLoadStatusLogged.add(JMBE_AUDIO_LIBRARY);
                         }
                     }
@@ -225,7 +225,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
                     mLibraryLoadStatusLogged.add(JMBE_AUDIO_LIBRARY);
                 }
             }
-            catch(IllegalAccessException e1)
+            catch(IllegalAccessException _)
             {
                 if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY))
                 {
@@ -233,7 +233,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
                     mLibraryLoadStatusLogged.add(JMBE_AUDIO_LIBRARY);
                 }
             }
-            catch(NoSuchMethodException nsme)
+            catch(NoSuchMethodException _)
             {
                 if(!mLibraryLoadStatusLogged.contains(JMBE_AUDIO_LIBRARY))
                 {
@@ -252,5 +252,10 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
         }
 
         mAudioCodec = audioConverter;
+    }
+
+    private static void setLoadedJmbeAudioConverterClass(Class<?> loadedJmbeAudioConverterClass)
+    {
+        sLoadedJmbeAudioConverterClass = loadedJmbeAudioConverterClass;
     }
 }

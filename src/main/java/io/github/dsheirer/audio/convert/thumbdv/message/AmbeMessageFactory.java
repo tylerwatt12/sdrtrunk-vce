@@ -45,6 +45,9 @@ public class AmbeMessageFactory
     private static final int INDEX_PACKET_TYPE = 3;
     private static final int INDEX_CONTROL_PACKET_TYPE = 4;
 
+    private AmbeMessageFactory()
+    {
+    }
 
     public static AmbeMessage getMessage(byte[] data)
     {
@@ -78,6 +81,8 @@ public class AmbeMessageFactory
                         return new SetSpeechFormatResponse(data);
                     case PKT_VERSION_STRING:
                         return new VersionResponse(data);
+                    default:
+                        return new UnknownResponse(data);
                 }
             }
             else if(data[INDEX_PACKET_TYPE] == CHANNEL_PACKET)
