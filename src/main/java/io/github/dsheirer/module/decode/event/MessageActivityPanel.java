@@ -117,6 +117,17 @@ public class MessageActivityPanel extends JPanel implements Listener<ProcessingC
         }
     }
 
+    @Override
+    public void removeNotify()
+    {
+        if(mTableColumnWidthMonitor != null)
+        {
+            mTableColumnWidthMonitor.dispose();
+        }
+
+        super.removeNotify();
+    }
+
     /**
      * Row visibility filter for messages
      */
