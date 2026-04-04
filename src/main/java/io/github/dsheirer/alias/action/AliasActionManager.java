@@ -28,8 +28,6 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageListener;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -42,7 +40,6 @@ import java.util.List;
  */
 public class AliasActionManager extends Module implements IMessageListener, Listener<IMessage>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AliasActionManager.class);
     private AliasList mAliasList;
 
     public AliasActionManager(AliasList aliasList)
@@ -90,7 +87,7 @@ public class AliasActionManager extends Module implements IMessageListener, List
     @Override
     public void stop()
     {
-        //No actions neeeded
+        //No actions needed
     }
 
     /**
