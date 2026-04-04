@@ -58,14 +58,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
     //Map of up to 16 band identifiers per RFSS.  These identifier update messages are inserted into any message that
     // conveys channel information so that the uplink/downlink frequencies can be calculated
-    private Map<Integer,IFrequencyBand> mFrequencyBandMap = new TreeMap<Integer,IFrequencyBand>();
-
-    /**
-     * Constructs an instance
-     */
-    public P25P2MessageProcessor()
-    {
-    }
+    private Map<Integer,IFrequencyBand> mFrequencyBandMap = new TreeMap<>();
 
     /**
      * Preloads frequency band (ie identifier update) content from the control channel when this is a traffic channel.
