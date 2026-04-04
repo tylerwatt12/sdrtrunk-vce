@@ -20,7 +20,6 @@ package io.github.dsheirer.module.decode.dmr.message.data.lc.shorty;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.LCMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.LCOpcode;
 import io.github.dsheirer.module.decode.dmr.message.type.Vendor;
@@ -28,7 +27,7 @@ import io.github.dsheirer.module.decode.dmr.message.type.Vendor;
 /**
  * Base short link control message
  */
-public abstract class ShortLCMessage extends LCMessage implements IMessage
+public abstract class ShortLCMessage extends LCMessage
 {
     protected static final int VENDOR_FLAG = 0;
     protected static final int[] OPCODE = new int[]{0, 1, 2, 3};
@@ -41,7 +40,7 @@ public abstract class ShortLCMessage extends LCMessage implements IMessage
      *
      * @param message containing the short link control message bits
      */
-    public ShortLCMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
+    protected ShortLCMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
     {
         super(message, timestamp, timeslot);
     }
