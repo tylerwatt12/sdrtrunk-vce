@@ -39,7 +39,6 @@ import io.github.dsheirer.sample.buffer.IByteBufferProvider;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ISourceEventListener;
-import io.github.dsheirer.source.ISourceEventProvider;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.wave.ComplexWaveSource;
 import java.io.File;
@@ -62,7 +61,7 @@ import org.slf4j.LoggerFactory;
  * correction.  It also provides a stream of demodulated soft symbols (in radians) for display to the user.
  */
 public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener, ISourceEventListener,
-        ISourceEventProvider, Listener<ComplexSamples>
+    Listener<ComplexSamples>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderLSM.class);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");
@@ -126,9 +125,9 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
             mDecimationFilterI = DecimationFilterFactory.getRealDecimationFilter(decimation);
             mDecimationFilterQ = DecimationFilterFactory.getRealDecimationFilter(decimation);
         }
-        catch(Exception e)
+        catch(Exception _)
         {
-            LOGGER.error("Error getting decimation filter for sample rate [" + sampleRate + "] decimation [" + decimation + "]");
+            LOGGER.error("Error getting decimation filter for sample rate [{}] decimation [{}]", sampleRate, decimation);
         }
 
         float decimatedSampleRate = (float)sampleRate / decimation;
@@ -140,7 +139,7 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
         mPulseShapingFilterQ = new RealFIRFilter(taps);
         mBasebandFilterI = FilterFactory.getRealFilter(getBasebandFilter(decimatedSampleRate));
         mBasebandFilterQ = FilterFactory.getRealFilter(getBasebandFilter(decimatedSampleRate));
-        mDemodulator.setSamplesPerSymbol(decimatedSampleRate / (float)SYMBOL_RATE);
+        mDemodulator.setSamplesPerSymbol(decimatedSampleRate / SYMBOL_RATE);
         mMessageFramer.setListener(mMessageProcessor);
     }
 
@@ -198,9 +197,9 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
             coefficients = FilterFactory.getTaps(specification);
             BASEBAND_FILTERS.put(sampleRate, coefficients);
         }
-        catch(Exception fde) //FilterDesignException
+        catch(Exception e) //FilterDesignException
         {
-            System.out.println("Error");
+            LOGGER.error("Error creating baseband filter for sample rate {}", sampleRate, e);
         }
 
         if(coefficients == null)
@@ -281,12 +280,13 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
     {
         switch(sourceEvent.getEvent())
         {
-            case NOTIFICATION_FREQUENCY_CHANGE:
-            case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
+            case NOTIFICATION_FREQUENCY_CHANGE, NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                 mDemodulator.resetPLL();
                 break;
             case NOTIFICATION_SAMPLE_RATE_CHANGE:
                 setSampleRate(sourceEvent.getValue().doubleValue());
+                break;
+            default:
                 break;
         }
     }
@@ -372,18 +372,24 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
 
                     if(iMessage instanceof SyncLossMessage)
                     {
-                        System.out.println(" >> MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
+                        LOGGER.info(" >> MESSAGE: TS{} {} \t\t[{} | {} | Valid:{} Total:{} Msgs] Rate [{} %]",
+                                iMessage.getTimeslot(), iMessage, errors, mBitErrorCounter, mValidMessageCounter,
+                                mTotalMessageCounter, DECIMAL_FORMAT.format(bitErrorRate));
                     }
                     else
                     {
-                        System.out.println(++mMessageCounter + " >> MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
+                        LOGGER.info("{} >> MESSAGE: TS{} {} \t\t[{} | {} | Valid:{} Total:{} Msgs] Rate [{} %]",
+                                ++mMessageCounter, iMessage.getTimeslot(), iMessage, errors, mBitErrorCounter,
+                                mValidMessageCounter, mTotalMessageCounter, DECIMAL_FORMAT.format(bitErrorRate));
                     }
                 }
                 else
                 {
                     if(logIdles && iMessage instanceof SyncLossMessage)
                     {
-                        System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
+                        LOGGER.info(">>MESSAGE: TS{} {} \t\t[{} | {} | Valid:{} Total:{} Msgs] Rate [{} %]",
+                                iMessage.getTimeslot(), iMessage, errors, mBitErrorCounter, mValidMessageCounter,
+                                mTotalMessageCounter, DECIMAL_FORMAT.format(bitErrorRate));
                     }
                 }
             }
