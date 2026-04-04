@@ -60,7 +60,6 @@ public class P25P1MessageFramer
     private final P25P1HardSyncDetector mHardSyncDetector = new P25P1HardSyncDetector();
     private boolean mSyncDetected = false;
 
-    private static final double MILLISECONDS_PER_SYMBOL = 1.0 / 4800.0 / 1000.0;
     private Listener<IMessage> mMessageListener;
     private boolean mMessageAssemblyRequired = false;
     private boolean mRunning = false;
@@ -75,14 +74,6 @@ public class P25P1MessageFramer
     private int mDetectedSyncBitErrors = 0;
     private final P25P1ChannelStatusProcessor mChannelStatusProcessor = new P25P1ChannelStatusProcessor();
     private PDUSequence mPDUSequence;
-    private int mDebugSymbolCount = 0;
-
-    /**
-     * Constructs an instance
-     */
-    public P25P1MessageFramer()
-    {
-    }
 
     /**
      * Process soft symbol and apply soft symbol sync pattern detection.
@@ -135,7 +126,6 @@ public class P25P1MessageFramer
     {
         boolean validNIDDetected = false;
 
-        mDebugSymbolCount++;
         mDibitSinceTimestampCounter++;
 
         //Strip status symbol after every 35 dibits/70 bits.  This counter is reset to zero on sync detect and runs
@@ -234,17 +224,11 @@ public class P25P1MessageFramer
         {
             switch(mMessageAssembler.getDataUnitID())
             {
-                case TRUNKING_SIGNALING_BLOCK_1:
-                case TRUNKING_SIGNALING_BLOCK_2:
-                case TRUNKING_SIGNALING_BLOCK_3:
+                case TRUNKING_SIGNALING_BLOCK_1, TRUNKING_SIGNALING_BLOCK_2, TRUNKING_SIGNALING_BLOCK_3:
                     dispatchTSBK();
                     break;
-                case PACKET_DATA_UNIT:
-                case PACKET_DATA_UNIT_BLOCK_1:
-                case PACKET_DATA_UNIT_BLOCK_2:
-                case PACKET_DATA_UNIT_BLOCK_3:
-                case PACKET_DATA_UNIT_BLOCK_4:
-                case PACKET_DATA_UNIT_BLOCK_5:
+                case PACKET_DATA_UNIT, PACKET_DATA_UNIT_BLOCK_1, PACKET_DATA_UNIT_BLOCK_2,
+                    PACKET_DATA_UNIT_BLOCK_3, PACKET_DATA_UNIT_BLOCK_4, PACKET_DATA_UNIT_BLOCK_5:
                     dispatchPDU();
                     break;
                 case TERMINATOR_DATA_UNIT:
@@ -670,19 +654,12 @@ public class P25P1MessageFramer
         mPDUSequence = null;
     }
 
-    private void reset()
-    {
-        mPDUSequence = null;
-        mStatusSymbolDibitCounter = 0;
-    }
-
     /**
      * Broadcasts the assembled message to the registered listener.
      * @param message to broadcast - ignored if there is no registered listener.
      */
     private void broadcast(IMessage message)
     {
-//        System.out.println("Symbols: " + mDebugSymbolCount);
         if(mRunning && message != null && mMessageListener != null)
         {
             mMessageListener.receive(message);
@@ -840,7 +817,6 @@ public class P25P1MessageFramer
         //flag it as invalid NID when this happens.  The NAC tracker will give us a value of 0 until it has enough
         //observations of a valid NID value.
         mNACTracker.track(nac);
-//        System.out.println("\t\t" + mDebugSymbolCount + " VALID NID - NAC:" + nac + " DUID:" + duid);
         nidDetected(nac, duid, nid.getCorrectedBitCount());
         return true;
     }
