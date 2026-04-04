@@ -25,20 +25,18 @@ import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
 public class RemezFIRFilterDesigner
 {
-	private final static Logger mLog = LoggerFactory.getLogger( RemezFIRFilterDesigner.class );
+	private static final Logger mLog = LoggerFactory.getLogger( RemezFIRFilterDesigner.class );
 	
 	private static final double CONVERGENCE_THRESHOLD = 0.0001;
     public static final int MAXIMUM_ITERATION_COUNT = 40;
     public static final double TWO_PI = 2.0 * FastMath.PI;
 
-    private static final DecimalFormat DECIMAL_FORMATTER = new DecimalFormat( "0.00000000" );
 
     private FIRFilterSpecification mSpecification;
 	private Grid mGrid;
@@ -98,11 +96,10 @@ public class RemezFIRFilterDesigner
         	}
         	while( !mConverged && iterationCount < MAXIMUM_ITERATION_COUNT );
     	}
-    	catch( FilterDesignException fde )
+    	catch( FilterDesignException _ )
     	{
-    		mLog.error( "Filter design error - couldn't find extremal indices at count [" + 
-    				iterationCount + "] try changing filter order up/down from [" +
-    				mSpecification.getOrder() + "]" );
+			mLog.error("Filter design error - couldn't find extremal indices at count [{}] try changing filter order up/down from [{}]",
+					iterationCount, mSpecification.getOrder());
     		
     		mConverged = false;
     	}
@@ -171,10 +168,10 @@ public class RemezFIRFilterDesigner
 
     	double M;
     	
-    	switch( mSpecification.getFilterType() )
-    	{
-    		case TYPE_1_ODD_LENGTH_EVEN_ORDER_SYMMETRICAL:
-    			M = ( (double)length - 1.0 ) / 2.0;
+    		switch( mSpecification.getFilterType() )
+    		{
+    			case TYPE_1_ODD_LENGTH_EVEN_ORDER_SYMMETRICAL:
+    			M = ( length - 1.0 ) / 2.0;
     	    	
     			for( int n = 0; n < length; n++ )
     			{
@@ -184,30 +181,32 @@ public class RemezFIRFilterDesigner
     				
     				for( int k = 1; k <= M; k++ )
     				{
-    					accumulator += 2.0 * frequencyResponse[ k ] * FastMath.cos( frequency * (double)k );
+    					accumulator += 2.0 * frequencyResponse[ k ] * FastMath.cos( frequency * k );
     				}
     				
-    				impulseResponse[ n ] = accumulator / (double)length;
+    				impulseResponse[ n ] = accumulator / length;
     			}
     			break;
     		case TYPE_2_EVEN_LENGTH_ODD_ORDER_SYMMETRICAL:
-    			double offset = (double)( length - 1 ) / 2.0;
+    			double offset = ( length - 1 ) / 2.0;
     			
                 for( int n = 0; n < length; n++ )
                 {
     				double accumulator = frequencyResponse[ 0 ];
                     
-    				double frequency = TWO_PI * ( (double)n - offset ) / (double)length;
+    				double frequency = TWO_PI * ( n - offset ) / length;
 
                     for( int k = 1; k < frequencyResponse.length; k++ )
                     {
-                    	accumulator += 2.0 * frequencyResponse[ k ] * FastMath.cos( frequency * (double)k );
+                    	accumulator += 2.0 * frequencyResponse[ k ] * FastMath.cos( frequency * k );
                     }
 
-                    impulseResponse[ n ] = accumulator / (double)length;
+                    impulseResponse[ n ] = accumulator / length;
                 }
                 break;
-    	}
+            default:
+                break;
+    		}
     	
     	return impulseResponse;
     }
@@ -246,6 +245,11 @@ public class RemezFIRFilterDesigner
         		denominator += dkOverCosineDelta;
     		}
     	}
+
+        if(denominator == 0.0)
+        {
+            throw new IllegalStateException("Remez interpolation denominator was zero");
+        }
 
 		return numerator / denominator;
     }
@@ -383,7 +387,12 @@ public class RemezFIRFilterDesigner
     		}
     	}
     	
-    	mDelta = numerator / denominator;
+        if(denominator == 0.0)
+        {
+            throw new IllegalStateException("Remez delta denominator was zero");
+        }
+
+		mDelta = numerator / denominator;
     }
 
     /**
@@ -637,13 +646,13 @@ public class RemezFIRFilterDesigner
     		length--;
     	}
 
-    	double half = (double)length / 2.0;
+    	double half = length / 2.0;
 
     	double[] resampled = new double[ (int)FastMath.ceil( half ) ] ;
     	
     	for( int x = 0; x < resampled.length; x++ )
     	{
-    		resampled[ x ] = getFrequencyResponse( FastMath.cos( FastMath.PI * (double)x / half ) );
+    		resampled[ x ] = getFrequencyResponse( FastMath.cos( FastMath.PI * x / half ) );
     	}
 
     	return resampled;
@@ -671,14 +680,14 @@ public class RemezFIRFilterDesigner
 			case TYPE_3_ODD_LENGTH_EVEN_ORDER_ANTI_SYMMETRICAL:
 				for( int x = 0; x < frequencyResponse.length; x++ )
 				{
-		    		double frequencyRadians = FastMath.PI * ( ( (double)x ) / filterLength );
+		    		double frequencyRadians = FastMath.PI * ( ( x ) / filterLength );
 					frequencyResponse[ x ] *= FastMath.sin( TWO_PI * frequencyRadians );
 				}
 				break;
 			case TYPE_4_EVEN_LENGTH_ODD_ORDER_ANTI_SYMMETRICAL:
 				for( int x = 0; x < frequencyResponse.length; x++ )
 				{
-		    		double frequencyRadians = FastMath.PI * ( ( (double)x ) / filterLength );
+		    		double frequencyRadians = FastMath.PI * ( ( x ) / filterLength );
 					frequencyResponse[ x ] *= FastMath.sin( FastMath.PI * frequencyRadians );
 				}
 				break;

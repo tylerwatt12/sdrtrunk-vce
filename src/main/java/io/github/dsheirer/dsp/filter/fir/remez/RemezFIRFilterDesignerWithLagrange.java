@@ -216,7 +216,7 @@ public class RemezFIRFilterDesignerWithLagrange
      *
      * @param cosineOfFrequency to calculate the frequency response
      * @return actual frequency response for the specified frequency with the current set of
-     * extreaml indices
+     * extremal indices
      */
     public double getFrequencyResponse(double cosineOfFrequency)
     {
