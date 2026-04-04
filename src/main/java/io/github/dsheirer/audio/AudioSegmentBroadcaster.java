@@ -20,13 +20,10 @@ package io.github.dsheirer.audio;
 
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Objects;
 
 public class AudioSegmentBroadcaster<T extends AudioSegment> extends Broadcaster<T>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioSegmentBroadcaster.class);
-
     /**
      * Increments the consumer count for the reusable complex buffer and then broadcasts the buffer to all registered
      * listeners.
@@ -39,13 +36,15 @@ public class AudioSegmentBroadcaster<T extends AudioSegment> extends Broadcaster
     @Override
     public void broadcast(T audioSegment)
     {
+        T nonNullAudioSegment = Objects.requireNonNull(audioSegment);
+
         for(Listener<T> listener : getListeners())
         {
-            audioSegment.incrementConsumerCount();
-            listener.receive(audioSegment);
+            nonNullAudioSegment.incrementConsumerCount();
+            listener.receive(nonNullAudioSegment);
         }
 
         //Decrement consumer counter for this broadcaster
-        audioSegment.decrementConsumerCount();
+        nonNullAudioSegment.decrementConsumerCount();
     }
 }

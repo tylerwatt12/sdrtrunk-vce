@@ -22,15 +22,12 @@ package io.github.dsheirer.audio.broadcast;
 import io.github.dsheirer.sample.Listener;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Base Audio Broadcaster class
  */
 public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration> implements Listener<AudioRecording>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AbstractAudioBroadcaster.class);
     private Listener<BroadcastEvent> mBroadcastEventListener;
     private T mBroadcastConfiguration;
     protected ObjectProperty<BroadcastState> mBroadcastState = new SimpleObjectProperty<>(BroadcastState.READY);
@@ -43,7 +40,7 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
      * Constructs an instance
      * @param broadcastConfiguration to use for this broadcaster
      */
-    public AbstractAudioBroadcaster(T broadcastConfiguration)
+    protected AbstractAudioBroadcaster(T broadcastConfiguration)
     {
         mBroadcastConfiguration = broadcastConfiguration;
     }

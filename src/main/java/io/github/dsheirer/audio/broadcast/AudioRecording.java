@@ -20,8 +20,6 @@ package io.github.dsheirer.audio.broadcast;
 
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.Collection;
@@ -29,8 +27,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class AudioRecording implements Comparable<AudioRecording>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioRecording.class);
-
     private Path mPath;
     private long mStartTime;
     private long mRecordingLength;
@@ -143,5 +139,11 @@ public class AudioRecording implements Comparable<AudioRecording>
     public boolean equals(Object o) {
         if (!(o instanceof AudioRecording)) return false;
         return compareTo((AudioRecording) o) == 0;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Long.hashCode(getStartTime());
     }
 }
