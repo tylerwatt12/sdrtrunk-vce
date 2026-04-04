@@ -1691,16 +1691,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         P25Channel toConvert = channel.getValue();
 
-        if(toConvert instanceof P25P2ExplicitChannel)
+        if(toConvert instanceof P25P2ExplicitChannel phase2)
         {
-            P25P2ExplicitChannel phase2 = (P25P2ExplicitChannel)toConvert;
             return APCO25ExplicitChannel.create(phase2.getDownlinkBandIdentifier(),
                 phase2.getDownlinkChannelNumber(), phase2.getUplinkBandIdentifier(),
                 phase2.getUplinkChannelNumber());
         }
-        else if(toConvert instanceof P25P2Channel)
+        else if(toConvert instanceof P25P2Channel phase2)
         {
-            P25P2Channel phase2 = (P25P2Channel)toConvert;
             return APCO25Channel.create(phase2.getDownlinkBandIdentifier(), phase2.getDownlinkChannelNumber());
         }
 

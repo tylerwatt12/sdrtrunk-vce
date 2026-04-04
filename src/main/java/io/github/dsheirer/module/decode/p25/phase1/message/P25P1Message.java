@@ -20,7 +20,6 @@ package io.github.dsheirer.module.decode.p25.phase1.message;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
@@ -29,9 +28,9 @@ import io.github.dsheirer.protocol.Protocol;
 /**
  * Base APCO25 Phase 1 Message
  */
-public abstract class P25P1Message extends TimeslotMessage implements IMessage
+public abstract class P25P1Message extends TimeslotMessage
 {
-    private Identifier mNAC;
+    private Identifier<?> mNAC;
 
     /**
      * Constructs a P25 message.
@@ -40,7 +39,7 @@ public abstract class P25P1Message extends TimeslotMessage implements IMessage
      * @param nac Network Access Code (NAC) for the message
      * @param timestamp when the message was transmitted
      */
-    public P25P1Message(CorrectedBinaryMessage message, int nac, long timestamp)
+    protected P25P1Message(CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(message, 0, timestamp);
         mNAC = APCO25Nac.create(nac);
@@ -52,7 +51,7 @@ public abstract class P25P1Message extends TimeslotMessage implements IMessage
      * @param message containing the binary message and optional corrected bit count
      * @param nac Network Access Code (NAC) for the message
      */
-    public P25P1Message(CorrectedBinaryMessage message, int nac)
+    protected P25P1Message(CorrectedBinaryMessage message, int nac)
     {
         this(message, nac, System.currentTimeMillis());
     }
@@ -71,7 +70,7 @@ public abstract class P25P1Message extends TimeslotMessage implements IMessage
     /**
      * NAC code for this message
      */
-    public Identifier getNAC()
+    public Identifier<?> getNAC()
     {
         return mNAC;
     }

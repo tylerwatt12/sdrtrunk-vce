@@ -56,6 +56,6 @@ public class UnknownP25Message extends P25P1Message
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }
