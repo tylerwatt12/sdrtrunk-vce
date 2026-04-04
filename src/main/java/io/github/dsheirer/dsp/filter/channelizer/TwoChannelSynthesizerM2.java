@@ -22,8 +22,6 @@ import io.github.dsheirer.sample.complex.ComplexSamples;
 import java.util.Arrays;
 import org.apache.commons.math3.util.FastMath;
 import org.jtransforms.fft.FloatFFT_1D;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Implements a two-channel polyphase filer synthesizer.  This class is intended to be used with an M2 polyphase
@@ -47,7 +45,6 @@ import org.slf4j.LoggerFactory;
  */
 public class TwoChannelSynthesizerM2
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TwoChannelSynthesizerM2.class);
     private float[] mSerpentineDataBuffer;
     private float[] mIQInterleavedFilter;
     private float[] mFilterVectorProduct;
@@ -87,7 +84,7 @@ public class TwoChannelSynthesizerM2
      */
     private void init(float[] filter)
     {
-        int tapsPerChannel = (int) FastMath.ceil(filter.length / 2);
+        int tapsPerChannel = (int) FastMath.ceil(filter.length / 2.0);
         mIQInterleavedFilter = getInterleavedFilter(filter, tapsPerChannel);
         mSerpentineDataBuffer = new float[mIQInterleavedFilter.length];
         mFilterVectorProduct = new float[mIQInterleavedFilter.length];
