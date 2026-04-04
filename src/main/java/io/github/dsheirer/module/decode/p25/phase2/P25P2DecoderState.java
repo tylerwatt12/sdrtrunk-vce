@@ -146,9 +146,27 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
     private static final String GROUP_AFFILIATION_LABEL = "GROUP AFFILIATION";
     private static final String GROUP_PAGE_LABEL = "GROUP PAGE - TALKGROUP IS ACTIVE ON SITE";
+    private static final String EXTENDED_FUNCTION_LABEL = "EXTENDED FUNCTION: ";
+    private static final String EXTENDED_FUNCTION_ARGUMENTS_LABEL = " ARGUMENTS:";
+    private static final String ADDITIONAL_INFO_LABEL = " ADDL:";
+    private static final String ACKNOWLEDGE_LABEL = "ACKNOWLEDGE: ";
+    private static final String DENY_LABEL = "DENY: ";
+    private static final String MESSAGE_UPDATE_LABEL = "MESSAGE UPDATE - ";
+    private static final String MOTOROLA_CANCEL_SUPERGROUP_LABEL = "CANCEL SUPER GROUP FOR RADIO";
+    private static final String MOTOROLA_CREATE_SUPERGROUP_LABEL = "CREATE SUPER GROUP ADD RADIO";
+    private static final String PRIORITY_LABEL = "PRIORITY ";
+    private static final String QUEUED_LABEL = "QUEUED - ";
+    private static final String RADIO_UNIT_MONITOR_LABEL = "RADIO UNIT MONITOR";
+    private static final String REASON_LABEL = " REASON:";
+    private static final String SILENT_LABEL = " (SILENT)";
     private static final String STATUS_LABEL = "STATUS";
+    private static final String STATUS_UPDATE_LABEL = "STATUS UPDATE - ";
+    private static final String STEALTH_LABEL = " (STEALTH)";
+    private static final String TIME_LABEL = " TIME:";
     private static final String UNIT_REGISTRATION_LABEL = "UNIT REGISTRATION";
+    private static final String UNIT_LABEL = "UNIT:";
     private static final String USER_PAGE_RETURN_LABEL = "USER PAGE-RETURN TO CONTROL CHANNEL";
+    private static final String USER_LABEL = " USER:";
     private Channel mChannel;
     private PatchGroupManager mPatchGroupManager;
     private P25P2NetworkConfigurationMonitor mNetworkConfigurationMonitor = new P25P2NetworkConfigurationMonitor();
@@ -283,16 +301,15 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         MacPduType macPduType = message.getMacPduType();
 
-        switch(macPduType)
+        if(macPduType == MacPduType.MAC_0_SIGNAL)
         {
-            case MAC_0_SIGNAL:
-                continueState(State.CONTROL);
-                break;
-            case MAC_6_HANGTIME:
-                //During hangtime, the from talker is no longer involved in the call ... remove it because sometimes
-                //we don't get the end PTT to signal the end.
-                getIdentifierCollection().remove(Role.FROM);
-                break;
+            continueState(State.CONTROL);
+        }
+        else if(macPduType == MacPduType.MAC_6_HANGTIME)
+        {
+            //During hangtime, the from talker is no longer involved in the call ... remove it because sometimes
+            //we don't get the end PTT to signal the end.
+            getIdentifierCollection().remove(Role.FROM);
         }
 
         MacStructure mac = message.getMacStructure();
@@ -642,19 +659,22 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_60_ACKNOWLEDGE_RESPONSE_FNE_ABBREVIATED:
                 if(mac instanceof AcknowledgeResponseFNEAbbreviated ar)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.ACKNOWLEDGE, "ACKNOWLEDGE: " + ar.getServiceType());
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.ACKNOWLEDGE,
+                            ACKNOWLEDGE_LABEL + ar.getServiceType());
                 }
                 break;
             case PHASE1_E0_ACKNOWLEDGE_RESPONSE_FNE_EXTENDED:
                 if(mac instanceof AcknowledgeResponseFNEExtended ar)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.ACKNOWLEDGE, "ACKNOWLEDGE: " + ar.getServiceType());
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.ACKNOWLEDGE,
+                            ACKNOWLEDGE_LABEL + ar.getServiceType());
                 }
                 break;
             case MOTOROLA_A8_ACKNOWLEDGE_RESPONSE:
                 if(mac instanceof MotorolaAcknowledgeResponse ar)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.ACKNOWLEDGE, "ACKNOWLEDGE: " + ar.getServiceType());
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.ACKNOWLEDGE,
+                            ACKNOWLEDGE_LABEL + ar.getServiceType());
                 }
                 break;
 
@@ -1267,13 +1287,13 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac.getOpcode() == MacOpcode.PHASE1_67_DENY_RESPONSE && mac instanceof DenyResponse dr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, "DENY: " + dr.getDeniedServiceType() + " REASON:" +
-                    dr.getDenyReason() + " ADDL:" + dr.getAdditionalInfo());
+            broadcast(message, mac, DecodeEventType.RESPONSE, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
+                    dr.getDenyReason() + ADDITIONAL_INFO_LABEL + dr.getAdditionalInfo());
         }
         else if(mac.getOpcode() == MacOpcode.MOTOROLA_A7_DENY_RESPONSE && mac instanceof MotorolaDenyResponse dr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, "DENY: " + dr.getDeniedServiceType() + " REASON:" +
-                    dr.getDenyReason() + (dr.hasAdditionalInformation() ? " ADDL:" + dr.getAdditionalInfo() : ""));
+            broadcast(message, mac, DecodeEventType.RESPONSE, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
+                    dr.getDenyReason() + (dr.hasAdditionalInformation() ? ADDITIONAL_INFO_LABEL + dr.getAdditionalInfo() : ""));
         }
     }
 
@@ -1287,22 +1307,22 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_64_EXTENDED_FUNCTION_COMMAND_ABBREVIATED:
                 if(mac instanceof ExtendedFunctionCommandAbbreviated efc)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "EXTENDED FUNCTION: " +
-                            efc.getExtendedFunction() + " ARGUMENTS:" + efc.getArguments());
+                    broadcast(message, mac, DecodeEventType.COMMAND, EXTENDED_FUNCTION_LABEL +
+                            efc.getExtendedFunction() + EXTENDED_FUNCTION_ARGUMENTS_LABEL + efc.getArguments());
                 }
                 break;
             case PHASE1_E4_EXTENDED_FUNCTION_COMMAND_EXTENDED_VCH:
                 if(mac instanceof ExtendedFunctionCommandExtendedVCH efce)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "EXTENDED FUNCTION: " +
-                            efce.getExtendedFunction() + " ARGUMENTS:" + efce.getArguments());
+                    broadcast(message, mac, DecodeEventType.COMMAND, EXTENDED_FUNCTION_LABEL +
+                            efce.getExtendedFunction() + EXTENDED_FUNCTION_ARGUMENTS_LABEL + efce.getArguments());
                 }
                 break;
             case PHASE1_E5_EXTENDED_FUNCTION_COMMAND_EXTENDED_LCCH:
                 if(mac instanceof ExtendedFunctionCommandExtendedLCCH efce)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "EXTENDED FUNCTION: " +
-                            efce.getExtendedFunction() + " ARGUMENTS:" + efce.getArguments());
+                    broadcast(message, mac, DecodeEventType.COMMAND, EXTENDED_FUNCTION_LABEL +
+                            efce.getExtendedFunction() + EXTENDED_FUNCTION_ARGUMENTS_LABEL + efce.getArguments());
                 }
                 break;
             case MOTOROLA_84_GROUP_REGROUP_EXTENDED_FUNCTION_COMMAND:
@@ -1310,11 +1330,11 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 {
                     if(efc.getExtendedFunction() == ExtendedFunction.GROUP_REGROUP_CANCEL_SUPERGROUP)
                     {
-                        broadcast(message, mac, DecodeEventType.COMMAND, "CANCEL SUPER GROUP FOR RADIO");
+                        broadcast(message, mac, DecodeEventType.COMMAND, MOTOROLA_CANCEL_SUPERGROUP_LABEL);
                     }
                     else if(efc.getExtendedFunction() == ExtendedFunction.GROUP_REGROUP_CREATE_SUPERGROUP)
                     {
-                        broadcast(message, mac, DecodeEventType.COMMAND, "CREATE SUPER GROUP ADD RADIO" +
+                        broadcast(message, mac, DecodeEventType.COMMAND, MOTOROLA_CREATE_SUPERGROUP_LABEL +
                                 efc.getTargetAddress());
                     }
                 }
@@ -1373,11 +1393,13 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac.getOpcode() == MacOpcode.PHASE1_61_QUEUED_RESPONSE && mac instanceof QueuedResponse qr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, "QUEUED - " + qr.getQueuedResponseServiceType() + " REASON:" + qr.getQueuedResponseReason() + " ADDL:" + qr.getAdditionalInfo());
+            broadcast(message, mac, DecodeEventType.RESPONSE, QUEUED_LABEL + qr.getQueuedResponseServiceType() +
+                    REASON_LABEL + qr.getQueuedResponseReason() + ADDITIONAL_INFO_LABEL + qr.getAdditionalInfo());
         }
         else if(mac.getOpcode() == MacOpcode.MOTOROLA_A6_QUEUED_RESPONSE && mac instanceof MotorolaQueuedResponse qr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, "QUEUED - " + qr.getQueuedResponseServiceType() + " REASON:" + qr.getQueuedResponseReason() + " ADDL:" + qr.getAdditionalInfo());
+            broadcast(message, mac, DecodeEventType.RESPONSE, QUEUED_LABEL + qr.getQueuedResponseServiceType() +
+                    REASON_LABEL + qr.getQueuedResponseReason() + ADDITIONAL_INFO_LABEL + qr.getAdditionalInfo());
         }
     }
 
@@ -1410,7 +1432,9 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_4C_RADIO_UNIT_MONITOR_COMMAND_ABBREVIATED:
                 if(mac instanceof RadioUnitMonitorCommandAbbreviated rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "RADIO UNIT MONITOR" + (rum.isSilentMonitor() ? " (SILENT)" : "") + " TIME:" + rum.getTransmitTime() + " MULTIPLIER:" + rum.getTransmitMultiplier());
+                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                            (rum.isSilentMonitor() ? SILENT_LABEL : "") + TIME_LABEL + rum.getTransmitTime() +
+                            " MULTIPLIER:" + rum.getTransmitMultiplier());
                 }
                 break;
             case PHASE1_5D_RADIO_UNIT_MONITOR_COMMAND_OBSOLETE:
@@ -1419,25 +1443,31 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_5E_RADIO_UNIT_MONITOR_ENHANCED_COMMAND_ABBREVIATED:
                 if(mac instanceof RadioUnitMonitorEnhancedCommandAbbreviated rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "RADIO UNIT MONITOR" + (rum.isSilentMode() ? " (SILENT)" : "") + " TIME:" + rum.getTransmitTime());
+                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                            (rum.isSilentMode() ? SILENT_LABEL : "") + TIME_LABEL + rum.getTransmitTime());
                 }
                 break;
             case PHASE1_CC_RADIO_UNIT_MONITOR_COMMAND_EXTENDED_VCH:
                 if(mac instanceof RadioUnitMonitorCommandExtendedVCH rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "RADIO UNIT MONITOR" + (rum.isSilentMonitor() ? " (STEALTH)" : "") + " TIME:" + rum.getTransmitTime() + "MULTIPLIER:" + rum.getTransmitMultiplier());
+                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                            (rum.isSilentMonitor() ? STEALTH_LABEL : "") + TIME_LABEL + rum.getTransmitTime() +
+                            "MULTIPLIER:" + rum.getTransmitMultiplier());
                 }
                 break;
             case PHASE1_CD_RADIO_UNIT_MONITOR_COMMAND_EXTENDED_LCCH:
                 if(mac instanceof RadioUnitMonitorCommandExtendedLCCH rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "RADIO UNIT MONITOR" + (rum.isSilentMonitor() ? " (STEALTH)" : "") + " TIME:" + rum.getTransmitTime() + "MULTIPLIER:" + rum.getTransmitMultiplier());
+                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                            (rum.isSilentMonitor() ? STEALTH_LABEL : "") + TIME_LABEL + rum.getTransmitTime() +
+                            "MULTIPLIER:" + rum.getTransmitMultiplier());
                 }
                 break;
             case PHASE1_DE_RADIO_UNIT_MONITOR_ENHANCED_COMMAND_EXTENDED:
                 if(mac instanceof RadioUnitMonitorEnhancedCommandExtended rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, "RADIO UNIT MONITOR" + (rum.isSilentMode() ? " (STEALTH)" : "") + " TIME:" + rum.getTransmitTime());
+                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                            (rum.isSilentMode() ? STEALTH_LABEL : "") + TIME_LABEL + rum.getTransmitTime());
                 }
                 break;
         }
@@ -1511,19 +1541,22 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_5C_MESSAGE_UPDATE_ABBREVIATED:
                 if(mac instanceof MessageUpdateAbbreviated mua)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.SDM, "MESSAGE UPDATE - " + mua.getShortDataMessage());
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.SDM,
+                            MESSAGE_UPDATE_LABEL + mua.getShortDataMessage());
                 }
                 break;
             case PHASE1_CE_MESSAGE_UPDATE_EXTENDED_LCCH:
                 if(mac instanceof MessageUpdateExtendedLCCH mue)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.SDM, "MESSAGE UPDATE - " + mue.getShortDataMessage());
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.SDM,
+                            MESSAGE_UPDATE_LABEL + mue.getShortDataMessage());
                 }
                 break;
             case PHASE1_DC_MESSAGE_UPDATE_EXTENDED_VCH:
                 if(mac instanceof MessageUpdateExtendedVCH mue)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.SDM, "MESSAGE UPDATE - " + mue.getShortDataMessage());
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.SDM,
+                            MESSAGE_UPDATE_LABEL + mue.getShortDataMessage());
                 }
                 break;
 
@@ -1560,7 +1593,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             boolean p1 = ip.isTalkgroupPriority1();
                     broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                             .channel(getCurrentChannel())
-                            .details((p1 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
+                            .details((p1 ? PRIORITY_LABEL : "") + USER_PAGE_RETURN_LABEL)
                             .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress1(), message.getTimestamp()))
                             .timeslot(getTimeslot())
                             .build());
@@ -1570,7 +1603,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 boolean p2 = ip.isTalkgroupPriority2();
                 broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                         .channel(getCurrentChannel())
-                        .details((p2 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
+                        .details((p2 ? PRIORITY_LABEL : "") + USER_PAGE_RETURN_LABEL)
                         .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress2(), message.getTimestamp()))
                         .timeslot(getTimeslot())
                         .build());
@@ -1580,7 +1613,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     boolean p3 = ip.isTalkgroupPriority3();
                     broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                             .channel(getCurrentChannel())
-                            .details((p3 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
+                            .details((p3 ? PRIORITY_LABEL : "") + USER_PAGE_RETURN_LABEL)
                             .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress3(), message.getTimestamp()))
                             .timeslot(getTimeslot())
                             .build());
@@ -1590,7 +1623,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         boolean p4 = ip.isTalkgroupPriority4();
                         broadcast(P25DecodeEvent.builder(DecodeEventType.PAGE, message.getTimestamp())
                                 .channel(getCurrentChannel())
-                                .details((p4 ? "PRIORITY " : "") + USER_PAGE_RETURN_LABEL)
+                                .details((p4 ? PRIORITY_LABEL : "") + USER_PAGE_RETURN_LABEL)
                                 .identifiers(getIdentifierCollectionForUser(ip.getTargetAddress4(), message.getTimestamp()))
                                 .timeslot(getTimeslot())
                                 .build());
@@ -1649,7 +1682,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_58_STATUS_UPDATE_ABBREVIATED:
                 if(mac instanceof StatusUpdateAbbreviated sua)
                 {
-                    broadcast(message, mac, DecodeEventType.STATUS, "STATUS UPDATE - UNIT:" + sua.getUnitStatus() + " USER:" + sua.getUserStatus());
+                    broadcast(message, mac, DecodeEventType.STATUS, STATUS_UPDATE_LABEL + UNIT_LABEL + sua.getUnitStatus() +
+                            USER_LABEL + sua.getUserStatus());
                 }
                 break;
             case PHASE1_5A_STATUS_QUERY_ABBREVIATED:
@@ -1661,13 +1695,15 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_D8_STATUS_UPDATE_EXTENDED_VCH:
                 if(mac instanceof StatusUpdateExtendedVCH sue)
                 {
-                    broadcast(message, mac, DecodeEventType.STATUS, "STATUS UPDATE - UNIT:" + sue.getUnitStatus() + " USER:" + sue.getUserStatus());
+                    broadcast(message, mac, DecodeEventType.STATUS, STATUS_UPDATE_LABEL + UNIT_LABEL + sue.getUnitStatus() +
+                            USER_LABEL + sue.getUserStatus());
                 }
                 break;
             case PHASE1_D9_STATUS_UPDATE_EXTENDED_LCCH:
                 if(mac instanceof StatusUpdateExtendedLCCH sue)
                 {
-                    broadcast(message, mac, DecodeEventType.STATUS, "STATUS UPDATE - UNIT:" + sue.getUnitStatus() + " USER:" + sue.getUserStatus());
+                    broadcast(message, mac, DecodeEventType.STATUS, STATUS_UPDATE_LABEL + UNIT_LABEL + sue.getUnitStatus() +
+                            USER_LABEL + sue.getUserStatus());
                 }
                 break;
             case PHASE1_DA_STATUS_QUERY_EXTENDED_VCH:
