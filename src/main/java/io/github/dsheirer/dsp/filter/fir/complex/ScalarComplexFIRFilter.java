@@ -85,7 +85,8 @@ public class ScalarComplexFIRFilter implements IComplexFilter
 
         int offset = 0;
 
-        float iAccumulator, qAccumulator;
+        float iAccumulator;
+        float qAccumulator;
 
         for(int bufferPointer = 0; bufferPointer < samples.length; bufferPointer += 2)
         {
@@ -120,8 +121,6 @@ public class ScalarComplexFIRFilter implements IComplexFilter
 
         float[] coefficients = FilterFactory.getLowPass(1000, 250, 99, WindowType.BLACKMAN);
 
-//        ComplexFIRFilter2 legacyFilter = new ComplexFIRFilter2(coefficients);
-        ScalarComplexFIRFilter filter = new ScalarComplexFIRFilter(coefficients);
         VectorComplexFIRFilter128Bit vectorFilter = new VectorComplexFIRFilter128Bit(coefficients);
 
         double accumulator = 0.0d;
@@ -132,17 +131,11 @@ public class ScalarComplexFIRFilter implements IComplexFilter
 
         for(int x = 0; x < iterations; x++)
         {
-//            float[] filtered = legacyFilter.filter(samples);
-//            float[] filtered = filter.filter(samples);
             float[] filtered = vectorFilter.filter(samples);
-//            float[] vfiltered = vectorFilter.filter(samples);
             accumulator += filtered[3];
         }
 
-//        System.out.println("REG:" + Arrays.toString(filtered));
-//        System.out.println("VEC:" + Arrays.toString(vfiltered));
-
-        double elapsed = System.currentTimeMillis() - start;
+        double elapsed = (double)System.currentTimeMillis() - start;
 
         DecimalFormat df = new DecimalFormat("0.000");
         System.out.println("Accumulator: " + accumulator);

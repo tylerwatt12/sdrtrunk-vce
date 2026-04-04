@@ -13,9 +13,8 @@ import java.util.List;
 
 public class FIRFilterSpecification
 {
-    private final static Logger mLog = LoggerFactory.getLogger(FIRFilterSpecification.class);
+    private static final Logger mLog = LoggerFactory.getLogger(FIRFilterSpecification.class);
 
-    private static final double PERFECT_RECONSTRUCTION_GAIN_AT_BAND_EDGE = -6.020599842071533; //0.5 magnitude
     private static final DecimalFormat DECIMAL_FORMATTER = new DecimalFormat("0.00000");
 
     private FIRLinearPhaseFilterType mRemezFilterType;
@@ -288,7 +287,7 @@ public class FIRFilterSpecification
      */
     public double getGridFrequencyInterval()
     {
-        return getTotalBandwidth() / ((getGridSize() - mFrequencyBands.size()));
+        return getTotalBandwidth() / (getGridSize() - mFrequencyBands.size());
     }
 
     /**
@@ -391,7 +390,7 @@ public class FIRFilterSpecification
 
             if(mOddLength != null)
             {
-                if(mOddLength)
+                if(mOddLength.booleanValue())
                 {
                     type = FIRLinearPhaseFilterType.TYPE_1_ODD_LENGTH_EVEN_ORDER_SYMMETRICAL;
                     //Force order to even
@@ -830,7 +829,8 @@ public class FIRFilterSpecification
 
             int order = mChannelCount * mTapsPerChannel - 1;
 
-            mLog.debug("Order:" + order + " Sample Rate:" + mSampleRate + " Estimated Order:" + estimatedOrder + " Requested Order:" + order);
+            mLog.debug("Order:{} Sample Rate:{} Estimated Order:{} Requested Order:{}", order, mSampleRate,
+                estimatedOrder, order);
 
             FIRFilterSpecification spec = new FIRFilterSpecification(type, order, mGridDensity);
 
@@ -838,10 +838,9 @@ public class FIRFilterSpecification
             double passEnd = bandEdge * (1.0 - mAlpha);
             double stopStart = bandEdge * (1.0 + mAlpha);
 
-            mLog.debug("Pass End:" + passEnd + " Band Edge:" + bandEdge + " Stop Begin:" + stopStart);
-            mLog.debug("Pass End:" + (int)(mSampleRate * passEnd) +
-                " Band Edge:" + (int)(mSampleRate * bandEdge) +
-                " Stop Begin:" + (int)(mSampleRate * stopStart));
+            mLog.debug("Pass End:{} Band Edge:{} Stop Begin:{}", passEnd, bandEdge, stopStart);
+            mLog.debug("Pass End:{} Band Edge:{} Stop Begin:{}",
+                (int)(mSampleRate * passEnd), (int)(mSampleRate * bandEdge), (int)(mSampleRate * stopStart));
 
             FrequencyBand passBand = new FrequencyBand(0.0, passEnd, 1.0, mPassRipple);
             FrequencyBand edgeBand = new FrequencyBand(bandEdge, bandEdge, 0.5, mPassRipple);
