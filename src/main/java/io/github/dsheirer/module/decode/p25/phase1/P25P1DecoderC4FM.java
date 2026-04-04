@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.module.decode.p25.phase1;
 
-import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
@@ -29,33 +28,16 @@ import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFactory;
 import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloat;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
-import io.github.dsheirer.message.IMessage;
-import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
-import io.github.dsheirer.module.decode.dmr.message.DMRBurst;
-import io.github.dsheirer.module.decode.dmr.message.data.DataMessageWithLinkControl;
-import io.github.dsheirer.module.decode.dmr.message.data.lc.LCMessage;
-import io.github.dsheirer.module.decode.dmr.message.data.lc.full.FullLCMessage;
-import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.ShortLCMessage;
-import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
-import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
-import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.buffer.IByteBufferProvider;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ISourceEventListener;
-import io.github.dsheirer.source.ISourceEventProvider;
 import io.github.dsheirer.source.SourceEvent;
-import io.github.dsheirer.source.wave.ComplexWaveSource;
-import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.text.DecimalFormat;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,10 +53,9 @@ import org.slf4j.LoggerFactory;
  * correction.  It also provides a stream of demodulated soft symbols (in radians) for display to the user.
  */
 public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener,
-        ISourceEventListener, ISourceEventProvider, Listener<ComplexSamples>
+    ISourceEventListener, Listener<ComplexSamples>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderC4FM.class);
-    private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");
     private static final int SYMBOL_RATE = 4800;
     private static final Map<Double,float[]> BASEBAND_FILTERS = new HashMap<>();
 
@@ -206,7 +187,7 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
         }
         catch(Exception fde) //FilterDesignException
         {
-            System.out.println("Error");
+            LOGGER.error("Error creating baseband filter for sample rate {}", sampleRate, fde);
         }
 
         if(coefficients == null)
@@ -288,12 +269,13 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
     {
         switch(sourceEvent.getEvent())
         {
-            case NOTIFICATION_FREQUENCY_CHANGE:
-            case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
+            case NOTIFICATION_FREQUENCY_CHANGE, NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                 mSymbolProcessor.resetPLL();
                 break;
             case NOTIFICATION_SAMPLE_RATE_CHANGE:
                 setSampleRate(sourceEvent.getValue().doubleValue());
+                break;
+            default:
                 break;
         }
     }
@@ -302,147 +284,5 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
     public Listener<ComplexSamples> getComplexSamplesListener()
     {
         return this;
-    }
-
-    public static void main(String[] args)
-    {
-        LOGGER.info("Starting ...");
-
-//        String directory = "D:\\DQPSK Equalizer Research - P25\\"; //Windows
-        String directory = "/media/denny/T9/DQPSK Equalizer Research - P25/"; //Linux
-
-        String file = directory + "P25-S1-Conventional-repeater-20241115_212221_469325000_QPS_Digital_Kynoch_Kynoch_Digital_59_baseband.wav";
-//        String file = directory + "P25-S3-C4FM-20241225_040459_152517500_NYSEG_Onondaga_Control_30_baseband.wav";
-
-        boolean autoReplay = false;
-
-        P25P1DecoderC4FM decoder = new P25P1DecoderC4FM();
-        decoder.start();
-
-        UserPreferences userPreferences = new UserPreferences();
-        P25P1AudioModule audio1 = new P25P1AudioModule(userPreferences, new AliasList(""));
-
-        decoder.setMessageListener(new Listener<>()
-        {
-            private long mBitCounter = 1;
-            private int mBitErrorCounter;
-            private int mValidMessageCounter;
-            private int mTotalMessageCounter;
-
-            @Override
-            public void receive(IMessage iMessage)
-            {
-                int errors = 0;
-
-                audio1.receive(iMessage);
-
-                if(iMessage instanceof P25P1Message message)
-                {
-                    mBitCounter += 288;
-
-                    if(message.getMessage() != null)
-                    {
-                        errors = message.getMessage().getCorrectedBitCount();
-                    }
-
-                    mTotalMessageCounter++;
-
-                    if(mTotalMessageCounter == 492)
-                    {
-                        int a = 0;
-                    }
-                    if(message.isValid())
-                    {
-                        mBitErrorCounter += Math.max(errors, 0);
-                        mValidMessageCounter++;
-                    }
-                }
-                else if(iMessage instanceof LCMessage lcw)
-                {
-                    mTotalMessageCounter++;
-                    errors = lcw.getMessage().getCorrectedBitCount();
-                    if(lcw.isValid())
-                    {
-                        mBitErrorCounter += errors;
-                        mValidMessageCounter++;
-                    }
-                }
-
-                double bitErrorRate = (double)mBitErrorCounter / (double)mBitCounter * 100.0;
-
-                boolean logEverything = true;
-                boolean logFLC = true;
-                boolean logSLC = true;
-                boolean logCACH = true;
-                boolean logIdles = true;
-
-                if(logEverything)
-                {
-                    if(iMessage.toString().contains("PLACEHOLDER"))
-                    {
-                        int a = 0;
-                    }
-                    System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                }
-                else
-                {
-                    if (logFLC)
-                    {
-                        if(iMessage instanceof FullLCMessage)
-                        {
-                            System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                        }
-                        else if(iMessage instanceof Terminator terminator)
-                        {
-                            System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                        }
-                        else if(iMessage instanceof DataMessageWithLinkControl)
-                        {
-                            System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                        }
-                    }
-
-                    if(logCACH && iMessage instanceof DMRBurst burst && burst.hasCACH())
-                    {
-                        System.out.println("CACH:" + burst.getCACH());
-                    }
-
-                    if(logSLC && iMessage instanceof ShortLCMessage)
-                    {
-                        System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                    }
-
-                    if(logIdles && iMessage instanceof SyncLossMessage)
-                    {
-                        System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                    }
-                }
-            }
-        });
-
-        try(ComplexWaveSource source = new ComplexWaveSource(new File(file), autoReplay))
-        {
-            source.setListener(iNativeBuffer -> {
-                Iterator<ComplexSamples> it = iNativeBuffer.iterator();
-
-                while(it.hasNext())
-                {
-                    decoder.receive(it.next());
-                }
-            });
-            source.start();
-            decoder.setSampleRate(source.getSampleRate());
-
-            while(true)
-            {
-                source.next(2048, true);
-            }
-        }
-        catch(IOException ioe)
-        {
-            LOGGER.error("Error", ioe);
-        }
-
-        LOGGER.info("Finished");
     }
 }
