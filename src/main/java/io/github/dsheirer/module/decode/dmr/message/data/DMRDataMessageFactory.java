@@ -98,6 +98,8 @@ public class DMRDataMessageFactory
                     return new DataBlock3_4Rate(pattern, getTrellisPayload(message), cach, slotType, timestamp, timeslot);
                 case RATE_1_DATA:
                     return new DataBlock1Rate(pattern, message, cach, slotType, timestamp, timeslot);
+                default:
+                    break;
             }
 
             //Get the BPTC(196,96) protected payload.  If the corrected bit count is -1, the payload/message is invalid
@@ -126,16 +128,14 @@ public class DMRDataMessageFactory
                         usb.setValid(false);
                     }
                     return usb;
-                case MBC_ENC_HEADER:
-                case MBC_HEADER:
+                case MBC_ENC_HEADER, MBC_HEADER:
                     DataMessage mbc = new MBCHeader(pattern, payload, cach, slotType, timestamp, timeslot);
                     if(payload.getCorrectedBitCount() < 0)
                     {
                         mbc.setValid(false);
                     }
                     return mbc;
-                case CHANNEL_CONTROL_ENC_HEADER:
-                case PI_HEADER:
+                case CHANNEL_CONTROL_ENC_HEADER, PI_HEADER:
                     LCMessage piLinkControl = mLinkControlMessageFactory.createFullEncryption(payload, timestamp,
                             timeslot);
                     DataMessage pi = new PiHeader(pattern, payload, cach, slotType, timestamp, timeslot, piLinkControl);
@@ -153,8 +153,7 @@ public class DMRDataMessageFactory
                         voice.setValid(false);
                     }
                     return voice;
-                case DATA_ENC_HEADER:
-                case DATA_HEADER:
+                case DATA_ENC_HEADER, DATA_HEADER:
                     int crcBitCount = CRCDMR.correctCCITT80(payload, 0, 80, 0xCCCC);
                     boolean valid = crcBitCount < 2 && payload.getCorrectedBitCount() != -1;
                     DataPacketFormat dpf = DataHeader.getDataPacketFormat(payload);
@@ -171,8 +170,7 @@ public class DMRDataMessageFactory
 
                             switch(vendor)
                             {
-                                case MOTOROLA_CAPACITY_PLUS:
-                                case MOTOROLA_CONNECT_PLUS:
+                                case MOTOROLA_CAPACITY_PLUS, MOTOROLA_CONNECT_PLUS:
                                     ServiceAccessPoint sap = ProprietaryDataHeader.getServiceAccessPoint(payload);
 
                                     if(sap == ServiceAccessPoint.SAP_1)
@@ -264,14 +262,15 @@ public class DMRDataMessageFactory
                         mbcBlock.setValid(false);
                     }
                     return mbcBlock;
-                case RESERVED_15:
-                case UNKNOWN:
+                case RESERVED_15, UNKNOWN:
                     DataMessage unk = new UnknownDataMessage(pattern, payload, cach, slotType, timestamp, timeslot);
                     if(payload.getCorrectedBitCount() < 0)
                     {
                         unk.setValid(false);
                     }
                     return unk;
+                default:
+                    break;
             }
         }
 
@@ -326,7 +325,7 @@ public class DMRDataMessageFactory
                 extracted.add(message.get(i));
             }
         }
-        catch(BitSetFullException ex)
+        catch(BitSetFullException _)
         {
             mLog.error("Error extracting DMR burst payload bits");
         }

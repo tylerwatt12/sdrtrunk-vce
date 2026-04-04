@@ -48,7 +48,6 @@ import io.github.dsheirer.sample.buffer.IByteBufferProvider;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ISourceEventListener;
-import io.github.dsheirer.source.ISourceEventProvider;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.wave.ComplexWaveSource;
 import java.io.File;
@@ -83,12 +82,11 @@ import org.slf4j.LoggerFactory;
  * embedded link control parameters.
  */
 public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener, ISourceEventListener,
-                ISourceEventProvider, Listener<ComplexSamples>
+                Listener<ComplexSamples>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(DMRDecoder.class);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");
     private static final int SYMBOL_RATE = 4800;
-    private static final float MAXIMUM_CARRIER_OFFSET = 5000.0f; //Threshold for retuning the signal.
     private static final Map<Double,float[]> BASEBAND_FILTERS = new HashMap<>();
     private DifferentialDemodulatorFloat mDemodulator;
     private final DMRMessageFramer mMessageFramer;
@@ -247,7 +245,7 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
             coefficients = FilterFactory.getTaps(specification);
             BASEBAND_FILTERS.put(sampleRate, coefficients);
         }
-        catch(Exception fde) //FilterDesignException
+        catch(Exception _) //FilterDesignException
         {
             System.out.println("Error");
         }
@@ -342,6 +340,8 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
                     break;
                 case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                     mCarrierOffsetProcessor.reset();
+                    break;
+                default:
                     break;
             }
         }

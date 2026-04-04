@@ -79,19 +79,18 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
     @Override
     public void receive(IMessage message)
     {
-        if(message instanceof DMRMessage dmr)
+        if(message instanceof DMRMessage dmr && dmr.isValid())
         {
-            if(dmr.isValid())
+            switch(dmr.getTimeslot())
             {
-                switch(dmr.getTimeslot())
-                {
-                    case 1:
-                        mTimeslotProcessor1.receive(dmr);
-                        break;
-                    case 2:
-                        mTimeslotProcessor2.receive(dmr);
-                        break;
-                }
+                case 1:
+                    mTimeslotProcessor1.receive(dmr);
+                    break;
+                case 2:
+                    mTimeslotProcessor2.receive(dmr);
+                    break;
+                default:
+                    break;
             }
         }
     }
@@ -313,6 +312,8 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
                                 mCallSequence.setEncrypted(uuvcu.getServiceOptions().isEncrypted());
                             }
                         }
+                        break;
+                    default:
                         break;
                 }
             }

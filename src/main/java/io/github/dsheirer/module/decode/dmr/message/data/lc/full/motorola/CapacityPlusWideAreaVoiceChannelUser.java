@@ -41,7 +41,6 @@ public class CapacityPlusWideAreaVoiceChannelUser extends CapacityPlusVoiceChann
     //Bits 16-23: Service Options
     private static final int[] UNKNOWN_1 = new int[]{24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
     private static final int[] GROUP_ID = new int[]{40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] UNUSED = new int[]{48, 49, 50};
     private static final int[] REST_LSN = new int[]{51, 52, 53, 54, 55};
     private static final int[] RADIO_ID = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71};
     //Reed Solomon FEC: 72-95

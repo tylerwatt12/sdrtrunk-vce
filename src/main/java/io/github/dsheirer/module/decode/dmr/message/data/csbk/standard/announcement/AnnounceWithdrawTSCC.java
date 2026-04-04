@@ -38,7 +38,6 @@ import java.util.List;
 public class AnnounceWithdrawTSCC extends Announcement
 {
     //Broadcast Parameters 1: 21-34
-    private static final int[] RESERVED = new int[]{21, 22, 23, 24};
     private static final int[] COLOR_CODE_CHAN_1 = new int[]{25, 26, 27, 28};
     private static final int[] COLOR_CODE_CHAN_2 = new int[]{29, 30, 31, 32};
     private static final int ADD_WITHDRAW_CHAN_1_FLAG = 33;

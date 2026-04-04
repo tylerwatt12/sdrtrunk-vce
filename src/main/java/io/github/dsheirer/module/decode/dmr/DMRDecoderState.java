@@ -121,7 +121,6 @@ public class DMRDecoderState extends TimeslotDecoderState
 {
     private static final Logger mLog = LoggerFactory.getLogger(DMRDecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
-    private static final long MAX_VALID_CALL_DURATION_MS = 30000;
     private static final AddChannelRotationActiveStateRequest CAPACITY_PLUS_ACTIVE_STATE_REQUEST =
             new AddChannelRotationActiveStateRequest(State.ACTIVE);
     private Channel mChannel;
@@ -284,6 +283,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     /**
      * Resets any temporal state details
      */
+    @Override
     protected void resetState()
     {
         super.resetState();
@@ -580,16 +580,14 @@ public class DMRDecoderState extends TimeslotDecoderState
             broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CALL, getTimeslot()));
         }
 
-        if(message.getSyncPattern() == DMRSyncPattern.BS_VOICE_FRAME_F && message instanceof VoiceEMBMessage voiceEmb)
+        if(message.getSyncPattern() == DMRSyncPattern.BS_VOICE_FRAME_F && message instanceof VoiceEMBMessage voiceEmb &&
+            voiceEmb.hasEmbeddedParameters())
         {
-            if(voiceEmb.hasEmbeddedParameters())
-            {
-                EmbeddedParameters embedded = voiceEmb.getEmbeddedParameters();
+            EmbeddedParameters embedded = voiceEmb.getEmbeddedParameters();
 
-                if(embedded.getShortBurst() instanceof EmbeddedEncryptionParameters arc4)
-                {
-                    updateEncryptedCall(arc4, true, voiceEmb.getTimestamp());
-                }
+            if(embedded.getShortBurst() instanceof EmbeddedEncryptionParameters arc4)
+            {
+                updateEncryptedCall(arc4, true, voiceEmb.getTimestamp());
             }
         }
     }
@@ -604,14 +602,11 @@ public class DMRDecoderState extends TimeslotDecoderState
             case VOICE_HEADER:
                 broadcast(new DecoderStateEvent(this, Event.START, State.CALL, getTimeslot()));
                 break;
-            case PI_HEADER:
-            case MBC_HEADER:
-            case DATA_HEADER:
-            case USB_DATA:
-            case MBC_ENC_HEADER:
-            case DATA_ENC_HEADER:
-            case CHANNEL_CONTROL_ENC_HEADER:
+            case PI_HEADER, MBC_HEADER, DATA_HEADER, USB_DATA, MBC_ENC_HEADER, DATA_ENC_HEADER,
+                CHANNEL_CONTROL_ENC_HEADER:
                 broadcast(new DecoderStateEvent(this, Event.START, State.DATA, getTimeslot()));
+                break;
+            default:
                 break;
         }
 
@@ -648,12 +643,8 @@ public class DMRDecoderState extends TimeslotDecoderState
                 break;
             case USB_DATA:
                 break;
-            case PI_HEADER:
-            case MBC_HEADER:
-            case DATA_HEADER:
-            case MBC_ENC_HEADER:
-            case DATA_ENC_HEADER:
-            case CHANNEL_CONTROL_ENC_HEADER:
+            case PI_HEADER, MBC_HEADER, DATA_HEADER, MBC_ENC_HEADER, DATA_ENC_HEADER,
+                CHANNEL_CONTROL_ENC_HEADER:
                 if(message instanceof HeaderMessage header)
                 {
                     processHeader(header);
@@ -669,19 +660,15 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
                 break;
             case TLC:
-                if(message instanceof Terminator)
+                if(message instanceof Terminator terminator)
                 {
-                    processTerminator((Terminator)message);
+                    processTerminator(terminator);
                 }
                 break;
-            case RATE_1_OF_2_DATA:
-            case RATE_3_OF_4_DATA:
-            case RATE_1_DATA:
+            case RATE_1_OF_2_DATA, RATE_3_OF_4_DATA, RATE_1_DATA:
                 broadcast(new DecoderStateEvent(this, Event.START, State.DATA, getTimeslot()));
                 break;
-            case MBC_BLOCK:
-            case RESERVED_15:
-            case UNKNOWN:
+            case MBC_BLOCK, RESERVED_15, UNKNOWN:
             default:
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
                 break;
@@ -721,28 +708,26 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         switch(csbk.getOpcode())
         {
-            case STANDARD_ACKNOWLEDGE_RESPONSE_INBOUND_PAYLOAD:
-            case STANDARD_ACKNOWLEDGE_RESPONSE_OUTBOUND_PAYLOAD:
-                if(csbk instanceof Acknowledge)
+            case STANDARD_ACKNOWLEDGE_RESPONSE_INBOUND_PAYLOAD, STANDARD_ACKNOWLEDGE_RESPONSE_OUTBOUND_PAYLOAD:
+                if(csbk instanceof Acknowledge acknowledge)
                 {
                     broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE,
-                            ((Acknowledge) csbk).getReason().toString()));
+                            acknowledge.getReason().toString()));
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
                 break;
-            case STANDARD_ACKNOWLEDGE_RESPONSE_INBOUND_TSCC:
-            case STANDARD_ACKNOWLEDGE_RESPONSE_OUTBOUND_TSCC:
-                if(csbk instanceof Acknowledge)
+            case STANDARD_ACKNOWLEDGE_RESPONSE_INBOUND_TSCC, STANDARD_ACKNOWLEDGE_RESPONSE_OUTBOUND_TSCC:
+                if(csbk instanceof Acknowledge acknowledge)
                 {
                     broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE,
-                            ((Acknowledge) csbk).getReason().toString()));
+                            acknowledge.getReason().toString()));
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
                 break;
             case STANDARD_AHOY:
-                if(csbk instanceof Ahoy)
+                if(csbk instanceof Ahoy ahoy)
                 {
-                    switch(((Ahoy)csbk).getServiceKind())
+                    switch(ahoy.getServiceKind())
                     {
                         case AUTHENTICATE_REGISTER_RADIO_CHECK_SERVICE:
                             broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND, DecodeEventType.REGISTER.toString()));
@@ -751,59 +736,53 @@ public class DMRDecoderState extends TimeslotDecoderState
                             broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND, "CANCEL CALL"));
                             break;
                         case SUPPLEMENTARY_SERVICE:
-                            if(csbk instanceof StunReviveKill)
+                            if(csbk instanceof StunReviveKill stunrevivekill)
                             {
                                 broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND,
-                                        ((StunReviveKill)csbk).getCommand() + " RADIO"));
+                                        stunrevivekill.getCommand() + " RADIO"));
                             }
                             break;
-                        case FULL_DUPLEX_MS_TO_MS_PACKET_CALL_SERVICE:
-                        case FULL_DUPLEX_MS_TO_MS_VOICE_CALL_SERVICE:
-                        case INDIVIDUAL_VOICE_CALL_SERVICE:
-                        case INDIVIDUAL_PACKET_CALL_SERVICE:
-                        case INDIVIDUAL_UDT_SHORT_DATA_CALL_SERVICE:
-                        case TALKGROUP_PACKET_CALL_SERVICE:
-                        case TALKGROUP_UDT_SHORT_DATA_CALL_SERVICE:
-                        case TALKGROUP_VOICE_CALL_SERVICE:
-                            if(csbk instanceof ServiceRadioCheck)
+                        case FULL_DUPLEX_MS_TO_MS_PACKET_CALL_SERVICE, FULL_DUPLEX_MS_TO_MS_VOICE_CALL_SERVICE,
+                            INDIVIDUAL_VOICE_CALL_SERVICE, INDIVIDUAL_PACKET_CALL_SERVICE,
+                            INDIVIDUAL_UDT_SHORT_DATA_CALL_SERVICE, TALKGROUP_PACKET_CALL_SERVICE,
+                            TALKGROUP_UDT_SHORT_DATA_CALL_SERVICE, TALKGROUP_VOICE_CALL_SERVICE:
+                            if(csbk instanceof ServiceRadioCheck src)
                             {
-                                ServiceRadioCheck src = (ServiceRadioCheck)csbk;
                                 broadcast(getDecodeEvent(csbk, DecodeEventType.RADIO_CHECK,
                                         src.getServiceDescription() + " SERVICE FOR " +
                                         (src.isTalkgroupTarget() ? "TALKGROUP" : "RADIO")));
                             }
+                            break;
+                        default:
                             break;
                     }
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
                 break;
             case STANDARD_ALOHA:
-                if(csbk instanceof Aloha)
+                if(csbk instanceof Aloha aloha && aloha.hasRadioIdentifier())
                 {
-                    Aloha aloha = (Aloha)csbk;
-
-                    if(aloha.hasRadioIdentifier())
-                    {
-                        broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE, "Aloha Acknowledge"));
-                        resetState();
-                    }
+                    broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE, "Aloha Acknowledge"));
+                    resetState();
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
                 break;
             case STANDARD_ANNOUNCEMENT:
-                if(csbk instanceof Announcement)
+                if(csbk instanceof Announcement announcement)
                 {
-                    switch(((Announcement)csbk).getAnnouncementType())
+                    switch(announcement.getAnnouncementType())
                     {
                         case MASS_REGISTRATION:
                             broadcast(getDecodeEvent(csbk, DecodeEventType.REGISTER, "MASS REGISTRATION"));
                             break;
                         case VOTE_NOW_ADVICE:
-                            if(csbk instanceof VoteNowAdvice)
+                            if(csbk instanceof VoteNowAdvice votenowadvice)
                             {
                                 broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND,
-                                        "VOTE NOW FOR " + ((VoteNowAdvice)csbk).getVotedSystemIdentityCode()));
+                                        "VOTE NOW FOR " + votenowadvice.getVotedSystemIdentityCode()));
                             }
+                            break;
+                        default:
                             break;
                     }
                 }
@@ -818,16 +797,14 @@ public class DMRDecoderState extends TimeslotDecoderState
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.DATA, getTimeslot()));
                 break;
             case STANDARD_PROTECT:
-                if(csbk instanceof Protect)
+                if(csbk instanceof Protect protect)
                 {
                     broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND,
-                            "PROTECT: " + ((Protect)csbk).getProtectKind()));
+                            "PROTECT: " + protect.getProtectKind()));
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CALL, getTimeslot()));
                 break;
-            case HYTERA_08_ANNOUNCEMENT:
-            case HYTERA_68_ANNOUNCEMENT:
-            case HYTERA_68_XPT_SITE_STATE:
+            case HYTERA_08_ANNOUNCEMENT, HYTERA_68_ANNOUNCEMENT, HYTERA_68_XPT_SITE_STATE:
                 break;
             case HYTERA_08_TRAFFIC_CHANNEL_TALKER_STATUS:
                 if(csbk instanceof HyteraTrafficChannelTalkerStatus status)
@@ -845,16 +822,15 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
                 break;
             case MOTOROLA_CAPPLUS_NEIGHBOR_REPORT:
-                if(csbk instanceof CapacityPlusNeighbors)
+                if(csbk instanceof CapacityPlusNeighbors capacityplusneighbors)
                 {
                     //Update state and rest channel
-                    updateRestChannel(((CapacityPlusNeighbors)csbk).getRestChannel());
+                    updateRestChannel(capacityplusneighbors.getRestChannel());
                 }
                 break;
             case MOTOROLA_CAPPLUS_SITE_STATUS:
-                if(csbk instanceof CapacityPlusSiteStatus)
+                if(csbk instanceof CapacityPlusSiteStatus cpss)
                 {
-                    CapacityPlusSiteStatus cpss = (CapacityPlusSiteStatus)csbk;
 
                     //Channel rotation monitor normally uses only CONTROL state, so when we detect that we're a
                     //Capacity plus system, add ACTIVE as an active state to the monitor.  This can be requested repeatedly.
@@ -886,14 +862,10 @@ public class DMRDecoderState extends TimeslotDecoderState
             case MOTOROLA_CONPLUS_NEIGHBOR_REPORT:
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
                 break;
-            case STANDARD_BROADCAST_TALKGROUP_VOICE_CHANNEL_GRANT:
-            case STANDARD_DUPLEX_PRIVATE_DATA_CHANNEL_GRANT:
-            case STANDARD_DUPLEX_PRIVATE_VOICE_CHANNEL_GRANT:
-            case STANDARD_PRIVATE_DATA_CHANNEL_GRANT_SINGLE_ITEM:
-            case STANDARD_PRIVATE_VOICE_CHANNEL_GRANT:
-            case STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_MULTI_ITEM:
-            case STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_SINGLE_ITEM:
-            case STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT:
+            case STANDARD_BROADCAST_TALKGROUP_VOICE_CHANNEL_GRANT, STANDARD_DUPLEX_PRIVATE_DATA_CHANNEL_GRANT,
+                STANDARD_DUPLEX_PRIVATE_VOICE_CHANNEL_GRANT, STANDARD_PRIVATE_DATA_CHANNEL_GRANT_SINGLE_ITEM,
+                STANDARD_PRIVATE_VOICE_CHANNEL_GRANT, STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_MULTI_ITEM,
+                STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_SINGLE_ITEM, STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT:
                 if(csbk instanceof ChannelGrant channelGrant)
                 {
                     DMRChannel channel = channelGrant.getChannel();
@@ -921,15 +893,10 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
                 break;
             case MOTOROLA_CAPMAX_ALOHA:
-                if(csbk instanceof CapacityMaxAloha)
+                if(csbk instanceof CapacityMaxAloha cmAloha && cmAloha.hasRadioIdentifier())
                 {
-                    CapacityMaxAloha cmAloha = (CapacityMaxAloha)csbk;
-
-                    if(cmAloha.hasRadioIdentifier())
-                    {
-                        broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE, "Aloha Acknowledge"));
-                        resetState();
-                    }
+                    broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE, "Aloha Acknowledge"));
+                    resetState();
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
                 break;
@@ -1124,19 +1091,17 @@ public class DMRDecoderState extends TimeslotDecoderState
         switch(message.getOpcode())
         {
             case FULL_ENCRYPTION_PARAMETERS:
-                if(message instanceof io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters ep)
+                if(message instanceof io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters ep &&
+                    mCurrentCallEvent != null)
                 {
-                    if(mCurrentCallEvent != null)
-                    {
-                        mCurrentCallEvent.setDetails(ep.getDetails());
-                        broadcast(mCurrentCallEvent);
-                    }
+                    mCurrentCallEvent.setDetails(ep.getDetails());
+                    broadcast(mCurrentCallEvent);
                 }
                 break;
             case SHORT_CAPACITY_PLUS_REST_CHANNEL_NOTIFICATION:
-                if(message instanceof CapacityPlusRestChannel)
+                if(message instanceof CapacityPlusRestChannel capacityplusrestchannel)
                 {
-                    updateRestChannel(((CapacityPlusRestChannel)message).getRestChannel());
+                    updateRestChannel(capacityplusrestchannel.getRestChannel());
                 }
                 break;
             case FULL_CAPACITY_PLUS_ENCRYPTED_VOICE_CHANNEL_USER:
@@ -1281,9 +1246,8 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
                 break;
             case FULL_HYTERA_GROUP_VOICE_CHANNEL_USER:
-                if(message instanceof HyteraGroupVoiceChannelUser)
+                if(message instanceof HyteraGroupVoiceChannelUser hgvcu)
                 {
-                    HyteraGroupVoiceChannelUser hgvcu = (HyteraGroupVoiceChannelUser)message;
 
                     if(isTerminator)
                     {
@@ -1301,14 +1265,12 @@ public class DMRDecoderState extends TimeslotDecoderState
                     }
                 }
                 break;
-            case FULL_HYTERA_TERMINATOR:
-            case FULL_STANDARD_TERMINATOR_DATA:
+            case FULL_HYTERA_TERMINATOR, FULL_STANDARD_TERMINATOR_DATA:
                 getIdentifierCollection().update(message.getIdentifiers());
                 break;
             case FULL_HYTERA_UNIT_TO_UNIT_VOICE_CHANNEL_USER:
-                if(message instanceof HyteraUnitToUnitVoiceChannelUser)
+                if(message instanceof HyteraUnitToUnitVoiceChannelUser huuvcu)
                 {
-                    HyteraUnitToUnitVoiceChannelUser huuvcu = (HyteraUnitToUnitVoiceChannelUser)message;
 
                     if(isTerminator)
                     {
@@ -1344,9 +1306,8 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
                 break;
             case FULL_STANDARD_UNIT_TO_UNIT_VOICE_CHANNEL_USER:
-                if(message instanceof UnitToUnitVoiceChannelUser)
+                if(message instanceof UnitToUnitVoiceChannelUser uuvcu)
                 {
-                    UnitToUnitVoiceChannelUser uuvcu = (UnitToUnitVoiceChannelUser)message;
 
                     if(isTerminator)
                     {
@@ -1363,8 +1324,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     }
                 }
                 break;
-            case FULL_STANDARD_GPS_INFO:
-            case FULL_HYTERA_GPS_INFO:
+            case FULL_STANDARD_GPS_INFO, FULL_HYTERA_GPS_INFO:
                 if(message instanceof GPSInformation gps)
                 {
                     PlottableDecodeEvent plottableGPS = PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, message.getTimestamp())
@@ -1384,6 +1344,8 @@ public class DMRDecoderState extends TimeslotDecoderState
                     getIdentifierCollection().update(tac.getTalkerAliasIdentifier());
                 }
                 break;
+            default:
+                break;
         }
     }
 
@@ -1396,7 +1358,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         if(mCurrentCallEvent != null)
         {
-            String details = mCurrentCallEvent.getDetails();;
+            String details = mCurrentCallEvent.getDetails();
 
             if(details == null)
             {
@@ -1556,5 +1518,6 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     public void init()
     {
+        // No additional initialization is required for DMR decoder state.
     }
 }

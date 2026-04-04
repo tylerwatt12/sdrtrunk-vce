@@ -14,7 +14,6 @@ import java.util.List;
  */
 public class CapacityMaxTalkerAlias extends CapacityPlusVoiceChannelUser
 {
-    private static final int[] ENCODING_TYPE = new int[]{16, 17, 18};
     private static final int[] LENGTH = new int[]{19, 20, 21, 22};
     private static final int ALIAS_START = 24;
     private static final int ALIAS_END = ALIAS_START + (6 * 8); //6 characters?

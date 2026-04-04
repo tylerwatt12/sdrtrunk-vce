@@ -36,12 +36,9 @@ import java.util.List;
 public class Announcement extends CSBKMessage
 {
     private static final int[] ANNOUNCEMENT_TYPE = new int[]{16, 17, 18, 19, 20};
-    private static final int[] PARAMS_1 = new int[]{21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34};
     private static final int REGISTRATION_REQUIRED_FLAG = 35;
     private static final int[] BACKOFF = new int[]{36, 37, 38, 39};
     private static final int SYSTEM_IDENTITY_CODE_OFFSET = 40;
-    private static final int[] PARAMS_2 = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
-        73, 74, 75, 76, 77, 78, 79};
 
     private List<Identifier> mIdentifiers;
     private SystemIdentityCode mSystemIdentityCode;

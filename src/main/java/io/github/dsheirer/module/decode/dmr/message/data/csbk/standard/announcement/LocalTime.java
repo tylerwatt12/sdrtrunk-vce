@@ -45,9 +45,6 @@ public class LocalTime extends Announcement
     private static final int[] HOUR = new int[]{56, 57, 58, 59, 60};
     private static final int[] MINUTE = new int[]{61, 62, 63, 64, 65, 66};
     private static final int[] SECOND = new int[]{67, 68, 69, 70, 71, 72};
-    private static final int[] DAY_OF_WEEK = new int[]{73, 74, 75};
-    private static final int[] UTC_MINUTES_OFFSET = new int[]{76, 77};
-    private static final int[] RESERVED = new int[]{78, 79};
 
     private List<Identifier> mIdentifiers;
 
