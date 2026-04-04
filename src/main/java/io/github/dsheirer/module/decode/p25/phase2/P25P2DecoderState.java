@@ -1058,6 +1058,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         }
                     }
                 }
+                break;
             default:
                 //Log unhandled opcodes at least once to detect and add support.
                 LOGGING_SUPPRESSOR.error(mac.getOpcode().name(), 1,
@@ -1875,6 +1876,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         mTrafficChannelManager.setCurrentControlFrequency(frequency, mChannel);
                     }
+                    break;
                 default:
                     break;
             }
