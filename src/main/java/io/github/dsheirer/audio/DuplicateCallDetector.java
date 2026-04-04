@@ -346,19 +346,16 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
                             {
                                 AudioSegment toCheck = mAudioSegments.get(checkIndex);
 
-                                if(!toCheck.isDuplicate())
+                                if(!toCheck.isDuplicate() && isDuplicate(current, toCheck))
                                 {
-                                    if(isDuplicate(current, toCheck))
-                                    {
-                                        toCheck.setDuplicate(true);
-                                        toCheck.decrementConsumerCount();
-                                        duplicates.add(toCheck);
+                                    toCheck.setDuplicate(true);
+                                    toCheck.decrementConsumerCount();
+                                    duplicates.add(toCheck);
 
-                                        //Notify optional listener that we flagged the call as duplicate.
-                                        if(mDuplicateCallDetectionListener != null)
-                                        {
-                                            mDuplicateCallDetectionListener.receive(toCheck);
-                                        }
+                                    //Notify optional listener that we flagged the call as duplicate.
+                                    if(mDuplicateCallDetectionListener != null)
+                                    {
+                                        mDuplicateCallDetectionListener.receive(toCheck);
                                     }
                                 }
 
