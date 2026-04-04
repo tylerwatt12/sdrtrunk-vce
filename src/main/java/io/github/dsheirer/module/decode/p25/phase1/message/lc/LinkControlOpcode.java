@@ -21,7 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1.message.lc;
 
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import java.util.EnumSet;
-import java.util.logging.Logger;
+import java.util.Set;
 
 /**
  * Opcodes used for Link Control Words.
@@ -122,7 +122,6 @@ public enum LinkControlOpcode
 
     private String mLabel;
     private int mCode;
-    private static Logger LOGGER = Logger.getLogger(LinkControlOpcode.class.getName());
 
     /**
      * Constructor
@@ -138,38 +137,42 @@ public enum LinkControlOpcode
     /**
      * Command, response and status opcodes
      */
-    public static final EnumSet<LinkControlOpcode> COMMAND_STATUS_OPCODES = EnumSet.of(UNIT_TO_UNIT_ANSWER_REQUEST,
-            TELEPHONE_INTERCONNECT_ANSWER_REQUEST, CALL_TERMINATION_OR_CANCELLATION, GROUP_AFFILIATION_QUERY,
-            UNIT_AUTHENTICATION_COMMAND, UNIT_REGISTRATION_COMMAND, STATUS_QUERY, STATUS_UPDATE, MESSAGE_UPDATE,
-            EXTENDED_FUNCTION_COMMAND, CALL_ALERT);
+    public static final Set<LinkControlOpcode> COMMAND_STATUS_OPCODES = Set.copyOf(EnumSet.of(
+            UNIT_TO_UNIT_ANSWER_REQUEST, TELEPHONE_INTERCONNECT_ANSWER_REQUEST,
+            CALL_TERMINATION_OR_CANCELLATION, GROUP_AFFILIATION_QUERY, UNIT_AUTHENTICATION_COMMAND,
+            UNIT_REGISTRATION_COMMAND, STATUS_QUERY, STATUS_UPDATE, MESSAGE_UPDATE,
+            EXTENDED_FUNCTION_COMMAND, CALL_ALERT));
 
     /**
      * Motorola Opcodes
      */
-    public static final EnumSet<LinkControlOpcode> MOTOROLA_OPCODES =
-            EnumSet.range(MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_USER, MOTOROLA_UNKNOWN);
+    public static final Set<LinkControlOpcode> MOTOROLA_OPCODES = Set.copyOf(
+            EnumSet.range(MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_USER, MOTOROLA_UNKNOWN));
 
     /**
      * L3Harris Opcodes
      */
-    public static final EnumSet<LinkControlOpcode> L3HARRIS_OPCODES = EnumSet.of(L3HARRIS_RETURN_TO_CONTROL_CHANNEL, L3HARRIS_TALKER_GPS_BLOCK1, L3HARRIS_TALKER_GPS_BLOCK2, L3HARRIS_TALKER_ALIAS_BLOCK_1, L3HARRIS_TALKER_ALIAS_BLOCK_2,
-            L3HARRIS_TALKER_ALIAS_BLOCK_3, L3HARRIS_TALKER_ALIAS_BLOCK_4, L3HARRIS_UNKNOWN);
+    public static final Set<LinkControlOpcode> L3HARRIS_OPCODES = Set.copyOf(EnumSet.of(
+            L3HARRIS_RETURN_TO_CONTROL_CHANNEL, L3HARRIS_TALKER_GPS_BLOCK1, L3HARRIS_TALKER_GPS_BLOCK2,
+            L3HARRIS_TALKER_ALIAS_BLOCK_1, L3HARRIS_TALKER_ALIAS_BLOCK_2, L3HARRIS_TALKER_ALIAS_BLOCK_3,
+            L3HARRIS_TALKER_ALIAS_BLOCK_4, L3HARRIS_UNKNOWN));
 
     /**
      * Network/channel related opcodes
      */
-    public static final EnumSet<LinkControlOpcode> NETWORK_OPCODES = EnumSet.of(CHANNEL_IDENTIFIER_UPDATE,
-            CHANNEL_IDENTIFIER_UPDATE_VU, SYSTEM_SERVICE_BROADCAST, SECONDARY_CONTROL_CHANNEL_BROADCAST,
-            SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT, ADJACENT_SITE_STATUS_BROADCAST,
-            ADJACENT_SITE_STATUS_BROADCAST_EXPLICIT, RFSS_STATUS_BROADCAST, RFSS_STATUS_BROADCAST_EXPLICIT,
-            NETWORK_STATUS_BROADCAST, NETWORK_STATUS_BROADCAST_EXPLICIT, PROTECTION_PARAMETER_BROADCAST);
+    public static final Set<LinkControlOpcode> NETWORK_OPCODES = Set.copyOf(EnumSet.of(
+            CHANNEL_IDENTIFIER_UPDATE, CHANNEL_IDENTIFIER_UPDATE_VU, SYSTEM_SERVICE_BROADCAST,
+            SECONDARY_CONTROL_CHANNEL_BROADCAST, SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT,
+            ADJACENT_SITE_STATUS_BROADCAST, ADJACENT_SITE_STATUS_BROADCAST_EXPLICIT,
+            RFSS_STATUS_BROADCAST, RFSS_STATUS_BROADCAST_EXPLICIT, NETWORK_STATUS_BROADCAST,
+            NETWORK_STATUS_BROADCAST_EXPLICIT, PROTECTION_PARAMETER_BROADCAST));
 
     /**
      * Voice/call opcodes
      */
-    public static final EnumSet<LinkControlOpcode> VOICE_OPCODES = EnumSet.of(GROUP_VOICE_CHANNEL_USER,
-            GROUP_VOICE_CHANNEL_UPDATE, GROUP_VOICE_CHANNEL_UPDATE_EXPLICIT, UNIT_TO_UNIT_VOICE_CHANNEL_USER,
-            TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER);
+    public static final Set<LinkControlOpcode> VOICE_OPCODES = Set.copyOf(EnumSet.of(
+            GROUP_VOICE_CHANNEL_USER, GROUP_VOICE_CHANNEL_UPDATE, GROUP_VOICE_CHANNEL_UPDATE_EXPLICIT,
+            UNIT_TO_UNIT_VOICE_CHANNEL_USER, TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER));
 
     /**
      * Indicates if the enumeration element is contained in one of the enumset groupings above.
@@ -261,6 +264,8 @@ public enum LinkControlOpcode
                     default:
                         return MOTOROLA_UNKNOWN;
                 }
+            default:
+                break;
         }
 
         if(0 <= value && value <= 63)

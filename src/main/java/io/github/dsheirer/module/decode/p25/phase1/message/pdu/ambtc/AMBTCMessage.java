@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc;
 
-import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.IBitErrorProvider;
 import io.github.dsheirer.module.decode.p25.P25Utils;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
@@ -27,7 +26,6 @@ import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.block.DataBlock;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.block.UnconfirmedDataBlock;
-import java.util.List;
 
 public abstract class AMBTCMessage extends P25P1Message implements IBitErrorProvider
 {
@@ -36,7 +34,7 @@ public abstract class AMBTCMessage extends P25P1Message implements IBitErrorProv
 
     private PDUSequence mPDUSequence;
 
-    public AMBTCMessage(PDUSequence PDUSequence, int nac, long timestamp)
+    protected AMBTCMessage(PDUSequence PDUSequence, int nac, long timestamp)
     {
         super(nac, timestamp);
         mPDUSequence = PDUSequence;
@@ -89,11 +87,7 @@ public abstract class AMBTCMessage extends P25P1Message implements IBitErrorProv
         return P25P1DataUnitID.ALTERNATE_MULTI_BLOCK_TRUNKING_CONTROL;
     }
 
-    /**
-     * List of identifiers provided by the message
-     */
-    public abstract List<Identifier> getIdentifiers();
-
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();
