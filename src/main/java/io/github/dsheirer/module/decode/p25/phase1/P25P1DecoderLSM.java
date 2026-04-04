@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.module.decode.p25.phase1;
 
-import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
@@ -27,26 +26,16 @@ import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
 import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
-import io.github.dsheirer.message.IMessage;
-import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
-import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
-import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.buffer.IByteBufferProvider;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ISourceEventListener;
 import io.github.dsheirer.source.SourceEvent;
-import io.github.dsheirer.source.wave.ComplexWaveSource;
-import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.text.DecimalFormat;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,7 +53,6 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
     Listener<ComplexSamples>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderLSM.class);
-    private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");
     private static final Map<Double,float[]> BASEBAND_FILTERS = new HashMap<>();
     private static final int SYMBOL_RATE = 4800;
 
@@ -115,7 +103,6 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
 
         //Identify decimation that gets as close to 4.0 Samples Per Symbol as possible (4800 x 4.0 = 19.2 kHz)
         while((sampleRate / decimation) >= 38400)
-//        while((sampleRate / decimation) > 50000)
         {
             decimation *= 2;
         }
@@ -295,129 +282,5 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
     public Listener<ComplexSamples> getComplexSamplesListener()
     {
         return this;
-    }
-
-    public static void main(String[] args)
-    {
-        LOGGER.info("Starting ...");
-
-//        String directory = "D:\\DQPSK Equalizer Research - P25\\"; //Windows
-        String directory = "/media/denny/T9/DQPSK Equalizer Research - P25/"; //Linux
-
-//        String file = directory + "P25-S2-LSM-20241225_040119_460500000_CNYICC_Onondaga_Onondaga_CC_0_baseband.wav";
-//        String file = directory + "P25-S4-LSM-TCH-Data-20250105_141051_453587500_CNYICC_Onondaga_T-Onondaga_CC_38_baseband.wav";
-//        String file = directory + "P25-S5-LSM-CCH-20250923_034304_460500000_CNYICC_Onondaga_Onondaga-CC_0_baseband.wav";
-        String file = directory + "P25-S6-LSM-CCH-20251025_071546_460500000_CNYICC_Onondaga_Onondaga-CC_0_baseband.wav";
-
-
-//        String file = directory + "P25-S3-C4FM-20241225_040459_152517500_NYSEG_Onondaga_Control_30_baseband.wav";
-
-
-        boolean autoReplay = false;
-
-        P25P1DecoderLSM decoder = new P25P1DecoderLSM();
-        decoder.start();
-
-        UserPreferences userPreferences = new UserPreferences();
-        P25P1AudioModule audio1 = new P25P1AudioModule(userPreferences, new AliasList(""));
-
-        decoder.setMessageListener(new Listener<>()
-        {
-            private long mBitCounter = 1;
-            private int mBitErrorCounter;
-            private int mValidMessageCounter;
-            private int mTotalMessageCounter;
-            private int mMessageCounter = 1;
-
-            @Override
-            public void receive(IMessage iMessage)
-            {
-                int errors = 0;
-
-                audio1.receive(iMessage);
-
-                if(iMessage instanceof P25P1Message message)
-                {
-                    mBitCounter += 288;
-
-                    if(message.getMessage() != null)
-                    {
-                        errors = message.getMessage().getCorrectedBitCount();
-                    }
-
-                    mTotalMessageCounter++;
-
-                    if(mTotalMessageCounter == 492)
-                    {
-                        int a = 0;
-                    }
-                    if(message.isValid())
-                    {
-                        mBitErrorCounter += Math.max(errors, 0);
-                        mValidMessageCounter++;
-                    }
-                }
-
-                double bitErrorRate = (double)mBitErrorCounter / (double)mBitCounter * 100.0;
-
-                boolean logEverything = true;
-                boolean logIdles = true;
-
-                if(logEverything)
-                {
-                    if(iMessage.toString().contains("PLACEHOLDER"))
-                    {
-                        int a = 0;
-                    }
-
-                    if(iMessage instanceof SyncLossMessage)
-                    {
-                        LOGGER.info(" >> MESSAGE: TS{} {} \t\t[{} | {} | Valid:{} Total:{} Msgs] Rate [{} %]",
-                                iMessage.getTimeslot(), iMessage, errors, mBitErrorCounter, mValidMessageCounter,
-                                mTotalMessageCounter, DECIMAL_FORMAT.format(bitErrorRate));
-                    }
-                    else
-                    {
-                        LOGGER.info("{} >> MESSAGE: TS{} {} \t\t[{} | {} | Valid:{} Total:{} Msgs] Rate [{} %]",
-                                ++mMessageCounter, iMessage.getTimeslot(), iMessage, errors, mBitErrorCounter,
-                                mValidMessageCounter, mTotalMessageCounter, DECIMAL_FORMAT.format(bitErrorRate));
-                    }
-                }
-                else
-                {
-                    if(logIdles && iMessage instanceof SyncLossMessage)
-                    {
-                        LOGGER.info(">>MESSAGE: TS{} {} \t\t[{} | {} | Valid:{} Total:{} Msgs] Rate [{} %]",
-                                iMessage.getTimeslot(), iMessage, errors, mBitErrorCounter, mValidMessageCounter,
-                                mTotalMessageCounter, DECIMAL_FORMAT.format(bitErrorRate));
-                    }
-                }
-            }
-        });
-
-        try(ComplexWaveSource source = new ComplexWaveSource(new File(file), autoReplay))
-        {
-            source.setListener(iNativeBuffer -> {
-                Iterator<ComplexSamples> it = iNativeBuffer.iterator();
-
-                while(it.hasNext())
-                {
-                    decoder.receive(it.next());
-                }
-            });
-            source.start();
-            decoder.setSampleRate(source.getSampleRate());
-
-            while(true)
-            {
-                source.next(2048, true);
-            }
-        }
-        catch(IOException ioe)
-        {
-            LOGGER.error("Error", ioe);
-        }
-
-        LOGGER.info("Finished");
     }
 }
