@@ -121,6 +121,8 @@ public class DMRDecoderState extends TimeslotDecoderState
 {
     private static final Logger mLog = LoggerFactory.getLogger(DMRDecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
+        private static final String NO_TCM_CHANNEL_GRANT_MESSAGE =
+            "No DMR Traffic Channel Manager available for channel grant-";
     private static final AddChannelRotationActiveStateRequest CAPACITY_PLUS_ACTIVE_STATE_REQUEST =
             new AddChannelRotationActiveStateRequest(State.ACTIVE);
     private Channel mChannel;
@@ -146,7 +148,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         //the monitor for timeslot 1.
         if(timeslot == 1)
         {
-            mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor(channel);
+            mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor();
         }
 
         //For RAS protected systems, allows user to ignore CRC checksums and still decode the system
@@ -879,7 +881,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     else
                     {
                         LOGGING_SUPPRESSOR.error("NoTCM" + csbk.getOpcode().name(), 2,
-                                "No DMR Traffic Channel Manager available for channel grant-" + csbk.getOpcode().name());
+                                NO_TCM_CHANNEL_GRANT_MESSAGE + csbk.getOpcode().name());
                     }
                 }
                 else
@@ -888,7 +890,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     //that are not ChannelGrant subclass implementations.
                     if(!(csbk instanceof UnknownCSBKMessage) && csbk.isValid())
                     {
-                        mLog.error("Unrecognized DMR channel grant CSBK ignored: " + csbk.getClass());
+                        mLog.error("Unrecognized DMR channel grant CSBK ignored: {}", csbk.getClass());
                     }
                 }
                 break;
@@ -927,7 +929,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     else
                     {
                         LOGGING_SUPPRESSOR.error("NoTCM" + csbk.getOpcode().name(), 2,
-                                "No DMR Traffic Channel Manager available for channel grant-" + csbk.getOpcode().name());
+                                NO_TCM_CHANNEL_GRANT_MESSAGE + csbk.getOpcode().name());
                     }
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
@@ -980,7 +982,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     else
                     {
                         LOGGING_SUPPRESSOR.error("NoTCM" + csbk.getOpcode().name(), 2,
-                                "No DMR Traffic Channel Manager available for channel grant-" + csbk.getOpcode().name());
+                                NO_TCM_CHANNEL_GRANT_MESSAGE + csbk.getOpcode().name());
                     }
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
@@ -999,7 +1001,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     else
                     {
                         LOGGING_SUPPRESSOR.error("NoTCM" + csbk.getOpcode().name(), 2,
-                                "No DMR Traffic Channel Manager available for channel grant-" + csbk.getOpcode().name());
+                                NO_TCM_CHANNEL_GRANT_MESSAGE + csbk.getOpcode().name());
                     }
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
@@ -1038,7 +1040,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     else
                     {
                         LOGGING_SUPPRESSOR.error("NoTCM" + csbk.getOpcode().name(), 2,
-                                "No DMR Traffic Channel Manager available for channel grant-" + csbk.getOpcode().name());
+                                NO_TCM_CHANNEL_GRANT_MESSAGE + csbk.getOpcode().name());
                     }
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));

@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.module.decode.dmr;
 
-import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.site.SiteIdentifier;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRNetwork;
@@ -52,8 +51,6 @@ import java.util.Map;
  */
 public class DMRNetworkConfigurationMonitor
 {
-    private static final String BRAND_HYTERA = "Hytera";
-    private static final String BRAND_MOTOROLA_CAPACITY_PLUS = "Motorola Capacity+";
     private static final String BRAND_MOTOROLA_CONNECT_PLUS = "Motorola Connect+";
     private static final String BRAND_STANDARD = "Standard";
     private static final String BRAND_TIER_3_TRUNKING = "Tier III Trunking";
@@ -76,25 +73,6 @@ public class DMRNetworkConfigurationMonitor
     private String mChannelType;
     private Integer mColorCodeTS1;
     private Integer mColorCodeTS2;
-    private DMRChannel mCurrentChannel;
-    private Channel mChannel;
-
-    /**
-     * Constructs an instance
-     * @param channel configuration
-     */
-    public DMRNetworkConfigurationMonitor(Channel channel)
-    {
-        mChannel = channel;
-    }
-
-    /**
-     * Sets the current channel
-     */
-    public void setCurrentChannel(DMRChannel channel)
-    {
-        mCurrentChannel = channel;
-    }
 
     /**
      * Process a DMR message
@@ -140,9 +118,9 @@ public class DMRNetworkConfigurationMonitor
     {
         switch(linkControl.getOpcode())
         {
-            case FULL_CAPACITY_MAX_GROUP_VOICE_CHANNEL_USER:
-            case FULL_CAPACITY_MAX_TALKER_ALIAS:
-            case FULL_CAPACITY_MAX_TALKER_ALIAS_CONTINUATION:
+            case FULL_CAPACITY_MAX_GROUP_VOICE_CHANNEL_USER,
+                FULL_CAPACITY_MAX_TALKER_ALIAS,
+                FULL_CAPACITY_MAX_TALKER_ALIAS_CONTINUATION:
                 mBrand = BRAND_MOTOROLA_CAPACITY_MAX_TIER_3_TRUNKING;
                 break;
 
@@ -193,6 +171,9 @@ public class DMRNetworkConfigurationMonitor
                 {
                     mBrand = BRAND_TIER_3_TRUNKING;
                 }
+                break;
+            default:
+                break;
         }
     }
 
@@ -204,11 +185,11 @@ public class DMRNetworkConfigurationMonitor
         switch(csbk.getOpcode())
         {
             case STANDARD_ALOHA:
-                if(csbk instanceof Aloha)
+                if(csbk instanceof Aloha aloha)
                 {
                     if(mDMRNetwork == null || mDMRSite == null)
                     {
-                        SystemIdentityCode sic = ((Aloha)csbk).getSystemIdentityCode();
+                        SystemIdentityCode sic = aloha.getSystemIdentityCode();
 
                         if(mDMRNetwork == null)
                         {
@@ -236,12 +217,10 @@ public class DMRNetworkConfigurationMonitor
                     mTier3NeighborSites.put(neighbor.getNeighborSystemIdentityCode().getSite().getValue(), neighbor);
                 }
                 break;
-            case HYTERA_08_ANNOUNCEMENT:
-            case HYTERA_68_ANNOUNCEMENT:
-                if(csbk instanceof HyteraAnnouncement)
+            case HYTERA_08_ANNOUNCEMENT,
+                HYTERA_68_ANNOUNCEMENT:
+                if(csbk instanceof HyteraAnnouncement ha)
                 {
-                    HyteraAnnouncement ha = (HyteraAnnouncement)csbk;
-
                     if(mBrand == null)
                     {
                         mBrand = BRAND_HYTERA_TIER_3_TRUNKING;
@@ -262,10 +241,8 @@ public class DMRNetworkConfigurationMonitor
 
                     mBrand = BRAND_HYTERA_TIER_3_TRUNKING;
                 }
-                if(csbk instanceof HyteraAdjacentSiteInformation)
+                if(csbk instanceof HyteraAdjacentSiteInformation hasi)
                 {
-                    HyteraAdjacentSiteInformation hasi = (HyteraAdjacentSiteInformation)csbk;
-
                     int site = hasi.getNeighborSystemIdentityCode().getSite().getValue();
 
                     if(!mTier3NeighborSites.containsKey(site))
@@ -275,11 +252,11 @@ public class DMRNetworkConfigurationMonitor
                 }
                 break;
             case MOTOROLA_CAPMAX_ALOHA:
-                if(csbk instanceof CapacityMaxAloha)
+                if(csbk instanceof CapacityMaxAloha capacityMaxAloha)
                 {
                     if(mDMRNetwork == null || mDMRSite == null)
                     {
-                        SystemIdentityCode sic = ((CapacityMaxAloha)csbk).getSystemIdentityCode();
+                        SystemIdentityCode sic = capacityMaxAloha.getSystemIdentityCode();
 
                         if(mDMRNetwork == null)
                         {
@@ -308,20 +285,21 @@ public class DMRNetworkConfigurationMonitor
                 mMode = MODE_CAPACITY_MAX_OPEN_SYSTEM;
                 break;
             case MOTOROLA_CONPLUS_NEIGHBOR_REPORT:
-                if(mNeighborSites.isEmpty() && csbk instanceof ConnectPlusNeighborReport)
+                if(mNeighborSites.isEmpty() && csbk instanceof ConnectPlusNeighborReport cpnr)
                 {
-                    ConnectPlusNeighborReport cpnr = (ConnectPlusNeighborReport)csbk;
                     mNeighborSites.addAll(cpnr.getNeighbors());
                 }
                 mBrand = BRAND_MOTOROLA_CONNECT_PLUS;
                 break;
             case MOTOROLA_CONPLUS_VOICE_CHANNEL_USER:
-                if(csbk instanceof ConnectPlusVoiceChannelUser)
+                if(csbk instanceof ConnectPlusVoiceChannelUser cpvcu)
                 {
-                    DMRChannel channel = ((ConnectPlusVoiceChannelUser)csbk).getChannel();
+                    DMRChannel channel = cpvcu.getChannel();
                     addDmrChannel(channel);
                 }
                 mBrand = BRAND_MOTOROLA_CONNECT_PLUS;
+                break;
+            default:
                 break;
         }
     }
