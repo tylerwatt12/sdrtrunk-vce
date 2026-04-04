@@ -21,12 +21,9 @@ package io.github.dsheirer.dsp.psk;
 import io.github.dsheirer.dsp.filter.interpolator.InterpolatorScalar;
 import io.github.dsheirer.sample.complex.Complex;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class InterpolatingSampleBuffer
 {
-    private final static Logger mLog = LoggerFactory.getLogger(InterpolatingSampleBuffer.class);
     private static final float MAXIMUM_DEVIATION_SAMPLES_PER_SYMBOL = 0.02f; // +/- 2% deviation
 
     private Complex mPrecedingSample = new Complex(0,0);
@@ -72,7 +69,7 @@ public class InterpolatingSampleBuffer
      */
     public void receive(Complex sample)
     {
-        mSamplingPoint--;
+        mSamplingPoint -= 1.0f;
 
         //Fill up the delay line to use with the interpolator
         mDelayLineInphase[mDelayLinePointer] = sample.inphase();
