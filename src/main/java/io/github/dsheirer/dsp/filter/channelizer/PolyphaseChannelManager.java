@@ -67,7 +67,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
 {
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LoggerFactory.getLogger(PolyphaseChannelManager.class));
-    private final static Logger mLog = LoggerFactory.getLogger(PolyphaseChannelManager.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PolyphaseChannelManager.class);
     private static final double MINIMUM_CHANNEL_BANDWIDTH = 25000.0;
     private static final double CHANNEL_OVERSAMPLING = 2.0;
     private static final int POLYPHASE_CHANNELIZER_TAPS_PER_CHANNEL = 9;
@@ -80,7 +80,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private ComplexPolyphaseChannelizerM2 mPolyphaseChannelizer;
     private ChannelSourceEventListener mChannelSourceEventListener = new ChannelSourceEventListener();
     private NativeBufferReceiver mNativeBufferReceiver = new NativeBufferReceiver();
-    private Dispatcher mBufferDispatcher;
+    private Dispatcher<INativeBuffer> mBufferDispatcher;
     private Map<Integer,float[]> mOutputProcessorFilters = new HashMap<>();
     private boolean mRunning = true;
 
@@ -110,7 +110,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         }
 
         mChannelCalculator = new ChannelCalculator(sampleRate, channelCount, frequency, CHANNEL_OVERSAMPLING);
-        mBufferDispatcher = new Dispatcher("sdrtrunk polyphase buffer processor", 10);
+        mBufferDispatcher = new Dispatcher<>("sdrtrunk polyphase buffer processor", 10);
         mBufferDispatcher.setListener(mNativeBufferReceiver);
     }
 
@@ -274,7 +274,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             //Broadcast a stop sample stream notification in case this was a forced-stop so consumers are aware
             channelSource.process(SourceEvent.stopSampleStreamNotification(channelSource));
         }
-        catch(SourceException se)
+        catch(SourceException _)
         {
             //Do nothing
         }
@@ -300,9 +300,9 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 int channelCount = ComplexPolyphaseChannelizerM2.getChannelCount(sampleRate);
                 mChannelCalculator.setRates(sampleRate, channelCount);
                 break;
-            case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED:
-            case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_UNLOCKED:
-            case NOTIFICATION_RECORDING_FILE_LOADED:
+              case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED,
+                  NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_UNLOCKED,
+                  NOTIFICATION_RECORDING_FILE_LOADED:
                 //no-op
                 break;
             case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
@@ -314,7 +314,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 }
                 break;
             default:
-                mLog.info("Unrecognized source event: " + sourceEvent);
+                mLog.info("Unrecognized source event: {}", sourceEvent);
                 break;
         }
     }
@@ -374,10 +374,9 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             {
                 channelSource.updateOutputProcessor(mChannelCalculator, mFilterManager);
             }
-            catch(IllegalArgumentException iae)
+            catch(IllegalArgumentException _)
             {
-                mLog.error("Error updating polyphase channel source output processor following tuner frequency or " +
-                        "sample rate change");
+                mLog.error("Error updating polyphase channel source output processor following tuner frequency or sample rate change");
                 stopChannelSource(channelSource);
             }
         }
@@ -434,25 +433,25 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             switch(sourceEvent.getEvent())
             {
                 case REQUEST_START_SAMPLE_STREAM:
-                    if(sourceEvent.hasSource() && sourceEvent.getSource() instanceof PolyphaseChannelSource)
+                    if(sourceEvent.hasSource() && sourceEvent.getSource() instanceof PolyphaseChannelSource polyphasechannelsource)
                     {
-                        startChannelSource((PolyphaseChannelSource)sourceEvent.getSource());
+                        startChannelSource(polyphasechannelsource);
                     }
                     else
                     {
-                        mLog.error("Request to start sample stream for unrecognized source: " +
+                        mLog.error("Request to start sample stream for unrecognized source: {}",
                             (sourceEvent.hasSource() ? sourceEvent.getSource().getClass() : "null source"));
                     }
                     break;
                 case REQUEST_STOP_SAMPLE_STREAM:
-                    if(sourceEvent.hasSource() && sourceEvent.getSource() instanceof PolyphaseChannelSource channelSource)
+                    if(sourceEvent.hasSource() && sourceEvent.getSource() instanceof PolyphaseChannelSource polyphasechannelsource)
                     {
-                        stopChannelSource(channelSource);
-                        channelSource.dispose();
+                        stopChannelSource(polyphasechannelsource);
+                        polyphasechannelsource.dispose();
                     }
                     else
                     {
-                        mLog.error("Request to stop sample stream for unrecognized source: " +
+                        mLog.error("Request to stop sample stream for unrecognized source: {}",
                             (sourceEvent.hasSource() ? sourceEvent.getSource().getClass() : "null source"));
                     }
                     break;
@@ -461,8 +460,8 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                     mSourceEventBroadcaster.broadcast(sourceEvent);
                     break;
                 default:
-                    mLog.error("Received unrecognized source event from polyphase channel source [" +
-                        sourceEvent.getEvent() + "]");
+                    mLog.error("Received unrecognized source event from polyphase channel source [{}]",
+                        sourceEvent.getEvent());
                     break;
             }
         }
@@ -510,7 +509,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 {
                     updateOutputProcessors();
                 }
-                catch(Exception e)
+                catch(Exception _)
                 {
                     mLog.error("Error updating polyphase channel output processors");
                 }
@@ -527,9 +526,9 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                     {
                         mPolyphaseChannelizer.receive(iterator.next());
                     }
-                    catch(Throwable throwable)
+                    catch(Exception exception)
                     {
-                        mLog.error("Error", throwable);
+                        mLog.error("Error", exception);
                     }
                 }
             }
