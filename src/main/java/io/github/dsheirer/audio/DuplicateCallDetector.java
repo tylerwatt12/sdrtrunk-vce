@@ -88,7 +88,7 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
     {
         if(mCallManagementProvider.isDuplicateCallDetectionEnabled())
         {
-            Identifier identifier = audioSegment.getIdentifierCollection()
+            Identifier<?> identifier = audioSegment.getIdentifierCollection()
                 .getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
 
             if(identifier instanceof SystemConfigurationIdentifier systemconfigurationidentifier)
@@ -210,8 +210,8 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
             if(mCallManagementProvider.isDuplicateCallDetectionByTalkgroupEnabled())
             {
                 //Step 1 check for duplicate TO values
-                List<Identifier> to1 = segment1.getIdentifierCollection().getIdentifiers(Role.TO);
-                List<Identifier> to2 = segment2.getIdentifierCollection().getIdentifiers(Role.TO);
+                List<Identifier<?>> to1 = getIdentifiers(segment1, Role.TO);
+                List<Identifier<?>> to2 = getIdentifiers(segment2, Role.TO);
 
                 if(isDuplicate(to1, to2))
                 {
@@ -222,8 +222,8 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
             if(mCallManagementProvider.isDuplicateCallDetectionByRadioEnabled())
             {
                 //Step 2 check for duplicate FROM values
-                List<Identifier> from1 = segment1.getIdentifierCollection().getIdentifiers(Role.FROM);
-                List<Identifier> from2 = segment2.getIdentifierCollection().getIdentifiers(Role.FROM);
+                List<Identifier<?>> from1 = getIdentifiers(segment1, Role.FROM);
+                List<Identifier<?>> from2 = getIdentifiers(segment2, Role.FROM);
 
                 return isDuplicate(from1, from2);
             }
@@ -239,22 +239,19 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
          * @param identifiers2
          * @return
          */
-        public static boolean isDuplicate(List<Identifier> identifiers1, List<Identifier> identifiers2)
+        public static boolean isDuplicate(List<Identifier<?>> identifiers1, List<Identifier<?>> identifiers2)
         {
-            for(Identifier identifier1: identifiers1)
+            for(Identifier<?> identifier1: identifiers1)
             {
                 if(identifier1 instanceof TalkgroupIdentifier tgId1)
                 {
                     int tg1 = tgId1.getValue();
 
-                    for(Identifier identifier2: identifiers2)
+                    for(Identifier<?> identifier2: identifiers2)
                     {
-                        if(identifier2 instanceof TalkgroupIdentifier tgId2 && tgId2.getValue() == tg1)
-                        {
-                            return true;
-                        }
-                        else if(identifier2 instanceof PatchGroupIdentifier pgId2 &&
-                                pgId2.getValue().getPatchGroup().getValue() == tg1)
+                        if((identifier2 instanceof TalkgroupIdentifier tgId2 && tgId2.getValue() == tg1) ||
+                            (identifier2 instanceof PatchGroupIdentifier pgId2 &&
+                                pgId2.getValue().getPatchGroup().getValue() == tg1))
                         {
                             return true;
                         }
@@ -264,7 +261,7 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
                 {
                     int talkgroup1 = pgId1.getValue().getPatchGroup().getValue();
 
-                    for(Identifier identifier2: identifiers2)
+                    for(Identifier<?> identifier2: identifiers2)
                     {
                         if((identifier2 instanceof TalkgroupIdentifier tgId2 && tgId2.getValue() == talkgroup1) ||
                             (identifier2 instanceof PatchGroupIdentifier pgId2 &&
@@ -278,7 +275,7 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
                 {
                     int radio1 = raId1.getValue();
 
-                    for(Identifier identifier2: identifiers2)
+                    for(Identifier<?> identifier2: identifiers2)
                     {
                         if(identifier2 instanceof RadioIdentifier raId2 && raId2.getValue() == radio1)
                         {
@@ -289,6 +286,12 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
             }
 
             return false;
+        }
+
+        @SuppressWarnings("unchecked")
+        private static List<Identifier<?>> getIdentifiers(AudioSegment audioSegment, Role role)
+        {
+            return (List<Identifier<?>>)(List<?>)audioSegment.getIdentifierCollection().getIdentifiers(role);
         }
 
         /**
