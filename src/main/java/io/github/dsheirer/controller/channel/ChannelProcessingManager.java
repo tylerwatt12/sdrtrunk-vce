@@ -661,8 +661,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                         }
                         catch(Exception e)
                         {
-                            mLog.error("Error during channel stop while setting processing to false [" + channel +
-                                    "] - continuing channel stop process", e);
+                            mLog.error("Error during channel stop while setting processing to false [{}] - continuing channel stop process",
+                                channel, e);
                         }
                     });
                 }
