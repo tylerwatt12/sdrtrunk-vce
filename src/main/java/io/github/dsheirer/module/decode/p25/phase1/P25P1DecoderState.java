@@ -39,7 +39,6 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
-import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
@@ -174,8 +173,6 @@ import io.github.dsheirer.util.PacketUtil;
 import java.util.Collections;
 import java.util.List;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Decoder state for an APCO25 channel.  Maintains the call/data/idle state of the channel and produces events by
@@ -183,8 +180,6 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P1DecoderState extends DecoderState implements IChannelEventListener
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderState.class);
-    private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
     private static final String CALL_ALERT_LABEL = "CALL ALERT";
     private static final String GROUP_AFFILIATION_LABEL = "GROUP AFFILIATION";
     private static final String STATUS_QUERY_LABEL = "STATUS QUERY";
@@ -1013,71 +1008,78 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 {
                     IPacket udpPayload = udpPacket.getPayload();
 
-                    if(udpPayload instanceof ARSPacket arsPacket)
+                    switch(udpPayload)
                     {
-                        MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
-
-                        DecodeEvent packetEvent = P25DecodeEvent.builder(DecodeEventType.AUTOMATIC_REGISTRATION_SERVICE,
-                                        message.getTimestamp())
-                                .channel(getCurrentChannel())
-                                .identifiers(mic)
-                                .details(arsPacket + " " + ipv4)
-                                .build();
-
-                        broadcast(packetEvent);
-                    }
-                    else if(udpPayload instanceof MCGPPacket mcgp)
-                    {
-                        MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
-
-                        DecodeEvent cellocatorEvent = P25DecodeEvent.builder(DecodeEventType.CELLOCATOR,
-                                        message.getTimestamp())
-                                .channel(getCurrentChannel())
-                                .identifiers(mic)
-                                .details(mcgp + " " + ipv4)
-                                .build();
-
-                        broadcast(cellocatorEvent);
-                    }
-                    else if(udpPayload instanceof LRRPPacket lrrpPacket)
-                    {
-                        MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
-
-                        DecodeEvent lrrpEvent = P25DecodeEvent.builder(DecodeEventType.LRRP, message.getTimestamp())
-                                .channel(getCurrentChannel())
-                                .details(lrrpPacket + " " + ipv4)
-                                .identifiers(mic)
-                                .protocol(Protocol.LRRP)
-                                .build();
-
-                        broadcast(lrrpEvent);
-
-                        GeoPosition geoPosition = PacketUtil.extractGeoPosition(lrrpPacket);
-
-                        if(geoPosition != null)
+                        case ARSPacket arsPacket:
                         {
-                            PlottableDecodeEvent plottableDecodeEvent = PlottableDecodeEvent
-                                    .plottableBuilder(DecodeEventType.GPS, message.getTimestamp())
+                            MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
+
+                            DecodeEvent packetEvent = P25DecodeEvent.builder(DecodeEventType.AUTOMATIC_REGISTRATION_SERVICE,
+                                            message.getTimestamp())
                                     .channel(getCurrentChannel())
                                     .identifiers(mic)
-                                    .protocol(Protocol.LRRP)
-                                    .location(geoPosition)
+                                    .details(arsPacket + " " + ipv4)
                                     .build();
 
-                            broadcast(plottableDecodeEvent);
+                            broadcast(packetEvent);
+                            break;
                         }
-                    }
-                    else
-                    {
-                        MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
+                        case MCGPPacket mcgp:
+                        {
+                            MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
 
-                        DecodeEvent packetEvent = P25DecodeEvent.builder(DecodeEventType.UDP_PACKET, message.getTimestamp())
-                                .channel(getCurrentChannel())
-                                .identifiers(mic)
-                                .details(ipv4.toString())
-                                .build();
+                            DecodeEvent cellocatorEvent = P25DecodeEvent.builder(DecodeEventType.CELLOCATOR,
+                                            message.getTimestamp())
+                                    .channel(getCurrentChannel())
+                                    .identifiers(mic)
+                                    .details(mcgp + " " + ipv4)
+                                    .build();
 
-                        broadcast(packetEvent);
+                            broadcast(cellocatorEvent);
+                            break;
+                        }
+                        case LRRPPacket lrrpPacket:
+                        {
+                            MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
+
+                            DecodeEvent lrrpEvent = P25DecodeEvent.builder(DecodeEventType.LRRP, message.getTimestamp())
+                                    .channel(getCurrentChannel())
+                                    .details(lrrpPacket + " " + ipv4)
+                                    .identifiers(mic)
+                                    .protocol(Protocol.LRRP)
+                                    .build();
+
+                            broadcast(lrrpEvent);
+
+                            GeoPosition geoPosition = PacketUtil.extractGeoPosition(lrrpPacket);
+
+                            if(geoPosition != null)
+                            {
+                                PlottableDecodeEvent plottableDecodeEvent = PlottableDecodeEvent
+                                        .plottableBuilder(DecodeEventType.GPS, message.getTimestamp())
+                                        .channel(getCurrentChannel())
+                                        .identifiers(mic)
+                                        .protocol(Protocol.LRRP)
+                                        .location(geoPosition)
+                                        .build();
+
+                                broadcast(plottableDecodeEvent);
+                            }
+                            break;
+                        }
+                        default:
+                        {
+                            MutableIdentifierCollection mic = getMutableIdentifierCollection(message.getIdentifiers(), message.getTimestamp());
+
+                            DecodeEvent packetEvent = P25DecodeEvent.builder(DecodeEventType.UDP_PACKET, message.getTimestamp())
+                                    .channel(getCurrentChannel())
+                                    .identifiers(mic)
+                                    .details(ipv4.toString())
+                                    .build();
+
+                            broadcast(packetEvent);
+                            break;
+                        }
                     }
                 }
                 else if(ipPayload instanceof ICMPPacket)
@@ -2008,6 +2010,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.COMMAND, "Function: " +
                             efce.getExtendedFunction() + " Arguments:" + efce.getExtendedFunctionArguments());
                 }
+                break;
             case GROUP_AFFILIATION_QUERY:
                 broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.QUERY, "Group Affiliation");
                 break;
@@ -2111,13 +2114,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 }
                 break;
             default:
-//                if(lcw.getVendor().isLoggable())
-//                {
-//                    LOGGING_SUPPRESSOR.info(lcw.getVendor().toString() + lcw.getOpcodeNumber() + lcw.getMessage().toHexString(),
-//                            1, "Unrecognized LCW Opcode: " + lcw.getOpcode().name() + " VENDOR:" + lcw.getVendor() +
-//                                    " OPCODE:" + lcw.getOpcodeNumber() + " MSG:" + lcw.getMessage().toHexString() +
-//                                    " CHAN:" + getCurrentChannel() + " FREQ:" + getCurrentFrequency());
-//                }
                 break;
         }
     }
@@ -2151,6 +2147,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 {
                     mTrafficChannelManager.setCurrentControlFrequency(frequency, mChannel);
                 }
+                break;
             default:
                 break;
         }
