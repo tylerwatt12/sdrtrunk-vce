@@ -24,15 +24,12 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.header.UDTHeader;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * Short Message Service (SMS) using Unified Data Transport
  */
 public class UDTShortMessageService extends DMRMessage
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(UDTShortMessageService.class);
+    private static final String INSUFFICIENT_DATA = "(insufficient data)";
     private UDTHeader mHeader;
     private String mSMS;
 
@@ -84,17 +81,8 @@ public class UDTShortMessageService extends DMRMessage
                 case BCD_4_BITS:
                     mSMS = parseBCD4Payload();
                     break;
-                case BINARY:
-                case MOBILE_SUBSCRIBER_OR_TALKGROUP_ADDRESS:
-                case NMEA_GPS_LOCATION_CODED:
-                case IP_ADDRESS:
-                case VENDOR_PROPRIETARY_8:
-                case VENDOR_PROPRIETARY_9:
-                case MIXED_FORMAT:
-                case UNKNOWN:
-//                    LOGGER.warn("Unrecognized UDT Short Data Format: " + mHeader.getFormat() +
-//                            " - Please send this to the sdrtrunk developer - Hex:" + getMessage().toHexString() +
-//                            " As String:" + new String(getMessage().getBytes()));
+                 case BINARY, MOBILE_SUBSCRIBER_OR_TALKGROUP_ADDRESS, NMEA_GPS_LOCATION_CODED, IP_ADDRESS,
+                     VENDOR_PROPRIETARY_8, VENDOR_PROPRIETARY_9, MIXED_FORMAT, UNKNOWN:
                     mSMS = "Error:" + new String(getMessage().getBytes());
                     break;
             }
@@ -125,7 +113,7 @@ public class UDTShortMessageService extends DMRMessage
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 
@@ -144,7 +132,7 @@ public class UDTShortMessageService extends DMRMessage
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 
@@ -163,7 +151,7 @@ public class UDTShortMessageService extends DMRMessage
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 
@@ -182,7 +170,7 @@ public class UDTShortMessageService extends DMRMessage
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 }
