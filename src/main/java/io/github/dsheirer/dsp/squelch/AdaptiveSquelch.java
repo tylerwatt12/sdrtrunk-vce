@@ -316,6 +316,8 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
             case REQUEST_CURRENT_SQUELCH_AUTO_TRACK:
                 broadcast(SourceEvent.squelchAutoTrack(getSquelchAutoTrack()));
                 break;
+            default:
+                break;
         }
     }
 }

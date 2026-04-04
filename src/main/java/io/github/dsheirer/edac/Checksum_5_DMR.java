@@ -20,16 +20,12 @@
 package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Implements the 5-bit Checksum error detection algorithm specified in TS 102 361-1 paragraph B.3.11
  */
 public class Checksum_5_DMR
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(Checksum_5_DMR.class);
-
     private static final int[] LC_0 = {0, 1, 2, 3, 4, 5, 6, 7};
     private static final int[] LC_1 = {8, 9, 10, 11, 12, 13, 14, 15};
     private static final int[] LC_2 = {16, 17, 18, 19, 20, 21, 22, 23};
@@ -40,6 +36,10 @@ public class Checksum_5_DMR
     private static final int[] LC_7 = {56, 57, 58, 59, 60, 61, 62, 63};
     private static final int[] LC_8 = {64, 65, 66, 67, 68, 69, 70, 71};
     private static final int[] CHECKSUM = {72, 73, 74, 75, 76};
+
+    private Checksum_5_DMR()
+    {
+    }
 
     /**
      * Indicates if the 77-bit Full Link Control message is valid.

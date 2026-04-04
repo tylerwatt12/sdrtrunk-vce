@@ -22,15 +22,12 @@ package io.github.dsheirer.dsp.squelch;
 import io.github.dsheirer.dsp.filter.iir.SinglePoleIirFilter;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Power monitor.  Provides periodic broadcast of current channel power from I/Q sample buffers.
  */
 public class PowerMonitor
 {
-    private static final Logger mLog = LoggerFactory.getLogger(PowerMonitor.class);
     private int mPowerLevelBroadcastCount = 0;
     private int mPowerLevelBroadcastThreshold;
     private Listener<SourceEvent> mSourceEventListener;

@@ -22,15 +22,12 @@ package io.github.dsheirer.dsp.fm;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * FM demodulator that uses JDK 17+ SIMD vector intrinsics
  */
 public class VectorFMDemodulator128 extends VectorFMDemodulator
 {
-    private static final Logger mLog = LoggerFactory.getLogger(VectorFMDemodulator128.class);
     protected static final float ZERO = 0.0f;
     private static final int BUFFER_OVERLAP = 1;
     private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_128;
@@ -38,10 +35,6 @@ public class VectorFMDemodulator128 extends VectorFMDemodulator
     //Initialize buffers to be non-null and resize once the first buffer arrives
     private float[] mIBuffer = new float[1];
     private float[] mQBuffer = new float[1];
-
-    public VectorFMDemodulator128()
-    {
-    }
 
     @Override
     public float[] demodulate(float[] i, float[] q)
@@ -68,7 +61,13 @@ public class VectorFMDemodulator128 extends VectorFMDemodulator
 
         float[] demodulated = new float[i.length];
 
-        FloatVector currentI, currentQ, previousI, previousQ, demod, demodI, demodQ;
+        FloatVector currentI;
+        FloatVector currentQ;
+        FloatVector previousI;
+        FloatVector previousQ;
+        FloatVector demod;
+        FloatVector demodI;
+        FloatVector demodQ;
 
         for(int bufferPointer = 0; bufferPointer < mIBuffer.length - 1; bufferPointer += VECTOR_SPECIES.length())
         {

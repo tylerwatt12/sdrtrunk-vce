@@ -19,16 +19,16 @@
 
 package io.github.dsheirer.dsp.filter.decimate;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * Factory for creating real and complex decimation filters.
  */
 public class DecimationFilterFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(DecimationFilterFactory.class);
     private static final int[] SUPPORTED_RATES = new int[]{0,2,4,8,16,32,64,128,256,512,1024};
+
+    private DecimationFilterFactory()
+    {
+    }
 
     /**
      * Creates a real-valued decimation filter for float array sample buffers providing greater than 100 dB of
@@ -41,8 +41,7 @@ public class DecimationFilterFactory
     {
         switch(decimationRate)
         {
-            case 0:
-            case 1:
+            case 0, 1:
                 return new RealDecimateX0Filter();
             case 2:
                 return new RealDecimateX2Filter();

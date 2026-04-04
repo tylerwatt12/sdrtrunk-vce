@@ -21,16 +21,12 @@ package io.github.dsheirer.edac;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import java.util.Arrays;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * P25 CRC check/correction methods
  */
 public class CRCP25
 {
-    private final static Logger mLog = LoggerFactory.getLogger(CRCP25.class);
-
     /**
      * CRC-CCITT 16-bit checksums for a message length of 80 bits plus 16
      * additional checksums representing CRC checksum bit errors

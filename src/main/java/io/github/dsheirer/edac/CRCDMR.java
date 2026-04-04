@@ -20,15 +20,15 @@ package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * DMR CRC check/correction methods
  */
 public class CRCDMR
 {
-    private final static Logger mLog = LoggerFactory.getLogger(CRCDMR.class);
+    private CRCDMR()
+    {
+    }
 
     /**
      * CRC-CCITT 16-bit checksums for a message length of 80 bits plus 16

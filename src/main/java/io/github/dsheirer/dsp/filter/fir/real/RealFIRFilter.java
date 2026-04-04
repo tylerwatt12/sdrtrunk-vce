@@ -107,8 +107,6 @@ public class RealFIRFilter implements IRealFilter
         float[] coefficients = FilterFactory.getLowPass(1000, 250, 99, WindowType.BLACKMAN);
 
         RealFIRFilter filter = new RealFIRFilter(coefficients);
-        VectorRealFIRFilter256Bit vectorFilter = new VectorRealFIRFilter256Bit(coefficients);
-
         double accumulator = 0.0d;
 
         int iterations = 1_000_000;
@@ -126,7 +124,7 @@ public class RealFIRFilter implements IRealFilter
 //        System.out.println("REG:" + Arrays.toString(filtered));
 //        System.out.println("VEC:" + Arrays.toString(vfiltered));
 
-        double elapsed = System.currentTimeMillis() - start;
+        double elapsed = (double)System.currentTimeMillis() - start;
 
         DecimalFormat df = new DecimalFormat("0.000");
         System.out.println("Accumulator: " + accumulator);

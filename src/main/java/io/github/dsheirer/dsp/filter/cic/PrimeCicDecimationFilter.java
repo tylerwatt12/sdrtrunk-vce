@@ -93,7 +93,7 @@ public class PrimeCicDecimationFilter
         //output and chain it to the final stage.
         if(stage != null)
         {
-            double channelRate = sampleRate / (double)decimation;
+            double channelRate = sampleRate / decimation;
             Stage output = new Output(channelRate, passFrequency, stopFrequency);
             stage.setChild(output);
         }
@@ -305,7 +305,7 @@ public class PrimeCicDecimationFilter
         {
             mSize = size - 1;
             mSampleBuffer = new float[mSize];
-            float baseGain = 1.0f / (float)size;
+            float baseGain = 1.0f / size;
             mGain = baseGain * (1.0f / (1.0f - baseGain));
         }
 
@@ -446,7 +446,6 @@ public class PrimeCicDecimationFilter
     {
         double sampleRate = 25.0;
         int decimation = 5;
-        double finalRate = sampleRate / decimation;
         IRealOscillator oscillator = OscillatorFactory.getRealOscillator(1.0, sampleRate);
 
         try

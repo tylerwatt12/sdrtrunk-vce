@@ -22,9 +22,6 @@
 package io.github.dsheirer.dsp.fsk;
 
 import io.github.dsheirer.dsp.symbol.ISyncDetectListener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * Monitors a symbol stream and externally provided sync detection events to track the sync state as the number of
  * message synchronization events relative the count of symbols that have been decoded to provide synchronization state
@@ -46,8 +43,6 @@ import org.slf4j.LoggerFactory;
  */
 public class SynchronizationMonitor implements ISyncDetectListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(SynchronizationMonitor.class);
-
     private ISyncStateListener mSyncStateListener;
     private SyncState mSyncState = SyncState.COARSE;
     private int mSyncCount;
