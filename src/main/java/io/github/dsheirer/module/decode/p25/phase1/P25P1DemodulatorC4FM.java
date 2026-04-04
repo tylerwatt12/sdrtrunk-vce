@@ -479,7 +479,8 @@ public class P25P1DemodulatorC4FM
         }
         catch(InterruptedException e)
         {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for sync results viewer", e);
         }
     }
 
@@ -533,7 +534,8 @@ public class P25P1DemodulatorC4FM
         }
         catch(InterruptedException e)
         {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for symbol viewer", e);
         }
     }
 
