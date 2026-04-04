@@ -20,10 +20,11 @@
 package io.github.dsheirer.module.decode.p25.reference;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 public enum Vendor
 {
-	STANDARD( "STANDARD", "STANDARD", 0),
+	STANDARD( "STANDARD", 0),
 	STANDARD_V1( "STANDARD", "STANDARD_01", 1),
 	V2( "VENDOR02", "V_02", 2),
 	V3( "VENDOR03", "V_03", 3),
@@ -167,7 +168,7 @@ public enum Vendor
 	V141( "VENDOR8D", "V_8D", 141),
 	V142( "VENDOR8E", "V_8E", 142),
 	V143( "VENDOR8F", "V_8F", 143),
-	MOTOROLA( "MOTOROLA", "MOTOROLA", 144),
+	MOTOROLA( "MOTOROLA", 144),
 	V145( "VENDOR91", "V_91", 145),
 	V146( "VENDOR92", "V_92", 146),
 	V147( "VENDOR93", "V_93", 147),
@@ -187,7 +188,7 @@ public enum Vendor
 	V161( "VENDORA1", "V_A1", 161),
 	V162( "VENDORA2", "V_A2", 162),
 	V163( "VENDORA3", "V_A3", 163),
-	HARRIS( "HARRIS", "HARRIS", 164),
+	HARRIS( "HARRIS", 164),
 	V165( "VENDORA5", "V_A5", 165),
 	V166( "VENDORA6", "V_A6", 166),
 	V167( "VENDORA7", "V_A7", 167),
@@ -288,6 +289,16 @@ public enum Vendor
 	/**
 	 * Constructs an instance
 	 * @param label for the vendor
+	 * @param value for the vendor
+	 */
+	Vendor( String label, int value )
+	{
+		this(label, label, value);
+	}
+
+	/**
+	 * Constructs an instance
+	 * @param label for the vendor
 	 * @param description of the vendor
 	 * @param value for the vendor
 	 */
@@ -298,7 +309,7 @@ public enum Vendor
 		mValue = value;
 	}
 
-	public static EnumSet<Vendor> LOGGABLE_VENDORS = EnumSet.of(STANDARD, MOTOROLA, HARRIS);
+	public static final Set<Vendor> LOGGABLE_VENDORS = Set.copyOf(EnumSet.of(STANDARD, MOTOROLA, HARRIS));
 	
 	public String getLabel()
 	{
