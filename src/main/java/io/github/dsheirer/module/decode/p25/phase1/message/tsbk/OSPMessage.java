@@ -37,7 +37,7 @@ public abstract class OSPMessage extends TSBKMessage
      * @param nac decoded from the NID
      * @param timestamp for the message
      */
-    public OSPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
+    protected OSPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(dataUnitID, message, nac, timestamp);
     }

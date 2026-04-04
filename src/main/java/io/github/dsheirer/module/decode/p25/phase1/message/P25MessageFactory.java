@@ -35,6 +35,10 @@ public class P25MessageFactory
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25MessageFactory.class);
 
+    private P25MessageFactory()
+    {
+    }
+
     /**
      * Creates a P25 message for known message types.
      *

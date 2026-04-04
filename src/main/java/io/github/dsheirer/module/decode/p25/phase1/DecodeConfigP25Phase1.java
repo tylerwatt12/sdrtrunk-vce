@@ -35,13 +35,6 @@ public class DecodeConfigP25Phase1 extends DecodeConfigP25
 
     private Modulation mModulation = Modulation.C4FM;
 
-    /**
-     * Constructs an instance
-     */
-    public DecodeConfigP25Phase1()
-    {
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {

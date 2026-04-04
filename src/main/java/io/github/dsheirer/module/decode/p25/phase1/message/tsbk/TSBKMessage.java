@@ -50,7 +50,7 @@ public abstract class TSBKMessage extends P25P1Message
      * @param nac decoded from the NID
      * @param timestamp for the message
      */
-    public TSBKMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
+    protected TSBKMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(message, nac, timestamp);
         mDataUnitID = dataUnitID;

@@ -39,7 +39,7 @@ public abstract class VendorOSPMessage extends OSPMessage
      * @param nac decoded from the NID
      * @param timestamp for the message
      */
-    public VendorOSPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
+    protected VendorOSPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(dataUnitID, message, nac, timestamp);
     }

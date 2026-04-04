@@ -42,6 +42,7 @@ public enum Modulation
     {
         return mLabel;
     }
+    @Override
     public String toString()
     {
         return getLabel();

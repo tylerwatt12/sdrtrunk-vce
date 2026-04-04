@@ -24,7 +24,7 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import java.util.List;
 
 /**
- * Interface to allow messages to be augmented with IdentiferUpdateXXX type
+ * Interface to allow messages to be augmented with IdentifierUpdateXXX type
  * messages that provide the channel information necessary to calculate the
  * uplink and downlink frequency for the channel.
  */

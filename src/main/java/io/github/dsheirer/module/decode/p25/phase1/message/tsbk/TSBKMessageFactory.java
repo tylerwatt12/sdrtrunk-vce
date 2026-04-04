@@ -134,6 +134,10 @@ public class TSBKMessageFactory
     private static final ViterbiDecoder_1_2_P25 VITERBI_HALF_RATE_DECODER = new ViterbiDecoder_1_2_P25();
     public static final int CRC_FAIL = -1;
 
+    private TSBKMessageFactory()
+    {
+    }
+
     /**
      * Performs deinterleave, Viterbi decoding, and applies the CRC-CCITT error detection/correction.
      * @param raw interleaved message

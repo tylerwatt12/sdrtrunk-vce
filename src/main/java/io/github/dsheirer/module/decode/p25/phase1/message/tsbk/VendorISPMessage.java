@@ -39,7 +39,7 @@ public abstract class VendorISPMessage extends ISPMessage
      * @param nac decoded from the NID
      * @param timestamp for the message
      */
-    public VendorISPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
+    protected VendorISPMessage(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(dataUnitID, message, nac, timestamp);
     }

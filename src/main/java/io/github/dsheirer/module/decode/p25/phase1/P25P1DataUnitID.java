@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * The Data Unit ID (DUID) is part of the Network ID (NID) field and indicates the type of message.
@@ -73,12 +74,12 @@ public enum P25P1DataUnitID
         mLabel = label;
     }
 
-    public static final EnumSet<P25P1DataUnitID> VALID_PRIMARY_DUIDS = EnumSet.of(HEADER_DATA_UNIT, TERMINATOR_DATA_UNIT,
+    public static final Set<P25P1DataUnitID> VALID_PRIMARY_DUIDS = Set.copyOf(EnumSet.of(HEADER_DATA_UNIT, TERMINATOR_DATA_UNIT,
             LOGICAL_LINK_DATA_UNIT_1, LOGICAL_LINK_DATA_UNIT_2, PACKET_DATA_UNIT, PACKET_DATA_UNIT_BLOCK_1,
-            TRUNKING_SIGNALING_BLOCK_1, TERMINATOR_DATA_UNIT_LINK_CONTROL);
+            TRUNKING_SIGNALING_BLOCK_1, TERMINATOR_DATA_UNIT_LINK_CONTROL));
 
-    public static final EnumSet<P25P1DataUnitID> TSBK_DATA_UNITS = EnumSet.of(TRUNKING_SIGNALING_BLOCK_1,
-            TRUNKING_SIGNALING_BLOCK_2, TRUNKING_SIGNALING_BLOCK_3);
+    public static final Set<P25P1DataUnitID> TSBK_DATA_UNITS = Set.copyOf(EnumSet.of(TRUNKING_SIGNALING_BLOCK_1,
+            TRUNKING_SIGNALING_BLOCK_2, TRUNKING_SIGNALING_BLOCK_3));
 
     /**
      * Indicates if this DUID is a primary DUID carried by the NID.
@@ -128,14 +129,6 @@ public enum P25P1DataUnitID
     public String getLabel()
     {
         return mLabel;
-    }
-
-    /**
-     * Indicates if the message has a trailing status dibit that must be processed
-     */
-    public boolean hasTrailingStatusDibit()
-    {
-        return false;
     }
 
     /**

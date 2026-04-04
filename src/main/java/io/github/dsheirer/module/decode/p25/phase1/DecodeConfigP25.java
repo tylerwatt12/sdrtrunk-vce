@@ -35,7 +35,7 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
 
-    public DecodeConfigP25()
+    protected DecodeConfigP25()
     {
     }
 

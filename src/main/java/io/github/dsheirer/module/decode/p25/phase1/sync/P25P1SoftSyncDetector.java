@@ -33,7 +33,7 @@ public abstract class P25P1SoftSyncDetector extends P25P1SyncDetector
     protected float[] mSymbols = new float[48]; //2x longer than 48-bit/24-dibit DMR sync patterns.
     protected int mSymbolPointer = 0;
 
-    public P25P1SoftSyncDetector()
+    protected P25P1SoftSyncDetector()
     {
     }
 
