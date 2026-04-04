@@ -33,8 +33,7 @@ import java.util.Arrays;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Manages the incoming audio segments and provides access to audio buffers from those segments.
@@ -46,7 +45,6 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      * sample rate.
      */
     public static final int SAMPLES_PER_INTERVAL = 160;
-    private static final Logger LOGGER = LoggerFactory.getLogger(AudioChannel.class);
     private final AudioBuffer mAudioBuffer = new AudioBuffer();
     private final Broadcaster<AudioEvent> mAudioEventBroadcaster = new Broadcaster<>();
     private final LinkedTransferQueue<AudioSegment> mAudioSegmentQueue = new LinkedTransferQueue<>();
@@ -166,7 +164,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      * Provides audio for this channel from the audio segment queue.
      * @return audio or null if there are no audio segments or test audio to play.
      */
-    public float[] getAudio()
+    public float @Nullable [] getAudio()
     {
         if(mAudioBuffer.isFull())
         {
@@ -389,7 +387,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     private void updateToneInsertionAudioClips()
     {
         mAudioSegmentStartTone = mUserPreferences.getPlaybackPreference().getStartTone();
-        mAudioSegmentDropTone = mUserPreferences.getPlaybackPreference().getDropTone();;
+        mAudioSegmentDropTone = mUserPreferences.getPlaybackPreference().getDropTone();
     }
 
     /**
@@ -581,7 +579,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
          * Retrieves an array of 160 samples if available, otherwise returns null.
          * @return 160 samples or null.
          */
-        public float[] get()
+        public float @Nullable [] get()
         {
             if(mBuffer.length >= SAMPLES_PER_INTERVAL)
             {
@@ -605,7 +603,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
          * Flushes remaining samples from the buffer when the quantity is less than a full sample set.
          * @return remaining samples or null.
          */
-        public float[] flush()
+        public float @Nullable [] flush()
         {
             mLock.lock();
 
