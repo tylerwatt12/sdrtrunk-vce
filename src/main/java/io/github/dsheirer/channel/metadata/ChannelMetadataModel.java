@@ -32,15 +32,11 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.table.AbstractTableModel;
 
 public class ChannelMetadataModel extends AbstractTableModel implements IChannelMetadataUpdateListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelMetadataModel.class);
-
     public static final int COLUMN_DECODER_STATE = 0;
     public static final int COLUMN_DECODER_TYPE = 1;
     public static final int COLUMN_USER_FROM = 2;

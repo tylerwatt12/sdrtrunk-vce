@@ -38,8 +38,6 @@ import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier
 import io.github.dsheirer.sample.Listener;
 import java.util.Collections;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Channel metadata containing details about the channel configuration, decoder state and current
@@ -47,8 +45,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, IdentifierUpdateListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelMetadata.class);
-
+    private static final String NULL_DESCRIPTION = "(null)";
     private SystemConfigurationIdentifier mSystemConfigurationIdentifier;
     private SiteConfigurationIdentifier mSiteConfigurationIdentifier;
     private ChannelNameConfigurationIdentifier mChannelNameConfigurationIdentifier;
@@ -56,10 +53,10 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     private ChannelStateIdentifier mChannelStateIdentifier = ChannelStateIdentifier.IDLE;
     private DecoderLogicalChannelNameIdentifier mDecoderLogicalChannelNameIdentifier;
     private DecoderTypeConfigurationIdentifier mDecoderTypeConfigurationIdentifier;
-    private Identifier mFromIdentifier;
+    private Identifier<?> mFromIdentifier;
     private List<Alias> mFromIdentifierAliases;
-    private Identifier mTalkerAliasIdentifier;
-    private Identifier mToIdentifier;
+    private Identifier<?> mTalkerAliasIdentifier;
+    private Identifier<?> mToIdentifier;
     private List<Alias> mToIdentifierAliases;
     private Integer mTimeslot;
 
@@ -95,20 +92,20 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
         StringBuilder sb = new StringBuilder();
         sb.append("Channel Metadata Description\n");
         sb.append("\tTimeslot: ").append(mTimeslot).append("\n");
-        Identifier decoder = getDecoderTypeConfigurationIdentifier();
-        sb.append("\tDecoder: ").append(decoder != null ? decoder : "(null)").append("\n");
-        Identifier state = getChannelStateIdentifier();
-        sb.append("\tState: ").append(state != null ? state : "(null)").append("\n");
-        Identifier system = getSystemConfigurationIdentifier();
-        sb.append("\tSystem: ").append(system != null ? system : "(null)").append("\n");
-        Identifier site = getSiteConfigurationIdentifier();
-        sb.append("\tSite: ").append(site != null ? site : "(null)").append("\n");
-        Identifier channel = getChannelNameConfigurationIdentifier();
-        sb.append("\tChannel: ").append(channel != null ? channel : "(null)").append("\n");
-        Identifier frequency = getFrequencyConfigurationIdentifier();
-        sb.append("\tFrequency: ").append(frequency != null ? frequency : "(null)").append("\n");
-        Identifier logical = getDecoderLogicalChannelNameIdentifier();
-        sb.append("\tLogical Channel: ").append(logical != null ? logical : "(null)").append("\n");
+        Identifier<?> decoder = getDecoderTypeConfigurationIdentifier();
+        sb.append("\tDecoder: ").append(decoder != null ? decoder : NULL_DESCRIPTION).append("\n");
+        Identifier<?> state = getChannelStateIdentifier();
+        sb.append("\tState: ").append(state != null ? state : NULL_DESCRIPTION).append("\n");
+        Identifier<?> system = getSystemConfigurationIdentifier();
+        sb.append("\tSystem: ").append(system != null ? system : NULL_DESCRIPTION).append("\n");
+        Identifier<?> site = getSiteConfigurationIdentifier();
+        sb.append("\tSite: ").append(site != null ? site : NULL_DESCRIPTION).append("\n");
+        Identifier<?> channel = getChannelNameConfigurationIdentifier();
+        sb.append("\tChannel: ").append(channel != null ? channel : NULL_DESCRIPTION).append("\n");
+        Identifier<?> frequency = getFrequencyConfigurationIdentifier();
+        sb.append("\tFrequency: ").append(frequency != null ? frequency : NULL_DESCRIPTION).append("\n");
+        Identifier<?> logical = getDecoderLogicalChannelNameIdentifier();
+        sb.append("\tLogical Channel: ").append(logical != null ? logical : NULL_DESCRIPTION).append("\n");
         return sb.toString();
     }
 
@@ -168,7 +165,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     }
 
     /**
-     * Logical channel name/number expoded by the decoder
+     * Logical channel name/number exploded by the decoder
      */
     public DecoderLogicalChannelNameIdentifier getDecoderLogicalChannelNameIdentifier()
     {
@@ -222,7 +219,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     /**
      * Current call event FROM identifier
      */
-    public Identifier getFromIdentifier()
+    public Identifier<?> getFromIdentifier()
     {
         return mFromIdentifier;
     }
@@ -243,7 +240,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     /**
      * Optional talker alias identifier
      */
-    public Identifier getTalkerAliasIdentifier()
+    public Identifier<?> getTalkerAliasIdentifier()
     {
         return mTalkerAliasIdentifier;
     }
@@ -259,7 +256,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     /**
      * Current call event TO identifier
      */
-    public Identifier getToIdentifier()
+    public Identifier<?> getToIdentifier()
     {
         return mToIdentifier;
     }
@@ -315,7 +312,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
 //            " role:" + update.getIdentifier().getRole() +
 //            " class:" + update.getIdentifier().getClass());
 
-        Identifier identifier = update.getIdentifier();
+        Identifier<?> identifier = update.getIdentifier();
 
         switch(identifier.getIdentifierClass())
         {
@@ -341,9 +338,9 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         }
                         break;
                     case CHANNEL:
-                        if(identifier instanceof ChannelNameConfigurationIdentifier && (update.isAdd() || update.isSilentAdd()))
+                        if(identifier instanceof ChannelNameConfigurationIdentifier channelnameconfigurationidentifier && (update.isAdd() || update.isSilentAdd()))
                         {
-                            mChannelNameConfigurationIdentifier = (ChannelNameConfigurationIdentifier)identifier;
+                            mChannelNameConfigurationIdentifier = channelnameconfigurationidentifier;
                         }
                         else
                         {
@@ -352,9 +349,9 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         broadcastUpdate(ChannelMetadataField.CONFIGURATION_CHANNEL);
                         break;
                     case CHANNEL_FREQUENCY:
-                        if(identifier instanceof FrequencyConfigurationIdentifier && (update.isAdd() || update.isSilentAdd()))
+                        if(identifier instanceof FrequencyConfigurationIdentifier frequencyconfigurationidentifier && (update.isAdd() || update.isSilentAdd()))
                         {
-                            mFrequencyConfigurationIdentifier = (FrequencyConfigurationIdentifier)identifier;
+                            mFrequencyConfigurationIdentifier = frequencyconfigurationidentifier;
                         }
                         else
                         {
@@ -363,9 +360,9 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         broadcastUpdate(ChannelMetadataField.CONFIGURATION_FREQUENCY);
                         break;
                     case DECODER_TYPE:
-                        if(identifier instanceof DecoderTypeConfigurationIdentifier && (update.isAdd() || update.isSilentAdd()))
+                        if(identifier instanceof DecoderTypeConfigurationIdentifier decodertypeconfigurationidentifier && (update.isAdd() || update.isSilentAdd()))
                         {
-                            mDecoderTypeConfigurationIdentifier = (DecoderTypeConfigurationIdentifier)identifier;
+                            mDecoderTypeConfigurationIdentifier = decodertypeconfigurationidentifier;
                         }
                         else
                         {
@@ -374,9 +371,9 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         broadcastUpdate(ChannelMetadataField.DECODER_TYPE);
                         break;
                     case SITE:
-                        if(identifier instanceof SiteConfigurationIdentifier && (update.isAdd() || update.isSilentAdd()))
+                        if(identifier instanceof SiteConfigurationIdentifier siteconfigurationidentifier && (update.isAdd() || update.isSilentAdd()))
                         {
-                            mSiteConfigurationIdentifier = (SiteConfigurationIdentifier)identifier;
+                            mSiteConfigurationIdentifier = siteconfigurationidentifier;
                         }
                         else
                         {
@@ -385,9 +382,9 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         broadcastUpdate(ChannelMetadataField.CONFIGURATION_SITE);
                         break;
                     case SYSTEM:
-                        if(identifier instanceof SystemConfigurationIdentifier && (update.isAdd() || update.isSilentAdd()))
+                        if(identifier instanceof SystemConfigurationIdentifier systemconfigurationidentifier && (update.isAdd() || update.isSilentAdd()))
                         {
-                            mSystemConfigurationIdentifier = (SystemConfigurationIdentifier)identifier;
+                            mSystemConfigurationIdentifier = systemconfigurationidentifier;
                         }
                         else
                         {
@@ -395,15 +392,18 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         }
                         broadcastUpdate(ChannelMetadataField.CONFIGURATION_SYSTEM);
                         break;
+                    default:
+                        // Other configuration forms are not represented in channel metadata.
+                        break;
                 }
                 break;
             case DECODER:
                 switch(identifier.getForm())
                 {
                     case CHANNEL_NAME:
-                        if(identifier instanceof DecoderLogicalChannelNameIdentifier && (update.isAdd() || update.isSilentAdd()))
+                        if(identifier instanceof DecoderLogicalChannelNameIdentifier decoderlogicalchannelnameidentifier && (update.isAdd() || update.isSilentAdd()))
                         {
-                            mDecoderLogicalChannelNameIdentifier = (DecoderLogicalChannelNameIdentifier)identifier;
+                            mDecoderLogicalChannelNameIdentifier = decoderlogicalchannelnameidentifier;
                         }
                         else
                         {
@@ -412,15 +412,18 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         broadcastUpdate(ChannelMetadataField.DECODER_CHANNEL_NAME);
                         break;
                     case STATE:
-                        if(identifier instanceof ChannelStateIdentifier && (update.isAdd() || update.isSilentAdd()))
+                        if(identifier instanceof ChannelStateIdentifier channelstateidentifier && (update.isAdd() || update.isSilentAdd()))
                         {
-                            mChannelStateIdentifier = (ChannelStateIdentifier)identifier;
+                            mChannelStateIdentifier = channelstateidentifier;
                         }
                         else
                         {
                             mChannelStateIdentifier = null;
                         }
                         broadcastUpdate(ChannelMetadataField.DECODER_STATE);
+                        break;
+                    default:
+                        // Other decoder forms are not represented in channel metadata.
                         break;
                 }
                 break;
@@ -441,7 +444,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                         }
                         else
                         {
-                            mFromIdentifierAliases = Collections.EMPTY_LIST;
+                            mFromIdentifierAliases = Collections.emptyList();
                         }
                     }
 
@@ -457,11 +460,14 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                     }
                     else
                     {
-                        mToIdentifierAliases = Collections.EMPTY_LIST;
+                        mToIdentifierAliases = Collections.emptyList();
                     }
 
                     broadcastUpdate(ChannelMetadataField.USER_TO);
                 }
+                break;
+            default:
+                // Other identifier classes are not represented in channel metadata.
                 break;
         }
     }
