@@ -27,6 +27,10 @@ import io.github.dsheirer.module.decode.p25.reference.PDUFormat;
 
 public class PDUHeaderFactory
 {
+    private PDUHeaderFactory()
+    {
+    }
+
     public static PDUHeader getPDUHeader(CorrectedBinaryMessage correctedBinaryMessage)
     {
         boolean passesCRC = correctedBinaryMessage.getCorrectedBitCount() >= 0;

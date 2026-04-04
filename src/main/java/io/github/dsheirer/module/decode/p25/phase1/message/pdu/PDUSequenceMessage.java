@@ -57,6 +57,6 @@ public class PDUSequenceMessage extends P25P1Message
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

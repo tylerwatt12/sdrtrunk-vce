@@ -35,27 +35,21 @@ public class PDUMessage extends P25P1Message
 {
     public static final int CONFIRMATION_REQUIRED_INDICATOR = 65;
     public static final int PACKET_DIRECTION_INDICATOR = 66;
-    public static final int[] FORMAT = {67, 68, 69, 70, 71};
-    public static final int[] SAP_ID = {74, 75, 76, 77, 78, 79};
-    public static final int[] VENDOR_ID = {80, 81, 82, 83, 84, 85, 86, 87};
-    public static final int[] LOGICAL_LINK_ID = {88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
+    private static final int[] FORMAT = {67, 68, 69, 70, 71};
+    private static final int[] SAP_ID = {74, 75, 76, 77, 78, 79};
+    private static final int[] VENDOR_ID = {80, 81, 82, 83, 84, 85, 86, 87};
+    private static final int[] LOGICAL_LINK_ID = {88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
             98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111};
-    public static final int[] BLOCKS_TO_FOLLOW = {113, 114, 115, 116, 117, 118, 119};
-    public static final int[] PAD_OCTET_COUNT = {123, 124, 125, 126, 127};
-    public static final int[] OPCODE = {122, 123, 124, 125, 126, 127};
-    public static final int[] DATA_HEADER_OFFSET = {138, 139, 140, 141, 142, 143};
-    public static final int[] PDU_CRC = {144, 145, 146, 147, 148, 149, 150, 151, 152,
-            153, 154, 155, 156, 157, 158, 159};
+    private static final int[] BLOCKS_TO_FOLLOW = {113, 114, 115, 116, 117, 118, 119};
+    private static final int[] PAD_OCTET_COUNT = {123, 124, 125, 126, 127};
+    private static final int[] OPCODE = {122, 123, 124, 125, 126, 127};
+    private static final int[] DATA_HEADER_OFFSET = {138, 139, 140, 141, 142, 143};
 
     private Identifier mLLID;
 
     public PDUMessage(CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(message, nac, timestamp);
-
-        /* Setup a CRC array to hold the header CRC and the multi-block CRC */
-//        mCRC = new CRC[ 2 ];
-//        mCRC[ 0 ] = CRC.PASSED;
     }
 
     @Override
@@ -213,6 +207,6 @@ public class PDUMessage extends P25P1Message
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

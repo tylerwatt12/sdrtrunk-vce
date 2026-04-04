@@ -74,6 +74,10 @@ public class PDUMessageFactory
 {
     private static final int[] BLOCK_0_UMBTC_OPCODE = {2, 3, 4, 5, 6, 7};
 
+    private PDUMessageFactory()
+    {
+    }
+
     /**
      * Creates a PDU sequence from the header
      * @param nac for the system
@@ -308,12 +312,11 @@ public class PDUMessageFactory
                 pduSequence.getHeader().getDirection(), pduSequence.getHeader().getVendor());
         }
 
-        switch(opcode)
+        if(opcode == Opcode.ISP_TELEPHONE_INTERCONNECT_EXPLICIT_DIAL_REQUEST)
         {
-            case ISP_TELEPHONE_INTERCONNECT_EXPLICIT_DIAL_REQUEST:
-                return new UMBTCTelephoneInterconnectRequestExplicitDialing(pduSequence, nac, timestamp);
-            default:
-                return new PDUSequenceMessage(pduSequence, nac, timestamp);
+            return new UMBTCTelephoneInterconnectRequestExplicitDialing(pduSequence, nac, timestamp);
         }
+
+        return new PDUSequenceMessage(pduSequence, nac, timestamp);
     }
 }

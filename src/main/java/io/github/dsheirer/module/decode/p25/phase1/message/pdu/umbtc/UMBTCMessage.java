@@ -38,7 +38,7 @@ public abstract class UMBTCMessage extends P25P1Message implements IBitErrorProv
 
     private PDUSequence mPDUSequence;
 
-    public UMBTCMessage(PDUSequence PDUSequence, int nac, long timestamp)
+    protected UMBTCMessage(PDUSequence PDUSequence, int nac, long timestamp)
     {
         super(nac, timestamp);
         mPDUSequence = PDUSequence;

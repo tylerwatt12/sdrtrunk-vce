@@ -33,30 +33,30 @@ import java.util.List;
 
 public class TDULCMessage extends P25P1Message implements IFrequencyBandReceiver
 {
-    public static final int[] LC_HEX_0 = {0, 1, 2, 3, 4, 5};
-    public static final int[] LC_HEX_1 = {6, 7, 8, 9, 10, 11};
-    public static final int[] LC_HEX_2 = {24, 25, 26, 27, 28, 29};
-    public static final int[] LC_HEX_3 = {30, 31, 32, 33, 34, 35};
-    public static final int[] LC_HEX_4 = {48, 49, 50, 51, 52, 53};
-    public static final int[] LC_HEX_5 = {54, 55, 56, 57, 58, 59};
-    public static final int[] LC_HEX_6 = {72, 73, 74, 75, 76, 77};
-    public static final int[] LC_HEX_7 = {78, 79, 80, 81, 82, 83};
-    public static final int[] LC_HEX_8 = {96, 97, 98, 99, 100, 101};
-    public static final int[] LC_HEX_9 = {102, 103, 104, 105, 106, 107};
-    public static final int[] LC_HEX_10 = {120, 121, 122, 123, 124, 125};
-    public static final int[] LC_HEX_11 = {126, 127, 128, 129, 130, 131};
-    public static final int[] RS_HEX_0 = {144, 145, 146, 147, 148, 149};
-    public static final int[] RS_HEX_1 = {150, 151, 152, 153, 154, 155};
-    public static final int[] RS_HEX_2 = {168, 169, 170, 171, 172, 173};
-    public static final int[] RS_HEX_3 = {174, 175, 176, 177, 178, 179};
-    public static final int[] RS_HEX_4 = {192, 193, 194, 195, 196, 197};
-    public static final int[] RS_HEX_5 = {198, 199, 200, 201, 202, 203};
-    public static final int[] RS_HEX_6 = {216, 217, 218, 219, 220, 221};
-    public static final int[] RS_HEX_7 = {222, 223, 224, 225, 226, 227};
-    public static final int[] RS_HEX_8 = {240, 241, 242, 243, 244, 245};
-    public static final int[] RS_HEX_9 = {246, 247, 248, 249, 250, 251};
-    public static final int[] RS_HEX_10 = {264, 265, 266, 267, 268, 269};
-    public static final int[] RS_HEX_11 = {270, 271, 272, 273, 274, 275};
+    private static final int[] LC_HEX_0 = {0, 1, 2, 3, 4, 5};
+    private static final int[] LC_HEX_1 = {6, 7, 8, 9, 10, 11};
+    private static final int[] LC_HEX_2 = {24, 25, 26, 27, 28, 29};
+    private static final int[] LC_HEX_3 = {30, 31, 32, 33, 34, 35};
+    private static final int[] LC_HEX_4 = {48, 49, 50, 51, 52, 53};
+    private static final int[] LC_HEX_5 = {54, 55, 56, 57, 58, 59};
+    private static final int[] LC_HEX_6 = {72, 73, 74, 75, 76, 77};
+    private static final int[] LC_HEX_7 = {78, 79, 80, 81, 82, 83};
+    private static final int[] LC_HEX_8 = {96, 97, 98, 99, 100, 101};
+    private static final int[] LC_HEX_9 = {102, 103, 104, 105, 106, 107};
+    private static final int[] LC_HEX_10 = {120, 121, 122, 123, 124, 125};
+    private static final int[] LC_HEX_11 = {126, 127, 128, 129, 130, 131};
+    private static final int[] RS_HEX_0 = {144, 145, 146, 147, 148, 149};
+    private static final int[] RS_HEX_1 = {150, 151, 152, 153, 154, 155};
+    private static final int[] RS_HEX_2 = {168, 169, 170, 171, 172, 173};
+    private static final int[] RS_HEX_3 = {174, 175, 176, 177, 178, 179};
+    private static final int[] RS_HEX_4 = {192, 193, 194, 195, 196, 197};
+    private static final int[] RS_HEX_5 = {198, 199, 200, 201, 202, 203};
+    private static final int[] RS_HEX_6 = {216, 217, 218, 219, 220, 221};
+    private static final int[] RS_HEX_7 = {222, 223, 224, 225, 226, 227};
+    private static final int[] RS_HEX_8 = {240, 241, 242, 243, 244, 245};
+    private static final int[] RS_HEX_9 = {246, 247, 248, 249, 250, 251};
+    private static final int[] RS_HEX_10 = {264, 265, 266, 267, 268, 269};
+    private static final int[] RS_HEX_11 = {270, 271, 272, 273, 274, 275};
 
     //Reed-Solomon(24,12,13) code protects the link control word.  Maximum correctable errors are:  6
     private static final ReedSolomon_24_12_13_P25 REED_SOLOMON_24_12_13_P25 = new ReedSolomon_24_12_13_P25();
@@ -107,7 +107,7 @@ public class TDULCMessage extends P25P1Message implements IFrequencyBandReceiver
 
         while(codewordPointer < getMessage().size())
         {
-            int corrected = Golay24.checkAndCorrect(getMessage(), codewordPointer);
+            Golay24.checkAndCorrect(getMessage(), codewordPointer);
             codewordPointer += 24;
         }
 
@@ -181,7 +181,7 @@ public class TDULCMessage extends P25P1Message implements IFrequencyBandReceiver
             return ((IFrequencyBandReceiver)getLinkControlWord()).getChannels();
         }
 
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     @Override

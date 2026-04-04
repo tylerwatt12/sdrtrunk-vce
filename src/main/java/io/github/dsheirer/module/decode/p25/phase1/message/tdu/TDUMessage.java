@@ -49,6 +49,6 @@ public class TDUMessage extends P25P1Message
 
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }
