@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class ThumbDv implements AutoCloseable
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ThumbDv.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ThumbDv.class);
     private static final String PORT_DESCRIPTION = "USB-to-Serial Port (ftdi_sio)";
     private static final String PORT_DESCRIPTION_FRAGMENT = "USB Serial Port";
     private static final int BAUD_RATE = 460800;
@@ -227,7 +227,7 @@ public class ThumbDv implements AutoCloseable
                             throw new IllegalStateException("Unrecognized audio protocol:" + mAudioProtocol);
                     }
                 }
-                catch(IOException ioe)
+                catch(IOException _)
                 {
                     mLog.error("Error setting audio protocol vocoder parameters");
                 }
