@@ -65,6 +65,7 @@ public enum PDUFormat
         return UNKNOWN;
     }
 
+    @Override
     public String toString()
     {
         return mLabel;

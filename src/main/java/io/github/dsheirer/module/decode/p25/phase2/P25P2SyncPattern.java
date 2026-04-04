@@ -26,6 +26,10 @@ import io.github.dsheirer.dsp.symbol.Dibit;
 
 public class P25P2SyncPattern
 {
+    private P25P2SyncPattern()
+    {
+    }
+
     private static final Dibit[] SYNC_PATTERN = {
         Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D11_MINUS_3,
         Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D11_MINUS_3,Dibit.D01_PLUS_3,

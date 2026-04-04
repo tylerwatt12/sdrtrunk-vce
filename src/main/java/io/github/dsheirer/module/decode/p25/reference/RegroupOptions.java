@@ -77,5 +77,5 @@ public class RegroupOptions
         return sb.toString();
     }
 
-    public enum RegroupType {PATCH_TWO_WAY_REGROUP, SIMULSELECT_ONE_WAY_REGROUP};
+    public enum RegroupType {PATCH_TWO_WAY_REGROUP, SIMULSELECT_ONE_WAY_REGROUP}
 }

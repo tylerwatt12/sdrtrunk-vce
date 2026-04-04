@@ -94,12 +94,9 @@ public enum Service
 
 		for(Service service : values())
 		{
-			if(isSupported(service, serviceBitmap))
+			if(isSupported(service, serviceBitmap) && service != Service.UNKNOWN)
 			{
-				if(service != Service.UNKNOWN)
-				{
-					services.add(service);
-				}
+				services.add(service);
 			}
 		}
 	

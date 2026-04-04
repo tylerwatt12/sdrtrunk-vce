@@ -34,7 +34,7 @@ public abstract class ServiceOptions
      * Constructs an instance
      * @param serviceOptions
      */
-    public ServiceOptions(int serviceOptions)
+    protected ServiceOptions(int serviceOptions)
     {
         mServiceOptions = serviceOptions;
     }

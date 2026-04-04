@@ -18,7 +18,7 @@ public enum RejectReason
     UNKNOWN( -1, "UNKNOWN" );
     
     private int mValue;
-    public String mLabel;
+    private String mLabel;
     
     private RejectReason(int value, String label )
     {
@@ -36,6 +36,7 @@ public enum RejectReason
     	return mLabel;
     }
     
+    @Override
     public String toString()
     {
     	return getLabel();

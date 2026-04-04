@@ -93,6 +93,8 @@ public enum ExtendedFunction
                 return GROUP_REGROUP_ACK_CREATE_SUPERGROUP;
             case 0x0281:
                 return GROUP_REGROUP_ACK_CANCEL_SUPERGROUP;
+            default:
+                break;
         }
 
         return UNKNOWN;

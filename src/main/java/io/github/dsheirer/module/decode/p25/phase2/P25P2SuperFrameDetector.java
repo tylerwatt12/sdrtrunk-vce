@@ -116,7 +116,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
     public P25P2SuperFrameDetector(IPhaseLockedLoop phaseLockedLoop)
     {
-        mSyncDetector = new P25P2SyncDetector(this, phaseLockedLoop);
+        mSyncDetector = new P25P2SyncDetector(this);
     }
 
     /**
@@ -151,6 +151,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
     public void reset()
     {
+        //No detector state needs to be cleared here; sync handling resets the rolling buffers as needed.
     }
 
     @Override

@@ -2,7 +2,11 @@ package io.github.dsheirer.module.decode.p25.reference;
 
 public class P25NetworkCallsign
 {
-	public static final String[] RADIX_50 =  new String[] 
+	private P25NetworkCallsign()
+	{
+	}
+
+	private static final String[] RADIX_50 =  new String[] 
 			{ " ", "A", "B", "C", "D", "E", "F", "G", 
 		      "H", "I", "J", "K", "L", "M", "N", "O", 
 		      "P", "Q", "R", "S", "T", "U", "V", "W", 
@@ -26,12 +30,12 @@ public class P25NetworkCallsign
 
 		StringBuilder sb = new StringBuilder();
 		
-		sb.append( getLetter( (int)( n1 / 1600 ) ) );
-		sb.append( getLetter( (int)( ( n1 / 40 ) % 40 ) ) );
-		sb.append( getLetter( (int)( n1 % 40 ) ) );
-		sb.append( getLetter( (int)( n2 / 1600 ) ) );
-		sb.append( getLetter( (int)( ( n2 / 40 ) % 40 ) ) );
-		sb.append( getLetter( (int)( n2 % 40 ) ) );
+		sb.append( getLetter( ( n1 / 1600 ) ) );
+		sb.append( getLetter( ( ( n1 / 40 ) % 40 ) ) );
+		sb.append( getLetter( ( n1 % 40 ) ) );
+		sb.append( getLetter( ( n2 / 1600 ) ) );
+		sb.append( getLetter( ( ( n2 / 40 ) % 40 ) ) );
+		sb.append( getLetter( ( n2 % 40 ) ) );
 
 		return sb.toString();
 	}
