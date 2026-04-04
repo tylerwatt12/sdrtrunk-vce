@@ -670,10 +670,6 @@ public class AliasList
         private Map<Integer,Alias> mTalkgroupAliasMap = new TreeMap<>();
         private Map<TalkgroupRange, Alias> mTalkgroupRangeAliasMap = new HashMap<>();
 
-        public TalkgroupAliasList()
-        {
-        }
-
         public Alias getAlias(TalkgroupIdentifier identifier)
         {
             //Attempt to do a fully qualified identifier match only
@@ -780,10 +776,6 @@ public class AliasList
         private Map<String,Alias> mFullyQualifiedRadioAliasMap = new HashMap<>();
         private Map<Integer,Alias> mRadioAliasMap = new TreeMap<>();
         private Map<RadioRange, Alias> mRadioRangeAliasMap = new HashMap<>();
-
-        public RadioAliasList()
-        {
-        }
 
         public Alias getAlias(RadioIdentifier identifier)
         {
