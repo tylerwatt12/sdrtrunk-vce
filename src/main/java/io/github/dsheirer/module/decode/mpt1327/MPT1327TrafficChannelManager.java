@@ -253,13 +253,13 @@ public class MPT1327TrafficChannelManager extends TrafficChannelManager implemen
     @Override
     public void reset()
     {
-
+        // No reset action is required for this manager.
     }
 
     @Override
     public void start()
     {
-
+        // No startup action is required for this manager.
     }
 
     @Override
@@ -271,7 +271,7 @@ public class MPT1327TrafficChannelManager extends TrafficChannelManager implemen
         //Issue a disable request for each traffic channel
         for(Channel channel : channels)
         {
-            mLog.debug("Stopping traffic channel: " + channel);
+            mLog.debug("Stopping traffic channel: {}", channel);
             broadcast(new ChannelEvent(channel, ChannelEvent.Event.REQUEST_DISABLE));
         }
     }
@@ -301,7 +301,7 @@ public class MPT1327TrafficChannelManager extends TrafficChannelManager implemen
     {
         List<Identifier> identifiers = collection.getIdentifiers(Role.TO);
 
-        if(identifiers.size() >= 1)
+        if(!identifiers.isEmpty())
         {
             return identifiers.get(0);
         }
@@ -383,6 +383,8 @@ public class MPT1327TrafficChannelManager extends TrafficChannelManager implemen
                                 broadcast(event);
                             }
                         }
+                        break;
+                    default:
                         break;
                 }
             }
