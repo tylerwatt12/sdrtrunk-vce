@@ -98,7 +98,7 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
                 synchronized(mDetectorMap)
                 {
                     SystemDuplicateCallDetector detector = mDetectorMap.computeIfAbsent(system,
-                        key -> new SystemDuplicateCallDetector(mCallManagementProvider, key));
+                        key -> new SystemDuplicateCallDetector(mCallManagementProvider));
 
                     detector.add(audioSegment);
                 }
@@ -123,16 +123,14 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
         private Lock mLock = new ReentrantLock();
         private boolean mMonitoring = false;
         private final ICallManagementProvider mCallManagementProvider;
-        private String mSystem;
 
         /**
          * Constructs an instance
          * @param callManagementProvider to check for duplicate monitoring preferences
          */
-        public SystemDuplicateCallDetector(ICallManagementProvider callManagementProvider, String system)
+        public SystemDuplicateCallDetector(ICallManagementProvider callManagementProvider)
         {
             mCallManagementProvider = callManagementProvider;
-            mSystem = system;
         }
 
         /**
