@@ -306,10 +306,6 @@ public class FIRFilterSpecification
         private double mPassBandAmplitude = 1.0;
         private double mStopBandAmplitude = 0.0;
 
-        public LowPassBuilder()
-        {
-        }
-
         public LowPassBuilder sampleRate(double sampleRateHz)
         {
             mSampleRate = sampleRateHz;
@@ -438,10 +434,6 @@ public class FIRFilterSpecification
         private double mPassBandAmplitude = 1.0;
         private double mStopBandAmplitude = 0.0;
 
-        public HighPassBuilder()
-        {
-        }
-
         public HighPassBuilder sampleRate(double sampleRateHz)
         {
             mSampleRate = sampleRateHz;
@@ -546,10 +538,6 @@ public class FIRFilterSpecification
         private double mPassRipple = 0.01;
         private double mStopAmplitude = 0.0;
         private double mPassAmplitude = 1.0;
-
-        public BandPassBuilder()
-        {
-        }
 
         /**
          * Sets the filter order. If the order is not specified, it will be calculated from the
@@ -729,10 +717,6 @@ public class FIRFilterSpecification
         private double mPassRipple = 0.01;
         private double mAlpha = 0.2;
 
-        public ChannelizerBuilder()
-        {
-        }
-
         /**
          * Sets the filter sample rate in hertz
          */
@@ -851,7 +835,7 @@ public class FIRFilterSpecification
             spec.addFrequencyBand(edgeBand);
             spec.addFrequencyBand(stopBand);
 
-            mLog.debug(spec.toString());
+            mLog.debug("{}", spec);
             return spec;
         }
     }
@@ -881,14 +865,6 @@ public class FIRFilterSpecification
     //
     // return weights;
     // }
-
-    /**
-     * Calculates filter order from filter length
-     */
-    private static int getFilterOrder(double length)
-    {
-        return (int)(FastMath.ceil(length) - 1);
-    }
 
     /**
      * Estimates filter length for a two-band (high or low pass) FIR filter.
