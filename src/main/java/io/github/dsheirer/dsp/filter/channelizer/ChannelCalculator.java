@@ -23,13 +23,10 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class ChannelCalculator
 {
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelCalculator.class);
 
     /**
      * Policy to determine desired corrective action for methods that calculate an index for a frequency or a frequency
@@ -70,7 +67,7 @@ public class ChannelCalculator
         mCenterFrequency = centerFrequency;
         mOversampling = oversampling;
 
-        updateChannelBandwidth();;
+        updateChannelBandwidth();
     }
 
     /**
@@ -78,7 +75,7 @@ public class ChannelCalculator
      */
     private void updateChannelBandwidth()
     {
-        mChannelBandwidth = (double)mSampleRate / (double)mChannelCount;
+        mChannelBandwidth = mSampleRate / mChannelCount;
     }
 
     /**
@@ -451,7 +448,7 @@ public class ChannelCalculator
         {
             if(indexBoundaryPolicy == IndexBoundaryPolicy.ADJUST_POSITIVE)
             {
-                return getCenterFrequency() + ((double)index * getChannelBandwidth()) - getHalfChannelBandwidth();
+                return getCenterFrequency() + (index * getChannelBandwidth()) - getHalfChannelBandwidth();
             }
             else
             {
@@ -460,11 +457,11 @@ public class ChannelCalculator
         }
         else if(index <= wrapAroundIndex)
         {
-            return getCenterFrequency() + ((double)index * getChannelBandwidth()) - getHalfChannelBandwidth();
+            return getCenterFrequency() + (index * getChannelBandwidth()) - getHalfChannelBandwidth();
         }
         else
         {
-            return getCenterFrequency() - ((double)(getChannelCount() - index) * getChannelBandwidth()) -
+            return getCenterFrequency() - ((getChannelCount() - index) * getChannelBandwidth()) -
                 getHalfChannelBandwidth();
         }
     }
@@ -496,16 +493,16 @@ public class ChannelCalculator
             }
             else
             {
-                return getCenterFrequency() - ((double)index * getChannelBandwidth() - getHalfChannelBandwidth());
+                return getCenterFrequency() - (index * getChannelBandwidth() - getHalfChannelBandwidth());
             }
         }
         else if(index <= wrapAroundIndex)
         {
-            return getCenterFrequency() + ((double)index * getChannelBandwidth()) + getHalfChannelBandwidth();
+            return getCenterFrequency() + (index * getChannelBandwidth()) + getHalfChannelBandwidth();
         }
         else
         {
-            return getCenterFrequency() - ((double)(getChannelCount() - index) * getChannelBandwidth()) +
+            return getCenterFrequency() - ((getChannelCount() - index) * getChannelBandwidth()) +
                 getHalfChannelBandwidth();
         }
     }
