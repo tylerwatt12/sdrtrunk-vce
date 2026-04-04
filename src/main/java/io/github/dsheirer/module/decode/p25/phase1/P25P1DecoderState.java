@@ -316,6 +316,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case UNKNOWN:
                     break;
+                default:
+                    break;
             }
         }
         else if(iMessage instanceof MotorolaTalkerAliasComplete tac && tac.isValid())
@@ -745,6 +747,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             su.getUserStatus());
                 }
                 break;
+            default:
+                break;
         }
     }
 
@@ -768,6 +772,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     processControlAnnouncedTrafficUpdate(upd.getChannel(), upd.getServiceOptions(), upd.getIdentifiers(),
                             ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
                 }
+                break;
+            default:
                 break;
         }
     }
@@ -820,6 +826,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     processControlTrafficGrant(mgrcg.getChannel(), mgrcg.getServiceOptions(), mgrcg.getIdentifiers(),
                             ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
                 }
+                break;
+            default:
                 break;
         }
     }
@@ -1597,6 +1605,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             "UNIT:" + su.getUnitStatus() + " USER:" + su.getUserStatus());
                 }
                 break;
+            default:
+                break;
         }
     }
 
@@ -1790,6 +1800,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             uuvcgu.getTimestamp(), tsbk.toString());
                 }
                 break;
+            default:
+                break;
         }
     }
 
@@ -1841,6 +1853,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     processControlTrafficGrant(tivcg.getChannel(), tivcg.getServiceOptions(), tivcg.getIdentifiers(), tsbk.getOpcode(),
                             tivcg.getTimestamp(), tsbk.toString());
                 }
+                break;
+            default:
                 break;
         }
     }
