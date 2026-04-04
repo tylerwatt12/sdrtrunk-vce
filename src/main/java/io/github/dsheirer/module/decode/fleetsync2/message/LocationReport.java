@@ -41,14 +41,10 @@ public class LocationReport extends Fleetsync2Message
     private static int[] GPS_SECONDS = {183, 184, 185, 186, 187, 188};
 
     //Message Block 4
-    private static int[] GPS_CHECKSUM = {213, 214, 215, 216, 217, 218, 219, 220};
     private static int[] LATITUDE_DEGREES_MINUTES = {221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236};
     private static int[] LATITUDE_FRACTIONAL_MINUTES = {238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251};
-    private static int[] SPEED = {252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268,
-        269, 270, 271, 272, 273, 274, 275, 276};
 
     //Message Block 5
-    private static int[] GPS_CENTURY = {277, 278, 279, 280, 281, 282, 283, 284};
     private static int[] GPS_YEAR = {284, 286, 287, 288, 289, 290, 291};
     private static int[] GPS_MONTH = {292, 293, 294, 295};
     private static int[] GPS_DAY = {296, 297, 298, 299, 300};
@@ -119,7 +115,7 @@ public class LocationReport extends Fleetsync2Message
         {
             if(hasHeading())
             {
-                mGPSHeading = (double)getHeadingValue() / 10.0;
+                mGPSHeading = getHeadingValue() / 10.0;
             }
             else
             {
@@ -147,7 +143,7 @@ public class LocationReport extends Fleetsync2Message
     {
         if(mGPSSpeed == null)
         {
-            mGPSSpeed = (double)getMessage().getInt(GPS_SPEED) + ((double)getMessage().getInt(GPS_SPEED_FRACTIONAL) / 255.0);
+            mGPSSpeed = getMessage().getInt(GPS_SPEED) + (getMessage().getInt(GPS_SPEED_FRACTIONAL) / 255.0);
         }
 
         return mGPSSpeed;
@@ -199,14 +195,14 @@ public class LocationReport extends Fleetsync2Message
         if(degreesMinutes != 0)
         {
             //Degrees - divide value by 100 and retain the whole number value (ie degrees)
-            retVal += (double)(degreesMinutes / 100);
+            retVal += (degreesMinutes / 100.0);
 
             //Minutes - modulus by 100 to get the whole minutes value
             int wholeMinutes = degreesMinutes % 100;
 
             if(wholeMinutes != 0)
             {
-                retVal += (double)(wholeMinutes / 60.0D);
+                retVal += (wholeMinutes / 60.0D);
             }
         }
 
@@ -215,7 +211,7 @@ public class LocationReport extends Fleetsync2Message
             //Fractional Minutes - divide by 10,000 to get the decimal place correct
             //then divide by 60 (minutes) to get the decimal value
             //10,000 * 60 = 600,000
-            retVal += (double)(decimalDegrees / 600000.0D);
+            retVal += (decimalDegrees / 600000.0D);
         }
 
         //Adjust the value +/- for the hemisphere

@@ -24,20 +24,15 @@ package io.github.dsheirer.module.decode.ip.cellocator;
  */
 public class CommunicationControl
 {
-    public enum Initiative {ACTIVE, RESPONSE};
-    public enum SpeedType {MOMENTARY, MAX};
+    public enum Initiative {ACTIVE, RESPONSE}
+    public enum SpeedType {MOMENTARY, MAX}
 
     private static final int MASK_CAN_ORIGINATED_ODOMETER = 0x8000;
     private static final int MASK_CAN_ORIGINATED_SPEED = 0x4000;
-    private static final int MASK_MULTI_PURPOSE_FIELD_CONTENT = 0x3000;
-    private static final int MASK_CR200_CR300_MESSAGE_SOURCE = 0x800;
     private static final int MASK_GARMIN_CONNECTED = 0x400;
     private static final int MASK_GARMIN_ENABLED = 0x200;
     private static final int MASK_CR200_CR300_MESSAGE_INITIATIVE = 0x100;
-    private static final int MASK_CR200_CR300_GSM_HIBERNATION_INDICATOR = 0x80;
     private static final int MASK_MOMENTARY_OR_MAX_SPEED_VALUE = 0x40;
-    private static final int MASK_BUSINESS_OR_PRIVATE_MODE = 0x20;
-    private static final int MASK_FIRMWARE_SUB_VERSION = 0x1F;
 
     private int mValue;
 

@@ -26,7 +26,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Payload extends HyteraToken
 {
-    private static final int[] CONTENT_LENGTH = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     private static final int PAYLOAD_START = 32;
 
     /**

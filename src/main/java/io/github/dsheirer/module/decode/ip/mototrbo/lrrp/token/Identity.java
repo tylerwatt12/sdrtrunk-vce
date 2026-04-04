@@ -30,7 +30,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Identity extends Token
 {
-    private static final int IDENTIFIER_START = 16;
     private static final int[] BYTE_VALUE = new int[]{0, 1, 2, 3, 4, 5, 6, 7};
 
     /**

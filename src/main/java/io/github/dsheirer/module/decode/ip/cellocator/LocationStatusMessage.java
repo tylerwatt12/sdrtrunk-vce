@@ -36,31 +36,6 @@ public class LocationStatusMessage extends MCGPPacket
     private static final int[] COMMUNICATION_CONTROL = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
         45, 46, 47};
     private static final int[] MESSAGE_NUMERATOR = new int[]{48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] HARDWARE_VERSION = new int[]{56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] SOFTWARE_VERSION = new int[]{64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] PROTOCOL_VERSION = new int[]{72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] UNIT_STATUS = new int[]{80, 81, 82, 83};
-    private static final int[] CURRENT_GSM_OPERATOR = new int[]{84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 152,
-        153, 154, 155, 156, 157, 158, 159};
-    private static final int[] TRANSMISSION_REASON_SPECIFIC_DATA = new int[]{96, 97, 98, 99, 100, 101, 102, 103};
-    private static final int[] TRANSMISSION_REASON = new int[]{104, 105, 106, 107, 108, 109, 110, 111};
-    private static final int[] UNIT_MODE_OF_OPERATION = new int[]{112, 113, 114, 115, 116, 117, 118, 119}; //Byte 20
-    private static final int[] UNIT_IO_STATUS = new int[]{120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
-        132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151};
-    private static final int[] ANALOG_INPUT_1 = new int[]{160, 161, 162, 163, 164, 165, 166, 167};
-    private static final int[] ANALOG_INPUT_2 = new int[]{168, 169, 170, 171, 172, 173, 174, 175};
-    private static final int[] ANALOG_INPUT_3 = new int[]{176, 177, 178, 179, 180, 181, 182, 183};
-    private static final int[] ANALOG_INPUT_4 = new int[]{184, 185, 186, 187, 188, 189, 190, 191};
-    private static final int[] MILEAGE_COUNTER = new int[]{192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203,
-        204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215};
-    private static final int[] MULTI_PURPOSE_FIELD = new int[]{216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
-        227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248,
-        249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263};
-    private static final int[] LAST_GPS_FIX = new int[]{264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276,
-        277, 278, 279};
-    private static final int[] LOCATION_STATUS = new int[]{280, 281, 282, 283, 284, 285, 286, 287};
-    private static final int[] GPS_MODE_1 = new int[]{288, 289, 290, 291, 292, 293, 294, 295};
-    private static final int[] GPS_MODE_2 = new int[]{296, 297, 298, 299, 300, 301, 302, 303};
     private static final int[] GPS_SATELLITES_USED = new int[]{304, 305, 306, 307, 308, 309, 310, 311};
 
     //Original signed 32-bit big endian field rearranged in little endian byte format
@@ -156,7 +131,7 @@ public class LocationStatusMessage extends MCGPPacket
     public double getLatitude()
     {
         int value = getMessage().getInt(LATITUDE, getOffset());
-        double radians = (double)value / 1E8d;
+        double radians = value / 1E8d;
         return FastMath.toDegrees(radians);
     }
 
@@ -166,7 +141,7 @@ public class LocationStatusMessage extends MCGPPacket
     public double getLongitude()
     {
         int value = getMessage().getInt(LONGITUDE, getOffset());
-        double radians = (double)value / 1E8d;
+        double radians = value / 1E8d;
         return FastMath.toDegrees(radians);
     }
 
@@ -176,7 +151,7 @@ public class LocationStatusMessage extends MCGPPacket
     public double getAltitude()
     {
         int centimeters = getMessage().getInt(ALTITUDE, getOffset());
-        return (double)centimeters / 1E2d;
+        return centimeters / 1E2d;
     }
 
     /**
@@ -185,7 +160,7 @@ public class LocationStatusMessage extends MCGPPacket
     public double getSpeed()
     {
         int centimetersPerSecond = getMessage().getInt(GROUND_SPEED, getOffset());
-        double kilometersPerSecond = (double)centimetersPerSecond / 1E5d;
+        double kilometersPerSecond = centimetersPerSecond / 1E5d;
         return kilometersPerSecond * 3600;
     }
 
@@ -195,7 +170,7 @@ public class LocationStatusMessage extends MCGPPacket
     public double getHeading()
     {
         int headingThousandthsRadian = getMessage().getInt(HEADING_TRUE, getOffset());
-        double radians = (double)headingThousandthsRadian / 1E3d;
+        double radians = headingThousandthsRadian / 1E3d;
         return FastMath.toDegrees(radians);
     }
 

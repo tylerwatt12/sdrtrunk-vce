@@ -44,11 +44,9 @@ public class AcknowledgeMessage extends MCGPPacket
     //This field is byte reversed (ie big endian)
     private static final int[] SECONDARY_ACKNOWLEDGE_NUMBER = new int[]{104, 105, 106, 107, 108, 109, 110, 111, 96, 97,
         98, 99, 100, 101, 102, 103};
-    private static final int[] RESERVED = new int[]{112, 113, 114, 115, 116, 117, 118, 119};
     private static final int[] YEAR = new int[]{121, 122, 123, 124, 125, 126, 127};
     private static final int[] MONTH = new int[]{133, 134, 135, 120};
     private static final int[] DAY = new int[]{128, 129, 130, 131, 132};
-    private static final int[] RESERVED_2 = new int[]{152, 153, 154, 155, 156, 157, 158}; //Always 0x40
     private static final int[] HOUR = new int[]{139, 140, 141, 142, 143};
     private static final int[] MINUTE = new int[]{149, 150, 151, 136, 137, 138};
     private static final int[] SECOND = new int[]{159, 144, 145, 146, 147, 148};

@@ -29,9 +29,6 @@ import java.util.List;
 
 public class UserRegistration extends ARSHeader
 {
-    private static final int HEADER_EXTENSION_FLAG = 24;
-    private static final int[] EVENT = {25, 26};
-    private static final int[] ENCODING = {27, 28, 29, 30, 31};
     private static final int DEVICE_IDENTIFIER_START = 24;
     private static final int DEVICE_IDENTIFIER_START_EXTENDED_HEADER = 32;
 

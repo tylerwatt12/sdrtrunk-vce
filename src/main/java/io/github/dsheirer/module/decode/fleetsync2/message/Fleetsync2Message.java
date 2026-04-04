@@ -33,28 +33,14 @@ import java.util.BitSet;
 public abstract class Fleetsync2Message extends Message
 {
     //Message Header
-    private static int[] BIT_REVERSALS = {0, 1, 2, 3, 4};
-    private static int[] SYNC_PATTERN = {5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
-
-    //Message Block 1
-    private static int[] STATUS = {21, 22, 23, 24, 25, 26, 27};
-    private static int[] MESSAGE_TYPE = {29, 30, 31, 32, 33};
-
     //Message Type Flags
-    private static int FLAG_UNKNOWN_1 = 21;
     private static int FLAG_EMERGENCY_WORKER = 22;
-    private static int FLAG_UNKNOWN_2 = 23;
     private static int FLAG_LONE_WORKER = 24;
-    private static int FLAG_UNKNOWN_3 = 25;
     private static int FLAG_PAGING = 26;
     private static int FLAG_END_OF_TRANSMISSION = 27;
-    private static int FLAG_MANUAL = 28;
     private static int FLAG_AUTOMATIC_NUMBER_IDENTIFIER = 29;
     private static int FLAG_STATUS = 30;
     private static int FLAG_ACKNOWLEDGE = 31;
-    private static int FLAG_UNKNOWN_4 = 32;
-    private static int FLAG_UNKNOWN_5 = 33;
-    private static int FLAG_UNKNOWN_6 = 34; //Always set for Acknowledge
     private static int FLAG_GPS_EXTENSION = 35;
     private static int FLAG_FLEET_EXTENSION = 36;
 
@@ -63,11 +49,8 @@ public abstract class Fleetsync2Message extends Message
     private static int[] FROM_IDENT = {45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56};
     private static int[] TO_IDENT = {57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68};
 
-    private static int[] CRC_BLOCK_1 = {69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84};
-
     //Message Block 2
     private static int[] FLEET_TO = {85, 86, 87, 88, 89, 90, 91, 92};
-    private static int[] CRC_BLOCK_2 = {132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148};
 
     private CorrectedBinaryMessage mMessage;
     private CRC[] mCRC = new CRC[2];
