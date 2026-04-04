@@ -74,7 +74,7 @@ public class MotorolaGroupRegroupVoiceRequest extends VendorISPMessage implement
         sb.append(" GROUP VOICE CALL FM:").append(getSourceAddress());
         sb.append(" TO:").append(getSuperGroup());
 
-        return super.toString();
+        return sb.toString();
     }
 
     public ServiceOptions getServiceOptions()
