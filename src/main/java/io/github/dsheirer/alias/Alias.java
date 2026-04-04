@@ -49,8 +49,6 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.util.Callback;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Alias provides an aliasing (e.g. name, color, etc) container that is linked to multiple alias identifiers and
@@ -178,7 +176,7 @@ public class Alias
     }
 
     @JsonIgnore
-    public ObjectProperty streamTalkgroupAliasProperty()
+    public ObjectProperty<StreamAsTalkgroup> streamTalkgroupAliasProperty()
     {
         return mStreamTalkgroupAlias;
     }
@@ -271,7 +269,7 @@ public class Alias
         boolean isEmptyThis = getAliasListName() == null || getAliasListName().isEmpty();
 
         return (isEmptyArgument && isEmptyThis) ||
-            (!isEmptyArgument && !isEmptyThis && aliasList.contentEquals(getAliasListName()));
+            (!isEmptyArgument && !isEmptyThis && getAliasListName().contentEquals(aliasList));
     }
 
     /**

@@ -31,8 +31,6 @@ import java.util.Map;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Alias Model contains all aliases and is responsible for creation and management of alias lists.  Alias lists are a
@@ -41,7 +39,6 @@ import org.slf4j.LoggerFactory;
  */
 public class AliasModel
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AliasModel.class);
     public static final String NO_ALIAS_LIST = "(No Alias List)";
     private ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
     private ObservableList<String> mAliasListNames = FXCollections.observableArrayList();
