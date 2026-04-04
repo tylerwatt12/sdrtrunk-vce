@@ -37,8 +37,6 @@ import java.awt.Dimension;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.Icon;
 import javax.swing.JLabel;
@@ -46,7 +44,6 @@ import javax.swing.JPanel;
 
 public class ControllerPanel extends JPanel
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ControllerPanel.class);
     private static final long serialVersionUID = 1L;
     private int mSettingsTabIndex = -1;
 
@@ -54,8 +51,6 @@ public class ControllerPanel extends JPanel
     private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
-
-    private JideTabbedPane mTabbedPane;
 
     public ControllerPanel(PlaylistManager playlistManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
@@ -84,7 +79,7 @@ public class ControllerPanel extends JPanel
 
         add(mAudioPanel, "wrap");
 
-        mTabbedPane = new JideTabbedPane()
+        JideTabbedPane tabbedPane = new JideTabbedPane()
         {
             @Override
             public void setSelectedIndex(int index)
@@ -99,19 +94,19 @@ public class ControllerPanel extends JPanel
                 }
             }
         };
-        mTabbedPane.setFont(this.getFont());
-        mTabbedPane.setForeground(Color.BLACK);
-        mTabbedPane.addTab("Now Playing", mNowPlayingPanel);
-        mTabbedPane.addTab("Map", mMapPanel);
-        mTabbedPane.addTab("Tuners", mTunerManagerPanel);
+        tabbedPane.setFont(this.getFont());
+        tabbedPane.setForeground(Color.BLACK);
+        tabbedPane.addTab("Now Playing", mNowPlayingPanel);
+        tabbedPane.addTab("Map", mMapPanel);
+        tabbedPane.addTab("Tuners", mTunerManagerPanel);
 
         Icon playIcon = IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 20, Color.DARK_GRAY);
-        mTabbedPane.addTab("Playlist Editor", playIcon, new JLabel("Show Playlist Manager"));
-        mSettingsTabIndex = mTabbedPane.getTabCount() - 1;
+        tabbedPane.addTab("Playlist Editor", playIcon, new JLabel("Show Playlist Manager"));
+        mSettingsTabIndex = tabbedPane.getTabCount() - 1;
 
         //Set preferred size to influence the split between these panels
-        mTabbedPane.setPreferredSize(new Dimension(880, 500));
+        tabbedPane.setPreferredSize(new Dimension(880, 500));
 
-        add(mTabbedPane, "wrap");
+        add(tabbedPane, "wrap");
     }
 }
