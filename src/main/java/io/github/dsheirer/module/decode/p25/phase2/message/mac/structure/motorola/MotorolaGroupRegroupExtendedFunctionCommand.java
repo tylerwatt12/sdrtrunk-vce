@@ -102,12 +102,16 @@ public class MotorolaGroupRegroupExtendedFunctionCommand extends MacStructureVen
             {
                 case TALKGROUP:
                     mArgumentAddress = APCO25Talkgroup.create(getInt(ARGUMENTS));
+                    break;
                 case SOURCE_RADIO:
                     mArgumentAddress = APCO25RadioIdentifier.createFrom(getInt(ARGUMENTS));
+                    break;
                 case TARGET_RADIO:
                     mArgumentAddress = APCO25RadioIdentifier.createTo(getInt(ARGUMENTS));
+                    break;
                 default:
                     //Do nothing and leave the variable null.
+                    break;
             }
         }
 
