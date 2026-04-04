@@ -43,7 +43,7 @@ public abstract class AbstractVoiceTimeslot extends Timeslot
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     @Override

@@ -35,10 +35,6 @@ public class DecodeConfigP25Phase2 extends DecodeConfigP25
     private ScrambleParameters mScrambleParameters;
     private boolean mAutoDetectScrambleParameters;
 
-    public DecodeConfigP25Phase2()
-    {
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {

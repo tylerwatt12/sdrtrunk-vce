@@ -28,6 +28,10 @@ import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
  */
 public class TimeslotFactory
 {
+    private TimeslotFactory()
+    {
+    }
+
     /**
      * Creates a timeslot parser instance
      *

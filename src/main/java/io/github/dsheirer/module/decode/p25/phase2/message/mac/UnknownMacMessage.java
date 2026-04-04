@@ -64,6 +64,6 @@ public class UnknownMacMessage extends MacMessage
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

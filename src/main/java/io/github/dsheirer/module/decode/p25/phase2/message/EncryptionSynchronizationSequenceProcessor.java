@@ -86,6 +86,8 @@ public class EncryptionSynchronizationSequenceProcessor
                     setESSB4(voice4Timeslot.getEssB());
                     mEssBCounter = 1;
                     break;
+                default:
+                    break;
             }
         }
     }

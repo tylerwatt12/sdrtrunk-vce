@@ -37,19 +37,10 @@ public class LinearFeedbackShiftRegister
     private static long TAP_8 = (1l << 8);
     private static long TAP_3 = (1l << 3);
 
-    private boolean mCurrentOutput;
     private long mRegisters;
     private int mWacn;
     private int mSystem;
     private int mNac;
-
-    /**
-     * Constructs an APCO25 Phase II external LFSR generator equivalent to
-     * polynomial G(x)=x44 + x40 + x35 + x29 + x24 + x10 + x0 as defined in TIA-102.BBAC paragraph 7.2.5.
-     */
-    public LinearFeedbackShiftRegister()
-    {
-    }
 
     public void updateSeed(int wacn, int system, int nac)
     {
@@ -65,8 +56,6 @@ public class LinearFeedbackShiftRegister
         {
             mRegisters = 0xFFFFFFFFFFFl;
         }
-
-        mCurrentOutput = getTap(TAP_43);
     }
 
     /**
@@ -76,7 +65,6 @@ public class LinearFeedbackShiftRegister
     public void updateSeed(long seed)
     {
         mRegisters = seed;
-        mCurrentOutput = getTap(TAP_43);
     }
 
     /**
@@ -178,40 +166,5 @@ public class LinearFeedbackShiftRegister
     private boolean getTap(long tap)
     {
         return (mRegisters & tap) == tap;
-    }
-
-    public static void main(String[] args)
-    {
-        long seed = 0;
-        int wacn = 0xBEE00;
-        int system = 0x1C7;
-        int nac = 0x1C1;
-
-        seed = (long)(0xFFFFF & wacn) << 24;
-        seed += (0xFFF & system) << 12;
-        seed += (0xFFF & nac);
-
-        seed = 0xBEE001C7013l;
-
-        System.out.println("Seed: " + Long.toHexString(seed).toUpperCase());
-
-        LinearFeedbackShiftRegister lfsr = new LinearFeedbackShiftRegister();
-//        BinaryMessage scramble = lfsr.generateScramblingSequence(0xBEE07, 0x40F, 0x04E);
-        BinaryMessage scramble = lfsr.generateScramblingSequence(seed, 400);
-        System.out.println("SCRAM: "  + scramble.toHexString());
-//        scramble.rotateRight(64, 0, 401);
-        System.out.println("SCRAM: " + scramble.toHexString());
-
-        BinaryMessage raw1 = BinaryMessage.loadHex("BEE001C70139CB7D5F2D4823695F7ED499EA998F8748E6DAB167FAC15EC2C6222E");
-//        BinaryMessage raw1 = BinaryMessage.loadHex("BEE0740F04E0172D21681A1B52FFBFBFEE53D2A5ADB9561CADF4D955EBF1CB0000");
-//        BinaryMessage raw2 = BinaryMessage.loadHex("BEE0740F04E0DD2D21681A1B52FFBFBFEE53FE86BEF78FD5AB910B2376F9D80000");
-        System.out.println("  RAW: " + raw1.toHexString());
-        System.out.println("  xxx: BEE001C70139CB");
-        int length = raw1.length();
-
-
-        raw1.xor(scramble);
-        BinaryMessage descrambled = raw1.get(0, length);
-        System.out.println("DESCR: " + descrambled.toHexString());
     }
 }

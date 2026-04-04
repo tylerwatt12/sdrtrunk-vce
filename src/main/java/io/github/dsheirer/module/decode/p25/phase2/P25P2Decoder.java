@@ -48,7 +48,7 @@ public abstract class P25P2Decoder extends FeedbackDecoder implements ISourceEve
     private double mSymbolRate;
     protected PowerMonitor mPowerMonitor = new PowerMonitor();
 
-    public P25P2Decoder(double symbolRate)
+    protected P25P2Decoder(double symbolRate)
     {
         mSymbolRate = symbolRate;
         mMessageProcessor = new P25P2MessageProcessor();

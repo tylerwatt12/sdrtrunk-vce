@@ -35,8 +35,6 @@ import java.util.List;
  */
 public class SacchTimeslot extends AbstractSignalingTimeslot
 {
-    private static final int MAX_OCTET_INDEX = 168; //180-12 = message length minus CRC-12 checksum.
-
     private static final IntField INFO_1 = IntField.range(2, 7);
     private static final IntField INFO_2 = IntField.range(8, 13);
     private static final IntField INFO_3 = IntField.range(14, 19);
