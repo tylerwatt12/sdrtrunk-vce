@@ -993,11 +993,20 @@ public class FIRFilterSpecification
          */
         public FrequencyBand(double start, double end, double amplitude, double ripple)
         {
-            assert (0.0 <= mStart);
-            assert (mStart <= mEnd);
-            assert (mEnd <= 1.0);
-            assert (0.0 <= amplitude && amplitude <= 1.0);
-            assert (0.0 <= ripple);
+            if(start < 0.0 || start > end || end > 1.0)
+            {
+                throw new IllegalArgumentException("Frequency band range must satisfy 0.0 <= start <= end <= 1.0");
+            }
+
+            if(amplitude < 0.0 || amplitude > 1.0)
+            {
+                throw new IllegalArgumentException("Frequency band amplitude must be between 0.0 and 1.0");
+            }
+
+            if(ripple < 0.0)
+            {
+                throw new IllegalArgumentException("Frequency band ripple must be non-negative");
+            }
 
             mStart = start;
             mEnd = end;
