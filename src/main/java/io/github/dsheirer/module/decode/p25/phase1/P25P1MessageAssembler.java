@@ -65,7 +65,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
 
         if(length < 0)
         {
-            System.out.println("Negative message length [" + length + "]  duid [" + duid + "]");
+            LOGGER.warn("Negative message length [{}] duid [{}]", length, duid);
             length = 0;
         }
 
@@ -104,8 +104,6 @@ public class P25P1MessageAssembler implements Listener<Dibit>
      */
     public int forceCompletion(P25P1DataUnitID previous, P25P1DataUnitID next)
     {
-//        System.out.println("\n[_] FORCING COMPLETION - PREV:" + previous + " CURRENT:" + mDataUnitID + " NEXT:" + next + " RECEIVED BITS:" + getMessage().currentSize() + "/" + getMessage().size() + "\n");
-
         if(mDataUnitID == P25P1DataUnitID.PLACE_HOLDER)
         {
             int length = getMessage().currentSize();
@@ -160,6 +158,8 @@ public class P25P1MessageAssembler implements Listener<Dibit>
                             }
                         }
                         break;
+                    default:
+                        break;
                 }
             }
 
@@ -180,6 +180,8 @@ public class P25P1MessageAssembler implements Listener<Dibit>
                         {
                             mDataUnitID = P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_1;
                         }
+                        break;
+                    default:
                         break;
                 }
             }
