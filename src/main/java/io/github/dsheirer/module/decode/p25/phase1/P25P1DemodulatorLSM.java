@@ -34,7 +34,6 @@ import java.util.Arrays;
 public class P25P1DemodulatorLSM
 {
     private static final float HALF_PI = (float)(Math.PI / 2.0);
-    private static final float TWO_PI = (float)(Math.PI * 2.0);
     private static final float MAX_PLL = (float)(Math.PI / 3.0); //+/- 800 Hz
     private static final float OBJECTIVE_MAGNITUDE = 1.0f;
     private static final int SYMBOL_RATE = 4800;
@@ -50,7 +49,12 @@ public class P25P1DemodulatorLSM
     private float[] mBufferQ;
     private float mPLL = 0f;
     private float mSampleGain = 1f;
-    private float mPreviousMiddleI, mPreviousMiddleQ, mPreviousCurrentI, mPreviousCurrentQ, mPreviousSymbolI = 0.7f, mPreviousSymbolQ = 0.7f;
+    private float mPreviousMiddleI;
+    private float mPreviousMiddleQ;
+    private float mPreviousCurrentI;
+    private float mPreviousCurrentQ;
+    private float mPreviousSymbolI = 0.7f;
+    private float mPreviousSymbolQ = 0.7f;
     private int mBufferPointer;
     private int mBufferReserve;
 
@@ -110,11 +114,26 @@ public class P25P1DemodulatorLSM
         float pllGain = 0.1f;
         double tedGain = samplesPerSymbol / 4;
         double maxTimingAdjustment = samplesPerSymbol / 25;
-        double pointer, residual, timingAdjustment;
-        float magnitude, phaseError = 0, requiredGain, softSymbol, pllI, pllQ, pllTemp;
-        float iMiddle, qMiddle, iCurrent, qCurrent, iMiddleDemodulated, qMiddleDemodulated, iSymbol, qSymbol;
-        int offset;
-        Dibit hardSymbol;
+        double pointer;
+        double residual;
+        double timingAdjustment;
+        float  magnitude;
+        float  phaseError = 0;
+        float  requiredGain;
+        float  softSymbol;
+        float  pllI;
+        float  pllQ;
+        float  pllTemp;
+        float  iMiddle;
+        float  qMiddle;
+        float  iCurrent;
+        float  qCurrent;
+        float  iMiddleDemodulated;
+        float  qMiddleDemodulated;
+        float  iSymbol;
+        float  qSymbol;
+        int    offset;
+        Dibit  hardSymbol;
 
         //I/Q buffers are the same length as incoming samples padded by an extra symbol length for processing space.
         int bufferReserve = mBufferReserve;
@@ -139,7 +158,7 @@ public class P25P1DemodulatorLSM
         while(bufferPointer < bufferReload)
         {
             bufferPointer++;
-            samplePoint--;
+            samplePoint -= 1.0f;
 
             if(samplePoint < 1)
             {
@@ -226,35 +245,6 @@ public class P25P1DemodulatorLSM
                 mDibitAssembler.receive(hardSymbol);
                 mFeedbackDecoder.broadcast(softSymbol);
 
-//                if(bufferPointer >= 15)
-//                {
-//                    SymbolViewerFX viewer = getDebugSymbolViewer();
-//                    CountDownLatch latch = new CountDownLatch(1);
-//                    float[] rawI = Arrays.copyOfRange(mBufferI, bufferPointer - 15, bufferPointer + 15);
-//                    float[] rawQ = Arrays.copyOfRange(mBufferQ, bufferPointer - 15, bufferPointer + 15);
-//                    double middle = 15 + samplePoint;// - timingAdjustment;
-//                    double previous = middle - samplesPerHalfSymbol;
-//                    double current = middle + samplesPerHalfSymbol;
-//                    double[] points = {previous, middle, current, //Timing
-//                            previousCurrentI, iMiddle, iCurrent, //RawI
-//                            previousCurrentQ, qMiddle, qCurrent, //RawQ
-//                            previousSymbolI, iMiddleDemodulated, iSymbol,  //DemodI
-//                            previousSymbolQ, qMiddleDemodulated, qSymbol}; //DemodQ
-//                    float middleSymbol = normalize((float)Math.atan2(qMiddleDemodulated, iMiddleDemodulated) + pll);
-//                    float[] symbols = {previousSymbol, middleSymbol, softSymbol};
-//                    float adjustedPLL = pll + (phaseError * pllGain);
-//                    viewer.receive(samplesPerSymbol, rawI, rawQ, sampleGain, adjustedPLL, points, symbols, latch);
-//                    try
-//                    {
-//                        latch.await();
-//                    }
-//                    catch(InterruptedException e)
-//                    {
-//                        throw new RuntimeException(e);
-//                    }
-//                    previousSymbol = softSymbol;
-//                }
-
                 //Shuffle the values
                 previousSymbolI = iSymbol;
                 previousSymbolQ = qSymbol;
@@ -279,25 +269,6 @@ public class P25P1DemodulatorLSM
         mPreviousSymbolQ = previousSymbolQ;
         mSampleGain = sampleGain;
         mSamplePoint = samplePoint;
-    }
-
-    /**
-     * Normalizes the value in radians to the range of +/-(2 * PI)
-     * @param value to normalize
-     * @return normalized value.
-     */
-    private static float normalize(float value)
-    {
-        if(value > Math.PI)
-        {
-            return value - TWO_PI;
-        }
-        else if(value < -Math.PI)
-        {
-            return value + TWO_PI;
-        }
-
-        return value;
     }
 
     /**
