@@ -43,15 +43,15 @@ import javax.swing.table.TableRowSorter;
 public class MessageActivityPanel extends JPanel implements Listener<ProcessingChain>
 {
     private static final long serialVersionUID = 1L;
-    private final String TABLE_PREFERENCE_KEY = "message.activity.panel";
-    private MessageActivityModel mMessageModel = new MessageActivityModel();
-    private MessageHistory mCurrentMessageHistory;
-    private JTable mTable = new JTable(mMessageModel);
-    private TableRowSorter<TableModel> mTableRowSorter;
-    private JTableColumnWidthMonitor mTableColumnWidthMonitor;
-    private UserPreferences mUserPreferences;
-    private FilterSet<IMessage> mMessageFilterSet;
-    private HistoryManagementPanel<IMessage> mHistoryManagementPanel;
+    private static final String TABLE_PREFERENCE_KEY = "message.activity.panel";
+    private transient MessageActivityModel mMessageModel = new MessageActivityModel();
+    private transient MessageHistory mCurrentMessageHistory;
+    private transient JTable mTable = new JTable(mMessageModel);
+    private transient TableRowSorter<TableModel> mTableRowSorter;
+    private transient JTableColumnWidthMonitor mTableColumnWidthMonitor;
+    private transient UserPreferences mUserPreferences;
+    private transient FilterSet<IMessage> mMessageFilterSet;
+    private transient HistoryManagementPanel<IMessage> mHistoryManagementPanel;
 
     /**
      * Constructs an instance
@@ -76,6 +76,8 @@ public class MessageActivityPanel extends JPanel implements Listener<ProcessingC
     @Override
     public void receive(ProcessingChain processingChain)
     {
+        HistoryManagementPanel<IMessage> historyManagementPanel = mHistoryManagementPanel;
+
         if(mCurrentMessageHistory != null)
         {
             mCurrentMessageHistory.removeListener(mMessageModel);
@@ -93,9 +95,9 @@ public class MessageActivityPanel extends JPanel implements Listener<ProcessingC
             mMessageFilterSet = DecoderFactory.getMessageFilters(processingChain.getModules());
             //Register filter change listener to refresh the table any time the event filters are changed.
             mMessageFilterSet.register(() -> mMessageModel.fireTableDataChanged());
-            if(mHistoryManagementPanel != null)
+            if(historyManagementPanel != null)
             {
-                mHistoryManagementPanel.updateFilterSet(mMessageFilterSet);
+                historyManagementPanel.updateFilterSet(mMessageFilterSet);
             }
 
             List<MessageItem> currentHistory = new ArrayList<>();
@@ -106,14 +108,20 @@ public class MessageActivityPanel extends JPanel implements Listener<ProcessingC
 
             mMessageModel.clearAndSet(currentHistory);
             mCurrentMessageHistory.addListener(mMessageModel);
-            mHistoryManagementPanel.setEnabled(true);
+            if(historyManagementPanel != null)
+            {
+                historyManagementPanel.setEnabled(true);
+            }
         }
         else
         {
             mCurrentMessageHistory = null;
             mMessageFilterSet = null;
             mMessageModel.clear();
-            mHistoryManagementPanel.setEnabled(false);
+            if(historyManagementPanel != null)
+            {
+                historyManagementPanel.setEnabled(false);
+            }
         }
     }
 
@@ -138,7 +146,14 @@ public class MessageActivityPanel extends JPanel implements Listener<ProcessingC
         {
             if(entry.getModel() instanceof MessageActivityModel model)
             {
-                MessageItem item = model.getItem(entry.getIdentifier());
+                Integer identifier = entry.getIdentifier();
+
+                if(identifier == null)
+                {
+                    return false;
+                }
+
+                MessageItem item = model.getItem(identifier);
 
                 if(mMessageFilterSet != null && item != null && item.getMessage() != null)
                 {

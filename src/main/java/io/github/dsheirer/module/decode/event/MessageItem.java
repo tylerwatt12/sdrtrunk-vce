@@ -82,9 +82,9 @@ public class MessageItem
             {
                 mText = getMessage().toString();
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                mLog.error("Error accessing message toString() method - protocol [" + getProtocol() + "]", t);
+                mLog.error("Error accessing message toString() method - protocol [{}]", getProtocol(), e);
                 mText = "MESSAGE ITEM ENCOUNTERED PARSING ERROR";
             }
         }
