@@ -44,8 +44,6 @@ import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Audio segment containing all related metadata and a dynamic collection of audio packets.  An audio segment can be
@@ -53,9 +51,9 @@ import org.slf4j.LoggerFactory;
  * broadcast.  Since the audio segment is held in memory until all consumers have finished processing the segment,
  * producers should constrain the duration of each audio segment to a reasonable duration.
  *
- * Producers can link time-constrained audio segments from a continous broadcast (e.g. FM radio station) so that
- * consumers can identify audio segments that belong to a continous stream.  This linkage presents a memory leak
- * potential.  Therefore, the audio segment uses the consumer counter to trigger an unlinking via the dispose() mehtod.
+ * Producers can link time-constrained audio segments from a continuous broadcast (e.g. FM radio station) so that
+ * consumers can identify audio segments that belong to a continuous stream.  This linkage presents a memory leak
+ * potential.  Therefore, the audio segment uses the consumer counter to trigger an unlinking via the dispose() method.
  * Accurate accounting of consumer count via the increment/decrementConsumerCount() methods is essential for good
  * memory management.
  *
@@ -66,7 +64,6 @@ import org.slf4j.LoggerFactory;
  */
 public class AudioSegment implements Listener<IdentifierUpdateNotification>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioSegment.class);
     private BooleanProperty mComplete = new SimpleBooleanProperty(false);
     private BooleanProperty mDuplicate = new SimpleBooleanProperty(false);
     private BooleanProperty mEncrypted = new SimpleBooleanProperty(false);
@@ -75,7 +72,7 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     private ObservableSet<BroadcastChannel> mBroadcastChannels = FXCollections.observableSet(new HashSet<>());
     private MutableIdentifierCollection mIdentifierCollection = new MutableIdentifierCollection();
     private Broadcaster<IdentifierUpdateNotification> mIdentifierUpdateNotificationBroadcaster = new Broadcaster<>();
-    private List<float[]> mAudioBuffers = new CopyOnWriteArrayList();
+    private List<float[]> mAudioBuffers = new CopyOnWriteArrayList<>();
     private AtomicInteger mConsumerCount = new AtomicInteger();
     private AliasList mAliasList;
     private long mStartTimestamp = System.currentTimeMillis();
@@ -274,7 +271,7 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     }
 
     /**
-     * Links this audio segment to a preceeding/previous audio segment
+     * Links this audio segment to a preceding/previous audio segment
      * @param previousAudioSegment to set as the predecessor
      */
     public void linkTo(AudioSegment previousAudioSegment)
@@ -294,9 +291,9 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
      * Adds the collection of identifiers to this segment's identifier collection
      * @param identifiers to pre-load into this audio segment
      */
-    void addIdentifiers(Collection<Identifier> identifiers)
+    void addIdentifiers(Collection<? extends Identifier<?>> identifiers)
     {
-        for(Identifier identifier: identifiers)
+        for(Identifier<?> identifier: identifiers)
         {
             addIdentifier(identifier);
         }
@@ -437,7 +434,7 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
      *
      * Note: identifiers pass to this method must be checked for timeslot match.
      */
-    public void addIdentifier(Identifier identifier)
+    public void addIdentifier(Identifier<?> identifier)
     {
         mIdentifierCollection.update(identifier);
 

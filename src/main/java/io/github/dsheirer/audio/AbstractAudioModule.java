@@ -20,12 +20,14 @@
 package io.github.dsheirer.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
+import java.util.Collection;
 
 /**
  * Base audio module implementation.
@@ -110,7 +112,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
             {
                 mAudioSegment = new AudioSegment(mAliasList, getTimeslot());
                 mAudioSegment.incrementConsumerCount();
-                mAudioSegment.addIdentifiers(mIdentifierCollection.getIdentifiers());
+                mAudioSegment.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
                 mIdentifierUpdateNotificationBroadcaster.addListener(mAudioSegment);
 
                 if(mRecordAudioOverride)
@@ -210,5 +212,11 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
     public void removeAudioSegmentListener()
     {
         mAudioSegmentListener = null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Collection<? extends Identifier<?>> asTypedIdentifiers(Collection<Identifier> identifiers)
+    {
+        return (Collection<? extends Identifier<?>>)(Collection<?>)identifiers;
     }
 }
