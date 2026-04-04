@@ -221,7 +221,7 @@ public class RemezFIRFilterDesigner
      * @param cosineOfFrequency to calculate the frequency response
      * 
      * @return actual frequency response for the specified frequency with the current set of
-     * extreaml indices
+     * extremal indices
      */
     private double getFrequencyResponse( double cosineOfFrequency )
     {

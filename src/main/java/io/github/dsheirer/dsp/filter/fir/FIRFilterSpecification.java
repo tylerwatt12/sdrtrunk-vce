@@ -288,7 +288,7 @@ public class FIRFilterSpecification
      */
     public double getGridFrequencyInterval()
     {
-        return getTotalBandwidth() / (double)((getGridSize() - mFrequencyBands.size()));
+        return getTotalBandwidth() / ((getGridSize() - mFrequencyBands.size()));
     }
 
     /**
@@ -834,7 +834,7 @@ public class FIRFilterSpecification
 
             FIRFilterSpecification spec = new FIRFilterSpecification(type, order, mGridDensity);
 
-            double bandEdge = (double)mChannelBandwidth / mSampleRate;
+            double bandEdge = mChannelBandwidth / mSampleRate;
             double passEnd = bandEdge * (1.0 - mAlpha);
             double stopStart = bandEdge * (1.0 + mAlpha);
 
@@ -947,7 +947,7 @@ public class FIRFilterSpecification
     public static int estimateBandPassOrder(double sampleRate, int passBandStart, int passBandEnd,
                                             double passBandRippleDb, double stopBandRippleDb)
     {
-        double df = (double)FastMath.abs(passBandEnd - passBandStart) / sampleRate;
+        double df = FastMath.abs(passBandEnd - passBandStart) / sampleRate;
         double ddp = FastMath.log10(passBandRippleDb);
         double dds = FastMath.log10(stopBandRippleDb);
 
@@ -964,7 +964,7 @@ public class FIRFilterSpecification
         double t4 = a5 * ddp;
 
         double cinf = dds * (t1 + t2 + a3) + t3 + t4 + a6;
-        double ginf = -14.6f * (double)FastMath.log10(passBandRippleDb / stopBandRippleDb) - 16.9;
+        double ginf = -14.6f * FastMath.log10(passBandRippleDb / stopBandRippleDb) - 16.9;
         double n = cinf / df + ginf * df + 1.0;
 
         return (int)FastMath.ceil(n);
@@ -1041,7 +1041,7 @@ public class FIRFilterSpecification
 
         public void setGridSize(int totalGridSize, double totalBandwidth)
         {
-            mGridSize = FastMath.max(1, (int)FastMath.ceil((double)totalGridSize * (getBandWidth() / totalBandwidth)));
+            mGridSize = FastMath.max(1, (int)FastMath.ceil(totalGridSize * (getBandWidth() / totalBandwidth)));
         }
 
         public String toString()

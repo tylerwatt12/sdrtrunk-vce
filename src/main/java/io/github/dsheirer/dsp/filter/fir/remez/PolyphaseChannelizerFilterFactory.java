@@ -25,18 +25,20 @@ import org.slf4j.LoggerFactory;
 
 public class PolyphaseChannelizerFilterFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(PolyphaseChannelizerFilterFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(PolyphaseChannelizerFilterFactory.class);
 
     private static final double OBJECTIVE_BAND_EDGE_COEFFICIENT_AMPLITUDE = FastMath.sqrt(2.0) / 2.0; //.707xxx
 
+    private PolyphaseChannelizerFilterFactory()
+    {
+    }
+
     public static float[] getFilter(int sampleRate, int channelBandwidth, double alpha)
     {
-        FIRLinearPhaseFilterType type = FIRLinearPhaseFilterType.TYPE_2_EVEN_LENGTH_ODD_ORDER_SYMMETRICAL;
-
         int passBandStart = 0;
         int gridDensity = 60;
 
-        int rolloffFrequency = (int)(alpha * (double)channelBandwidth);
+        int rolloffFrequency = (int)(alpha * channelBandwidth);
 
         int passBandStop = channelBandwidth - rolloffFrequency;
 
@@ -50,15 +52,13 @@ public class PolyphaseChannelizerFilterFactory
         int order = FIRFilterSpecification.estimateFilterOrder( sampleRate, passBandStop, stopBandStart,
             passRipple, stopRipple );
 
-//        order = 1001;
-
         // Ensure odd order since we're designing a Type 2 filter
         if(order % 2 == 0)
         {
             order++;
         }
 
-        mLog.info("Filter Order: " + order);
+        mLog.info("Filter Order: {}", order);
 
         FIRFilterSpecification specification = new PolyphaseChannelizerDesigner(order, gridDensity);
 
@@ -72,13 +72,13 @@ public class PolyphaseChannelizerFilterFactory
             channelBandwidth, channelBandwidth, OBJECTIVE_BAND_EDGE_COEFFICIENT_AMPLITUDE, transitionRipple, 5.0);
 
         FIRFilterSpecification.FrequencyBand stopBand = new FIRFilterSpecification.FrequencyBand(sampleRate,
-            stopBandStart, (int)(sampleRate / 2), 0.0, stopRipple);
+            stopBandStart, (sampleRate / 2), 0.0, stopRipple);
 
         specification.addFrequencyBand(passBand);
         specification.addFrequencyBand(transitionBand);
         specification.addFrequencyBand(stopBand);
 
-        double bandEdgeFrequency = FastMath.cos(FastMath.PI * (double)channelBandwidth / (double)(sampleRate / 2));
+        double bandEdgeFrequency = FastMath.cos(FastMath.PI * channelBandwidth / (sampleRate / 2.0));
         float[] filter = null;
 
         try
@@ -86,7 +86,7 @@ public class PolyphaseChannelizerFilterFactory
             RemezFIRFilterDesignerWithLagrange designer = new RemezFIRFilterDesignerWithLagrange(specification);
             filter = designer.getImpulseResponse();
             double bandEdgeAmplitude = designer.getFrequencyResponse(bandEdgeFrequency);
-            mLog.debug("Coefficient Amplitude at Band Edge is: " + bandEdgeAmplitude + " for frequency: " + passBandStop);
+            mLog.debug("Coefficient Amplitude at Band Edge is: {} for frequency: {}", bandEdgeAmplitude, passBandStop);
         }
         catch(Exception e)
         {
