@@ -175,7 +175,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                                      * message from timeslot 1 and then resend the original timeslot 1 as the carrier
                                      * message and also push the timeslot 2 mac message and mac structure to listener.
                                      */
-                                    else if(mMacMessageWithMultiFragment1 != null && mMacMessageWithMultiFragment1 != null)
+                                    else if(mMacMessageWithMultiFragment1 != null && mMacStructureMultiFragment1 != null)
                                     {
                                         mMacStructureMultiFragment1.addContinuationMessage(mfcm);
                                         //Re-broadcast the original timeslot 1 mac message with the updated structure
