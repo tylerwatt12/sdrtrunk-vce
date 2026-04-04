@@ -49,9 +49,9 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
 
     private static final String[] COLUMNS = {"Status", "Decoder", "From", "Alias", "To", "Alias", "Channel", "Frequency", "Channel Name"};
 
-    private List<ChannelMetadata> mChannelMetadata = new ArrayList();
-    private Map<ChannelMetadata,Channel> mMetadataChannelMap = new HashMap();
-    private Listener<ChannelAndMetadata> mChannelAddListener;
+    private transient List<ChannelMetadata> mChannelMetadata = new ArrayList<>();
+    private transient Map<ChannelMetadata,Channel> mMetadataChannelMap = new HashMap<>();
+    private transient Listener<ChannelAndMetadata> mChannelAddListener;
 
     public ChannelMetadataModel()
     {
@@ -111,7 +111,7 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
         {
             if(!metadataCopy.contains(entry.getKey()))
             {
-                sb.append("\n\tWARNING: orphaned Metadata Channel map entry - channel: " + entry.getValue()).append("\n");
+                sb.append("\n\tWARNING: orphaned Metadata Channel map entry - channel: ").append(entry.getValue()).append("\n");
             }
         }
 
@@ -238,11 +238,9 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
     {
         switch(columnIndex)
         {
-            case COLUMN_USER_FROM:
-            case COLUMN_USER_TO:
+            case COLUMN_USER_FROM, COLUMN_USER_TO:
                 return ChannelMetadata.class;
-            case COLUMN_USER_FROM_ALIAS:
-            case COLUMN_USER_TO_ALIAS:
+            case COLUMN_USER_FROM_ALIAS, COLUMN_USER_TO_ALIAS:
                 return Alias.class;
             case COLUMN_DECODER_LOGICAL_CHANNEL_NAME:
                 return String.class;
@@ -303,6 +301,8 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
                     return channelMetadata.getFromIdentifierAliases();
                 case COLUMN_USER_TO_ALIAS:
                     return channelMetadata.getToIdentifierAliases();
+                default:
+                    return null;
             }
         }
 
@@ -317,37 +317,35 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
         if(rowIndex >= 0)
         {
             //Execute on the swing thread to avoid threading issues
-            EventQueue.invokeLater(new Runnable()
-            {
-                @Override
-                public void run()
+            EventQueue.invokeLater(() -> {
+                switch(channelMetadataField)
                 {
-                    switch(channelMetadataField)
-                    {
-                        case CONFIGURATION_CHANNEL:
-                            fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_CHANNEL);
-                            break;
-                        case CONFIGURATION_FREQUENCY:
-                            fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_FREQUENCY);
-                            break;
-                        case DECODER_CHANNEL_NAME:
-                            fireTableCellUpdated(rowIndex, COLUMN_DECODER_LOGICAL_CHANNEL_NAME);
-                            break;
-                        case DECODER_TYPE:
-                            fireTableCellUpdated(rowIndex, COLUMN_DECODER_TYPE);
-                            break;
-                        case DECODER_STATE:
-                            fireTableCellUpdated(rowIndex, COLUMN_DECODER_STATE);
-                            break;
-                        case USER_FROM:
-                            fireTableCellUpdated(rowIndex, COLUMN_USER_FROM);
-                            fireTableCellUpdated(rowIndex, COLUMN_USER_FROM_ALIAS);
-                            break;
-                        case USER_TO:
-                            fireTableCellUpdated(rowIndex, COLUMN_USER_TO);
-                            fireTableCellUpdated(rowIndex, COLUMN_USER_TO_ALIAS);
-                            break;
-                    }
+                    case CONFIGURATION_CHANNEL:
+                        fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_CHANNEL);
+                        break;
+                    case CONFIGURATION_FREQUENCY:
+                        fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_FREQUENCY);
+                        break;
+                    case DECODER_CHANNEL_NAME:
+                        fireTableCellUpdated(rowIndex, COLUMN_DECODER_LOGICAL_CHANNEL_NAME);
+                        break;
+                    case DECODER_TYPE:
+                        fireTableCellUpdated(rowIndex, COLUMN_DECODER_TYPE);
+                        break;
+                    case DECODER_STATE:
+                        fireTableCellUpdated(rowIndex, COLUMN_DECODER_STATE);
+                        break;
+                    case USER_FROM:
+                        fireTableCellUpdated(rowIndex, COLUMN_USER_FROM);
+                        fireTableCellUpdated(rowIndex, COLUMN_USER_FROM_ALIAS);
+                        break;
+                    case USER_TO:
+                        fireTableCellUpdated(rowIndex, COLUMN_USER_TO);
+                        fireTableCellUpdated(rowIndex, COLUMN_USER_TO_ALIAS);
+                        break;
+                    default:
+                        // Other metadata fields are not displayed in this table model.
+                        break;
                 }
             });
         }
