@@ -141,10 +141,10 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     clearPendingVoiceTimeslots();
                 }
             }
-            else if(message instanceof EncryptionSynchronizationSequence && message.isValid())
+            else if(message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence && message.isValid())
             {
                 mEncryptedCallStateEstablished = true;
-                mEncryptedCall = ((EncryptionSynchronizationSequence)message).isEncrypted();
+                mEncryptedCall = encryptionSynchronizationSequence.isEncrypted();
                 processPendingVoiceTimeslots();
             }
         }
@@ -193,7 +193,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 }
                 catch(Exception e)
                 {
-                    mLog.error("Error synthesizing AMBE audio - continuing [" + e.getLocalizedMessage() + "]");
+                    mLog.error("Error synthesizing AMBE audio - continuing [{}]", e.getLocalizedMessage());
                 }
             }
         }
@@ -355,13 +355,10 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         @Override
         public void receive(SquelchStateEvent event)
         {
-            if(event.getTimeslot() == getTimeslot())
+            if(event.getTimeslot() == getTimeslot() && event.getSquelchState() == SquelchState.SQUELCH)
             {
-                if(event.getSquelchState() == SquelchState.SQUELCH)
-                {
-                    closeAudioSegment();
-                    reset();
-                }
+                closeAudioSegment();
+                reset();
             }
         }
     }

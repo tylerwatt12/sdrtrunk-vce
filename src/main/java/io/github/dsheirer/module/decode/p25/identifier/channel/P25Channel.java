@@ -68,22 +68,22 @@ public class P25Channel implements IChannelDescriptor
 
     public int getDownlinkBandIdentifier()
     {
-        return mBandIdentifier;
+        return getBandIdentifier();
     }
 
     public int getDownlinkChannelNumber()
     {
-        return mChannelNumber;
+        return getChannelNumber();
     }
 
     public int getUplinkBandIdentifier()
     {
-        return mBandIdentifier;
+        return getBandIdentifier();
     }
 
     public int getUplinkChannelNumber()
     {
-        return mChannelNumber;
+        return getChannelNumber();
     }
 
     @Override
@@ -172,12 +172,9 @@ public class P25Channel implements IChannelDescriptor
      */
     public int getTimeslot()
     {
-        if(isTDMAChannel())
+        if(isTDMAChannel() && getDownlinkChannelNumber() % getTimeslotCount() == 1)
         {
-            if(getDownlinkChannelNumber() % getTimeslotCount() == 1)
-            {
-                return 2;
-            }
+            return 2;
         }
 
         return 1;

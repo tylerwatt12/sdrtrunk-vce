@@ -29,7 +29,7 @@ import io.github.dsheirer.protocol.Protocol;
 /**
  * APCO-25 Channel composed of a frequency band and a channel number within the frequency band.
  *
- * This class supports inserting a band identifier message that allows the uplink and downlink freuqencies
+ * This class supports inserting a band identifier message that allows the uplink and downlink frequencies
  * for the channel to be calculated.
  */
 public class APCO25Channel extends Identifier<P25Channel> implements IChannelDescriptor, Comparable<IChannelDescriptor>
@@ -151,12 +151,12 @@ public class APCO25Channel extends Identifier<P25Channel> implements IChannelDes
         {
             return true;
         }
-        if(o == null || !(o instanceof APCO25Channel) || ((APCO25Channel)o).getValue() == null)
+        if(!(o instanceof APCO25Channel apco25Channel) || apco25Channel.getValue() == null)
         {
             return false;
         }
 
-        return getValue().equals(((APCO25Channel)o).getValue());
+        return getValue().equals(apco25Channel.getValue());
     }
 
     @Override

@@ -23,6 +23,7 @@
 package io.github.dsheirer.module.decode.p25.identifier.channel;
 
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
+import java.util.Objects;
 
 public class P25ExplicitChannel extends P25Channel implements Comparable<P25Channel>
 {
@@ -91,5 +92,11 @@ public class P25ExplicitChannel extends P25Channel implements Comparable<P25Chan
     public boolean equals(Object o) {
         if (!(o instanceof P25ExplicitChannel)) return false;
         return compareTo((P25ExplicitChannel) o) == 0;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getDownlinkBandIdentifier(), getDownlinkChannelNumber());
     }
 }

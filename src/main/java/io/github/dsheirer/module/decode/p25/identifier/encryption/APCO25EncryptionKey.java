@@ -33,6 +33,7 @@ public class APCO25EncryptionKey extends EncryptionKey
         return Encryption.fromValue(getAlgorithm());
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

@@ -39,6 +39,7 @@ public class UnknownOSPMessage extends OSPMessage
         super(dataUnitId, message, nac, timestamp);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

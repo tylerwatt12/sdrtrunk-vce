@@ -68,6 +68,7 @@ public class P25P1AudioModule extends ImbeAudioModule
     @Override
     public void start()
     {
+        // No startup work is required beyond base-class construction for this audio module.
     }
 
     /**
