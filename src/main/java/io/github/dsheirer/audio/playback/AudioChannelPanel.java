@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.audio.playback;
 
-import com.google.common.base.Joiner;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
@@ -44,11 +43,10 @@ import java.awt.EventQueue;
 import java.awt.Font;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import net.miginfocom.swing.MigLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
@@ -60,7 +58,6 @@ import javax.swing.JPanel;
 public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, SettingChangeListener
 {
     private static final long serialVersionUID = 1L;
-    private static final Logger mLog = LoggerFactory.getLogger(AudioChannelPanel.class);
 
     public static final String PROPERTY_PREFIX = "audio.channel.panel.color.";
     public static final String PROPERTY_COLOR_BACKGROUND = PROPERTY_PREFIX + "background";
@@ -68,15 +65,15 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
     public static final String PROPERTY_COLOR_MUTED = PROPERTY_PREFIX + "muted";
     public static final String PROPERTY_COLOR_VALUE = PROPERTY_PREFIX + "value";
 
-    private final AudioChannel mAudioChannel;
-    private final AliasModel mAliasModel;
-    private final IconModel mIconModel;
-    private final SettingsManager mSettingsManager;
-    private final UserPreferences mUserPreferences;
-    private final TalkgroupFormatPreference mTalkgroupFormatPreference;
-    private Identifier mIdentifier;
-    private List<Alias> mAliases = Collections.EMPTY_LIST;
-    private final Lock mLock = new ReentrantLock();
+    private final transient AudioChannel mAudioChannel;
+    private final transient AliasModel mAliasModel;
+    private final transient IconModel mIconModel;
+    private final transient SettingsManager mSettingsManager;
+    private final transient UserPreferences mUserPreferences;
+    private final transient TalkgroupFormatPreference mTalkgroupFormatPreference;
+    private transient Identifier<?> mIdentifier;
+    private transient List<Alias> mAliases = Collections.emptyList();
+    private final transient Lock mLock = new ReentrantLock();
 
     private final Font mFont = new Font(Font.MONOSPACED, Font.PLAIN, 16);
     private final Color mBackgroundColor;
@@ -84,7 +81,6 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
     private final Color mMutedColor;
     private final Color mValueColor;
     private final JLabel mMutedLabel = new JLabel("M");
-    private JLabel mChannelName = new JLabel(" ");
     private final JLabel mIconLabel = new JLabel(" ");
     private final JLabel mIdentifierLabel = new JLabel("-----");
 
@@ -160,10 +156,10 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
         mMutedLabel.setVisible(false);
         add(mMutedLabel);
 
-        mChannelName = new JLabel(mAudioChannel != null ? mAudioChannel.getChannelName() : " ");
-        mChannelName.setFont(mFont);
-        mChannelName.setForeground(mLabelColor);
-        add(mChannelName);
+        JLabel channelName = new JLabel(mAudioChannel != null ? mAudioChannel.getChannelName() : " ");
+        channelName.setFont(mFont);
+        channelName.setForeground(mLabelColor);
+        add(channelName);
 
         mIconLabel.setFont(mFont);
         mIconLabel.setForeground(mValueColor);
@@ -182,8 +178,7 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
             case AUDIO_STOPPED:
                 EventQueue.invokeLater(this::resetLabels);
                 break;
-            case AUDIO_MUTED:
-            case AUDIO_UNMUTED:
+            case AUDIO_MUTED, AUDIO_UNMUTED:
                 EventQueue.invokeLater(() -> mMutedLabel.setVisible(mAudioChannel.isMuted()));
                 break;
             default:
@@ -203,7 +198,7 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
         {
             boolean updated = mIdentifier != null;
             mIdentifier = null;
-            mAliases = Collections.EMPTY_LIST;
+            mAliases = Collections.emptyList();
 
             //Hold the lock through the label update
             if(updated)
@@ -242,7 +237,7 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
         {
             if(toIds.size() == 1)
             {
-                Identifier currentIdentifier = mIdentifier;
+                Identifier<?> currentIdentifier = mIdentifier;
 
                 if(currentIdentifier == null || currentIdentifier != toIds.get(0))
                 {
@@ -342,32 +337,25 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
     @Override
     public void settingChanged(Setting setting)
     {
-        if(setting instanceof ColorSetting)
+        if(setting instanceof ColorSetting colorSetting &&
+            colorSetting.getColorSettingName() == ColorSetting.ColorSettingName.CHANNEL_STATE_LABEL_DECODER)
         {
-            ColorSetting colorSetting = (ColorSetting)setting;
-
-            switch(colorSetting.getColorSettingName())
-            {
-                case CHANNEL_STATE_LABEL_DECODER:
-                    EventQueue.invokeLater(() -> {
-                        if(mIdentifierLabel != null)
-                        {
-                            mIdentifierLabel.setForeground(mLabelColor);
-                        }
-                        if(mIconLabel != null)
-                        {
-                            mIconLabel.setForeground(mLabelColor);
-                        }
-                    });
-                    break;
-                default:
-                    break;
-            }
+            EventQueue.invokeLater(() -> {
+                if(mIdentifierLabel != null)
+                {
+                    mIdentifierLabel.setForeground(mLabelColor);
+                }
+                if(mIconLabel != null)
+                {
+                    mIconLabel.setForeground(mLabelColor);
+                }
+            });
         }
     }
 
     @Override
     public void settingDeleted(Setting setting)
     {
+        // No action needed; the panel only reacts to active setting changes.
     }
 }

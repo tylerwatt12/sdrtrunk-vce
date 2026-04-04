@@ -29,6 +29,7 @@ import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
+import javax.swing.SwingConstants;
 
 /**
  * Displays one or more audio channel panels.
@@ -79,9 +80,9 @@ public class AudioChannelsPanel extends JPanel
     {
         for(Component component: getComponents())
         {
-            if(component instanceof AudioChannelPanel)
+            if(component instanceof AudioChannelPanel audioChannelPanel)
             {
-                ((AudioChannelPanel)component).dispose();
+                audioChannelPanel.dispose();
             }
         }
     }
@@ -91,7 +92,7 @@ public class AudioChannelsPanel extends JPanel
      */
     private void addSeparator()
     {
-        JSeparator separator = new JSeparator(JSeparator.VERTICAL);
+        JSeparator separator = new JSeparator(SwingConstants.VERTICAL);
         separator.setBackground(Color.DARK_GRAY);
         add(separator);
     }
