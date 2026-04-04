@@ -65,7 +65,7 @@ public class MotorolaExtendedFunctionCommand extends VendorOSPMessage
         sb.append(getMessageStub());
         sb.append(" ").append(getDescription());
         sb.append(" FOR RADIO:").append(getTargetAddress());
-        return super.toString();
+        return sb.toString();
     }
 
     public String getDescription()
