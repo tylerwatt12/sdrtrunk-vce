@@ -30,8 +30,8 @@ import org.slf4j.LoggerFactory;
 
 public abstract class AbstractComplexPolyphaseChannelizer implements Listener<InterleavedComplexSamples>, ISourceEventListener
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AbstractComplexPolyphaseChannelizer.class);
-    private Broadcaster<SourceEvent> mSourceChangeBroadcaster = new Broadcaster();
+    private static final Logger mLog = LoggerFactory.getLogger(AbstractComplexPolyphaseChannelizer.class);
+    private Broadcaster<SourceEvent> mSourceChangeBroadcaster = new Broadcaster<>();
     private List<PolyphaseChannelSource> mChannels = new CopyOnWriteArrayList<>();
     private double mSampleRate;
     private int mChannelCount;
@@ -44,12 +44,12 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
      *
      * @param channelCount
      */
-    public AbstractComplexPolyphaseChannelizer(double sampleRate, int channelCount)
+    protected AbstractComplexPolyphaseChannelizer(double sampleRate, int channelCount)
     {
         mChannelCount = channelCount;
         mSubChannelCount = channelCount * 2; //Number of I/Q channels
         mSampleRate = sampleRate;
-        mChannelSampleRate = (double)mSampleRate / (double)mChannelCount;
+        mChannelSampleRate = mSampleRate / mChannelCount;
     }
 
     /**
@@ -69,7 +69,7 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
     {
         mSampleRate = sampleRate;
         mChannelCount = channelCount;
-        mChannelSampleRate = mSampleRate / (double)mChannelCount;
+        mChannelSampleRate = mSampleRate / mChannelCount;
     }
 
     /**
@@ -124,8 +124,9 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
         }
         else
         {
-            mLog.error("Error adding polyphase channel source - " + (polyphaseChannelSource == null ? "source is null" :
-                    "channel source is already added to this channelizer"));
+                mLog.error("Error adding polyphase channel source - {}",
+                    polyphaseChannelSource == null ? "source is null" :
+                        "channel source is already added to this channelizer");
         }
     }
 
@@ -143,8 +144,9 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
         }
         else
         {
-            mLog.error("Error removing polyphase channel source - " + (polyphaseChannelSource == null ? "source is null" :
-                    "channel source was not previously added to this channelizer"));
+            mLog.error("Error removing polyphase channel source - {}",
+                    polyphaseChannelSource == null ? "source is null" :
+                        "channel source was not previously added to this channelizer");
         }
     }
 
