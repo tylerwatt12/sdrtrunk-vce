@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase2.enumeration;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * P25 Phase 2 Data Unit ID (DUID) enumeration
@@ -101,7 +102,7 @@ public enum DataUnitID
         return mLabel;
     }
 
-    public static EnumSet<DataUnitID> VALID_VALUES = EnumSet.range(VOICE_4, UNSCRAMBLED_FACCH);
+    public static final Set<DataUnitID> VALID_VALUES = Set.copyOf(EnumSet.range(VOICE_4, UNSCRAMBLED_FACCH));
 
     /**
      * Lookup the Data Unit ID from an encoded 8-bit integer value that contains the 4-bit duid value and an appended
@@ -143,6 +144,8 @@ public enum DataUnitID
                 return RESERVED_E;
             case 0xFF:
                 return UNSCRAMBLED_FACCH;
+            default:
+                break;
         }
 
         DataUnitID closest = DataUnitID.UNKNOWN;
