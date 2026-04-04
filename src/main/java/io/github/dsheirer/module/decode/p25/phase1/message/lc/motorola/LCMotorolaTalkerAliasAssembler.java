@@ -44,47 +44,43 @@ public class LCMotorolaTalkerAliasAssembler
     private long mMostRecentTimestamp;
 
     /**
-     * Constructs an instance
-     */
-    public LCMotorolaTalkerAliasAssembler()
-    {
-    }
-
-    /**
      * Link control word to process.
      * @param lcw to add
      * @return true if we can (now) assemble a complete talker alias from the header and data blocks.
      */
     public boolean add(LinkControlWord lcw, long timestamp)
     {
-        if(lcw instanceof LCMotorolaTalkerAliasHeader header)
+        switch(lcw)
         {
-            mMostRecentTimestamp = timestamp;
-
-            if(mSequence != header.getSequence())
+            case LCMotorolaTalkerAliasHeader header:
             {
-                mDataBlocks.clear();
-                mSequence = header.getSequence();
+                mMostRecentTimestamp = timestamp;
+
+                if(mSequence != header.getSequence())
+                {
+                    mDataBlocks.clear();
+                    mSequence = header.getSequence();
+                }
+
+                mHeader = header;
+                break;
             }
-
-            mHeader = header;
-        }
-        else if(lcw instanceof LCMotorolaTalkerAliasDataBlock block)
-        {
-            mMostRecentTimestamp = timestamp;
-
-            if(block.getSequence() != mSequence)
+            case LCMotorolaTalkerAliasDataBlock block:
             {
-                mHeader = null;
-                mDataBlocks.clear();
-                mSequence = block.getSequence();
-            }
+                mMostRecentTimestamp = timestamp;
 
-            mDataBlocks.put(block.getBlockNumber(), block);
-        }
-        else
-        {
-            return false; //For all lcw's that are not headers or data blocks
+                if(block.getSequence() != mSequence)
+                {
+                    mHeader = null;
+                    mDataBlocks.clear();
+                    mSequence = block.getSequence();
+                }
+
+                mDataBlocks.put(block.getBlockNumber(), block);
+                break;
+            }
+            default:
+                return false; //For all lcw's that are not headers or data blocks
         }
 
         return isComplete();

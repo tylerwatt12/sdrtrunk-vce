@@ -71,6 +71,7 @@ public class AMBTCRFSSStatusBroadcast extends AMBTCMessage implements IFrequency
         setValid(hasDataBlock(0));
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

@@ -58,6 +58,7 @@ public class AMBTCLocationRegistrationRequest extends AMBTCMessage
         super(PDUSequence, nac, timestamp);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

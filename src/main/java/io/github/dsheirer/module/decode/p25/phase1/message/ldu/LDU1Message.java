@@ -212,12 +212,14 @@ public class LDU1Message extends LDUMessage implements IFrequencyBandReceiver
     @Override
     public List<IChannelDescriptor> getChannels()
     {
-        if(getLinkControlWord().isValid() && getLinkControlWord() instanceof IFrequencyBandReceiver)
+
+        LinkControlWord lcw = getLinkControlWord();
+        if(lcw.isValid() && lcw instanceof IFrequencyBandReceiver ifrequencybandreceiver)
         {
-            return ((IFrequencyBandReceiver) getLinkControlWord()).getChannels();
+            return ifrequencybandreceiver.getChannels();
         }
 
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     @Override

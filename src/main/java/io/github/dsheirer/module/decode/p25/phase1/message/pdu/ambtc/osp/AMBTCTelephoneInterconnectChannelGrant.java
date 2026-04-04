@@ -40,13 +40,11 @@ import java.util.List;
 public class AMBTCTelephoneInterconnectChannelGrant extends AMBTCMessage implements IFrequencyBandReceiver, IServiceOptionsProvider
 {
     private static final int[] HEADER_SERVICE_OPTIONS = {64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] HEADER_RESERVED = {72, 73, 74, 75, 76, 77, 78, 79};
     private static final int[] BLOCK_0_DOWNLINK_FREQUENCY_BAND = {0, 1, 2, 3};
     private static final int[] BLOCK_0_DOWNLINK_CHANNEL_NUMBER = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
     private static final int[] BLOCK_0_UPLINK_FREQUENCY_BAND = {16, 17, 18, 19};
     private static final int[] BLOCK_0_UPLINK_CHANNEL_NUMBER = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     private static final int[] BLOCK_0_CALL_TIMER = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCK_0_RESERVED = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
 
     private VoiceServiceOptions mVoiceServiceOptions;
     private APCO25Channel mChannel;
@@ -59,6 +57,7 @@ public class AMBTCTelephoneInterconnectChannelGrant extends AMBTCMessage impleme
         super(PDUSequence, nac, timestamp);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();
@@ -87,7 +86,7 @@ public class AMBTCTelephoneInterconnectChannelGrant extends AMBTCMessage impleme
     {
         if(hasDataBlock(0))
         {
-            return getDataBlock(0).getMessage().getInt(BLOCK_0_CALL_TIMER) * 100; //milliseconds
+            return getDataBlock(0).getMessage().getInt(BLOCK_0_CALL_TIMER) * 100L; //milliseconds
         }
 
         return 0;

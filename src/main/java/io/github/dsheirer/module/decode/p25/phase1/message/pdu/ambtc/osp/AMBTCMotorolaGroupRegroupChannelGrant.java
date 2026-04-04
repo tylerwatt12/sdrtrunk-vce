@@ -65,6 +65,7 @@ public class AMBTCMotorolaGroupRegroupChannelGrant extends AMBTCMessage implemen
         super(PDUSequence, nac, timestamp);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

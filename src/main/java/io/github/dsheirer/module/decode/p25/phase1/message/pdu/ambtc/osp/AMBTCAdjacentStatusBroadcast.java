@@ -61,6 +61,7 @@ public class AMBTCAdjacentStatusBroadcast extends AMBTCMessage implements IFrequ
         setValid(hasDataBlock(0));
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

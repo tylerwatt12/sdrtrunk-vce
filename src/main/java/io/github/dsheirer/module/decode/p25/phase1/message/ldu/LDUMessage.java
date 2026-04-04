@@ -38,7 +38,7 @@ public abstract class LDUMessage extends P25P1Message
     public static final int IMBE_FRAME_7 = 1064;
     public static final int IMBE_FRAME_8 = 1248;
     public static final int IMBE_FRAME_9 = 1424;
-    public static final int[] LOW_SPEED_DATA = {1392, 1393, 1394, 1395, 1396, 1397, 1398, 1399, 1408, 1409, 1410, 1411,
+    private static final int[] LOW_SPEED_DATA = {1392, 1393, 1394, 1395, 1396, 1397, 1398, 1399, 1408, 1409, 1410, 1411,
             1412, 1413, 1414, 1415};
     private List<byte[]> mIMBIFrames;
 
@@ -48,7 +48,7 @@ public abstract class LDUMessage extends P25P1Message
      * @param nac code
      * @param timestamp for the message
      */
-    public LDUMessage(CorrectedBinaryMessage message, int nac, long timestamp)
+    protected LDUMessage(CorrectedBinaryMessage message, int nac, long timestamp)
     {
         super(message, nac, timestamp);
     }
@@ -65,6 +65,7 @@ public abstract class LDUMessage extends P25P1Message
      * Base message used by subclass implementations.
      * @return base message
      */
+    @Override
     public String getMessageStub()
     {
         StringBuilder sb = new StringBuilder();

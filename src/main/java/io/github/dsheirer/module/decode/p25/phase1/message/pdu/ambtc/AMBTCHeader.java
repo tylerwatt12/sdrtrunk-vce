@@ -31,9 +31,9 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
  */
 public class AMBTCHeader extends PDUHeader
 {
-    public static final int[] SAP_ID = {10, 11, 12, 13, 14, 15};
-    public static final int[] OPCODE = {58, 59, 60, 61, 62, 63};
-    public static final int[] DATA = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final int[] SAP_ID = {10, 11, 12, 13, 14, 15};
+    private static final int[] OPCODE = {58, 59, 60, 61, 62, 63};
+    private static final int[] DATA = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
 
     public AMBTCHeader(CorrectedBinaryMessage message, boolean passesCRC)
     {

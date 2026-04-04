@@ -155,6 +155,6 @@ public class LCChannelIdentifierUpdateVU extends LinkControlWord implements IFre
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

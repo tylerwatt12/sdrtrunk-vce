@@ -98,7 +98,7 @@ public class LDU2Message extends LDUMessage
         /* Hamming( 10,6,3 ) error detection and correction */
         for(int index : GOLAY_WORD_STARTS)
         {
-            int errors = Hamming10.checkAndCorrect(getMessage(), index);
+            Hamming10.checkAndCorrect(getMessage(), index);
         }
 
         /* Reed-Solomon( 24,16,9 ) error detection and correction

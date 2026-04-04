@@ -24,7 +24,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
-import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -36,7 +35,7 @@ import java.util.List;
  * Motorola completely assembled talker alias.  Note: this is not a true link control word.  It is reassembled from a
  * header and data blocks.
  */
-public class MotorolaTalkerAliasComplete extends TimeslotMessage implements IMessage
+public class MotorolaTalkerAliasComplete extends TimeslotMessage
 {
     private static final byte[] LOOKUP_TABLE =
     {
@@ -190,13 +189,13 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage implements IMes
             while(byteIndex < bytes);
 
             // Copy decoded bytes (as chars) to our alias string
-            String alias = "";
+            StringBuilder alias = new StringBuilder(chars);
             for(char i = 0; i < chars; i++)
             {
-                alias += (char) ((decoded[i * 2] << 8) | decoded[i * 2 + 1]);
+                alias.append((char)(((decoded[i * 2] & 0xFF) << 8) | (decoded[i * 2 + 1] & 0xFF)));
             }
 
-            mAlias = P25TalkerAliasIdentifier.create(alias);
+            mAlias = P25TalkerAliasIdentifier.create(alias.toString());
         }
 
         return mAlias;

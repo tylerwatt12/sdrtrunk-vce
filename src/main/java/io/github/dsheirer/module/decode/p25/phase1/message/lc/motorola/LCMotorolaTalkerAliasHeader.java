@@ -70,7 +70,6 @@ public class LCMotorolaTalkerAliasHeader extends LinkControlWord
     private static final IntField FORMAT = IntField.length8(OCTET_5_BIT_40); //Value 1 observed - unicode?
     private static final IntField UNKNOWN = IntField.length8(OCTET_6_BIT_48); //Always 0x00
     private static final IntField SEQUENCE = IntField.length4(OCTET_7_BIT_56);
-    private static final IntField CHECKSUM = IntField.length12(OCTET_7_BIT_56 + 4);
     private APCO25Talkgroup mTalkgroup;
     private List<Identifier> mIdentifiers;
 

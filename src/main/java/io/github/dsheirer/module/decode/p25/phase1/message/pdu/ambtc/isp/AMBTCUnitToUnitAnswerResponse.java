@@ -35,7 +35,6 @@ public class AMBTCUnitToUnitAnswerResponse extends AMBTCMessage implements IServ
 {
     private static final int[] HEADER_SERVICE_OPTIONS = {64, 65, 66, 67, 68, 69, 70, 71};
     private static final int[] HEADER_ANSWER_RESPONSE = {72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] BLOCK_0_RESERVED = {0, 1, 2, 3, 4, 5, 6, 7};
     private static final int[] BLOCK_0_WACN = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
         27};
     private static final int[] BLOCK_0_SYSTEM = {28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
@@ -55,6 +54,7 @@ public class AMBTCUnitToUnitAnswerResponse extends AMBTCMessage implements IServ
         super(PDUSequence, nac, timestamp);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

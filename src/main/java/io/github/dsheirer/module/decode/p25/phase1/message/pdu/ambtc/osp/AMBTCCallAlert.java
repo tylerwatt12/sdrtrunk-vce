@@ -53,6 +53,7 @@ public class AMBTCCallAlert extends AMBTCMessage
         super(PDUSequence, nac, timestamp);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();

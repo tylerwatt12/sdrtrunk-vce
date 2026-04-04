@@ -30,7 +30,6 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCMessag
 import io.github.dsheirer.module.decode.p25.reference.ChannelType;
 import java.util.Collections;
 import java.util.List;
-import org.apache.commons.math3.util.FastMath;
 
 /**
  * Frequency band update TDMA multi-block format for a foreign system.
@@ -65,6 +64,7 @@ public class AMBTCFrequencyBandUpdateTDMA extends AMBTCMessage // implements IFr
         super(PDUSequence, nac, timestamp);
     }
 
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();
@@ -166,7 +166,7 @@ public class AMBTCFrequencyBandUpdateTDMA extends AMBTCMessage // implements IFr
 
     public long getDownlinkFrequency(int channelNumber)
     {
-        return getBaseFrequency() + (getChannelSpacing() * (int)(FastMath.floor(channelNumber / getTimeslotCount())));
+        return getBaseFrequency() + (getChannelSpacing() * (channelNumber / getTimeslotCount()));
     }
 
     public long getUplinkFrequency(int channelNumber)
@@ -191,6 +191,6 @@ public class AMBTCFrequencyBandUpdateTDMA extends AMBTCMessage // implements IFr
 
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

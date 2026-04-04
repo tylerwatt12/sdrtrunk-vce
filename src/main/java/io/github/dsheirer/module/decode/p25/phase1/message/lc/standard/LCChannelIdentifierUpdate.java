@@ -143,6 +143,6 @@ public class LCChannelIdentifierUpdate extends LinkControlWord implements IFrequ
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }
