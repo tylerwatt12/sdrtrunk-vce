@@ -23,8 +23,6 @@ import io.github.dsheirer.dsp.filter.iir.SinglePoleIirFilter;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceEvent;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Power squelch
@@ -34,7 +32,6 @@ import org.slf4j.LoggerFactory;
  */
 public class PowerSquelch implements Listener<SourceEvent>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(PowerSquelch.class);
     private State mState = State.MUTE;
     private SinglePoleIirFilter mFilter;
     private float mPower = 0.0f;

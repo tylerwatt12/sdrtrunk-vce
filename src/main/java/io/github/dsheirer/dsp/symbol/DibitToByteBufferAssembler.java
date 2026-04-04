@@ -21,16 +21,12 @@ package io.github.dsheirer.dsp.symbol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.buffer.IByteBufferProvider;
 import java.nio.ByteBuffer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Assembles reusable byte buffers from an incoming stream of Dibits.
  */
 public class DibitToByteBufferAssembler implements Listener<Dibit>, IByteBufferProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(DibitToByteBufferAssembler.class);
-
     private ByteBuffer mCurrentBuffer;
     private int mBufferSize;
     private byte mCurrentByte;

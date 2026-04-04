@@ -60,7 +60,8 @@ public class PowerMonitor
 
         if(mPowerLevelBroadcastCount > mPowerLevelBroadcastThreshold && i.length >= 10)
         {
-            double iSquared, qSquared;
+            double iSquared;
+            double qSquared;
             for(int x = 0; x < 10; x++)
             {
                 iSquared = Math.pow(i[x], 2.0f);

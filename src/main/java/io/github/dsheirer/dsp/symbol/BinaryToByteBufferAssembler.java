@@ -22,16 +22,12 @@ import io.github.dsheirer.bits.IBinarySymbolProcessor;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.buffer.IByteBufferProvider;
 import java.nio.ByteBuffer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Assembles reusable byte buffers from an incoming stream of boolean values.
  */
 public class BinaryToByteBufferAssembler implements IBinarySymbolProcessor, IByteBufferProvider
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BinaryToByteBufferAssembler.class);
-
     private ByteBuffer mCurrentBuffer;
     private int mBufferSize;
     private byte mCurrentByte;
