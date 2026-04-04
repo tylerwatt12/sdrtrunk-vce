@@ -381,7 +381,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
         mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
-        mTrafficChannelManager.processP1ControlAnnouncedTrafficUpdate(channel, serviceOptions, mic, opcode, timestamp, context);
+        mTrafficChannelManager.processP1ControlAnnouncedTrafficUpdate(channel, serviceOptions, mic, opcode, timestamp);
     }
 
     /**
