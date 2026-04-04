@@ -185,6 +185,18 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
+    private static final String CALL_ALERT_LABEL = "CALL ALERT";
+    private static final String GROUP_AFFILIATION_LABEL = "GROUP AFFILIATION";
+    private static final String STATUS_QUERY_LABEL = "STATUS QUERY";
+    private static final String UNIT_AND_USER_STATUS_LABEL = "UNIT AND USER STATUS";
+    private static final String UNIT_REGISTRATION_LABEL = "UNIT REGISTRATION";
+    private static final String UNIT_LABEL = "UNIT:";
+    private static final String USER_LABEL = " USER:";
+    private static final String REASON_LABEL = " REASON: ";
+    private static final String ARGUMENTS_LABEL = " ARGUMENTS:";
+    private static final String ANNOUNCEMENT_GROUP_LABEL = " ANNOUNCEMENT GROUP:";
+    private static final String ROAMING_ADDRESS_LABEL = "ROAMING ADDRESS";
+    private static final String MESSAGE_LABEL = "MESSAGE:";
     private final Channel mChannel;
     private final Modulation mModulation;
     private final PatchGroupManager mPatchGroupManager = new PatchGroupManager();
@@ -290,8 +302,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case IP_PACKET_DATA:
                     processPacketData(message);
                     break;
-                case LOGICAL_LINK_DATA_UNIT_1:
-                case LOGICAL_LINK_DATA_UNIT_2:
+                case LOGICAL_LINK_DATA_UNIT_1, LOGICAL_LINK_DATA_UNIT_2:
                     processLDU(message);
                     break;
                 case PACKET_DATA_UNIT_BLOCK_1:
@@ -306,9 +317,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case TERMINATOR_DATA_UNIT_LINK_CONTROL:
                     processTDULC(message);
                     break;
-                case TRUNKING_SIGNALING_BLOCK_1:
-                case TRUNKING_SIGNALING_BLOCK_2:
-                case TRUNKING_SIGNALING_BLOCK_3:
+                case TRUNKING_SIGNALING_BLOCK_1, TRUNKING_SIGNALING_BLOCK_2, TRUNKING_SIGNALING_BLOCK_3:
                     processTSBK(message);
                     break;
                 case UNCONFIRMED_MULTI_BLOCK_TRUNKING_CONTROL:
@@ -360,7 +369,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      * @param timestamp when the channel grant occurred.
      */
     private void processControlTrafficGrant(APCO25Channel channel, ServiceOptions serviceOptions,
-                                            List<Identifier> identifiers, Opcode opcode, long timestamp, String context)
+                                            List<Identifier> identifiers, Opcode opcode, long timestamp)
     {
         if(channel.getValue().getDownlinkFrequency() > 0)
         {
@@ -379,7 +388,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      * @param timestamp of the message
      */
     private void processControlAnnouncedTrafficUpdate(APCO25Channel channel, ServiceOptions serviceOptions,
-                                                      List<Identifier> identifiers, Opcode opcode, long timestamp, String context)
+                                                      List<Identifier> identifiers, Opcode opcode, long timestamp)
     {
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
         mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
@@ -391,7 +400,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private DecodeEventType getLCDecodeEventType(LinkControlWord lcw)
     {
-        boolean encrypted = lcw.isEncrypted();;
+        boolean encrypted = lcw.isEncrypted();
 
         switch(lcw.getOpcode())
         {
@@ -541,11 +550,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case ISP_CALL_ALERT_REQUEST:
                     broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
-                            "CALL ALERT");
+                            CALL_ALERT_LABEL);
                     break;
                 case ISP_GROUP_AFFILIATION_REQUEST:
                     broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
-                            "GROUP AFFILIATION");
+                            GROUP_AFFILIATION_LABEL);
                     break;
                 case ISP_INDIVIDUAL_DATA_SERVICE_REQUEST:
                     if(ambtc instanceof AMBTCIndividualDataServiceRequest idsr)
@@ -565,16 +574,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     if(ambtc instanceof AMBTCMessageUpdateRequest mur)
                     {
                         broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.SDM,
-                                "MESSAGE:" + mur.getShortDataMessage());
+                                MESSAGE_LABEL + mur.getShortDataMessage());
                     }
                     break;
                 case ISP_ROAMING_ADDRESS_REQUEST:
                     broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
-                            "ROAMING ADDRESS");
+                            ROAMING_ADDRESS_LABEL);
                     break;
-                case ISP_STATUS_QUERY_REQUEST:
-                case ISP_STATUS_QUERY_RESPONSE:
-                case ISP_STATUS_UPDATE_REQUEST:
+                case ISP_STATUS_QUERY_REQUEST, ISP_STATUS_QUERY_RESPONSE, ISP_STATUS_UPDATE_REQUEST:
                     processAMBTCStatus(ambtc);
                     break;
                 case ISP_UNIT_ACKNOWLEDGE_RESPONSE:
@@ -639,18 +646,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
 
                 //Channel grants
-                case OSP_GROUP_DATA_CHANNEL_GRANT:
-                case OSP_GROUP_VOICE_CHANNEL_GRANT:
-                case OSP_INDIVIDUAL_DATA_CHANNEL_GRANT:
-                case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT:
-                case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT:
-                case MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_GRANT:
+                case OSP_GROUP_DATA_CHANNEL_GRANT, OSP_GROUP_VOICE_CHANNEL_GRANT,
+                    OSP_INDIVIDUAL_DATA_CHANNEL_GRANT, OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT,
+                    OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT, MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_GRANT:
                     processAMBTCChannelGrant(ambtc);
                     break;
 
                 //Channel grant updates
-                case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE:
-                case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE:
+                case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE, OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE:
                     processAMBTCChannelGrantUpdate(ambtc);
                     break;
 
@@ -660,23 +663,23 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case OSP_CALL_ALERT:
                     broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.PAGE,
-                            "CALL ALERT");
+                            CALL_ALERT_LABEL);
                     break;
                 case OSP_GROUP_AFFILIATION_QUERY:
                     broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.QUERY,
-                            "GROUP AFFILIATION");
+                            GROUP_AFFILIATION_LABEL);
                     break;
                 case OSP_GROUP_AFFILIATION_RESPONSE:
                     if(ambtc instanceof AMBTCGroupAffiliationResponse gar)
                     {
                         broadcastEvent(ambtc, DecodeEventType.RESPONSE, "AFFILIATION GROUP:" +
-                                gar.getGroupAddress() + " ANNOUNCEMENT GROUP:" + gar.getAnnouncementGroup());
+                                gar.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL + gar.getAnnouncementGroup());
                     }
                     break;
                 case OSP_MESSAGE_UPDATE:
                     if(ambtc instanceof AMBTCMessageUpdate mu)
                     {
-                        broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.SDM, "MESSAGE:" +
+                        broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.SDM, MESSAGE_LABEL +
                                 mu.getShortDataMessage());
                     }
                     break;
@@ -694,10 +697,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case OSP_ROAMING_ADDRESS_COMMAND:
                     broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.COMMAND,
-                            "ROAMING ADDRESS");
+                            ROAMING_ADDRESS_LABEL);
                     break;
-                case OSP_STATUS_QUERY:
-                case OSP_STATUS_UPDATE:
+                case OSP_STATUS_QUERY, OSP_STATUS_UPDATE:
                     processAMBTCStatus(ambtc);
                     break;
                 case OSP_UNIT_REGISTRATION_RESPONSE:
@@ -727,14 +729,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         switch(ambtc.getHeader().getOpcode())
         {
-            case ISP_STATUS_QUERY_REQUEST:
-            case OSP_STATUS_QUERY:
+            case ISP_STATUS_QUERY_REQUEST, OSP_STATUS_QUERY:
                 broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
-                        "STATUS QUERY");
+                        STATUS_QUERY_LABEL);
                 break;
             case ISP_STATUS_QUERY_RESPONSE:
                 broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.RESPONSE,
-                        "STATUS QUERY");
+                        STATUS_QUERY_LABEL);
                 break;
             case ISP_STATUS_UPDATE_REQUEST:
                 broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
@@ -743,7 +744,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case OSP_STATUS_UPDATE:
                 if(ambtc instanceof AMBTCStatusUpdate su)
                 {
-                    broadcastEvent(ambtc, DecodeEventType.STATUS, "UNIT:" + su.getUnitStatus() + " USER:" +
+                    broadcastEvent(ambtc, DecodeEventType.STATUS, UNIT_LABEL + su.getUnitStatus() + USER_LABEL +
                             su.getUserStatus());
                 }
                 break;
@@ -763,14 +764,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 if(ambtc instanceof AMBTCUnitToUnitVoiceServiceChannelGrantUpdate upd)
                 {
                     processControlAnnouncedTrafficUpdate(upd.getChannel(), upd.getServiceOptions(), upd.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE:
                 if(ambtc instanceof AMBTCTelephoneInterconnectChannelGrantUpdate upd)
                 {
                     processControlAnnouncedTrafficUpdate(upd.getChannel(), upd.getServiceOptions(), upd.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             default:
@@ -789,42 +790,42 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 if(ambtc instanceof AMBTCGroupDataChannelGrant gdcg)
                 {
                     processControlTrafficGrant(gdcg.getChannel(), gdcg.getServiceOptions(), gdcg.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             case OSP_GROUP_VOICE_CHANNEL_GRANT:
                 if(ambtc instanceof AMBTCGroupVoiceChannelGrant gvcg)
                 {
                     processControlTrafficGrant(gvcg.getChannel(), gvcg.getServiceOptions(), gvcg.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             case OSP_INDIVIDUAL_DATA_CHANNEL_GRANT:
                 if(ambtc instanceof AMBTCIndividualDataChannelGrant idcg)
                 {
                     processControlTrafficGrant(idcg.getChannel(), idcg.getServiceOptions(), idcg.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT:
                 if(ambtc instanceof AMBTCTelephoneInterconnectChannelGrant ticg)
                 {
                     processControlTrafficGrant(ticg.getChannel(), ticg.getServiceOptions(), ticg.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT:
                 if(ambtc instanceof AMBTCUnitToUnitVoiceServiceChannelGrant uuvscg)
                 {
                     processControlTrafficGrant(uuvscg.getChannel(), uuvscg.getServiceOptions(), uuvscg.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             case MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_GRANT:
                 if(ambtc instanceof AMBTCMotorolaGroupRegroupChannelGrant mgrcg)
                 {
                     processControlTrafficGrant(mgrcg.getChannel(), mgrcg.getServiceOptions(), mgrcg.getIdentifiers(),
-                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp(), ambtc.toString());
+                            ambtc.getHeader().getOpcode(), ambtc.getTimestamp());
                 }
                 break;
             default:
@@ -1197,41 +1198,28 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             switch(tsbk.getOpcode())
             {
                 //Channel Grant messages
-                case OSP_GROUP_DATA_CHANNEL_GRANT:
-                case OSP_GROUP_VOICE_CHANNEL_GRANT:
-                case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT:
-                case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT:
-                case OSP_SNDCP_DATA_CHANNEL_GRANT:
-                case MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_GRANT:
+                case OSP_GROUP_DATA_CHANNEL_GRANT, OSP_GROUP_VOICE_CHANNEL_GRANT,
+                        OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT, OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT,
+                        OSP_SNDCP_DATA_CHANNEL_GRANT, MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_GRANT:
                     processTSBKChannelGrant(tsbk);
                     break;
 
                 //Channel Grant Update messages
-                case OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE:
-                case OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE_EXPLICIT:
-                case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE:
-                case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE:
-                case MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_UPDATE:
+                case OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE, OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE_EXPLICIT,
+                        OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE,
+                        OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE, MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_UPDATE:
                     processTSBKChannelGrantUpdate(tsbk);
                     break;
 
                     //Network Configuration Messages
-                case MOTOROLA_OSP_TRAFFIC_CHANNEL_ID:
-                case MOTOROLA_OSP_SYSTEM_LOADING:
-                case MOTOROLA_OSP_BASE_STATION_ID:
-                case MOTOROLA_OSP_CONTROL_CHANNEL_PLANNED_SHUTDOWN:
-                case OSP_IDENTIFIER_UPDATE_TDMA:
-                case OSP_IDENTIFIER_UPDATE_VHF_UHF_BANDS:
-                case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
-                case OSP_SNDCP_DATA_CHANNEL_ANNOUNCEMENT_EXPLICIT:
-                case OSP_TIME_DATE_ANNOUNCEMENT:
-                case OSP_TDMA_SYNC_BROADCAST:
-                case OSP_SYSTEM_SERVICE_BROADCAST:
-                case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST:
-                case OSP_ADJACENT_STATUS_BROADCAST:
-                case OSP_IDENTIFIER_UPDATE:
-                case OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN:
-                case OSP_RESERVED_3F:
+                case MOTOROLA_OSP_TRAFFIC_CHANNEL_ID, MOTOROLA_OSP_SYSTEM_LOADING, MOTOROLA_OSP_BASE_STATION_ID,
+                        MOTOROLA_OSP_CONTROL_CHANNEL_PLANNED_SHUTDOWN, OSP_IDENTIFIER_UPDATE_TDMA,
+                        OSP_IDENTIFIER_UPDATE_VHF_UHF_BANDS, OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT,
+                        OSP_SNDCP_DATA_CHANNEL_ANNOUNCEMENT_EXPLICIT, OSP_TIME_DATE_ANNOUNCEMENT,
+                        OSP_TDMA_SYNC_BROADCAST, OSP_SYSTEM_SERVICE_BROADCAST,
+                        OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST, OSP_ADJACENT_STATUS_BROADCAST,
+                        OSP_IDENTIFIER_UPDATE, OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN,
+                        OSP_RESERVED_3F:
                     mNetworkConfigurationMonitor.process(tsbk);
 
                     //Send the frequency bands to the traffic channel manager to use for traffic channel preload data
@@ -1289,8 +1277,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.PAGE,
                             "SNDCP DATA PAGE REQUEST");
                     break;
-                case OSP_STATUS_UPDATE:
-                case OSP_STATUS_QUERY:
+                case OSP_STATUS_UPDATE, OSP_STATUS_QUERY:
                     processTSBKStatus(tsbk);
                     break;
                 case OSP_MESSAGE_UPDATE:
@@ -1305,7 +1292,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             "RADIO UNIT MONITOR");
                     break;
                 case OSP_CALL_ALERT:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.PAGE, "CALL ALERT");
+                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.PAGE, CALL_ALERT_LABEL);
                     break;
                 case OSP_ACKNOWLEDGE_RESPONSE:
                     processTSBKAcknowledgeResponse(tsbk);
@@ -1324,7 +1311,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case OSP_GROUP_AFFILIATION_QUERY:
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.QUERY,
-                            "GROUP AFFILIATION");
+                            GROUP_AFFILIATION_LABEL);
                     break;
                 case OSP_LOCATION_REGISTRATION_RESPONSE:
                     processTSBKLocationRegistrationResponse(tsbk);
@@ -1334,7 +1321,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case OSP_UNIT_REGISTRATION_COMMAND:
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.COMMAND,
-                            "UNIT REGISTRATION");
+                            UNIT_REGISTRATION_LABEL);
                     break;
                 case OSP_AUTHENTICATION_COMMAND:
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.COMMAND,
@@ -1427,16 +1414,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case ISP_SNDCP_RECONNECT_REQUEST:
                     processTSBKSndcpReconnectRequest(tsbk);
                     break;
-                case ISP_STATUS_UPDATE_REQUEST:
-                case ISP_STATUS_QUERY_RESPONSE:
-                case ISP_STATUS_QUERY_REQUEST:
+                case ISP_STATUS_UPDATE_REQUEST, ISP_STATUS_QUERY_RESPONSE, ISP_STATUS_QUERY_REQUEST:
                     processTSBKStatus(tsbk);
                     break;
                 case ISP_MESSAGE_UPDATE_REQUEST:
                     if(tsbk instanceof MessageUpdateRequest mur)
                     {
                         broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.SDM,
-                                "MESSAGE:" + mur.getShortDataMessage());
+                                MESSAGE_LABEL + mur.getShortDataMessage());
                     }
                     break;
                 case ISP_RADIO_UNIT_MONITOR_REQUEST:
@@ -1445,7 +1430,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case ISP_CALL_ALERT_REQUEST:
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
-                            "CALL ALERT");
+                            CALL_ALERT_LABEL);
                     break;
                 case ISP_UNIT_ACKNOWLEDGE_RESPONSE:
                     if(tsbk instanceof UnitAcknowledgeResponse uar)
@@ -1466,7 +1451,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     if(tsbk instanceof ExtendedFunctionResponse efr)
                     {
                         broadcastEvent(tsbk, DecodeEventType.RESPONSE, "EXTENDED FUNCTION:" +
-                                efr.getExtendedFunction() + " ARGUMENTS:" + efr.getArguments());
+                                efr.getExtendedFunction() + ARGUMENTS_LABEL + efr.getArguments());
                     }
                     break;
                 case ISP_EMERGENCY_ALARM_REQUEST:
@@ -1475,13 +1460,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case ISP_GROUP_AFFILIATION_REQUEST:
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
-                            "GROUP AFFILIATION");
+                            GROUP_AFFILIATION_LABEL);
                     break;
                 case ISP_GROUP_AFFILIATION_QUERY_RESPONSE:
                     if(tsbk instanceof GroupAffiliationQueryResponse gaqr)
                     {
                         broadcastEvent(tsbk, DecodeEventType.RESPONSE, "AFFILIATION - GROUP:" +
-                            gaqr.getGroupAddress() + " ANNOUNCEMENT GROUP:" + gaqr.getAnnouncementGroupAddress());
+                            gaqr.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL + gaqr.getAnnouncementGroupAddress());
                     }
                     break;
                 case ISP_UNIT_DE_REGISTRATION_REQUEST:
@@ -1512,11 +1497,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case ISP_ROAMING_ADDRESS_REQUEST:
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
-                            "ROAMING ADDRESS");
+                            ROAMING_ADDRESS_LABEL);
                     break;
                 case ISP_ROAMING_ADDRESS_RESPONSE:
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.RESPONSE,
-                            "ROAMING ADDRESS");
+                            ROAMING_ADDRESS_LABEL);
                     break;
                 case MOTOROLA_OSP_ACKNOWLEDGE_RESPONSE:
                     processTSBKAcknowledgeResponse(tsbk);
@@ -1573,36 +1558,36 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case ISP_STATUS_UPDATE_REQUEST:
                 if(tsbk instanceof StatusUpdateRequest sur)
                 {
-                    broadcastEvent(tsbk, DecodeEventType.STATUS, "UNIT:" + sur.getUnitStatus() + " USER:" +
+                    broadcastEvent(tsbk, DecodeEventType.STATUS, UNIT_LABEL + sur.getUnitStatus() + USER_LABEL +
                             sur.getUserStatus());
                 }
                 break;
             case ISP_STATUS_QUERY_RESPONSE:
                 if(tsbk instanceof StatusQueryResponse sqr)
                 {
-                    broadcastEvent(tsbk, DecodeEventType.STATUS, "UNIT:" + sqr.getUnitStatus() + " USER:" +
+                    broadcastEvent(tsbk, DecodeEventType.STATUS, UNIT_LABEL + sqr.getUnitStatus() + USER_LABEL +
                             sqr.getUserStatus());
                 }
                 break;
             case ISP_STATUS_QUERY_REQUEST:
-                if(tsbk instanceof StatusQueryRequest sqr)
+                if(tsbk instanceof StatusQueryRequest)
                 {
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.QUERY,
-                            "UNIT AND USER STATUS");
+                            UNIT_AND_USER_STATUS_LABEL);
                 }
                 break;
             case OSP_STATUS_QUERY:
-                if(tsbk instanceof StatusQuery sq)
+                if(tsbk instanceof StatusQuery)
                 {
                     broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.QUERY,
-                            "UNIT AND USER STATUS");
+                            UNIT_AND_USER_STATUS_LABEL);
                 }
                 break;
             case OSP_STATUS_UPDATE:
                 if(tsbk instanceof StatusUpdate su)
                 {
                     broadcastEvent(tsbk, DecodeEventType.STATUS,
-                            "UNIT:" + su.getUnitStatus() + " USER:" + su.getUserStatus());
+                            UNIT_LABEL + su.getUnitStatus() + USER_LABEL + su.getUserStatus());
                 }
                 break;
             default:
@@ -1673,7 +1658,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             broadcastEvent(tsbk, DecodeEventType.RESPONSE, gar.getAffiliationResponse() +
                     " AFFILIATION GROUP: " + gar.getGroupAddress() +
                     (gar.isGlobalAffiliation() ? " (GLOBAL)" : " (LOCAL)") +
-                    " ANNOUNCEMENT GROUP:" + gar.getAnnouncementGroupAddress());
+                    ANNOUNCEMENT_GROUP_LABEL + gar.getAnnouncementGroupAddress());
         }
     }
 
@@ -1683,12 +1668,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         {
             broadcastEvent(tsbk, DecodeEventType.RESPONSE,
  		"DENY: " + dr.getDeniedServiceType().getDescription() +
-                    " REASON: " + dr.getDenyReason() + " - INFO: " + dr.getAdditionalInfo());
+                    REASON_LABEL + dr.getDenyReason() + " - INFO: " + dr.getAdditionalInfo());
         }
         else if(tsbk instanceof MotorolaDenyResponse mdr)
         {
             broadcastEvent(tsbk, DecodeEventType.RESPONSE, "DENY: " + mdr.getDeniedServiceType().getDescription()
-                    + " REASON: " + mdr.getDenyReason() + " - INFO: " + mdr.getAdditionalInfo());
+                    + REASON_LABEL + mdr.getDenyReason() + " - INFO: " + mdr.getAdditionalInfo());
         }
     }
 
@@ -1697,7 +1682,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         if(tsbk instanceof ExtendedFunctionCommand efc)
         {
             broadcastEvent(tsbk, DecodeEventType.COMMAND, "FUNCTION: " + efc.getExtendedFunction() +
-                    " ARGUMENTS:" + efc.getArguments());
+                    ARGUMENTS_LABEL + efc.getArguments());
         }
         else if(tsbk instanceof MotorolaExtendedFunctionCommand mefc)
         {
@@ -1713,7 +1698,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             }
             else
             {
-                broadcastEvent(tsbk, DecodeEventType.COMMAND, "FUNCTION CLASS: " + mefc.getFunctionClass() + " OPERAND:" + mefc.getFunctionOperand() + " ARGUMENTS:" + mefc.getFunctionArguments());
+                broadcastEvent(tsbk, DecodeEventType.COMMAND, "FUNCTION CLASS: " + mefc.getFunctionClass() +
+                        " OPERAND:" + mefc.getFunctionOperand() + ARGUMENTS_LABEL + mefc.getFunctionArguments());
             }
         }
 
@@ -1724,13 +1710,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         if(tsbk instanceof QueuedResponse qr)
         {
             broadcastEvent(tsbk, DecodeEventType.RESPONSE, "QUEUED: " +
-                    qr.getQueuedResponseServiceType().getDescription() + " REASON: " + qr.getQueuedResponseReason() +
+                    qr.getQueuedResponseServiceType().getDescription() + REASON_LABEL + qr.getQueuedResponseReason() +
                     " INFO: " + qr.getAdditionalInfo());
         }
         else if(tsbk instanceof MotorolaQueuedResponse mqr)
         {
             broadcastEvent(tsbk, DecodeEventType.RESPONSE, "QUEUED: " + mqr.getQueuedServiceType().getDescription() +
-                    " REASON: " + mqr.getQueuedResponseReason() + " INFO: " + mqr.getAdditionalInfo());
+                    REASON_LABEL + mqr.getQueuedResponseReason() + " INFO: " + mqr.getAdditionalInfo());
         }
     }
 
@@ -1757,12 +1743,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 if(tsbk instanceof MotorolaGroupRegroupChannelUpdate pgvcgu)
                 {
                     processControlAnnouncedTrafficUpdate(pgvcgu.getChannel1(), null, Collections.singletonList(pgvcgu.getPatchGroup1()),
-                            tsbk.getOpcode(), pgvcgu.getTimestamp(), tsbk.toString());
+                            tsbk.getOpcode(), pgvcgu.getTimestamp());
 
                     if(pgvcgu.hasPatchGroup2())
                     {
                         processControlAnnouncedTrafficUpdate(pgvcgu.getChannel2(), null, Collections.singletonList(pgvcgu.getPatchGroup2()),
-                                tsbk.getOpcode(), pgvcgu.getTimestamp(), tsbk.toString());
+                                tsbk.getOpcode(), pgvcgu.getTimestamp());
                     }
                 }
                 break;
@@ -1770,12 +1756,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 if(tsbk instanceof GroupVoiceChannelGrantUpdate gvcgu)
                 {
                     processControlAnnouncedTrafficUpdate(gvcgu.getChannelA(), null, Collections.singletonList(gvcgu.getGroupAddressA()),
-                            tsbk.getOpcode(), gvcgu.getTimestamp(), tsbk.toString());
+                            tsbk.getOpcode(), gvcgu.getTimestamp());
 
                     if(gvcgu.hasGroupB())
                     {
                         processControlAnnouncedTrafficUpdate(gvcgu.getChannelB(), null, Collections.singletonList(gvcgu.getGroupAddressB()),
-                                tsbk.getOpcode(), gvcgu.getTimestamp(), tsbk.toString());
+                                tsbk.getOpcode(), gvcgu.getTimestamp());
                     }
                 }
                 break;
@@ -1783,21 +1769,21 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 if(tsbk instanceof GroupVoiceChannelGrantUpdateExplicit gvcgue)
                 {
                     processControlAnnouncedTrafficUpdate(gvcgue.getChannel(), gvcgue.getServiceOptions(), gvcgue.getIdentifiers(),
-                            tsbk.getOpcode(), gvcgue.getTimestamp(), tsbk.toString());
+                            tsbk.getOpcode(), gvcgue.getTimestamp());
                 }
                 break;
             case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE:
                 if(tsbk instanceof TelephoneInterconnectVoiceChannelGrantUpdate tivcgu)
                 {
                     processControlAnnouncedTrafficUpdate(tivcgu.getChannel(), tivcgu.getServiceOptions(), tivcgu.getIdentifiers(),
-                            tsbk.getOpcode(), tivcgu.getTimestamp(), tsbk.toString());
+                            tsbk.getOpcode(), tivcgu.getTimestamp());
                 }
                 break;
             case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE:
                 if(tsbk instanceof UnitToUnitVoiceChannelGrantUpdate uuvcgu)
                 {
                     processControlAnnouncedTrafficUpdate(uuvcgu.getChannel(), null, uuvcgu.getIdentifiers(), tsbk.getOpcode(),
-                            uuvcgu.getTimestamp(), tsbk.toString());
+                            uuvcgu.getTimestamp());
                 }
                 break;
             default:
@@ -1816,42 +1802,42 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 if(tsbk instanceof MotorolaGroupRegroupChannelGrant mgrcg)
                 {
                     processControlTrafficGrant(mgrcg.getChannel(), mgrcg.getServiceOptions(), mgrcg.getIdentifiers(), tsbk.getOpcode(),
-                            mgrcg.getTimestamp(), tsbk.toString());
+                            mgrcg.getTimestamp());
                 }
                 break;
             case OSP_GROUP_DATA_CHANNEL_GRANT:
                 if(tsbk instanceof GroupDataChannelGrant gdcg)
                 {
                     processControlTrafficGrant(gdcg.getChannel(), gdcg.getDataServiceOptions(), gdcg.getIdentifiers(),
-                            tsbk.getOpcode(), gdcg.getTimestamp(), tsbk.toString());
+                            tsbk.getOpcode(), gdcg.getTimestamp());
                 }
                 break;
             case OSP_GROUP_VOICE_CHANNEL_GRANT:
                 if(tsbk instanceof GroupVoiceChannelGrant gvcg)
                 {
                     processControlTrafficGrant(gvcg.getChannel(), gvcg.getServiceOptions(), gvcg.getIdentifiers(), tsbk.getOpcode(),
-                            gvcg.getTimestamp(), tsbk.toString());
+                            gvcg.getTimestamp());
                 }
                 break;
             case OSP_SNDCP_DATA_CHANNEL_GRANT:
                 if(tsbk instanceof SNDCPDataChannelGrant dcg)
                 {
                     processControlTrafficGrant(dcg.getChannel(), dcg.getServiceOptions(), dcg.getIdentifiers(), tsbk.getOpcode(),
-                            dcg.getTimestamp(), tsbk.toString());
+                            dcg.getTimestamp());
                 }
                 break;
             case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT:
                 if(tsbk instanceof UnitToUnitVoiceChannelGrant uuvcg)
                 {
                     processControlTrafficGrant(uuvcg.getChannel(), null, uuvcg.getIdentifiers(), tsbk.getOpcode(),
-                            uuvcg.getTimestamp(), tsbk.toString());
+                            uuvcg.getTimestamp());
                 }
                 break;
             case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT:
                 if(tsbk instanceof TelephoneInterconnectVoiceChannelGrant tivcg)
                 {
                     processControlTrafficGrant(tivcg.getChannel(), tivcg.getServiceOptions(), tivcg.getIdentifiers(), tsbk.getOpcode(),
-                            tivcg.getTimestamp(), tsbk.toString());
+                            tivcg.getTimestamp());
                 }
                 break;
             default:
@@ -1875,11 +1861,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 //Ignore - handled elsewhere
                 break;
             //Calls getting ready to start or in-progress on this channel
-            case GROUP_VOICE_CHANNEL_USER:
-            case MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_USER:
-            case TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER:
-            case UNIT_TO_UNIT_VOICE_CHANNEL_USER:
-            case UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
+            case GROUP_VOICE_CHANNEL_USER, MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_USER,
+                    TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER, UNIT_TO_UNIT_VOICE_CHANNEL_USER,
+                    UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
                 if(isTerminator)
                 {
                     getIdentifierCollection().update(mPatchGroupManager.update(lcw.getIdentifiers(), timestamp));
@@ -1890,7 +1874,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 }
                 break;
             case MOTOROLA_TALK_COMPLETE:
-                if(lcw instanceof LCMotorolaTalkComplete tc)
+                if(lcw instanceof LCMotorolaTalkComplete)
                 {
                     //TCM has already closed the call event.  Remove the FROM user identifiers to prepare for the
                     //next call.
@@ -1908,8 +1892,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 break;
 
             //Voice Channel Update messages - indicates calls in-progress on another channel - ignored
-            case GROUP_VOICE_CHANNEL_UPDATE:
-            case GROUP_VOICE_CHANNEL_UPDATE_EXPLICIT:
+            case GROUP_VOICE_CHANNEL_UPDATE, GROUP_VOICE_CHANNEL_UPDATE_EXPLICIT:
                 break;
 
             //Network configuration messages
@@ -1983,14 +1966,10 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 mNetworkConfigurationMonitor.process(lcw);
                 break;
 
-            case ADJACENT_SITE_STATUS_BROADCAST:
-            case ADJACENT_SITE_STATUS_BROADCAST_EXPLICIT:
-            case CHANNEL_IDENTIFIER_UPDATE:
-            case CHANNEL_IDENTIFIER_UPDATE_VU:
-            case PROTECTION_PARAMETER_BROADCAST:
-            case SECONDARY_CONTROL_CHANNEL_BROADCAST:
-            case SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
-            case SYSTEM_SERVICE_BROADCAST:
+            case ADJACENT_SITE_STATUS_BROADCAST, ADJACENT_SITE_STATUS_BROADCAST_EXPLICIT,
+                    CHANNEL_IDENTIFIER_UPDATE, CHANNEL_IDENTIFIER_UPDATE_VU, PROTECTION_PARAMETER_BROADCAST,
+                    SECONDARY_CONTROL_CHANNEL_BROADCAST, SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT,
+                    SYSTEM_SERVICE_BROADCAST:
                 mNetworkConfigurationMonitor.process(lcw);
                 break;
 
@@ -2007,8 +1986,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case MOTOROLA_FAILSOFT:
                 //Ignore - there's nothing we can do with failsoft
                 break;
-            case MOTOROLA_TALKER_ALIAS_HEADER:
-            case MOTOROLA_TALKER_ALIAS_DATA_BLOCK:
+            case MOTOROLA_TALKER_ALIAS_HEADER, MOTOROLA_TALKER_ALIAS_DATA_BLOCK:
                 //Inore - we'll pickup the talker alias from the assembler in the MessageProcessor.
                 break;
 
@@ -2054,14 +2032,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 if(lcw instanceof LCStatusUpdate su)
                 {
                     broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.STATUS,
-                            "UNIT:" + su.getUnitStatus() + " USER:" + su.getUserStatus());
+                            UNIT_LABEL + su.getUnitStatus() + USER_LABEL + su.getUserStatus());
                 }
                 break;
             case STATUS_UPDATE_EXTENDED:
                 if(lcw instanceof LCStatusUpdateExtended sue)
                 {
-                    broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.STATUS, "UNIT:" +
-                            sue.getUnitStatus() + " USER:" + sue.getUserStatus());
+                    broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.STATUS, UNIT_LABEL +
+                            sue.getUnitStatus() + USER_LABEL + sue.getUserStatus());
                 }
                 break;
             case TELEPHONE_INTERCONNECT_ANSWER_REQUEST:
@@ -2193,5 +2171,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     @Override
     public void init()
     {
+        //No additional initialization required for P25 phase 1 decoder state.
     }
 }
