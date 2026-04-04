@@ -24,8 +24,6 @@ import io.github.dsheirer.dsp.magnitude.MagnitudeFactory;
 import io.github.dsheirer.dsp.squelch.AdaptiveSquelch;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * FM Demodulator for demodulating complex samples and producing demodulated floating point samples.
@@ -35,7 +33,6 @@ import org.slf4j.LoggerFactory;
  */
 public class SquelchingFMDemodulator implements ISquelchingDemodulator, Listener<SourceEvent>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SquelchingFMDemodulator.class);
     private static final float ZERO = 0.0f;
     private final AdaptiveSquelch mAdaptiveSquelch;
     private final IMagnitudeCalculator mMagnitude = MagnitudeFactory.getMagnitudeCalculator();
@@ -150,11 +147,12 @@ public class SquelchingFMDemodulator implements ISquelchingDemodulator, Listener
         switch(sourceEvent.getEvent())
         {
             //Only forward squelch threshold and auto-track current & change requests
-            case REQUEST_CURRENT_SQUELCH_THRESHOLD:
-            case REQUEST_CHANGE_SQUELCH_THRESHOLD:
-            case REQUEST_CURRENT_SQUELCH_AUTO_TRACK:
-            case REQUEST_CHANGE_SQUELCH_AUTO_TRACK:
+            case REQUEST_CURRENT_SQUELCH_THRESHOLD, REQUEST_CHANGE_SQUELCH_THRESHOLD,
+                REQUEST_CURRENT_SQUELCH_AUTO_TRACK, REQUEST_CHANGE_SQUELCH_AUTO_TRACK:
                 mAdaptiveSquelch.receive(sourceEvent);
+                break;
+            default:
+                // Ignore unrelated source events.
                 break;
         }
     }

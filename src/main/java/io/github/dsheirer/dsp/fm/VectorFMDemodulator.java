@@ -19,18 +19,14 @@
 
 package io.github.dsheirer.dsp.fm;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * FM demodulator that uses JDK 17+ SIMD vector intrinsics
  */
 public abstract class VectorFMDemodulator implements IDemodulator
 {
-    private static final Logger mLog = LoggerFactory.getLogger(VectorFMDemodulator.class);
     private ScalarFMDemodulator mScalar;
 
-    public VectorFMDemodulator()
+    protected VectorFMDemodulator()
     {
     }
 

@@ -22,15 +22,15 @@ package io.github.dsheirer.dsp.fm;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating FM demodulators
  */
 public class FmDemodulatorFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(FmDemodulatorFactory.class);
+    private FmDemodulatorFactory()
+    {
+    }
 
     /**
      * Creates the optimal FM demodulator using calibration data to select the optimal

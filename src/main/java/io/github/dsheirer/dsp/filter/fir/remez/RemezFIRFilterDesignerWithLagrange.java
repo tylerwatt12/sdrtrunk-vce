@@ -26,26 +26,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
-import java.text.DecimalFormat;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
 public class RemezFIRFilterDesignerWithLagrange
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RemezFIRFilterDesignerWithLagrange.class);
+    private static final Logger mLog = LoggerFactory.getLogger(RemezFIRFilterDesignerWithLagrange.class);
 
     private static final double CONVERGENCE_THRESHOLD = 0.0001;
     public static final int MAXIMUM_ITERATION_COUNT = 40;
     public static final double TWO_PI = 2.0 * FastMath.PI;
 
-    private static final DecimalFormat DECIMAL_FORMATTER = new DecimalFormat("0.00000000");
 
     private FIRFilterSpecification mSpecification;
     private Grid mGrid;
     private List<Integer> mExtremalIndices;
 
-    private double[] mD;
     private double[] mGridErrors;
     private double[] mGridFrequencyResponse;
     private double[] mIdealFrequencyResponse;
@@ -169,7 +167,7 @@ public class RemezFIRFilterDesignerWithLagrange
         switch(mSpecification.getFilterType())
         {
             case TYPE_1_ODD_LENGTH_EVEN_ORDER_SYMMETRICAL:
-                M = ((double)length - 1.0) / 2.0;
+                M = (length - 1.0) / 2.0;
 
                 for(int n = 0; n < length; n++)
                 {
@@ -179,28 +177,30 @@ public class RemezFIRFilterDesignerWithLagrange
 
                     for(int k = 1; k <= M; k++)
                     {
-                        accumulator += 2.0 * frequencyResponse[k] * FastMath.cos(frequency * (double)k);
+                        accumulator += 2.0 * frequencyResponse[k] * FastMath.cos(frequency * k);
                     }
 
-                    impulseResponse[n] = accumulator / (double)length;
+                    impulseResponse[n] = accumulator / length;
                 }
                 break;
             case TYPE_2_EVEN_LENGTH_ODD_ORDER_SYMMETRICAL:
-                double offset = (double)(length - 1) / 2.0;
+                double offset = (length - 1) / 2.0;
 
                 for(int n = 0; n < length; n++)
                 {
                     double accumulator = frequencyResponse[0];
 
-                    double frequency = TWO_PI * ((double)n - offset) / (double)length;
+                    double frequency = TWO_PI * (n - offset) / length;
 
                     for(int k = 1; k < frequencyResponse.length; k++)
                     {
-                        accumulator += 2.0 * frequencyResponse[k] * FastMath.cos(frequency * (double)k);
+                        accumulator += 2.0 * frequencyResponse[k] * FastMath.cos(frequency * k);
                     }
 
-                    impulseResponse[n] = accumulator / (double)length;
+                    impulseResponse[n] = accumulator / length;
                 }
+                break;
+            default:
                 break;
         }
 
@@ -399,7 +399,7 @@ public class RemezFIRFilterDesignerWithLagrange
         }
 
         //Set the scale to the maximum scale we could see for a primitive decimal
-        mDelta = numerator.divide(denominator, 1023, BigDecimal.ROUND_HALF_DOWN).doubleValue();
+        mDelta = numerator.divide(denominator, 1023, RoundingMode.HALF_DOWN).doubleValue();
     }
 
     /**
@@ -599,7 +599,7 @@ public class RemezFIRFilterDesignerWithLagrange
 
         double convergence = maximum - FastMath.abs(mDelta);
 
-        mLog.debug("Convergence: " + convergence);
+        mLog.debug("Convergence: {}", convergence);
 
         mConverged = convergence < CONVERGENCE_THRESHOLD;
     }
@@ -634,13 +634,13 @@ public class RemezFIRFilterDesignerWithLagrange
             length--;
         }
 
-        double half = (double)length / 2.0;
+        double half = length / 2.0;
 
         double[] resampled = new double[(int)FastMath.ceil(half)];
 
         for(int x = 0; x < resampled.length; x++)
         {
-            resampled[x] = getFrequencyResponse(FastMath.cos(FastMath.PI * (double)x / half));
+            resampled[x] = getFrequencyResponse(FastMath.cos(FastMath.PI * x / half));
         }
 
         return resampled;
@@ -667,14 +667,14 @@ public class RemezFIRFilterDesignerWithLagrange
             case TYPE_3_ODD_LENGTH_EVEN_ORDER_ANTI_SYMMETRICAL:
                 for(int x = 0; x < frequencyResponse.length; x++)
                 {
-                    double frequencyRadians = FastMath.PI * (((double)x) / filterLength);
+                    double frequencyRadians = FastMath.PI * ((x) / filterLength);
                     frequencyResponse[x] *= FastMath.sin(TWO_PI * frequencyRadians);
                 }
                 break;
             case TYPE_4_EVEN_LENGTH_ODD_ORDER_ANTI_SYMMETRICAL:
                 for(int x = 0; x < frequencyResponse.length; x++)
                 {
-                    double frequencyRadians = FastMath.PI * (((double)x) / filterLength);
+                    double frequencyRadians = FastMath.PI * ((x) / filterLength);
                     frequencyResponse[x] *= FastMath.sin(FastMath.PI * frequencyRadians);
                 }
                 break;
