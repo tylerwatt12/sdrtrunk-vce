@@ -23,7 +23,6 @@ package io.github.dsheirer.module.decode.p25.audio;
 import io.github.dsheirer.audio.codec.mbe.MBECallSequence;
 import io.github.dsheirer.audio.codec.mbe.MBECallSequenceRecorder;
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
@@ -83,14 +82,9 @@ public class P25P1CallSequenceRecorder extends MBECallSequenceRecorder
     @Override
     public void receive(IMessage message)
     {
-        if(message instanceof P25P1Message)
+        if(message instanceof P25P1Message p25 && p25.isValid())
         {
-            P25P1Message p25 = (P25P1Message)message;
-
-            if(p25.isValid())
-            {
-                process(p25);
-            }
+            process(p25);
         }
     }
 
@@ -112,21 +106,21 @@ public class P25P1CallSequenceRecorder extends MBECallSequenceRecorder
      */
     public void process(P25P1Message message)
     {
-        if(message instanceof LDUMessage)
+        if(message instanceof LDUMessage ldumessage)
         {
-            process((LDUMessage)message);
+            process(ldumessage);
         }
-        else if(message instanceof TDULCMessage)
+        else if(message instanceof TDULCMessage tdulcMessage)
         {
-            process((TDULCMessage)message);
+            process(tdulcMessage);
         }
         else if(message instanceof TDUMessage)
         {
             flush();
         }
-        else if (message instanceof HDUMessage)
+        else if(message instanceof HDUMessage hduMessage)
         {
-            process((HDUMessage)message);
+            process(hduMessage);
         }
     }
 
@@ -145,9 +139,9 @@ public class P25P1CallSequenceRecorder extends MBECallSequenceRecorder
             mCallSequence = new MBECallSequence(PROTOCOL);
         }
 
-        if(lduMessage instanceof LDU1Message)
+        if(lduMessage instanceof LDU1Message ldu1Message)
         {
-            process((LDU1Message)lduMessage);
+            process(ldu1Message);
         }
 
         List<byte[]> voiceFrames = lduMessage.getIMBEFrames();
@@ -163,9 +157,9 @@ public class P25P1CallSequenceRecorder extends MBECallSequenceRecorder
             baseTimestamp += 20;
         }
 
-        if(lduMessage instanceof LDU2Message)
+        if(lduMessage instanceof LDU2Message ldu2Message)
         {
-            process((LDU2Message)lduMessage);
+            process(ldu2Message);
         }
     }
 
@@ -208,10 +202,11 @@ public class P25P1CallSequenceRecorder extends MBECallSequenceRecorder
                     mCallSequence.setToIdentifier(mpgvcup.getSupergroupAddress().toString());
                     mCallSequence.setCallType(CALL_TYPE_GROUP);
                     break;
-                case CALL_TERMINATION_OR_CANCELLATION:
-                case MOTOROLA_TALK_COMPLETE:
+                case CALL_TERMINATION_OR_CANCELLATION, MOTOROLA_TALK_COMPLETE:
                     writeCallSequence(mCallSequence);
                     mCallSequence = null;
+                    break;
+                default:
                     break;
             }
         }
@@ -245,7 +240,7 @@ public class P25P1CallSequenceRecorder extends MBECallSequenceRecorder
         if (hd.isEncryptedAudio())
         {
             mCallSequence.setEncrypted(true);
-            Phase2EncryptionSyncParameters esp = new Phase2EncryptionSyncParameters((EncryptionKeyIdentifier)hd.getEncryptionKey(), hd.getMessageIndicator());
+            Phase2EncryptionSyncParameters esp = new Phase2EncryptionSyncParameters(hd.getEncryptionKey(), hd.getMessageIndicator());
             mCallSequence.setEncryptionSyncParameters(esp);
         }
     }

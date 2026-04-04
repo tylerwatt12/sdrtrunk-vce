@@ -108,6 +108,8 @@ public class SystemIdentityCode extends AbstractStructure
                 case HUGE:
                     mNetwork = new DMRNetwork(getMessage().getInt(HUGE_NET, getOffset()));
                     break;
+                default:
+                    break;
             }
         }
 
@@ -134,6 +136,8 @@ public class SystemIdentityCode extends AbstractStructure
                     break;
                 case HUGE:
                     mSite = new DMRSite(getMessage().getInt(HUGE_SITE, getOffset()));
+                    break;
+                default:
                     break;
             }
         }
