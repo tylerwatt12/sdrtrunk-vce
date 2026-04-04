@@ -42,15 +42,14 @@ import java.util.TreeSet;
 public class MPT1327DecoderState extends DecoderState
 {
 
-    private TreeSet<String> mIdents = new TreeSet<String>();
-    private HashMap<String,ArrayList<String>> mGroups = new HashMap<String,ArrayList<String>>();
+    private TreeSet<String> mIdents = new TreeSet<>();
+    private HashMap<String,ArrayList<String>> mGroups = new HashMap<>();
 
     private String mSite;
 
     private int mChannelNumber;
     private ChannelType mChannelType;
 
-    private long mFrequency = 0;
     private long mCallTimeoutMilliseconds;
     private MPT1327TrafficChannelManager mMPT1327TrafficChannelManager;
 
@@ -91,14 +90,10 @@ public class MPT1327DecoderState extends DecoderState
     @Override
     public void receive(IMessage message)
     {
-        if(message.isValid())
+        if(message.isValid() && message instanceof MPT1327Message mpt)
         {
-            if(message instanceof MPT1327Message)
+            switch(mpt.getMessageType())
             {
-                MPT1327Message mpt = ((MPT1327Message)message);
-
-                switch(mpt.getMessageType())
-                {
                     case ACK:
                         mIdents.add(mpt.getFromID());
 
@@ -115,13 +110,7 @@ public class MPT1327DecoderState extends DecoderState
 
                         broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL));
                         break;
-                    case ACKB:
-                    case ACKE:
-                    case ACKI:
-                    case ACKQ:
-                    case ACKT:
-                    case ACKV:
-                    case ACKX:
+                    case ACKB, ACKE, ACKI, ACKQ, ACKT, ACKV, ACKX:
                         broadcast(getDecodeEvent(message, mpt, DecodeEventType.ACKNOWLEDGE, mpt.getMessageType().getDescription()));
                         broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL));
                         break;
@@ -133,13 +122,7 @@ public class MPT1327DecoderState extends DecoderState
                         broadcast(getDecodeEvent(message, mpt, DecodeEventType.COMMAND, "Send Status Message"));
                         broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL));
                         break;
-                    case ALH:
-                    case ALHD:
-                    case ALHE:
-                    case ALHF:
-                    case ALHR:
-                    case ALHS:
-                    case ALHX:
+                    case ALH, ALHD, ALHE, ALHF, ALHR, ALHS, ALHX:
                         setSite(mpt.getSiteID());
                         broadcast(new DecoderStateEvent(this, Event.START, State.CONTROL));
                         break;
@@ -157,10 +140,7 @@ public class MPT1327DecoderState extends DecoderState
                             broadcast(decodeEvent);
                         }
                         break;
-                    case HEAD_PLUS1:
-                    case HEAD_PLUS2:
-                    case HEAD_PLUS3:
-                    case HEAD_PLUS4:
+                    case HEAD_PLUS1, HEAD_PLUS2, HEAD_PLUS3, HEAD_PLUS4:
                         broadcast(getDecodeEvent(message, mpt, DecodeEventType.SDM, mpt.getMessage()));
                         broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL));
                         break;
@@ -186,7 +166,6 @@ public class MPT1327DecoderState extends DecoderState
                         break;
                     default:
                         break;
-                }
             }
         }
     }
@@ -207,6 +186,7 @@ public class MPT1327DecoderState extends DecoderState
         return ic;
     }
 
+    @Override
     public void reset()
     {
         super.reset();
@@ -227,8 +207,12 @@ public class MPT1327DecoderState extends DecoderState
         }
     }
     @Override
-    public void init() {}
+    public void init()
+    {
+        // No additional MPT1327-specific initialization is required.
+    }
 
+    @Override
     protected void resetState()
     {
         super.resetState();
@@ -242,7 +226,7 @@ public class MPT1327DecoderState extends DecoderState
         if(mChannelType == ChannelType.STANDARD)
         {
             broadcast(new ChangeChannelTimeoutEvent(this, mChannelType,
-                DecodeConfiguration.DEFAULT_CALL_TIMEOUT_DELAY_SECONDS * 1000));
+                DecodeConfiguration.DEFAULT_CALL_TIMEOUT_DELAY_SECONDS * 1000L));
         }
     }
 
@@ -307,7 +291,7 @@ public class MPT1327DecoderState extends DecoderState
         }
         else
         {
-            List<String> talkgroups = new ArrayList<String>(mGroups.keySet());
+            List<String> talkgroups = new ArrayList<>(mGroups.keySet());
             Collections.sort(talkgroups);
 
             for(String talkgroup : talkgroups)
@@ -357,7 +341,6 @@ public class MPT1327DecoderState extends DecoderState
                 resetState();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
-                mFrequency = event.getFrequency();
                 break;
             default:
                 break;
