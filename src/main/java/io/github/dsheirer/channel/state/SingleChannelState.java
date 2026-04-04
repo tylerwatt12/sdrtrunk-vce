@@ -427,9 +427,8 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
                         {
                             mStateMachine.setFadeTimeoutBufferMilliseconds(timeout.getCallTimeoutMilliseconds());
                         }
-                    case CONTINUATION:
-                    case DECODE:
-                    case START:
+                        // fall through
+                    case CONTINUATION, DECODE, START:
                         if(State.SINGLE_CHANNEL_ACTIVE_STATES.contains(event.getState()))
                         {
                             mStateMachine.setState(event.getState());

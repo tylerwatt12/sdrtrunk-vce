@@ -27,8 +27,6 @@ import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.AbstractListModel;
 import java.util.ArrayList;
@@ -37,7 +35,6 @@ import java.util.List;
 public class ChannelMapModel extends AbstractListModel<ChannelMap>
 {
     private static final long serialVersionUID = 1L;
-    private final static Logger mLog = LoggerFactory.getLogger(ChannelMapModel.class);
 
     private ObservableList<ChannelMap> mChannelMaps = FXCollections.observableArrayList(ChannelMap.extractor());
     private Broadcaster<ChannelMapEvent> mEventBroadcaster = new Broadcaster<>();
