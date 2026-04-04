@@ -33,17 +33,14 @@ import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormat
 import io.github.dsheirer.protocol.Protocol;
 import java.text.ParseException;
 import java.util.EnumMap;
-import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.jspecify.annotations.NonNull;
 
 /**
  * Protocol-specific formatting of talkgroup values and parsing of formatted talkgroup values.
  */
 public class TalkgroupFormatter
 {
-    private final static Logger mLog = LoggerFactory.getLogger(TalkgroupFormatter.class);
-    private static Map<Protocol,AbstractIntegerFormatter> mFormatterMap = new EnumMap<>(Protocol.class);
+    private static final EnumMap<@NonNull Protocol,AbstractIntegerFormatter> mFormatterMap = new EnumMap<>(Protocol.class);
 
     static
     {
@@ -63,7 +60,7 @@ public class TalkgroupFormatter
         mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
     }
 
-    public TalkgroupFormatter()
+    private TalkgroupFormatter()
     {
     }
 
