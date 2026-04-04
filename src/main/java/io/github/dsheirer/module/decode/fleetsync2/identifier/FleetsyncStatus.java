@@ -30,8 +30,6 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public class FleetsyncStatus extends IntegerIdentifier
 {
-    private Role mRole;
-
     /**
      * Constructs an APCO-25 status
      * @param status value
@@ -40,7 +38,6 @@ public class FleetsyncStatus extends IntegerIdentifier
     public FleetsyncStatus(int status, IdentifierClass identifierClass, Form form, Role role)
     {
         super(status, identifierClass, form, role);
-        mRole = role;
     }
 
     @Override

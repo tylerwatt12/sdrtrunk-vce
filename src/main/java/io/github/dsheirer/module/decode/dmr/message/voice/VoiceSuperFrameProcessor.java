@@ -160,6 +160,8 @@ public class VoiceSuperFrameProcessor
                 }
                 softReset();
                 break;
+            default:
+                break;
         }
     }
 

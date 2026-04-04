@@ -18,7 +18,6 @@
 package io.github.dsheirer.module.decode.event;
 
 import io.github.dsheirer.message.IMessage;
-import io.github.dsheirer.message.Message;
 import io.github.dsheirer.sample.Listener;
 
 public interface ActivitySummaryProvider extends Listener<IMessage>

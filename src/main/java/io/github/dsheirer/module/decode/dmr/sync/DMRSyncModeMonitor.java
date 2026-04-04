@@ -37,13 +37,6 @@ public class DMRSyncModeMonitor
     private DMRSyncDetectMode mMode = DMRSyncDetectMode.AUTOMATIC;
 
     /**
-     * Constructs an instance
-     */
-    public DMRSyncModeMonitor()
-    {
-    }
-
-    /**
      * Sets (and locks) the sync detection mode.  This can be directly invoked when the operating mode is known
      * in advance, such as for a repeated traffic channel where the expected mode is BASE_ONLY, otherwise this method
      * is automatically invoked by this monitor when operating in ALL mode, once the dominant mode is established.
@@ -73,20 +66,16 @@ public class DMRSyncModeMonitor
 
         switch(pattern)
         {
-            case BASE_STATION_DATA:
-            case BASE_STATION_VOICE:
+            case BASE_STATION_DATA, BASE_STATION_VOICE:
                 mBaseCount++;
                 break;
-            case MOBILE_STATION_DATA:
-            case MOBILE_STATION_VOICE:
-            case REVERSE_CHANNEL:
+            case MOBILE_STATION_DATA, MOBILE_STATION_VOICE, REVERSE_CHANNEL:
                 mMobileCount++;
                 break;
-            case DIRECT_DATA_TIMESLOT_1:
-            case DIRECT_DATA_TIMESLOT_2:
-            case DIRECT_VOICE_TIMESLOT_1:
-            case DIRECT_VOICE_TIMESLOT_2:
+            case DIRECT_DATA_TIMESLOT_1, DIRECT_DATA_TIMESLOT_2, DIRECT_VOICE_TIMESLOT_1, DIRECT_VOICE_TIMESLOT_2:
                 mDirectCount++;
+                break;
+            default:
                 break;
         }
 
