@@ -1896,5 +1896,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     @Override
     public void init()
     {
+        //No additional phase-2-specific initialization is required here.
     }
 }
