@@ -405,8 +405,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 return encrypted ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
             case TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER:
                 return encrypted ? DecodeEventType.CALL_INTERCONNECT_ENCRYPTED : DecodeEventType.CALL_INTERCONNECT;
-            case UNIT_TO_UNIT_VOICE_CHANNEL_USER:
-            case UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
+            case UNIT_TO_UNIT_VOICE_CHANNEL_USER, UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
                 return encrypted ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED : DecodeEventType.CALL_UNIT_TO_UNIT;
             default:
                 return encrypted ? DecodeEventType.CALL_ENCRYPTED : DecodeEventType.CALL;
@@ -511,18 +510,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
 
         return requestCollection;
-    }
-
-    /**
-     * Creates a copy of the current identifier collection, removes any USER identifiers and adds the argument identifier
-     * passed through the patch group manager to replace with a patch group if it exists
-     * @param identifier to add to the collection copy
-     * @param timestamp to check for freshness of patch group info.
-     * @return collection
-     */
-    private MutableIdentifierCollection getMutableIdentifierCollection(Identifier identifier, long timestamp)
-    {
-        return getMutableIdentifierCollection(Collections.singletonList(identifier), timestamp);
     }
 
     /**
@@ -709,7 +696,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     //don't allow that to corrupt the real frequency bands for this system.
                     break;
                 default:
-//                    LOGGER.debug("Unrecognized AMBTC Opcode: " + ambtc.getHeader().getOpcode().name());
                     break;
             }
         }
@@ -1525,13 +1511,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     processTSBKActiveTDMADataChannel(tsbk);
                     break;
                 default:
-//                    if(!tsbk.getOpcode().name().startsWith("ISP"))
-//                    {
-//                        LOGGING_SUPPRESSOR.info(tsbk.getOpcode().name() + tsbk.getMessage().toHexString(),
-//                        1, "Unrecognized TSBK Opcode: " + tsbk.getOpcode().name() +
-//                            " VENDOR:" + tsbk.getVendor() + " OPCODE:" + tsbk.getOpcodeNumber() +
-//                                " MSG:" + tsbk.getMessage().toHexString());
-//                    }
                     break;
             }
         }
