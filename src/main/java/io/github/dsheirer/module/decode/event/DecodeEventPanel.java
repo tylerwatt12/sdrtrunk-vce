@@ -107,6 +107,11 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
     public void dispose()
     {
+        if(mTableColumnWidthMonitor != null)
+        {
+            mTableColumnWidthMonitor.dispose();
+        }
+
         MyEventBus.getGlobalEventBus().unregister(this);
     }
 
