@@ -61,6 +61,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,9 +72,9 @@ import org.slf4j.LoggerFactory;
 public class AliasList
 {
     private final static Logger mLog = LoggerFactory.getLogger(AliasList.class);
-    private Map<Protocol,TalkgroupAliasList> mTalkgroupProtocolMap = new EnumMap<>(Protocol.class);
-    private Map<Protocol,RadioAliasList> mRadioProtocolMap = new EnumMap<>(Protocol.class);
-    private Map<DCSCode,Alias> mDCSCodeAliasMap = new EnumMap<>(DCSCode.class);
+    private EnumMap<@NonNull Protocol,TalkgroupAliasList> mTalkgroupProtocolMap = new EnumMap<>(Protocol.class);
+    private EnumMap<@NonNull Protocol,RadioAliasList> mRadioProtocolMap = new EnumMap<>(Protocol.class);
+    private EnumMap<@NonNull DCSCode,Alias> mDCSCodeAliasMap = new EnumMap<>(DCSCode.class);
     private Map<String,Alias> mESNMap = new HashMap<>();
     private Map<Integer,Alias> mUnitStatusMap = new HashMap<>();
     private Map<Integer,Alias> mUserStatusMap = new HashMap<>();
@@ -228,15 +229,15 @@ public class AliasList
                     case STATUS:
                         int userStatus = ((UserStatusID)id).getStatus();
 
-                        if(mUserStatusMap.containsKey(userStatus) && !mUserStatusMap.get(userStatus).equals(alias))
+                        Alias existingUserStatusAlias = mUserStatusMap.computeIfAbsent(userStatus, key -> alias);
+
+                        if(!existingUserStatusAlias.equals(alias))
                         {
                             id.setOverlap(true);
 
-                            Alias existing = mUserStatusMap.get(userStatus);
-
-                            for(AliasID aliasID: existing.getAliasIdentifiers())
+                            for(AliasID aliasID: existingUserStatusAlias.getAliasIdentifiers())
                             {
-                                if(aliasID instanceof UserStatusID && ((UserStatusID)aliasID).getStatus() == userStatus)
+                                if(aliasID instanceof UserStatusID userStatusID && userStatusID.getStatus() == userStatus)
                                 {
                                     aliasID.setOverlap(true);
                                 }
@@ -247,15 +248,15 @@ public class AliasList
                     case UNIT_STATUS:
                         int unitStatus = ((UnitStatusID)id).getStatus();
 
-                        if(mUnitStatusMap.containsKey(unitStatus) && !mUnitStatusMap.get(unitStatus).equals(alias))
+                        Alias existingUnitStatusAlias = mUnitStatusMap.computeIfAbsent(unitStatus, key -> alias);
+
+                        if(!existingUnitStatusAlias.equals(alias))
                         {
                             id.setOverlap(true);
 
-                            Alias existing = mUnitStatusMap.get(unitStatus);
-
-                            for(AliasID aliasID: existing.getAliasIdentifiers())
+                            for(AliasID aliasID: existingUnitStatusAlias.getAliasIdentifiers())
                             {
-                                if(aliasID instanceof UnitStatusID && ((UnitStatusID)aliasID).getStatus() == unitStatus)
+                                if(aliasID instanceof UnitStatusID unitStatusID && unitStatusID.getStatus() == unitStatus)
                                 {
                                     aliasID.setOverlap(true);
                                 }
@@ -268,13 +269,13 @@ public class AliasList
 
                         if(toneSequence != null)
                         {
-                            if(mToneSequenceMap.containsKey(toneSequence) && !mToneSequenceMap.get(toneSequence).equals(alias))
+                            Alias existingToneSequenceAlias = mToneSequenceMap.computeIfAbsent(toneSequence, key -> alias);
+
+                            if(!existingToneSequenceAlias.equals(alias))
                             {
                                 id.setOverlap(true);
 
-                                Alias existing = mToneSequenceMap.get(toneSequence);
-
-                                for(AliasID aliasID: existing.getAliasIdentifiers())
+                                for(AliasID aliasID: existingToneSequenceAlias.getAliasIdentifiers())
                                 {
                                     if(aliasID instanceof TonesID && aliasID.equals(id))
                                     {
@@ -282,17 +283,13 @@ public class AliasList
                                     }
                                 }
                             }
-                            else
-                            {
-                                mToneSequenceMap.put(toneSequence, alias);
-                            }
                         }
                         break;
                 }
             }
-            catch(Exception e)
+            catch(Exception _)
             {
-                mLog.error("Couldn't add alias ID " + id + " for alias " + alias);
+                mLog.error("Couldn't add alias ID {} for alias {}", id, alias);
             }
         }
     }
@@ -340,7 +337,7 @@ public class AliasList
             }
         }
 
-        overlapAliases.stream().forEach(alias -> addAlias(alias));
+        overlapAliases.stream().forEach(this::addAlias);
     }
 
     /**
@@ -694,47 +691,38 @@ public class AliasList
         {
             if(talkgroup instanceof P25FullyQualifiedTalkgroup fqt)
             {
+                Alias existingFullyQualifiedTalkgroupAlias =
+                    mFullyQualifiedTalkgroupAliasMap.computeIfAbsent(fqt.getHashKey(), key -> alias);
+
                 //Detect collisions
-                if(mFullyQualifiedTalkgroupAliasMap.containsKey(fqt.getHashKey()))
+                if(!existingFullyQualifiedTalkgroupAlias.equals(alias))
                 {
-                    Alias existing = mFullyQualifiedTalkgroupAliasMap.get(fqt.getHashKey());
+                    fqt.setOverlap(true);
 
-                    if(!existing.equals(alias))
+                    for(AliasID aliasID: existingFullyQualifiedTalkgroupAlias.getAliasIdentifiers())
                     {
-                        fqt.setOverlap(true);
-
-                        for(AliasID aliasID: existing.getAliasIdentifiers())
+                        if(aliasID instanceof P25FullyQualifiedTalkgroup existingFqt &&
+                                existingFqt.getHashKey().contentEquals(fqt.getHashKey()))
                         {
-                            if(aliasID instanceof P25FullyQualifiedTalkgroup existingFqt &&
-                                    existingFqt.getHashKey().contentEquals(fqt.getHashKey()))
-                            {
-                                aliasID.setOverlap(true);
-                            }
+                            aliasID.setOverlap(true);
                         }
                     }
-                }
-                else
-                {
-                    mFullyQualifiedTalkgroupAliasMap.put(fqt.getHashKey(), alias);
                 }
             }
             else
             {
+                Alias existingTalkgroupAlias = mTalkgroupAliasMap.computeIfAbsent(talkgroup.getValue(), key -> alias);
+
                 //Detect talkgroup collisions and set overlap flag for both
-                if(mTalkgroupAliasMap.containsKey(talkgroup.getValue()))
+                if(!existingTalkgroupAlias.equals(alias))
                 {
-                    Alias existing = mTalkgroupAliasMap.get(talkgroup.getValue());
+                    talkgroup.setOverlap(true);
 
-                    if(!existing.equals(alias))
+                    for(AliasID aliasID: existingTalkgroupAlias.getAliasIdentifiers())
                     {
-                        talkgroup.setOverlap(true);
-
-                        for(AliasID aliasID: existing.getAliasIdentifiers())
+                        if(aliasID instanceof Talkgroup && ((Talkgroup)aliasID).getValue() == talkgroup.getValue())
                         {
-                            if(aliasID instanceof Talkgroup && ((Talkgroup)aliasID).getValue() == talkgroup.getValue())
-                            {
-                                aliasID.setOverlap(true);
-                            }
+                            aliasID.setOverlap(true);
                         }
                     }
                 }
@@ -814,47 +802,38 @@ public class AliasList
         {
             if(radio instanceof P25FullyQualifiedRadio fqr)
             {
+                Alias existingFullyQualifiedRadioAlias =
+                    mFullyQualifiedRadioAliasMap.computeIfAbsent(fqr.getHashKey(), key -> alias);
+
                 //Detect collisions
-                if(mFullyQualifiedRadioAliasMap.containsKey(fqr.getHashKey()))
+                if(!existingFullyQualifiedRadioAlias.equals(alias))
                 {
-                    Alias existing = mFullyQualifiedRadioAliasMap.get(fqr.getHashKey());
+                    fqr.setOverlap(true);
 
-                    if(!existing.equals(alias))
+                    for(AliasID aliasID: existingFullyQualifiedRadioAlias.getAliasIdentifiers())
                     {
-                        fqr.setOverlap(true);
-
-                        for(AliasID aliasID: existing.getAliasIdentifiers())
+                        if(aliasID instanceof P25FullyQualifiedRadio existingFqr &&
+                                existingFqr.getHashKey().contentEquals(fqr.getHashKey()))
                         {
-                            if(aliasID instanceof P25FullyQualifiedRadio existingFqr &&
-                                    existingFqr.getHashKey().contentEquals(fqr.getHashKey()))
-                            {
-                                aliasID.setOverlap(true);
-                            }
+                            aliasID.setOverlap(true);
                         }
                     }
-                }
-                else
-                {
-                    mFullyQualifiedRadioAliasMap.put(fqr.getHashKey(), alias);
                 }
             }
             else
             {
+                Alias existingRadioAlias = mRadioAliasMap.computeIfAbsent(radio.getValue(), key -> alias);
+
                 //Detect collisions
-                if(mRadioAliasMap.containsKey(radio.getValue()))
+                if(!existingRadioAlias.equals(alias))
                 {
-                    Alias existing = mRadioAliasMap.get(radio.getValue());
+                    radio.setOverlap(true);
 
-                    if(!existing.equals(alias))
+                    for(AliasID aliasID: existingRadioAlias.getAliasIdentifiers())
                     {
-                        radio.setOverlap(true);
-
-                        for(AliasID aliasID: existing.getAliasIdentifiers())
+                        if(aliasID instanceof Radio existingRadio && (existingRadio.getValue() == radio.getValue()))
                         {
-                            if(aliasID instanceof Radio existingRadio && (existingRadio.getValue() == radio.getValue()))
-                            {
-                                aliasID.setOverlap(true);
-                            }
+                            aliasID.setOverlap(true);
                         }
                     }
                 }
