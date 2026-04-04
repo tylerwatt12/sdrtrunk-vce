@@ -59,7 +59,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
      * Map of up to 16 band identifiers per RFSS.  These identifier update messages are inserted into any message that
      * conveys channel information so that the uplink/downlink frequencies can be calculated
      */
-    private Map<Integer,IFrequencyBand> mFrequencyBandMap = new TreeMap<Integer,IFrequencyBand>();
+    private Map<Integer,IFrequencyBand> mFrequencyBandMap = new TreeMap<>();
 
     /**
      * Temporary holding for an extended source link control message while it awaits the extension message to arrive.
@@ -80,13 +80,6 @@ public class P25P1MessageProcessor implements Listener<IMessage>
      * Harris talker alias assembler for link control talker alias blocks
      */
     private HarrisTalkerAliasAssembler mHarrisTalkerAliasAssembler = new HarrisTalkerAliasAssembler();
-
-    /**
-     * Constructs an instance
-     */
-    public P25P1MessageProcessor()
-    {
-    }
 
     /**
      * Preloads frequency band information from the control channel.
@@ -116,25 +109,23 @@ public class P25P1MessageProcessor implements Listener<IMessage>
             //Reassemble extended source link control messages.
             if(message instanceof LDU1Message ldu1)
             {
-                LinkControlWord lcw = ldu1.getLinkControlWord();;
+                LinkControlWord lcw = ldu1.getLinkControlWord();
 
-                if(lcw instanceof IExtendedSourceMessage esm)
+                switch(lcw)
                 {
-                    if(lcw instanceof LCSourceIDExtension extension)
-                    {
+                    case LCSourceIDExtension extension:
                         processSourceIDExtension(extension);
-                    }
-                    else if(esm.isExtensionRequired())
-                    {
+                        break;
+                    case IExtendedSourceMessage esm when esm.isExtensionRequired():
                         processSourceIDExtension(null);
                         mHeldLDU1Message = ldu1;
                         return;
-                    }
-                }
-                else if(lcw instanceof LCHarrisTalkerAliasBase harrisTalkerAlias)
-                {
-                    //Send the LCW to the harris talker alias assembler
-                    dispatch(mHarrisTalkerAliasAssembler.process(harrisTalkerAlias, ldu1.getTimestamp()));
+                    case LCHarrisTalkerAliasBase harrisTalkerAlias:
+                        //Send the LCW to the harris talker alias assembler
+                        dispatch(mHarrisTalkerAliasAssembler.process(harrisTalkerAlias, ldu1.getTimestamp()));
+                        break;
+                    default:
+                        break;
                 }
 
                 //Flush any held messages
@@ -303,10 +294,8 @@ public class P25P1MessageProcessor implements Listener<IMessage>
     private void processForFrequencyBands(AbstractMessage message)
     {
         //Insert frequency band identifier update messages into channel-type messages */
-        if(message instanceof IFrequencyBandReceiver)
+        if(message instanceof IFrequencyBandReceiver receiver)
         {
-            IFrequencyBandReceiver receiver = (IFrequencyBandReceiver)message;
-
             List<IChannelDescriptor> channels = receiver.getChannels();
 
             for(IChannelDescriptor channel : channels)
@@ -324,17 +313,13 @@ public class P25P1MessageProcessor implements Listener<IMessage>
         }
 
         //Store band identifiers so that they can be injected into channel type messages
-        if(message instanceof IFrequencyBand)
+        if(message instanceof IFrequencyBand bandIdentifier &&
+                !mFrequencyBandMap.containsKey(bandIdentifier.getIdentifier()))
         {
-            IFrequencyBand bandIdentifier = (IFrequencyBand)message;
-
             //Only store the frequency band if it's new so we don't hold on to more than one instance of the
             //frequency band message.  Otherwise, we'll hold on to several instances of each message as they get
             //injected into other messages with channel information.
-            if(!mFrequencyBandMap.containsKey(bandIdentifier.getIdentifier()))
-            {
-                mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
-            }
+            mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
         }
     }
 
