@@ -31,13 +31,6 @@ public class HarrisTalkerAliasAssembler
     private long mTimestamp;
 
     /**
-     * Constructs an instance.
-     */
-    public HarrisTalkerAliasAssembler()
-    {
-    }
-
-    /**
      * Resets the contents when a terminator or idle message is received.
      */
     public void reset()
@@ -88,6 +81,8 @@ public class HarrisTalkerAliasAssembler
                         mBlock4 = block4;
                         return assemble();
                     }
+                    break;
+                default:
                     break;
             }
         }

@@ -22,8 +22,8 @@ package io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.dmr.identifier.P25Location;
-import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisGPS;
@@ -42,10 +42,7 @@ import org.jdesktop.swingx.mapviewer.GeoPosition;
 public class LCHarrisTalkerGPSComplete extends LinkControlWord implements IMessage
 {
     private static final DecimalFormat GPS_FORMAT = new DecimalFormat("0.000000");
-    private static final SimpleDateFormat SDF = new SimpleDateFormat("HH:mm:ss");
-    static {
-        SDF.setTimeZone(TimeZone.getTimeZone("UTC"));
-    }
+    private final SimpleDateFormat mSimpleDateFormat = new SimpleDateFormat("HH:mm:ss");
     private P25Location mLocation;
     private GeoPosition mGeoPosition;
     private List<Identifier> mIdentifiers;
@@ -58,6 +55,7 @@ public class LCHarrisTalkerGPSComplete extends LinkControlWord implements IMessa
     private LCHarrisTalkerGPSComplete(CorrectedBinaryMessage message, long timestamp)
     {
         super(message);
+        mSimpleDateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
         mTimestamp = timestamp;
     }
 
@@ -76,7 +74,7 @@ public class LCHarrisTalkerGPSComplete extends LinkControlWord implements IMessa
     @Override
     public int getTimeslot()
     {
-        return P25P1Message.TIMESLOT_0;
+        return TimeslotMessage.TIMESLOT_0;
     }
 
     /**
@@ -105,7 +103,7 @@ public class LCHarrisTalkerGPSComplete extends LinkControlWord implements IMessa
         GeoPosition geo = getGeoPosition();
         sb.append(GPS_FORMAT.format(geo.getLatitude())).append(" ").append(GPS_FORMAT.format(geo.getLongitude()));
         sb.append(" HEADING:").append(getHeading());
-        sb.append(" TIME:").append(SDF.format(getTimestampMs()));
+        sb.append(" TIME:").append(mSimpleDateFormat.format(getTimestampMs()));
         sb.append(" UTC MSG:").append(getMessage().toHexString());
         return sb.toString();
     }

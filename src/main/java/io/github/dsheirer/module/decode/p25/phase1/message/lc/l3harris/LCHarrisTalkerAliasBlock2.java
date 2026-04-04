@@ -26,9 +26,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class LCHarrisTalkerAliasBlock2 extends LCHarrisTalkerAliasBase
 {
-    private static final int PAYLOAD_START = OCTET_2_BIT_16;
-    private static final int PAYLOAD_END = OCTET_9_BIT_72;
-
     /**
      * Constructs a Link Control Word from the binary message sequence.
      *

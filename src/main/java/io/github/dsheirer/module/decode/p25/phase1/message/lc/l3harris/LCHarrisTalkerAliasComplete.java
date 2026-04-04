@@ -24,7 +24,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.message.IMessage;
-import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
+import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.protocol.Protocol;
@@ -149,7 +149,7 @@ public class LCHarrisTalkerAliasComplete extends LinkControlWord implements IMes
     @Override
     public int getTimeslot()
     {
-        return P25P1Message.TIMESLOT_0;
+        return TimeslotMessage.TIMESLOT_0;
     }
 
     @Override

@@ -158,7 +158,7 @@ public class HDUMessage extends P25P1Message
         {
             irrecoverableErrors = reedSolomon_63_47_17.decode(input, output);
         }
-        catch(Exception e)
+        catch(Exception _)
         {
             irrecoverableErrors = true;
         }

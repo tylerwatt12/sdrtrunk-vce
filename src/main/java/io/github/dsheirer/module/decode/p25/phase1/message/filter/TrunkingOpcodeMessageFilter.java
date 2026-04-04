@@ -35,7 +35,6 @@ import java.util.function.Function;
 public class TrunkingOpcodeMessageFilter extends Filter<IMessage, Opcode>
 {
     private KeyExtractor mKeyExtractor = new KeyExtractor();
-    private Collection<Opcode> mOpcodes;
 
     /**
      * Constructs an instance
@@ -45,8 +44,6 @@ public class TrunkingOpcodeMessageFilter extends Filter<IMessage, Opcode>
     public TrunkingOpcodeMessageFilter(String name, Collection<Opcode> opcodes)
     {
         super(name);
-
-        mOpcodes = opcodes;
 
         for(Opcode opcode: opcodes)
         {
