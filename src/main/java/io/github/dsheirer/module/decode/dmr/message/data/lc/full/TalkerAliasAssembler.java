@@ -43,13 +43,6 @@ public class TalkerAliasAssembler
     private boolean mEmptyTs2 = true;
 
     /**
-     * Constructs an instance.
-     */
-    public TalkerAliasAssembler()
-    {
-    }
-
-    /**
      * Resets the contents of either timeslot 1 or 2 when a terminator or idle message is received.
      * @param timeslot 1 or 2
      */
@@ -82,8 +75,7 @@ public class TalkerAliasAssembler
     {
         switch(message.getOpcode())
         {
-            case FULL_STANDARD_TALKER_ALIAS_HEADER:
-            case FULL_HYTERA_TALKER_ALIAS_HEADER:
+            case FULL_STANDARD_TALKER_ALIAS_HEADER, FULL_HYTERA_TALKER_ALIAS_HEADER:
                 if(message instanceof TalkerAliasHeader tah)
                 {
                     if(message.getTimeslot() == 1)
@@ -99,8 +91,8 @@ public class TalkerAliasAssembler
                         return assemble(2);
                     }
                 }
-            case FULL_STANDARD_TALKER_ALIAS_BLOCK_1:
-            case FULL_HYTERA_TALKER_ALIAS_BLOCK_1:
+                break;
+            case FULL_STANDARD_TALKER_ALIAS_BLOCK_1, FULL_HYTERA_TALKER_ALIAS_BLOCK_1:
                 if(message instanceof TalkerAliasBlock1 tab1)
                 {
                     if(message.getTimeslot() == 1)
@@ -116,8 +108,8 @@ public class TalkerAliasAssembler
                         return assemble(2);
                     }
                 }
-            case FULL_STANDARD_TALKER_ALIAS_BLOCK_2:
-            case FULL_HYTERA_TALKER_ALIAS_BLOCK_2:
+                break;
+            case FULL_STANDARD_TALKER_ALIAS_BLOCK_2, FULL_HYTERA_TALKER_ALIAS_BLOCK_2:
                 if(message instanceof TalkerAliasBlock2 tab2)
                 {
                     if(message.getTimeslot() == 1)
@@ -133,8 +125,8 @@ public class TalkerAliasAssembler
                         return assemble(2);
                     }
                 }
-            case FULL_STANDARD_TALKER_ALIAS_BLOCK_3:
-            case FULL_HYTERA_TALKER_ALIAS_BLOCK_3:
+                break;
+            case FULL_STANDARD_TALKER_ALIAS_BLOCK_3, FULL_HYTERA_TALKER_ALIAS_BLOCK_3:
                 if(message instanceof TalkerAliasBlock3 tab3)
                 {
                     if(message.getTimeslot() == 1)
@@ -150,6 +142,9 @@ public class TalkerAliasAssembler
                         return assemble(2);
                     }
                 }
+                break;
+            default:
+                break;
         }
 
         return null;
