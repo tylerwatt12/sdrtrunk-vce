@@ -38,6 +38,8 @@ import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetector;
 import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetectorFactory;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Provides message framing for the demodulated dibit stream.  This framer is notified by an external sync detection
@@ -48,6 +50,7 @@ import io.github.dsheirer.sample.Listener;
  */
 public class P25P1MessageFramer
 {
+    private static final Logger mLog = LoggerFactory.getLogger(P25P1MessageFramer.class);
     private static final int DIBIT_LENGTH_NID = 33; //32 dibits (64 bits) +1 status
     private static final float SYNC_DETECTION_THRESHOLD = 60;
     private final BCH_63_16_23_P25 mBCHDecoder = new BCH_63_16_23_P25();
@@ -419,7 +422,7 @@ public class P25P1MessageFramer
                 mMessageAssembler = null;
                 break;
             default:
-                System.out.println("Unexpected TSBK DUID: " +  mMessageAssembler.getDataUnitID());
+                mLog.warn("Unexpected TSBK DUID: {}", mMessageAssembler.getDataUnitID());
         }
     }
 
@@ -629,7 +632,7 @@ public class P25P1MessageFramer
                 }
                 break;
             default:
-                System.out.println("Unexpected PDU DUID: " + mMessageAssembler.getMessage());
+                mLog.warn("Unexpected PDU DUID: {}", mMessageAssembler.getMessage());
                 mMessageAssembler = null;
                 mPDUSequence = null;
         }
