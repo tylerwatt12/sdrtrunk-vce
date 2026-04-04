@@ -44,9 +44,8 @@ public class MBECallSequenceReader
         ObjectMapper mapper = new ObjectMapper();
         Object obj = mapper.readValue(path.toFile(), MBECallSequence.class);
 
-        if(obj instanceof MBECallSequence)
+        if(obj instanceof MBECallSequence sequence)
         {
-            MBECallSequence sequence = (MBECallSequence)obj;
 
             List<String> audioFrames = new ArrayList<>();
 

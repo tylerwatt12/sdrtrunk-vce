@@ -18,8 +18,6 @@
  */
 package io.github.dsheirer.audio.convert;
 
-import java.util.List;
-
 public interface ISilenceGenerator
 {
     AudioFrames generate(long duration);
