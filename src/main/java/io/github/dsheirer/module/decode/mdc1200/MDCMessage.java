@@ -31,9 +31,6 @@ import java.util.List;
 
 public class MDCMessage extends Message
 {
-    private static int[] SYNC1 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-        23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-
     private static int[] OPCODE = {47, 46, 45, 44, 43, 42, 41, 40};
     private static int ANI_FLAG = 40;
     private static int DIRECTION_FLAG = 45;
@@ -42,10 +39,6 @@ public class MDCMessage extends Message
     private static int EMERGENCY_FLAG = 48;
     private static int[] ARGUMENT = {49, 50, 51, 52, 53, 54};
     private static int BOT_EOT_FLAG = 55;
-    private static int[] DIGIT_2 = {59, 58, 57, 56};
-    private static int[] DIGIT_1 = {63, 62, 61, 60};
-    private static int[] DIGIT_4 = {67, 66, 65, 64};
-    private static int[] DIGIT_3 = {71, 70, 69, 68};
     private static int[] IDENTITY = {63, 62, 61, 60, 59, 58, 57, 56, 71, 70, 69, 68, 67, 66, 65, 64};
 
     private CorrectedBinaryMessage mMessage;
@@ -186,7 +179,7 @@ public class MDCMessage extends Message
      */
     public String format(int number, int decimalPlaces)
     {
-        return StringUtils.leftPad(Integer.valueOf(number).toString(), decimalPlaces, '0');
+        return StringUtils.leftPad(Integer.toString(number), decimalPlaces, '0');
     }
 
     @Override

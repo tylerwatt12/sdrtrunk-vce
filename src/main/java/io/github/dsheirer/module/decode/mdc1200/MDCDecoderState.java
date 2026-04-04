@@ -37,10 +37,6 @@ public class MDCDecoderState extends DecoderState
     private Set<MDC1200Identifier> mIdents = new TreeSet<>();
     private Set<MDC1200Identifier> mEmergencyIdents = new TreeSet<>();
 
-    public MDCDecoderState()
-    {
-    }
-
     @Override
     public DecoderType getDecoderType()
     {
@@ -58,15 +54,16 @@ public class MDCDecoderState extends DecoderState
     }
 
     @Override
-    public void init() {}
+    public void init()
+    {
+        // No additional MDC-specific initialization is required.
+    }
 
     @Override
     public void receive(IMessage message)
     {
-        if(message instanceof MDCMessage)
+        if(message instanceof MDCMessage mdc)
         {
-            MDCMessage mdc = (MDCMessage)message;
-
             mIdents.add(mdc.getFromIdentifier());
 
             if(mdc.isEmergency())
@@ -105,10 +102,7 @@ public class MDCDecoderState extends DecoderState
                 case ANI:
                     broadcast(new DecoderStateEvent(this, Event.DECODE, State.CALL));
                     break;
-                case ACKNOWLEDGE:
-                case EMERGENCY:
-                case PAGING:
-                case STATUS:
+                case ACKNOWLEDGE, EMERGENCY, PAGING, STATUS:
                 default:
                     broadcast(new DecoderStateEvent(this, Event.DECODE, State.DATA));
                     break;
@@ -166,13 +160,9 @@ public class MDCDecoderState extends DecoderState
     @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == Event.REQUEST_RESET)
         {
-            case REQUEST_RESET:
-                resetState();
-                break;
-            default:
-                break;
+            resetState();
         }
     }
 
