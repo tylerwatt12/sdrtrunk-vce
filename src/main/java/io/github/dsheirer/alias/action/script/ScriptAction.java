@@ -33,7 +33,7 @@ import java.io.InputStreamReader;
 
 public class ScriptAction extends RecurringAction
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ScriptAction.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ScriptAction.class);
 
     private String mScript;
 

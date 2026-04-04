@@ -59,7 +59,7 @@ import java.util.concurrent.ThreadFactory;
  */
 public abstract class AbstractTileFactory extends TileFactory
 {
-	private final static Logger mLog = LoggerFactory.getLogger( AbstractTileFactory.class );
+	private static final Logger mLog = LoggerFactory.getLogger( AbstractTileFactory.class );
 	private boolean mSSLSuitesLogged = false;
 
 	/**

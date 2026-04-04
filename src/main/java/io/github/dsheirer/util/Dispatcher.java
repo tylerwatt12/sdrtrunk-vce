@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  */
 public class Dispatcher<E> implements Listener<E>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(Dispatcher.class);
+    private static final Logger mLog = LoggerFactory.getLogger(Dispatcher.class);
     private final LinkedTransferQueue<E> mQueue = new LinkedTransferQueue<>();
     private final List<E> mDrainBuffer = new ArrayList<>();
     private Listener<E> mListener;

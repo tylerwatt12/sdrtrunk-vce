@@ -28,7 +28,7 @@ import java.util.concurrent.ScheduledExecutorService;
 
 public class ThreadPool
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ThreadPool.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ThreadPool.class);
     public static ScheduledExecutorService SCHEDULED =
             Executors.newScheduledThreadPool(4, new NamingThreadFactory("sdrtrunk scheduled"));
     public static ExecutorService CACHED =

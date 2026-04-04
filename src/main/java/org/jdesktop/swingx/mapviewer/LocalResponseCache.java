@@ -42,7 +42,7 @@ import java.util.Map;
  */
 public class LocalResponseCache extends ResponseCache
 {
-	private final static Logger mLog = 
+	private static final Logger mLog = 
 			LoggerFactory.getLogger( LocalResponseCache.class );
 
 	private final File cacheDir;

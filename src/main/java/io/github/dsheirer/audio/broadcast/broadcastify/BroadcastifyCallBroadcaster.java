@@ -64,7 +64,7 @@ import org.slf4j.LoggerFactory;
  */
 public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<BroadcastifyCallConfiguration>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BroadcastifyCallBroadcaster.class);
+    private static final Logger mLog = LoggerFactory.getLogger(BroadcastifyCallBroadcaster.class);
 
     private static final String ENCODING_TYPE_MP3 = "mp3";
     private static final String MULTIPART_TYPE = "multipart";

@@ -50,7 +50,7 @@ import javax.swing.table.AbstractTableModel;
 
 public class BroadcastModel extends AbstractTableModel implements Listener<AudioRecording>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BroadcastModel.class);
+    private static final Logger mLog = LoggerFactory.getLogger(BroadcastModel.class);
 
     public static final String TEMPORARY_STREAM_DIRECTORY = "streaming";
     public static final String TEMPORARY_STREAM_FILE_SUFFIX = "temporary_streaming_file_";

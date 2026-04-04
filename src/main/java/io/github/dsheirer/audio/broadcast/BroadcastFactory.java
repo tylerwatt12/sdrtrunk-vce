@@ -46,7 +46,7 @@ import org.slf4j.LoggerFactory;
 
 public class BroadcastFactory
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BroadcastFactory.class);
+    private static final Logger mLog = LoggerFactory.getLogger(BroadcastFactory.class);
 
     /**
      * Creates an audio streaming broadcaster for the configuration

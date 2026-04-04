@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
 
 public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration> extends AbstractAudioBroadcaster<T>
 {
-    private final static Logger mLog = LoggerFactory.getLogger(AudioStreamingBroadcaster.class);
+    private static final Logger mLog = LoggerFactory.getLogger(AudioStreamingBroadcaster.class);
 
     public static final int PROCESSOR_RUN_INTERVAL_MS = 1000;
     private ScheduledFuture<?> mRecordingQueueProcessorFuture;

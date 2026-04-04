@@ -36,7 +36,7 @@ import java.io.File;
 
 public class ClipAction extends RecurringAction
 {
-    private final static Logger mLog = LoggerFactory.getLogger(ClipAction.class);
+    private static final Logger mLog = LoggerFactory.getLogger(ClipAction.class);
 
     private String mFilePath;
 

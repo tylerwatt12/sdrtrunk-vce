@@ -29,12 +29,9 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import java.util.List;
 import java.util.Optional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class IcecastMetadata
 {
-    private final static Logger mLog = LoggerFactory.getLogger(IcecastMetadata.class);
 
     /**
      * Creates the title for a metadata update

@@ -46,7 +46,7 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
 {
     private static final long serialVersionUID = 1L;
 
-    private final static Logger mLog =
+    private static final Logger mLog =
         LoggerFactory.getLogger(WaterfallPanel.class);
 
     private static DecimalFormat CURSOR_FORMAT = new DecimalFormat("0.00000");

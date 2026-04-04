@@ -84,7 +84,7 @@ public class JXMapViewer extends JPanel implements DesignMode
 {
 	private static final long serialVersionUID = -3530746298586937321L;
 
-	private final static Logger mLog = LoggerFactory.getLogger(JXMapViewer.class);
+	private static final Logger mLog = LoggerFactory.getLogger(JXMapViewer.class);
 	
 	private final boolean isNegativeYAllowed = true; // maybe rename to isNorthBounded and isSouthBounded?
 

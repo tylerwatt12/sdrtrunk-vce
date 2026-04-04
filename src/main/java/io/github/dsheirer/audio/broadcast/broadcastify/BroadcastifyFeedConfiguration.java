@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
 
 public class BroadcastifyFeedConfiguration extends IcecastTCPConfiguration
 {
-    private final static Logger mLog = LoggerFactory.getLogger(BroadcastifyFeedConfiguration.class);
+    private static final Logger mLog = LoggerFactory.getLogger(BroadcastifyFeedConfiguration.class);
 
     private int mFeedID;
     private boolean mVerboseLogging = false;

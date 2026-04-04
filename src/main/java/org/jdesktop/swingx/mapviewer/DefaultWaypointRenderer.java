@@ -24,7 +24,7 @@ import java.awt.image.BufferedImage;
  */
 public class DefaultWaypointRenderer implements WaypointRenderer<Waypoint>
 {
-	private final static Logger mLog = 
+	private static final Logger mLog = 
 			LoggerFactory.getLogger( DefaultWaypointRenderer.class );
 
 	private BufferedImage img = null;

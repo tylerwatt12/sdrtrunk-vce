@@ -46,7 +46,7 @@ import java.util.List;
 
 public class IcecastBroadcastMetadataUpdater implements IBroadcastMetadataUpdater
 {
-    private final static Logger mLog = LoggerFactory.getLogger(IcecastBroadcastMetadataUpdater.class);
+    private static final Logger mLog = LoggerFactory.getLogger(IcecastBroadcastMetadataUpdater.class);
     private final static String UTF8 = "UTF-8";
     private HttpClient mHttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
     private IcecastConfiguration mIcecastConfiguration;

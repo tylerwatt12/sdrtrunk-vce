@@ -41,8 +41,6 @@ import java.awt.geom.Line2D;
 import java.util.Arrays;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JPanel;
 
@@ -50,7 +48,6 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
 {
     private static final long serialVersionUID = 1L;
 
-    private final static Logger mLog = LoggerFactory.getLogger(SpectrumPanel.class);
 
     private static final RenderingHints RENDERING_HINTS =
         new RenderingHints(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);

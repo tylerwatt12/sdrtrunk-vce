@@ -48,7 +48,7 @@ import org.slf4j.LoggerFactory;
 
 public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster
 {
-    private final static Logger mLog = LoggerFactory.getLogger(IcecastTCPAudioBroadcaster.class);
+    private static final Logger mLog = LoggerFactory.getLogger(IcecastTCPAudioBroadcaster.class);
     private final static String TERMINATOR = "\n";
     private final static String SEPARATOR = ":";
     private static final long RECONNECT_INTERVAL_MILLISECONDS = 3000; //3 seconds
