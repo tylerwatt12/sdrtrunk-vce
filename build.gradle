@@ -55,17 +55,17 @@ repositories {
     maven { url = "https://jitpack.io" }
 }
 
-def javafxVersion = "25.0.1"
+def javafxVersion = "26"
 def javafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ? "win" :
     (org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isMacOsX() ? "mac" : "linux")
 
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
-//Java 24 is required for this version of the Project Panama preview/incubator feature
+//Java 26 is required for this version of the Project Panama preview/incubator feature
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+        languageVersion = JavaLanguageVersion.of(26)
     }
 }
 
@@ -250,17 +250,17 @@ String macAppVersion = macAppVersionParts.join('.')
  * author's development environment, but can be changed to your environment if you want to use this build pattern.
  */
 String jdk_base = '/home/denny/java_jdks/'
-String jdk_linux_aarch64 = jdk_base + 'linux-arm64/jdk-25.0.1-full'
-String jdk_linux_x86_64 = jdk_base + 'linux-x64/jdk-25.0.1-full'
-String jdk_osx_x86_64 = jdk_base + 'osx-x64/jdk-25.0.1-full.jdk'
-String jdk_osx_aarch64 = jdk_base + 'osx-arm64/jdk-25.0.1-full.jdk'
-String jdk_windows_x86_64 = jdk_base + 'windows-x64/jdk-25.0.1-full'
-String jdk_windows_aarch64 = jdk_base + 'windows-arm64/jdk-25.0.1-full'
+String jdk_linux_aarch64 = jdk_base + 'linux-arm64/jdk-26-full'
+String jdk_linux_x86_64 = jdk_base + 'linux-x64/jdk-26-full'
+String jdk_osx_x86_64 = jdk_base + 'osx-x64/jdk-26-full.jdk'
+String jdk_osx_aarch64 = jdk_base + 'osx-arm64/jdk-26-full.jdk'
+String jdk_windows_x86_64 = jdk_base + 'windows-x64/jdk-26-full'
+String jdk_windows_aarch64 = jdk_base + 'windows-arm64/jdk-26-full'
 
 /**
  * Download URLs to download the JDK as part of the gradle build packaging process
  */
-def jdk_download_base = "https://download.bell-sw.com/java/25.0.1+11/bellsoft-jdk25.0.1+11-"
+def jdk_download_base = "https://download.bell-sw.com/java/26+37/bellsoft-jdk26+37-"
 def jdk_download_suffix = "-full.tar.gz"
 def jdk_download_linux_aarch64 = jdk_download_base + "linux-aarch64" + jdk_download_suffix
 def jdk_download_linux_x86_64 = jdk_download_base + "linux-amd64" + jdk_download_suffix
