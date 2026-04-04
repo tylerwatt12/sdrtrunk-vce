@@ -417,11 +417,17 @@ public class AliasModel
                 {
                     for(Alias alias: change.getAddedSubList())
                     {
-                        addAliasList(alias.getAliasListName());
-
-                        if(hasAliasList(alias.getAliasListName()))
+                        if(alias == null)
                         {
-                            getAliasList(alias.getAliasListName()).addAlias(alias);
+                            continue;
+                        }
+
+                        String aliasListName = alias.getAliasListName();
+                        addAliasList(aliasListName);
+
+                        if(hasAliasList(aliasListName))
+                        {
+                            getAliasList(aliasListName).addAlias(alias);
                         }
                     }
                 }
@@ -429,11 +435,18 @@ public class AliasModel
                 {
                     for(Alias alias: change.getRemoved())
                     {
-                        if(hasAliasList(alias.getAliasListName()))
+                        if(alias == null)
                         {
-                            AliasList aliasList = getAliasList(alias.getName());
+                            continue;
+                        }
 
-                            if(alias != null)
+                        String aliasListName = alias.getAliasListName();
+
+                        if(hasAliasList(aliasListName))
+                        {
+                            AliasList aliasList = getAliasList(aliasListName);
+
+                            if(aliasList != null)
                             {
                                 aliasList.removeAlias(alias);
                             }
