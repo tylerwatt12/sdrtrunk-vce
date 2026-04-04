@@ -51,6 +51,7 @@ import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.SwingConstants;
 import javax.swing.JTable;
 import javax.swing.RowFilter;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -62,18 +63,18 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
     private static final long serialVersionUID = 1L;
     private static final String TABLE_PREFERENCE_KEY = "decode.event.panel";
 
-    private JTable mTable;
-    private JTableColumnWidthMonitor mTableColumnWidthMonitor;
-    private DecodeEventModel mEventModel = new DecodeEventModel();
-    private DecodeEventHistory mCurrentEventHistory;
-    private JScrollPane mEmptyScroller;
-    private IconModel mIconModel;
-    private AliasModel mAliasModel;
-    private UserPreferences mUserPreferences;
-    private TimestampCellRenderer mTimestampCellRenderer;
-    private FilterSet<IDecodeEvent> mFilterSet = new DecodeEventFilterSet();
-    private TableRowSorter<TableModel> mTableRowSorter;
-    private HistoryManagementPanel<IDecodeEvent> mHistoryManagementPanel;
+    private transient JTable mTable;
+    private transient JTableColumnWidthMonitor mTableColumnWidthMonitor;
+    private transient DecodeEventModel mEventModel = new DecodeEventModel();
+    private transient DecodeEventHistory mCurrentEventHistory;
+    private transient JScrollPane mEmptyScroller;
+    private transient IconModel mIconModel;
+    private transient AliasModel mAliasModel;
+    private transient UserPreferences mUserPreferences;
+    private transient TimestampCellRenderer mTimestampCellRenderer;
+    private transient FilterSet<IDecodeEvent> mFilterSet = new DecodeEventFilterSet();
+    private transient TableRowSorter<TableModel> mTableRowSorter;
+    private transient HistoryManagementPanel<IDecodeEvent> mHistoryManagementPanel;
 
 
     /**
@@ -180,7 +181,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         public IdentifierCellRenderer(Role role)
         {
             mRole = role;
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
 
         @Override
@@ -188,9 +189,9 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         {
             JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
-            if(value instanceof IdentifierCollection)
+            if(value instanceof IdentifierCollection identifierCollection)
             {
-                List<Identifier> identifiers = ((IdentifierCollection)value).getIdentifiers(mRole);
+                List<Identifier> identifiers = identifierCollection.getIdentifiers(mRole);
                 label.setText(format(identifiers));
             }
             else
@@ -217,7 +218,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
             for(Identifier identifier: identifiers)
             {
-                if(sb.length() > 0)
+                if(!sb.isEmpty())
                 {
                     sb.append(",");
                 }
@@ -252,7 +253,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         public AliasedIdentifierCellRenderer(Role role)
         {
             mRole = role;
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
 
         @Override
@@ -264,9 +265,8 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
             ImageIcon icon = null;
             String text = null;
 
-            if(value instanceof IdentifierCollection)
+            if(value instanceof IdentifierCollection identifierCollection)
             {
-                IdentifierCollection identifierCollection = (IdentifierCollection)value;
                 List<Identifier> identifiers = identifierCollection.getIdentifiers(mRole);
 
                 if(identifiers != null && !identifiers.isEmpty())
@@ -283,7 +283,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
                             if(!aliases.isEmpty())
                             {
-                                if(sb.length() > 0)
+                                if(!sb.isEmpty())
                                 {
                                     sb.append(",");
                                 }
@@ -312,7 +312,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
         public TimestampCellRenderer()
         {
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
             updatePreferences();
         }
 
@@ -345,7 +345,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
         public DurationCellRenderer()
         {
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
 
         @Override
@@ -361,7 +361,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
                 if(duration > 0)
                 {
-                    formatted = mDecimalFormat.format((double)duration / 1e3d);
+                    formatted = mDecimalFormat.format(duration / 1e3d);
                 }
             }
 
@@ -380,7 +380,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
         public FrequencyCellRenderer()
         {
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
 
         @Override
@@ -390,10 +390,8 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
             String formatted = null;
 
-            if(value instanceof IChannelDescriptor)
+            if(value instanceof IChannelDescriptor channelDescriptor)
             {
-                IChannelDescriptor channelDescriptor = (IChannelDescriptor)value;
-
                 long frequency = channelDescriptor.getDownlinkFrequency();
 
                 if(frequency > 0)
@@ -415,7 +413,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
     {
         public ChannelDescriptorCellRenderer()
         {
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
     }
 
@@ -429,7 +427,14 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         {
             if(entry.getModel() instanceof DecodeEventModel model)
             {
-                IDecodeEvent event = model.getItem(entry.getIdentifier());
+                Integer identifier = entry.getIdentifier();
+
+                if(identifier == null)
+                {
+                    return false;
+                }
+
+                IDecodeEvent event = model.getItem(identifier);
 
                 if(event != null)
                 {
