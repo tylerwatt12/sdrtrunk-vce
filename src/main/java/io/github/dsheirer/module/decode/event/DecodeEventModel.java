@@ -137,6 +137,8 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
                     return event.getChannelDescriptor();
                 case COLUMN_DETAILS:
                     return event.getDetails();
+                default:
+                    break;
             }
         }
 
@@ -156,6 +158,8 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
                 return IdentifierCollection.class;
             case COLUMN_CHANNEL:
                 return String.class;
+            default:
+                break;
         }
 
         return super.getColumnClass(columnIndex);

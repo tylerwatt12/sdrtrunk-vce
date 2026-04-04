@@ -25,6 +25,7 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import java.util.Collection;
 import java.util.function.Function;
+import org.jspecify.annotations.NonNull;
 
 /**
  * This is used as a base for {@link IDecodeEvent} types.
@@ -40,7 +41,7 @@ public class EventFilter extends Filter<IDecodeEvent,DecodeEventType>
      * @param name of this filter
      * @param decodeEventTypes to filter against
      */
-    public EventFilter(String name, Collection<DecodeEventType> decodeEventTypes)
+    public EventFilter(String name, Collection<@NonNull DecodeEventType> decodeEventTypes)
     {
         super(name);
 
