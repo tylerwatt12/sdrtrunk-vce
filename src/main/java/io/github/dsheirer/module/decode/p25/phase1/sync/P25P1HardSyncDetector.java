@@ -30,13 +30,6 @@ public class P25P1HardSyncDetector extends P25P1SyncDetector
     private long mValue;
 
     /**
-     * Constructs an instance
-     */
-    public P25P1HardSyncDetector()
-    {
-    }
-
-    /**
      * Processes the dibit.
      *
      * @param dibit to process

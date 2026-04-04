@@ -60,6 +60,23 @@ import org.apache.commons.lang3.StringUtils;
  */
 public class P25P1NetworkConfigurationMonitor
 {
+    private static final String CHANNEL_LABEL = " CHANNEL:";
+    private static final String DOWNLINK_LABEL = " DOWNLINK:";
+    private static final String UPLINK_LABEL = " UPLINK:";
+    private static final String SYSTEM_LABEL = " SYSTEM:";
+    private static final String NAC_LABEL = " NAC:";
+    private static final String RFSS_LABEL = " RFSS:";
+    private static final String SITE_LABEL = " SITE:";
+    private static final String LRA_LABEL = " LRA:";
+    private static final String PRIMARY_CONTROL_CHANNEL_LABEL = "  PRI CONTROL CHANNEL:";
+    private static final String AVAILABLE_SERVICES_LABEL = "  AVAILABLE SERVICES:";
+    private static final String SUPPORTED_SERVICES_LABEL = "  SUPPORTED SERVICES:";
+    private static final String UNKNOWN_LABEL = "  UNKNOWN";
+    private static final String STATUS_LABEL = "  STATUS:";
+    private static final String WACN_LABEL = "  WACN:";
+    private static final String SECONDARY_CONTROL_CHANNEL_LABEL = "  SEC CONTROL CHANNEL:";
+    private static final String CURRENT_FDMA_DATA_CHANNEL_LABEL = "  CURRENT FDMA DATA CHANNEL:";
+    private static final String ACTIVE_TDMA_DATA_CHANNEL_LABEL = "  ACTIVE TDMA DATA CHANNEL:";
 
     private Map<Integer,IFrequencyBand> mFrequencyBandMap = new HashMap<>();
 
@@ -113,38 +130,33 @@ public class P25P1NetworkConfigurationMonitor
     {
         switch(tsbk.getOpcode())
         {
-            case OSP_IDENTIFIER_UPDATE:
-            case OSP_IDENTIFIER_UPDATE_TDMA:
-            case OSP_IDENTIFIER_UPDATE_VHF_UHF_BANDS:
-                if(tsbk instanceof IFrequencyBand)
+            case OSP_IDENTIFIER_UPDATE, OSP_IDENTIFIER_UPDATE_TDMA, OSP_IDENTIFIER_UPDATE_VHF_UHF_BANDS:
+                if(tsbk instanceof IFrequencyBand frequencyBand)
                 {
-                    IFrequencyBand frequencyBand = (IFrequencyBand)tsbk;
                     mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
                 }
                 break;
             case OSP_NETWORK_STATUS_BROADCAST:
-                if(tsbk instanceof NetworkStatusBroadcast)
+                if(tsbk instanceof NetworkStatusBroadcast networkStatusBroadcast)
                 {
-                    mTSBKNetworkStatusBroadcast = (NetworkStatusBroadcast)tsbk;
+                    mTSBKNetworkStatusBroadcast = networkStatusBroadcast;
                 }
                 break;
             case OSP_SYSTEM_SERVICE_BROADCAST:
-                if(tsbk instanceof SystemServiceBroadcast)
+                if(tsbk instanceof SystemServiceBroadcast systemServiceBroadcast)
                 {
-                    mTSBKSystemServiceBroadcast = (SystemServiceBroadcast)tsbk;
+                    mTSBKSystemServiceBroadcast = systemServiceBroadcast;
                 }
                 break;
             case OSP_RFSS_STATUS_BROADCAST:
-                if(tsbk instanceof RFSSStatusBroadcast)
+                if(tsbk instanceof RFSSStatusBroadcast rfssStatusBroadcast)
                 {
-                    mTSBKRFSSStatusBroadcast = (RFSSStatusBroadcast)tsbk;
+                    mTSBKRFSSStatusBroadcast = rfssStatusBroadcast;
                 }
                 break;
             case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST:
-                if(tsbk instanceof SecondaryControlChannelBroadcast)
+                if(tsbk instanceof SecondaryControlChannelBroadcast sccb)
                 {
-                    SecondaryControlChannelBroadcast sccb = (SecondaryControlChannelBroadcast)tsbk;
-
                     for(IChannelDescriptor secondaryControlChannel : sccb.getChannels())
                     {
                         mSecondaryControlChannels.put(secondaryControlChannel.toString(), secondaryControlChannel);
@@ -152,30 +164,28 @@ public class P25P1NetworkConfigurationMonitor
                 }
                 break;
             case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
-                if(tsbk instanceof SecondaryControlChannelBroadcastExplicit)
+                if(tsbk instanceof SecondaryControlChannelBroadcastExplicit sccbe)
                 {
-                    SecondaryControlChannelBroadcastExplicit sccbe = (SecondaryControlChannelBroadcastExplicit)tsbk;
                     IChannelDescriptor channel = sccbe.getChannel();
                     mSecondaryControlChannels.put(channel.toString(), channel);
                 }
                 break;
             case OSP_ADJACENT_STATUS_BROADCAST:
-                if(tsbk instanceof AdjacentStatusBroadcast)
+                if(tsbk instanceof AdjacentStatusBroadcast asb)
                 {
-                    AdjacentStatusBroadcast asb = (AdjacentStatusBroadcast)tsbk;
                     mTSBKNeighborSites.put((int)asb.getSite().getValue(), asb);
                 }
                 break;
             case OSP_SNDCP_DATA_CHANNEL_ANNOUNCEMENT_EXPLICIT:
-                if(tsbk instanceof SNDCPDataChannelAnnouncementExplicit)
+                if(tsbk instanceof SNDCPDataChannelAnnouncementExplicit sndcpDataChannelAnnouncementExplicit)
                 {
-                    mSNDCPDataChannel = (SNDCPDataChannelAnnouncementExplicit)tsbk;
+                    mSNDCPDataChannel = sndcpDataChannelAnnouncementExplicit;
                 }
                 break;
             case MOTOROLA_OSP_BASE_STATION_ID:
-                if(tsbk instanceof MotorolaBaseStationId)
+                if(tsbk instanceof MotorolaBaseStationId motorolaBaseStationId)
                 {
-                    mMotorolaBaseStationId = (MotorolaBaseStationId)tsbk;
+                    mMotorolaBaseStationId = motorolaBaseStationId;
                 }
                 break;
             case MOTOROLA_OSP_TDMA_DATA_CHANNEL:
@@ -183,6 +193,8 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     mTDMADataChannelMap.put(tdma.getChannel(), tdma);
                 }
+                break;
+            default:
                 break;
         }
     }
@@ -195,23 +207,24 @@ public class P25P1NetworkConfigurationMonitor
         switch(ambtc.getHeader().getOpcode())
         {
             case OSP_ADJACENT_STATUS_BROADCAST:
-                if(ambtc instanceof AMBTCAdjacentStatusBroadcast)
+                if(ambtc instanceof AMBTCAdjacentStatusBroadcast aasb)
                 {
-                    AMBTCAdjacentStatusBroadcast aasb = (AMBTCAdjacentStatusBroadcast)ambtc;
                     mAMBTCNeighborSites.put((int)aasb.getSite().getValue(), aasb);
                 }
                 break;
             case OSP_NETWORK_STATUS_BROADCAST:
-                if(ambtc instanceof AMBTCNetworkStatusBroadcast)
+                if(ambtc instanceof AMBTCNetworkStatusBroadcast ambtcNetworkStatusBroadcast)
                 {
-                    mAMBTCNetworkStatusBroadcast = (AMBTCNetworkStatusBroadcast)ambtc;
+                    mAMBTCNetworkStatusBroadcast = ambtcNetworkStatusBroadcast;
                 }
                 break;
             case OSP_RFSS_STATUS_BROADCAST:
-                if(ambtc instanceof AMBTCRFSSStatusBroadcast)
+                if(ambtc instanceof AMBTCRFSSStatusBroadcast ambtcRfssStatusBroadcast)
                 {
-                    mAMBTCRFSSStatusBroadcast = (AMBTCRFSSStatusBroadcast)ambtc;
+                    mAMBTCRFSSStatusBroadcast = ambtcRfssStatusBroadcast;
                 }
+                break;
+            default:
                 break;
 //TODO: process the rest of the messages here
         }
@@ -227,56 +240,50 @@ public class P25P1NetworkConfigurationMonitor
             switch(lcw.getOpcode())
             {
                 case ADJACENT_SITE_STATUS_BROADCAST:
-                    if(lcw instanceof LCAdjacentSiteStatusBroadcast)
+                    if(lcw instanceof LCAdjacentSiteStatusBroadcast assb)
                     {
-                        LCAdjacentSiteStatusBroadcast assb = (LCAdjacentSiteStatusBroadcast)lcw;
                         mLCNeighborSites.put((int)assb.getSite().getValue(), assb);
                     }
                     break;
                 case ADJACENT_SITE_STATUS_BROADCAST_EXPLICIT:
-                    if(lcw instanceof LCAdjacentSiteStatusBroadcastExplicit)
+                    if(lcw instanceof LCAdjacentSiteStatusBroadcastExplicit assbe)
                     {
-                        LCAdjacentSiteStatusBroadcastExplicit assbe = (LCAdjacentSiteStatusBroadcastExplicit)lcw;
                         mLCNeighborSitesExplicit.put((int)assbe.getSite().getValue(), assbe);
                     }
                     break;
-                case CHANNEL_IDENTIFIER_UPDATE:
-                case CHANNEL_IDENTIFIER_UPDATE_VU:
-                    if(lcw instanceof IFrequencyBand)
+                case CHANNEL_IDENTIFIER_UPDATE, CHANNEL_IDENTIFIER_UPDATE_VU:
+                    if(lcw instanceof IFrequencyBand band)
                     {
-                        IFrequencyBand band = (IFrequencyBand)lcw;
                         mFrequencyBandMap.put(band.getIdentifier(), band);
                     }
                     break;
                 case NETWORK_STATUS_BROADCAST:
-                    if(lcw instanceof LCNetworkStatusBroadcast)
+                    if(lcw instanceof LCNetworkStatusBroadcast networkStatusBroadcast)
                     {
-                        mLCNetworkStatusBroadcast = (LCNetworkStatusBroadcast)lcw;
+                        mLCNetworkStatusBroadcast = networkStatusBroadcast;
                     }
                     break;
                 case NETWORK_STATUS_BROADCAST_EXPLICIT:
-                    if(lcw instanceof LCNetworkStatusBroadcastExplicit)
+                    if(lcw instanceof LCNetworkStatusBroadcastExplicit networkStatusBroadcastExplicit)
                     {
-                        mLCNetworkStatusBroadcastExplicit = (LCNetworkStatusBroadcastExplicit)lcw;
+                        mLCNetworkStatusBroadcastExplicit = networkStatusBroadcastExplicit;
                     }
                     break;
                 case RFSS_STATUS_BROADCAST:
-                    if(lcw instanceof LCRFSSStatusBroadcast)
+                    if(lcw instanceof LCRFSSStatusBroadcast rfssStatusBroadcast)
                     {
-                        mLCRFSSStatusBroadcast = (LCRFSSStatusBroadcast)lcw;
+                        mLCRFSSStatusBroadcast = rfssStatusBroadcast;
                     }
                     break;
                 case RFSS_STATUS_BROADCAST_EXPLICIT:
-                    if(lcw instanceof LCRFSSStatusBroadcastExplicit)
+                    if(lcw instanceof LCRFSSStatusBroadcastExplicit rfssStatusBroadcastExplicit)
                     {
-                        mLCRFSSStatusBroadcastExplicit = (LCRFSSStatusBroadcastExplicit)lcw;
+                        mLCRFSSStatusBroadcastExplicit = rfssStatusBroadcastExplicit;
                     }
                     break;
                 case SECONDARY_CONTROL_CHANNEL_BROADCAST:
-                    if(lcw instanceof LCSecondaryControlChannelBroadcast)
+                    if(lcw instanceof LCSecondaryControlChannelBroadcast sccb)
                     {
-                        LCSecondaryControlChannelBroadcast sccb = (LCSecondaryControlChannelBroadcast)lcw;
-
                         for(IChannelDescriptor channel : sccb.getChannels())
                         {
                             mSecondaryControlChannels.put(channel.toString(), channel);
@@ -284,9 +291,8 @@ public class P25P1NetworkConfigurationMonitor
                     }
                     break;
                 case SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
-                    if(lcw instanceof LCSecondaryControlChannelBroadcastExplicit)
+                    if(lcw instanceof LCSecondaryControlChannelBroadcastExplicit sccb)
                     {
-                        LCSecondaryControlChannelBroadcastExplicit sccb = (LCSecondaryControlChannelBroadcastExplicit)lcw;
                         for(IChannelDescriptor channel : sccb.getChannels())
                         {
                             mSecondaryControlChannels.put(channel.toString(), channel);
@@ -294,10 +300,12 @@ public class P25P1NetworkConfigurationMonitor
                     }
                     break;
                 case SYSTEM_SERVICE_BROADCAST:
-                    if(lcw instanceof LCSystemServiceBroadcast)
+                    if(lcw instanceof LCSystemServiceBroadcast systemServiceBroadcast)
                     {
-                        mLCSystemServiceBroadcast = (LCSystemServiceBroadcast)lcw;
+                        mLCSystemServiceBroadcast = systemServiceBroadcast;
                     }
+                    break;
+                default:
                     break;
             }
 
@@ -333,9 +341,9 @@ public class P25P1NetworkConfigurationMonitor
      */
     private String format(Identifier identifier, int width)
     {
-        if(identifier.getValue() instanceof Integer)
+        if(identifier.getValue() instanceof Integer integer)
         {
-            String hex = StringUtils.leftPad(Integer.toHexString((Integer)identifier.getValue()), width, '0');
+            String hex = StringUtils.leftPad(Integer.toHexString(integer), width, '0');
 
             return hex.toUpperCase() + "[" + identifier.getValue() + "]";
         }
@@ -354,82 +362,82 @@ public class P25P1NetworkConfigurationMonitor
         sb.append("\n\nNetwork\n");
         if(mTSBKNetworkStatusBroadcast != null)
         {
-            sb.append("  WACN:").append(format(mTSBKNetworkStatusBroadcast.getWacn(), 5));
-            sb.append(" SYSTEM:").append(format(mTSBKNetworkStatusBroadcast.getSystem(), 3));
-            sb.append(" NAC:").append(format(mTSBKNetworkStatusBroadcast.getNAC(), 3));
-            sb.append(" LRA:").append(format(mTSBKNetworkStatusBroadcast.getLocationRegistrationArea(), 2));
+            sb.append(WACN_LABEL).append(format(mTSBKNetworkStatusBroadcast.getWacn(), 5));
+            sb.append(SYSTEM_LABEL).append(format(mTSBKNetworkStatusBroadcast.getSystem(), 3));
+            sb.append(NAC_LABEL).append(format(mTSBKNetworkStatusBroadcast.getNAC(), 3));
+            sb.append(LRA_LABEL).append(format(mTSBKNetworkStatusBroadcast.getLocationRegistrationArea(), 2));
         }
         else if(mAMBTCNetworkStatusBroadcast != null)
         {
-            sb.append("  WACN:").append(format(mAMBTCNetworkStatusBroadcast.getWacn(), 5));
-            sb.append(" SYSTEM:").append(format(mAMBTCNetworkStatusBroadcast.getSystem(), 3));
-            sb.append(" NAC:").append(format(mAMBTCNetworkStatusBroadcast.getNAC(), 3));
+            sb.append(WACN_LABEL).append(format(mAMBTCNetworkStatusBroadcast.getWacn(), 5));
+            sb.append(SYSTEM_LABEL).append(format(mAMBTCNetworkStatusBroadcast.getSystem(), 3));
+            sb.append(NAC_LABEL).append(format(mAMBTCNetworkStatusBroadcast.getNAC(), 3));
         }
         else if(mLCNetworkStatusBroadcast != null)
         {
-            sb.append("  WACN:").append(format(mLCNetworkStatusBroadcast.getWACN(), 5));
-            sb.append(" SYSTEM:").append(format(mLCNetworkStatusBroadcast.getSystem(), 3));
+            sb.append(WACN_LABEL).append(format(mLCNetworkStatusBroadcast.getWACN(), 5));
+            sb.append(SYSTEM_LABEL).append(format(mLCNetworkStatusBroadcast.getSystem(), 3));
         }
         else if(mLCNetworkStatusBroadcastExplicit != null)
         {
-            sb.append("  WACN:").append(format(mLCNetworkStatusBroadcastExplicit.getWACN(), 5));
-            sb.append(" SYSTEM:").append(format(mLCNetworkStatusBroadcastExplicit.getSystem(), 3));
+            sb.append(WACN_LABEL).append(format(mLCNetworkStatusBroadcastExplicit.getWACN(), 5));
+            sb.append(SYSTEM_LABEL).append(format(mLCNetworkStatusBroadcastExplicit.getSystem(), 3));
         }
         else
         {
-            sb.append("  UNKNOWN");
+            sb.append(UNKNOWN_LABEL);
         }
 
         sb.append("\n\nCurrent Site\n");
 
         if(mTSBKRFSSStatusBroadcast != null)
         {
-            sb.append("  SYSTEM:").append(format(mTSBKRFSSStatusBroadcast.getSystem(), 3));
-            sb.append(" NAC:").append(format(mTSBKRFSSStatusBroadcast.getNAC(), 3));
-            sb.append(" RFSS:").append(format(mTSBKRFSSStatusBroadcast.getRfss(), 2));
-            sb.append(" SITE:").append(format(mTSBKRFSSStatusBroadcast.getSite(), 2));
-            sb.append(" LRA:").append(format(mTSBKRFSSStatusBroadcast.getLocationRegistrationArea(), 2));
-            sb.append("  STATUS:").append(mTSBKRFSSStatusBroadcast.isActiveNetworkConnectionToRfssControllerSite() ?
+            sb.append(" " + SYSTEM_LABEL).append(format(mTSBKRFSSStatusBroadcast.getSystem(), 3));
+            sb.append(NAC_LABEL).append(format(mTSBKRFSSStatusBroadcast.getNAC(), 3));
+            sb.append(RFSS_LABEL).append(format(mTSBKRFSSStatusBroadcast.getRfss(), 2));
+            sb.append(SITE_LABEL).append(format(mTSBKRFSSStatusBroadcast.getSite(), 2));
+            sb.append(LRA_LABEL).append(format(mTSBKRFSSStatusBroadcast.getLocationRegistrationArea(), 2));
+            sb.append(STATUS_LABEL).append(mTSBKRFSSStatusBroadcast.isActiveNetworkConnectionToRfssControllerSite() ?
                 "ACTIVE RFSS NETWORK CONNECTION\n" : "\n");
-            sb.append("  PRI CONTROL CHANNEL:").append(mTSBKRFSSStatusBroadcast.getChannel());
-            sb.append(" DOWNLINK:").append(mTSBKRFSSStatusBroadcast.getChannel().getDownlinkFrequency());
-            sb.append(" UPLINK:").append(mTSBKRFSSStatusBroadcast.getChannel().getUplinkFrequency()).append("\n");
+            sb.append(PRIMARY_CONTROL_CHANNEL_LABEL).append(mTSBKRFSSStatusBroadcast.getChannel());
+            sb.append(DOWNLINK_LABEL).append(mTSBKRFSSStatusBroadcast.getChannel().getDownlinkFrequency());
+            sb.append(UPLINK_LABEL).append(mTSBKRFSSStatusBroadcast.getChannel().getUplinkFrequency()).append("\n");
         }
         else if(mLCRFSSStatusBroadcast != null)
         {
-            sb.append("  SYSTEM:").append(format(mLCRFSSStatusBroadcast.getSystem(), 3));
-            sb.append(" RFSS:").append(format(mLCRFSSStatusBroadcast.getRfss(), 2));
-            sb.append(" SITE:").append(format(mLCRFSSStatusBroadcast.getSite(), 2));
-            sb.append(" LRA:").append(format(mLCRFSSStatusBroadcast.getLocationRegistrationArea(), 2)).append("\n");
-            sb.append("  PRI CONTROL CHANNEL:").append(mLCRFSSStatusBroadcast.getChannel());
-            sb.append(" DOWNLINK:").append(mLCRFSSStatusBroadcast.getChannel().getDownlinkFrequency());
-            sb.append(" UPLINK:").append(mLCRFSSStatusBroadcast.getChannel().getUplinkFrequency()).append("\n");
+            sb.append(" " + SYSTEM_LABEL).append(format(mLCRFSSStatusBroadcast.getSystem(), 3));
+            sb.append(RFSS_LABEL).append(format(mLCRFSSStatusBroadcast.getRfss(), 2));
+            sb.append(SITE_LABEL).append(format(mLCRFSSStatusBroadcast.getSite(), 2));
+            sb.append(LRA_LABEL).append(format(mLCRFSSStatusBroadcast.getLocationRegistrationArea(), 2)).append("\n");
+            sb.append(PRIMARY_CONTROL_CHANNEL_LABEL).append(mLCRFSSStatusBroadcast.getChannel());
+            sb.append(DOWNLINK_LABEL).append(mLCRFSSStatusBroadcast.getChannel().getDownlinkFrequency());
+            sb.append(UPLINK_LABEL).append(mLCRFSSStatusBroadcast.getChannel().getUplinkFrequency()).append("\n");
         }
         else if(mLCRFSSStatusBroadcastExplicit != null)
         {
-            sb.append("  RFSS:").append(mLCRFSSStatusBroadcastExplicit.getRfss());
-            sb.append(" SITE:").append(format(mLCRFSSStatusBroadcastExplicit.getSite(), 2));
-            sb.append(" LRA:").append(format(mLCRFSSStatusBroadcastExplicit.getLocationRegistrationArea(), 2)).append("\n");
-            sb.append("  PRI CONTROL CHANNEL:").append(mLCRFSSStatusBroadcastExplicit.getChannel());
-            sb.append(" DOWNLINK:").append(mLCRFSSStatusBroadcastExplicit.getChannel().getDownlinkFrequency());
-            sb.append(" UPLINK:").append(mLCRFSSStatusBroadcastExplicit.getChannel().getUplinkFrequency()).append("\n");
+            sb.append(" " + RFSS_LABEL).append(mLCRFSSStatusBroadcastExplicit.getRfss());
+            sb.append(SITE_LABEL).append(format(mLCRFSSStatusBroadcastExplicit.getSite(), 2));
+            sb.append(LRA_LABEL).append(format(mLCRFSSStatusBroadcastExplicit.getLocationRegistrationArea(), 2)).append("\n");
+            sb.append(PRIMARY_CONTROL_CHANNEL_LABEL).append(mLCRFSSStatusBroadcastExplicit.getChannel());
+            sb.append(DOWNLINK_LABEL).append(mLCRFSSStatusBroadcastExplicit.getChannel().getDownlinkFrequency());
+            sb.append(UPLINK_LABEL).append(mLCRFSSStatusBroadcastExplicit.getChannel().getUplinkFrequency()).append("\n");
         }
         else if(mAMBTCRFSSStatusBroadcast != null)
         {
-            sb.append("  SYSTEM:").append(format(mAMBTCRFSSStatusBroadcast.getSystem(), 3));
-            sb.append(" NAC:").append(format(mAMBTCRFSSStatusBroadcast.getNAC(), 3));
-            sb.append(" RFSS:").append(format(mAMBTCRFSSStatusBroadcast.getRFSS(), 2));
-            sb.append(" SITE:").append(format(mAMBTCRFSSStatusBroadcast.getSite(), 2));
-            sb.append(" LRA:").append(format(mAMBTCRFSSStatusBroadcast.getLRA(), 2));
-            sb.append("  STATUS:").append(mAMBTCRFSSStatusBroadcast.isActiveNetworkConnectionToRfssControllerSite() ?
+            sb.append(" " + SYSTEM_LABEL).append(format(mAMBTCRFSSStatusBroadcast.getSystem(), 3));
+            sb.append(NAC_LABEL).append(format(mAMBTCRFSSStatusBroadcast.getNAC(), 3));
+            sb.append(RFSS_LABEL).append(format(mAMBTCRFSSStatusBroadcast.getRFSS(), 2));
+            sb.append(SITE_LABEL).append(format(mAMBTCRFSSStatusBroadcast.getSite(), 2));
+            sb.append(LRA_LABEL).append(format(mAMBTCRFSSStatusBroadcast.getLRA(), 2));
+            sb.append(STATUS_LABEL).append(mAMBTCRFSSStatusBroadcast.isActiveNetworkConnectionToRfssControllerSite() ?
                 "ACTIVE RFSS NETWORK CONNECTION\n" : "\n");
-            sb.append("  PRI CONTROL CHANNEL:").append(mAMBTCRFSSStatusBroadcast.getChannel());
-            sb.append(" DOWNLINK:").append(mAMBTCRFSSStatusBroadcast.getChannel().getDownlinkFrequency());
-            sb.append(" UPLINK:").append(mAMBTCRFSSStatusBroadcast.getChannel().getUplinkFrequency()).append("\n");
+            sb.append(PRIMARY_CONTROL_CHANNEL_LABEL).append(mAMBTCRFSSStatusBroadcast.getChannel());
+            sb.append(DOWNLINK_LABEL).append(mAMBTCRFSSStatusBroadcast.getChannel().getDownlinkFrequency());
+            sb.append(UPLINK_LABEL).append(mAMBTCRFSSStatusBroadcast.getChannel().getUplinkFrequency()).append("\n");
         }
         else
         {
-            sb.append("  UNKNOWN");
+            sb.append(UNKNOWN_LABEL);
         }
 
         if(!mSecondaryControlChannels.isEmpty())
@@ -440,26 +448,26 @@ public class P25P1NetworkConfigurationMonitor
                     .sorted(Map.Entry.comparingByKey())
                     .filter(Objects::nonNull)
                     .forEach(entry -> {
-                        sb.append("  SEC CONTROL CHANNEL:").append(entry.getValue());
-                        sb.append(" DOWNLINK:").append(entry.getValue().getDownlinkFrequency());
-                        sb.append(" UPLINK:").append(entry.getValue().getUplinkFrequency()).append("\n");
+                        sb.append(SECONDARY_CONTROL_CHANNEL_LABEL).append(entry.getValue());
+                        sb.append(DOWNLINK_LABEL).append(entry.getValue().getDownlinkFrequency());
+                        sb.append(UPLINK_LABEL).append(entry.getValue().getUplinkFrequency()).append("\n");
                     });
         }
 
         if(mSNDCPDataChannel != null)
         {
-            sb.append("  CURRENT FDMA DATA CHANNEL:").append(mSNDCPDataChannel.getChannel());
-            sb.append(" DOWNLINK:").append(mSNDCPDataChannel.getChannel().getDownlinkFrequency());
-            sb.append(" UPLINK:").append(mSNDCPDataChannel.getChannel().getUplinkFrequency()).append("\n");
+            sb.append(CURRENT_FDMA_DATA_CHANNEL_LABEL).append(mSNDCPDataChannel.getChannel());
+            sb.append(DOWNLINK_LABEL).append(mSNDCPDataChannel.getChannel().getDownlinkFrequency());
+            sb.append(UPLINK_LABEL).append(mSNDCPDataChannel.getChannel().getUplinkFrequency()).append("\n");
         }
 
         if(!mTDMADataChannelMap.isEmpty())
         {
             for(Map.Entry<APCO25Channel, MotorolaExplicitTDMADataChannelAnnouncement> entry: mTDMADataChannelMap.entrySet())
             {
-                sb.append("  ACTIVE TDMA DATA CHANNEL:").append(entry.getKey());
-                sb.append(" DOWNLINK:").append(entry.getKey().getDownlinkFrequency());
-                sb.append(" UPLINK:").append(entry.getKey().getUplinkFrequency()).append("\n");
+                sb.append(ACTIVE_TDMA_DATA_CHANNEL_LABEL).append(entry.getKey());
+                sb.append(DOWNLINK_LABEL).append(entry.getKey().getDownlinkFrequency());
+                sb.append(UPLINK_LABEL).append(entry.getKey().getUplinkFrequency()).append("\n");
             }
         }
 
@@ -470,13 +478,13 @@ public class P25P1NetworkConfigurationMonitor
 
         if(mTSBKSystemServiceBroadcast != null)
         {
-            sb.append("  AVAILABLE SERVICES:").append(mTSBKSystemServiceBroadcast.getAvailableServices());
-            sb.append("  SUPPORTED SERVICES:").append(mTSBKSystemServiceBroadcast.getSupportedServices());
+            sb.append(AVAILABLE_SERVICES_LABEL).append(mTSBKSystemServiceBroadcast.getAvailableServices());
+            sb.append(SUPPORTED_SERVICES_LABEL).append(mTSBKSystemServiceBroadcast.getSupportedServices());
         }
         else if(mLCSystemServiceBroadcast != null)
         {
-            sb.append("  AVAILABLE SERVICES:").append(mLCSystemServiceBroadcast.getAvailableServices());
-            sb.append("  SUPPORTED SERVICES:").append(mLCSystemServiceBroadcast.getSupportedServices());
+            sb.append(AVAILABLE_SERVICES_LABEL).append(mLCSystemServiceBroadcast.getAvailableServices());
+            sb.append(SUPPORTED_SERVICES_LABEL).append(mLCSystemServiceBroadcast.getSupportedServices());
         }
 
         sb.append("\nNeighbor Sites\n");
@@ -488,7 +496,7 @@ public class P25P1NetworkConfigurationMonitor
 
         if(sites.isEmpty())
         {
-            sb.append("  UNKNOWN");
+            sb.append(UNKNOWN_LABEL);
         }
         else
         {
@@ -499,49 +507,49 @@ public class P25P1NetworkConfigurationMonitor
                         if(mAMBTCNeighborSites.containsKey(site))
                         {
                             AMBTCAdjacentStatusBroadcast ambtc = mAMBTCNeighborSites.get(site);
-                            sb.append("  SYSTEM:").append(format(ambtc.getSystem(), 3));
-                            sb.append(" NAC:").append(format(ambtc.getNAC(), 3));
-                            sb.append(" RFSS:").append(format(ambtc.getRfss(), 2));
-                            sb.append(" SITE:").append(format(ambtc.getSite(), 2));
-                            sb.append(" LRA:").append(format(ambtc.getLocationRegistrationArea(), 2));
-                            sb.append(" CHANNEL:").append(ambtc.getChannel());
-                            sb.append(" DOWNLINK:").append(ambtc.getChannel().getDownlinkFrequency());
-                            sb.append(" UPLINK:").append(ambtc.getChannel().getUplinkFrequency()).append("\n");
+                            sb.append(" " + SYSTEM_LABEL).append(format(ambtc.getSystem(), 3));
+                            sb.append(NAC_LABEL).append(format(ambtc.getNAC(), 3));
+                            sb.append(RFSS_LABEL).append(format(ambtc.getRfss(), 2));
+                            sb.append(SITE_LABEL).append(format(ambtc.getSite(), 2));
+                            sb.append(LRA_LABEL).append(format(ambtc.getLocationRegistrationArea(), 2));
+                            sb.append(CHANNEL_LABEL).append(ambtc.getChannel());
+                            sb.append(DOWNLINK_LABEL).append(ambtc.getChannel().getDownlinkFrequency());
+                            sb.append(UPLINK_LABEL).append(ambtc.getChannel().getUplinkFrequency()).append("\n");
                         }
                         if(mLCNeighborSites.containsKey(site))
                         {
                             LCAdjacentSiteStatusBroadcast lc = mLCNeighborSites.get(site);
-                            sb.append("  SYSTEM:").append(format(lc.getSystem(), 3));
-                            sb.append(" RFSS:").append(format(lc.getRfss(), 2));
-                            sb.append(" SITE:").append(format(lc.getSite(), 2));
-                            sb.append(" LRA:").append(format(lc.getLocationRegistrationArea(), 2));
-                            sb.append(" CHANNEL:").append(lc.getChannel());
-                            sb.append(" DOWNLINK:").append(lc.getChannel().getDownlinkFrequency());
-                            sb.append(" UPLINK:").append(lc.getChannel().getUplinkFrequency()).append("\n");
+                            sb.append(" " + SYSTEM_LABEL).append(format(lc.getSystem(), 3));
+                            sb.append(RFSS_LABEL).append(format(lc.getRfss(), 2));
+                            sb.append(SITE_LABEL).append(format(lc.getSite(), 2));
+                            sb.append(LRA_LABEL).append(format(lc.getLocationRegistrationArea(), 2));
+                            sb.append(CHANNEL_LABEL).append(lc.getChannel());
+                            sb.append(DOWNLINK_LABEL).append(lc.getChannel().getDownlinkFrequency());
+                            sb.append(UPLINK_LABEL).append(lc.getChannel().getUplinkFrequency()).append("\n");
 
                         }
                         if(mLCNeighborSitesExplicit.containsKey(site))
                         {
                             LCAdjacentSiteStatusBroadcastExplicit lce = mLCNeighborSitesExplicit.get(site);
                             sb.append("  SYSTEM:---");
-                            sb.append(" RFSS:").append(format(lce.getRfss(), 2));
-                            sb.append(" SITE:").append(format(lce.getSite(), 2));
-                            sb.append(" LRA:").append(format(lce.getLocationRegistrationArea(), 2));
-                            sb.append(" CHANNEL:").append(lce.getChannel());
-                            sb.append(" DOWNLINK:").append(lce.getChannel().getDownlinkFrequency());
-                            sb.append(" UPLINK:").append(lce.getChannel().getUplinkFrequency()).append("\n");
+                            sb.append(RFSS_LABEL).append(format(lce.getRfss(), 2));
+                            sb.append(SITE_LABEL).append(format(lce.getSite(), 2));
+                            sb.append(LRA_LABEL).append(format(lce.getLocationRegistrationArea(), 2));
+                            sb.append(CHANNEL_LABEL).append(lce.getChannel());
+                            sb.append(DOWNLINK_LABEL).append(lce.getChannel().getDownlinkFrequency());
+                            sb.append(UPLINK_LABEL).append(lce.getChannel().getUplinkFrequency()).append("\n");
                         }
                         if(mTSBKNeighborSites.containsKey(site))
                         {
                             AdjacentStatusBroadcast asb = mTSBKNeighborSites.get(site);
-                            sb.append("  SYSTEM:").append(format(asb.getSystem(), 3));
-                            sb.append(" NAC:").append(format(asb.getNAC(), 3));
-                            sb.append(" RFSS:").append(format(asb.getRfss(), 2));
-                            sb.append(" SITE:").append(format(asb.getSite(), 2));
-                            sb.append(" LRA:").append(format(asb.getLocationRegistrationArea(), 2));
-                            sb.append(" CHANNEL:").append(asb.getChannel());
-                            sb.append(" DOWNLINK:").append(asb.getChannel().getDownlinkFrequency());
-                            sb.append(" UPLINK:").append(asb.getChannel().getUplinkFrequency());
+                            sb.append(" " + SYSTEM_LABEL).append(format(asb.getSystem(), 3));
+                            sb.append(NAC_LABEL).append(format(asb.getNAC(), 3));
+                            sb.append(RFSS_LABEL).append(format(asb.getRfss(), 2));
+                            sb.append(SITE_LABEL).append(format(asb.getSite(), 2));
+                            sb.append(LRA_LABEL).append(format(asb.getLocationRegistrationArea(), 2));
+                            sb.append(CHANNEL_LABEL).append(asb.getChannel());
+                            sb.append(DOWNLINK_LABEL).append(asb.getChannel().getDownlinkFrequency());
+                            sb.append(UPLINK_LABEL).append(asb.getChannel().getUplinkFrequency());
                             sb.append(" STATUS:").append(asb.getSiteFlags()).append("\n");
                         }
                     });
@@ -550,7 +558,7 @@ public class P25P1NetworkConfigurationMonitor
         sb.append("\nFrequency Bands\n");
         if(mFrequencyBandMap.isEmpty())
         {
-            sb.append("  UNKNOWN");
+            sb.append(UNKNOWN_LABEL);
         }
         else
         {
