@@ -176,6 +176,7 @@ def jvmArgsMac = jvmArgsLinux +
         ['-Xms512m', //Use a modest starting heap for more predictable memory behavior
          '-Xmx2g', //Cap Java heap growth during leak/allocation debugging
          '-XX:MaxDirectMemorySize=512m', //Cap direct/NIO buffer growth
+         '-XX:NativeMemoryTracking=summary', //Enable native memory accounting for live jcmd diagnostics
          '-Dprism.maxvram=256m', //Cap JavaFX/Prism graphics memory usage
          '-XX:+HeapDumpOnOutOfMemoryError', //Capture a heap dump when memory exhaustion occurs
          '-XX:HeapDumpPath=' + file(System.getProperty('user.home') + '/SDRTrunk/diagnostics').absolutePath,
