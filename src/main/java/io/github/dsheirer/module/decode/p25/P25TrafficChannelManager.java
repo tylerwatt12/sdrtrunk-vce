@@ -399,7 +399,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param timestamp of the message
      */
     public void processP2ChannelUpdate(APCO25Channel channel, ServiceOptions serviceOptions,
-                                       IdentifierCollection ic, MacOpcode macOpcode, long timestamp, String context)
+                                       IdentifierCollection ic, MacOpcode macOpcode, long timestamp)
     {
         if(channel.getDownlinkFrequency() > 0)
         {
@@ -411,7 +411,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                 if(!processing)
                 {
-                    processP2ChannelGrant(channel, serviceOptions, ic, macOpcode, timestamp, context);
+                    processP2ChannelGrant(channel, serviceOptions, ic, macOpcode, timestamp);
                 }
             }
             finally
@@ -428,7 +428,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param timestamp for the final duration update for the event
      * @return true if the current tracked call event was ended
      */
-    public boolean processP2TrafficCallEnd(long frequency, int timeslot, long timestamp, String context)
+    public boolean processP2TrafficCallEnd(long frequency, int timeslot, long timestamp)
     {
         boolean completed = false;
 
@@ -463,7 +463,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param timestamp for the final duration update for the event
      * @return true if the current tracked call event was ended
      */
-    public boolean processP2TrafficEndPushToTalk(long frequency, int timeslot, long timestamp, String context)
+    public boolean processP2TrafficEndPushToTalk(long frequency, int timeslot, long timestamp)
     {
         boolean completed = false;
 
@@ -668,7 +668,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public IChannelDescriptor processP2TrafficCurrentUser(long frequency, int timeslot, IChannelDescriptor channelDescriptor,
                                                           ServiceOptions serviceOptions, MacOpcode macOpcode,
-                                                          IdentifierCollection ic, long timestamp, String additionalDetails, String context)
+                                                          IdentifierCollection ic, long timestamp, String additionalDetails)
     {
         mLock.lock();
 
@@ -725,7 +725,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param macOpcode to identify the call type for the event description
      */
     public void processP2ChannelGrant(APCO25Channel apco25Channel, ServiceOptions serviceOptions,
-                                      IdentifierCollection ic, MacOpcode macOpcode, long timestamp, String context)
+                                      IdentifierCollection ic, MacOpcode macOpcode, long timestamp)
     {
         mLock.lock();
 
@@ -743,7 +743,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     {
                         APCO25Channel phase1Channel = convertPhase2ToPhase1(apco25Channel);
                         processPhase1ControlChannelGrant(phase1Channel, serviceOptions, ic, decodeEventType,
-                                isDataChannelGrant, timestamp, context);
+                                isDataChannelGrant, timestamp);
                     }
                     else
                     {
@@ -760,7 +760,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             else
             {
                 processPhase1ControlChannelGrant(apco25Channel, serviceOptions, ic, decodeEventType, isDataChannelGrant,
-                        timestamp, context);
+                        timestamp);
             }
 
         }
@@ -780,7 +780,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param opcode to identify the call type for the event description
      */
     public void processP1ControlDirectedChannelGrant(APCO25Channel apco25Channel, ServiceOptions serviceOptions,
-                                                     IdentifierCollection ic, Opcode opcode, long timestamp, String context)
+                                                     IdentifierCollection ic, Opcode opcode, long timestamp)
     {
         mLock.lock();
 
@@ -797,7 +797,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             else
             {
                 processPhase1ControlChannelGrant(apco25Channel, serviceOptions, ic, decodeEventType,
-                        isDataChannelGrant, timestamp, context);
+                        isDataChannelGrant, timestamp);
             }
         }
         finally
@@ -899,7 +899,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param identifier to update within the event.
      * @param timestamp for the update
      */
-    public void processP1TrafficCurrentUser(long frequency, Identifier identifier, long timestamp, String context)
+    public void processP1TrafficCurrentUser(long frequency, Identifier identifier, long timestamp)
     {
         mLock.lock();
 
@@ -945,7 +945,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param identifiers to update within the event.
      * @param timestamp for the update
      */
-    public void processP1TrafficLDU1(long frequency, List<Identifier> identifiers, long timestamp, String context)
+    public void processP1TrafficLDU1(long frequency, List<Identifier> identifiers, long timestamp)
     {
         mLock.lock();
 
@@ -957,7 +957,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             if(tracker != null && tracker.isComplete())
             {
-                channelDescriptor = tracker.getEvent().getChannelDescriptor();;
+                channelDescriptor = tracker.getEvent().getChannelDescriptor();
                 removeTracker(frequency, TimeslotMessage.TIMESLOT_1);
                 tracker = null;
             }
@@ -1020,7 +1020,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void processP1TrafficCurrentUser(long frequency, IChannelDescriptor channelDescriptor,
                                             DecodeEventType decodeEventType, ServiceOptions serviceOptions,
-                                            IdentifierCollection ic, long timestamp, String additionalDetails, String context)
+                                            IdentifierCollection ic, long timestamp, String additionalDetails)
     {
         mLock.lock();
 
@@ -1103,7 +1103,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 //Remove the existing call tracker because it's a different call now
                 removeTracker(channel.getDownlinkFrequency(), channel.getTimeslot());
-                processP1ControlDirectedChannelGrant(channel, serviceOptions, ic, opcode, timestamp, context);
+                processP1ControlDirectedChannelGrant(channel, serviceOptions, ic, opcode, timestamp);
             }
         }
         finally
@@ -1118,7 +1118,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param frequency for the channel
      * @return true if the tracked call event was marked as complete.
      */
-    public boolean processP1TrafficCallEnd(long frequency, long timestamp, String context)
+    public boolean processP1TrafficCallEnd(long frequency, long timestamp)
     {
         boolean completed = false;
 
@@ -1209,7 +1209,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private void processPhase1ControlChannelGrant(APCO25Channel apco25Channel, ServiceOptions serviceOptions,
                                                   IdentifierCollection ic, DecodeEventType decodeEventType,
-                                                  boolean isDataChannelGrant, long timestamp, String context)
+                                                  boolean isDataChannelGrant, long timestamp)
     {
         long frequency = apco25Channel.getDownlinkFrequency();
 
@@ -1331,9 +1331,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                            IdentifierCollection ic, DecodeEventType decodeEventType,
                                            boolean isDataChannelGrant, long timestamp)
     {
-        if(mPhase2ScrambleParameters != null && ic instanceof MutableIdentifierCollection)
+        if(mPhase2ScrambleParameters != null && ic instanceof MutableIdentifierCollection mutableidentifiercollection)
         {
-            ((MutableIdentifierCollection)ic).silentUpdate(ScrambleParameterIdentifier.create(mPhase2ScrambleParameters));
+            mutableidentifiercollection.silentUpdate(ScrambleParameterIdentifier.create(mPhase2ScrambleParameters));
         }
 
         int timeslot = apco25Channel.getTimeslot();
@@ -1627,11 +1627,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void reset()
     {
+        // No reset action is required for this manager.
     }
 
     @Override
     public void start()
     {
+        // No startup action is required for this manager.
     }
 
     @Override
@@ -1763,6 +1765,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                         broadcast(tracker);
                                     });
                             break;
+                        default:
+                            break;
                     }
                 }
                 finally
@@ -1817,6 +1821,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                             broadcast(tracker2);
                                         }
                                     });
+                            break;
+                        default:
                             break;
                     }
                 }
