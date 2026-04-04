@@ -43,8 +43,6 @@ public class MPT1327Message extends Message
     private static int BLOCK_4_START = 212;
     private static int BLOCK_5_START = 276;
     private static int BLOCK_6_START = 340;
-    private static int[] REVS = {0, 1, 2, 3};
-    private static int[] SYNC = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
 
     /* Block 1 Fields */
     private static int[] B1_SYSDEF = {21, 22, 23, 24, 25};
@@ -56,7 +54,6 @@ public class MPT1327Message extends Message
     private static int[] B1_CHANNEL = {35, 36, 37, 38, 39, 40, 41, 42, 43, 44};
     private static int[] B1_MESSAGE_TYPE = {41, 42, 43, 44, 45, 46, 47, 48, 49};
     private static int[] B1_GTC_CHAN = {43, 44, 45, 46, 47, 48, 49, 50, 51, 52};
-    private static int[] B1_PREFIX2 = {48, 49, 50, 51, 52, 53, 54};
     private static int[] B1_IDENT2 = {50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62};
     private static int[] B1_IDENT2_GTC = {53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65};
     private static int[] B1_IDENT2_HEAD = {55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67};
@@ -80,29 +77,22 @@ public class MPT1327Message extends Message
 
     private static int B2_SDM_SEGMENT_TRANSACTION_FLAG = 85;
     private static int[] B2_SDM_GENERAL_FORMAT = {86, 87, 88};
-    private static int B2_SDM_INITIAL_SEGMENT_FLAG = 89;
     private static int B2_SDM_STF0_START = 86;
     private static int B2_SDM_STF0_END = 131;
     private static int B2_SDM_STF1_START = 90;
     private static int B2_SDM_STF1_END = 131;
 
     /* Block 3 or Second Data Codeword Fields */
-    private static int B3_SDM_RETURN_SLOT_ACCESS = 149;
     private static int B3_SDM_START = 150;
     private static int B3_SDM_END = 195;
 
     /* Block 4 or Third Data Codeword Fields */
-    private static int B4_SDM_SEGMENT_TRANSACTION_FLAG = 213;
-    private static int[] B4_SDM_NUMBER_SEGMENTS = {214, 215};
-    private static int B4_SDM_CONTINUATION_SEGMENT_FLAG = 216;
-    private static int B4_SDM_RESERVED_FLAG = 217;
     private static int B4_SDM_STF0_START = 214;
     private static int B4_SDM_STF0_END = 259;
     private static int B4_SDM_STF1_START = 218;
     private static int B4_SDM_STF1_END = 259;
 
     /* Block 5 or Fourth Data Codeword Fields */
-    private static int B5_SDM_RETURN_SLOT_ACCESS = 277;
     private static int B5_SDM_START = 278;
     private static int B5_SDM_END = 323;
 
@@ -127,15 +117,10 @@ public class MPT1327Message extends Message
             switch(mMessageType)
             {
                 /* 1 data block messages */
-                case AHYC:
-                case CLEAR:
-                case MAINT:
-                case MOVE:
+                case AHYC, CLEAR, MAINT, MOVE:
                     break;
                 /* 2 data block messages */
-                case AHYQ:
-                case ALH:
-                case HEAD_PLUS1:
+                case AHYQ, ALH, HEAD_PLUS1:
                     checkParity(1, BLOCK_2_START, BLOCK_3_START);
                     break;
                 /* 3 data block messages */
@@ -144,8 +129,7 @@ public class MPT1327Message extends Message
                     checkParity(2, BLOCK_3_START, BLOCK_4_START);
                     break;
                 /* 4 data block messages */
-                case ACKT:
-                case HEAD_PLUS3:
+                case ACKT, HEAD_PLUS3:
                     checkParity(1, BLOCK_2_START, BLOCK_3_START);
                     checkParity(2, BLOCK_3_START, BLOCK_4_START);
                     checkParity(3, BLOCK_4_START, BLOCK_5_START);
@@ -157,45 +141,9 @@ public class MPT1327Message extends Message
                     checkParity(3, BLOCK_4_START, BLOCK_5_START);
                     checkParity(4, BLOCK_5_START, BLOCK_6_START);
                     break;
-                case ACK:
-                case ACKB:
-                case ACKE:
-                case ACKI:
-                case ACKQ:
-                case ACKV:
-                case ACKX:
-                case AHOY:
-                case AHYP:
-                case AHYX:
-                case ALHD:
-                case ALHE:
-                case ALHF:
-                case ALHR:
-                case ALHS:
-                case ALHX:
-                case BCAST:
-                case GTC:
-                case MARK:
-                case DACKD:
-                case DACKZ:
-                case DACK_DAL:
-                case DACK_DALG:
-                case DACK_DALN:
-                case DACK_GO:
-                case DAHY:
-                case DAHYX:
-                case DAHYZ:
-                case DRQG:
-                case DRQX:
-                case DRQZ:
-                case GTT:
-                case RLA:
-                case SACK:
-                case SAMIS:
-                case SAMIU:
-                case SAMO:
-                case SITH:
-                case UNKN:
+                case ACK, ACKB, ACKE, ACKI, ACKQ, ACKV, ACKX, AHOY, AHYP, AHYX, ALHD, ALHE, ALHF, ALHR,
+                    ALHS, ALHX, BCAST, GTC, MARK, DACKD, DACKZ, DACK_DAL, DACK_DALG, DACK_DALN, DACK_GO,
+                    DAHY, DAHYX, DAHYZ, DRQG, DRQX, DRQZ, GTT, RLA, SACK, SAMIS, SAMIU, SAMO, SITH, UNKN:
                 default:
                     break;
             }
@@ -298,17 +246,14 @@ public class MPT1327Message extends Message
      */
     public String getSiteID()
     {
-        if(mMessageType == MPTMessageType.BCAST)
+        switch(mMessageType)
         {
-            return String.valueOf(mMessage.getInt(B1_SYSTEM_ID));
-        }
-        else if(mMessageType == MPTMessageType.ALH)
-        {
-            return String.valueOf(mMessage.getInt(B2_SYSTEM_ID));
-        }
-        else
-        {
-            return null;
+            case BCAST:
+                return String.valueOf(mMessage.getInt(B1_SYSTEM_ID));
+            case ALH:
+                return String.valueOf(mMessage.getInt(B2_SYSTEM_ID));
+            default:
+                return null;
         }
     }
 
@@ -402,20 +347,14 @@ public class MPT1327Message extends Message
     {
         MPTMessageType type = getMessageType();
 
-        if(type == MPTMessageType.GTC)
+        switch(type)
         {
-            return mMessage.getInt(B1_IDENT2_GTC);
-        }
-        else if(type == MPTMessageType.HEAD_PLUS1 ||
-            type == MPTMessageType.HEAD_PLUS2 ||
-            type == MPTMessageType.HEAD_PLUS3 ||
-            type == MPTMessageType.HEAD_PLUS4)
-        {
-            return mMessage.getInt(B1_IDENT2_HEAD);
-        }
-        else
-        {
-            return mMessage.getInt(B1_IDENT2);
+            case GTC:
+                return mMessage.getInt(B1_IDENT2_GTC);
+            case HEAD_PLUS1, HEAD_PLUS2, HEAD_PLUS3, HEAD_PLUS4:
+                return mMessage.getInt(B1_IDENT2_HEAD);
+            default:
+                return mMessage.getInt(B1_IDENT2);
         }
     }
 
@@ -451,7 +390,7 @@ public class MPT1327Message extends Message
     {
         if(sb.length() < index)
         {
-            return String.format("%" + (index - sb.length()) + "s", " ");
+            return " ".repeat(index - sb.length());
         }
         else
         {
@@ -472,7 +411,7 @@ public class MPT1327Message extends Message
      */
     public String format(int number, int decimalPlaces)
     {
-        return StringUtils.leftPad(Integer.valueOf(number).toString(), decimalPlaces, '0');
+        return StringUtils.leftPad(Integer.toString(number), decimalPlaces, '0');
     }
 
     public String getMessage()
@@ -495,26 +434,9 @@ public class MPT1327Message extends Message
 
                 switch(type)
                 {
-                    case ALLI:
-                    case IPFIXI:
-                    case PABXI:
-                    case PSTNGI:
-                    case PSTNSI1:
-                    case PSTNSI2:
-                    case PSTNSI3:
-                    case PSTNSI4:
-                    case PSTNSI5:
-                    case PSTNSI6:
-                    case PSTNSI7:
-                    case PSTNSI8:
-                    case PSTNSI9:
-                    case PSTNSI10:
-                    case PSTNSI11:
-                    case PSTNSI12:
-                    case PSTNSI13:
-                    case PSTNSI14:
-                    case PSTNSI15:
-                    case USER:
+                    case ALLI, IPFIXI, PABXI, PSTNGI, PSTNSI1, PSTNSI2, PSTNSI3, PSTNSI4, PSTNSI5,
+                        PSTNSI6, PSTNSI7, PSTNSI8, PSTNSI9, PSTNSI10, PSTNSI11, PSTNSI12, PSTNSI13,
+                        PSTNSI14, PSTNSI15, USER:
                         sb.append(type.getLabel());
                         sb.append(" CALL REQUEST");
                         break;
@@ -628,13 +550,7 @@ public class MPT1327Message extends Message
                 sb.append(" ");
                 sb.append(getStatusMessage());
                 break;
-            case ALH:
-            case ALHD:
-            case ALHS:
-            case ALHE:
-            case ALHR:
-            case ALHX:
-            case ALHF:
+            case ALH, ALHD, ALHS, ALHE, ALHR, ALHX, ALHF:
                 sb.append(" SYSTEM:");
                 sb.append(getSiteID());
 
@@ -664,8 +580,7 @@ public class MPT1327Message extends Message
 
                 switch(sysdef)
                 {
-                    case ANNOUNCE_CONTROL_CHANNEL:
-                    case WITHDRAW_CONTROL_CHANNEL:
+                    case ANNOUNCE_CONTROL_CHANNEL, WITHDRAW_CONTROL_CHANNEL:
                         sb.append(" CHAN:");
                         sb.append(getChannel());
                         break;
@@ -719,10 +634,7 @@ public class MPT1327Message extends Message
                 }
 
                 break;
-            case HEAD_PLUS1:
-            case HEAD_PLUS2:
-            case HEAD_PLUS3:
-            case HEAD_PLUS4:
+            case HEAD_PLUS1, HEAD_PLUS2, HEAD_PLUS3, HEAD_PLUS4:
                 sb.append(" ");
                 sb.append(getSDM());
                 break;
@@ -769,18 +681,18 @@ public class MPT1327Message extends Message
                     sb.append(slots.getLabel());
                     break;
                 case PSTNGI:
-                    if(slots == Slots.SLOTS_1)
+                    switch(slots)
                     {
-                        sb.append("SEND UP TO 9 PSTN DIALED DIGITS");
-                    }
-                    else if(slots == Slots.SLOTS_2)
-                    {
-                        sb.append("SEND 10 TO 31 PSTN DIALED DIGITS");
-                    }
-                    else
-                    {
-                        sb.append("SEND PSTN DIALED DIGITS USING ");
-                        sb.append(slots.getLabel());
+                        case SLOTS_1:
+                            sb.append("SEND UP TO 9 PSTN DIALED DIGITS");
+                            break;
+                        case SLOTS_2:
+                            sb.append("SEND 10 TO 31 PSTN DIALED DIGITS");
+                            break;
+                        default:
+                            sb.append("SEND PSTN DIALED DIGITS USING ");
+                            sb.append(slots.getLabel());
+                            break;
                     }
                     break;
                 case SDMI:
@@ -855,21 +767,8 @@ public class MPT1327Message extends Message
             case PABXI:
                 sb.append("PABX EXT");
                 break;
-            case PSTNSI1:
-            case PSTNSI2:
-            case PSTNSI3:
-            case PSTNSI4:
-            case PSTNSI5:
-            case PSTNSI6:
-            case PSTNSI7:
-            case PSTNSI8:
-            case PSTNSI9:
-            case PSTNSI10:
-            case PSTNSI11:
-            case PSTNSI12:
-            case PSTNSI13:
-            case PSTNSI14:
-            case PSTNSI15:
+            case PSTNSI1, PSTNSI2, PSTNSI3, PSTNSI4, PSTNSI5, PSTNSI6, PSTNSI7, PSTNSI8,
+                 PSTNSI9, PSTNSI10, PSTNSI11, PSTNSI12, PSTNSI13, PSTNSI14, PSTNSI15:
                 sb.append("PRE-DEFINED PSTN");
                 break;
             case PSTNGI:
@@ -979,10 +878,7 @@ public class MPT1327Message extends Message
 
         switch(type)
         {
-            case HEAD_PLUS1:
-            case HEAD_PLUS2:
-            case HEAD_PLUS3:
-            case HEAD_PLUS4:
+            case HEAD_PLUS1, HEAD_PLUS2, HEAD_PLUS3, HEAD_PLUS4:
                 SDMFormat format = getSDMFormat();
 
                 switch(format)
@@ -1383,24 +1279,17 @@ public class MPT1327Message extends Message
         {
             if(0 <= value && value < 32)
             {
-                if(value == 28)
+                switch(value)
                 {
-                    figure = false;
-                }
-                else if(value == 29)
-                {
-                    figure = true;
-                }
-                else
-                {
-                    if(figure)
-                    {
-                        sb.append(TELEX_FIGURES[value]);
-                    }
-                    else
-                    {
-                        sb.append(TELEX_LETTERS[value]);
-                    }
+                    case 28:
+                        figure = false;
+                        break;
+                    case 29:
+                        figure = true;
+                        break;
+                    default:
+                        sb.append(figure ? TELEX_FIGURES[value] : TELEX_LETTERS[value]);
+                        break;
                 }
             }
         }
@@ -1545,10 +1434,7 @@ public class MPT1327Message extends Message
                     return PSTNSI14;
                 case 8135:
                     return PSTNSI15;
-                case 8181:
-                case 8182:
-                case 8183:
-                case 8184:
+                case 8181, 8182, 8183, 8184:
                     return RESERVED;
                 case 8185:
                     return REGI;
@@ -1804,6 +1690,7 @@ public class MPT1327Message extends Message
             return mDescription;
         }
 
+        @Override
         public String toString()
         {
             return getDescription();
@@ -1868,59 +1755,18 @@ public class MPT1327Message extends Message
                     return MOVE;
                 case 284:
                     return BCAST;
-                case 288:
-                case 289:
-                case 290:
-                case 291:
-                case 292:
-                case 293:
-                case 294:
-                case 295:
-                case 296:
-                case 297:
-                case 298:
-                case 299:
-                case 300:
-                case 301:
-                case 302:
-                case 303:
+                case 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303:
                     return SAMO;
-                case 304:
-                case 305:
-                case 306:
-                case 307:
+                case 304, 305, 306, 307:
                     return HEAD_PLUS1;
-                case 308:
-                case 309:
-                case 310:
-                case 311:
+                case 308, 309, 310, 311:
                     return HEAD_PLUS2;
-                case 312:
-                case 313:
-                case 314:
-                case 315:
+                case 312, 313, 314, 315:
                     return HEAD_PLUS3;
-                case 316:
-                case 317:
-                case 318:
-                case 319:
+                case 316, 317, 318, 319:
                     return HEAD_PLUS4;
-                case 320:
-                case 321:
-                case 322:
-                case 323:
-                case 324:
-                case 325:
-                case 326:
-                case 327:
-                case 328:
-                case 329:
-                case 330:
-                case 331:
-                case 332:
-                case 333:
-                case 334:
-                case 335:
+                case 320, 321, 322, 323, 324, 325, 326, 327,
+                     328, 329, 330, 331, 332, 333, 334, 335:
                     return GTT;
                 case 416:
                     return DACK_DAL;
@@ -1942,10 +1788,7 @@ public class MPT1327Message extends Message
                     return DAHYZ;
                 case 430:
                     return DAHYX;
-                case 440:
-                case 441:
-                case 442:
-                case 443:
+                case 440, 441, 442, 443:
                     return SITH;
                 default:
                     return UNKN;

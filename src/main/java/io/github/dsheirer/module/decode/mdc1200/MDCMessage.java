@@ -43,7 +43,7 @@ public class MDCMessage extends Message
 
     private CorrectedBinaryMessage mMessage;
     private MDC1200Identifier mFromIdentifier;
-    private List<Identifier> mIdentifiers;
+    private List<Identifier<?>> mIdentifiers;
 
     public MDCMessage(CorrectedBinaryMessage message)
     {
@@ -66,6 +66,7 @@ public class MDCMessage extends Message
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public List<Identifier> getIdentifiers()
     {
         if(mIdentifiers == null)
@@ -74,7 +75,7 @@ public class MDCMessage extends Message
             mIdentifiers.add(getFromIdentifier());
         }
 
-        return mIdentifiers;
+        return (List<Identifier>)(List<?>)mIdentifiers;
     }
 
     public boolean isValid()
@@ -159,6 +160,7 @@ public class MDCMessage extends Message
                 {
                     return MDCMessageType.EMERGENCY;
                 }
+                // fall through
             case 1:
                 return MDCMessageType.ANI;
             default:
