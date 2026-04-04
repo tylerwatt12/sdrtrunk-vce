@@ -1,7 +1,5 @@
 package io.github.dsheirer.module.decode.p25.phase1.message;
 
-import org.apache.commons.math3.util.FastMath;
-
 /**
  * Utility class to declare a frequency band
  */
@@ -69,7 +67,7 @@ public class P25FrequencyBand implements IFrequencyBand
     {
         if(isTDMA())
         {
-            return getBaseFrequency() + (getChannelSpacing() * (int)(FastMath.floor(channelNumber / getTimeslotCount())));
+            return getBaseFrequency() + (getChannelSpacing() * (channelNumber / getTimeslotCount()));
         }
 
         return getBaseFrequency() + (getChannelSpacing() * channelNumber);
