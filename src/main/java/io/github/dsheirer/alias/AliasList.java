@@ -295,6 +295,9 @@ public class AliasList
                             }
                         }
                         break;
+                    default:
+                        // These identifier types don't participate in AliasList lookup indexes.
+                        break;
                 }
             }
             catch(Exception _)
@@ -526,6 +529,9 @@ public class AliasList
                             return toList(mDCSCodeAliasMap.get(dcsCode));
                         }
                     }
+                    break;
+                default:
+                    // Remaining identifier forms are not indexed in AliasList.
                     break;
             }
         }
