@@ -35,24 +35,23 @@ public class HalfBandDecimationFilterAnalysis
     private static FloatFFT_1D FFT = new FloatFFT_1D(FFT_SIZE);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.0");
 
-    private static final WindowType WINDOW_TYPE = WindowType.BLACKMAN;
     private static final int[] TAP_LENGTHS = new int[]{7,11,15,19,23,27,31,35,39,43,47,51,55,59,63,67,71,75,79,83,87,91,95,99,103,107};
-    private static final int BY_2 = (int)(FFT_SIZE / 2 * (1.0 / 2.0));
-    private static final int BY_2_25 = (int)(FFT_SIZE / 2 * (1.0 / 2.25));
-    private static final int BY_2_50 = (int)(FFT_SIZE / 2 * (1.0 / 2.5));
-    private static final int BY_2_75 = (int)(FFT_SIZE / 2 * (1.0 / 2.75));
-    private static final int BY_3 = (int)(FFT_SIZE / 2 * (1.0 / 3.0));
-    private static final int BY_4 = (int)(FFT_SIZE / 2 * (1.0 / 4.0));
-    private static final int BY_8 = (int)(FFT_SIZE / 2 * (1.0 / 8.0));
-    private static final int BY_16 = (int)(FFT_SIZE / 2 * (1.0 / 16.0));
-    private static final int BY_32 = (int)(FFT_SIZE / 2 * (1.0 / 32.0));
-    private static final int BY_64 = (int)(FFT_SIZE / 2 * (1.0 / 64.0));
-    private static final int BY_128 = (int)(FFT_SIZE / 2 * (1.0 / 128.0));
-    private static final int BY_256 = (int)(FFT_SIZE / 2 * (1.0 / 256.0));
-    private static final int BY_512 = (int)(FFT_SIZE / 2 * (1.0 / 512.0));
-    private static final int BY_1024 = (int)(FFT_SIZE / 2 * (1.0 / 1024.0));
+    private static final int BY_2 = (int)(FFT_SIZE / 2.0 * (1.0 / 2.0));
+    private static final int BY_2_25 = (int)(FFT_SIZE / 2.0 * (1.0 / 2.25));
+    private static final int BY_2_50 = (int)(FFT_SIZE / 2.0 * (1.0 / 2.5));
+    private static final int BY_2_75 = (int)(FFT_SIZE / 2.0 * (1.0 / 2.75));
+    private static final int BY_3 = (int)(FFT_SIZE / 2.0 * (1.0 / 3.0));
+    private static final int BY_4 = (int)(FFT_SIZE / 2.0 * (1.0 / 4.0));
+    private static final int BY_8 = (int)(FFT_SIZE / 2.0 * (1.0 / 8.0));
+    private static final int BY_16 = (int)(FFT_SIZE / 2.0 * (1.0 / 16.0));
+    private static final int BY_32 = (int)(FFT_SIZE / 2.0 * (1.0 / 32.0));
+    private static final int BY_64 = (int)(FFT_SIZE / 2.0 * (1.0 / 64.0));
+    private static final int BY_128 = (int)(FFT_SIZE / 2.0 * (1.0 / 128.0));
+    private static final int BY_256 = (int)(FFT_SIZE / 2.0 * (1.0 / 256.0));
+    private static final int BY_512 = (int)(FFT_SIZE / 2.0 * (1.0 / 512.0));
+    private static final int BY_1024 = (int)(FFT_SIZE / 2.0 * (1.0 / 1024.0));
 
-    public HalfBandDecimationFilterAnalysis()
+    private HalfBandDecimationFilterAnalysis()
     {
     }
 
@@ -61,7 +60,7 @@ public class HalfBandDecimationFilterAnalysis
         for(WindowType windowType: WindowType.NO_PARAMETER_WINDOWS)
         {
             StringBuilder sb = new StringBuilder();
-            sb.append("Window: " + windowType).append("\n");
+            sb.append("Window: ").append(windowType).append("\n");
             sb.append("Length\t\t2x\t\t2.25x\t2.50x\t2.75x\t3x\t\t4x\t\t8x\t\t16x\t\t32x\t\t64x\t\t128x\t256x\t512x\t1024x\n");
 
             for(int length: TAP_LENGTHS)
