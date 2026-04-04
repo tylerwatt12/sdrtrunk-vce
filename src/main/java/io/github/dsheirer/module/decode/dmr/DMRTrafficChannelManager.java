@@ -519,10 +519,10 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
         switch(opcode)
         {
-            case STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT:
-            case STANDARD_BROADCAST_TALKGROUP_VOICE_CHANNEL_GRANT:
-            case MOTOROLA_CAPMAX_CHANNEL_UPDATE_OPEN_MODE:
-            case MOTOROLA_CAPMAX_CHANNEL_UPDATE_ADVANTAGE_MODE:
+            case STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT,
+                STANDARD_BROADCAST_TALKGROUP_VOICE_CHANNEL_GRANT,
+                MOTOROLA_CAPMAX_CHANNEL_UPDATE_OPEN_MODE,
+                MOTOROLA_CAPMAX_CHANNEL_UPDATE_ADVANTAGE_MODE:
                 type = encrypted ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_GROUP;
                 break;
 
@@ -539,18 +539,20 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                 }
                 break;
 
-            case STANDARD_PRIVATE_VOICE_CHANNEL_GRANT:
-            case STANDARD_DUPLEX_PRIVATE_VOICE_CHANNEL_GRANT:
+            case STANDARD_PRIVATE_VOICE_CHANNEL_GRANT,
+                STANDARD_DUPLEX_PRIVATE_VOICE_CHANNEL_GRANT:
                 type = encrypted ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED : DecodeEventType.CALL_UNIT_TO_UNIT;
                 break;
 
-            case STANDARD_PRIVATE_DATA_CHANNEL_GRANT_SINGLE_ITEM:
-            case STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_SINGLE_ITEM:
-            case STANDARD_DUPLEX_PRIVATE_DATA_CHANNEL_GRANT:
-            case STANDARD_PRIVATE_DATA_CHANNEL_GRANT_MULTI_ITEM:
-            case STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_MULTI_ITEM:
-            case MOTOROLA_CONPLUS_DATA_CHANNEL_GRANT:
+            case STANDARD_PRIVATE_DATA_CHANNEL_GRANT_SINGLE_ITEM,
+                STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_SINGLE_ITEM,
+                STANDARD_DUPLEX_PRIVATE_DATA_CHANNEL_GRANT,
+                STANDARD_PRIVATE_DATA_CHANNEL_GRANT_MULTI_ITEM,
+                STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_MULTI_ITEM,
+                MOTOROLA_CONPLUS_DATA_CHANNEL_GRANT:
                 type = encrypted ? DecodeEventType.DATA_CALL_ENCRYPTED : DecodeEventType.DATA_CALL;
+                break;
+            default:
                 break;
         }
 
@@ -895,6 +897,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         {
                             mLock.unlock();
                         }
+                        break;
+                    default:
                         break;
                 }
             }

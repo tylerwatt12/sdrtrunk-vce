@@ -325,6 +325,8 @@ public class CSBKMessageFactory
                 case MOTOROLA_CONPLUS_DATA_WINDOW_GRANT:
                     csbk = new ConnectPlusDataRevertWindowGrant(pattern, message, cach, slotType, timestamp, timeslot);
                     break;
+                default:
+                    break;
             }
 
             if(csbk == null)

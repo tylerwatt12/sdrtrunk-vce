@@ -45,7 +45,7 @@ public abstract class DataBlock extends DataMessage
      * @param timestamp message was received
      * @param timeslot for the DMR burst
      */
-    public DataBlock(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
+    protected DataBlock(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
                      long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);
