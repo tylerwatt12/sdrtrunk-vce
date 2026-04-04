@@ -28,20 +28,17 @@ import io.github.dsheirer.preference.identifier.talkgroup.AbstractIntegerFormatt
 import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.jspecify.annotations.NonNull;
 
 import java.text.ParseException;
 import java.util.EnumMap;
-import java.util.Map;
 
 /**
  * Protocol-specific formatting of radio id values and parsing of formatted radio id values.
  */
 public class RadioFormatter
 {
-    private final static Logger mLog = LoggerFactory.getLogger(RadioFormatter.class);
-    private static Map<Protocol,AbstractIntegerFormatter> mFormatterMap = new EnumMap<>(Protocol.class);
+    private static final EnumMap<@NonNull Protocol,AbstractIntegerFormatter> mFormatterMap = new EnumMap<>(Protocol.class);
 
     static
     {
@@ -50,7 +47,7 @@ public class RadioFormatter
         mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
     }
 
-    public RadioFormatter()
+    private RadioFormatter()
     {
     }
 
