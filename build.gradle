@@ -172,7 +172,14 @@ def jvmArgsLinux =
 /**
  * JVM Arguments for running the application on macOS.
  */
-def jvmArgsMac = jvmArgsLinux + ['-Xdock:name=sdrtrunk']
+def jvmArgsMac = jvmArgsLinux +
+        ['-Xms512m', //Use a modest starting heap for more predictable memory behavior
+         '-Xmx2g', //Cap Java heap growth during leak/allocation debugging
+         '-XX:MaxDirectMemorySize=512m', //Cap direct/NIO buffer growth
+         '-Dprism.maxvram=256m', //Cap JavaFX/Prism graphics memory usage
+         '-XX:+HeapDumpOnOutOfMemoryError', //Capture a heap dump when memory exhaustion occurs
+         '-XX:HeapDumpPath=' + file(System.getProperty('user.home') + '/SDRTrunk/diagnostics').absolutePath,
+         '-Xdock:name=sdrtrunk']
 
 application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
