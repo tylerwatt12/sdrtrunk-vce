@@ -36,6 +36,10 @@ import javafx.scene.Node;
  */
 public class PreferenceEditorFactory
 {
+    private PreferenceEditorFactory()
+    {
+    }
+
     public static Node getEditor(PreferenceEditorType preferenceEditorType, UserPreferences userPreferences)
     {
         switch(preferenceEditorType)

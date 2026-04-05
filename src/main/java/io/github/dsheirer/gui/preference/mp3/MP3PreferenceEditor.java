@@ -83,7 +83,7 @@ public class MP3PreferenceEditor extends HBox
             mEditorPane.add(getAudioSampleRateComboBox(), 1, row++);
 
             Label notice = new Label("Note: sdrtrunk default 8 kHz audio rate is resampled to input sample rate before MP3 encoding");
-            mEditorPane.add(notice, 0, row++, 2, 1);
+            mEditorPane.add(notice, 0, row, 2, 1);
         }
 
         return mEditorPane;

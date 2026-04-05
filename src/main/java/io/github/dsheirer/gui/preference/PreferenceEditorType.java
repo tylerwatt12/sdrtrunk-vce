@@ -44,6 +44,7 @@ public enum PreferenceEditorType
         mLabel = label;
     }
 
+    @Override
     public String toString()
     {
         return mLabel;

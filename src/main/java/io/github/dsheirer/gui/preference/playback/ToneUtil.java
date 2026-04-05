@@ -30,6 +30,10 @@ public class ToneUtil
     //Maximum tone volume: 0.0 <> 1.0
     private static final double MAX_TONE_VOLUME = 0.5f;
 
+    private ToneUtil()
+    {
+    }
+
     /**
      * Generates a tone using the specified parameters
      * @param toneFrequency of the tone
@@ -55,12 +59,12 @@ public class ToneUtil
         {
             for(int x = 0; x < 10; x++)
             {
-                samples[x] *= (float)x / 10.0f;
+                samples[x] *= x / 10.0f;
             }
 
             for(int x = 0; x < 10; x++)
             {
-                samples[samples.length - 1 - x] *= (float)x / 10.0f;
+                samples[samples.length - 1 - x] *= x / 10.0f;
             }
         }
 

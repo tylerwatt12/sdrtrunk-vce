@@ -25,8 +25,9 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import java.io.File;
-import javafx.event.ActionEvent;
-import javafx.event.EventHandler;
+import java.nio.file.Path;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Button;
@@ -312,24 +313,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeApplicationRootButton == null)
         {
-            mChangeApplicationRootButton = new Button("Change...");
-            mChangeApplicationRootButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Application Root Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryApplicationRoot().toFile());
-                    Stage stage = (Stage)getChangeApplicationRootButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryApplicationRoot(selected.toPath());
-                    }
-                }
-            });
+            mChangeApplicationRootButton = createChangeButton("Select Application Root Folder",
+                mDirectoryPreference::getDirectoryApplicationRoot, mDirectoryPreference::setDirectoryApplicationRoot);
         }
 
         return mChangeApplicationRootButton;
@@ -339,15 +324,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetApplicationRootButton == null)
         {
-            mResetApplicationRootButton = new Button("Reset");
-            mResetApplicationRootButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryApplicationRoot();
-                }
-            });
+            mResetApplicationRootButton = createResetButton(mDirectoryPreference::resetDirectoryApplicationRoot);
         }
 
         return mResetApplicationRootButton;
@@ -377,24 +354,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeApplicationLogsButton == null)
         {
-            mChangeApplicationLogsButton = new Button("Change...");
-            mChangeApplicationLogsButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Application Logs Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryApplicationLog().toFile());
-                    Stage stage = (Stage)getChangeApplicationLogsButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryApplicationLogs(selected.toPath());
-                    }
-                }
-            });
+            mChangeApplicationLogsButton = createChangeButton("Select Application Logs Folder",
+                mDirectoryPreference::getDirectoryApplicationLog, mDirectoryPreference::setDirectoryApplicationLogs);
         }
 
         return mChangeApplicationLogsButton;
@@ -404,15 +365,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetApplicationLogsButton == null)
         {
-            mResetApplicationLogsButton = new Button("Reset");
-            mResetApplicationLogsButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryApplicationLogs();
-                }
-            });
+            mResetApplicationLogsButton = createResetButton(mDirectoryPreference::resetDirectoryApplicationLogs);
         }
 
         return mResetApplicationLogsButton;
@@ -442,24 +395,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeConfigurationButton == null)
         {
-            mChangeConfigurationButton = new Button("Change...");
-            mChangeConfigurationButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Configuration Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryConfiguration().toFile());
-                    Stage stage = (Stage)getChangeConfigurationButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryConfiguration(selected.toPath());
-                    }
-                }
-            });
+            mChangeConfigurationButton = createChangeButton("Select Configuration Folder",
+                mDirectoryPreference::getDirectoryConfiguration, mDirectoryPreference::setDirectoryConfiguration);
         }
 
         return mChangeConfigurationButton;
@@ -469,15 +406,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetConfigurationButton == null)
         {
-            mResetConfigurationButton = new Button("Reset");
-            mResetConfigurationButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryConfiguration();
-                }
-            });
+            mResetConfigurationButton = createResetButton(mDirectoryPreference::resetDirectoryConfiguration);
         }
 
         return mResetConfigurationButton;
@@ -507,24 +436,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeEventLogsButton == null)
         {
-            mChangeEventLogsButton = new Button("Change...");
-            mChangeEventLogsButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Event Logs Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryEventLog().toFile());
-                    Stage stage = (Stage)getChangeEventLogsButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryEventLogs(selected.toPath());
-                    }
-                }
-            });
+            mChangeEventLogsButton = createChangeButton("Select Event Logs Folder",
+                mDirectoryPreference::getDirectoryEventLog, mDirectoryPreference::setDirectoryEventLogs);
         }
 
         return mChangeEventLogsButton;
@@ -534,15 +447,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetEventLogsButton == null)
         {
-            mResetEventLogsButton = new Button("Reset");
-            mResetEventLogsButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryEventLogs();
-                }
-            });
+            mResetEventLogsButton = createResetButton(mDirectoryPreference::resetDirectoryEventLogs);
         }
 
         return mResetEventLogsButton;
@@ -572,24 +477,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeJmbeButton == null)
         {
-            mChangeJmbeButton = new Button("Change...");
-            mChangeJmbeButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select JMBE Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryJmbe().toFile());
-                    Stage stage = (Stage)getChangeJmbeButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryJmbe(selected.toPath());
-                    }
-                }
-            });
+            mChangeJmbeButton = createChangeButton("Select JMBE Folder",
+                mDirectoryPreference::getDirectoryJmbe, mDirectoryPreference::setDirectoryJmbe);
         }
 
         return mChangeJmbeButton;
@@ -599,15 +488,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetJmbeButton == null)
         {
-            mResetJmbeButton = new Button("Reset");
-            mResetJmbeButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryJmbe();
-                }
-            });
+            mResetJmbeButton = createResetButton(mDirectoryPreference::resetDirectoryJmbe);
         }
 
         return mResetJmbeButton;
@@ -637,24 +518,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangePlaylistButton == null)
         {
-            mChangePlaylistButton = new Button("Change...");
-            mChangePlaylistButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Playlist Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryPlaylist().toFile());
-                    Stage stage = (Stage)getChangePlaylistButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryPlaylist(selected.toPath());
-                    }
-                }
-            });
+            mChangePlaylistButton = createChangeButton("Select Playlist Folder",
+                mDirectoryPreference::getDirectoryPlaylist, mDirectoryPreference::setDirectoryPlaylist);
         }
 
         return mChangePlaylistButton;
@@ -664,15 +529,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetPlaylistButton == null)
         {
-            mResetPlaylistButton = new Button("Reset");
-            mResetPlaylistButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryPlaylist();
-                }
-            });
+            mResetPlaylistButton = createResetButton(mDirectoryPreference::resetDirectoryPlaylist);
         }
 
         return mResetPlaylistButton;
@@ -702,24 +559,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeRecordingButton == null)
         {
-            mChangeRecordingButton = new Button("Change...");
-            mChangeRecordingButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Recording Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryRecording().toFile());
-                    Stage stage = (Stage)getChangeRecordingButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryRecording(selected.toPath());
-                    }
-                }
-            });
+            mChangeRecordingButton = createChangeButton("Select Recording Folder",
+                mDirectoryPreference::getDirectoryRecording, mDirectoryPreference::setDirectoryRecording);
         }
 
         return mChangeRecordingButton;
@@ -729,15 +570,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetRecordingButton == null)
         {
-            mResetRecordingButton = new Button("Reset");
-            mResetRecordingButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryRecording();
-                }
-            });
+            mResetRecordingButton = createResetButton(mDirectoryPreference::resetDirectoryRecording);
         }
 
         return mResetRecordingButton;
@@ -767,24 +600,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeScreenCaptureButton == null)
         {
-            mChangeScreenCaptureButton = new Button("Change...");
-            mChangeScreenCaptureButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Screen Capture Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryScreenCapture().toFile());
-                    Stage stage = (Stage)getChangeScreenCaptureButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryScreenCapture(selected.toPath());
-                    }
-                }
-            });
+            mChangeScreenCaptureButton = createChangeButton("Select Screen Capture Folder",
+                mDirectoryPreference::getDirectoryScreenCapture, mDirectoryPreference::setDirectoryScreenCapture);
         }
 
         return mChangeScreenCaptureButton;
@@ -794,15 +611,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetScreenCaptureButton == null)
         {
-            mResetScreenCaptureButton = new Button("Reset");
-            mResetScreenCaptureButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryScreenCapture();
-                }
-            });
+            mResetScreenCaptureButton = createResetButton(mDirectoryPreference::resetDirectoryScreenCapture);
         }
 
         return mResetScreenCaptureButton;
@@ -832,24 +641,8 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mChangeStreamingButton == null)
         {
-            mChangeStreamingButton = new Button("Change...");
-            mChangeStreamingButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    DirectoryChooser directoryChooser = new DirectoryChooser();
-                    directoryChooser.setTitle("Select Streaming Folder");
-                    directoryChooser.setInitialDirectory(mDirectoryPreference.getDirectoryStreaming().toFile());
-                    Stage stage = (Stage)getChangeStreamingButton().getScene().getWindow();
-                    File selected = directoryChooser.showDialog(stage);
-
-                    if(selected != null)
-                    {
-                        mDirectoryPreference.setDirectoryStreaming(selected.toPath());
-                    }
-                }
-            });
+            mChangeStreamingButton = createChangeButton("Select Streaming Folder",
+                mDirectoryPreference::getDirectoryStreaming, mDirectoryPreference::setDirectoryStreaming);
         }
 
         return mChangeStreamingButton;
@@ -859,15 +652,7 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(mResetStreamingButton == null)
         {
-            mResetStreamingButton = new Button("Reset");
-            mResetStreamingButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    mDirectoryPreference.resetDirectoryStreaming();
-                }
-            });
+            mResetStreamingButton = createResetButton(mDirectoryPreference::resetDirectoryStreaming);
         }
 
         return mResetStreamingButton;
@@ -881,6 +666,31 @@ public class DirectoryPreferenceEditor extends HBox
         }
 
         return mStreamingPathLabel;
+    }
+
+    private Button createChangeButton(String title, Supplier<Path> initialDirectorySupplier, Consumer<Path> directorySetter)
+    {
+        Button button = new Button("Change...");
+        button.setOnAction(event -> {
+            DirectoryChooser directoryChooser = new DirectoryChooser();
+            directoryChooser.setTitle(title);
+            directoryChooser.setInitialDirectory(initialDirectorySupplier.get().toFile());
+            Stage stage = (Stage)button.getScene().getWindow();
+            File selected = directoryChooser.showDialog(stage);
+
+            if(selected != null)
+            {
+                directorySetter.accept(selected.toPath());
+            }
+        });
+        return button;
+    }
+
+    private Button createResetButton(Runnable resetAction)
+    {
+        Button button = new Button("Reset");
+        button.setOnAction(event -> resetAction.run());
+        return button;
     }
 
     @Subscribe

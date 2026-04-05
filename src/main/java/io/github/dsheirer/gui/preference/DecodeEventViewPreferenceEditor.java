@@ -88,7 +88,6 @@ public class DecodeEventViewPreferenceEditor extends HBox
                 if(displayableTimestamp.getTimestampFormat() == current)
                 {
                     mTimestampFormatChoiceBox.getSelectionModel().select(displayableTimestamp);
-                    continue;
                 }
             }
 

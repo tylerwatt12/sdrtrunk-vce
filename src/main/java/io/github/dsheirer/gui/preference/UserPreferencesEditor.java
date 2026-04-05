@@ -75,16 +75,6 @@ public class UserPreferencesEditor extends BorderPane
         setCenter(contentBox);
     }
 
-    private UserPreferences getUserPreferences()
-    {
-        if(mUserPreferences == null)
-        {
-            mUserPreferences = new UserPreferences();
-        }
-
-        return mUserPreferences;
-    }
-
     /**
      * Shows the editor specified in the request by scrolling the editor view tree to the selected item.
      */
@@ -261,29 +251,6 @@ public class UserPreferencesEditor extends BorderPane
         return mMenuBar;
     }
 
-    private void setEditor(PreferenceEditorType type)
-    {
-        Node editor = mEditors.get(type);
-
-        if(editor == null)
-        {
-            if(type == PreferenceEditorType.DEFAULT)
-            {
-                editor = getDefaultEditor();
-            }
-            else
-            {
-                editor = PreferenceEditorFactory.getEditor(type, getUserPreferences());
-                mEditors.put(type, editor);
-            }
-        }
-
-        getEditorAndButtonsBox().getChildren().remove(mEditor);
-        VBox.setVgrow(editor, Priority.ALWAYS);
-        mEditor = editor;
-        getEditorAndButtonsBox().getChildren().add(0, mEditor);
-    }
-
     /**
      * Listens for editor tree selection events and creates a preference editor instance for each type as needed.
      *
@@ -306,6 +273,39 @@ public class UserPreferencesEditor extends BorderPane
             }
 
             setEditor(PreferenceEditorType.DEFAULT);
+        }
+
+        private void setEditor(PreferenceEditorType type)
+        {
+            Node editor = mEditors.get(type);
+
+            if(editor == null)
+            {
+                if(type == PreferenceEditorType.DEFAULT)
+                {
+                    editor = getDefaultEditor();
+                }
+                else
+                {
+                    editor = PreferenceEditorFactory.getEditor(type, getUserPreferences());
+                    mEditors.put(type, editor);
+                }
+            }
+
+            getEditorAndButtonsBox().getChildren().remove(mEditor);
+            VBox.setVgrow(editor, Priority.ALWAYS);
+            mEditor = editor;
+            getEditorAndButtonsBox().getChildren().add(0, mEditor);
+        }
+
+        private UserPreferences getUserPreferences()
+        {
+            if(mUserPreferences == null)
+            {
+                mUserPreferences = new UserPreferences();
+            }
+
+            return mUserPreferences;
         }
     }
 }
