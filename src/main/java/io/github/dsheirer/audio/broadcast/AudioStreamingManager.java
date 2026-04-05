@@ -124,73 +124,140 @@ public class AudioStreamingManager implements Listener<AudioSegment>
     }
 
     /**
-     * Main processing method to process audio segments
+     * Scheduled runnable to process audio segments.
      */
-    private void processAudioSegments()
+    public class AudioSegmentProcessor implements Runnable
     {
-        mNewAudioSegments.drainTo(mAudioSegments);
-
-        Iterator<AudioSegment> it = mAudioSegments.iterator();
-        AudioSegment audioSegment;
-        while(it.hasNext())
+        /**
+         * Creates a temporary streaming recording file path
+         */
+        private Path getTemporaryRecordingPath()
         {
-            audioSegment = it.next();
+            StringBuilder sb = new StringBuilder();
+            sb.append(BroadcastModel.TEMPORARY_STREAM_FILE_SUFFIX);
 
-            if(audioSegment.isDuplicate() && mUserPreferences.getCallManagementPreference().isDuplicateStreamingSuppressionEnabled())
+            //Check for integer overflow and readjust negative value to 0
+            if(mNextRecordingNumber < 0)
             {
-                it.remove();
-                audioSegment.decrementConsumerCount();
+                mNextRecordingNumber = 1;
             }
-            else if(audioSegment.completeProperty().get())
-            {
-                it.remove();
 
-                if(mAudioRecordingListener != null && audioSegment.hasBroadcastChannels())
+            int recordingNumber = mNextRecordingNumber++;
+
+            sb.append(recordingNumber).append("_");
+            sb.append(TimeStamp.getLongTimeStamp("_"));
+            sb.append(mBroadcastFormat.getFileExtension());
+
+            return mUserPreferences.getDirectoryPreference().getDirectoryStreaming().resolve(sb.toString());
+        }
+
+        /**
+         * Processes an audio segment for streaming by creating a temporary MP3 recording and submitting the recording
+         * to the specific broadcast channel(s).
+         * @param audioSegment to process for streaming
+         * @param identifierCollection to use for the streamed audio recording.
+         * @param broadcastChannels to receive the audio recording
+         */
+        private void processAudioSegment(AudioSegment audioSegment, IdentifierCollection identifierCollection,
+                                         Set<BroadcastChannel> broadcastChannels)
+        {
+            Path path = getTemporaryRecordingPath();
+            long length = 0;
+
+            for(float[] audioBuffer: audioSegment.getAudioBuffers())
+            {
+                length += audioBuffer.length;
+            }
+
+            length /= 8; //Sample rate is 8000 samples per second, or 8 samples per millisecond.
+
+            try
+            {
+                AudioSegmentRecorder.record(audioSegment, path, RecordFormat.MP3, mUserPreferences, identifierCollection);
+
+                AudioRecording audioRecording = new AudioRecording(path, broadcastChannels, identifierCollection,
+                    audioSegment.getStartTimestamp(), length);
+                mAudioRecordingListener.receive(audioRecording);
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("Error recording temporary stream MP3");
+            }
+        }
+
+        /**
+         * Main processing method to process audio segments
+         */
+        private void processAudioSegments()
+        {
+            mNewAudioSegments.drainTo(mAudioSegments);
+
+            Iterator<AudioSegment> it = mAudioSegments.iterator();
+            AudioSegment audioSegment;
+            while(it.hasNext())
+            {
+                audioSegment = it.next();
+
+                if(audioSegment.isDuplicate() && mUserPreferences.getCallManagementPreference().isDuplicateStreamingSuppressionEnabled())
                 {
-                    IdentifierCollection identifiers =
+                    it.remove();
+                    audioSegment.decrementConsumerCount();
+                }
+                else if(audioSegment.completeProperty().get())
+                {
+                    it.remove();
+
+                    if(mAudioRecordingListener != null && audioSegment.hasBroadcastChannels())
+                    {
+                        IdentifierCollection identifiers =
                             new IdentifierCollection(audioSegment.getIdentifierCollection().getIdentifiers());
 
-                    if(identifiers.getToIdentifier() instanceof PatchGroupIdentifier patchGroupIdentifier)
-                    {
-                        if(mUserPreferences.getCallManagementPreference()
-                                .getPatchGroupStreamingOption() == PatchGroupStreamingOption.TALKGROUPS)
+                        if(identifiers.getToIdentifier() instanceof PatchGroupIdentifier patchGroupIdentifier)
                         {
-                            //Decompose the patch group into the individual (patched) talkgroups and process the audio
-                            //segment for each patched talkgroup.
-                            PatchGroup patchGroup = patchGroupIdentifier.getValue();
-
-                            List<Identifier> ids = new ArrayList<>();
-                            ids.addAll(patchGroup.getPatchedTalkgroupIdentifiers());
-                            ids.addAll(patchGroup.getPatchedRadioIdentifiers());
-
-                            //If there are no patched radios/talkgroups, override user preference and stream as a patch group
-                            if(ids.isEmpty() || audioSegment.getAliasList() == null)
+                            if(mUserPreferences.getCallManagementPreference()
+                                .getPatchGroupStreamingOption() == PatchGroupStreamingOption.TALKGROUPS)
                             {
-                                processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
+                                //Decompose the patch group into the individual (patched) talkgroups and process the audio
+                                //segment for each patched talkgroup.
+                                PatchGroup patchGroup = patchGroupIdentifier.getValue();
+
+                                List<Identifier> ids = new ArrayList<>();
+                                ids.addAll(patchGroup.getPatchedTalkgroupIdentifiers());
+                                ids.addAll(patchGroup.getPatchedRadioIdentifiers());
+
+                                //If there are no patched radios/talkgroups, override user preference and stream as a patch group
+                                if(ids.isEmpty() || audioSegment.getAliasList() == null)
+                                {
+                                    processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
+                                }
+                                else
+                                {
+                                    AliasList aliasList = audioSegment.getAliasList();
+
+                                    for(Identifier identifier: ids)
+                                    {
+                                        List<Alias> aliases = aliasList.getAliases(identifier);
+                                        Set<BroadcastChannel> broadcastChannels = new HashSet<>();
+                                        for(Alias alias: aliases)
+                                        {
+                                            broadcastChannels.addAll(alias.getBroadcastChannels());
+                                        }
+
+                                        if(!broadcastChannels.isEmpty())
+                                        {
+                                            MutableIdentifierCollection decomposedIdentifiers =
+                                                new MutableIdentifierCollection(identifiers.getIdentifiers());
+                                            //Remove patch group TO identifier & replace with the patched talkgroup/radio
+                                            decomposedIdentifiers.remove(Role.TO);
+                                            decomposedIdentifiers.update(identifier);
+                                            processAudioSegment(audioSegment, decomposedIdentifiers, broadcastChannels);
+                                        }
+                                    }
+                                }
                             }
                             else
                             {
-                                AliasList aliasList = audioSegment.getAliasList();
-
-                                for(Identifier identifier: ids)
-                                {
-                                    List<Alias> aliases = aliasList.getAliases(identifier);
-                                    Set<BroadcastChannel> broadcastChannels = new HashSet<>();
-                                    for(Alias alias: aliases)
-                                    {
-                                        broadcastChannels.addAll(alias.getBroadcastChannels());
-                                    }
-
-                                    if(!broadcastChannels.isEmpty())
-                                    {
-                                        MutableIdentifierCollection decomposedIdentifiers =
-                                                new MutableIdentifierCollection(identifiers.getIdentifiers());
-                                        //Remove patch group TO identifier & replace with the patched talkgroup/radio
-                                        decomposedIdentifiers.remove(Role.TO);
-                                        decomposedIdentifiers.update(identifier);
-                                        processAudioSegment(audioSegment, decomposedIdentifiers, broadcastChannels);
-                                    }
-                                }
+                                processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
                             }
                         }
                         else
@@ -198,81 +265,12 @@ public class AudioStreamingManager implements Listener<AudioSegment>
                             processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
                         }
                     }
-                    else
-                    {
-                        processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
-                    }
-                }
 
-                audioSegment.decrementConsumerCount();
+                    audioSegment.decrementConsumerCount();
+                }
             }
         }
-    }
 
-    /**
-     * Processes an audio segment for streaming by creating a temporary MP3 recording and submitting the recording
-     * to the specific broadcast channel(s).
-     * @param audioSegment to process for streaming
-     * @param identifierCollection to use for the streamed audio recording.
-     * @param broadcastChannels to receive the audio recording
-     */
-    private void processAudioSegment(AudioSegment audioSegment, IdentifierCollection identifierCollection,
-                                     Set<BroadcastChannel> broadcastChannels)
-    {
-        Path path = getTemporaryRecordingPath();
-        long length = 0;
-
-        for(float[] audioBuffer: audioSegment.getAudioBuffers())
-        {
-            length += audioBuffer.length;
-        }
-
-        length /= 8; //Sample rate is 8000 samples per second, or 8 samples per millisecond.
-
-        try
-        {
-            AudioSegmentRecorder.record(audioSegment, path, RecordFormat.MP3, mUserPreferences, identifierCollection);
-
-            AudioRecording audioRecording = new AudioRecording(path, broadcastChannels, identifierCollection,
-                    audioSegment.getStartTimestamp(), length);
-            mAudioRecordingListener.receive(audioRecording);
-        }
-        catch(IOException ioe)
-        {
-            mLog.error("Error recording temporary stream MP3");
-        }
-    }
-
-    /**
-     * Creates a temporary streaming recording file path
-     */
-    private Path getTemporaryRecordingPath()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append(BroadcastModel.TEMPORARY_STREAM_FILE_SUFFIX);
-
-        //Check for integer overflow and readjust negative value to 0
-        if(mNextRecordingNumber < 0)
-        {
-            mNextRecordingNumber = 1;
-        }
-
-        int recordingNumber = mNextRecordingNumber++;
-
-        sb.append(recordingNumber).append("_");
-        sb.append(TimeStamp.getLongTimeStamp("_"));
-        sb.append(mBroadcastFormat.getFileExtension());
-
-        Path temporaryRecordingPath = mUserPreferences.getDirectoryPreference().getDirectoryStreaming().resolve(sb.toString());
-
-        return temporaryRecordingPath;
-    }
-
-    /**
-     * Scheduled runnable to process audio segments.
-     */
-    public class AudioSegmentProcessor implements Runnable
-    {
         @Override
         public void run()
         {
@@ -280,9 +278,9 @@ public class AudioStreamingManager implements Listener<AudioSegment>
             {
                 processAudioSegments();
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                mLog.error("Error processing audio segments for streaming", t);
+                mLog.error("Error processing audio segments for streaming", e);
             }
         }
     }

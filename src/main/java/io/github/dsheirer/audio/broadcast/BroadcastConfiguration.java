@@ -166,6 +166,7 @@ public abstract class BroadcastConfiguration
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public abstract BroadcastServerType getBroadcastServerType();
 
+    @SuppressWarnings("java:S1172")
     private void setBroadcastServerType(BroadcastServerType type)
     {
         //Do nothing

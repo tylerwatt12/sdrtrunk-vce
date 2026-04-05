@@ -38,6 +38,7 @@ import org.slf4j.LoggerFactory;
 public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration> extends AbstractAudioBroadcaster<T>
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioStreamingBroadcaster.class);
+    private static final String STATUS_LABEL = "] status: ";
 
     public static final int PROCESSOR_RUN_INTERVAL_MS = 1000;
     private ScheduledFuture<?> mRecordingQueueProcessorFuture;
@@ -78,7 +79,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
      * The last audio packet's metadata is automatically attached to the closed audio recording when it is enqueued for
      * broadcast.  That metadata will be updated on the remote server once the audio recording is opened for streaming.
      */
-    public AudioStreamingBroadcaster(T broadcastConfiguration, InputAudioFormat inputAudioFormat, MP3Setting mp3Setting)
+    protected AudioStreamingBroadcaster(T broadcastConfiguration, InputAudioFormat inputAudioFormat, MP3Setting mp3Setting)
     {
         super(broadcastConfiguration);
         mBroadcastFormat = broadcastConfiguration.getBroadcastFormat();
@@ -127,13 +128,10 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
      */
     public void start()
     {
-        if(mStreaming.compareAndSet(false, true))
+        if(mStreaming.compareAndSet(false, true) && mRecordingQueueProcessorFuture == null)
         {
-            if(mRecordingQueueProcessorFuture == null)
-            {
-                mRecordingQueueProcessorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(mRecordingQueueProcessor,
-                    0, PROCESSOR_RUN_INTERVAL_MS, TimeUnit.MILLISECONDS);
-            }
+            mRecordingQueueProcessorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(mRecordingQueueProcessor,
+                0, PROCESSOR_RUN_INTERVAL_MS, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -206,7 +204,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
         {
             if(state == BroadcastState.CONNECTED || state == BroadcastState.DISCONNECTED)
             {
-                mLog.info("[" + getStreamName() + "] status: " + state);
+                mLog.info("[" + getStreamName() + STATUS_LABEL + state);
             }
 
             super.setBroadcastState(state);
@@ -215,12 +213,12 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
             {
                 if(mBroadcastState.get().isErrorState())
                 {
-                    mLog.error("[" + getStreamName() + "] status: " + mBroadcastState.get().toString());
+                    mLog.error("[" + getStreamName() + STATUS_LABEL + mBroadcastState.get().toString());
                     stop();
                 }
                 else if(mBroadcastState.get().isWarningState())
                 {
-                    mLog.warn("[" + getStreamName() + "] status: " + mBroadcastState.get().toString());
+                    mLog.warn("[" + getStreamName() + STATUS_LABEL + mBroadcastState.get().toString());
                 }
             }
 
@@ -375,13 +373,13 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
                         if(audio.length > 0)
                         {
-                            switch(mBroadcastFormat)
+                            if(mBroadcastFormat == BroadcastFormat.MP3)
                             {
-                                case MP3:
-                                    mInputFrames = MP3FrameTools.split(audio);
-                                    break;
-                                default:
-                                    throw new IllegalArgumentException("Unsupported broadcast format [" + mBroadcastFormat + "]");
+                                mInputFrames = MP3FrameTools.split(audio);
+                            }
+                            else
+                            {
+                                throw new IllegalArgumentException("Unsupported broadcast format [" + mBroadcastFormat + "]");
                             }
                             mInputIdentifierCollection = nextRecording.getIdentifierCollection();
 

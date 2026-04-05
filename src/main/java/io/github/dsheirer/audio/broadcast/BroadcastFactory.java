@@ -48,6 +48,10 @@ public class BroadcastFactory
 {
     private static final Logger mLog = LoggerFactory.getLogger(BroadcastFactory.class);
 
+    private BroadcastFactory()
+    {
+    }
+
     /**
      * Creates an audio streaming broadcaster for the configuration
      *
@@ -136,13 +140,12 @@ public class BroadcastFactory
 
     public static ISilenceGenerator getSilenceGenerator(BroadcastFormat format, InputAudioFormat inputAudioFormat, MP3Setting mp3Setting)
     {
-        switch(format)
+        if(format == BroadcastFormat.MP3)
         {
-            case MP3:
-                return new MP3SilenceGenerator(inputAudioFormat, mp3Setting);
-            default:
-                throw new IllegalArgumentException("Unrecognized broadcast format [" + format +
-                    "] can't create silence generator");
+            return new MP3SilenceGenerator(inputAudioFormat, mp3Setting);
         }
+
+        throw new IllegalArgumentException("Unrecognized broadcast format [" + format +
+            "] can't create silence generator");
     }
 }
