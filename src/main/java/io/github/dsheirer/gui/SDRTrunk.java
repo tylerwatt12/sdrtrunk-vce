@@ -642,29 +642,6 @@ public class SDRTrunk implements Listener<TunerEvent>
     }
 
     /**
-     * Toggles visibility of the broadcast channels status panel at the bottom of the controller panel
-     */
-    private void toggleBroadcastStatusPanelVisibility()
-    {
-        mBroadcastStatusVisible = !mBroadcastStatusVisible;
-
-        EventQueue.invokeLater(() -> {
-            if(mBroadcastStatusVisible)
-            {
-                mSplitPane.add(getBroadcastStatusPanel());
-            }
-            else
-            {
-                mSplitPane.remove(getBroadcastStatusPanel());
-            }
-
-            mMainGui.revalidate();
-        });
-
-        mPreferences.putBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, mBroadcastStatusVisible);
-    }
-
-    /**
      * Lazy constructor for resource status panel
      */
     private JFXPanel getResourceStatusPanel()
@@ -677,40 +654,6 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         return mResourceStatusPanel;
     }
-
-    /**
-     * Toggles visibility of the resource status panel at the bottom of the main UI window
-     */
-    private void toggleResourceStatusPanelVisibility()
-    {
-        mResourceStatusVisible = !mResourceStatusVisible;
-
-        EventQueue.invokeLater(() -> {
-            if(mResourceStatusVisible)
-            {
-                mMainGui.add(getResourceStatusPanel(), "span,growx");
-            }
-            else
-            {
-                mMainGui.remove(getResourceStatusPanel());
-            }
-
-            mMainGui.revalidate();
-        });
-
-        mPreferences.putBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, mResourceStatusVisible);
-    }
-
-    /**
-     * Toggles visibility of the Now Playing channel details panel
-     */
-    private void toggleNowPlayingDetailsPanelVisibility()
-    {
-        mNowPlayingDetailsVisible = !mNowPlayingDetailsVisible;
-        mControllerPanel.getNowPlayingPanel().setDetailTabsVisible(mNowPlayingDetailsVisible);
-        mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, mNowPlayingDetailsVisible);
-    }
-
 
     /**
      * Loads the application properties file from the user's home directory,
@@ -801,7 +744,19 @@ public class SDRTrunk implements Listener<TunerEvent>
             super("Show Streaming Status");
             setSelected(mBroadcastStatusVisible);
             addActionListener(e -> {
-                toggleBroadcastStatusPanelVisibility();
+                mBroadcastStatusVisible = !mBroadcastStatusVisible;
+                EventQueue.invokeLater(() -> {
+                    if(mBroadcastStatusVisible)
+                    {
+                        mSplitPane.add(getBroadcastStatusPanel());
+                    }
+                    else
+                    {
+                        mSplitPane.remove(getBroadcastStatusPanel());
+                    }
+                    mMainGui.revalidate();
+                });
+                mPreferences.putBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, mBroadcastStatusVisible);
                 setSelected(mBroadcastStatusVisible);
             });
         }
@@ -817,7 +772,19 @@ public class SDRTrunk implements Listener<TunerEvent>
             super("Show Resource Status");
             setSelected(mResourceStatusVisible);
             addActionListener(e -> {
-                toggleResourceStatusPanelVisibility();
+                mResourceStatusVisible = !mResourceStatusVisible;
+                EventQueue.invokeLater(() -> {
+                    if(mResourceStatusVisible)
+                    {
+                        mMainGui.add(getResourceStatusPanel(), "span,growx");
+                    }
+                    else
+                    {
+                        mMainGui.remove(getResourceStatusPanel());
+                    }
+                    mMainGui.revalidate();
+                });
+                mPreferences.putBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, mResourceStatusVisible);
                 setSelected(mResourceStatusVisible);
             });
         }
@@ -833,7 +800,9 @@ public class SDRTrunk implements Listener<TunerEvent>
             super("Show Now Playing Channel Details");
             setSelected(mNowPlayingDetailsVisible);
             addActionListener(e -> {
-                toggleNowPlayingDetailsPanelVisibility();
+                mNowPlayingDetailsVisible = !mNowPlayingDetailsVisible;
+                mControllerPanel.getNowPlayingPanel().setDetailTabsVisible(mNowPlayingDetailsVisible);
+                mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, mNowPlayingDetailsVisible);
                 setSelected(mNowPlayingDetailsVisible);
             });
         }
