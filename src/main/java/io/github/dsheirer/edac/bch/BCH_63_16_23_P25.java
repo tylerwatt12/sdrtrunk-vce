@@ -56,14 +56,12 @@ public class BCH_63_16_23_P25 extends BCH_63
     {
         decode(message);
 
-        if(message.getCorrectedBitCount() == BCH.MESSAGE_NOT_CORRECTED && observedNAC > 0)
+        if(message.getCorrectedBitCount() == BCH.MESSAGE_NOT_CORRECTED && observedNAC > 0 &&
+            message.getInt(NAC_FIELD) != observedNAC)
         {
             //Check to see if the message NAC is different than the observed NAC ... overwrite and try again.
-            if(message.getInt(NAC_FIELD) != observedNAC)
-            {
-                message.setInt(observedNAC, NAC_FIELD);
-                decode(message);
-            }
+            message.setInt(observedNAC, NAC_FIELD);
+            decode(message);
         }
     }
 }

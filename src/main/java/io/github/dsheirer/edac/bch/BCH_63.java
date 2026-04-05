@@ -31,7 +31,7 @@ public abstract class BCH_63 extends BCH
      * @param k data bits size
      * @param t error detection and correction capacity of the generator polynomial used to create the codewords.
      */
-    public BCH_63(int k, int t)
+    protected BCH_63(int k, int t)
     {
         super(M, k, t, PRIMITIVE_POLYNOMIAL_GF_63);
     }

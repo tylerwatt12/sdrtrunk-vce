@@ -32,15 +32,6 @@ public class BCH_255 extends BCH
      */
     public BCH_255(int k, int t)
     {
-//        super(M, k, t, PRIMITIVE_POLYNOMIAL_GF_255);
         super(M, k, t, 0x12D);
-    }
-
-    public static void main(String[] args)
-    {
-        BCH_255 b = new BCH_255(M, 1);
-
-        System.out.println("ALOG: " + Arrays.toString(b.a_log_tab));
-        System.out.println("APOW: " + Arrays.toString(b.a_pow_tab));
     }
 }

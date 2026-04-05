@@ -65,11 +65,6 @@ public abstract class BCH
     private int mN;
 
     /**
-     * Codeword message content size or number of data bits.
-     */
-    private int mK;
-
-    /**
      * Error detection and correction capacity of the BCH code.  This is the maximum number of bit errors that can
      * be detected and corrected.
      */
@@ -92,11 +87,10 @@ public abstract class BCH
      * @param primitivePolynomial for the GF(2).  Note: use one of the PRIMITIVE_POLYNOMIAL_GF_xxx constants defined in
      * this class which cover use cases for M: 2-8.
      */
-    public BCH(int m, int k, int t, int primitivePolynomial)
+    protected BCH(int m, int k, int t, int primitivePolynomial)
     {
         mM = m;
         mN = (1 << m) - 1;
-        mK = k;
         mT = t;
         mPrimitivePolynomial = primitivePolynomial;
         initTables();
@@ -118,7 +112,14 @@ public abstract class BCH
     {
         xi_tab = new int[mM];
 
-        int i, j, r, sum, x, y, remaining, ak = 0;
+        int i;
+        int j;
+        int r;
+        int sum;
+        int x;
+        int y;
+        int remaining;
+        int ak = 0;
         int[] xi = new int[mM];
 
         /* find k s.t. Tr(a^k) = 1 and 0 <= k < m */
@@ -309,7 +310,8 @@ public abstract class BCH
     public GFPoly compute_trace_bk_mod(int k, GFPoly f, GFPoly z)
     {
         int m = mM;
-        int i, j;
+        int i;
+        int j;
 
         /* z contains z^2j mod f */
         z.mDegree = 1;
@@ -367,8 +369,11 @@ public abstract class BCH
             return;
         }
 
-        int la, p, m;
-        int i, j;
+        int la;
+        int p;
+        int m;
+        int i;
+        int j;
         int[] c = Arrays.copyOf(a.mC, a.mC.length);
         int d = b.mDegree;
 
@@ -448,8 +453,14 @@ public abstract class BCH
     {
         int[] roots = new int[poly.mDegree];
 
-        int n = 0, i, l0, l1, l2;
-        int u, v, r;
+        int n = 0;
+        int i;
+        int l0;
+        int l1;
+        int l2;
+        int u;
+        int v;
+        int r;
 
         if(poly.mC[0] > 0 && poly.mC[1] > 0)
         {
@@ -479,7 +490,7 @@ public abstract class BCH
             {
                 /* reverse z=a/bX transformation and compute log(1/r) */
                 roots[n++] = modulo(2 * mN - l1 - a_log_tab[r] + l2);
-                roots[n++] = modulo(2 * mN - l1 - a_log_tab[r ^ 1] + l2);
+                roots[n] = modulo(2 * mN - l1 - a_log_tab[r ^ 1] + l2);
             }
         }
 
@@ -493,8 +504,15 @@ public abstract class BCH
     {
         int[] roots = new int[poly.mDegree];
 
-        int i, n = 0;
-        int a, b, c, a2, b2, c2, e3;
+        int i;
+        int n = 0;
+        int a;
+        int b;
+        int c;
+        int a2;
+        int b2;
+        int c2;
+        int e3;
         int[] tmp = new int[4];
 
         if(poly.mC[0] != 0)
@@ -534,8 +552,18 @@ public abstract class BCH
     {
         int[] roots = new int[poly.mDegree];
 
-        int i, l, n = 0;
-        int a, b, c, d, e = 0, f, a2, b2, c2, e4;
+        int i;
+        int l;
+        int a;
+        int b;
+        int c;
+        int d;
+        int e = 0;
+        int f;
+        int a2;
+        int b2;
+        int c2;
+        int e4;
 
         if (poly.mC[0] == 0)
         {
@@ -608,9 +636,12 @@ public abstract class BCH
      */
     public int find_affine4_roots(int a, int b, int c, int[] roots)
     {
-        int i, j, k;
+        int i;
+        int j;
+        int k;
         int m = mM;
-        int mask = 0xff, t;
+        int mask = 0xff;
+        int t;
         int[] rows = new int[16];
 
         j = a_log(b);
@@ -649,8 +680,13 @@ public abstract class BCH
     public int solve_linear_system(int[] rows, int[] sol, int nsol)
     {
         int m = mM;
-        int tmp, mask;
-        int rem, c, r, p, k;
+        int tmp;
+        int mask;
+        int rem;
+        int c;
+        int r;
+        int p;
+        int k;
         int[] param = new int[m];
 
         k = 0;
@@ -767,8 +803,14 @@ public abstract class BCH
      */
     public GFPoly compute_error_locator_polynomial(int[] syn)
     {
-        int i, j, tmp, l, pd = 1, d = syn[0];
-        int k, pp = -1;
+        int i;
+        int j;
+        int tmp;
+        int l;
+        int pd = 1;
+        int d = syn[0];
+        int k;
+        int pp = -1;
 
         GFPoly elp = new GFPoly(2 * mT + 1);
         GFPoly pelp = new GFPoly(2 * mT + 1);
@@ -802,7 +844,6 @@ public abstract class BCH
                 {
                     elp.mDegree = tmp;
                     elp_copy.copyTo(pelp); //reimplemented
-                    //                    gf_poly_copy(pelp, elp_copy);
                     pd = d;
                     pp = 2 * i;
                 }
@@ -927,55 +968,6 @@ public abstract class BCH
         return syndromes;
     }
 
-    /*
-     * compute 2t syndromes of ecc polynomial, i.e. ecc(a^j) for j=1..2t ... this only works for 32-bit codeword
-     *
-     * Note: this is ported from the original implementation that used an array of one or more 32-bit integers to
-     * represent the codeword and was used during development and testing of the ported code.  This method only works
-     * with a single 32-bit codeword formed for a BCH(31) finite set and does not work for larger BCH codes, so don't
-     * use this method.
-     */
-    private int[] compute_syndromes(int codeword)
-    {
-        int i, j;
-        int poly;
-        int[] syn = new int[2 * mT];
-
-        int t = mT;
-        int s = mN - mK;  //Should be 31 - 21 = 10, which is also <=m*t or 5 * 2;
-
-        /* compute v(a^j) for j=1 .. 2t-1 */
-        do
-        {
-            poly = codeword;
-            s -= 32;
-
-            s = 0;
-
-            while(poly != 0)
-            {
-                i = deg(poly);
-
-                for(j = 0; j < 2 * t; j += 2)
-                {
-                    syn[j] ^= a_pow((j + 1) * (i + s));
-                }
-
-                poly ^= (1 << i);
-            }
-        }
-        while(s > 0);
-
-        //        System.out.println("Syndromes Before Squaring: " + Arrays.toString(syn));
-        /* v(a^(2j)) = v(a^j)^2 */
-        for(j = 0; j < t; j++)
-        {
-            syn[2 * j + 1] = gf_sqr(syn[j]);
-        }
-
-        return syn;
-    }
-
     /**
      * Calculates the degree of the polynomial, represented as the most significant bit index
      *
@@ -997,7 +989,8 @@ public abstract class BCH
      */
     public void initTables()
     {
-        int i, x = 1;
+        int i;
+        int x = 1;
         int k = 1 << mM;
 
         a_pow_tab = new int[k];
@@ -1015,9 +1008,6 @@ public abstract class BCH
         }
         a_pow_tab[k - 1] = 1;
         a_log_tab[0] = 0;
-
-        //        System.out.println("a_pow_tab = " + Arrays.toString(a_pow_tab));
-        //        System.out.println("a_log_tab = " + Arrays.toString(a_log_tab));
 
         buildDegree2Base();
     }
@@ -1063,14 +1053,11 @@ public abstract class BCH
         int[] syndromes = computeSyndromes(message);
         GFPoly elp = compute_error_locator_polynomial(syndromes);
         int elpDegree = elp.mDegree;
-        //        System.out.println(elp);
         int k = 1; //Recursive call argument
         int[] roots = find_poly_roots(elp, k);
-        //        System.out.println(elp);
 
         if(roots.length != elpDegree)
         {
-            //            System.out.println("Error roots " + Arrays.toString(roots) + " do not match ELP degree [" + elpDegree + "]");
             message.setCorrectedBitCount(MESSAGE_NOT_CORRECTED);
             return;
         }
@@ -1080,7 +1067,6 @@ public abstract class BCH
 
         if(rootSet.size() != roots.length)
         {
-            //            System.out.println("Error roots were not distinct: " + Arrays.toString(roots));
             message.setCorrectedBitCount(MESSAGE_NOT_CORRECTED);
             return;
         }
@@ -1091,8 +1077,6 @@ public abstract class BCH
         {
             roots[x] = mN - 1 - roots[x];
         }
-
-        //        System.out.println("Error Roots:" + Arrays.toString(roots));
 
         //Correct the errors in the original message.
         for(int error: roots)
