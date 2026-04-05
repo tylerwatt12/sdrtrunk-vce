@@ -111,30 +111,24 @@ public class LTRConfigurationEditor extends ChannelConfigurationEditor
                 //There's a bug either in the toggle group or the segmented button where setting the toggle to selected
                 //when the control is hidden in a titled pane prevents the selection, so we have to select the toggle
                 //again when the pane is expanded.  This state is detected by a null selected toggle.
-                if(newValue)
+                if(newValue && getDirectionButton().getToggleGroup().getSelectedToggle() == null &&
+                    getItem().getDecodeConfiguration() instanceof DecodeConfigLTRStandard decodeConfig)
                 {
-                    if(getDirectionButton().getToggleGroup().getSelectedToggle() == null)
+                    MessageDirection direction = decodeConfig.getMessageDirection();
+
+                    if(direction == null)
                     {
-                        if(getItem().getDecodeConfiguration() instanceof DecodeConfigLTRStandard)
-                        {
-                            DecodeConfigLTRStandard decodeConfig = (DecodeConfigLTRStandard)getItem().getDecodeConfiguration();
-                            MessageDirection direction = decodeConfig.getMessageDirection();
-
-                            if(direction == null)
-                            {
-                                direction = MessageDirection.OSW;
-                            }
-
-                            //This will cause the modified property to trigger, so capture the modified state before
-                            //and re-apply after
-                            boolean modified = modifiedProperty().get();
-                            for(Toggle toggle: getDirectionButton().getToggleGroup().getToggles())
-                            {
-                                toggle.setSelected(toggle.getUserData() == direction);
-                            }
-                            modifiedProperty().set(modified);
-                        }
+                        direction = MessageDirection.OSW;
                     }
+
+                    //This will cause the modified property to trigger, so capture the modified state before
+                    //and re-apply after
+                    boolean modified = modifiedProperty().get();
+                    for(Toggle toggle: getDirectionButton().getToggleGroup().getToggles())
+                    {
+                        toggle.setSelected(toggle.getUserData() == direction);
+                    }
+                    modifiedProperty().set(modified);
                 }
             });
 

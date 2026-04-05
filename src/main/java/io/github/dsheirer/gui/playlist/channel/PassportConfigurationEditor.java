@@ -209,6 +209,7 @@ public class PassportConfigurationEditor extends ChannelConfigurationEditor
     @Override
     protected void setDecoderConfiguration(DecodeConfiguration config)
     {
+        // Passport has no decoder-specific settings to populate in this editor.
     }
 
     @Override

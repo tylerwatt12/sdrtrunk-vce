@@ -79,7 +79,6 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private final TalkgroupValueChangeListener mTalkgroupValueChangeListener = new TalkgroupValueChangeListener();
     private final IntegerFormatter mDecimalFormatter = new IntegerFormatter(1, 65535);
-    private final HexFormatter mHexFormatter = new HexFormatter(1, 65535);
 
     /**
      * Constructs an instance

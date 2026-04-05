@@ -31,7 +31,10 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import javafx.scene.control.TitledPane;
 
 /**
- * Unknown protocol channel configuration editor
+ * Unknown protocol channel configuration editor.
+ *
+ * This editor is intentionally non-interactive because unsupported protocols do not expose
+ * configurable decoder, logging, recording, auxiliary decoder, or source options here.
  */
 public class UnknownConfigurationEditor extends ChannelConfigurationEditor
 {
@@ -64,42 +67,50 @@ public class UnknownConfigurationEditor extends ChannelConfigurationEditor
     @Override
     public DecoderType getDecoderType()
     {
+        // Unknown protocol channels do not map to a concrete decoder type.
         return null;
     }
 
     @Override
     protected void setDecoderConfiguration(DecodeConfiguration config)
     {
+        // No decoder configuration is available for unknown protocol channels.
     }
 
     @Override
     protected void saveDecoderConfiguration()
     {
+        // No decoder configuration is available for unknown protocol channels.
     }
 
     @Override
     protected void setEventLogConfiguration(EventLogConfiguration config)
     {
+        // No event log configuration is available for unknown protocol channels.
     }
 
     @Override
     protected void saveEventLogConfiguration()
     {
+        // No event log configuration is available for unknown protocol channels.
     }
 
     @Override
     protected void setAuxDecoderConfiguration(AuxDecodeConfiguration config)
     {
+        // No auxiliary decoder configuration is available for unknown protocol channels.
     }
 
     @Override
     protected void saveAuxDecoderConfiguration()
     {
+        // No auxiliary decoder configuration is available for unknown protocol channels.
     }
 
     @Override
     protected void setRecordConfiguration(RecordConfiguration config)
     {
+        // No record configuration is available for unknown protocol channels.
     }
 
     @Override
@@ -111,10 +122,12 @@ public class UnknownConfigurationEditor extends ChannelConfigurationEditor
     @Override
     protected void setSourceConfiguration(SourceConfiguration config)
     {
+        // No source configuration is available for unknown protocol channels.
     }
 
     @Override
     protected void saveSourceConfiguration()
     {
+        // No source configuration is available for unknown protocol channels.
     }
 }
