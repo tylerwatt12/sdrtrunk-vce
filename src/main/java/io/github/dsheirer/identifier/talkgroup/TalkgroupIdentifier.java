@@ -26,12 +26,13 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
+import java.util.Objects;
 
 /**
  * Talkgroup identifier.
  *
- * Note: this class overrides the .equals method to ensure that all talkgroups and subclasses can be compared using
- * the talkgroup value, regardless if it is a simple talkgroup or a fully qualified talkgroup identifier.
+ * Note: equality is limited to the concrete talkgroup identifier type so that subclasses with additional identity
+ * fields can define coherent equals/hashCode implementations.
  */
 public abstract class TalkgroupIdentifier extends IntegerIdentifier
 {
@@ -40,7 +41,7 @@ public abstract class TalkgroupIdentifier extends IntegerIdentifier
      * @param value for the talkgroup
      * @param role for the talkgroup
      */
-    public TalkgroupIdentifier(Integer value, Role role)
+    protected TalkgroupIdentifier(Integer value, Role role)
     {
         super(value, IdentifierClass.USER, Form.TALKGROUP, role);
     }
@@ -52,8 +53,7 @@ public abstract class TalkgroupIdentifier extends IntegerIdentifier
     }
 
     /**
-     * Overrides to compare just the talkgroup value, class, form, role and protocol.  This allows a fully qualified
-     * talkgroup identifier to be equivalent to a standard talkgroup identifier for the traffic channel manager.
+     * Overrides to compare the talkgroup value, identifier details, protocol, and concrete type.
      */
     @Override
     public boolean equals(Object o)
@@ -63,15 +63,22 @@ public abstract class TalkgroupIdentifier extends IntegerIdentifier
             return true;
         }
 
-        if(o instanceof TalkgroupIdentifier tg)
+        if(o == null || getClass() != o.getClass())
         {
-            return (getValue().intValue() == tg.getValue().intValue()) &&
-                    getIdentifierClass() == tg.getIdentifierClass() &&
-                    getForm() == tg.getForm() &&
-                    getRole() == tg.getRole() &&
-                    getProtocol() == tg.getProtocol();
+            return false;
         }
 
-        return false;
+        TalkgroupIdentifier tg = (TalkgroupIdentifier)o;
+        return Objects.equals(getValue(), tg.getValue()) &&
+                getIdentifierClass() == tg.getIdentifierClass() &&
+                getForm() == tg.getForm() &&
+                getRole() == tg.getRole() &&
+                getProtocol() == tg.getProtocol();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getClass(), getValue(), getIdentifierClass(), getForm(), getRole(), getProtocol());
     }
 }

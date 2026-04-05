@@ -20,6 +20,7 @@
 package io.github.dsheirer.identifier.talkgroup;
 
 import io.github.dsheirer.identifier.Role;
+import java.util.Objects;
 
 /**
  * Fully qualified radio identifier
@@ -38,7 +39,7 @@ public abstract class FullyQualifiedTalkgroupIdentifier extends TalkgroupIdentif
      * @param id for the talkgroup within the home system.
      * @param role played by the talkgroup.
      */
-    public FullyQualifiedTalkgroupIdentifier(int localAddress, int wacn, int system, int id, Role role)
+    protected FullyQualifiedTalkgroupIdentifier(int localAddress, int wacn, int system, int id, Role role)
     {
         super(localAddress, role);
         mWacn = wacn;
@@ -105,19 +106,29 @@ public abstract class FullyQualifiedTalkgroupIdentifier extends TalkgroupIdentif
     @Override
     public boolean equals(Object o)
     {
-        //Attempt to match as a fully qualified talkgroup match first
+        if(this == o)
+        {
+            return true;
+        }
+
         if(o instanceof FullyQualifiedTalkgroupIdentifier fqti)
         {
             return getWacn() == fqti.getWacn() &&
                     getSystem() == fqti.getSystem() &&
-                    getTalkgroup() == fqti.getTalkgroup();
-        }
-        //Attempt to match the local address against a simple talkgroup version
-        else if(o instanceof TalkgroupIdentifier ti)
-        {
-            return getValue() != 0 && ti.getValue() != 0 && getValue().equals(ti.getValue());
+                    getTalkgroup() == fqti.getTalkgroup() &&
+                    getIdentifierClass() == fqti.getIdentifierClass() &&
+                    getForm() == fqti.getForm() &&
+                    getRole() == fqti.getRole() &&
+                    getProtocol() == fqti.getProtocol();
         }
 
-        return super.equals(o);
+        return false;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getClass(), getWacn(), getSystem(), getTalkgroup(), getIdentifierClass(), getForm(),
+                getRole(), getProtocol());
     }
 }

@@ -24,7 +24,6 @@ package io.github.dsheirer.identifier.talkgroup;
 
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.protocol.Protocol;
-
 /**
  * LTR talkgroup identifier
  */
@@ -98,8 +97,8 @@ public class LTRTalkgroup extends TalkgroupIdentifier implements Comparable<LTRT
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof LTRTalkgroup)) return false;
-        return compareTo((LTRTalkgroup) o) == 0;
+    public boolean equals(Object o)
+    {
+        return super.equals(o);
     }
 }
