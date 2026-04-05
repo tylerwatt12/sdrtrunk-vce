@@ -310,11 +310,8 @@ public class LoginDialog extends Dialog<AuthorizationInformation>
                         return;
                     }
 
-                    Platform.runLater(new Runnable()
+                    Platform.runLater(() ->
                     {
-                        @Override
-                        public void run()
-                        {
                             boolean success = false;
                             RadioReference.LoginStatus loginStatus;
 
@@ -346,11 +343,8 @@ public class LoginDialog extends Dialog<AuthorizationInformation>
                                     getTestFailIcon().setVisible(true);
                                     getTestExpiredIcon().setVisible(false);
 
-                                    Alert alert = new Alert(Alert.AlertType.ERROR, "Please verify username and password", ButtonType.OK);
-                                    alert.setHeaderText("Login Failed");
-                                    alert.setTitle("Test Failed");
-                                    alert.initOwner(((Node)getTestConnectionButton()).getScene().getWindow());
-                                    alert.showAndWait();
+                                    showTestAlert(Alert.AlertType.ERROR, "Please verify username and password",
+                                        "Login Failed");
                                     mLog.error("Login failed. Invalid username or password.  Can't login to radioreference.com");
                                 }
                                 else
@@ -368,44 +362,42 @@ public class LoginDialog extends Dialog<AuthorizationInformation>
 
                                 if(rre.getCause() instanceof ConnectException)
                                 {
-                                    Alert alert = new Alert(Alert.AlertType.ERROR, "Please check network or radio reference availability", ButtonType.OK);
-                                    alert.setHeaderText("No Network Connection");
-                                    alert.setTitle("Test Failed");
-                                    alert.initOwner(((Node)getTestConnectionButton()).getScene().getWindow());
-                                    alert.showAndWait();
+                                    showTestAlert(Alert.AlertType.ERROR,
+                                        "Please check network or radio reference availability",
+                                        "No Network Connection");
                                     mLog.error("No network connection to radioreference.com");
                                 }
                                 else if(rre.hasFault())
                                 {
                                     Fault fault = rre.getFault();
 
-                                    Alert alert = new Alert(Alert.AlertType.ERROR, fault.getFaultString(), ButtonType.OK);
-                                    alert.setHeaderText(fault.getFaultCode());
-                                    alert.setTitle("Test Failed");
-                                    alert.initOwner(((Node)getTestConnectionButton()).getScene().getWindow());
-                                    alert.showAndWait();
+                                    showTestAlert(Alert.AlertType.ERROR, fault.getFaultString(), fault.getFaultCode());
                                     mLog.error("Test failed.  Fault [" + fault.toString() + "] Can't login to radioreference.com");
                                 }
                                 else
                                 {
-                                    Alert alert = new Alert(Alert.AlertType.ERROR, "Error: " + rre.getMessage(), ButtonType.OK);
-                                    alert.setHeaderText("Unknown Error");
-                                    alert.setTitle("Test Failed");
-                                    alert.initOwner(((Node)getTestConnectionButton()).getScene().getWindow());
-                                    alert.showAndWait();
+                                    showTestAlert(Alert.AlertType.ERROR, "Error: " + rre.getMessage(), "Unknown Error");
                                     mLog.error("Error testing connection to radioreference.com", rre);
                                 }
                             }
 
 
                             getTestConnectionButton().setDisable(false);
-                        }
                     });
                 }
             });
         }
 
         return mTestConnectionButton;
+    }
+
+    private void showTestAlert(Alert.AlertType alertType, String contentText, String headerText)
+    {
+        Alert alert = new Alert(alertType, contentText, ButtonType.OK);
+        alert.setHeaderText(headerText);
+        alert.setTitle("Test Failed");
+        alert.initOwner(((Node)getTestConnectionButton()).getScene().getWindow());
+        alert.showAndWait();
     }
 
     private IconNode getTestPassIcon()

@@ -19,4 +19,4 @@
 
 package io.github.dsheirer.gui.playlist.radioreference;
 
-public enum Level {NATIONAL, STATE, COUNTY};
+public enum Level {NATIONAL, STATE, COUNTY}

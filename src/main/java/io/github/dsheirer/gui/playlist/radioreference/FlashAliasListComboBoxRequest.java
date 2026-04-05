@@ -20,8 +20,9 @@
 package io.github.dsheirer.gui.playlist.radioreference;
 
 /**
- * Simple request to flash the alias list box
+ * Marker event posted on the global event bus to request that the alias list combo box be flashed.
  */
-public class FlashAliasListComboBoxRequest
+@SuppressWarnings("java:S2094")
+public record FlashAliasListComboBoxRequest()
 {
 }

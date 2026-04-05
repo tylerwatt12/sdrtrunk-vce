@@ -51,6 +51,10 @@ import java.util.Map;
  */
 public class RadioReferenceDecoder
 {
+    private static final String TYPE_DMR = "DMR";
+    private static final String TYPE_LTR = "LTR";
+    private static final String TYPE_MOTOROLA = "Motorola";
+    private static final String TYPE_PROJECT_25 = "Project 25";
 
     private UserPreferences mUserPreferences;
     private Map<Integer,Flavor> mFlavorMap;
@@ -293,7 +297,7 @@ public class RadioReferenceDecoder
      */
     public boolean isLTR(System system)
     {
-        return getType(system) != null && getType(system).getName().toLowerCase().contentEquals("ltr");
+        return getType(system) != null && getType(system).getName().equalsIgnoreCase(TYPE_LTR);
     }
 
     /**
@@ -302,7 +306,7 @@ public class RadioReferenceDecoder
      */
     public boolean isHybridMotorolaP25(System system)
     {
-        return getType(system) != null && getType(system).getName().contentEquals("Motorola") &&
+        return getType(system) != null && getType(system).getName().contentEquals(TYPE_MOTOROLA) &&
             getProtocol(system) == Protocol.APCO25;
     }
 
@@ -313,19 +317,8 @@ public class RadioReferenceDecoder
      */
     public boolean isLSM(Site site)
     {
-        if(site != null)
-        {
-            if(site.getModulation() != null && site.getModulation().contentEquals("LSM"))
-            {
-                return true;
-            }
-            else if(site.getDescription() != null && site.getDescription().contains("Simulcast"))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return site != null && ((site.getModulation() != null && site.getModulation().contentEquals("LSM")) ||
+                (site.getDescription() != null && site.getDescription().contains("Simulcast")));
     }
 
     /**
@@ -338,7 +331,7 @@ public class RadioReferenceDecoder
     {
         Type type = getType(systemInformation);
         Flavor flavor = getFlavor(systemInformation);
-        return type != null && flavor != null && type.getName().contains("DMR") && !site.getSiteFrequencies().isEmpty();
+        return type != null && flavor != null && type.getName().contains(TYPE_DMR) && !site.getSiteFrequencies().isEmpty();
     }
 
     /**
@@ -400,9 +393,9 @@ public class RadioReferenceDecoder
 
         switch(type.getName())
         {
-            case "DMR":
+            case TYPE_DMR:
                 return Protocol.DMR;
-            case "LTR":
+            case TYPE_LTR:
                 if(flavor != null)
                 {
                     if(flavor.getName().contentEquals("Standard") || flavor.getName().contentEquals("Net"))
@@ -417,9 +410,9 @@ public class RadioReferenceDecoder
                 return Protocol.LTR;
             case "MPT-1327":
                 return Protocol.MPT1327;
-            case "Project 25":
+            case TYPE_PROJECT_25:
                 return Protocol.APCO25;
-            case "Motorola":
+            case TYPE_MOTOROLA:
                 if(voice.getName().contentEquals("Analog and APCO-25 Common Air Interface") ||
                     voice.getName().contentEquals("APCO-25 Common Air Interface Exclusive"))
                 {
@@ -465,9 +458,9 @@ public class RadioReferenceDecoder
         {
             switch(type.getName())
             {
-                case "DMR":
+                case TYPE_DMR:
                     return DecoderType.DMR;
-                case "LTR":
+                case TYPE_LTR:
                     if(flavor.getName().contentEquals("Net"))
                     {
                         return DecoderType.LTR_NET;
@@ -482,7 +475,7 @@ public class RadioReferenceDecoder
                     }
                 case "MPT-1327":
                     return DecoderType.MPT1327;
-                case "Project 25":
+                case TYPE_PROJECT_25:
                     if(flavor.getName().contentEquals("Phase II"))
                     {
                         return DecoderType.P25_PHASE2;
@@ -492,7 +485,7 @@ public class RadioReferenceDecoder
                         return DecoderType.P25_PHASE1;
                     }
                     break;
-                case "Motorola":
+                case TYPE_MOTOROLA:
                     if(voice.getName().contentEquals("Analog and APCO-25 Common Air Interface") ||
                         voice.getName().contentEquals("APCO-25 Common Air Interface Exclusive"))
                     {
