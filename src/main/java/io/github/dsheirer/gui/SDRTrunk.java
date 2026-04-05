@@ -499,64 +499,20 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         JMenuItem viewApplicationLogsMenu = new JMenuItem("Application Log Files");
         viewApplicationLogsMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewApplicationLogsMenu.addActionListener(arg0 -> {
-            File logsDirectory = mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog().toFile();
-            try
-            {
-                Desktop.getDesktop().open(logsDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " + logsDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewApplicationLogsMenu.addActionListener(arg0 ->
+                openFileExplorer(mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog().toFile()));
         viewMenu.add(viewApplicationLogsMenu);
 
         JMenuItem viewRecordingsMenuItem = new JMenuItem("Audio Recordings");
         viewRecordingsMenuItem.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewRecordingsMenuItem.addActionListener(arg0 -> {
-            File recordingsDirectory = mUserPreferences.getDirectoryPreference().getDirectoryRecording().toFile();
-
-            try
-            {
-                Desktop.getDesktop().open(recordingsDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " +
-                                recordingsDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewRecordingsMenuItem.addActionListener(arg0 ->
+                openFileExplorer(mUserPreferences.getDirectoryPreference().getDirectoryRecording().toFile()));
         viewMenu.add(viewRecordingsMenuItem);
 
         JMenuItem viewEventLogsMenu = new JMenuItem("Channel Event Log Files");
         viewEventLogsMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewEventLogsMenu.addActionListener(arg0 -> {
-            File eventLogsDirectory = mUserPreferences.getDirectoryPreference().getDirectoryEventLog().toFile();
-            try
-            {
-                Desktop.getDesktop().open(eventLogsDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " + eventLogsDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewEventLogsMenu.addActionListener(arg0 ->
+                openFileExplorer(mUserPreferences.getDirectoryPreference().getDirectoryEventLog().toFile()));
         viewMenu.add(viewEventLogsMenu);
 
         JMenuItem iconManagerMenu = new JMenuItem("Icon Manager");
@@ -571,22 +527,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         JMenuItem viewScreenCapturesMenu = new JMenuItem("Screen Captures");
         viewScreenCapturesMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewScreenCapturesMenu.addActionListener(arg0 -> {
-            File screenCapturesDirectory = mUserPreferences.getDirectoryPreference().getDirectoryScreenCapture().toFile();
-            try
-            {
-                Desktop.getDesktop().open(screenCapturesDirectory);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Couldn't open file explorer");
-
-                JOptionPane.showMessageDialog(mMainGui,
-                        "Can't launch file explorer - files are located at: " + screenCapturesDirectory,
-                        "Can't launch file explorer",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        });
+        viewScreenCapturesMenu.addActionListener(arg0 ->
+                openFileExplorer(mUserPreferences.getDirectoryPreference().getDirectoryScreenCapture().toFile()));
         viewMenu.add(viewScreenCapturesMenu);
 
         JMenuItem preferencesItem = new JMenuItem("User Preferences");
@@ -643,6 +585,22 @@ public class SDRTrunk implements Listener<TunerEvent>
     /**
      * Performs shutdown operations
      */
+    private void openFileExplorer(File directory)
+    {
+        try
+        {
+            Desktop.getDesktop().open(directory);
+        }
+        catch(Exception e)
+        {
+            mLog.error("Couldn't open file explorer", e);
+            JOptionPane.showMessageDialog(mMainGui,
+                    "Can't launch file explorer - files are located at: " + directory,
+                    "Can't launch file explorer",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void processShutdown()
     {
         mLog.info("Application shutdown started ...");
