@@ -32,6 +32,10 @@ public class AmDemodulatorFactory
 {
     private static final Logger mLog = LoggerFactory.getLogger(AmDemodulatorFactory.class);
 
+    private AmDemodulatorFactory()
+    {
+    }
+
     /**
      * Creates the optimal AM demodulator using calibration data to select the optimal
      * implementation from scalar and vector options.

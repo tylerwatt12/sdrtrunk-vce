@@ -19,8 +19,6 @@
 
 package io.github.dsheirer.dsp.am;
 
-import io.github.dsheirer.dsp.magnitude.IMagnitudeCalculator;
-import io.github.dsheirer.dsp.magnitude.MagnitudeFactory;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationException;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
@@ -36,7 +34,6 @@ public class AmDemodulatorCalibration extends Calibration
     private static final int ITERATION_DURATION_MS = 1000;
     private static final int WARMUP_ITERATIONS = 5;
     private static final int TEST_ITERATIONS = 5;
-    private IMagnitudeCalculator mMagnitudeCalculator = MagnitudeFactory.getMagnitudeCalculator();
     private IAmDemodulator mScalarDemodulator = new ScalarAMDemodulator(500.0f);
     private IAmDemodulator mVectorDemodulator64 = new VectorAMDemodulator64(500.0f);
     private IAmDemodulator mVectorDemodulator128 = new VectorAMDemodulator128(500.0f);
