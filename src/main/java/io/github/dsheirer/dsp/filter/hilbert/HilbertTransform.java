@@ -50,7 +50,7 @@ public abstract class HilbertTransform
      *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
      *  THE SOFTWARE.
      ******************************************************************************/
-    public static final float[] HALF_BAND_FILTER_47_TAP = new float[]
+    private static final float[] HALF_BAND_FILTER_47_TAP = new float[]
     {
             -0.000998606272947510f, 0.0f,  0.001695637278417295f, 0.0f,
             -0.003054430179754289f, 0.0f,  0.005055504379767936f, 0.0f,
@@ -65,6 +65,7 @@ public abstract class HilbertTransform
             0.005055504379767936f, 0.0f, -0.003054430179754289f, 0.0f,
             0.001695637278417295f, 0.0f, -0.000998606272947510f
     };
+    private static final float[] CONVERTED_COEFFICIENTS = convertHalfBandToHilbert(HALF_BAND_FILTER_47_TAP);
 
     protected float[] mCoefficients;
     protected int mIOverlap = 11;
@@ -72,9 +73,17 @@ public abstract class HilbertTransform
     protected float[] mIBuffer = new float[mIOverlap];
     protected float[] mQBuffer = new float[mQOverlap];
 
-    public HilbertTransform()
+    protected HilbertTransform()
     {
-        mCoefficients = convertHalfBandToHilbert(HALF_BAND_FILTER_47_TAP);
+        mCoefficients = CONVERTED_COEFFICIENTS.clone();
+    }
+
+    /**
+     * Returns a copy of the pre-converted Hilbert transform coefficients.
+     */
+    public static float[] getCoefficients()
+    {
+        return CONVERTED_COEFFICIENTS.clone();
     }
 
     /**

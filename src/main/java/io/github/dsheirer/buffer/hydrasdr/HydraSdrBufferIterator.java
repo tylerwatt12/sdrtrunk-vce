@@ -31,8 +31,7 @@ public abstract class HydraSdrBufferIterator<T> implements Iterator<T>
 {
     protected static final float SCALE_SIGNED_12_BIT_TO_FLOAT = 1.0f / 2048.0f;
     protected static final int FRAGMENT_SIZE = 4096;
-    protected static final float[] COEFFICIENTS =
-            HilbertTransform.convertHalfBandToHilbert(HilbertTransform.HALF_BAND_FILTER_47_TAP);
+    protected static final float[] COEFFICIENTS = HilbertTransform.getCoefficients();
 
     public static final int I_OVERLAP = 11;
     public static final int Q_OVERLAP = 23;
