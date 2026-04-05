@@ -32,7 +32,7 @@ import java.util.Objects;
  */
 public abstract class StringIdentifier extends Identifier<String>
 {
-    public StringIdentifier(String value, IdentifierClass identifierClass, Form form, Role role)
+    protected StringIdentifier(String value, IdentifierClass identifierClass, Form form, Role role)
     {
         super(value, identifierClass, form, role);
     }

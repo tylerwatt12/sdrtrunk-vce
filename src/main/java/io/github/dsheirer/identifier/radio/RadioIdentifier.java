@@ -36,7 +36,7 @@ import java.util.Objects;
  */
 public abstract class RadioIdentifier extends IntegerIdentifier
 {
-    public RadioIdentifier(Integer value, Role role)
+    protected RadioIdentifier(Integer value, Role role)
     {
         super(value, IdentifierClass.USER, Form.RADIO, role);
     }

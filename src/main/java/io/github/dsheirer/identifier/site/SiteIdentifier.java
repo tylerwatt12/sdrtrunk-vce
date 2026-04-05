@@ -30,7 +30,7 @@ import io.github.dsheirer.identifier.integer.IntegerIdentifier;
  */
 public abstract class SiteIdentifier extends IntegerIdentifier
 {
-    public SiteIdentifier(int site)
+    protected SiteIdentifier(int site)
     {
         super(site, IdentifierClass.NETWORK, Form.SITE, Role.BROADCAST);
     }

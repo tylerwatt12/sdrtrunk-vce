@@ -34,7 +34,7 @@ import java.util.List;
  */
 public abstract class StringListIdentifier extends Identifier<List<String>>
 {
-    public StringListIdentifier(List<String> values, IdentifierClass identifierClass, Form form, Role role)
+    protected StringListIdentifier(List<String> values, IdentifierClass identifierClass, Form form, Role role)
     {
         super(values, identifierClass, form, role);
     }
