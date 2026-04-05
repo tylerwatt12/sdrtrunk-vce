@@ -36,6 +36,10 @@ public class ChannelConfigurationEditorFactory
     private static final Logger mLog = LoggerFactory.getLogger(ChannelConfigurationEditorFactory.class);
     private static List<DecoderType> mLoggedUnrecognizedTypes = new ArrayList<>();
 
+    private ChannelConfigurationEditorFactory()
+    {
+    }
+
     /**
      * Constructs an editor for the specified decoder type
      * @param decoderType to create

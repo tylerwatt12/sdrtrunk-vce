@@ -84,7 +84,6 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     private TableView<TimeslotFrequency> mTimeslotFrequencyTable;
     private IntegerTextField mLogicalChannelNumberField;
     private FrequencyField mDownlinkFrequencyField;
-//    private FrequencyField mUplinkFrequencyField;
     private Button mAddTimeslotFrequencyButton;
     private Button mDeleteTimeslotFrequencyButton;
     private Spinner<Integer> mChannelRotationDelaySpinner;
@@ -314,20 +313,17 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
 
         getLogicalChannelNumberField().setDisable(timeslot == null);
         getDownlinkFrequencyField().setDisable(timeslot == null);
-//        getUplinkFrequencyField().setDisable(timeslot == null);
         getDeleteTimeslotFrequencyButton().setDisable(timeslot == null);
 
         if(timeslot != null)
         {
             getLogicalChannelNumberField().set(timeslot.getNumber());
             getDownlinkFrequencyField().set(timeslot.getDownlinkFrequency());
-//            getUplinkFrequencyField().set(timeslot.getUplinkFrequency());
         }
         else
         {
             getLogicalChannelNumberField().set(0);
             getDownlinkFrequencyField().set(0);
-//            getUplinkFrequencyField().set(0);
         }
 
         modifiedProperty().set(modified);
@@ -460,35 +456,6 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         return mDownlinkFrequencyField;
     }
 
-//    private FrequencyField getUplinkFrequencyField()
-//    {
-//        if(mUplinkFrequencyField == null)
-//        {
-//            mUplinkFrequencyField = new FrequencyField();
-//            mUplinkFrequencyField.setDisable(true);
-//            mUplinkFrequencyField.textProperty().addListener(new ChangeListener<String>()
-//            {
-//                @Override
-//                public void changed(ObservableValue<? extends String> observable, String oldValue, String newValue)
-//                {
-//                    TimeslotFrequency selected = getTimeslotTable().getSelectionModel().getSelectedItem();
-//
-//                    if(selected != null)
-//                    {
-//                        selected.setUplinkFrequency(mUplinkFrequencyField.get());
-//                        int lsn = selected.getNumber();
-//                        selected.setNumber(-1);
-//                        selected.setNumber(lsn);
-//                    }
-//
-//                    modifiedProperty().set(true);
-//                }
-//            });
-//        }
-//
-//        return mUplinkFrequencyField;
-//    }
-
     private ToggleSwitch getIgnoreDataCallsButton()
     {
         if(mIgnoreDataCallsButton == null)
@@ -609,8 +576,6 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         getLogicalChannelNumberField().setDisable(true);
         getDownlinkFrequencyField().set(0);
         getDownlinkFrequencyField().setDisable(true);
-//        getUplinkFrequencyField().set(0);
-//        getUplinkFrequencyField().setDisable(true);
         getChannelRotationDelaySpinner().setDisable(config == null);
 
         if(config instanceof DecodeConfigDMR)

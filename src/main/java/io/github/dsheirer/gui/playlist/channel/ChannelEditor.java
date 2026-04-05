@@ -172,9 +172,8 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
 
             //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
             alert.setResizable(true);
-            alert.onShownProperty().addListener(e -> {
-                Platform.runLater(() -> alert.setResizable(false));
-            });
+            alert.onShownProperty().addListener(e ->
+                Platform.runLater(() -> alert.setResizable(false)));
 
             Optional<ButtonType> result = alert.showAndWait();
 
@@ -413,57 +412,49 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             TableColumn<Channel,Boolean> playingColumn = new TableColumn("Playing");
             playingColumn.setPrefWidth(75);
             playingColumn.setCellValueFactory(new PropertyValueFactory<>("processing"));
-            playingColumn.setCellFactory(param -> {
-                TableCell<Channel,Boolean> tableCell = new TableCell<>()
+            playingColumn.setCellFactory(param -> new TableCell<>()
+            {
+                @Override
+                protected void updateItem(Boolean item, boolean empty)
                 {
-                    @Override
-                    protected void updateItem(Boolean item, boolean empty)
+                    setAlignment(Pos.CENTER);
+                    setText(null);
+
+                    if(empty || item == null || !item)
                     {
-                        setAlignment(Pos.CENTER);
-                        setText(null);
-
-                        if(empty || item == null || !item)
-                        {
-                            setGraphic(null);
-                        }
-                        else
-                        {
-                            IconNode iconNode = new IconNode(FontAwesome.CHECK);
-                            iconNode.setFill(Color.GREEN);
-                            setGraphic(iconNode);
-                        }
+                        setGraphic(null);
                     }
-                };
-
-                return tableCell;
+                    else
+                    {
+                        IconNode iconNode = new IconNode(FontAwesome.CHECK);
+                        iconNode.setFill(Color.GREEN);
+                        setGraphic(iconNode);
+                    }
+                }
             });
 
             TableColumn<Channel,Boolean> autoStartColumn = new TableColumn<>("Auto-Start");
             autoStartColumn.setCellValueFactory(new PropertyValueFactory<>("autoStart"));
             autoStartColumn.setPrefWidth(95);
-            autoStartColumn.setCellFactory(param -> {
-                TableCell<Channel,Boolean> tableCell = new TableCell<>()
+            autoStartColumn.setCellFactory(param -> new TableCell<>()
+            {
+                @Override
+                protected void updateItem(Boolean item, boolean empty)
                 {
-                    @Override
-                    protected void updateItem(Boolean item, boolean empty)
+                    setAlignment(Pos.CENTER);
+                    setText(null);
+
+                    if(empty || item == null || !item)
                     {
-                        setAlignment(Pos.CENTER);
-                        setText(null);
-
-                        if(empty || item == null || !item)
-                        {
-                            setGraphic(null);
-                        }
-                        else
-                        {
-                            IconNode iconNode = new IconNode(FontAwesome.CHECK);
-                            iconNode.setFill(Color.GREEN);
-                            setGraphic(iconNode);
-                        }
+                        setGraphic(null);
                     }
-                };
-
-                return tableCell;
+                    else
+                    {
+                        IconNode iconNode = new IconNode(FontAwesome.CHECK);
+                        iconNode.setFill(Color.GREEN);
+                        setGraphic(iconNode);
+                    }
+                }
             });
 
             TableColumn systemColumn = new TableColumn("System");
@@ -717,7 +708,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
      */
     public static class ChannelListFilter implements Predicate<Channel>
     {
-        public enum View{ALL,AUTO_START,PLAYING};
+        public enum View{ALL,AUTO_START,PLAYING}
 
         private String mFilterText;
         private View mView = View.ALL;
@@ -753,13 +744,13 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             switch(mView)
             {
-                case ALL:
-                default:
-                    return matchesFilter(channel);
                 case AUTO_START:
                     return channel.isAutoStart() && matchesFilter(channel);
                 case PLAYING:
                     return channel.isProcessing() && matchesFilter(channel);
+                case ALL:
+                default:
+                    return matchesFilter(channel);
             }
         }
 
@@ -773,27 +764,10 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
                 return true;
             }
 
-            if(channel.getName() != null && channel.getName().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            if(channel.getSite() != null && channel.getSite().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            if(channel.getSystem() != null && channel.getSystem().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            if(channel.getDecodeConfiguration().getDecoderType().toString().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            return false;
+            return (channel.getName() != null && channel.getName().toLowerCase().contains(mFilterText)) ||
+                (channel.getSite() != null && channel.getSite().toLowerCase().contains(mFilterText)) ||
+                (channel.getSystem() != null && channel.getSystem().toLowerCase().contains(mFilterText)) ||
+                channel.getDecodeConfiguration().getDecoderType().toString().toLowerCase().contains(mFilterText);
         }
     }
 }

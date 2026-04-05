@@ -80,7 +80,6 @@ public class AMConfigurationEditor extends ChannelConfigurationEditor
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private TalkgroupValueChangeListener mTalkgroupValueChangeListener = new TalkgroupValueChangeListener();
     private IntegerFormatter mDecimalFormatter = new IntegerFormatter(1, 65535);
-    private HexFormatter mHexFormatter = new HexFormatter(1, 65535);
 
     /**
      * Constructs an instance

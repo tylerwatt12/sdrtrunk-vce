@@ -107,7 +107,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
      * @param tunerManager for tuners
      * @param userPreferences for preferences
      */
-    public ChannelConfigurationEditor(PlaylistManager playlistManager, TunerManager tunerManager,
+    protected ChannelConfigurationEditor(PlaylistManager playlistManager, TunerManager tunerManager,
                                       UserPreferences userPreferences, IFilterProcessor filterProcessor)
     {
         mPlaylistManager = playlistManager;
