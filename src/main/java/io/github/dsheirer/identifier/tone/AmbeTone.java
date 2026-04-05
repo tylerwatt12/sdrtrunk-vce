@@ -19,8 +19,10 @@
 
 package io.github.dsheirer.identifier.tone;
 
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -193,12 +195,13 @@ public enum AmbeTone
     private String mValue;
     private String mLabel;
 
-    public static final EnumSet<AmbeTone> ALL_VALID_TONES = EnumSet.range(AmbeTone.DTMF_0, AmbeTone.HZ_3812_50);
+    public static final Set<AmbeTone> ALL_VALID_TONES =
+            Collections.unmodifiableSet(EnumSet.range(AmbeTone.DTMF_0, AmbeTone.HZ_3812_50));
 
-    public static final EnumSet<AmbeTone> CALL_PROGRESS_TONES = EnumSet.range(AmbeTone.BUSY_TONE, AmbeTone.RINGING_TONE);
-    public static final EnumSet<AmbeTone> DISCRETE_TONES = EnumSet.range(AmbeTone.HZ_156_25, AmbeTone.HZ_3812_50);
-    public static final EnumSet<AmbeTone> DTMF_TONES = EnumSet.range(AmbeTone.DTMF_0, AmbeTone.DTMF_POUND);
-    public static final EnumSet<AmbeTone> KNOX_TONES = EnumSet.range(AmbeTone.KNOX_0, AmbeTone.KNOX_POUND);
+    private static final Set<AmbeTone> CALL_PROGRESS_TONES = EnumSet.range(AmbeTone.BUSY_TONE, AmbeTone.RINGING_TONE);
+    private static final Set<AmbeTone> DISCRETE_TONES = EnumSet.range(AmbeTone.HZ_156_25, AmbeTone.HZ_3812_50);
+    private static final Set<AmbeTone> DTMF_TONES = EnumSet.range(AmbeTone.DTMF_0, AmbeTone.DTMF_POUND);
+    private static final Set<AmbeTone> KNOX_TONES = EnumSet.range(AmbeTone.KNOX_0, AmbeTone.KNOX_POUND);
 
     private static final Map<String,AmbeTone> CALL_PROGRESS_LOOKUP_MAP = new TreeMap<>();
     private static final Map<String,AmbeTone> DTMF_LOOKUP_MAP = new TreeMap<>();
@@ -287,6 +290,8 @@ public enum AmbeTone
                     {
                         return TONE_LOOKUP_MAP.get(tone);
                     }
+                    break;
+                default:
                     break;
             }
         }
