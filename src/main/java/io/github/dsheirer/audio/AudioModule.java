@@ -115,6 +115,7 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     @Override
     public void start()
     {
+        //No additional startup is required for buffered audio packaging.
     }
 
     @Override

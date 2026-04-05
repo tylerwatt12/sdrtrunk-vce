@@ -29,6 +29,10 @@ import javax.sound.sampled.SourceDataLine;
  */
 public class AudioFormats
 {
+	private AudioFormats()
+	{
+	}
+
 	public static final boolean LITTLE_ENDIAN = false;
 
 	public static final float PCM_8_KHZ_RATE = 8000;
@@ -44,7 +48,7 @@ public class AudioFormats
 	public static final int PCM_FRAME_SIZE_BYTES_32_BIT_MONO = 4;
 	public static final int PCM_FRAME_SIZE_BYTES_16_BIT_STEREO = 4;
 
-	public static AudioFormat PCM_SIGNED_8000_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_8000_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_8_KHZ_RATE,
 					PCM_SAMPLE_SIZE_32_BITS,
 					ONE_CHANNEL,
@@ -52,7 +56,7 @@ public class AudioFormats
 					PCM_8_KHZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_8000_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_8000_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_8_KHZ_RATE,
 					PCM_SAMPLE_SIZE_16_BITS,
 					ONE_CHANNEL,
@@ -60,7 +64,7 @@ public class AudioFormats
 					PCM_8_KHZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_16000_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_16000_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_16_KHZ_RATE,
 					PCM_SAMPLE_SIZE_16_BITS,
 					ONE_CHANNEL,
@@ -68,7 +72,7 @@ public class AudioFormats
 					PCM_16_KHZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_16000_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_16000_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_16_KHZ_RATE,
 					PCM_SAMPLE_SIZE_32_BITS,
 					ONE_CHANNEL,
@@ -76,7 +80,7 @@ public class AudioFormats
 					PCM_16_KHZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_22050_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_22050_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_22050_HZ_RATE,
 					PCM_SAMPLE_SIZE_16_BITS,
 					ONE_CHANNEL,
@@ -84,7 +88,7 @@ public class AudioFormats
 					PCM_22050_HZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_22050_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_22050_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_22050_HZ_RATE,
 					PCM_SAMPLE_SIZE_32_BITS,
 					ONE_CHANNEL,
@@ -92,7 +96,7 @@ public class AudioFormats
 					PCM_22050_HZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_44100_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_44100_HZ_16_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_44100_HZ_RATE,
 					PCM_SAMPLE_SIZE_16_BITS,
 					ONE_CHANNEL,
@@ -100,7 +104,7 @@ public class AudioFormats
 					PCM_44100_HZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_44100_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_44100_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_44100_HZ_RATE,
 					PCM_SAMPLE_SIZE_32_BITS,
 					ONE_CHANNEL,
@@ -108,7 +112,7 @@ public class AudioFormats
 					PCM_44100_HZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static AudioFormat PCM_SIGNED_8000_HZ_16BITS_STEREO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
+	public static final AudioFormat PCM_SIGNED_8000_HZ_16BITS_STEREO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_8_KHZ_RATE,
 					PCM_SAMPLE_SIZE_16_BITS,
 					TWO_CHANNELS,
