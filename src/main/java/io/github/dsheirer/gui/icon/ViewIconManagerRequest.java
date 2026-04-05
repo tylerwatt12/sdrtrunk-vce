@@ -26,7 +26,4 @@ import io.github.dsheirer.gui.JavaFxWindowRequest;
  */
 public class ViewIconManagerRequest extends JavaFxWindowRequest
 {
-    public ViewIconManagerRequest()
-    {
-    }
 }

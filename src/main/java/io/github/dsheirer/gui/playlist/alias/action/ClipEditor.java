@@ -200,19 +200,15 @@ public class ClipEditor extends ActionEditor<ClipAction>
             final TestMessage testMessage = new TestMessage();
             final Alias testAlias = new Alias("Test Alias");
 
-            ThreadPool.CACHED.submit(new Runnable()
+            ThreadPool.CACHED.submit(() ->
             {
-                @Override
-                public void run()
+                try
                 {
-                    try
-                    {
-                        clipAction.execute(testAlias, testMessage);
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.error("Error testing clip action", e);
-                    }
+                    clipAction.execute(testAlias, testMessage);
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error testing clip action", e);
                 }
             });
         }

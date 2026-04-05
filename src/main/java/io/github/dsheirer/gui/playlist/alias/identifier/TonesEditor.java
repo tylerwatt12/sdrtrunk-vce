@@ -271,9 +271,7 @@ public class TonesEditor extends IdentifierEditor<TonesID>
             mToneListView = new ListView<>();
             mToneListView.setDisable(true);
             mToneListView.setPrefHeight(75);
-            mToneListView.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
-                setTone(newValue);
-            });
+            mToneListView.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> setTone(newValue));
         }
 
         return mToneListView;

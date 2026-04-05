@@ -530,7 +530,7 @@ public class AliasItemEditor extends Editor<Alias>
 
             if(editor == null)
             {
-                editor = ActionEditorFactory.getEditor(aliasAction.getType(), mUserPreferences);
+                editor = ActionEditorFactory.getEditor(aliasAction.getType());
                 mActionEditorMap.put(aliasAction.getType(), editor);
             }
         }

@@ -200,19 +200,15 @@ public class ScriptEditor extends ActionEditor<ScriptAction>
             final TestMessage testMessage = new TestMessage();
             final Alias testAlias = new Alias("Test Alias");
 
-            ThreadPool.CACHED.submit(new Runnable()
+            ThreadPool.CACHED.submit(() ->
             {
-                @Override
-                public void run()
+                try
                 {
-                    try
-                    {
-                        clipAction.execute(testAlias, testMessage);
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.error("Error testing script action", e);
-                    }
+                    clipAction.execute(testAlias, testMessage);
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error testing script action", e);
                 }
             });
         }

@@ -38,11 +38,11 @@ public abstract class Editor<T> extends JPanel
 {
     private static final long serialVersionUID = 1L;
 
-    protected T mItem;
+    protected transient T mItem;
     protected boolean mModified = false;
     protected Editor<?> mSaveRequestListener;
 
-    public Editor()
+    protected Editor()
     {
     }
 

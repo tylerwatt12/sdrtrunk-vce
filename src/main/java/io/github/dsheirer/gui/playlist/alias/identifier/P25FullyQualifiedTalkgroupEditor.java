@@ -137,7 +137,7 @@ public class P25FullyQualifiedTalkgroupEditor extends IdentifierEditor<P25FullyQ
 
         IntegerFormat format = mUserPreferences.getTalkgroupFormatPreference().getTalkgroupFormat(getItem().getProtocol());
 
-        if(format == IntegerFormat.DECIMAL && (mTalkgroupTextFormatter == null || !(mTalkgroupTextFormatter instanceof IntegerFormatter)))
+        if(format == IntegerFormat.DECIMAL && !(mTalkgroupTextFormatter instanceof IntegerFormatter))
         {
             mWacnTextFormatter = new IntegerFormatter(0,0xFFFFF);
             mSystemTextFormatter = new IntegerFormatter(0,0xFFF);
@@ -147,7 +147,7 @@ public class P25FullyQualifiedTalkgroupEditor extends IdentifierEditor<P25FullyQ
             mSystemField.setTooltip(new Tooltip("Format: 0 - 4095"));
             mTalkgroupField.setTooltip(new Tooltip("Format: 0 - 65535"));
         }
-        else if(format == IntegerFormat.HEXADECIMAL && (mTalkgroupTextFormatter == null || !(mTalkgroupTextFormatter instanceof HexFormatter)))
+        else if(format == IntegerFormat.HEXADECIMAL && !(mTalkgroupTextFormatter instanceof HexFormatter))
         {
             mWacnTextFormatter = new HexFormatter(0,0xFFFFF);
             mSystemTextFormatter = new HexFormatter(0,0xFFF);

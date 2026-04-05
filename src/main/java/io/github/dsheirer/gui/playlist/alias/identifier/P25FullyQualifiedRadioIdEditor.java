@@ -137,7 +137,7 @@ public class P25FullyQualifiedRadioIdEditor extends IdentifierEditor<P25FullyQua
 
         IntegerFormat format = mUserPreferences.getTalkgroupFormatPreference().getTalkgroupFormat(getItem().getProtocol());
 
-        if(format == IntegerFormat.DECIMAL && (mRadioTextFormatter == null || !(mRadioTextFormatter instanceof IntegerFormatter)))
+        if(format == IntegerFormat.DECIMAL && !(mRadioTextFormatter instanceof IntegerFormatter))
         {
             mWacnTextFormatter = new IntegerFormatter(0,0xFFFFF);
             mSystemTextFormatter = new IntegerFormatter(0,0xFFF);
@@ -147,7 +147,7 @@ public class P25FullyQualifiedRadioIdEditor extends IdentifierEditor<P25FullyQua
             mSystemField.setTooltip(new Tooltip("Format: 0 - 4095"));
             mRadioField.setTooltip(new Tooltip("Format: 0 - 16777215"));
         }
-        else if(format == IntegerFormat.HEXADECIMAL && (mRadioTextFormatter == null || !(mRadioTextFormatter instanceof HexFormatter)))
+        else if(format == IntegerFormat.HEXADECIMAL && !(mRadioTextFormatter instanceof HexFormatter))
         {
             mWacnTextFormatter = new HexFormatter(0,0xFFFFF);
             mSystemTextFormatter = new HexFormatter(0,0xFFF);

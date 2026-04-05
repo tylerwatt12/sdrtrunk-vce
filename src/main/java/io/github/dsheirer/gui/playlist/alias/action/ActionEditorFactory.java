@@ -20,15 +20,17 @@
 package io.github.dsheirer.gui.playlist.alias.action;
 
 import io.github.dsheirer.alias.action.AliasActionType;
-import io.github.dsheirer.preference.UserPreferences;
 
 /**
  * Factory for creating JavaFX editors for alias identifiers
  */
 public class ActionEditorFactory
 {
+    private ActionEditorFactory()
+    {
+    }
 
-    public static ActionEditor getEditor(AliasActionType type, UserPreferences userPreferences)
+    public static ActionEditor getEditor(AliasActionType type)
     {
         switch(type)
         {

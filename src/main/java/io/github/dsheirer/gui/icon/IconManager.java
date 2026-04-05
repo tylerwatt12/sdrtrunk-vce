@@ -171,8 +171,7 @@ public class IconManager extends Editor<Icon>
             TableColumn<Icon,Boolean> typeColumn = new TableColumn<>("Type");
             typeColumn.setPrefWidth(100);
             typeColumn.setCellValueFactory(new PropertyValueFactory<>("defaultIcon"));
-            typeColumn.setCellFactory(param -> {
-                TableCell tableCell = new TableCell<Icon,Boolean>()
+            typeColumn.setCellFactory(param -> new TableCell<Icon,Boolean>()
                 {
                     @Override
                     protected void updateItem(Boolean item, boolean empty)
@@ -199,10 +198,7 @@ public class IconManager extends Editor<Icon>
                             setText(null);
                         }
                     }
-                };
-
-                return tableCell;
-            });
+                });
 
             mIconTableView.getColumns().addAll(typeColumn, iconColumn, nameColumn);
             mIconTableView.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
@@ -331,19 +327,13 @@ public class IconManager extends Editor<Icon>
 
         if(name == null || name.isEmpty())
         {
-            Alert alert = new Alert(Alert.AlertType.ERROR, "Please assign a name for the icon", ButtonType.OK);
-            alert.setHeaderText("Name is required");
-            alert.setTitle("Save Icon");
-            alert.showAndWait();
+            showSaveErrorAlert("Name is required", "Please assign a name for the icon");
             return;
         }
 
         if(path == null || path.isEmpty() || !Files.exists(Path.of(path)))
         {
-            Alert alert = new Alert(Alert.AlertType.ERROR, "Please select a picture file for the icon", ButtonType.OK);
-            alert.setHeaderText("File is required");
-            alert.setTitle("Save Icon");
-            alert.showAndWait();
+            showSaveErrorAlert("File is required", "Please select a picture file for the icon");
             return;
         }
 
@@ -360,11 +350,8 @@ public class IconManager extends Editor<Icon>
 
             if(icon.getFxImage() != null && icon.getFxImage().getException() != null)
             {
-                Alert alert = new Alert(Alert.AlertType.ERROR, "Unable to load icon image from selected " +
-                    "file. Please select a valid image file for the icon", ButtonType.OK);
-                alert.setHeaderText("Invalid image file");
-                alert.setTitle("Save Icon");
-                alert.showAndWait();
+                showSaveErrorAlert("Invalid image file", "Unable to load icon image from selected " +
+                    "file. Please select a valid image file for the icon");
                 return;
             }
             else
@@ -377,9 +364,18 @@ public class IconManager extends Editor<Icon>
         modifiedProperty().set(false);
     }
 
+    private void showSaveErrorAlert(String headerText, String contentText)
+    {
+        Alert alert = new Alert(Alert.AlertType.ERROR, contentText, ButtonType.OK);
+        alert.setHeaderText(headerText);
+        alert.setTitle("Save Icon");
+        alert.showAndWait();
+    }
+
     @Override
     public void dispose()
     {
+        // No listeners or resources require explicit cleanup for this editor.
     }
 
     @Override
@@ -532,7 +528,7 @@ public class IconManager extends Editor<Icon>
         @Override
         public TableCell<Icon, String> call(TableColumn<Icon, String> param)
         {
-            TableCell<Icon,String> tableCell = new TableCell<>()
+            return new TableCell<>()
             {
                 @Override
                 protected void updateItem(String item, boolean empty)
@@ -564,8 +560,6 @@ public class IconManager extends Editor<Icon>
                     }
                 }
             };
-
-            return tableCell;
         }
     }
 }

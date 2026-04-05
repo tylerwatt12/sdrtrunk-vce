@@ -27,6 +27,9 @@ import io.github.dsheirer.preference.UserPreferences;
  */
 public class IdentifierEditorFactory
 {
+    private IdentifierEditorFactory()
+    {
+    }
 
     public static IdentifierEditor getEditor(AliasIDType type, UserPreferences userPreferences)
     {

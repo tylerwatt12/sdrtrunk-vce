@@ -132,8 +132,7 @@ public class RadioIdEditor extends IdentifierEditor<Radio>
             }
             else
             {
-                mLog.warn("Couldn't find radio detail for protocol [" + getItem().getProtocol() +
-                    "] and format [" + format + "]");
+                logMissingRadioDetail("Couldn't find radio detail", getItem().getProtocol(), format);
             }
 
             getFormatLabel().setText(radioDetail.getTooltip());
@@ -217,8 +216,8 @@ public class RadioIdEditor extends IdentifierEditor<Radio>
             }
         }
 
-        mLog.warn("Unable to find radio id editor for protocol [" + protocol + "] and format [" + integerFormat +
-                "] - using default editor");
+        logMissingRadioDetail("Unable to find radio id editor", protocol, integerFormat);
+        mLog.warn("Using default editor");
 
         //Use a default instance
         for(RadioDetail detail: mRadioDetails)
@@ -229,31 +228,44 @@ public class RadioIdEditor extends IdentifierEditor<Radio>
             }
         }
 
-        mLog.warn("No Radio Detail is configured for protocol [" + protocol + "] and format [" + integerFormat + "]");
+        logMissingRadioDetail("No Radio Detail is configured", protocol, integerFormat);
         return null;
+    }
+
+    private void logMissingRadioDetail(String prefix, Protocol protocol, IntegerFormat integerFormat)
+    {
+        mLog.warn("{} for protocol [{}] and format [{}]", prefix, protocol, integerFormat);
     }
 
     private void loadRadioDetails()
     {
         mRadioDetails.clear();
-        mRadioDetails.add(new RadioDetail(Protocol.APCO25, IntegerFormat.DECIMAL, new IntegerFormatter(0,0xFFFFFF),
-            "Format: 0 - 16777215"));
-        mRadioDetails.add(new RadioDetail(Protocol.APCO25, IntegerFormat.HEXADECIMAL, new HexFormatter(0,0xFFFFFF),
-            "Format: 0 - FFFFFF"));
-        mRadioDetails.add(new RadioDetail(Protocol.DMR, IntegerFormat.DECIMAL, new IntegerFormatter(0,0xFFFFFF),
-            "Format: 0 - 16777215"));
-        mRadioDetails.add(new RadioDetail(Protocol.DMR, IntegerFormat.HEXADECIMAL, new HexFormatter(0,0xFFFFFF),
-            "Format: 0 - FFFFFF"));
-        mRadioDetails.add(new RadioDetail(Protocol.PASSPORT, IntegerFormat.DECIMAL, new IntegerFormatter(0,0x7FFFFF),
-            "Format: 0 - 8388607"));
-        mRadioDetails.add(new RadioDetail(Protocol.PASSPORT, IntegerFormat.HEXADECIMAL, new HexFormatter(0,0x7FFFFF),
-            "Format: 0 - 7FFFFF"));
-        mRadioDetails.add(new RadioDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, new IntegerFormatter(0,16777215),
-            "Format: 0 - FFFFFF"));
-        mRadioDetails.add(new RadioDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, new IntegerFormatter(0,16777215),
-            "Format: 0 - FFFFFF"));
-        mRadioDetails.add(new RadioDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, new HexFormatter(0,16777215),
-            "Format: 0 - FFFFFF"));
+        addRadioDetails(Protocol.APCO25, 0xFFFFFF);
+        addRadioDetails(Protocol.DMR, 0xFFFFFF);
+        addRadioDetails(Protocol.PASSPORT, 0x7FFFFF);
+        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0xFFFFFF);
+        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0xFFFFFF);
+        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0xFFFFFF);
+    }
+
+    private void addRadioDetails(Protocol protocol, int maximum)
+    {
+        addRadioDetail(protocol, IntegerFormat.DECIMAL, maximum);
+        addRadioDetail(protocol, IntegerFormat.HEXADECIMAL, maximum);
+    }
+
+    private void addRadioDetail(Protocol protocol, IntegerFormat integerFormat, int maximum)
+    {
+        TextFormatter<Integer> formatter = integerFormat == IntegerFormat.HEXADECIMAL ?
+            new HexFormatter(0, maximum) : new IntegerFormatter(0, maximum);
+        mRadioDetails.add(new RadioDetail(protocol, integerFormat, formatter, getTooltip(integerFormat, maximum)));
+    }
+
+    private String getTooltip(IntegerFormat integerFormat, int maximum)
+    {
+        return integerFormat == IntegerFormat.HEXADECIMAL ?
+            "Format: 0 - " + Integer.toHexString(maximum).toUpperCase() :
+            "Format: 0 - " + maximum;
     }
 
     public class RadioDetail

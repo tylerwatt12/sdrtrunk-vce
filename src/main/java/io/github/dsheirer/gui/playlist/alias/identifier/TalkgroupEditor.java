@@ -130,12 +130,11 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
                 mTalkgroupField.setTooltip(new Tooltip(talkgroupDetail.getTooltip()));
                 mIntegerTextFormatter.setValue(value);
                 mIntegerTextFormatter.valueProperty().addListener(mTalkgroupValueChangeListener);
-            }
-            else
-            {
-                mLog.warn("Couldn't find talkgroup detail for protocol [" + getItem().getProtocol() +
-                        "] and format [" + format + "]");
-            }
+                }
+                else
+                {
+                    logMissingTalkgroupDetail("Couldn't find talkgroup detail", getItem().getProtocol(), format);
+                }
 
             getFormatLabel().setText(talkgroupDetail.getTooltip());
         }
@@ -218,8 +217,8 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
             }
         }
 
-        mLog.warn("Unable to find talkgroup editor for protocol [" + protocol + "] and format [" + integerFormat +
-                "] - using default editor");
+        logMissingTalkgroupDetail("Unable to find talkgroup editor", protocol, integerFormat);
+        mLog.warn("Using default editor");
 
         //Use a default instance
         for(TalkgroupDetail detail: mTalkgroupDetails)
@@ -230,8 +229,13 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
             }
         }
 
-        mLog.warn("No Talkgroup Detail is configured for protocol [" + protocol + "] and format [" + integerFormat + "]");
+        logMissingTalkgroupDetail("No Talkgroup Detail is configured", protocol, integerFormat);
         return null;
+    }
+
+    private void logMissingTalkgroupDetail(String prefix, Protocol protocol, IntegerFormat integerFormat)
+    {
+        mLog.warn("{} for protocol [{}] and format [{}]", prefix, protocol, integerFormat);
     }
 
     private void loadTalkgroupDetails()
@@ -241,10 +245,7 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
                 "Format: 1 - 65535"));
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.AM, IntegerFormat.HEXADECIMAL, new HexFormatter(1,0xFFFF),
                 "Format: 1 - FFFF"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.APCO25, IntegerFormat.DECIMAL, new IntegerFormatter(0,65535),
-                "Format: 0 - 65535"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.APCO25, IntegerFormat.HEXADECIMAL, new HexFormatter(0,65535),
-                "Format: 0 - FFFF"));
+        addNumericTalkgroupDetails(Protocol.APCO25, 0, 0xFFFF);
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.DMR, IntegerFormat.DECIMAL, new IntegerFormatter(1,0xFFFFFF),
                 "Format: 1 - 16,777,215"));
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.DMR, IntegerFormat.HEXADECIMAL, new HexFormatter(1,0xFFFFFF),
@@ -253,26 +254,37 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
                 new PrefixIdentFormatter(), "Format: PPP-IIII = Prefix (0-127), Ident (0-8191)"));
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.LTR, IntegerFormat.FORMATTED, new LtrFormatter(),
                 "Format: A-HH-TTT = Area (0-1), Home (0-31), Talkgroup (0-255)"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.MDC1200, IntegerFormat.DECIMAL, new IntegerFormatter(0,0xFFFF),
-                "Format: 0 - 65535"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.MDC1200, IntegerFormat.HEXADECIMAL, new HexFormatter(0,0xFFFF),
-                "Format: 0 - FFFF"));
+        addNumericTalkgroupDetails(Protocol.MDC1200, 0, 0xFFFF);
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.MPT1327, IntegerFormat.FORMATTED,
                 new PrefixIdentFormatter(), "Format: PPP-IIII = Prefix (0-127), Ident (0-8191)"));
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.DECIMAL, new IntegerFormatter(1,0xFFFF),
                 "Format: 1 - 65535"));
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.HEXADECIMAL, new HexFormatter(1,0xFFFF),
                 "Format: 1 - FFFF"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.PASSPORT, IntegerFormat.DECIMAL, new IntegerFormatter(0,0xFFFF),
-                "Format: 0 - 65535"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.PASSPORT, IntegerFormat.HEXADECIMAL, new HexFormatter(0,0xFFFF),
-                "Format: 0 - FFFF"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, new IntegerFormatter(0,16777215),
-                "Format: 0 - FFFFFF"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, new IntegerFormatter(0,16777215),
-                "Format: 0 - FFFFFF"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, new HexFormatter(0,16777215),
-                "Format: 0 - FFFFFF"));
+        addNumericTalkgroupDetails(Protocol.PASSPORT, 0, 0xFFFF);
+        addNumericTalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0, 0xFFFFFF);
+        addNumericTalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0, 0xFFFFFF);
+        addNumericTalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0, 0xFFFFFF);
+    }
+
+    private void addNumericTalkgroupDetails(Protocol protocol, int minimum, int maximum)
+    {
+        addNumericTalkgroupDetail(protocol, IntegerFormat.DECIMAL, minimum, maximum);
+        addNumericTalkgroupDetail(protocol, IntegerFormat.HEXADECIMAL, minimum, maximum);
+    }
+
+    private void addNumericTalkgroupDetail(Protocol protocol, IntegerFormat integerFormat, int minimum, int maximum)
+    {
+        TextFormatter<Integer> formatter = integerFormat == IntegerFormat.HEXADECIMAL ?
+                new HexFormatter(minimum, maximum) : new IntegerFormatter(minimum, maximum);
+        mTalkgroupDetails.add(new TalkgroupDetail(protocol, integerFormat, formatter, getTooltip(integerFormat, minimum, maximum)));
+    }
+
+    private String getTooltip(IntegerFormat integerFormat, int minimum, int maximum)
+    {
+        return integerFormat == IntegerFormat.HEXADECIMAL ?
+                "Format: " + Integer.toHexString(minimum).toUpperCase() + " - " + Integer.toHexString(maximum).toUpperCase() :
+                "Format: " + minimum + " - " + maximum;
     }
 
     public static class TalkgroupDetail
