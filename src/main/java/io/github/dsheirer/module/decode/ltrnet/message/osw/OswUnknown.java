@@ -64,6 +64,6 @@ public class OswUnknown extends LtrNetOswMessage
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

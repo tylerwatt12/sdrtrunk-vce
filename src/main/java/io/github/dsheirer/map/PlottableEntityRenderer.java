@@ -144,7 +144,7 @@ public class PlottableEntityRenderer
             return aliasList.getAliases(entityHistory.getIdentifier());
         }
 
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     private ImageIcon getIcon(Alias alias)
@@ -215,5 +215,4 @@ public class PlottableEntityRenderer
         }
     }
 }
-
 

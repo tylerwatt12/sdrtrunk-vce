@@ -62,6 +62,6 @@ public class ReceiveFrequencyHigh extends FrequencyHigh
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }

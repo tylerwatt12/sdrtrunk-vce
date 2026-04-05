@@ -121,6 +121,6 @@ public class LJ1200TransponderMessage extends Message
     @Override
     public List<Identifier> getIdentifiers()
     {
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 }
