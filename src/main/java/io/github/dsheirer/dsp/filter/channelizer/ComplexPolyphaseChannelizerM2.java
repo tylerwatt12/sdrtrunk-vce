@@ -70,7 +70,6 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
 
     //Sized to process 40 times per second
     private IFFTProcessorDispatcher mIFFTProcessorDispatcher = new IFFTProcessorDispatcher(25);
-    private FloatFFT_1D mFFT;
     private float[] mInlineSamples;
     private float[] mInlineFilter;
     private boolean mTopBlockIndicator = true;
@@ -157,7 +156,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         }
 
         mLog.info("Sample Rate [" + DECIMAL_FORMAT.format(sampleRate) + "] providing [" + channels +
-            "] channels at [" + DECIMAL_FORMAT.format(sampleRate / (double)channels) + "] Hz each");
+            "] channels at [" + DECIMAL_FORMAT.format(sampleRate / channels) + "] Hz each");
 
         return channels;
     }
@@ -390,7 +389,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private void init(float[] coefficients)
     {
         int channelCount = getChannelCount();
-        mFFT = new FloatFFT_1D(channelCount);
+        mIFFTProcessorDispatcher.setFFT(new FloatFFT_1D(channelCount));
         int bufferLength = getSubChannelCount() * mTapsPerChannel;
         mSamplesPerBlock = channelCount; //Same as subChannelCount / 2
         mTopBlockMap = getTopBlockMap(channelCount);
@@ -406,6 +405,8 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     public class IFFTProcessorDispatcher extends Dispatcher<List<float[]>>
     {
+        private FloatFFT_1D mFFT;
+
         public IFFTProcessorDispatcher(long interval)
         {
             super("sdrtrunk polyphase ifft processor", interval);
@@ -436,6 +437,11 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
                     mLog.error("Error during IFFT and dispatch of processed channel results", t);
                 }
             });
+        }
+
+        private void setFFT(FloatFFT_1D fft)
+        {
+            mFFT = fft;
         }
     }
 }
