@@ -61,6 +61,12 @@ public class VectorUtilities
      */
     public static void checkComplexArrayLength(float[] i, float[] q, VectorSpecies<Float> species)
     {
+        if(i.length != q.length)
+        {
+            throw new IllegalArgumentException("I/Q buffer lengths must match. I length [" + i.length +
+                "] Q length [" + q.length + "]");
+        }
+
         if(i.length % species.length() != 0)
         {
             throw new IllegalArgumentException("I/Q buffer lengths [" + i.length + "] must be a power of 2 multiple of " +
