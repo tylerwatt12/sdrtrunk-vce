@@ -73,6 +73,7 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
 
     //Smoothing across bins in the same DFT result set
     private SmoothingFilter mSmoothingFilter = new NoSmoothingFilter();
+    private final transient Object mSmoothingFilterLock = new Object();
 
     //Reference dB value set according to the source sample size
     private float mDBScale;
@@ -136,7 +137,7 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
         //Apply averaging over multiple DFT output frames
         if(mAveraging > 1)
         {
-            float gain = 1.0f / (float)mAveraging;
+            float gain = 1.0f / mAveraging;
 
             for(int x = 0; x < mDisplayFFTBins.length; x++)
             {
@@ -227,7 +228,7 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
                     height = 0;
                 }
 
-                float xAxis = (float)x * binSize;
+                float xAxis = x * binSize;
 
                 spectrumShape.lineTo(xAxis, height);
             }
@@ -459,7 +460,7 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
         {
             int pointSize = getSmoothing();
 
-            synchronized(mSmoothingFilter)
+            synchronized(mSmoothingFilterLock)
             {
                 switch(type)
                 {

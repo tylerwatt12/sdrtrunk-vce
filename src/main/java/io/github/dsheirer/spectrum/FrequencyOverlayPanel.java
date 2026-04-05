@@ -31,8 +31,8 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.RenderingHints;
+import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
-import java.awt.event.ComponentListener;
 import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.text.DecimalFormat;
@@ -46,8 +46,7 @@ import javax.swing.JPanel;
 public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcessor, SettingChangeListener
 {
     private static final long serialVersionUID = 1L;
-    private final DecimalFormat PPM_FORMATTER = new DecimalFormat( "#.0" );
-    private final static RenderingHints RENDERING_HINTS = new RenderingHints(RenderingHints.KEY_ANTIALIASING,
+    private static final RenderingHints RENDERING_HINTS = new RenderingHints(RenderingHints.KEY_ANTIALIASING,
         RenderingHints.VALUE_ANTIALIAS_ON);
     static
     {
@@ -75,7 +74,7 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
     //Defines the offset at the bottom of the spectral display to account for
     //the frequency labels
     private double mSpectrumInset = 20.0d;
-    private LabelSizeManager mLabelSizeMonitor = new LabelSizeManager();
+    private transient LabelSizeManager mLabelSizeMonitor = new LabelSizeManager();
 
     private SettingsManager mSettingsManager;
 
@@ -245,9 +244,9 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
         long maxFrequency = getMaxDisplayFrequency();
 
         //Frequency increments for label and tick spacing
-        int label = mLabelSizeMonitor.getLabelIncrement(graphics);
+        int label = mLabelSizeMonitor.getLabelIncrement();
         int major = mLabelSizeMonitor.getMajorTickIncrement(graphics);
-        int minor = mLabelSizeMonitor.getMinorTickIncrement(graphics);
+        int minor = mLabelSizeMonitor.getMinorTickIncrement();
 
         //Avoid divide by zero error
         if(minor == 0)
@@ -268,13 +267,9 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
             {
                 drawFrequencyLineAndLabel(graphics, frequency);
             }
-            else if(frequency % major == 0)
-            {
-                drawTickLine(graphics, frequency, true);
-            }
             else
             {
-                drawTickLine(graphics, frequency, false);
+                drawTickLine(graphics, frequency, frequency % major == 0);
             }
 
             frequency += minor;
@@ -313,16 +308,6 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
     {
         graphics.setColor(color);
         graphics.draw(new Line2D.Double(xaxis, 0.0d, xaxis, getSize().getHeight() - mSpectrumInset));
-    }
-
-    /**
-     * Draws a vertical line at the xaxis
-     */
-    private void drawChannelCenterLine(Graphics2D graphics, double xaxis)
-    {
-        double height = getSize().getHeight() - mSpectrumInset;
-        graphics.setColor(Color.LIGHT_GRAY);
-        graphics.draw(new Line2D.Double(xaxis, height * 0.65d, xaxis, height - 1.0d));
     }
 
     /**
@@ -379,15 +364,15 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
      */
     private double getAxisFromFrequency(long frequency)
     {
-        double screenWidth = (double)getSize().getWidth();
+        double screenWidth = getSize().getWidth();
         double pixelsPerBin = screenWidth / (double)mDFTSize.getSize();
         double pixelOffsetToMinDisplayFrequency = pixelsPerBin * 2.0d;
 
         //Calculate frequency offset from the min frequency
-        double frequencyOffset = (double)(frequency - getMinDisplayFrequency());
+        double frequencyOffset = (frequency - getMinDisplayFrequency());
 
         //Determine ratio of frequency offset to overall bandwidth
-        double ratio = frequencyOffset / (double)getDisplayBandwidth();
+        double ratio = frequencyOffset / getDisplayBandwidth();
 
         //Apply the ratio to the screen width minus 1 bin width
         double screenOffset = screenWidth * ratio;
@@ -402,7 +387,7 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
     {
         double width = getSize().getWidth();
         double offset = xAxis / width;
-        long frequency = getMinDisplayFrequency() + FastMath.round((double)getDisplayBandwidth() * offset);
+        long frequency = getMinDisplayFrequency() + FastMath.round(getDisplayBandwidth() * offset);
         if(frequency > (getMaxFrequency()))
         {
             frequency = getMaxFrequency();
@@ -471,10 +456,7 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
 
     private long getMinDisplayFrequency()
     {
-        double bandwidthPerBin = (double)mBandwidth / (double)(mDFTSize.getSize());
-
         return getMinFrequency();
-//        return getMinFrequency() + (int)((mDFTZoomWindowOffset) * bandwidthPerBin);
     }
 
     private long getMaxDisplayFrequency()
@@ -494,7 +476,7 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
      * Calculates correct spacing and format for frequency labels and major/minor
      * tick lines based on current frequency, bandwidth, zoom and screen size.
      */
-    public class LabelSizeManager implements ComponentListener
+    public class LabelSizeManager extends ComponentAdapter
     {
         private static final double LABEL_FILL_THRESHOLD = 0.5d;
 
@@ -507,7 +489,7 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
 
         public String format(long frequency)
         {
-            return mFrequencyFormat.format((double)frequency / 1E6D);
+            return mFrequencyFormat.format(frequency / 1E6D);
         }
 
         private void setPrecision(int precision)
@@ -538,10 +520,10 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
 
                 int maxLabelWidth = fontMetrics.stringWidth(format(getMaxDisplayFrequency()));
 
-                double maxLabels = ((double) FrequencyOverlayPanel.this.getWidth() * LABEL_FILL_THRESHOLD) / (double)maxLabelWidth;
+                double maxLabels = (FrequencyOverlayPanel.this.getWidth() * LABEL_FILL_THRESHOLD) / maxLabelWidth;
 
                 //Calculate the next smallest base 10 value for the major increment
-                int power = (int)FastMath.log10((double)getDisplayBandwidth() / maxLabels);
+                int power = (int)FastMath.log10(getDisplayBandwidth() / maxLabels);
 
                 //Set the number of decimal places to display in frequency labels
                 int precision = 5 - power;
@@ -590,12 +572,12 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
             return mMajorTickIncrement;
         }
 
-        public int getMinorTickIncrement(Graphics2D graphics)
+        public int getMinorTickIncrement()
         {
             return mMinorTickIncrement;
         }
 
-        public int getLabelIncrement(Graphics2D graphics)
+        public int getLabelIncrement()
         {
             return mLabelIncrement;
         }
@@ -605,9 +587,5 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
         {
             update();
         }
-
-        public void componentHidden(ComponentEvent arg0) {}
-        public void componentMoved(ComponentEvent arg0) {}
-        public void componentShown(ComponentEvent arg0) {}
     }
 }

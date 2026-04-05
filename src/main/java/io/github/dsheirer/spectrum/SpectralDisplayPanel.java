@@ -52,12 +52,12 @@ import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
-import java.awt.event.ComponentListener;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.util.ArrayList;
-import java.util.Hashtable;
+import java.util.Dictionary;
 import net.miginfocom.swing.MigLayout;
 import org.apache.commons.math3.util.FastMath;
 
@@ -93,8 +93,6 @@ public class SpectralDisplayPanel extends JPanel
     private int mZoom = 0;
     private int mDFTZoomWindowOffset = 0;
 
-    private JScrollPane mScrollPane;
-    private JLayeredPane mLayeredPanel;
     private SpectrumPanel mSpectrumPanel;
     private WaterfallPanel mWaterfallPanel;
     private OverlayPanel mOverlayPanel;
@@ -257,7 +255,7 @@ public class SpectralDisplayPanel extends JPanel
             //Calculate the bin offset into the newly sized zoom window that
             //would place the frequency in the same proportional window location
             //that it was in the previous zoom size
-            double windowBinOffset = (double)getZoomWindowSizeInBins() * windowOffset;
+            double windowBinOffset = getZoomWindowSizeInBins() * windowOffset;
 
             //Set the overall offset to place the reference frequency in the
             //same location in the newly zoomed window
@@ -330,6 +328,7 @@ public class SpectralDisplayPanel extends JPanel
      * Overrides JComponent method to return false, since we have overlapping
      * panels with the spectrum and channel panels
      */
+    @Override
     public boolean isOptimizedDrawingEnabled()
     {
         return false;
@@ -343,8 +342,8 @@ public class SpectralDisplayPanel extends JPanel
          * The layered pane holds the overlapping spectrum and channel panels
          * and manages the sizing of each panel with the resize listener
          */
-        mLayeredPanel = new JLayeredPane();
-        mLayeredPanel.addComponentListener(new ResizeListener());
+        JLayeredPane layeredPanel = new JLayeredPane();
+        layeredPanel.addComponentListener(new ResizeListener());
 
         /**
          * Create a mouse adapter to handle mouse events over the spectrum
@@ -357,8 +356,8 @@ public class SpectralDisplayPanel extends JPanel
         mOverlayPanel.addMouseWheelListener(mouser);
 
         //Add the spectrum and channel panels to the layered panel
-        mLayeredPanel.add(mSpectrumPanel, 0, 0);
-        mLayeredPanel.add(mOverlayPanel, 1, 0);
+        layeredPanel.add(mSpectrumPanel, 0, 0);
+        layeredPanel.add(mOverlayPanel, 1, 0);
 
         //Create the waterfall
         mWaterfallPanel.addMouseListener(mouser);
@@ -367,10 +366,10 @@ public class SpectralDisplayPanel extends JPanel
 
         /* Attempt to set a 50/50 split preferred size for the split pane */
         double totalHeight =
-                mLayeredPanel.getPreferredSize().getHeight() + mWaterfallPanel.getPreferredSize().getHeight();
+                layeredPanel.getPreferredSize().getHeight() + mWaterfallPanel.getPreferredSize().getHeight();
 
-        mLayeredPanel.setPreferredSize(
-                new Dimension((int)mLayeredPanel.getPreferredSize().getWidth(), (int)(totalHeight / 2.0d)));
+        layeredPanel.setPreferredSize(
+                new Dimension((int)layeredPanel.getPreferredSize().getWidth(), (int)(totalHeight / 2.0d)));
 
         mWaterfallPanel.setPreferredSize(
                 new Dimension((int)mWaterfallPanel.getPreferredSize().getWidth(), (int)(totalHeight / 2.0d)));
@@ -378,12 +377,12 @@ public class SpectralDisplayPanel extends JPanel
         //Create the split pane to hold the layered pane and the waterfall
         JideSplitPane splitPane = new JideSplitPane(JSplitPane.VERTICAL_SPLIT);
         splitPane.setDividerSize(5);
-        splitPane.add(mLayeredPanel);
+        splitPane.add(layeredPanel);
         splitPane.add(mWaterfallPanel);
 
-        mScrollPane = new JScrollPane(splitPane);
+        JScrollPane scrollPane = new JScrollPane(splitPane);
 
-        add(mScrollPane, "grow");
+        add(scrollPane, "grow");
 
         /**
          * Setup DFTProcessor to process samples and register the waterfall and
@@ -481,7 +480,7 @@ public class SpectralDisplayPanel extends JPanel
      * Monitors the sizing of the layered pane and resizes the spectrum and
      * channel panels whenever the layered pane is resized
      */
-    public class ResizeListener implements ComponentListener
+    public class ResizeListener extends ComponentAdapter
     {
         @Override public void componentResized(ComponentEvent e)
         {
@@ -489,18 +488,6 @@ public class SpectralDisplayPanel extends JPanel
 
             mSpectrumPanel.setBounds(0, 0, c.getWidth(), c.getHeight());
             mOverlayPanel.setBounds(0, 0, c.getWidth(), c.getHeight());
-        }
-
-        @Override public void componentHidden(ComponentEvent arg0)
-        {
-        }
-
-        @Override public void componentMoved(ComponentEvent arg0)
-        {
-        }
-
-        @Override public void componentShown(ComponentEvent arg0)
-        {
         }
     }
 
@@ -512,10 +499,6 @@ public class SpectralDisplayPanel extends JPanel
         private int mDFTZoomWindowOffsetAtDragStart = 0;
         private int mDragStartX = 0;
         private double mPixelsPerBin;
-
-        public MouseEventProcessor()
-        {
-        }
 
         @Override public void mouseWheelMoved(MouseWheelEvent e)
         {
@@ -539,7 +522,7 @@ public class SpectralDisplayPanel extends JPanel
 
             int dragDistance = mDragStartX - event.getX();
 
-            double binDistance = (double)dragDistance / mPixelsPerBin;
+            double binDistance = dragDistance / mPixelsPerBin;
 
             int offset = (int)(mDFTZoomWindowOffsetAtDragStart + binDistance);
 
@@ -564,7 +547,7 @@ public class SpectralDisplayPanel extends JPanel
 
             mDFTZoomWindowOffsetAtDragStart = mDFTZoomWindowOffset;
 
-            mPixelsPerBin = (double)getWidth() / ((double)(mDFTSize.getSize()) / (double)getZoomMultiplier());
+            mPixelsPerBin = getWidth() / ((double)(mDFTSize.getSize()) / getZoomMultiplier());
         }
 
         /**
@@ -810,19 +793,7 @@ public class SpectralDisplayPanel extends JPanel
 
             mPausable = pausable;
 
-            addActionListener(new ActionListener()
-            {
-                @Override public void actionPerformed(ActionEvent e)
-                {
-                    EventQueue.invokeLater(new Runnable()
-                    {
-                        @Override public void run()
-                        {
-                            mPausable.setPaused(!paused);
-                        }
-                    });
-                }
-            });
+            addActionListener(e -> EventQueue.invokeLater(() -> mPausable.setPaused(!paused)));
         }
     }
 
@@ -840,7 +811,7 @@ public class SpectralDisplayPanel extends JPanel
             mFrequency = frequency;
             mWindowOffset = windowOffset;
 
-            Hashtable<Integer, JComponent> labels = new Hashtable<>();
+            Dictionary<Integer, JComponent> labels = createStandardLabels(1, 0);
             labels.put(0, new JLabel("1x"));
             labels.put(1, new JLabel("2x"));
             labels.put(2, new JLabel("4x"));
@@ -856,13 +827,7 @@ public class SpectralDisplayPanel extends JPanel
             setPaintTicks(true);
             setPaintLabels(true);
 
-            this.addChangeListener(new ChangeListener()
-            {
-                @Override public void stateChanged(ChangeEvent e)
-                {
-                    setZoom(getValue(), mFrequency, mWindowOffset);
-                }
-            });
+            this.addChangeListener(e -> setZoom(getValue(), mFrequency, mWindowOffset));
         }
     }
 
@@ -883,19 +848,7 @@ public class SpectralDisplayPanel extends JPanel
 
             setSelected(mOverlayPanel.getChannelDisplay() == mChannelDisplay);
 
-            addActionListener(new ActionListener()
-            {
-                @Override public void actionPerformed(ActionEvent e)
-                {
-                    EventQueue.invokeLater(new Runnable()
-                    {
-                        @Override public void run()
-                        {
-                            mOverlayPanel.setChannelDisplay(mChannelDisplay);
-                        }
-                    });
-                }
-            });
+            addActionListener(e -> EventQueue.invokeLater(() -> mOverlayPanel.setChannelDisplay(mChannelDisplay)));
         }
     }
 }

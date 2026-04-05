@@ -22,6 +22,10 @@ import java.awt.image.IndexColorModel;
 
 public class WaterfallColorModel
 {
+	private WaterfallColorModel()
+	{
+	}
+
 	public static IndexColorModel getDefaultColorModel()
 	{
 		int bitDepth = 8;

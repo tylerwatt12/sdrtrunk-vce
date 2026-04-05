@@ -57,10 +57,10 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     private byte[] mPausedPixels;
     private int mDFTSize = 4096;
     private int mImageHeight = 700;
-    private MemoryImageSource mMemoryImageSource;
-    private ColorModel mColorModel = WaterfallColorModel.getDefaultColorModel();
+    private transient MemoryImageSource mMemoryImageSource;
+    private transient ColorModel mColorModel = WaterfallColorModel.getDefaultColorModel();
     private Color mColorSpectrumCursor;
-    private Image mWaterfallImage;
+    private transient Image mWaterfallImage;
 
     private Point mCursorLocation = new Point(0, 0);
     private boolean mCursorVisible = false;
@@ -211,12 +211,10 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     @Override
     public void settingChanged(Setting setting)
     {
-        if(setting instanceof ColorSetting colorSetting)
+        if(setting instanceof ColorSetting colorSetting &&
+            colorSetting.getColorSettingName() == ColorSettingName.SPECTRUM_CURSOR)
         {
-            if(colorSetting.getColorSettingName() == ColorSettingName.SPECTRUM_CURSOR)
-            {
-                mColorSpectrumCursor = colorSetting.getColor();
-            }
+            mColorSpectrumCursor = colorSetting.getColor();
         }
     }
 
@@ -272,7 +270,7 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
         if(mZoom != 0)
         {
             double binPixelWidth = getBinPixelWidth(multiplier);
-            offset = -binPixelWidth * (double)(mDFTZoomWindowOffset);
+            offset = -binPixelWidth * (mDFTZoomWindowOffset);
         }
 
         return offset;
@@ -280,12 +278,13 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
 
     private double getBinPixelWidth(int multiplier)
     {
-        return ((double)getWidth() * (double)multiplier) / (double)mDFTSize;
+        return ((double)getWidth() * (double)multiplier) / mDFTSize;
     }
 
     /**
      * Renders the screen at each refresh
      */
+    @Override
     public void paintComponent(Graphics g)
     {
         super.paintComponent(g);
@@ -368,7 +367,7 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
             sum += update[x];
         }
 
-        float average = (float)(sum / (double)update.length - 1);
+        float average = (float)(sum / update.length - 1);
         float scale = 256.0f / average;
 
         for(int x = 0; x < update.length - 1; x++)

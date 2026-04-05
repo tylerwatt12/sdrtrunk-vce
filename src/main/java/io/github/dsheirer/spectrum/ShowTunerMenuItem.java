@@ -25,8 +25,6 @@ import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
 
 import javax.swing.JMenuItem;
 import java.awt.EventQueue;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 
 public class ShowTunerMenuItem extends JMenuItem
 {
@@ -39,22 +37,11 @@ public class ShowTunerMenuItem extends JMenuItem
         mDiscoveredTunerModel = discoveredTunerModel;
         mTuner = tuner;
 
-        addActionListener(new ActionListener()
+        addActionListener(e -> EventQueue.invokeLater(() ->
         {
-            @Override
-            public void actionPerformed(ActionEvent e)
-            {
-                EventQueue.invokeLater(new Runnable()
-                {
-                    @Override
-                    public void run()
-                    {
-                        SystemProperties properties = SystemProperties.getInstance();
-                        properties.set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
-                        mDiscoveredTunerModel.broadcast(new TunerEvent(mTuner, TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY));
-                    }
-                });
-            }
-        });
+            SystemProperties properties = SystemProperties.getInstance();
+            properties.set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
+            mDiscoveredTunerModel.broadcast(new TunerEvent(mTuner, TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY));
+        }));
     }
 }

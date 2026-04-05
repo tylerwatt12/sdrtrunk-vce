@@ -32,7 +32,6 @@ import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.ISourceEventProcessor;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
-import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.FontMetrics;
@@ -40,9 +39,8 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.RenderingHints;
-import java.awt.Stroke;
+import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
-import java.awt.event.ComponentListener;
 import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.text.DecimalFormat;
@@ -58,16 +56,13 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
     private static final long serialVersionUID = 1L;
     private final DecimalFormat PPM_FORMATTER = new DecimalFormat( "#.0" );
 
-    private final static RenderingHints RENDERING_HINTS = new RenderingHints(RenderingHints.KEY_ANTIALIASING,
+    private static final RenderingHints RENDERING_HINTS = new RenderingHints(RenderingHints.KEY_ANTIALIASING,
         RenderingHints.VALUE_ANTIALIAS_ON);
 
     static
     {
         RENDERING_HINTS.put(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
     }
-
-    private final static BasicStroke DASHED_STROKE = new BasicStroke(0.8f, BasicStroke.CAP_BUTT,
-        BasicStroke.JOIN_MITER, 5.0f, new float[]{2.0f, 4.0f}, 0.0f);
 
     private static DecimalFormat CURSOR_FORMAT = new DecimalFormat("000.00000");
     private long mFrequency = 0;
@@ -98,7 +93,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
     //Defines the offset at the bottom of the spectral display to account for
     //the frequency labels
     private double mSpectrumInset = 20.0d;
-    private LabelSizeManager mLabelSizeMonitor = new LabelSizeManager();
+    private transient LabelSizeManager mLabelSizeMonitor = new LabelSizeManager();
 
     private SettingsManager mSettingsManager;
     private ChannelModel mChannelModel;
@@ -330,15 +325,13 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
      */
     private void drawFrequencies(Graphics2D graphics)
     {
-        Stroke currentStroke = graphics.getStroke();
-
         long minFrequency = getMinDisplayFrequency();
         long maxFrequency = getMaxDisplayFrequency();
 
         //Frequency increments for label and tick spacing
-        int label = mLabelSizeMonitor.getLabelIncrement(graphics);
+        int label = mLabelSizeMonitor.getLabelIncrement();
         int major = mLabelSizeMonitor.getMajorTickIncrement(graphics);
-        int minor = mLabelSizeMonitor.getMinorTickIncrement(graphics);
+        int minor = mLabelSizeMonitor.getMinorTickIncrement();
 
         //Avoid divide by zero error
         if(minor == 0)
@@ -359,13 +352,9 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
             {
                 drawFrequencyLineAndLabel(graphics, frequency);
             }
-            else if(frequency % major == 0)
-            {
-                drawTickLine(graphics, frequency, true);
-            }
             else
             {
-                drawTickLine(graphics, frequency, false);
+                drawTickLine(graphics, frequency, frequency % major == 0);
             }
 
             frequency += minor;
@@ -429,8 +418,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
     /**
      * Draws the Automatic Frequency Control (AFC) channel center offset
      */
-    private void drawAFC(Graphics2D graphics, double frequencyAxis, double errorAxis, double bandwidth,
-                         int correction, long frequency)
+    private void drawAFC(Graphics2D graphics, double errorAxis, double bandwidth, int correction, long frequency)
     {
         double height = getSize().getHeight() - mSpectrumInset;
         double verticalAxisTop = height * 0.88d;
@@ -449,7 +437,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
         graphics.draw(new Line2D.Double(errorEdgeStart, verticalAxisTop, errorEdgeStart, verticalAxisBottom));
         graphics.draw(new Line2D.Double(errorEdgeStop, verticalAxisTop, errorEdgeStop, verticalAxisBottom));
 
-        double ppm = (double)correction / ((double)frequency / 1E6d);
+        double ppm = correction / (frequency / 1E6d);
 
         String label = "PPM " + PPM_FORMATTER.format(ppm) ;
 
@@ -469,17 +457,17 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
      */
     private double getAxisFromFrequency(long frequency)
     {
-        double screenWidth = (double)getSize().getWidth();
+        double screenWidth = getSize().getWidth();
 
         double pixelsPerBin = screenWidth / (double)mDFTSize.getSize();
 
         double pixelOffsetToMinDisplayFrequency = pixelsPerBin * 2.0d;
 
         //Calculate frequency offset from the min frequency
-        double frequencyOffset = (double)(frequency - getMinDisplayFrequency());
+        double frequencyOffset = (frequency - getMinDisplayFrequency());
 
         //Determine ratio of frequency offset to overall bandwidth
-        double ratio = frequencyOffset / (double)getDisplayBandwidth();
+        double ratio = frequencyOffset / getDisplayBandwidth();
 
         //Apply the ratio to the screen width minus 1 bin width
         double screenOffset = screenWidth * ratio;
@@ -497,7 +485,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
 
         double offset = xAxis / width;
 
-        long frequency = getMinDisplayFrequency() + FastMath.round((double)getDisplayBandwidth() * offset);
+        long frequency = getMinDisplayFrequency() + FastMath.round(getDisplayBandwidth() * offset);
 
         if(frequency > (getMaxFrequency()))
         {
@@ -554,7 +542,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
                         }
 
                         double xAxis = getAxisFromFrequency(tunerChannel.getFrequency());
-                        double width = (double)(tunerChannel.getBandwidth()) / (double)getDisplayBandwidth() * getSize().getWidth();
+                        double width = (double)(tunerChannel.getBandwidth()) / getDisplayBandwidth() * getSize().getWidth();
 
                         Rectangle2D.Double box = new Rectangle2D.Double(xAxis - (width / 2.0d), 0.0d, width,
                                 getSize().getHeight() - mSpectrumInset);
@@ -595,8 +583,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
                         if(correction != 0)
                         {
                             long error = frequency + correction;
-                            drawAFC(graphics, frequencyAxis, getAxisFromFrequency(error), width, correction,
-                                    tunerChannel.getFrequency());
+                            drawAFC(graphics, getAxisFromFrequency(error), width, correction, tunerChannel.getFrequency());
                         }
                     }
                 }
@@ -760,7 +747,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
 
     private long getMinDisplayFrequency()
     {
-        double bandwidthPerBin = (double)mBandwidth / (double)(mDFTSize.getSize());
+        double bandwidthPerBin = mBandwidth / (double)(mDFTSize.getSize());
 
         return getMinFrequency() + (int)((mDFTZoomWindowOffset) * bandwidthPerBin);
     }
@@ -786,7 +773,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
      */
     public ArrayList<Channel> getChannelsAtFrequency(long frequency)
     {
-        ArrayList<Channel> configs = new ArrayList<Channel>();
+        ArrayList<Channel> configs = new ArrayList<>();
 
         for(Channel config : mVisibleChannels)
         {
@@ -812,7 +799,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
      * Calculates correct spacing and format for frequency labels and major/minor
      * tick lines based on current frequency, bandwidth, zoom and screen size.
      */
-    public class LabelSizeManager implements ComponentListener
+    public class LabelSizeManager extends ComponentAdapter
     {
         private static final double LABEL_FILL_THRESHOLD = 0.5d;
 
@@ -825,7 +812,7 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
 
         public String format(long frequency)
         {
-            return mFrequencyFormat.format((double)frequency / 1E6D);
+            return mFrequencyFormat.format(frequency / 1E6D);
         }
 
         private void setPrecision(int precision)
@@ -856,10 +843,10 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
 
                 int maxLabelWidth = fontMetrics.stringWidth(format(getMaxDisplayFrequency()));
 
-                double maxLabels = ((double)OverlayPanel.this.getWidth() * LABEL_FILL_THRESHOLD) / (double)maxLabelWidth;
+                double maxLabels = (OverlayPanel.this.getWidth() * LABEL_FILL_THRESHOLD) / maxLabelWidth;
 
                 //Calculate the next smallest base 10 value for the major increment
-                int power = (int)FastMath.log10((double)getDisplayBandwidth() / maxLabels);
+                int power = (int)FastMath.log10(getDisplayBandwidth() / maxLabels);
 
                 //Set the number of decimal places to display in frequency labels
                 int precision = 5 - power;
@@ -908,12 +895,12 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
             return mMajorTickIncrement;
         }
 
-        public int getMinorTickIncrement(Graphics2D graphics)
+        public int getMinorTickIncrement()
         {
             return mMinorTickIncrement;
         }
 
-        public int getLabelIncrement(Graphics2D graphics)
+        public int getLabelIncrement()
         {
             return mLabelIncrement;
         }
@@ -922,18 +909,6 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
         public void componentResized(ComponentEvent arg0)
         {
             update();
-        }
-
-        public void componentHidden(ComponentEvent arg0)
-        {
-        }
-
-        public void componentMoved(ComponentEvent arg0)
-        {
-        }
-
-        public void componentShown(ComponentEvent arg0)
-        {
         }
 
     }
