@@ -69,11 +69,16 @@ import org.slf4j.LoggerFactory;
  {
      private static final Logger mLog = LoggerFactory.getLogger(OpenMHzBroadcaster.class);
 
-     private static final String ENCODING_TYPE_MP3 = "mp3";
      private static final String MULTIPART_TYPE = "multipart";
      private static final String DEFAULT_SUBTYPE = "form-data";
      private static final String MULTIPART_FORM_DATA = MULTIPART_TYPE + "/" + DEFAULT_SUBTYPE;
      private static final String APPLICATION_FORM_URLENCODED = "application/x-www-form-urlencoded";
+     private static final String OK_RESPONSE = "OK";
+     private static final String NO_RESPONSE = "No Response";
+     private static final String INVALID_API_KEY_RESPONSE = "Invalid API Key";
+     private static final String INVALID_SYSTEM_NAME_RESPONSE = "Invalid System Name";
+     private static final String FILE_UPLOAD_FAIL_LABEL = "OpenMHz API file upload fail [";
+     private static final String RESPONSE_LABEL = "] response [";
      private Queue<AudioRecording> mAudioRecordingQueue = new LinkedTransferQueue<>();
      private ScheduledFuture<?> mAudioRecordingProcessorFuture;
      private HttpClient mHttpClient = HttpClient.newBuilder()
@@ -107,11 +112,11 @@ import org.slf4j.LoggerFactory;
          String response = testConnection(getBroadcastConfiguration());
          mLastConnectionAttempt = System.currentTimeMillis();
 
-         if(response == "OK")
+         if(OK_RESPONSE.equals(response))
          {
              setBroadcastState(BroadcastState.CONNECTED);
          }
-         else if (response == "No Response")
+         else if(NO_RESPONSE.equals(response))
          {
             setBroadcastState(BroadcastState.NO_SERVER);
             mLog.error("Error connecting to OpenMHz server [Server not found or not reachable]");
@@ -159,41 +164,6 @@ import org.slf4j.LoggerFactory;
          }
      }
 
-     /**
-      * Indicates if this broadcaster continues to have successful connections to and transactions with the remote
-      * server.  If there is a connectivity or other issue, the broadcast state is set to temporary error and
-      * the audio processor thread will persistently invoke this method to attempt a reconnect.
-      */
-     private boolean connected()
-     {
-         if(getBroadcastState() != BroadcastState.CONNECTED &&
-             (System.currentTimeMillis() - mLastConnectionAttempt > mConnectionAttemptInterval))
-         {
-             setBroadcastState(BroadcastState.CONNECTING);
-
-             String response = testConnection(getBroadcastConfiguration());
-             mLastConnectionAttempt = System.currentTimeMillis();
-
-             if(response == "OK")
-             {
-                 setBroadcastState(BroadcastState.CONNECTED);
-             }
-             else if (response == "No Response")
-             {
-                setBroadcastState(BroadcastState.NO_SERVER);
-                mLog.error("Error reconnecting to OpenMHz server [Server not found or not reachable]");
-             }
-             else
-             {
-                 setBroadcastState(BroadcastState.ERROR);
-                 mLog.error("Error reconnecting to OpenMHz server [" + response + "]");
-             }
-
-         }
-
-         return getBroadcastState() == BroadcastState.CONNECTED;
-     }
-
      @Override
      public int getAudioQueueSize()
      {
@@ -205,322 +175,6 @@ import org.slf4j.LoggerFactory;
      {
          mAudioRecordingQueue.offer(audioRecording);
          broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
-     }
-
-     /**
-      * Indicates if the audio recording is non-null and not too old, meaning that the age of the recording has not
-      * exceeded the max age value indicated in the broadcast configuration.  Audio recordings that are too old will be
-      * deleted to ensure that the in-memory queue size doesn't blow up.
-      * @param audioRecording to test
-      * @return true if the recording is valid
-      */
-     private boolean isValid(AudioRecording audioRecording)
-     {
-         return audioRecording != null && System.currentTimeMillis() - audioRecording.getStartTime() <=
-             getBroadcastConfiguration().getMaximumRecordingAge();
-     }
-
-     /**
-      * Processes any enqueued audio recordings. This method employs asynchronous
-      * interaction with the server, so multiple audio recording uploads can occur simultaneously.
-      */
-     private void processRecordingQueue()
-     {
-
-
-         while(connected() && !mAudioRecordingQueue.isEmpty())
-         {
-             final AudioRecording audioRecording = mAudioRecordingQueue.poll();
-             broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
-
-             if(isValid(audioRecording) && audioRecording.getRecordingLength() > 0)
-             {
-                 int durationSeconds = (int)(audioRecording.getRecordingLength() / 1E3f);
-                 long timestampSeconds = (int)(audioRecording.getStartTime() / 1E3);
-                 String talkgroup = getTo(audioRecording);
-                 String radioId = getFrom(audioRecording);
-                 String talkerAlias = getTalkerAlias(audioRecording);
-                 Long frequency = getFrequency(audioRecording);
-                 String patches = getPatches(audioRecording);
-                 String talkgroupLabel = getTalkgroupLabel(audioRecording);
-                 String talkgroupGroup = getTalkgroupGroup(audioRecording);
-                 String systemLabel = getSystemLabel(audioRecording);
-
-                 try
-                 {
-                     byte[] audioBytes = null;
-
-                     try
-                     {
-                         audioBytes = Files.readAllBytes(audioRecording.getPath());
-                     }
-                     catch(IOException e)
-                     {
-                         mLog.error("OpenMHz - audio recording file not found - ignoring upload");
-                     }
-
-                     if(audioBytes != null)
-                     {
-                        String uri = getBroadcastConfiguration().getHost() + "/" + getBroadcastConfiguration().getSystemName() + "/upload";
-
-                         OpenMHzBuilder bodyBuilder = new OpenMHzBuilder();
-                             bodyBuilder
-                             .addFile(audioBytes)
-                             .addPart(FormField.FREQ, frequency)
-                             .addPart(FormField.START_TIME, timestampSeconds)
-                             .addPart(FormField.STOP_TIME, timestampSeconds)
-                             .addPart(FormField.CALL_LENGTH, durationSeconds)
-                             .addPart(FormField.TALKGROUP_NUM, talkgroup)
-                             .addPart(FormField.EMERGENCY, 0)
-                             .addPart(FormField.API_KEY, getBroadcastConfiguration().getApiKey())
-                             .addPart(FormField.PATCH_LIST, patches)
-                             .addPart(FormField.TALKER_ALIAS, talkerAlias)
-                             .addPart(FormField.SOURCE_LIST, "[{ \"pos\": 0.00, \"src\": " + radioId + "}]");
-
-                         HttpRequest fileRequest = HttpRequest.newBuilder()
-                             .uri(URI.create(uri))
-                             .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-                             .header(HttpHeaders.USER_AGENT, "sdrtrunk")
-                             .POST(bodyBuilder.build())
-                             .build();
-
-                         mHttpClient.sendAsync(fileRequest, HttpResponse.BodyHandlers.ofString())
-                             .whenComplete((fileResponse, throwable1) -> {
-                                 if(throwable1 != null || fileResponse.statusCode() != 200)
-                                 {
-                                     if(throwable1 instanceof IOException || throwable1 instanceof CompletionException)
-                                     {
-                                         //We get socket reset exceptions occasionally when the remote server doesn't
-                                         //fully read our request and immediately responds.
-                                         setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-                                         mLog.error("OpenMHz API file upload fail [" +
-                                             fileResponse.statusCode() + "] response [" +
-                                             fileResponse.body() + "]");
-                                     }
-                                     else
-                                     {
-                                         setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-                                         mLog.error("OpenMHz API file upload fail [" +
-                                             fileResponse.statusCode() + "] response [" +
-                                             fileResponse.body() + "]");
-                                     }
-
-                                     incrementErrorAudioCount();
-                                     broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
-                                         BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-                                 }
-                                 else
-                                 {
-
-                                     if(fileResponse.statusCode() == 200)
-                                     {
-                                         incrementStreamedAudioCount();
-                                         broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
-                                             BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE)); 
-                                         audioRecording.removePendingReplay(); 
-                                     }
-                                     else
-                                     {
-                                         setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-                                         mLog.error("OpenMHz API file upload fail [" +
-                                             fileResponse.statusCode() + "] response [" +
-                                             fileResponse.body() + "]");
-                                     }
-
-
-                                 }
-
-                             });
-                     }
-                     else
-                     {
-                         //Register an error for the file not found exception
-                         mLog.error("OpenMHz API - upload file not found [" +
-                             audioRecording.getPath().toString() + "]");
-                         incrementErrorAudioCount();
-                         broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
-                             BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-                         audioRecording.removePendingReplay();
-                     }
-                 }
-                 catch(Exception e)
-                 {
-                     mLog.error("Unknown Error", e);
-                     setBroadcastState(BroadcastState.ERROR);
-                     incrementErrorAudioCount();
-                     broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-                     audioRecording.removePendingReplay();
-                 }
-             }
-         }
-
-         //If we're not connected and there are recordings in the queue, check the recording at the head of the queue
-         // and start age-off once the recordings become too old.  The recordings should be time ordered in the queue.
-         AudioRecording audioRecording = mAudioRecordingQueue.peek();
-
-         while(audioRecording != null)
-         {
-             if(isValid(audioRecording))
-             {
-                 return;
-             }
-             else
-             {
-                 //Remove the recording from the queue, remove a replay, and peek at the next recording in the queue
-                 mAudioRecordingQueue.poll();
-                 audioRecording.removePendingReplay();
-                 incrementAgedOffAudioCount();
-                 broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
-                 audioRecording = mAudioRecordingQueue.peek();
-             }
-         }
-     }
-
-     /**
-      * Creates a frequency value from the audio recording identifier collection.
-      */
-     private static Long getFrequency(AudioRecording audioRecording)
-     {
-         Identifier identifier = audioRecording.getIdentifierCollection().getIdentifier(IdentifierClass.CONFIGURATION,
-             Form.CHANNEL_FREQUENCY, Role.ANY);
-
-         if(identifier instanceof ConfigurationLongIdentifier)
-         {
-             Long value = ((ConfigurationLongIdentifier)identifier).getValue();
-
-             if(value != null)
-             {
-                 return value;
-             }
-         }
-
-         return Long.valueOf(0);
-     }
-
-     /**
-      * Creates a formatted string with the FROM identifier or uses a default of zero(0)
-      */
-     private static String getFrom(AudioRecording audioRecording)
-     {
-         for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
-         {
-             if(identifier instanceof RadioIdentifier)
-             {
-                 return ((RadioIdentifier)identifier).getValue().toString();
-             }
-         }
-
-         return "0";
-     }
-
-     /**
-      * Creates a formatted string with the TO identifiers or uses a default of zero (0)
-      * 
-      */
-     private String getTo(AudioRecording audioRecording)
-     {
-         Identifier identifier = audioRecording.getIdentifierCollection().getToIdentifier();
-
-         if(identifier != null)
-         {
-             AliasList aliasList = mAliasModel.getAliasList(audioRecording.getIdentifierCollection());
-
-             if(aliasList != null)
-             {
-                 List<Alias> aliases = aliasList.getAliases(identifier);
-
-                 //Check for 'Stream As Talkgroup' alias and use this instead of the decoded TO value.
-                 Optional<Alias> streamAs = aliases.stream().filter(alias -> alias.getStreamTalkgroupAlias() != null).findFirst();
-
-                 if(streamAs.isPresent())
-                 {
-                     return String.valueOf(streamAs.get().getStreamTalkgroupAlias().getValue());
-                 }
-             }
-
-             if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
-             {
-                 return patchGroupIdentifier.getValue().getPatchGroup().getValue().toString();
-             }
-             else if(identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
-             {
-                 return String.valueOf(RadioReferenceDecoder.convertToRadioReferenceTalkgroup(talkgroupIdentifier.getValue(),
-                         talkgroupIdentifier.getProtocol()));
-             }
-             else if(identifier instanceof RadioIdentifier radioIdentifier)
-             {
-                 return radioIdentifier.getValue().toString();
-             }
-         }
-
-         return "0";
-     }
-
-     /**
-      * Creates a formatted string with the Talkgroup Label from the Audio Recording Alias
-      * If this is a PatchGroup we return only the first label as the primary talkgroup label.
-      * 
-      */
-     private String getTalkgroupLabel(AudioRecording audioRecording)
-     {
-
-         AliasList aliasList = mAliasModel.getAliasList(audioRecording.getIdentifierCollection());
-         Identifier identifier = audioRecording.getIdentifierCollection().getToIdentifier();
-
-         StringBuilder sb = new StringBuilder();
-         if(identifier != null)
-         {
-             List<Alias> aliases = aliasList.getAliases(identifier);
-             if(!aliases.isEmpty())
-             {
-                 sb.append(aliases.get(0));
-             }
-
-         }
-
-         return sb.toString();
-     }
-
-     /**
-      * Creates a formatted string with the Talkgroup Group from the Audio Recording Alias
-      * If this is a PatchGroup we return only the first group as the primary talkgroup group.
-      * 
-      */
-     private String getTalkgroupGroup(AudioRecording audioRecording)
-     {
-
-         AliasList aliasList = mAliasModel.getAliasList(audioRecording.getIdentifierCollection());
-         Identifier identifier = audioRecording.getIdentifierCollection().getToIdentifier();
-
-         StringBuilder sb = new StringBuilder();
-         if(identifier != null)
-         {
-             List<Alias> aliases = aliasList.getAliases(identifier);
-             if(!aliases.isEmpty())
-             {
-                 sb.append(aliases.get(0).getGroup());
-             }
-         }
-
-         return sb.toString();
-     }
-
-     /**
-      * Creates a formatted string with the System Label from the Audio Recording Alias
-      * If this is a PatchGroup we return only the first sytem as the primary talkgroup system.
-      * 
-      */
-     private String getSystemLabel(AudioRecording audioRecording)
-     {
-         List<Identifier> systems = audioRecording.getIdentifierCollection().getIdentifiers(Form.SYSTEM);
-
-         StringBuilder sb = new StringBuilder();
-         if(!systems.isEmpty())
-         {
-            sb.append(systems.get(0));
-         }
-
-         return sb.toString();
      }
 
     /**
@@ -556,28 +210,6 @@ import org.slf4j.LoggerFactory;
         return "[]";
     }
 
-    /**
-     * Creates a formatted string with talkerAlias identifier
-     */
-    private static String getTalkerAlias(AudioRecording audioRecording)
-    {
-        for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
-        {
-            if(identifier instanceof TalkerAliasIdentifier)
-            {
-                TalkerAliasIdentifier talkerID = (TalkerAliasIdentifier)identifier;
-
-                if(talkerID.isValid())
-                {
-                    return talkerID.getValue();
-                }
-            }
-        }
-
-        return "";
-    }
-
-
      /**
       * Tests both the connection and configuration against the OpenMHz Call API service
       * @param configuration containing API key and system id
@@ -608,29 +240,33 @@ import org.slf4j.LoggerFactory;
 
              if (response.statusCode() == 200)
              {
-                return "OK";
+                return OK_RESPONSE;
              }
              else if(response.statusCode() == 403)
              {
-                return "Invalid API Key";
+                return INVALID_API_KEY_RESPONSE;
              }
              else if(response.statusCode() == 500)
              {
-                return "Invalid System Name";
+                return INVALID_SYSTEM_NAME_RESPONSE;
              }
 
-             return "No Response";
+             return NO_RESPONSE;
          }
-         catch(Exception e)
-         {  
-            Throwable throwableCause = e.getCause();
-
-            if(throwableCause instanceof ConnectException)
+         catch(InterruptedException e)
+         {
+            Thread.currentThread().interrupt();
+            mLog.error("Interrupted while connecting to OpenMHz server", e);
+            return "Uknown Exception";
+         }
+         catch(IOException e)
+         {
+            if(e instanceof ConnectException || e.getCause() instanceof ConnectException)
             {
-                return "No Response";
+                return NO_RESPONSE;
             }
 
-            mLog.error("Exception connecting to OpenMHz server [" + e.toString() + "]");
+            mLog.error("Exception connecting to OpenMHz server [" + e + "]");
             return "Uknown Exception";
          }
      }
@@ -641,6 +277,306 @@ import org.slf4j.LoggerFactory;
          public void run()
          {
              processRecordingQueue();
+         }
+
+         /**
+          * Indicates if this broadcaster continues to have successful connections to and transactions with the remote
+          * server. If there is a connectivity or other issue, the broadcast state is set to temporary error and the
+          * audio processor thread will persistently invoke this method to attempt a reconnect.
+          */
+         private boolean connected()
+         {
+             if(getBroadcastState() != BroadcastState.CONNECTED &&
+                 (System.currentTimeMillis() - mLastConnectionAttempt > mConnectionAttemptInterval))
+             {
+                 setBroadcastState(BroadcastState.CONNECTING);
+
+                 String response = testConnection(getBroadcastConfiguration());
+                 mLastConnectionAttempt = System.currentTimeMillis();
+
+                 if(OK_RESPONSE.equals(response))
+                 {
+                     setBroadcastState(BroadcastState.CONNECTED);
+                 }
+                 else if(NO_RESPONSE.equals(response))
+                 {
+                    setBroadcastState(BroadcastState.NO_SERVER);
+                    mLog.error("Error reconnecting to OpenMHz server [Server not found or not reachable]");
+                 }
+                 else
+                 {
+                     setBroadcastState(BroadcastState.ERROR);
+                     mLog.error("Error reconnecting to OpenMHz server [" + response + "]");
+                 }
+             }
+
+             return getBroadcastState() == BroadcastState.CONNECTED;
+         }
+
+         /**
+          * Indicates if the audio recording is non-null and not too old.
+          */
+         private boolean isValid(AudioRecording audioRecording)
+         {
+             return audioRecording != null && System.currentTimeMillis() - audioRecording.getStartTime() <=
+                 getBroadcastConfiguration().getMaximumRecordingAge();
+         }
+
+         /**
+          * Creates a frequency value from the audio recording identifier collection.
+          */
+         private Long getFrequency(AudioRecording audioRecording)
+         {
+             Identifier identifier = audioRecording.getIdentifierCollection().getIdentifier(IdentifierClass.CONFIGURATION,
+                 Form.CHANNEL_FREQUENCY, Role.ANY);
+
+             if(identifier instanceof ConfigurationLongIdentifier)
+             {
+                 Long value = ((ConfigurationLongIdentifier)identifier).getValue();
+
+                 if(value != null)
+                 {
+                     return value;
+                 }
+             }
+
+             return Long.valueOf(0);
+         }
+
+         /**
+          * Creates a formatted string with the FROM identifier or uses a default of zero(0).
+          */
+         private String getFrom(AudioRecording audioRecording)
+         {
+             for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
+             {
+                 if(identifier instanceof RadioIdentifier)
+                 {
+                     return ((RadioIdentifier)identifier).getValue().toString();
+                 }
+             }
+
+             return "0";
+         }
+
+         /**
+          * Creates a formatted string with the TO identifiers or uses a default of zero (0).
+          */
+         private String getTo(AudioRecording audioRecording)
+         {
+             Identifier identifier = audioRecording.getIdentifierCollection().getToIdentifier();
+
+             if(identifier != null)
+             {
+                 AliasList aliasList = mAliasModel.getAliasList(audioRecording.getIdentifierCollection());
+
+                 if(aliasList != null)
+                 {
+                     List<Alias> aliases = aliasList.getAliases(identifier);
+
+                     //Check for 'Stream As Talkgroup' alias and use this instead of the decoded TO value.
+                     Optional<Alias> streamAs = aliases.stream()
+                         .filter(alias -> alias.getStreamTalkgroupAlias() != null)
+                         .findFirst();
+
+                     if(streamAs.isPresent())
+                     {
+                         return String.valueOf(streamAs.get().getStreamTalkgroupAlias().getValue());
+                     }
+                 }
+
+                 if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+                 {
+                     return patchGroupIdentifier.getValue().getPatchGroup().getValue().toString();
+                 }
+                 else if(identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+                 {
+                     return String.valueOf(RadioReferenceDecoder.convertToRadioReferenceTalkgroup(
+                         talkgroupIdentifier.getValue(), talkgroupIdentifier.getProtocol()));
+                 }
+                 else if(identifier instanceof RadioIdentifier radioIdentifier)
+                 {
+                     return radioIdentifier.getValue().toString();
+                 }
+             }
+
+             return "0";
+         }
+
+         /**
+          * Creates a formatted string with talkerAlias identifier.
+          */
+         private String getTalkerAlias(AudioRecording audioRecording)
+         {
+             for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
+             {
+                 if(identifier instanceof TalkerAliasIdentifier)
+                 {
+                     TalkerAliasIdentifier talkerID = (TalkerAliasIdentifier)identifier;
+
+                     if(talkerID.isValid())
+                     {
+                         return talkerID.getValue();
+                     }
+                 }
+             }
+
+             return "";
+         }
+
+         private byte[] loadAudioBytes(AudioRecording audioRecording)
+         {
+             try
+             {
+                 return Files.readAllBytes(audioRecording.getPath());
+             }
+             catch(IOException e)
+             {
+                 mLog.error("OpenMHz - audio recording file not found - ignoring upload");
+                 return null;
+             }
+         }
+
+         /**
+          * Processes any enqueued audio recordings. This method employs asynchronous interaction with the server, so
+          * multiple audio recording uploads can occur simultaneously.
+          */
+         private void processRecordingQueue()
+         {
+             while(connected() && !mAudioRecordingQueue.isEmpty())
+             {
+                 final AudioRecording audioRecording = mAudioRecordingQueue.poll();
+                 broadcast(new BroadcastEvent(OpenMHzBroadcaster.this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+
+                 if(isValid(audioRecording) && audioRecording.getRecordingLength() > 0)
+                 {
+                     int durationSeconds = (int)(audioRecording.getRecordingLength() / 1E3f);
+                     long timestampSeconds = (int)(audioRecording.getStartTime() / 1E3);
+                     String talkgroup = getTo(audioRecording);
+                     String radioId = getFrom(audioRecording);
+                     String talkerAlias = getTalkerAlias(audioRecording);
+                     Long frequency = getFrequency(audioRecording);
+                     String patches = getPatches(audioRecording);
+
+                     try
+                     {
+                         byte[] audioBytes = loadAudioBytes(audioRecording);
+
+                         if(audioBytes != null)
+                         {
+                            String uri = getBroadcastConfiguration().getHost() + "/" +
+                                getBroadcastConfiguration().getSystemName() + "/upload";
+
+                             OpenMHzBuilder bodyBuilder = new OpenMHzBuilder();
+                             bodyBuilder
+                                 .addFile(audioBytes)
+                                 .addPart(FormField.FREQ, frequency)
+                                 .addPart(FormField.START_TIME, timestampSeconds)
+                                 .addPart(FormField.STOP_TIME, timestampSeconds)
+                                 .addPart(FormField.CALL_LENGTH, durationSeconds)
+                                 .addPart(FormField.TALKGROUP_NUM, talkgroup)
+                                 .addPart(FormField.EMERGENCY, 0)
+                                 .addPart(FormField.API_KEY, getBroadcastConfiguration().getApiKey())
+                                 .addPart(FormField.PATCH_LIST, patches)
+                                 .addPart(FormField.TALKER_ALIAS, talkerAlias)
+                                 .addPart(FormField.SOURCE_LIST, "[{ \"pos\": 0.00, \"src\": " + radioId + "}]");
+
+                             HttpRequest fileRequest = HttpRequest.newBuilder()
+                                 .uri(URI.create(uri))
+                                 .header(HttpHeaders.CONTENT_TYPE,
+                                     MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
+                                 .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+                                 .POST(bodyBuilder.build())
+                                 .build();
+
+                             mHttpClient.sendAsync(fileRequest, HttpResponse.BodyHandlers.ofString())
+                                 .whenComplete((fileResponse, throwable1) -> {
+                                     if(throwable1 != null || fileResponse.statusCode() != 200)
+                                     {
+                                         if(throwable1 instanceof IOException || throwable1 instanceof CompletionException)
+                                         {
+                                             //We get socket reset exceptions occasionally when the remote server doesn't
+                                             //fully read our request and immediately responds.
+                                             setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
+                                             mLog.error(FILE_UPLOAD_FAIL_LABEL +
+                                                 fileResponse.statusCode() + RESPONSE_LABEL +
+                                                 fileResponse.body() + "]");
+                                         }
+                                         else
+                                         {
+                                             setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
+                                             mLog.error(FILE_UPLOAD_FAIL_LABEL +
+                                                 fileResponse.statusCode() + RESPONSE_LABEL +
+                                                 fileResponse.body() + "]");
+                                         }
+
+                                         incrementErrorAudioCount();
+                                         broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
+                                             BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                                     }
+                                     else
+                                     {
+                                         if(fileResponse.statusCode() == 200)
+                                         {
+                                             incrementStreamedAudioCount();
+                                             broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
+                                                 BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
+                                             audioRecording.removePendingReplay();
+                                         }
+                                         else
+                                         {
+                                             setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
+                                             mLog.error(FILE_UPLOAD_FAIL_LABEL +
+                                                 fileResponse.statusCode() + RESPONSE_LABEL +
+                                                 fileResponse.body() + "]");
+                                         }
+                                     }
+                                 });
+                         }
+                         else
+                         {
+                             //Register an error for the file not found exception
+                             mLog.error("OpenMHz API - upload file not found [" +
+                                 audioRecording.getPath().toString() + "]");
+                             incrementErrorAudioCount();
+                             broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
+                                 BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                             audioRecording.removePendingReplay();
+                         }
+                     }
+                     catch(Exception e)
+                     {
+                         mLog.error("Unknown Error", e);
+                         setBroadcastState(BroadcastState.ERROR);
+                         incrementErrorAudioCount();
+                         broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
+                             BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                         audioRecording.removePendingReplay();
+                     }
+                 }
+             }
+
+             //If we're not connected and there are recordings in the queue, check the recording at the head of the
+             // queue and start age-off once the recordings become too old. The recordings should be time ordered.
+             AudioRecording audioRecording = mAudioRecordingQueue.peek();
+
+             while(audioRecording != null)
+             {
+                 if(isValid(audioRecording))
+                 {
+                     return;
+                 }
+                 else
+                 {
+                     //Remove the recording from the queue, remove a replay, and peek at the next recording in the queue
+                     mAudioRecordingQueue.poll();
+                     audioRecording.removePendingReplay();
+                     incrementAgedOffAudioCount();
+                     broadcast(new BroadcastEvent(OpenMHzBroadcaster.this,
+                         BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                     audioRecording = mAudioRecordingQueue.peek();
+                 }
+             }
          }
      }
 
@@ -656,19 +592,19 @@ import org.slf4j.LoggerFactory;
          String response = testConnection(config);
          mLog.error("Response: " + response);
 
-         if(response == "OK")
+         if(OK_RESPONSE.equals(response))
          {
              mLog.debug("Test Successful!");
          }
          else
          {
-             if(response.contains("Invalid API Key"))
+             if(response.contains(INVALID_API_KEY_RESPONSE))
              {
-                 mLog.error("Invalid API Key");
+                 mLog.error(INVALID_API_KEY_RESPONSE);
              }
-             else if(response.contains("Invalid System Name"))
+             else if(response.contains(INVALID_SYSTEM_NAME_RESPONSE))
              {
-                 mLog.error("Invalid System Name");
+                 mLog.error(INVALID_SYSTEM_NAME_RESPONSE);
              }
              else
              {
