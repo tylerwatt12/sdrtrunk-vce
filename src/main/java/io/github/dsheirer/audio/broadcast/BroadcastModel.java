@@ -65,17 +65,16 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     public static final int COLUMN_BROADCASTER_AGED_OFF_COUNT = 5;
     public static final int COLUMN_BROADCASTER_ERROR_COUNT = 6;
 
-    public static final String[] COLUMN_NAMES = new String[]
+    private static final String[] COLUMN_NAMES = new String[]
         {"Stream Type", "Name", "Status", "Queued", "Streamed/Uploaded", "Aged Off", "Upload Error"};
 
     private ObservableList<ConfiguredBroadcast> mConfiguredBroadcasts =
         FXCollections.observableArrayList(ConfiguredBroadcast.extractor());
     private List<AudioRecording> mRecordingQueue = new CopyOnWriteArrayList<>();
     private Map<Integer,AbstractAudioBroadcaster> mBroadcasterMap = new HashMap<>();
-    private IconModel mIconModel;
     private AliasModel mAliasModel;
     private Broadcaster<BroadcastEvent> mBroadcastEventBroadcaster = new Broadcaster<>();
-    private BroadcastEventListener mBroadcastEventListener = new BroadcastEventListener();
+    private transient BroadcastEventListener mBroadcastEventListener = new BroadcastEventListener();
     private UserPreferences mUserPreferences;
 
     /**
@@ -84,7 +83,6 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     public BroadcastModel(AliasModel aliasModel, IconModel iconModel, UserPreferences userPreferences)
     {
         mAliasModel = aliasModel;
-        mIconModel = iconModel;
         mUserPreferences = userPreferences;
 
         //Monitor to remove temporary recording files that have been streamed by all audio broadcasters
@@ -280,7 +278,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
             if(configuredBroadcast.hasAudioBroadcaster())
             {
                 mBroadcasterMap.remove(broadcastConfiguration.getId());
-                configuredBroadcast.getAudioBroadcaster().stop();;
+                configuredBroadcast.getAudioBroadcaster().stop();
                 configuredBroadcast.setAudioBroadcaster(null);
             }
 
@@ -666,76 +664,53 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     }
 
     /**
-     * Cleanup method to remove a temporary recording file from disk.
-     *
-     * @param recording to remove
-     */
-    private void removeRecording(AudioRecording recording)
-    {
-        try
-        {
-            Files.delete(recording.getPath());
-        }
-        catch(IOException ioe)
-        {
-            mLog.error("Error deleting temporary internet recording file: " + recording.getPath().toString() + " - " +
-                ioe.getMessage());
-        }
-    }
-
-
-    /**
      * Removes any temporary stream recordings left-over from the previous application run.
      *
      * This should only be invoked on startup.
      */
     private void removeOrphanedTemporaryRecordings()
     {
-        ThreadPool.SCHEDULED.submit(new Runnable()
+        ThreadPool.SCHEDULED.submit(() ->
         {
-            @Override
-            public void run()
+            try
+            {
+                Path path = SystemProperties.getInstance().getApplicationFolder(BroadcastModel.TEMPORARY_STREAM_DIRECTORY);
+
+                if(path != null && Files.isDirectory(path))
+                {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(TEMPORARY_STREAM_FILE_SUFFIX);
+                    sb.append("*.*");
+                    deleteOrphanedTemporaryRecordings(path, sb.toString());
+                }
+            }
+            catch(Throwable t)
+            {
+                mLog.error("Error during cleanup of orphaned temporary streaming recording files");
+            }
+        });
+    }
+
+    private void deleteOrphanedTemporaryRecordings(Path path, String pattern)
+    {
+        try(DirectoryStream<Path> directoryStream = Files.newDirectoryStream(path, pattern))
+        {
+            directoryStream.forEach(pathToDelete ->
             {
                 try
                 {
-                    Path path = SystemProperties.getInstance().getApplicationFolder(BroadcastModel.TEMPORARY_STREAM_DIRECTORY);
-
-                    if(path != null && Files.isDirectory(path))
-                    {
-                        StringBuilder sb = new StringBuilder();
-                        sb.append(TEMPORARY_STREAM_FILE_SUFFIX);
-                        sb.append("*.*");
-
-                        try(DirectoryStream<Path> directoryStream = Files.newDirectoryStream(path, sb.toString()))
-                        {
-                            directoryStream.forEach(new Consumer<Path>()
-                            {
-                                @Override
-                                public void accept(Path path)
-                                {
-                                    try
-                                    {
-                                        Files.delete(path);
-                                    }
-                                    catch(IOException ioe)
-                                    {
-                                        mLog.error("Couldn't delete orphaned temporary recording: " + path.toString(), ioe);
-                                    }
-                                }
-                            });
-                        }
-                        catch(IOException ioe)
-                        {
-                            mLog.error("Error discovering orphaned temporary stream recording files", ioe);
-                        }
-                    }
+                    Files.delete(pathToDelete);
                 }
-                catch(Throwable t)
+                catch(IOException ioe)
                 {
-                    mLog.error("Error during cleanup of orphaned temporary streaming recording files");
+                    mLog.error("Couldn't delete orphaned temporary recording: " + pathToDelete.toString(), ioe);
                 }
-            }
-        });
+            });
+        }
+        catch(IOException ioe)
+        {
+            mLog.error("Error discovering orphaned temporary stream recording files", ioe);
+        }
     }
 
     /**
@@ -763,6 +738,24 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
      */
     public class RecordingDeletionMonitor implements Runnable
     {
+        /**
+         * Cleanup method to remove a temporary recording file from disk.
+         *
+         * @param recording to remove
+         */
+        private void removeRecording(AudioRecording recording)
+        {
+            try
+            {
+                Files.delete(recording.getPath());
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("Error deleting temporary internet recording file: " + recording.getPath().toString() + " - " +
+                    ioe.getMessage());
+            }
+        }
+
         @Override
         public void run()
         {

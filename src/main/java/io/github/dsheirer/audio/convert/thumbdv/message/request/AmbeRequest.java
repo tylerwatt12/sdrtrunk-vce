@@ -49,7 +49,7 @@ public abstract class AmbeRequest extends AmbeMessage
         byte[] data = new byte[length + 4];
 
         data[0] = PACKET_START_BYTE;
-        data[1] = (byte)((length >> 8 & 0xFF));
+        data[1] = (byte)(length >> 8 & 0xFF);
         data[2] = (byte)(length & 0xFF);
 
         if(type == PacketField.PACKET_TYPE_ENCODE_SPEECH || type == PacketField.PACKET_TYPE_DECODE_SPEECH)

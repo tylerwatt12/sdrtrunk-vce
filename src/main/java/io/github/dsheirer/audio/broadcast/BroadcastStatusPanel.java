@@ -40,8 +40,6 @@ import javax.swing.table.DefaultTableCellRenderer;
 public class BroadcastStatusPanel extends JPanel
 {
     private JTable mTable;
-    private JTableColumnWidthMonitor mColumnWidthMonitor;
-    private JScrollPane mScrollPane;
     private BroadcastModel mBroadcastModel;
     private UserPreferences mUserPreferences;
     private String mPreferenceKey;
@@ -77,11 +75,11 @@ public class BroadcastStatusPanel extends JPanel
 
         mTable.getColumnModel().getColumn(BroadcastModel.COLUMN_BROADCASTER_STATUS).setCellRenderer(new StatusCellRenderer());
         mTable.getColumnModel().getColumn(BroadcastModel.COLUMN_BROADCAST_SERVER_TYPE).setCellRenderer(new ServerTypeRenderer());
-        mColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, mPreferenceKey);
+        new JTableColumnWidthMonitor(mUserPreferences, mTable, mPreferenceKey);
 
-        mScrollPane = new JScrollPane(mTable);
+        JScrollPane scrollPane = new JScrollPane(mTable);
 
-        add(mScrollPane);
+        add(scrollPane);
     }
 
     public class ServerTypeRenderer extends DefaultTableCellRenderer
@@ -130,7 +128,7 @@ public class BroadcastStatusPanel extends JPanel
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
                                                        boolean hasFocus, int row, int column)
         {
-            JLabel component = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
             if(isSelected)
             {

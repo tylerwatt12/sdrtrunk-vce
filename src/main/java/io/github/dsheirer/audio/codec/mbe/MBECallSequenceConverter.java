@@ -72,68 +72,65 @@ public class MBECallSequenceConverter
             throw new IllegalArgumentException("Cannot decode null or encrypted call sequence");
         }
 
-        if(callSequence != null)
+        if(callSequence.getProtocol().equals(P25P1CallSequenceRecorder.PROTOCOL))
         {
-            if(callSequence.getProtocol().equals(P25P1CallSequenceRecorder.PROTOCOL))
+            P25P1AudioModule audioModule = new P25P1AudioModule(new UserPreferences(), new AliasList("mbe generator"));
+            audioModule.setRecordAudio(true);
+            audioModule.start();
+
+            if(callSequence.getFromIdentifier() != null)
             {
-                P25P1AudioModule audioModule = new P25P1AudioModule(new UserPreferences(), new AliasList("mbe generator"));
-                audioModule.setRecordAudio(true);
-                audioModule.start();
-
-                if(callSequence.getFromIdentifier() != null)
-                {
-                    int from = 0;
-
-                    try
-                    {
-                        from = Integer.parseInt(callSequence.getFromIdentifier());
-                        audioModule.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(APCO25RadioIdentifier.createFrom(from),
-                                IdentifierUpdateNotification.Operation.ADD, 0));
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.error("Error parsing from identifier from value [" + callSequence.getFromIdentifier());
-                    }
-                }
-
-                if(callSequence.getToIdentifier() != null)
-                {
-                    int to = 0;
-
-                    try
-                    {
-                        to = Integer.parseInt(callSequence.getToIdentifier());
-                        audioModule.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(APCO25Talkgroup.create(to),
-                                IdentifierUpdateNotification.Operation.ADD, 0));
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.error("Error parsing from identifier from value [" + callSequence.getFromIdentifier());
-                    }
-                }
-
-                IAudioCodec codec = audioModule.getAudioCodec();
-
-                for(VoiceFrame voiceFrame: callSequence.getVoiceFrames())
-                {
-                    byte[] frameBytes = voiceFrame.getFrameBytes();
-                    float[] audio = codec.getAudio(frameBytes);
-                    audioModule.addAudio(audio);
-                }
-
-                AudioSegment audioSegment = audioModule.getAudioSegment();
+                int from = 0;
 
                 try
                 {
-                    AudioSegmentRecorder.recordWAVE(audioSegment, outputPath, audioSegment.getIdentifierCollection());
+                    from = Integer.parseInt(callSequence.getFromIdentifier());
+                    audioModule.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(APCO25RadioIdentifier.createFrom(from),
+                        IdentifierUpdateNotification.Operation.ADD, 0));
                 }
-                catch(IOException ioe)
+                catch(Exception e)
                 {
-                    mLog.error("Error writing audio segment, ioe");
+                    mLog.error("Error parsing from identifier from value [" + callSequence.getFromIdentifier());
                 }
-
-                audioModule.stop();
             }
+
+            if(callSequence.getToIdentifier() != null)
+            {
+                int to = 0;
+
+                try
+                {
+                    to = Integer.parseInt(callSequence.getToIdentifier());
+                    audioModule.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(APCO25Talkgroup.create(to),
+                        IdentifierUpdateNotification.Operation.ADD, 0));
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error parsing from identifier from value [" + callSequence.getFromIdentifier());
+                }
+            }
+
+            IAudioCodec codec = audioModule.getAudioCodec();
+
+            for(VoiceFrame voiceFrame: callSequence.getVoiceFrames())
+            {
+                byte[] frameBytes = voiceFrame.getFrameBytes();
+                float[] audio = codec.getAudio(frameBytes);
+                audioModule.addAudio(audio);
+            }
+
+            AudioSegment audioSegment = audioModule.getAudioSegment();
+
+            try
+            {
+                AudioSegmentRecorder.recordWAVE(audioSegment, outputPath, audioSegment.getIdentifierCollection());
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("Error writing audio segment, ioe");
+            }
+
+            audioModule.stop();
         }
     }
 

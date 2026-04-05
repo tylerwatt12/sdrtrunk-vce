@@ -24,6 +24,7 @@ package io.github.dsheirer.audio.codec.mbe;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.preference.UserPreferences;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,13 +32,13 @@ public abstract class ImbeAudioModule extends JmbeAudioModule
 {
     private static final Logger mLog = LoggerFactory.getLogger(ImbeAudioModule.class);
     private static final String IMBE_CODEC = "IMBE";
-    private static boolean sLibraryStatusLogged = false;
+    private static final AtomicBoolean sLibraryStatusLogged = new AtomicBoolean();
 
-    public ImbeAudioModule(UserPreferences userPreferences, AliasList aliasList)
+    protected ImbeAudioModule(UserPreferences userPreferences, AliasList aliasList)
     {
         super(userPreferences, aliasList, DEFAULT_TIMESLOT);
 
-        if(!sLibraryStatusLogged)
+        if(sLibraryStatusLogged.compareAndSet(false, true))
         {
             if(getAudioCodec() != null)
             {
@@ -47,8 +48,6 @@ public abstract class ImbeAudioModule extends JmbeAudioModule
             {
                 mLog.warn("JMBE audio conversion library, IMBE CODEC not loaded - P25-1 audio will NOT be available");
             }
-
-            sLibraryStatusLogged = true;
         }
     }
 

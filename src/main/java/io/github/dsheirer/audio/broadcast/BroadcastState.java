@@ -111,6 +111,7 @@ public enum BroadcastState
         mWarningState = warningState;
     }
 
+    @Override
     public String toString()
     {
         return mLabel;

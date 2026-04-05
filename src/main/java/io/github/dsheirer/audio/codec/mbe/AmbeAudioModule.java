@@ -24,6 +24,7 @@ package io.github.dsheirer.audio.codec.mbe;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.preference.UserPreferences;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,13 +32,13 @@ public abstract class AmbeAudioModule extends JmbeAudioModule
 {
     private static final Logger mLog = LoggerFactory.getLogger(AmbeAudioModule.class);
     private static final String AMBE_CODEC = "AMBE 3600 x 2450";
-    private static boolean sLibraryStatusLogged = false;
+    private static final AtomicBoolean sLibraryStatusLogged = new AtomicBoolean();
 
-    public AmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
+    protected AmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
     {
         super(userPreferences, aliasList, timeslot);
 
-        if(!sLibraryStatusLogged)
+        if(sLibraryStatusLogged.compareAndSet(false, true))
         {
             if(getAudioCodec() != null)
             {
@@ -47,8 +48,6 @@ public abstract class AmbeAudioModule extends JmbeAudioModule
             {
                 mLog.warn("AMBE CODEC not loaded - P25-2/DMR/NXDN audio will NOT be available");
             }
-
-            sLibraryStatusLogged = true;
         }
     }
 

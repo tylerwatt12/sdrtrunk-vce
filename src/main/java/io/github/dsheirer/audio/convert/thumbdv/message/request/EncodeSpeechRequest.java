@@ -79,7 +79,7 @@ public class EncodeSpeechRequest extends AmbeRequest
 
         for(short sample: mSamples)
         {
-            data[pointer++] = (byte)((sample >> 8 & 0xFF));
+            data[pointer++] = (byte)(sample >> 8 & 0xFF);
             data[pointer++] = (byte)(sample & 0xFF);
         }
 

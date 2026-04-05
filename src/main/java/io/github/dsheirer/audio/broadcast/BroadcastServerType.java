@@ -47,6 +47,7 @@ public enum BroadcastServerType
         mIconPath = iconPath;
     }
 
+    @Override
     public String toString()
     {
         return mLabel;

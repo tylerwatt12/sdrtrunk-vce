@@ -59,7 +59,7 @@ public abstract class MBECallSequenceRecorder extends Module implements IMessage
      * @param userPreferences to obtain recording directory
      * @param channelFrequency for the channel to record
      */
-    public MBECallSequenceRecorder(UserPreferences userPreferences, long channelFrequency, String system, String site)
+    protected MBECallSequenceRecorder(UserPreferences userPreferences, long channelFrequency, String system, String site)
     {
         mUserPreferences = userPreferences;
         mChannelFrequency = channelFrequency;
