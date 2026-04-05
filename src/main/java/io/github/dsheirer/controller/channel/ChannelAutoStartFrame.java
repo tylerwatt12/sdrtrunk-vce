@@ -23,8 +23,6 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.Dimension;
 import java.awt.EventQueue;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.List;
@@ -50,12 +48,10 @@ public class ChannelAutoStartFrame extends JFrame
     private List<Channel> mChannels;
 
     private JLabel mCountdownLabel;
-    private JButton mStartButton;
-    private JButton mCancelButton;
     private JTable mChannelTable;
     private AtomicBoolean mChannelsStarted = new AtomicBoolean();
     private int mAutoStartTimeoutSeconds;
-    private ScheduledFuture<?> mTimerFuture;
+    private transient ScheduledFuture<?> mTimerFuture;
 
     /**
      * Creates and displays a channel auto-start gui for presenting the user with a list of channels that
@@ -106,53 +102,26 @@ public class ChannelAutoStartFrame extends JFrame
 
         panel.add(new JScrollPane(getChannelTable()), "span");
 
-        mStartButton = new JButton("Start Now");
-        mStartButton.addActionListener(new ActionListener()
-        {
-            @Override
-            public void actionPerformed(ActionEvent e)
-            {
-                mLog.info("Starting [" + mChannels.size() + "] channels now - user invoked");
-                startChannels();
-                stopTimer();
-            }
+        JButton startButton = new JButton("Start Now");
+        startButton.addActionListener(e -> {
+            mLog.info("Starting [" + mChannels.size() + "] channels now - user invoked");
+            startChannels();
+            stopTimer();
         });
-        panel.add(mStartButton);
+        panel.add(startButton);
 
-        mCancelButton = new JButton("Cancel");
-        mCancelButton.addActionListener(new ActionListener()
-        {
-            @Override
-            public void actionPerformed(ActionEvent e)
-            {
-                mLog.info("Channel auto-start canceled by user");
-                stopTimer();
-            }
+        JButton cancelButton = new JButton("Cancel");
+        cancelButton.addActionListener(e -> {
+            mLog.info("Channel auto-start canceled by user");
+            stopTimer();
         });
-        panel.add(mCancelButton);
+        panel.add(cancelButton);
         setContentPane(panel);
     }
 
     private String getCountdownText(int value)
     {
         return "started in: " + value + " seconds.";
-    }
-
-    /**
-     * Updates the countdown text label on the swing event thread
-     *
-     * @param value for the countdown
-     */
-    private void updateCountdownText(final int value)
-    {
-        EventQueue.invokeLater(new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                mCountdownLabel.setText(getCountdownText(value));
-            }
-        });
     }
 
     /**
@@ -179,14 +148,11 @@ public class ChannelAutoStartFrame extends JFrame
      */
     private void startChannels()
     {
-        if(mChannelsStarted.compareAndSet(false, true))
+        if(mChannelsStarted.compareAndSet(false, true) && mChannelEventListener != null)
         {
-            if(mChannelEventListener != null)
+            for(Channel channel : mChannels)
             {
-                for(Channel channel : mChannels)
-                {
-                    mChannelEventListener.receive(new ChannelEvent(channel, ChannelEvent.Event.REQUEST_ENABLE));
-                }
+                mChannelEventListener.receive(new ChannelEvent(channel, ChannelEvent.Event.REQUEST_ENABLE));
             }
         }
     }
@@ -222,6 +188,15 @@ public class ChannelAutoStartFrame extends JFrame
     public class CountdownTimer implements Runnable
     {
         private int mCount = mAutoStartTimeoutSeconds;
+
+        /**
+         * Updates the countdown text label on the swing event thread.
+         * @param value for the countdown
+         */
+        private void updateCountdownText(int value)
+        {
+            EventQueue.invokeLater(() -> mCountdownLabel.setText(getCountdownText(value)));
+        }
 
         @Override
         public void run()

@@ -44,11 +44,7 @@ public class ChannelRangeModel extends AbstractTableModel
 												 "Error" };
 
 	private List<ChannelRange> mRanges = new CopyOnWriteArrayList<>();
-	private ChannelRangeEventListener mListener;
-	
-	public ChannelRangeModel()
-	{
-	}
+	private transient ChannelRangeEventListener mListener;
 	
 	public void setListener( ChannelRangeEventListener listener )
 	{
@@ -151,6 +147,7 @@ public class ChannelRangeModel extends AbstractTableModel
 	    return mHeaders.length;
     }
 
+	@Override
 	public String getColumnName( int column ) 
 	{
         return mHeaders[ column ];
@@ -237,11 +234,13 @@ public class ChannelRangeModel extends AbstractTableModel
 		}
 	}
 	
+	@Override
 	public boolean isCellEditable( int row, int column )
 	{
 		return row < mRanges.size() && column != ERROR;
 	}
 	
+	@Override
 	public void setValueAt( Object value, int row, int column )
 	{
 		int parsedValue = -1;
@@ -274,6 +273,8 @@ public class ChannelRangeModel extends AbstractTableModel
 						break;
 					case SIZE:
 						range.setStepSize( parsedValue );
+						break;
+					default:
 						break;
 				}
 				

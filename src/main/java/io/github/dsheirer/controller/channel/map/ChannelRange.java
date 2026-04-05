@@ -111,12 +111,12 @@ public class ChannelRange
 
             long frequency = getFrequency(mFirstChannel.get());
 
-            sb.append(FREQUENCY_FORMATTER.format((double)frequency / 1E6D));
+            sb.append(FREQUENCY_FORMATTER.format(frequency / 1E6D));
             sb.append("  Last: ");
             sb.append(mLastChannel.get()).append("=");
 
             frequency = getFrequency(mLastChannel.get());
-            sb.append(FREQUENCY_FORMATTER.format((double)frequency / 1E6D));
+            sb.append(FREQUENCY_FORMATTER.format(frequency / 1E6D));
             sb.append(" MHz");
         }
         else
@@ -187,13 +187,13 @@ public class ChannelRange
 
     public void setFirstChannelNumber(int first)
     {
-        mFirstChannel.set(first);;
+        mFirstChannel.set(first);
     }
 
     @JacksonXmlProperty(isAttribute = true, localName = "last")
     public void setLastChannelNumber(int last)
     {
-        mLastChannel.set(last);;
+        mLastChannel.set(last);
     }
 
     public int getLastChannelNumber()

@@ -6,7 +6,7 @@ public class ConfigurationValidationException extends Exception
 {
 	private static final long serialVersionUID = 1L;
 
-	private Component mComponent;
+	private final Component mComponent;
 	
 	public ConfigurationValidationException( Component component, 
 											 String validationMessage )

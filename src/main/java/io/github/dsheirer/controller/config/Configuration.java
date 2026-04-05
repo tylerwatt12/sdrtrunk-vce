@@ -22,7 +22,7 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 @JacksonXmlRootElement(localName = "configuration")
 public abstract class Configuration
 {
-    public Configuration()
+    protected Configuration()
     {
     }
 }

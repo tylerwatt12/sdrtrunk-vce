@@ -76,6 +76,7 @@ import org.slf4j.LoggerFactory;
 public class ChannelProcessingManager implements Listener<ChannelEvent>
 {
     private static final String DIVIDER = "-------------------------------------------------------------------------\n";
+    private static final String ERROR_STOPPING_CHANNEL_LABEL = "Error stopping channel [";
     private static final Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
     private static final String TUNER_UNAVAILABLE_DESCRIPTION = "TUNER UNAVAILABLE";
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
@@ -286,7 +287,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     }
                     catch(Exception e)
                     {
-                        mLog.error("Error stopping channel [" + channel + "]", e);
+                        mLog.error(ERROR_STOPPING_CHANNEL_LABEL + channel + "]", e);
                     }
                 }
                 else
@@ -362,7 +363,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             }
             catch(ChannelException ce)
             {
-                mLog.error("Error stopping channel [" + channel + "]", ce);
+                mLog.error(ERROR_STOPPING_CHANNEL_LABEL + channel + "]", ce);
             }
         }
     }
@@ -896,7 +897,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     }
                     catch(Exception e)
                     {
-                        mLog.error("Error stopping channel [" + toShutdown + "]", e);
+                        mLog.error(ERROR_STOPPING_CHANNEL_LABEL + toShutdown + "]", e);
                     }
                 }
             }

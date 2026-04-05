@@ -92,9 +92,9 @@ public class AutoStartChannelModel extends AbstractTableModel
                 return channel.getName();
             case COLUMN_DECODER:
                 return channel.getDecodeConfiguration().getDecoderType().getShortDisplayString();
+            default:
+                return null;
         }
-
-        return null;
     }
 
     @Override

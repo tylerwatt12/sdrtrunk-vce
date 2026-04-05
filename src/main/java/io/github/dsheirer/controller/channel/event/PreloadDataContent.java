@@ -34,7 +34,7 @@ public abstract class PreloadDataContent<T> implements ModuleEventBusMessage
      * Constructs an instance
      * @param data to preload
      */
-    public PreloadDataContent(T data)
+    protected PreloadDataContent(T data)
     {
         mData = data;
     }
