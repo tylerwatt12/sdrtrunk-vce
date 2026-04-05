@@ -440,16 +440,6 @@ public class RadioReferenceDecoder
      */
     public DecoderType getDecoderType(System system)
     {
-        return getDecoderType(system, null);
-    }
-
-    /**
-     * Decoder type for the specified system, if supported.
-     * @param system requiring a decoder type
-     * @return decoder type or null.
-     */
-    public DecoderType getDecoderType(System system, Site site)
-    {
         Type type = getType(system);
         Flavor flavor = getFlavor(system);
         Voice voice = getVoice(system);
