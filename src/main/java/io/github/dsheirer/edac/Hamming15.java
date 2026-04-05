@@ -26,6 +26,10 @@ import io.github.dsheirer.bits.BinaryMessage;
  */
 public class Hamming15
 {
+    private Hamming15()
+    {
+    }
+    
     //DMR Checksums from generator matrix TS 102 361-1 Table B.15
     private static int[] CHECKSUMS = new int[]{0x9, 0xD, 0xF, 0xE, 0x7, 0xA, 0x5, 0xB, 0xC, 0x6, 0x3, 0x8, 0x4, 0x2, 0x1};
     private static int[] ERROR_INDEX = new int[]{-1, 14, 13, 10, 12, 6, 9, 4, 11, 0, 5, 7, 8, 1, 3, 2};

@@ -8,6 +8,9 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Hamming10
 {
+    private Hamming10()
+    {
+    }
 
     private static int[] CHECKSUMS = new int[]{0xE, 0xD, 0xB, 0X7, 0x3, 0xC};
 
@@ -78,10 +81,9 @@ public class Hamming10
                 return 1;
             case 15:
                 return 2;
+            default:
+                return 2;
         }
-
-        /* We'll never get to here */
-        return 2;
     }
 
     /**

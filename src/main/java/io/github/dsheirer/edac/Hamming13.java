@@ -27,6 +27,10 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Hamming13
 {
+    private Hamming13()
+    {
+    }
+
     //DMR Checksums from generator matrix TS 102 361-1 Table B.14
     private static int[] CHECKSUMS = new int[]{0xF, 0xE, 0x7, 0xA, 0x5, 0xB, 0xC, 0x6, 0x3, 0x8, 0x4, 0x2, 0x1};
     private static int[] ERROR_INDEX = new int[]{-1, 12, 11, 8, 10, 4, 7, 2, 9, -1, 3, 5, 6, -1, 1, 0, -1, -1};
@@ -145,17 +149,5 @@ public class Hamming13
         int calculated = calculateChecksum(message, offset);
         int checksum = message.getInt(offset + 9, offset + 12);
         return (checksum ^ calculated);
-    }
-
-    public static void main(String[] args)
-    {
-        String transmitted = "0000010000001";
-        String correct = "0000000000000";
-        String recommended = "0001000000001";
-//        CorrectedBinaryMessage cbm = new CorrectedBinaryMessage(CorrectedBinaryMessage.load(transmitted));
-        CorrectedBinaryMessage cbm = new CorrectedBinaryMessage(CorrectedBinaryMessage.load(correct));
-//        CorrectedBinaryMessage cbm = new CorrectedBinaryMessage(CorrectedBinaryMessage.load(recommended));
-        int syndrome = getSyndrome(cbm, 0);
-        System.out.println("Syndrome " + syndrome);
     }
 }

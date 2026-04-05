@@ -29,7 +29,7 @@ public class ReedSolomon_63_P25 extends BerlekempMassey
      * In binary, this is expressed as: 1000011 which is reversed to big-endian format for this algorithm
      * See: TIA 102-BAAA paragraph 4.9 Reed-Solomon Code Generator Matrices
      */
-    public static final int[] P25_GENERATOR_POLYNOMIAL = { 1, 1, 0, 0, 0, 0, 1 };
+    private static final int[] P25_GENERATOR_POLYNOMIAL = { 1, 1, 0, 0, 0, 0, 1 };
 
     /**
      * Constructs an instance
