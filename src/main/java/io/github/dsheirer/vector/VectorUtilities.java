@@ -34,6 +34,10 @@ public class VectorUtilities
     private static final Logger mLog = LoggerFactory.getLogger(VectorUtilities.class);
     private static boolean mSpeciesMismatchLogged = false;
 
+    private VectorUtilities()
+    {
+    }
+
     /**
      * Checks the species to determine if it is compatible with the preferred species for the runtime CPU
      * and logs a warning if the species' lane width is wider than the preferred species ... which would be
@@ -43,13 +47,10 @@ public class VectorUtilities
      */
     public static void checkSpecies(VectorSpecies<Float> species)
     {
-        if(FloatVector.SPECIES_PREFERRED.length() < species.length())
+        if(FloatVector.SPECIES_PREFERRED.length() < species.length() && !mSpeciesMismatchLogged)
         {
-            if(!mSpeciesMismatchLogged)
-            {
-                mLog.warn("CPU supports maximum SIMD instructions of " + FloatVector.SPECIES_PREFERRED);
-                mSpeciesMismatchLogged = true;
-            }
+            mLog.warn("CPU supports maximum SIMD instructions of " + FloatVector.SPECIES_PREFERRED);
+            mSpeciesMismatchLogged = true;
         }
     }
 
