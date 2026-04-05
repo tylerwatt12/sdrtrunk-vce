@@ -70,8 +70,6 @@ public class CRCLTR
 	 */
 	public static CRC check( BitSet msg, MessageDirection direction )
 	{
-		CRC crc = CRC.UNKNOWN;
-		
 		int calculated = getCalculatedChecksum( msg );
 		int transmitted = getTransmittedChecksum( msg );
 
@@ -103,6 +101,14 @@ public class CRCLTR
 	{
 		int calculated = getCalculatedChecksum( msg );
 		int transmitted = getTransmittedChecksum( msg );
+
+		if(direction == MessageDirection.ISW)
+		{
+			return "CALC: " + Integer.toHexString(calculated).toUpperCase() +
+					" CALC-INV: " + Integer.toHexString(calculated ^ 127).toUpperCase() +
+					" TRANS: " + Integer.toHexString(transmitted).toUpperCase();
+		}
+
 		return "CALC: " + Integer.toHexString(calculated).toUpperCase() +
 				" TRANS: " + Integer.toHexString(transmitted).toUpperCase();
 	}
