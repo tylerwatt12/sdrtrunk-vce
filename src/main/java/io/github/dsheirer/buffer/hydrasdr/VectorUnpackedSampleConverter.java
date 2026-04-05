@@ -44,7 +44,8 @@ public class VectorUnpackedSampleConverter implements IHydraSdrSampleConverter
 
         short sample;
         short[] samples;
-        byte b1, b2;
+        byte b1;
+        byte b2;
 
         samples = new short[buffer.capacity() / 2];
 

@@ -29,7 +29,6 @@ public class BooleanAveragingBuffer
     private boolean[] mBuffer;
     private int mBufferPointer;
     private int mThreshold;
-    private int mTrueCount;
 
     public BooleanAveragingBuffer(int length)
     {
@@ -74,14 +73,16 @@ public class BooleanAveragingBuffer
         //Load the new value into the buffer
         put(newValue);
 
-        mTrueCount = 0;
+        int trueCount = 0;
 
-        for (boolean b : mBuffer) {
-            if (b) {
-                mTrueCount++;
+        for(boolean b: mBuffer)
+        {
+            if(b)
+            {
+                trueCount++;
             }
         }
 
-        return mTrueCount > mThreshold;
+        return trueCount > mThreshold;
     }
 }

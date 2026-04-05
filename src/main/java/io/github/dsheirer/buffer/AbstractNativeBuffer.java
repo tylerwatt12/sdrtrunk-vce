@@ -32,7 +32,7 @@ public abstract class AbstractNativeBuffer implements INativeBuffer
      * @param timestamp for the start of this buffer
      * @param samplesPerMillisecond to calculate the time offset of sub-buffers extracted from this native buffer.
      */
-    public AbstractNativeBuffer(long timestamp, float samplesPerMillisecond)
+    protected AbstractNativeBuffer(long timestamp, float samplesPerMillisecond)
     {
         mTimestamp = timestamp;
         mSamplesPerMillisecond = samplesPerMillisecond;

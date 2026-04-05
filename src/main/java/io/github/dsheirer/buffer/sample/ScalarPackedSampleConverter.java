@@ -93,30 +93,4 @@ public class ScalarPackedSampleConverter implements ISampleConverter
     {
         return mDcCalculationManager.getAverageDc();
     }
-
-    public static void main(String[] args)
-    {
-        byte[] raw = new byte[262144];
-        ByteBuffer buffer = ByteBuffer.wrap(raw);
-
-        ScalarPackedSampleConverter scalar = new ScalarPackedSampleConverter();
-        VectorUnpackedSampleConverter vector = new VectorUnpackedSampleConverter();
-
-        long accumulator = 0;
-        int iterations = 1_000_000;
-
-        System.out.println("Starting ...");
-        long start = System.currentTimeMillis();
-        for(int count = 0; count < iterations; count++)
-        {
-//            short[] samples = scalar.convert(buffer);
-            short[] samples = vector.convert(buffer);
-            accumulator += samples[1];
-        }
-        long elapsed = System.currentTimeMillis() - start;
-
-        System.out.println("Accumulator: " + accumulator);
-        System.out.println("Elapsed: " + (elapsed / 1000.0f));
-        System.out.println("Finished");
-    }
 }

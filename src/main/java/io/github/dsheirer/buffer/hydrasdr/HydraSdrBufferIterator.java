@@ -54,7 +54,7 @@ public abstract class HydraSdrBufferIterator<T> implements Iterator<T>
      * @param timestamp of the buffer
      * @param samplesPerMillisecond to calculate sub-buffer fragment timestamps
      */
-    public HydraSdrBufferIterator(short[] samples, short[] residualI, short[] residualQ, float averageDc, long timestamp,
+    protected HydraSdrBufferIterator(short[] samples, short[] residualI, short[] residualQ, float averageDc, long timestamp,
                                 float samplesPerMillisecond)
     {
         if(residualI.length != I_OVERLAP || residualQ.length != Q_OVERLAP)

@@ -36,13 +36,6 @@ public class AirspyHfNativeBufferFactory extends AbstractNativeBufferFactory
     private DcCorrectionManager mDcCorrectionManager = new DcCorrectionManager();
 
     /**
-     * Constructs an instance
-     */
-    public AirspyHfNativeBufferFactory()
-    {
-    }
-
-    /**
      * Converts the samples byte buffer into a native buffer and calculates DC offset
      * @param samples byte array copied from native memory
      * @param timestamp of the samples

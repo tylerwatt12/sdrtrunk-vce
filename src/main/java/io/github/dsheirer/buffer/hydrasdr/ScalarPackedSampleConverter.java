@@ -40,7 +40,9 @@ public class ScalarPackedSampleConverter implements IHydraSdrSampleConverter
         int offset = 0;
         short sample;
         short[] samples;
-        byte b1, b2, b3;
+        byte b1;
+        byte b2;
+        byte b3;
 
         samples = new short[buffer.capacity() / 3 * 2];
 
