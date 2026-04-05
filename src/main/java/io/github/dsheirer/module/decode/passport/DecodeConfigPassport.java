@@ -23,10 +23,6 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 
 public class DecodeConfigPassport extends DecodeConfiguration
 {
-    public DecodeConfigPassport()
-    {
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {

@@ -59,4 +59,26 @@ public class PassportRadioId extends RadioIdentifier implements Comparable<Passp
     {
         return Integer.compare(getValue(), o.getValue());
     }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        if(this == obj)
+        {
+            return true;
+        }
+
+        if(!(obj instanceof PassportRadioId other))
+        {
+            return false;
+        }
+
+        return getValue() == other.getValue();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Integer.hashCode(getValue());
+    }
 }

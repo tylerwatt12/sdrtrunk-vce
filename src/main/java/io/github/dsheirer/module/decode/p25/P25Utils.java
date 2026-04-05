@@ -4,6 +4,10 @@ import org.apache.commons.lang3.StringUtils;
 
 public class P25Utils
 {
+    private P25Utils()
+    {
+    }
+
     /**
      * Formats a NAC code to three hexadecimal characters using zeros to prepad the value to three places.
      * @param nac to format
