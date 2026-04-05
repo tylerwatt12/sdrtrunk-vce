@@ -98,7 +98,7 @@ public class EventLogConfigurationEditor extends Editor<EventLogConfiguration>
     @Override
     public void dispose()
     {
-
+        // Nothing to dispose
     }
 
     public class EventLogControl extends GridPane

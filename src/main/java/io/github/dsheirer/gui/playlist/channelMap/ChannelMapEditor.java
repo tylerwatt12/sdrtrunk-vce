@@ -61,7 +61,6 @@ public class ChannelMapEditor extends SplitPane
 {
     private static final String COPY_NAME = " (copy)";
     private ChannelMapModel mChannelMapModel;
-    private SplitPane mSplitPane;
     private MapEditor mMapEditor;
     private HBox mChannelMapManagerBox;
     private VBox mMapButtonsBox;
@@ -259,9 +258,8 @@ public class ChannelMapEditor extends SplitPane
 
                     //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
                     alert.setResizable(true);
-                    alert.onShownProperty().addListener(e -> {
-                        Platform.runLater(() -> alert.setResizable(false));
-                    });
+                    alert.onShownProperty().addListener(e ->
+                        Platform.runLater(() -> alert.setResizable(false)));
 
                     alert.showAndWait();
                 }
@@ -515,9 +513,8 @@ public class ChannelMapEditor extends SplitPane
 
                 //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
                 alert.setResizable(true);
-                alert.onShownProperty().addListener(e -> {
-                    Platform.runLater(() -> alert.setResizable(false));
-                });
+                alert.onShownProperty().addListener(e ->
+                    Platform.runLater(() -> alert.setResizable(false)));
 
                 alert.showAndWait();
 
@@ -766,10 +763,6 @@ public class ChannelMapEditor extends SplitPane
     {
         private static final String BACKGROUND_COLOR_RED = "-fx-background-color: red;";
         private static final String BACKGROND_COLOR_NONE = "-fx-background-color: null;";
-
-        public ColorTableCell()
-        {
-        }
 
         @Override
         protected void updateItem(Integer item, boolean empty)

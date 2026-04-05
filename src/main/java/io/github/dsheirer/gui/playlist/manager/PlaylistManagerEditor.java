@@ -323,7 +323,7 @@ public class PlaylistManagerEditor extends HBox
             mSelectButton = new Button("Select");
             mSelectButton.setTooltip(new Tooltip("Sets the selected playlist as the current playlist"));
             mSelectButton.setMaxWidth(Double.MAX_VALUE);
-            mSelectButton.setOnAction(event -> {selectPlayist(getPlaylistTableView().getSelectionModel().getSelectedItem());});
+            mSelectButton.setOnAction(event -> selectPlayist(getPlaylistTableView().getSelectionModel().getSelectedItem()));
         }
 
         return mSelectButton;
@@ -543,14 +543,7 @@ public class PlaylistManagerEditor extends HBox
     {
         if(preferenceType == PreferenceType.PLAYLIST)
         {
-            Platform.runLater(new Runnable()
-            {
-                @Override
-                public void run()
-                {
-                    getPlaylistTableView().refresh();
-                }
-            });
+            Platform.runLater(() -> getPlaylistTableView().refresh());
         }
     }
 }

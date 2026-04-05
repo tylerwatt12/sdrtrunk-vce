@@ -27,7 +27,6 @@ import io.github.dsheirer.rrapi.type.Site;
  */
 public class EnrichedSite implements Comparable<EnrichedSite>
 {
-    private static final String PHASE_2_TDMA_MODULATION = "TDMA";
     private Site mSite;
     private CountyInfo mCountyInfo;
 
@@ -172,5 +171,27 @@ public class EnrichedSite implements Comparable<EnrichedSite>
     public int compareTo(EnrichedSite o)
     {
         return this.toString().compareTo(o.toString());
+    }
+
+    @Override
+    public boolean equals(Object o)
+    {
+        if(this == o)
+        {
+            return true;
+        }
+
+        if(!(o instanceof EnrichedSite other))
+        {
+            return false;
+        }
+
+        return this.toString().equals(other.toString());
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return toString().hashCode();
     }
 }

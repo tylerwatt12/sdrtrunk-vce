@@ -99,7 +99,7 @@ public class AuxDecoderConfigurationEditor extends Editor<AuxDecodeConfiguration
     @Override
     public void dispose()
     {
-
+        //Nothing to dispose
     }
 
     public class AuxDecoderControl extends GridPane
