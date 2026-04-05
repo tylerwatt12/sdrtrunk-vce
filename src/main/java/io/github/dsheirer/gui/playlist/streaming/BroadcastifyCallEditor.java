@@ -94,6 +94,7 @@ public class BroadcastifyCallEditor extends AbstractBroadcastEditor<Broadcastify
     @Override
     public void dispose()
     {
+        // Nothing to dispose
     }
 
     @Override
@@ -293,34 +294,21 @@ public class BroadcastifyCallEditor extends AbstractBroadcastEditor<Broadcastify
 
                 if(apiKey == null || apiKey.isEmpty())
                 {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "Please enter an API Key",
-                        ButtonType.OK);
-                    alert.setTitle("Test Connection");
-                    alert.setHeaderText("A valid API Key is required");
-                    alert.initOwner(getTestButton().getScene().getWindow());
-                    alert.show();
+                    showTestConnectionInputError("Please enter an API Key", "A valid API Key is required");
                     return;
                 }
 
                 if(systemID < 1)
                 {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "Please enter a non-zero System ID",
-                        ButtonType.OK);
-                    alert.setTitle("Test Connection");
-                    alert.setHeaderText("A valid System ID is required");
-                    alert.initOwner(getTestButton().getScene().getWindow());
-                    alert.show();
+                    showTestConnectionInputError("Please enter a non-zero System ID",
+                        "A valid System ID is required");
                     return;
                 }
 
                 if(host == null || host.isEmpty())
                 {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "Please enter a Broadcastify URL",
-                        ButtonType.OK);
-                    alert.setTitle("Test Connection");
-                    alert.setHeaderText("A valid URL for Broadcastify is required");
-                    alert.initOwner(getTestButton().getScene().getWindow());
-                    alert.show();
+                    showTestConnectionInputError("Please enter a Broadcastify URL",
+                        "A valid URL for Broadcastify is required");
                     return;
                 }
 
@@ -333,12 +321,7 @@ public class BroadcastifyCallEditor extends AbstractBroadcastEditor<Broadcastify
 
                 if(result != null && result.toLowerCase().startsWith("ok"))
                 {
-                    Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Test successful.",
-                        ButtonType.OK);
-                    alert.setTitle("Test Result");
-                    alert.setHeaderText("Success!");
-                    alert.initOwner(getTestButton().getScene().getWindow());
-                    alert.show();
+                    showTestResult(Alert.AlertType.CONFIRMATION, "Test successful.", "Success!");
                     return;
                 }
                 else
@@ -354,16 +337,30 @@ public class BroadcastifyCallEditor extends AbstractBroadcastEditor<Broadcastify
                         message = "Invalid System ID";
                     }
 
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "Error: " + message, ButtonType.OK);
-                    alert.setTitle("Test Result");
-                    alert.setHeaderText("Test Failed.");
-                    alert.initOwner(getTestButton().getScene().getWindow());
-                    alert.show();
+                    showTestResult(Alert.AlertType.ERROR, "Error: " + message, "Test Failed.");
                     return;
                 }
             });
         }
 
         return mTestButton;
+    }
+
+    private void showTestConnectionInputError(String contentText, String headerText)
+    {
+        Alert alert = new Alert(Alert.AlertType.ERROR, contentText, ButtonType.OK);
+        alert.setTitle("Test Connection");
+        alert.setHeaderText(headerText);
+        alert.initOwner(getTestButton().getScene().getWindow());
+        alert.show();
+    }
+
+    private void showTestResult(Alert.AlertType alertType, String contentText, String headerText)
+    {
+        Alert alert = new Alert(alertType, contentText, ButtonType.OK);
+        alert.setTitle("Test Result");
+        alert.setHeaderText(headerText);
+        alert.initOwner(getTestButton().getScene().getWindow());
+        alert.show();
     }
 }

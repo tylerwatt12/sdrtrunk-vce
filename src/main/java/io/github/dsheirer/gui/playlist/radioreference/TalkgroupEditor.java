@@ -23,7 +23,6 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.playlist.alias.ViewAliasRequest;
 import io.github.dsheirer.playlist.PlaylistManager;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import javafx.geometry.HPos;
@@ -60,9 +59,8 @@ public class TalkgroupEditor extends GridPane
     private Alias mAlias;
     private boolean mSetEncryptedDoNotMonitor;
 
-    public TalkgroupEditor(UserPreferences userPreferences, PlaylistManager playlistManager)
+    public TalkgroupEditor(PlaylistManager playlistManager)
     {
-        mUserPreferences = userPreferences;
         mPlaylistManager = playlistManager;
 
         setHgap(5);

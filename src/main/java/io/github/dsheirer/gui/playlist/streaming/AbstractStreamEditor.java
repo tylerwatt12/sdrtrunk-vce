@@ -46,7 +46,7 @@ public abstract class AbstractStreamEditor<T extends BroadcastConfiguration> ext
     /**
      * Constructs an instance
      */
-    public AbstractStreamEditor(PlaylistManager playlistManager)
+    protected AbstractStreamEditor(PlaylistManager playlistManager)
     {
         super(playlistManager);
     }

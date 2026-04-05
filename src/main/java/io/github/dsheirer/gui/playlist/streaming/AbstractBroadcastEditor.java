@@ -57,7 +57,7 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
      * Constructs an instance
      * @param playlistManager for access the stream manager
      */
-    public AbstractBroadcastEditor(PlaylistManager playlistManager)
+    protected AbstractBroadcastEditor(PlaylistManager playlistManager)
     {
         mPlaylistManager = playlistManager;
         getFormatField().setText(getBroadcastServerType().toString());
@@ -115,9 +115,8 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
             String updatedName = getNameTextField().getText();
             configuration.setName(getNameTextField().getText());
 
-            if(previousName != null && !previousName.isEmpty() && !updatedName.contentEquals(previousName))
-            {
-                if(getPlaylistManager().getAliasModel().hasAliasesWithBroadcastChannel(previousName))
+            if(previousName != null && !previousName.isEmpty() && !updatedName.contentEquals(previousName)
+                && getPlaylistManager().getAliasModel().hasAliasesWithBroadcastChannel(previousName))
                 {
                     Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                     alert.getButtonTypes().clear();
@@ -129,9 +128,8 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
 
                     //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
                     alert.setResizable(true);
-                    alert.onShownProperty().addListener(e -> {
-                        Platform.runLater(() -> alert.setResizable(false));
-                    });
+                    alert.onShownProperty().addListener(e ->
+                        Platform.runLater(() -> alert.setResizable(false)));
 
                     alert.showAndWait().ifPresent(buttonType -> {
                         if(buttonType == ButtonType.YES)
@@ -139,7 +137,6 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
                             getPlaylistManager().getAliasModel().updateBroadcastChannel(previousName, updatedName);
                         }
                     });
-                }
             }
 
             //TODO: remove this after we get rid of Swing tables so that we don't have to announce these changes.

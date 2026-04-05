@@ -430,7 +430,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         if(mTalkgroupEditor == null)
         {
-            mTalkgroupEditor = new TalkgroupEditor(mUserPreferences, mPlaylistManager);
+            mTalkgroupEditor = new TalkgroupEditor(mPlaylistManager);
         }
 
         return mTalkgroupEditor;
