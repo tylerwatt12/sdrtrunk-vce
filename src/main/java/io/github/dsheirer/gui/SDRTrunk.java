@@ -785,37 +785,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
     }
 
-    /**
-     * Gets (or creates) the SDRTRunk application home directory.
-     *
-     * Note: the user can change this setting to allow log files and other
-     * files to reside elsewhere on the file system.
-     */
-    private Path getHomePath()
-    {
-        Path homePath = FileSystems.getDefault()
-            .getPath(System.getProperty("user.home"), "SDRTrunk");
-
-        if(!Files.exists(homePath))
-        {
-            try
-            {
-                Files.createDirectory(homePath);
-
-                mLog.info("SDRTrunk - created application home directory [" +
-                    homePath.toString() + "]");
-            }
-            catch(Exception e)
-            {
-                homePath = null;
-
-                mLog.error("SDRTrunk: exception while creating SDRTrunk home " +
-                    "directory in the user's home directory", e);
-            }
-        }
-
-        return homePath;
-    }
 
     @Override
     public void receive(TunerEvent event)
@@ -932,9 +901,9 @@ public class SDRTrunk implements Listener<TunerEvent>
                 }
 
                 @Override
-                public void menuDeselected(MenuEvent e) { }
+                public void menuDeselected(MenuEvent e) { /* no action required */ }
                 @Override
-                public void menuCanceled(MenuEvent e) { }
+                public void menuCanceled(MenuEvent e) { /* no action required */ }
             });
         }
 
