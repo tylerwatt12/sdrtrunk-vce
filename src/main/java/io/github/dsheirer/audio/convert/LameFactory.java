@@ -28,6 +28,10 @@ import net.sourceforge.lame.mp3.MPEGMode;
  */
 public class LameFactory
 {
+    private LameFactory()
+    {
+    }
+
     /**
      * Creates a LAME MP3 encoder using the specified input sample rate and MP3 settings
      * @param input sample rate

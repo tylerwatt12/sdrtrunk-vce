@@ -21,7 +21,6 @@ package io.github.dsheirer.audio.convert;
 import io.github.dsheirer.audio.AudioUtils;
 import io.github.dsheirer.dsp.filter.resample.RealResampler;
 import io.github.dsheirer.sample.ConversionUtils;
-import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -41,7 +40,6 @@ public class MP3AudioConverter implements IAudioConverter
     public static final int AUDIO_QUALITY = Lame.QUALITY_LOW;
     private LameEncoder mEncoder;
     private RealResampler mResampler;
-    private ByteArrayOutputStream mMP3EncodedFramesStream = new ByteArrayOutputStream();
     private byte[] mOutputFramesBuffer;
     private InputAudioFormat mInputAudioFormat;
 

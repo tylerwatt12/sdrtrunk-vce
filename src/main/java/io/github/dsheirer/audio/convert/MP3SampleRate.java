@@ -21,9 +21,13 @@ package io.github.dsheirer.audio.convert;
 
 public class MP3SampleRate
 {
-    private final static int[] MPEG_1 = new int[]{44100, 48000, 32000};
-    private final static int[] MPEG_2 = new int[]{22050, 24000, 16000};
-    private final static int[] MPEG2_5 = new int[]{11025, 12000, 8000};
+    private static final int[] MPEG_1 = new int[]{44100, 48000, 32000};
+    private static final int[] MPEG_2 = new int[]{22050, 24000, 16000};
+    private static final int[] MPEG2_5 = new int[]{11025, 12000, 8000};
+
+    private MP3SampleRate()
+    {
+    }
 
     public static int getSampleRate(MPEGVersion version, int value)
     {

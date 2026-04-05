@@ -27,6 +27,10 @@ package io.github.dsheirer.audio.convert.thumbdv.message;
  */
 public abstract class AmbeMessage
 {
+    protected AmbeMessage()
+    {
+    }
+
     /**
      * Converts the byte array to a hexadecimal string array
      */

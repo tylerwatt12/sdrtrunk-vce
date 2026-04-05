@@ -212,69 +212,6 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
         }
     }
 
-    private void updateIdentifiers(IdentifierCollection identifierCollection)
-    {
-        if(identifierCollection == null || identifierCollection.isEmpty())
-        {
-            resetLabels();
-            return;
-        }
-
-        List<Identifier> toIds = identifierCollection.getIdentifiers(IdentifierClass.USER, Role.TO);
-
-        if(toIds.isEmpty())
-        {
-            resetLabels();
-            return;
-        }
-
-        boolean updated = false;
-
-        //Protect access to mIdentifier and mAliases
-        mLock.lock();
-
-        try
-        {
-            if(toIds.size() == 1)
-            {
-                Identifier<?> currentIdentifier = mIdentifier;
-
-                if(currentIdentifier == null || currentIdentifier != toIds.get(0))
-                {
-                    mIdentifier = toIds.get(0);
-                    AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
-
-                    if(aliasList != null)
-                    {
-                        mAliases = aliasList.getAliases(mIdentifier);
-                    }
-                    updated = true;
-                }
-            }
-            else
-            {
-                mIdentifier = toIds.get(0);
-                AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
-
-                if(aliasList != null)
-                {
-                    mAliases = aliasList.getAliases(mIdentifier);
-                }
-                updated = true;
-            }
-
-            //Hold the lock through the label update
-            if(updated)
-            {
-                updateLabels();
-            }
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-    }
-
     /**
      * Updates the alias label with text and icon from the alias.
      */
@@ -327,6 +264,69 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
      */
     public class AudioMetadataProcessor implements Listener<IdentifierCollection>
     {
+        private void updateIdentifiers(IdentifierCollection identifierCollection)
+        {
+            if(identifierCollection == null || identifierCollection.isEmpty())
+            {
+                resetLabels();
+                return;
+            }
+
+            List<Identifier> toIds = identifierCollection.getIdentifiers(IdentifierClass.USER, Role.TO);
+
+            if(toIds.isEmpty())
+            {
+                resetLabels();
+                return;
+            }
+
+            boolean updated = false;
+
+            //Protect access to mIdentifier and mAliases
+            mLock.lock();
+
+            try
+            {
+                if(toIds.size() == 1)
+                {
+                    Identifier<?> currentIdentifier = mIdentifier;
+
+                    if(currentIdentifier == null || currentIdentifier != toIds.get(0))
+                    {
+                        mIdentifier = toIds.get(0);
+                        AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
+
+                        if(aliasList != null)
+                        {
+                            mAliases = aliasList.getAliases(mIdentifier);
+                        }
+                        updated = true;
+                    }
+                }
+                else
+                {
+                    mIdentifier = toIds.get(0);
+                    AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
+
+                    if(aliasList != null)
+                    {
+                        mAliases = aliasList.getAliases(mIdentifier);
+                    }
+                    updated = true;
+                }
+
+                //Hold the lock through the label update
+                if(updated)
+                {
+                    updateLabels();
+                }
+            }
+            finally
+            {
+                mLock.unlock();
+            }
+        }
+
         @Override
         public void receive(final IdentifierCollection identifierCollection)
         {

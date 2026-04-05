@@ -21,6 +21,7 @@ package io.github.dsheirer.audio.convert;
 
 import io.github.dsheirer.audio.AudioFormats;
 import java.util.EnumSet;
+import java.util.Set;
 
 import javax.sound.sampled.AudioFormat;
 
@@ -45,13 +46,14 @@ public enum InputAudioFormat
     /**
      * Set that includes sample rates of 8 or 16 kHz
      */
-    public static final EnumSet<InputAudioFormat> SAMPLE_RATES_8_16 = EnumSet.of(SR_8000, SR_32_8000, SR_16000, SR_32_16000);
+    public static final Set<InputAudioFormat> SAMPLE_RATES_8_16 =
+        Set.copyOf(EnumSet.of(SR_8000, SR_32_8000, SR_16000, SR_32_16000));
 
     /**
      * Set that includes sample rates of 8, 16, or 22 kHz
      */
-    public static final EnumSet<InputAudioFormat> SAMPLE_RATES_8_16_22 = EnumSet.of(SR_8000, SR_32_8000, SR_16000,
-            SR_32_16000, SR_22050, SR_32_22050);
+    public static final Set<InputAudioFormat> SAMPLE_RATES_8_16_22 = Set.copyOf(EnumSet.of(SR_8000, SR_32_8000,
+        SR_16000, SR_32_16000, SR_22050, SR_32_22050));
 
     /**
      * Constructs an instance

@@ -24,7 +24,7 @@ import org.apache.commons.math3.util.FastMath;
 public abstract class AudioFrames
 {
     protected final int audioDuration;
-    protected final List<byte[]> audioFrames;
+    protected final List<byte[]> mAudioFrames;
     protected int mCurrentFrame = -1;
 
     /**
@@ -32,10 +32,10 @@ public abstract class AudioFrames
      * @param audioDuration total duration in milliseconds
      * @param audioFrames series of audio frames, split on frame boundaries
      */
-    public AudioFrames(int audioDuration, List<byte[]> audioFrames)
+    protected AudioFrames(int audioDuration, List<byte[]> audioFrames)
     {
         this.audioDuration = audioDuration;
-        this.audioFrames = audioFrames;
+        mAudioFrames = audioFrames;
     }
 
     /**
@@ -53,7 +53,7 @@ public abstract class AudioFrames
      */
     public List<byte[]> getFrames()
     {
-        return audioFrames;
+        return mAudioFrames;
     }
 
     /**
@@ -62,7 +62,7 @@ public abstract class AudioFrames
      */
     public byte[] getCurrentFrame()
     {
-        return audioFrames.get(mCurrentFrame);
+        return mAudioFrames.get(mCurrentFrame);
     }
 
     /**
@@ -78,7 +78,7 @@ public abstract class AudioFrames
     public boolean hasPrevFrame()
     {
         int prevFrame = mCurrentFrame - 1;
-        return prevFrame >= 0 && prevFrame < audioFrames.size();
+        return prevFrame >= 0 && prevFrame < mAudioFrames.size();
     }
 
     /**
@@ -88,7 +88,7 @@ public abstract class AudioFrames
     public boolean hasNextFrame()
     {
         int nextFrame = mCurrentFrame + 1;
-        return nextFrame >= 0 && nextFrame < audioFrames.size();
+        return nextFrame >= 0 && nextFrame < mAudioFrames.size();
     }
 
     /**

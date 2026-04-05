@@ -27,6 +27,10 @@ public class MP3FrameInspector
 {
     private static final Logger mLog = LoggerFactory.getLogger(MP3FrameInspector.class);
 
+    private MP3FrameInspector()
+    {
+    }
+
     public static void inspect(List<byte[]> frames)
     {
         if(frames.isEmpty())
@@ -55,17 +59,5 @@ public class MP3FrameInspector
         }
     }
 
-    /* TODO: Rework for MP3SilenceGenerator returning IAudioFrames
-    public static void main(String[] args)
-    {
-        mLog.info("Starting ...");
-        MP3SilenceGenerator gen = new MP3SilenceGenerator(InputAudioFormat.SR_8000, MP3Setting.getDefault());
-
-        List<byte[]> audio = gen.generate(173);
-
-        inspect(audio);
-
-        mLog.info("Finished");
-    }
-    */
+    /* TODO: Rework for MP3SilenceGenerator returning IAudioFrames */
 }

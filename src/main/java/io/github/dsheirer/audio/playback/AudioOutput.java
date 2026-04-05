@@ -100,16 +100,7 @@ public class AudioOutput implements LineListener
                 if(mSourceDataLine != null)
                 {
                     mSourceDataLine.addLineListener(this);
-                    try
-                    {
-                        Control gain = mSourceDataLine.getControl(FloatControl.Type.MASTER_GAIN);
-                        mGainControl = (FloatControl) gain;
-                    }
-                    catch(IllegalArgumentException iae)
-                    {
-                        LOGGING_SUPPRESSOR.error("no gain control", 2, "Couldn't obtain " +
-                                "MASTER GAIN control for stereo line [" + mixer.getMixerInfo().getName() + "]");
-                    }
+                    initializeGainControl(mixer);
 
                     mCanProcessAudio = true;
                 }
@@ -139,6 +130,20 @@ public class AudioOutput implements LineListener
                     audioChannel.setDisabled(true);
                 }
             }
+        }
+    }
+
+    private void initializeGainControl(Mixer mixer)
+    {
+        try
+        {
+            Control gain = mSourceDataLine.getControl(FloatControl.Type.MASTER_GAIN);
+            mGainControl = (FloatControl)gain;
+        }
+        catch(IllegalArgumentException iae)
+        {
+            LOGGING_SUPPRESSOR.error("no gain control", 2, "Couldn't obtain " +
+                "MASTER GAIN control for stereo line [" + mixer.getMixerInfo().getName() + "]");
         }
     }
 
@@ -223,38 +228,6 @@ public class AudioOutput implements LineListener
     public AudioProvider getAudioProvider()
     {
         return mAudioProvider;
-    }
-
-    /**
-     * Process audio from the audio provider and writes it to the mixer's source data line.  Calls to this method can
-     * block on the source data line until it has capacity available to accept the audio.
-     */
-    private void processAudio()
-    {
-        if(mSourceDataLine == null)
-        {
-            LOGGING_SUPPRESSOR.error("null output", 2,
-                    "Audio Output source data line is null - ignoring audio playback request");
-            return;
-        }
-
-        ByteBuffer buffer = mAudioProvider.getAudio();
-
-        if(buffer != null)
-        {
-            //This is a blocking method call.
-            int wrote = mSourceDataLine.write(buffer.array(), 0, buffer.array().length);
-
-            //Around JDK 22 something started causing the source data line to fail to accept audio byte data via the
-            //write() method. When this happens, close and reopen the data line to clear the error state.
-            if(wrote <= 0)
-            {
-                LOGGING_SUPPRESSOR.info("Stalled Data Line", 3,
-                        "Audio playback data line has stopped accepting samples - recycling to clear the error");
-                mSourceDataLine.close();
-                openSourceDataLine();
-            }
-        }
     }
 
     /**
@@ -357,6 +330,38 @@ public class AudioOutput implements LineListener
     {
         private final AtomicBoolean mProcessing = new AtomicBoolean();
 
+        /**
+         * Process audio from the audio provider and writes it to the mixer's source data line. Calls to this method can
+         * block on the source data line until it has capacity available to accept the audio.
+         */
+        private void processAudio()
+        {
+            if(mSourceDataLine == null)
+            {
+                LOGGING_SUPPRESSOR.error("null output", 2,
+                    "Audio Output source data line is null - ignoring audio playback request");
+                return;
+            }
+
+            ByteBuffer buffer = mAudioProvider.getAudio();
+
+            if(buffer != null)
+            {
+                //This is a blocking method call.
+                int wrote = mSourceDataLine.write(buffer.array(), 0, buffer.array().length);
+
+                //Around JDK 22 something started causing the source data line to fail to accept audio byte data via the
+                //write() method. When this happens, close and reopen the data line to clear the error state.
+                if(wrote <= 0)
+                {
+                    LOGGING_SUPPRESSOR.info("Stalled Data Line", 3,
+                        "Audio playback data line has stopped accepting samples - recycling to clear the error");
+                    mSourceDataLine.close();
+                    openSourceDataLine();
+                }
+            }
+        }
+
         @Override
         public void run()
         {
@@ -366,9 +371,9 @@ public class AudioOutput implements LineListener
                 {
                     processAudio();
                 }
-                catch(Throwable t)
+                catch(Exception e)
                 {
-                    mLog.error("Error while processing audio buffers", t);
+                    mLog.error("Error while processing audio buffers", e);
                 }
 
                 mProcessing.set(false);

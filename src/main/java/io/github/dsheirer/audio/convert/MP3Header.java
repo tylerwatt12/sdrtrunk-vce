@@ -130,6 +130,7 @@ public class MP3Header
                     case LAYER3: return 1152;
                     default:
                 }
+                // fall through
             case V_2:
             case V_2_5:
                 switch(getMPEGLayer(frame, offset))
@@ -139,6 +140,7 @@ public class MP3Header
                     case LAYER3: return 576;
                     default:
                 }
+                // fall through
             default:
         }
         return 0;

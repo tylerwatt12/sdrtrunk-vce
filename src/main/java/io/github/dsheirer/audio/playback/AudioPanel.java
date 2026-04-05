@@ -29,8 +29,8 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
 import java.awt.EventQueue;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
@@ -58,7 +58,6 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
     private final SettingsManager mSettingsManager;
     private final UserPreferences mUserPreferences;
     private AudioChannelsPanel mAudioChannelsPanel;
-    private JButton mMuteButton;
 
     /**
      * Constructs an instance
@@ -87,9 +86,9 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
     {
         setLayout(new MigLayout("insets 0 0 0 0", "[]0[grow,fill]", "[fill]0[]"));
         setBackground(Color.BLACK);
-        mMuteButton = new MuteButton();
-        mMuteButton.setBackground(getBackground());
-        add(mMuteButton);
+        JButton muteButton = new MuteButton();
+        muteButton.setBackground(getBackground());
+        add(muteButton);
         mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel);
         add(mAudioChannelsPanel);
         addMouseListener(new MouseSelectionListener());
@@ -143,7 +142,7 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
     /**
      * Mouse listener
      */
-    public class MouseSelectionListener implements MouseListener
+    public class MouseSelectionListener extends MouseAdapter
     {
         @Override
         public void mouseClicked(MouseEvent event)
@@ -173,26 +172,6 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                 popup.show(event.getComponent(), event.getX(), event.getY());
             }
         }
-
-        @Override
-        public void mousePressed(MouseEvent e)
-        {
-        }
-
-        @Override
-        public void mouseReleased(MouseEvent e)
-        {
-        }
-
-        @Override
-        public void mouseEntered(MouseEvent e)
-        {
-        }
-
-        @Override
-        public void mouseExited(MouseEvent e)
-        {
-        }
     }
 
     /**
@@ -200,7 +179,7 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
      */
     public static class VolumeSlider extends JSlider
     {
-        private final FloatControl mFloatControl;
+        private final transient FloatControl mFloatControl;
 
         /**
          * Constructs an instance
@@ -220,7 +199,7 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                 getFloatValue(VolumeSlider.this.getValue()),
                 1000));
 
-            addMouseListener(new MouseListener()
+            addMouseListener(new MouseAdapter()
             {
                 @Override
                 public void mouseClicked(MouseEvent event)
@@ -230,10 +209,6 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                         VolumeSlider.this.setValue(50);
                     }
                 }
-                public void mouseReleased(MouseEvent arg0) {}
-                public void mousePressed(MouseEvent arg0) {}
-                public void mouseExited(MouseEvent arg0) {}
-                public void mouseEntered(MouseEvent arg0) {}
             });
         }
 
@@ -270,11 +245,11 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             }
             else if(value < 50)
             {
-                return (float) (50 - value) / 50.0f * mFloatControl.getMinimum();
+                return (50 - value) / 50.0f * mFloatControl.getMinimum();
             }
             else
             {
-                return (float) (value - 50) / 50.0f * mFloatControl.getMaximum();
+                return (value - 50) / 50.0f * mFloatControl.getMaximum();
             }
         }
     }

@@ -21,9 +21,13 @@ package io.github.dsheirer.audio.convert;
 
 public class MP3BitRate
 {
-    private final static int[] MPEG_1_L3 = new int[]{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320};
-    private final static int[] MPEG_2_L3 = new int[]{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160};
-    private final static int[] MPEG_2_5_L3 = new int[]{0, 8, 16, 24, 32, 40, 48, 56, 64};
+    private static final int[] MPEG_1_L3 = new int[]{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320};
+    private static final int[] MPEG_2_L3 = new int[]{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160};
+    private static final int[] MPEG_2_5_L3 = new int[]{0, 8, 16, 24, 32, 40, 48, 56, 64};
+
+    private MP3BitRate()
+    {
+    }
 
     public static int getLayer3BitRate(MPEGVersion version, int value)
     {

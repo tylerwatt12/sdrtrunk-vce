@@ -24,7 +24,6 @@ import java.util.List;
 public class MP3SilenceGenerator implements ISilenceGenerator
 {
     private MP3AudioConverter mMP3AudioConverter;
-    private InputAudioFormat mInputAudioFormat;
     private byte[] mSilenceFrame;
     private int mSilenceFrameDuration;
 
@@ -33,16 +32,15 @@ public class MP3SilenceGenerator implements ISilenceGenerator
      */
     public MP3SilenceGenerator(InputAudioFormat inputAudioFormat, MP3Setting setting)
     {
-        mInputAudioFormat = inputAudioFormat;
         mMP3AudioConverter = new MP3AudioConverter(inputAudioFormat, setting, false);
-        generate_frame();
+        generateFrame();
     }
 
     /**
      * Generates a single silence frame
      * @return
      */
-    private void generate_frame()
+    private void generateFrame()
     {
         //We generate silence at 8000 kHz, because it gets resampled by the silence generator to the target rate
         int length = (int)(InputAudioFormat.SR_8000.getSampleRate());
@@ -115,30 +113,5 @@ public class MP3SilenceGenerator implements ISilenceGenerator
         return c;
     }
 
-    /* TODO: Rework for MP3SilenceGenerator returning IAudioFrames
-    public static void main(String[] args)
-    {
-        mLog.debug("Starting ...");
-
-        MP3SilenceGenerator generator = new MP3SilenceGenerator(InputAudioFormat.SR_44100, MP3Setting.VBR_7);
-
-        int x = 100;
-
-//        for(; x < 1000; x += 10)
-//        {
-        List<byte[]> silenceFrames = generator.generate(x);
-
-        mLog.debug("Generated [" + silenceFrames.size() + "] silence frames");
-
-        for(byte[] silence: silenceFrames)
-        {
-            mLog.debug("Silence:" + x + " Length:" + silence.length);
-        }
-
-        MP3FrameInspector.inspect(silenceFrames);
-//        }
-
-        mLog.debug("Finished");
-    }
-    */
+    /* TODO: Rework for MP3SilenceGenerator returning IAudioFrames */
 }
