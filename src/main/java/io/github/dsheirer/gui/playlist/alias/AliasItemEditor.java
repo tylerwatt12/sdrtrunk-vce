@@ -1617,16 +1617,7 @@ public class AliasItemEditor extends Editor<Alias>
                     sb.append("APCO-25 Fully Qualified Talkgroup:").append(fqt.getWacn());
                     sb.append(".").append(fqt.getSystem());
                     sb.append(".").append(fqt.getValue());
-
-                    if(fqt.overlapProperty().get())
-                    {
-                        sb.append(" - Error: Overlap");
-                    }
-
-                    if(!fqt.isValid())
-                    {
-                        sb.append(" **NOT VALID**");
-                    }
+                    appendValidationState(sb, fqt.overlapProperty().get(), fqt.isValid());
                     setText(sb.toString());
                 }
                 else if(item instanceof Talkgroup)
@@ -1639,17 +1630,8 @@ public class AliasItemEditor extends Editor<Alias>
                     StringBuilder sb = new StringBuilder();
 
                     sb.append("Talkgroup:").append(formatted);
-                    sb.append(" Protocol:").append((talkgroup.getProtocol()));
-
-                    if(talkgroup.overlapProperty().get())
-                    {
-                        sb.append(" - Error: Overlap");
-                    }
-
-                    if(!talkgroup.isValid())
-                    {
-                        sb.append(" **NOT VALID**");
-                    }
+                    appendProtocol(sb, talkgroup.getProtocol());
+                    appendValidationState(sb, talkgroup.overlapProperty().get(), talkgroup.isValid());
 
                     setText(sb.toString());
                 }
@@ -1663,17 +1645,8 @@ public class AliasItemEditor extends Editor<Alias>
                     String formattedMax = TalkgroupFormatter.format(protocol, talkgroupRange.getMaxTalkgroup(), integerFormat);
                     StringBuilder sb = new StringBuilder();
                     sb.append("Talkgroup Range:").append(formattedMin).append(" to ").append(formattedMax);
-                    sb.append(" Protocol:").append((talkgroupRange.getProtocol()));
-
-                    if(talkgroupRange.overlapProperty().get())
-                    {
-                        sb.append(" - Error: Overlap");
-                    }
-
-                    if(!talkgroupRange.isValid())
-                    {
-                        sb.append(" **NOT VALID**");
-                    }
+                    appendProtocol(sb, talkgroupRange.getProtocol());
+                    appendValidationState(sb, talkgroupRange.overlapProperty().get(), talkgroupRange.isValid());
                     setText(sb.toString());
                 }
                 else if(item instanceof P25FullyQualifiedRadio fqr)
@@ -1682,16 +1655,7 @@ public class AliasItemEditor extends Editor<Alias>
                     sb.append("APCO-25 Fully Qualified Radio ID:").append(fqr.getWacn());
                     sb.append(".").append(fqr.getSystem());
                     sb.append(".").append(fqr.getValue());
-
-                    if(fqr.overlapProperty().get())
-                    {
-                        sb.append(" - Error: Overlap");
-                    }
-
-                    if(!fqr.isValid())
-                    {
-                        sb.append(" **NOT VALID**");
-                    }
+                    appendValidationState(sb, fqr.overlapProperty().get(), fqr.isValid());
                     setText(sb.toString());
                 }
                 else if(item instanceof Radio)
@@ -1703,17 +1667,8 @@ public class AliasItemEditor extends Editor<Alias>
                     String formatted = RadioFormatter.format(protocol, radio.getValue(), integerFormat);
                     StringBuilder sb = new StringBuilder();
                     sb.append("Radio ID:").append(formatted);
-                    sb.append(" Protocol:").append((radio.getProtocol()));
-
-                    if(radio.overlapProperty().get())
-                    {
-                        sb.append(" - Error: Overlap");
-                    }
-
-                    if(!radio.isValid())
-                    {
-                        sb.append(" **NOT VALID**");
-                    }
+                    appendProtocol(sb, radio.getProtocol());
+                    appendValidationState(sb, radio.overlapProperty().get(), radio.isValid());
                     setText(sb.toString());
                 }
                 else if(item instanceof RadioRange)
@@ -1726,17 +1681,8 @@ public class AliasItemEditor extends Editor<Alias>
                     String formattedMax = TalkgroupFormatter.format(protocol, radioRange.getMaxRadio(), integerFormat);
                     StringBuilder sb = new StringBuilder();
                     sb.append("Radio ID Range:").append(formattedMin).append(" to ").append(formattedMax);
-                    sb.append(" Protocol:").append((radioRange.getProtocol()));
-
-                    if(radioRange.overlapProperty().get())
-                    {
-                        sb.append(" - Error: Overlap");
-                    }
-
-                    if(!radioRange.isValid())
-                    {
-                        sb.append(" **NOT VALID**");
-                    }
+                    appendProtocol(sb, radioRange.getProtocol());
+                    appendValidationState(sb, radioRange.overlapProperty().get(), radioRange.isValid());
                     setText(sb.toString());
                 }
                 else
@@ -1747,6 +1693,24 @@ public class AliasItemEditor extends Editor<Alias>
             else
             {
                 setText(null);
+            }
+        }
+
+        private void appendProtocol(StringBuilder stringBuilder, Protocol protocol)
+        {
+            stringBuilder.append(" Protocol:").append(protocol);
+        }
+
+        private void appendValidationState(StringBuilder stringBuilder, boolean overlap, boolean valid)
+        {
+            if(overlap)
+            {
+                stringBuilder.append(" - Error: Overlap");
+            }
+
+            if(!valid)
+            {
+                stringBuilder.append(" **NOT VALID**");
             }
         }
     }
@@ -1768,7 +1732,7 @@ public class AliasItemEditor extends Editor<Alias>
             gridPane.add(iconLabel, 0, 0);
             gridPane.add(textLabel,1,0);
 
-            ListCell<Icon> cell = new ListCell<>()
+            return new ListCell<>()
             {
                 @Override
                 protected void updateItem(Icon item, boolean empty)
@@ -1788,8 +1752,6 @@ public class AliasItemEditor extends Editor<Alias>
                     }
                 }
             };
-
-            return cell;
         }
     }
 }

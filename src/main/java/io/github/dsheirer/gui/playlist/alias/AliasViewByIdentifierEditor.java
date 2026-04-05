@@ -214,9 +214,8 @@ public class AliasViewByIdentifierEditor extends VBox
             mAliasAndIdentifierTableView.setMaxHeight(Double.MAX_VALUE);
 
             mAliasAndIdentifierTableView.getSelectionModel().selectedItemProperty()
-                .addListener((observable, oldValue, newValue) -> {
-                    getViewAliasButton().setDisable(newValue == null);
-                });
+                .addListener((observable, oldValue, newValue) ->
+                    getViewAliasButton().setDisable(newValue == null));
         }
 
         return mAliasAndIdentifierTableView;
@@ -236,9 +235,7 @@ public class AliasViewByIdentifierEditor extends VBox
                 mAliasListNameComboBox.getSelectionModel().select(0);
             }
             mAliasListNameComboBox.getSelectionModel().selectedItemProperty()
-                .addListener((observable, oldValue, newValue) -> {
-                    updateList();
-                });
+                .addListener((observable, oldValue, newValue) -> updateList());
         }
 
         return mAliasListNameComboBox;

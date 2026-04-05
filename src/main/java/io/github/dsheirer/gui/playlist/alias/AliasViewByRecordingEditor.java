@@ -107,9 +107,7 @@ public class AliasViewByRecordingEditor extends VBox
             mAliasListNameComboBox = new ComboBox<>(filteredChannelList);
             mAliasListNameComboBox.setPadding(new Insets(0,10,0,0));
             mAliasListNameComboBox.getSelectionModel().selectedItemProperty()
-                .addListener((observable, oldValue, newValue) -> {
-                    updateListFilters();
-                });
+                .addListener((observable, oldValue, newValue) -> updateListFilters());
             if(mAliasListNameComboBox.getItems().size() > 0)
             {
                 mAliasListNameComboBox.getSelectionModel().select(0);
@@ -173,9 +171,7 @@ public class AliasViewByRecordingEditor extends VBox
         if(mSearchField == null)
         {
             mSearchField = TextFields.createClearableTextField();
-            mSearchField.textProperty().addListener((observable, oldValue, newValue) -> {
-                updateListFilters();
-            });
+            mSearchField.textProperty().addListener((observable, oldValue, newValue) -> updateListFilters());
         }
 
         return mSearchField;
@@ -403,10 +399,6 @@ public class AliasViewByRecordingEditor extends VBox
         private String mAliasListName;
         private String mFilterText;
 
-        public AvailablePredicate()
-        {
-        }
-
         public void setAliasListName(String aliasListName)
         {
             mAliasListName = aliasListName;
@@ -453,10 +445,6 @@ public class AliasViewByRecordingEditor extends VBox
     {
         private String mAliasListName;
         private String mFilterText;
-
-        public SelectedPredicate()
-        {
-        }
 
         public void setAliasListName(String aliasListName)
         {

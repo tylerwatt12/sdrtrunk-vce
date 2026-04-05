@@ -398,18 +398,14 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mDeleteAliasListButton.setOnAction(event -> {
                 String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
                 if (aliasListName.equals(AliasModel.NO_ALIAS_LIST)) {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "", ButtonType.OK);
-                    alert.setTitle("Delete Alias List");
+                    Alert alert = createDeleteAliasListAlert(Alert.AlertType.ERROR, ButtonType.OK);
                     alert.setHeaderText("You cannot delete " + aliasListName + ".");
-                    alert.initOwner((getDeleteAliasListButton()).getScene().getWindow());
                     alert.showAndWait();
                     return;
                 }
 
-                Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "", ButtonType.NO, ButtonType.YES);
-                alert.setTitle("Delete Alias List");
+                Alert alert = createDeleteAliasListAlert(Alert.AlertType.CONFIRMATION, ButtonType.NO, ButtonType.YES);
                 alert.setHeaderText("Are you sure you want to delete the alias list " + aliasListName + " and all associated aliases?");
-                alert.initOwner((getDeleteAliasListButton()).getScene().getWindow());
 
                 Optional<ButtonType> result = alert.showAndWait();
                 if (result.isPresent() && result.get() == ButtonType.YES)
@@ -420,6 +416,14 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
 
         return mDeleteAliasListButton;
+    }
+
+    private Alert createDeleteAliasListAlert(Alert.AlertType alertType, ButtonType... buttonTypes)
+    {
+        Alert alert = new Alert(alertType, "", buttonTypes);
+        alert.setTitle("Delete Alias List");
+        alert.initOwner(getDeleteAliasListButton().getScene().getWindow());
+        return alert;
     }
 
 
@@ -932,14 +936,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             }
             else if(mAliasListName.equals(alias.getAliasListName()))
             {
-                if(alias.getName() != null && alias.getName().toLowerCase().contains(mSearchText))
-                {
-                    return true;
-                }
-                else if(alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mSearchText))
-                {
-                    return true;
-                }
+                return (alias.getName() != null && alias.getName().toLowerCase().contains(mSearchText)) ||
+                        (alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mSearchText));
             }
 
             return false;

@@ -33,6 +33,10 @@ import javafx.scene.paint.Color;
  */
 public class ColorUtil
 {
+    private ColorUtil()
+    {
+    }
+
     /**
      * Converts the color to a 32 bit integer value
      * @param color to convert
@@ -79,19 +83,8 @@ public class ColorUtil
         value = value >> 8;
         int red = value & 0xFF;
         value = value >> 8;
-        double alpha = (double)(value & 0xFF) / 255.0;
+        double alpha = (value & 0xFF) / 255.0;
 
-        Color color = Color.rgb(red, green, blue, alpha);
-        return color;
-    }
-
-    public static void main(String[] args)
-    {
-        int rgb = -1;
-
-        Color color = ColorUtil.fromInteger(rgb);
-
-        int converted = ColorUtil.toInteger(color);
-
+        return Color.rgb(red, green, blue, alpha);
     }
 }
