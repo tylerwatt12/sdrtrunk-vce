@@ -40,10 +40,6 @@ public class PlaylistV2
     private List<Channel> mChannels = new ArrayList<>();
     private List<ChannelMap> mChannelMaps = new ArrayList<>();
 
-    public PlaylistV2()
-    {
-    }
-
     /**
      * Version number for this playlist
      */

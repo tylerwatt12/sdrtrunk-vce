@@ -21,6 +21,7 @@
 package io.github.dsheirer.preference.identifier.talkgroup;
 
 import io.github.dsheirer.preference.identifier.IntegerFormat;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,12 +41,12 @@ public abstract class AbstractIntegerFormatter
 
     public static String toHex(int value, int width)
     {
-        return String.format("%0" + width + "X", value);
+        return StringUtils.leftPad(Integer.toHexString(value).toUpperCase(), width, '0');
     }
 
     public static String toDecimal(int value, int width)
     {
-        return String.format("%0" + width + "d", value);
+        return StringUtils.leftPad(Integer.toString(value), width, '0');
     }
 
     /**

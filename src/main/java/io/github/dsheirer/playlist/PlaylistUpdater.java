@@ -56,12 +56,16 @@ public class PlaylistUpdater
     private static final String APCO25_RADIO_ID = "[A-Fa-f\\d\\*]{6}";
     private static final String APCO25_TALKGROUP = "[A-Fa-f\\d\\*]{4}";
     private static final String FLEETSYNC_TALKGROUP = "(\\d{3})-(\\d{4})";
-    private static final String LTR_TALKGROUP = "([\\d\\*]{1})-([\\d\\*]{2})-([\\d\\*]{3})";
+    private static final String LTR_TALKGROUP = "([\\d\\*])-([\\d\\*]{2})-([\\d\\*]{3})";
     private static final String LTR_TALKGROUP_WILDCARD = "\\*-\\*{2}-([\\d]{3})";
     private static final String MDC1200_TALKGROUP = "[A-Fa-f\\d\\*]{4}";
     private static final String MOBILE_ID_NUMBER = "[A-Fa-f\\d\\*]{6}";
     private static final String MPT1327_TALKGROUP = "(\\d{3})-(\\d{4})";
     private static final String PASSPORT_TALKGROUP = "[\\d\\*]{5}";
+
+    private PlaylistUpdater()
+    {
+    }
     private static final Pattern FLEETSYNC_PATTERN = Pattern.compile(FLEETSYNC_TALKGROUP);
     private static final Pattern LTR_PATTERN = Pattern.compile(LTR_TALKGROUP);
     private static final Pattern MPT1327_PATTERN = Pattern.compile(MPT1327_TALKGROUP);
@@ -92,10 +96,11 @@ public class PlaylistUpdater
                 removeVersion1NonRecordableAliasIdentifiers(playlist);
                 removeVersion1SiteIdentifiers(playlist);
                 updateVersion1Talkgroups(playlist);
-                updated = true;
+                // fall through
             case 3:
                 convertP25TalkgroupsToRadioIdentifiers(playlist);
                 updated = true;
+                // fall through
                 break;
         }
 
@@ -393,8 +398,8 @@ public class PlaylistUpdater
 
                                         if(m.matches())
                                         {
-                                            int value = Integer.valueOf(m.group(3));
-                                            value += (Integer.valueOf(m.group(2)) << 8);
+                                            int value = Integer.parseInt(m.group(3));
+                                            value += (Integer.parseInt(m.group(2)) << 8);
                                             toAdd.add(new Talkgroup(Protocol.LTR, value));
                                             it.remove();
                                             updated++;
@@ -444,8 +449,8 @@ public class PlaylistUpdater
 
                             if(matcher.matches())
                             {
-                                int value = Integer.valueOf(matcher.group(2));
-                                value += (Integer.valueOf(matcher.group(1)) << 12);
+                                int value = Integer.parseInt(matcher.group(2));
+                                value += (Integer.parseInt(matcher.group(1)) << 12);
 
                                 toAdd.add(new Talkgroup(Protocol.FLEETSYNC, value));
                                 it.remove();
@@ -495,8 +500,8 @@ public class PlaylistUpdater
 
                                 if(matcher.matches())
                                 {
-                                    int value = Integer.valueOf(matcher.group(2));
-                                    value += (Integer.valueOf(matcher.group(1)) << 13);
+                                    int value = Integer.parseInt(matcher.group(2));
+                                    value += (Integer.parseInt(matcher.group(1)) << 13);
 
                                     toAdd.add(new Talkgroup(Protocol.MPT1327, value));
                                     it.remove();

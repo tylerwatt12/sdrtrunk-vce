@@ -21,6 +21,7 @@
 package io.github.dsheirer.preference.identifier;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Options for formatting of integer values.
@@ -38,11 +39,12 @@ public enum IntegerFormat
         mLabel = label;
     }
 
+    @Override
     public String toString()
     {
         return mLabel;
     }
 
-    public static EnumSet<IntegerFormat> DECIMAL_HEXADECIMAL = EnumSet.of(DECIMAL, HEXADECIMAL);
-    public static EnumSet<IntegerFormat> DECIMAL_FORMATTED = EnumSet.of(DECIMAL, FORMATTED);
+    public static final Set<IntegerFormat> DECIMAL_HEXADECIMAL = Set.copyOf(EnumSet.of(DECIMAL, HEXADECIMAL));
+    public static final Set<IntegerFormat> DECIMAL_FORMATTED = Set.copyOf(EnumSet.of(DECIMAL, FORMATTED));
 }

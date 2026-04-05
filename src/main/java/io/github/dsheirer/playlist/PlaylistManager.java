@@ -63,6 +63,7 @@ import org.slf4j.LoggerFactory;
 public class PlaylistManager implements Listener<ChannelEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(PlaylistManager.class);
+    private static final String PLAYLIST_READ_ERROR = "IO error while reading playlist file";
 
     public static final int PLAYLIST_CURRENT_VERSION = 4;
 
@@ -310,14 +311,14 @@ public class PlaylistManager implements Listener<ChannelEvent>
 
         try(InputStream in = Files.newInputStream(path))
         {
-            PlaylistV2 playlist = objectMapper.readValue(in, PlaylistV2.class);
+            objectMapper.readValue(in, PlaylistV2.class);
 
             //If jackson can successfully deserialize the file, then it's a good V2 playlist
             return true;
         }
         catch(IOException ioe)
         {
-            mLog.error("IO error while reading playlist file", ioe);
+            mLog.error(PLAYLIST_READ_ERROR, ioe);
         }
 
         return false;
@@ -559,7 +560,7 @@ public class PlaylistManager implements Listener<ChannelEvent>
             }
             catch(IOException ioe)
             {
-                mLog.error("IO error while reading playlist file", ioe);
+                mLog.error(PLAYLIST_READ_ERROR, ioe);
             }
         }
         else if(Files.exists(files.getLegacyPlaylist()))
@@ -584,7 +585,7 @@ public class PlaylistManager implements Listener<ChannelEvent>
             }
             catch(IOException ioe)
             {
-                mLog.error("IO error while reading playlist file", ioe);
+                mLog.error(PLAYLIST_READ_ERROR, ioe);
             }
         }
         else
@@ -607,12 +608,9 @@ public class PlaylistManager implements Listener<ChannelEvent>
      */
     public void schedulePlaylistSave()
     {
-        if(!mPlaylistLoading)
+        if(!mPlaylistLoading && mPlaylistSavePending.compareAndSet(false, true))
         {
-            if(mPlaylistSavePending.compareAndSet(false, true))
-            {
-                mPlaylistSaveFuture = ThreadPool.SCHEDULED.schedule(new PlaylistSaveTask(), 2, TimeUnit.SECONDS);
-            }
+            mPlaylistSaveFuture = ThreadPool.SCHEDULED.schedule(new PlaylistSaveTask(), 2, TimeUnit.SECONDS);
         }
     }
 

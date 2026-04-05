@@ -351,14 +351,13 @@ public class TalkgroupFormatPreference extends Preference
      */
     private String formatPatchGroupIdentifier(PatchGroupIdentifier patchGroupIdentifier)
     {
-        switch(patchGroupIdentifier.getProtocol())
+        if(patchGroupIdentifier.getProtocol() == Protocol.APCO25)
         {
-            case APCO25:
-                return APCO25TalkgroupFormatter.format(patchGroupIdentifier, getTalkgroupFormat(Protocol.APCO25),
-                    isTalkgroupFixedWidth(Protocol.APCO25));
-            default:
-                return patchGroupIdentifier.toString();
+            return APCO25TalkgroupFormatter.format(patchGroupIdentifier, getTalkgroupFormat(Protocol.APCO25),
+                isTalkgroupFixedWidth(Protocol.APCO25));
         }
+
+        return patchGroupIdentifier.toString();
     }
 
     /**
