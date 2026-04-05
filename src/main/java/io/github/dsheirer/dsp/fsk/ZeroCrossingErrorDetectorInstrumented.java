@@ -19,7 +19,7 @@ import javafx.beans.property.SimpleFloatProperty;
 
 public class ZeroCrossingErrorDetectorInstrumented extends ZeroCrossingErrorDetector
 {
-    public SimpleFloatProperty timingError = new SimpleFloatProperty();
+    private final SimpleFloatProperty timingError = new SimpleFloatProperty();
 
     /**
      * Constructs the detector for the specified samples per symbol.
@@ -54,5 +54,10 @@ public class ZeroCrossingErrorDetectorInstrumented extends ZeroCrossingErrorDete
     public boolean[] getBuffer()
     {
         return mBuffer;
+    }
+
+    public SimpleFloatProperty timingErrorProperty()
+    {
+        return timingError;
     }
 }

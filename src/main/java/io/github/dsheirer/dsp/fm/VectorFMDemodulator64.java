@@ -36,10 +36,6 @@ public class VectorFMDemodulator64 extends VectorFMDemodulator
     private float[] mIBuffer = new float[1];
     private float[] mQBuffer = new float[1];
 
-    public VectorFMDemodulator64()
-    {
-    }
-
     @Override
     public float[] demodulate(float[] i, float[] q)
     {
@@ -65,7 +61,13 @@ public class VectorFMDemodulator64 extends VectorFMDemodulator
 
         float[] demodulated = new float[i.length];
 
-        FloatVector currentI, currentQ, previousI, previousQ, demod, demodI, demodQ;
+        FloatVector currentI;
+        FloatVector currentQ;
+        FloatVector previousI;
+        FloatVector previousQ;
+        FloatVector demod;
+        FloatVector demodI;
+        FloatVector demodQ;
 
         for(int bufferPointer = 0; bufferPointer < mIBuffer.length - 1; bufferPointer += VECTOR_SPECIES.length())
         {

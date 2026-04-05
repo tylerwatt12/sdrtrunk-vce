@@ -17,7 +17,7 @@ package io.github.dsheirer.dsp.fsk;
 
 public class SampleBufferInstrumented extends SampleBuffer
 {
-    public boolean mLastSymbol;
+    private boolean mLastSymbol;
 
     /**
      * Buffer to store complex sample data and produce interpolated samples.

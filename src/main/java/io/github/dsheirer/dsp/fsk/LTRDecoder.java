@@ -93,13 +93,6 @@ public class LTRDecoder implements Listener<float[]>
     private IRealFilter mLowPassFilter = FilterFactory.getRealFilter(sLowPassFilterCoefficients);
 
     /**
-     * Constructs an instance
-     */
-    public LTRDecoder()
-    {
-    }
-
-    /**
      * Registers the listener to receive decoded symbols.
      * @param listener to register
      */
@@ -203,7 +196,7 @@ public class LTRDecoder implements Listener<float[]>
                         }
                     }
 
-                    mBaudCounter++;
+                    mBaudCounter += 1.0f;
 
                     if(mBaudCounter > BAUD_LENGTH)
                     {
@@ -265,7 +258,9 @@ public class LTRDecoder implements Listener<float[]>
         double ybar = samples[offset];
 
         double sumXY = 0;
-        double fact1, dx, dy;
+        double fact1;
+        double dx;
+        double dy;
 
         for(int x = 1; x < SLOPE_CALCULATION_LENGTH; x++)
         {

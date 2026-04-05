@@ -50,7 +50,8 @@ public class ScalarFMDemodulator implements IDemodulator
     {
         float[] demodulated = new float[i.length];
 
-        float demodI, demodQ;
+        float demodI;
+        float demodQ;
 
         //Demodulate the first sample
         demodI = (i[0] * mPreviousI) - (q[0] * -mPreviousQ);

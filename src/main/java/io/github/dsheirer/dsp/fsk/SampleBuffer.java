@@ -26,7 +26,6 @@ public class SampleBuffer
     protected int mTwiceSamplesPerSymbol;
     private int mIntegerSamplesPerSymbol;
     private int mHalfIntegerSamplesPerSymbol;
-    private int mPositiveSampleDecisionCount;
     protected int mSymbolStart;
     protected int mSymbolEnd;
     protected float mSamplesPerSymbol;
@@ -59,7 +58,7 @@ public class SampleBuffer
      */
     public void receive(boolean sample)
     {
-        mMidSymbolSamplingPoint--;
+        mMidSymbolSamplingPoint -= 1.0f;
 
         mDelayLine[mDelayLinePointer] = sample;
         mDelayLine[mDelayLinePointer + mTwiceSamplesPerSymbol] = sample;
@@ -102,7 +101,7 @@ public class SampleBuffer
      */
     public boolean getSymbol()
     {
-        mPositiveSampleDecisionCount = 0;
+        int positiveSampleDecisionCount = 0;
 
         //Symbol samples are 0.5 and 1.5 symbols ahead of the current buffer pointer, but 0.5 to 1.5 symbol period
         //before the most recently stored sample decision.
@@ -113,10 +112,10 @@ public class SampleBuffer
         {
             if(mDelayLine[x])
             {
-                mPositiveSampleDecisionCount++;
+                positiveSampleDecisionCount++;
             }
         }
 
-        return mPositiveSampleDecisionCount > mHalfIntegerSamplesPerSymbol;
+        return positiveSampleDecisionCount > mHalfIntegerSamplesPerSymbol;
     }
 }

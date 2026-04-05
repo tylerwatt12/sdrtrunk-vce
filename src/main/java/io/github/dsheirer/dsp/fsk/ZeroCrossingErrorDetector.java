@@ -38,7 +38,6 @@ public class ZeroCrossingErrorDetector
     protected float mZeroCrossingOne;
     protected float mZeroCrossingTwo;
     protected float mDetectedZeroCrossing;
-    private int mZeroCrossingCount;
 
     /**
      * Constructs the detector for the specified samples per symbol.
@@ -75,20 +74,20 @@ public class ZeroCrossingErrorDetector
      */
     public float getError()
     {
-        mZeroCrossingCount = 0;
+        int zeroCrossingCount = 0;
 
         for(int x = 0; x < mBuffer.length - 1; x++)
         {
             if(mBuffer[x] ^ mBuffer[x + 1])
             {
-                if(mZeroCrossingCount == 0)
+                if(zeroCrossingCount == 0)
                 {
-                    mZeroCrossingCount++;
+                    zeroCrossingCount++;
                     mZeroCrossingOne = x + 0.5f;
                 }
-                else if(mZeroCrossingCount == 1)
+                else if(zeroCrossingCount == 1)
                 {
-                    mZeroCrossingCount++;
+                    zeroCrossingCount++;
                     mZeroCrossingTwo = x + 0.5f;
                 }
                 else
@@ -99,16 +98,16 @@ public class ZeroCrossingErrorDetector
             }
         }
 
-        if(mZeroCrossingCount == 1)
+        if(zeroCrossingCount == 1)
         {
             mDetectedZeroCrossing = mZeroCrossingOne;
 
             return mZeroCrossingIdeal - mZeroCrossingOne;
         }
-        else if(mZeroCrossingCount == 2)
+        else if(zeroCrossingCount == 2)
         {
             float errorDistanceOne = mZeroCrossingIdeal - mZeroCrossingOne;
-            float errorDistanceTwo = mZeroCrossingCount - mZeroCrossingTwo;
+            float errorDistanceTwo = zeroCrossingCount - mZeroCrossingTwo;
 
             if(FastMath.abs(errorDistanceOne) < FastMath.abs(errorDistanceTwo))
             {
