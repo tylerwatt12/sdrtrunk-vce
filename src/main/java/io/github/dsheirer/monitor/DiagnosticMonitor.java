@@ -186,7 +186,7 @@ public class DiagnosticMonitor
         StringBuilder sb = new StringBuilder();
         sb.append("JVM and Application Environment Report\n");
         Attributes atts = findManifestAttributes();
-        if(!atts.isEmpty()) {
+        if(atts != null) {
             sb.append("\nVersion  : " + atts.getValue("Implementation-Version"));
             sb.append("\nGradle Version    : " + atts.getValue("Created-By"));
             sb.append("\nBuild Timestamp   : " + atts.getValue("Build-Timestamp"));
@@ -229,7 +229,7 @@ public class DiagnosticMonitor
 
                 if(atts == null)
                 {
-                    return new Attributes();
+                    return null;
                 }
 
                 if(atts.containsValue("sdrtrunk project"))
@@ -240,10 +240,10 @@ public class DiagnosticMonitor
         }
         catch (Exception ex)
         {
-            return new Attributes();
+            return null;
         }
 
-        return new Attributes();
+        return null;
     }
 
     private Attributes loadManifestAttributes(URL resource)
@@ -255,7 +255,7 @@ public class DiagnosticMonitor
         }
         catch(IOException e)
         {
-            return new Attributes();
+            return null;
         }
     }
 
