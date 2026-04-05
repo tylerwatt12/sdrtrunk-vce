@@ -29,6 +29,10 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class HilbertTransformFactory
 {
+    private HilbertTransformFactory()
+    {
+    }
+
     public static HilbertTransform getHilbertTransform()
     {
         Implementation implementation = CalibrationManager.getInstance().getImplementation(CalibrationType.HILBERT_TRANSFORM);

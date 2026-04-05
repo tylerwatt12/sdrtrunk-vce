@@ -64,7 +64,9 @@ public class VectorHilbertTransformDefaultBits extends HilbertTransform
         float[] i = new float[bufferLength];
         float[] q = new float[bufferLength];
 
-        FloatVector accumulator, filter, samples;
+        FloatVector accumulator;
+        FloatVector filter;
+        FloatVector samples;
 
         for(int x = 0; x < bufferLength; x++)
         {
