@@ -302,7 +302,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         {
             mAliasListNameComboBox = new ComboBox<>(mPlaylistManager.getAliasModel().aliasListNames());
             mAliasListNameComboBox.getSelectionModel().selectedItemProperty()
-                    .addListener((ObservableValue<String> observable, String oldValue, String newValue) ->
+                    .addListener((observable, oldValue, newValue) ->
                     {
                         getNewAliasButton().setDisable(newValue == null || newValue.contentEquals(AliasModel.NO_ALIAS_LIST));
                         update();
@@ -932,11 +932,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             }
             else if(mAliasListName.equals(alias.getAliasListName()))
             {
-                if(alias.getName() == null)
-                {
-                    return true;
-                }
-                else if(alias.getName().toLowerCase().contains(mSearchText))
+                if(alias.getName() != null && alias.getName().toLowerCase().contains(mSearchText))
                 {
                     return true;
                 }
