@@ -32,7 +32,7 @@ import java.util.List;
 /**
  * Request to start/enable processing for the specified channel
  */
-public class ChannelStartProcessingRequest extends ModuleEventBusMessage
+public class ChannelStartProcessingRequest implements ModuleEventBusMessage
 {
     private final Channel mChannel;
     private final IChannelDescriptor mChannelDescriptor;

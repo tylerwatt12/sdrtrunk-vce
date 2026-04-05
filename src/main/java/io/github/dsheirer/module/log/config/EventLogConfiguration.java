@@ -30,11 +30,7 @@ import java.util.List;
 @JacksonXmlRootElement(localName = "event_log_configuration")
 public class EventLogConfiguration extends Configuration
 {
-    protected List<EventLogType> mLoggers = new ArrayList<EventLogType>();
-
-    public EventLogConfiguration()
-    {
-    }
+    protected List<EventLogType> mLoggers = new ArrayList<>();
 
     @JacksonXmlProperty(isAttribute = false, localName = "logger")
     public List<EventLogType> getLoggers()

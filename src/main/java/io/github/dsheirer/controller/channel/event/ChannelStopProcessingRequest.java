@@ -25,7 +25,7 @@ import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 /**
  * Request to stop processing a channel for a specific tuner channel source
  */
-public class ChannelStopProcessingRequest extends ModuleEventBusMessage
+public class ChannelStopProcessingRequest implements ModuleEventBusMessage
 {
     private TunerChannelSource mTunerChannelSource;
     /**

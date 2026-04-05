@@ -26,7 +26,7 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
  * any module can subscribe to it.
  * @param <T> data generic that should be loaded into modules in the processing chain.
  */
-public abstract class PreloadDataContent<T> extends ModuleEventBusMessage
+public abstract class PreloadDataContent<T> implements ModuleEventBusMessage
 {
     private final T mData;
 

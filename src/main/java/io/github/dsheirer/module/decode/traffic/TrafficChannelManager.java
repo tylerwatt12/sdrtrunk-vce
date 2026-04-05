@@ -32,7 +32,7 @@ public abstract class TrafficChannelManager extends Module
     /**
      * Constructs an instance.
      */
-    public TrafficChannelManager()
+    protected TrafficChannelManager()
     {
     }
 

@@ -24,7 +24,7 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
 /**
  * Request to lock or unlock a frequency from use.
  */
-public class FrequencyLockChangeRequest extends ModuleEventBusMessage
+public class FrequencyLockChangeRequest implements ModuleEventBusMessage
 {
     private long mFrequency;
     private boolean mLock;

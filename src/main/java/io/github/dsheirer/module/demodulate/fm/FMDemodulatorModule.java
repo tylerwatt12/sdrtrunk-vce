@@ -104,11 +104,22 @@ public class FMDemodulatorModule extends Module implements ISourceEventListener,
     }
 
     @Override
-    public void reset() {}
+    public void reset()
+    {
+        //No additional reset behavior is required for this module.
+    }
+
     @Override
-    public void start() {}
+    public void start()
+    {
+        //No explicit startup work is required for this module.
+    }
+
     @Override
-    public void stop() {}
+    public void stop()
+    {
+        //No explicit shutdown work is required for this module.
+    }
 
     @Override
     public void setBufferListener(Listener<float[]> listener)

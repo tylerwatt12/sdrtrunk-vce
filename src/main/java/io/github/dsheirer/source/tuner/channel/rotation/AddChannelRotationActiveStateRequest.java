@@ -25,7 +25,7 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
 /**
  * Request to add a channel state to the list of active channel states monitored by the channel rotation monitor.
  */
-public class AddChannelRotationActiveStateRequest extends ModuleEventBusMessage
+public class AddChannelRotationActiveStateRequest implements ModuleEventBusMessage
 {
     private State mState;
 

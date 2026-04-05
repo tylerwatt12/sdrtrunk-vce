@@ -39,7 +39,7 @@ public abstract class EventLogger extends Module
     private long mFrequency;
     protected Writer mLogFile;
 
-    public EventLogger(Path logDirectory, String fileNameSuffix, long frequency)
+    protected EventLogger(Path logDirectory, String fileNameSuffix, long frequency)
     {
         mLogDirectory = logDirectory;
         mFileNameSuffix = fileNameSuffix;

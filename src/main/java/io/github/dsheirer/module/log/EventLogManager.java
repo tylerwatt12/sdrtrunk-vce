@@ -54,7 +54,7 @@ public class EventLogManager
             frequency = ((SourceConfigTuner)channel.getSourceConfiguration()).getFrequency();
         }
 
-        List<Module> loggers = new ArrayList<Module>();
+        List<Module> loggers = new ArrayList<>();
 
         for(EventLogType type : config.getLoggers())
         {

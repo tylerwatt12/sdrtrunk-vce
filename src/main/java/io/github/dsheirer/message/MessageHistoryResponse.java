@@ -26,7 +26,7 @@ import java.util.List;
 /**
  * Response to message history request.
  */
-public class MessageHistoryResponse extends ModuleEventBusMessage
+public class MessageHistoryResponse implements ModuleEventBusMessage
 {
     private List<IMessage> mMessages;
 

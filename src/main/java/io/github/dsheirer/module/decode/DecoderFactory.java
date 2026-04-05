@@ -121,6 +121,10 @@ public class DecoderFactory
     private static final double FM_CHANNEL_BANDWIDTH = 12500.0;
     private static final boolean AUDIO_FILTER_ENABLE = true;
 
+    private DecoderFactory()
+    {
+    }
+
     /**
      * Returns a list of one primary decoder and any auxiliary decoders, as
      * specified in the configurations.

@@ -35,7 +35,7 @@ public abstract class Decoder extends Module implements IMessageProvider
     /**
      * Decoder - parent class for all decoders, demodulators and components.
      */
-    public Decoder()
+    protected Decoder()
     {
     }
 

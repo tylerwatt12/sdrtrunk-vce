@@ -24,7 +24,7 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
 /**
  * Notification that a channel configuration has changed.
  */
-public class ChannelConfigurationChangeNotification extends ModuleEventBusMessage
+public class ChannelConfigurationChangeNotification implements ModuleEventBusMessage
 {
     private Channel mChannel;
 

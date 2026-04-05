@@ -24,6 +24,6 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
 /**
  * Request to disable the channel rotation monitor.
  */
-public class DisableChannelRotationMonitorRequest extends ModuleEventBusMessage
+public class DisableChannelRotationMonitorRequest implements ModuleEventBusMessage
 {
 }

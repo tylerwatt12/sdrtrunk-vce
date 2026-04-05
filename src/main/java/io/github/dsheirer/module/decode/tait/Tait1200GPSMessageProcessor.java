@@ -28,10 +28,6 @@ public class Tait1200GPSMessageProcessor implements Listener<CorrectedBinaryMess
 
     private Listener<IMessage> mMessageListener;
 
-    public Tait1200GPSMessageProcessor()
-    {
-    }
-
     public void dispose()
     {
         mMessageListener = null;

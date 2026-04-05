@@ -39,7 +39,7 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     /**
      * Constructs an instance
      */
-    public HistoryModule(int maximumHistorySize)
+    protected HistoryModule(int maximumHistorySize)
     {
         mMaximumHistorySize = maximumHistorySize;
     }

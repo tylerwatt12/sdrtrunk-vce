@@ -20,6 +20,7 @@ package io.github.dsheirer.module.decode;
 
 import io.github.dsheirer.protocol.Protocol;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Enumeration of decoder types
@@ -58,8 +59,8 @@ public enum DecoderType
     /**
      * Primary decoders that operate on I/Q sample streams
      */
-    public static EnumSet<DecoderType> PRIMARY_DECODERS =
-        EnumSet.of(DecoderType.AM,
+    public static final Set<DecoderType> PRIMARY_DECODERS =
+        Set.copyOf(EnumSet.of(DecoderType.AM,
         DecoderType.DMR,
         DecoderType.LTR,
         DecoderType.LTR_NET,
@@ -67,29 +68,29 @@ public enum DecoderType
         DecoderType.NBFM,
         DecoderType.P25_PHASE1,
         DecoderType.P25_PHASE2,
-        DecoderType.PASSPORT);
+        DecoderType.PASSPORT));
 
     /**
      * Auxiliary decoders that operate on in-band signalling in the decoded audio channel
      */
-    public static final EnumSet<DecoderType> AUX_DECODERS =
-        EnumSet.of(DecoderType.DCS,
+    public static final Set<DecoderType> AUX_DECODERS =
+        Set.copyOf(EnumSet.of(DecoderType.DCS,
         DecoderType.FLEETSYNC2,
         DecoderType.LJ_1200,
         DecoderType.MDC1200,
-        DecoderType.TAIT_1200);
+        DecoderType.TAIT_1200));
 
     /**
      * Decoders that produce a (recordable) bitstream
      */
-    public static final EnumSet<DecoderType> BITSTREAM_DECODERS = EnumSet.of(DecoderType.DMR,
-        DecoderType.MPT1327, DecoderType.P25_PHASE1, DecoderType.P25_PHASE2);
+    public static final Set<DecoderType> BITSTREAM_DECODERS = Set.copyOf(EnumSet.of(DecoderType.DMR,
+        DecoderType.MPT1327, DecoderType.P25_PHASE1, DecoderType.P25_PHASE2));
 
     /**
      * Decoders that produce (recordable) MBE audio codec frames
      */
-    public static final EnumSet<DecoderType> MBE_AUDIO_CODEC_DECODERS =
-        EnumSet.of(DecoderType.DMR, DecoderType.P25_PHASE1, DecoderType.P25_PHASE2);
+    public static final Set<DecoderType> MBE_AUDIO_CODEC_DECODERS =
+        Set.copyOf(EnumSet.of(DecoderType.DMR, DecoderType.P25_PHASE1, DecoderType.P25_PHASE2));
 
     public Protocol getProtocol()
     {

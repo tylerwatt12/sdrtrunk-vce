@@ -39,7 +39,7 @@ public abstract class SquelchControlDecoder extends PrimaryDecoder implements IS
      * Constructs an instance
      * @param config for the decoder
      */
-    public SquelchControlDecoder(DecodeConfiguration config)
+    protected SquelchControlDecoder(DecodeConfiguration config)
     {
         mDecodeConfiguration = config;
     }

@@ -48,6 +48,7 @@ public class MessageEventLogger extends EventLogger implements IMessageListener,
     @Override
     public void reset()
     {
+        //Message event loggers do not maintain resettable runtime state.
     }
 
     @Override

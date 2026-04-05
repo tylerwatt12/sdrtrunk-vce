@@ -24,6 +24,6 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
 /**
  * Request for message history from the message history module.
  */
-public class MessageHistoryRequest extends ModuleEventBusMessage
+public class MessageHistoryRequest implements ModuleEventBusMessage
 {
 }

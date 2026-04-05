@@ -24,7 +24,7 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
 /**
  * Response to decode event history request from a processing chain for the specified channel.
  */
-public class DecodeEventHistoryResponse extends ModuleEventBusMessage
+public class DecodeEventHistoryResponse implements ModuleEventBusMessage
 {
     private DecodeEventHistory mDecodeEventHistory;
 

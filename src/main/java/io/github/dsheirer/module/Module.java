@@ -55,7 +55,7 @@ public abstract class Module
 	/**
 	 * Constructs an instance
 	 */
-	public Module()
+	protected Module()
 	{
 	}
 

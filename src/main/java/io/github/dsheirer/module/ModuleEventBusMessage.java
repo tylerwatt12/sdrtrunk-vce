@@ -20,9 +20,8 @@
 package io.github.dsheirer.module;
 
 /**
- * Base module event bus message.  All classes that are passed over a processing chain event bus should extend this
- * base class.
+ * Marker interface for module event bus messages passed over a processing chain event bus.
  */
-public abstract class ModuleEventBusMessage
+public interface ModuleEventBusMessage
 {
 }

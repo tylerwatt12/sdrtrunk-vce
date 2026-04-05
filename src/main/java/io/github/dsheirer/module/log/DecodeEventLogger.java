@@ -42,9 +42,10 @@ import org.apache.commons.csv.QuoteMode;
 
 public class DecodeEventLogger extends EventLogger implements IDecodeEventListener, Listener<IDecodeEvent>
 {
+    private static final String CSV_HEADER =
+        "TIMESTAMP,DURATION_MS,PROTOCOL,EVENT,FROM,TO,CHANNEL_NUMBER,FREQUENCY,TIMESLOT,DETAILS,EVENT_ID";
     private SimpleDateFormat mTimestampFormat = TimestampFormat.TIMESTAMP_COLONS.getFormatter();
     private DecimalFormat mFrequencyFormat = new DecimalFormat("0.000000");
-    private AliasList mAliasList;
     private AliasModel mAliasModel;
 
     /**
@@ -72,7 +73,7 @@ public class DecodeEventLogger extends EventLogger implements IDecodeEventListen
     @Override
     public String getHeader()
     {
-        return getCSVHeader();
+        return CSV_HEADER;
     }
 
     @Override
@@ -84,11 +85,7 @@ public class DecodeEventLogger extends EventLogger implements IDecodeEventListen
     @Override
     public void reset()
     {
-    }
-
-    public static String getCSVHeader()
-    {
-        return "TIMESTAMP,DURATION_MS,PROTOCOL,EVENT,FROM,TO,CHANNEL_NUMBER,FREQUENCY,TIMESLOT,DETAILS,EVENT_ID";
+        //Decode event loggers do not maintain resettable runtime state.
     }
 
     private String toCSV(IDecodeEvent event)
@@ -112,16 +109,16 @@ public class DecodeEventLogger extends EventLogger implements IDecodeEventListen
 
         Identifier toIdentifier = event.getIdentifierCollection().getToIdentifier();
 
-        if(toIdentifier != null)
-        {
-            Identifier identifier = event.getIdentifierCollection()
-                .getIdentifier(IdentifierClass.CONFIGURATION,Form.ALIAS_LIST,Role.ANY);
-            mAliasList = mAliasModel.getAliasList((AliasListConfigurationIdentifier)identifier);
-
-            if(mAliasList != null)
+            if(toIdentifier != null)
             {
-                String mystring = (!mAliasList.getAliases(toIdentifier).isEmpty()) ?
-                    mAliasList.getAliases(toIdentifier).toString() : "";
+                Identifier identifier = event.getIdentifierCollection()
+                    .getIdentifier(IdentifierClass.CONFIGURATION,Form.ALIAS_LIST,Role.ANY);
+            AliasList aliasList = mAliasModel.getAliasList((AliasListConfigurationIdentifier)identifier);
+
+            if(aliasList != null)
+            {
+                String mystring = (!aliasList.getAliases(toIdentifier).isEmpty()) ?
+                    aliasList.getAliases(toIdentifier).toString() : "";
                 cells.add(mystring + " (" + toIdentifier + ")");
             }
             else
