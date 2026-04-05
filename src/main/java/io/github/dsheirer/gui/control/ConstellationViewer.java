@@ -59,9 +59,7 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
 	public void receive( Complex sample )
 	{
 		mBuffer.receive( sample );
-		
-		Complex angle = Complex.multiply( sample, mPrevious.conjugate() );
-		
+
 		repaint();
 	}
 	
@@ -91,8 +89,8 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
 
     	List<Complex> samples = mBuffer.getElements();
     	
-    	double centerX = (double)getHeight() / 2.0d;
-    	double centerY = (double)getWidth() / 2.0d;
+    	double centerX = getHeight() / 2.0d;
+    	double centerY = getWidth() / 2.0d;
     	
     	double scale = 0.5d;
     	
@@ -113,28 +111,9 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
         		double q = ( sample.quadrature() * mPrevious.inphase() ) + 
         				( sample.inphase() * -mPrevious.quadrature() );
 
-        		double angle;
-
-        		//Check for divide by zero
-        		if( i == 0 )
-        		{
-        			angle = 0.0;
-        		}
-        		else
-        		{
-        			/**
-        			 * Use the arcus tangent of imaginary (q) divided by real (i) to
-        			 * get the phase angle (+/-) which was directly manipulated by the
-        			 * original message waveform during the modulation.  This value now
-        			 * serves as the instantaneous amplitude of the demodulated signal
-        			 */
-        			double denominator = 1.0d / i;
-        			angle = FastMath.atan( q * denominator );
-        		}
-        		
-        		Ellipse2D.Double ellipse = 
-        				new Ellipse2D.Double( centerX - ( i * scale ), 
-        						centerY - ( q * scale ), 4, 4 );
+	        		Ellipse2D.Double ellipse = 
+	        				new Ellipse2D.Double( centerX - ( i * scale ), 
+	        						centerY - ( q * scale ), 4, 4 );
         		
         		graphics.draw( ellipse );
         		
