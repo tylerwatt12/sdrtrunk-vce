@@ -40,10 +40,6 @@ public class DQPSKGardnerDemodulator extends PSKDemodulator<Dibit>
         super(interpolatingSampleBuffer, phaseLockedLoop);
     }
 
-	public void dispose()
-	{
-	}
-
     @Override
     protected void calculateSymbol()
     {

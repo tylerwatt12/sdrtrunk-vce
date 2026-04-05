@@ -28,6 +28,10 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class DifferentialDemodulatorFactory
 {
+    private DifferentialDemodulatorFactory()
+    {
+    }
+
     /**
      * Creates the optimal float output demodulator using calibration data to select the optimal implementation from
      * scalar and vector options, or defaults to the scalar implementation if the calibration wasn't executed.

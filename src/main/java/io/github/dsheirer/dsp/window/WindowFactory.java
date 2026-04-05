@@ -102,21 +102,21 @@ public class WindowFactory
 
         if(length % 2 == 0) //Even length
         {
-            int half = (int)((length - 1) / 2);
+            int half = ((length - 1) / 2);
 
             for(int x = -half; x < length / 2 + 1; x++)
             {
                 coefficients[x + half] = (float)FastMath.cos(
-                    ((float)x * PI) / ((float)length + 1.0f));
+                    (x * PI) / (length + 1.0f));
             }
         }
         else //Odd length
         {
-            int half = (int)length / 2;
+            int half = length / 2;
 
             for(int x = -half; x < half + 1; x++)
             {
-                coefficients[x + half] = (float)FastMath.cos(((float)x * PI) / ((float)length + 1.0f));
+                coefficients[x + half] = (float)FastMath.cos((x * PI) / (length + 1.0f));
             }
         }
 
@@ -133,7 +133,7 @@ public class WindowFactory
     {
         float[] coefficients = new float[length];
 
-        float denominator = length - 1;
+        float denominator = length - 1.0f;
 
         float a0 = 0.426590713672f;
         float a1 = 0.496560619089f;
@@ -142,8 +142,8 @@ public class WindowFactory
         for(int x = 0; x < length; x++)
         {
             coefficients[x] = a0 -
-                (a1 * (float)FastMath.cos((TWO_PI * (float)x) / denominator)) +
-                (a2 * (float)FastMath.cos((FOUR_PI * (float)x) / denominator));
+                (a1 * (float)FastMath.cos((TWO_PI * x) / denominator)) +
+                (a2 * (float)FastMath.cos((FOUR_PI * x) / denominator));
         }
 
         return coefficients;
@@ -159,7 +159,7 @@ public class WindowFactory
     {
         float[] coefficients = new float[length];
 
-        float denominator = length - 1;
+        float denominator = length - 1.0f;
         float a0 = 0.355768f;
         float a1 = 0.487396f;
         float a2 = 0.144232f;
@@ -168,9 +168,9 @@ public class WindowFactory
         for(int x = 0; x < length; x++)
         {
             coefficients[x] = a0 -
-                (a1 * (float)FastMath.cos(TWO_PI * (float)x / denominator)) +
-                (a2 * (float)FastMath.cos(FOUR_PI * (float)x / denominator)) -
-                (a3 * (float)FastMath.cos(SIX_PI * (float)x / denominator));
+                (a1 * (float)FastMath.cos(TWO_PI * x / denominator)) +
+                (a2 * (float)FastMath.cos(FOUR_PI * x / denominator)) -
+                (a3 * (float)FastMath.cos(SIX_PI * x / denominator));
         }
 
         return coefficients;
@@ -186,7 +186,7 @@ public class WindowFactory
     {
         float[] coefficients = new float[length];
 
-        float denominator = length - 1;
+        float denominator = length - 1.0f;
         float a0 = 0.3635819f;
         float a1 = 0.4891775f;
         float a2 = 0.1365995f;
@@ -195,9 +195,9 @@ public class WindowFactory
         for(int x = 0; x < length; x++)
         {
             coefficients[x] = a0 -
-                (a1 * (float)FastMath.cos(TWO_PI * (float)x / denominator)) +
-                (a2 * (float)FastMath.cos(FOUR_PI * (float)x / denominator)) -
-                (a3 * (float)FastMath.cos(SIX_PI * (float)x / denominator));
+                (a1 * (float)FastMath.cos(TWO_PI * x / denominator)) +
+                (a2 * (float)FastMath.cos(FOUR_PI * x / denominator)) -
+                (a3 * (float)FastMath.cos(SIX_PI * x / denominator));
         }
 
         return coefficients;
@@ -213,7 +213,7 @@ public class WindowFactory
     {
         float[] coefficients = new float[length];
 
-        float denominator = length - 1;
+        float denominator = length - 1.0f;
         float a0 = 0.35875f;
         float a1 = 0.48829f;
         float a2 = 0.14128f;
@@ -222,9 +222,9 @@ public class WindowFactory
         for(int x = 0; x < length; x++)
         {
             coefficients[x] = a0 -
-                (a1 * (float)FastMath.cos(TWO_PI * (float)x / denominator)) +
-                (a2 * (float)FastMath.cos(FOUR_PI * (float)x / denominator)) -
-                (a3 * (float)FastMath.cos(SIX_PI * (float)x / denominator));
+                (a1 * (float)FastMath.cos(TWO_PI * x / denominator)) +
+                (a2 * (float)FastMath.cos(FOUR_PI * x / denominator)) -
+                (a3 * (float)FastMath.cos(SIX_PI * x / denominator));
         }
 
         return coefficients;
@@ -240,7 +240,7 @@ public class WindowFactory
     {
         float[] coefficients = new float[length];
 
-        float denominator = length - 1;
+        float denominator = length - 1.0f;
 
         float a0 = 0.27105140069342f;
         float a1 = 0.43329793923448f;
@@ -253,7 +253,7 @@ public class WindowFactory
 
         for(int x = 0; x < length; x++)
         {
-            float w = TWO_PI * (float)x / denominator;
+            float w = TWO_PI * x / denominator;
 
             coefficients[x] = a0 -
                 (a1 * (float)FastMath.cos(w)) +
@@ -297,7 +297,7 @@ public class WindowFactory
 
         for(int x = 0; x < length; x++)
         {
-            coefficients[x] = 0.5f - (0.5f * (float)FastMath.cos(TWO_PI * (float)x / (length - 1)));
+            coefficients[x] = 0.5f - (0.5f * (float)FastMath.cos(TWO_PI * x / (length - 1)));
         }
 
         return coefficients;
@@ -313,7 +313,7 @@ public class WindowFactory
     {
         float[] coefficients = new float[length];
 
-        float denominator = length - 1;
+        float denominator = length - 1.0f;
 
         float a0 = 0.215578948f;
         float a1 = 0.41663158f;
@@ -324,10 +324,10 @@ public class WindowFactory
         for(int x = 0; x < length; x++)
         {
             coefficients[x] = a0 -
-                (a1 * (float)FastMath.cos(TWO_PI * (float)x / denominator)) +
-                (a2 * (float)FastMath.cos(FOUR_PI * (float)x / denominator)) -
-                (a3 * (float)FastMath.cos(SIX_PI * (float)x / denominator)) +
-                (a4 * (float)FastMath.cos(EIGHT_PI * (float)x / denominator));
+                (a1 * (float)FastMath.cos(TWO_PI * x / denominator)) +
+                (a2 * (float)FastMath.cos(FOUR_PI * x / denominator)) -
+                (a3 * (float)FastMath.cos(SIX_PI * x / denominator)) +
+                (a4 * (float)FastMath.cos(EIGHT_PI * x / denominator));
         }
 
         return coefficients;
@@ -388,7 +388,7 @@ public class WindowFactory
      * @param x Value.
      * @return Return value.
      */
-    public final static float getBesselZerothOrder(final float x)
+    public static final float getBesselZerothOrder(final float x)
     {
         float f = 1;
         final float x2 = x * x * 0.25f;

@@ -42,10 +42,6 @@ public class DQPSKGardnerSymbolEvaluator implements IPSKSymbolEvaluator<Dibit>
      * Timing error is calculated using the Gardner method by comparing the previous symbol to the current symbol and
      * amplifying the delta between the two using the intra-symbol sample to form the timing error.
      */
-    public DQPSKGardnerSymbolEvaluator()
-    {
-    }
-
     /**
      * Sets the middle and current symbols to be evaluated for phase and timing errors and to determine the
      * transmitted symbol relative to the closest reference symbol.  After invoking this method, you can access the

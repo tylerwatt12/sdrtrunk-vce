@@ -20,16 +20,12 @@
 package io.github.dsheirer.dsp.psk.demod;
 
 import java.util.Arrays;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Differential demodulator that uses scalar calculations for demodulating the sample stream.
  */
 public class DifferentialDemodulatorFloatScalar extends DifferentialDemodulatorFloat
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(DifferentialDemodulatorFloatScalar.class);
-
     /**
      * Constructor
      *
@@ -65,7 +61,12 @@ public class DifferentialDemodulatorFloatScalar extends DifferentialDemodulatorF
         //mIDecoded, mQDecoded and mPhase will be filled below during the decoding process.
 
         float[] decodedPhases = new float[i.length];
-        float iPrevious, qPreviousConjugate, iCurrent, qCurrent, differentialI, differentialQ;
+        float iPrevious;
+        float qPreviousConjugate;
+        float iCurrent;
+        float qCurrent;
+        float differentialI;
+        float differentialQ;
 
         //Differential demodulation.
         for(int x = 0; x < sampleLength; x++)

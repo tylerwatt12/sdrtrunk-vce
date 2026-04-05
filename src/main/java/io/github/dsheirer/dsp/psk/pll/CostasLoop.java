@@ -49,7 +49,6 @@ public class CostasLoop implements IPhaseLockedLoop
     private double mSymbolRate;
     private double mSampleRate;
     private IFrequencyErrorProcessor mFrequencyErrorProcessor;
-    private long mFrequencyError;
     private int mBaudCounter;
 
     /**
@@ -206,11 +205,11 @@ public class CostasLoop implements IPhaseLockedLoop
         {
             mBaudCounter = 0;
 
-            mFrequencyError = (long)(mSampleRate / TWO_PI * mLoopFrequency);
+            long frequencyError = (long)(mSampleRate / TWO_PI * mLoopFrequency);
 
             if(mFrequencyErrorProcessor != null)
             {
-                mFrequencyErrorProcessor.processFrequencyError(mFrequencyError);
+                mFrequencyErrorProcessor.processFrequencyError(frequencyError);
             }
         }
     }

@@ -81,7 +81,6 @@ public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFre
         if(mSyncCount > MAX_SYNC_COUNT)
         {
             mSyncCount = MAX_SYNC_COUNT;
-            return;
         }
     }
 

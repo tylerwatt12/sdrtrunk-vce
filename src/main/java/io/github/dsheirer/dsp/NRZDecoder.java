@@ -24,8 +24,8 @@ import io.github.dsheirer.sample.Listener;
 
 public class NRZDecoder implements IBinarySymbolProcessor
 {
-    public final static boolean MODE_NORMAL = true;
-    public final static boolean MODE_INVERTED = false;
+    public static final boolean MODE_NORMAL = true;
+    public static final boolean MODE_INVERTED = false;
 
     private IBinarySymbolProcessor mListener;
     private boolean mMode = MODE_NORMAL;

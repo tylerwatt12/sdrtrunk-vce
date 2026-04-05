@@ -1,6 +1,7 @@
 package io.github.dsheirer.dsp.window;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Window types
@@ -27,12 +28,13 @@ public enum WindowType
     }
 
 
+    @Override
     public String toString()
     {
         return mLabel;
     }
 
-    public static final EnumSet<WindowType> NO_PARAMETER_WINDOWS = EnumSet.of(WindowType.BLACKMAN, WindowType.BLACKMAN_HARRIS_4,
-            WindowType.BLACKMAN_HARRIS_7, WindowType.BLACKMAN_NUTALL, WindowType.COSINE, WindowType.FLAT_TOP,
-            WindowType.HAMMING, WindowType.HANN, WindowType.NUTALL);
+    public static final Set<WindowType> NO_PARAMETER_WINDOWS = Set.copyOf(EnumSet.of(WindowType.BLACKMAN,
+        WindowType.BLACKMAN_HARRIS_4, WindowType.BLACKMAN_HARRIS_7, WindowType.BLACKMAN_NUTALL,
+        WindowType.COSINE, WindowType.FLAT_TOP, WindowType.HAMMING, WindowType.HANN, WindowType.NUTALL));
 }

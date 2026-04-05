@@ -37,7 +37,7 @@ public abstract class PSKDemodulator<T> implements ComplexSampleListener
      * @param interpolatingSampleBuffer to store complex samples and provide access to interpolated samples
      * @param phaseLockedLoop to track and remove frequency offset in the incoming samples
      */
-    public PSKDemodulator(InterpolatingSampleBuffer interpolatingSampleBuffer, IPhaseLockedLoop phaseLockedLoop)
+    protected PSKDemodulator(InterpolatingSampleBuffer interpolatingSampleBuffer, IPhaseLockedLoop phaseLockedLoop)
     {
         mInterpolatingSampleBuffer = interpolatingSampleBuffer;
         mPLL = phaseLockedLoop;

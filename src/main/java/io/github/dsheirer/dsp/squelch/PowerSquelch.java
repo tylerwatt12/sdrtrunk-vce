@@ -39,7 +39,6 @@ public class PowerSquelch implements Listener<SourceEvent>
     private int mRampThreshold;
     private int mRampCount;
     private boolean mSquelchChanged = false;
-    private boolean mStateChange = false;
     private int mPowerLevelBroadcastCount = 0;
     private int mPowerLevelBroadcastThreshold;
     private Listener<SourceEvent> mSourceEventListener;
@@ -123,7 +122,7 @@ public class PowerSquelch implements Listener<SourceEvent>
             broadcast(SourceEvent.channelPowerLevel(null, 10.0 * Math.log10(mPower)));
         }
 
-        mStateChange = false;
+        boolean stateChange = false;
 
         switch(mState)
         {
@@ -138,7 +137,7 @@ public class PowerSquelch implements Listener<SourceEvent>
                     else
                     {
                         mState = State.UNMUTE;
-                        mStateChange = true;
+                        stateChange = true;
                     }
                 }
             }
@@ -146,7 +145,7 @@ public class PowerSquelch implements Listener<SourceEvent>
                 if(mRampCount >= mRampThreshold)
                 {
                     mState = State.UNMUTE;
-                    mStateChange = true;
+                    stateChange = true;
                 }
                 else
                 {
@@ -157,7 +156,7 @@ public class PowerSquelch implements Listener<SourceEvent>
                 if(mRampCount <= 0)
                 {
                     mState = State.MUTE;
-                    mStateChange = true;
+                    stateChange = true;
                 }
                 else
                 {
@@ -175,14 +174,14 @@ public class PowerSquelch implements Listener<SourceEvent>
                     else
                     {
                         mState = State.MUTE;
-                        mStateChange = true;
+                        stateChange = true;
                     }
                 }
             }
         }
 
         //Signal that the squelch state has changed if we modified the squelch state above.
-        setSquelchChanged(mStateChange);
+        setSquelchChanged(stateChange);
     }
 
     /**

@@ -11,7 +11,7 @@ public abstract class Window
      * Constructs an instance.
      * @param coefficients coefficients
      */
-    public Window(float[] coefficients)
+    protected Window(float[] coefficients)
     {
         mCoefficients = coefficients;
     }

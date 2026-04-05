@@ -276,7 +276,9 @@ public class NoiseSquelch implements INoiseSquelchController
                 mMeanAccumulatorPointer = 0;
 
                 //Calculate the variance
-                float varianceAccumulator1 = 0.0f, deviation, varianceAccumulator2 = 0.0f;
+                float varianceAccumulator1 = 0.0f;
+                float deviation;
+                float varianceAccumulator2 = 0.0f;
                 for(int i = x - mVarianceWindowSize + 1; i <= x; i++)
                 {
                     deviation = mFilteredBuffer[i] - mean;
@@ -465,7 +467,9 @@ public class NoiseSquelch implements INoiseSquelchController
             end = mFilteredBuffer.length;
         }
 
-        float varianceAccumulator1 = 0.0f, deviation, varianceAccumulator2 = 0.0f;
+        float varianceAccumulator1 = 0.0f;
+        float deviation;
+        float varianceAccumulator2 = 0.0f;
 
         for(int i = start; i < end; i++)
         {
@@ -478,52 +482,5 @@ public class NoiseSquelch implements INoiseSquelchController
 
         //Formula from Apache Commons Math - Variance class.
         return (varianceAccumulator1 - (varianceAccumulator2 * varianceAccumulator2 / sampleSize)) / sampleSize;
-    }
-
-    public static void main(String[] args)
-    {
-//        Path directory = Paths.get("/media/denny/T9/NBFM Squelch Research"); //Linux
-//        Path file = directory.resolve("20250629_072704_453850000_Onondaga-County_Fire-EMS_OC-Fire-Disp_79_baseband.wav");
-//        Path file = directory.resolve("DMR_1_CAPPLUS.wav");
-//        Path file = directory.resolve("20250702_034109_145510000_R828D_V4_POLY_No_Antenna_Normal_Gain.wav");
-//        Path file = directory.resolve("20250702_034301_145510000_R828D_V4_POLY_No_Antenna_Max_Gain.wav");
-//        Path file = directory.resolve("20250702_034403_145510000_R828D_V4_POLY_No_Antenna_Min_Gain.wav");
-//        Path file = directory.resolve("20250702_034541_145510000_R828D_V4_HET_No_Antenna_Min_Gain.wav");
-//        Path file = directory.resolve("20250702_034635_145510000_R828D_V4_HET_No_Antenna_Max_Gain.wav");
-//        Path file = directory.resolve("20250702_034742_145510000_R828D_V4_HET_No_Antenna_Normal_Gain.wav");
-//        Path file = directory.resolve("20250703_043912_162500000_NOAA_25_khz_no_center_signal.wav");
-//        Path file = directory.resolve("20250703_043958_162550000_NOAA_25_khz_yes_center_signal.wav");
-//
-//        DecodeConfigNBFM config = new DecodeConfigNBFM();
-//        config.setBandwidth(DecodeConfigAnalog.Bandwidth.BW_12_5);
-//        NBFMDecoder decoder = new NBFMDecoder(config);
-//
-//        try(ComplexWaveSource source = new ComplexWaveSource(file.toFile(), false))
-//        {
-//            source.setListener(iNativeBuffer -> {
-//                Iterator<ComplexSamples> it = iNativeBuffer.iterator();
-//
-//                while(it.hasNext())
-//                {
-//                    ComplexSamples samples = it.next();
-//                    decoder.receive(samples);
-//                }
-//            });
-//            source.start();
-//
-//            decoder.getSourceEventListener().receive(SourceEvent.sampleRateChange(source.getSampleRate()));
-//
-//            while(true)
-//            {
-//                source.next(2048, true);
-//            }
-//        }
-//        catch(IOException ioe)
-//        {
-//
-//            ioe.printStackTrace();
-//        }
-//
-//        System.out.println("Finished");
     }
 }

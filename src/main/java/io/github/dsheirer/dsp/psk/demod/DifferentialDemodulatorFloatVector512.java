@@ -23,15 +23,12 @@ import java.util.Arrays;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Differential demodulator that uses Vector SIMD 512 calculations for demodulating the sample stream.
  */
 public class DifferentialDemodulatorFloatVector512 extends DifferentialDemodulatorFloat
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(DifferentialDemodulatorFloatVector512.class);
     private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_512;
 
     /**
@@ -75,7 +72,12 @@ public class DifferentialDemodulatorFloatVector512 extends DifferentialDemodulat
         float[] interpolatedI = new float[VECTOR_SPECIES.length()];
         float[] interpolatedQ = new float[VECTOR_SPECIES.length()];
         float[] decodedPhases = new float[sampleLength];
-        FloatVector iPrevious, qPreviousConjugate, iCurrent, qCurrent, differentialI, differentialQ;
+        FloatVector iPrevious;
+        FloatVector qPreviousConjugate;
+        FloatVector iCurrent;
+        FloatVector qCurrent;
+        FloatVector differentialI;
+        FloatVector differentialQ;
 
         //Differential demodulation.
         for(int x = 0; x < sampleLength; x += VECTOR_SPECIES.length())

@@ -20,14 +20,17 @@
 package io.github.dsheirer.dsp.symbol;
 
 import java.util.Arrays;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Implements a circular buffer delay line for dibits.
  */
 public class DibitDelayLine
 {
+    private static final Logger mLog = LoggerFactory.getLogger(DibitDelayLine.class);
     protected Dibit[] mDelayLine;
-    public int mPointer;
+    private int mPointer;
 
     /**
      * Constructs an instance
@@ -123,6 +126,6 @@ public class DibitDelayLine
             pointer = pointer % mDelayLine.length;
         }
 
-        System.out.println(sb);
+        mLog.info(sb.toString());
     }
 }

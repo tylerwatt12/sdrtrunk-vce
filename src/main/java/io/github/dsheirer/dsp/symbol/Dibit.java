@@ -177,12 +177,12 @@ public enum Dibit
                 return Dibit.D10_MINUS_1;
             case 3:
                 return Dibit.D11_MINUS_3;
+            default:
+                return Dibit.D00_PLUS_1;
         }
-
-        return Dibit.D00_PLUS_1;
     }
 
-    public static enum Rotation {PLUS90, MINUS90, INVERT}
+    public enum Rotation {PLUS90, MINUS90, INVERT}
 
     /**
      * Returns the value of this dibit if the symbol were rotated in the direction indicated.
@@ -254,7 +254,6 @@ public enum Dibit
         switch(value)
         {
             case 0:
-            default:
                 return Dibit.D00_PLUS_1;
             case 1:
                 return Dibit.D01_PLUS_3;
@@ -262,6 +261,8 @@ public enum Dibit
                 return Dibit.D10_MINUS_1;
             case 3:
                 return Dibit.D11_MINUS_3;
+            default:
+                return Dibit.D00_PLUS_1;
         }
     }
 

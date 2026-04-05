@@ -44,7 +44,7 @@ public abstract class DifferentialDemodulatorFloat implements IDemodulator
      * @param sampleRate in Hertz
      * @param symbolRate symbols per second
      */
-    public DifferentialDemodulatorFloat(double sampleRate, int symbolRate)
+    protected DifferentialDemodulatorFloat(double sampleRate, int symbolRate)
     {
         mSampleRate = (float) sampleRate;
         mSymbolRate = symbolRate;
