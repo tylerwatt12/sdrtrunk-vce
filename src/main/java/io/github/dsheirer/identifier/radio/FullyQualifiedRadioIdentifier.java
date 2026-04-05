@@ -20,6 +20,7 @@
 package io.github.dsheirer.identifier.radio;
 
 import io.github.dsheirer.identifier.Role;
+import java.util.Objects;
 
 /**
  * Fully qualified radio identifier.  This is used for roaming radios or any time there is a need to fully qualify a
@@ -39,7 +40,7 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
      * @param system of the home network for the radio.
      * @param id of the radio within the home network.
      */
-    public FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role)
+    protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role)
     {
         super(localAddress, role);
         mWacn = wacn;
@@ -106,19 +107,29 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
     @Override
     public boolean equals(Object o)
     {
-        //Attempt to match as a fully qualified radio match first
+        if(this == o)
+        {
+            return true;
+        }
+
         if(o instanceof FullyQualifiedRadioIdentifier fqri)
         {
             return getWacn() == fqri.getWacn() &&
                     getSystem() == fqri.getSystem() &&
-                    getRadio() == fqri.getRadio();
-        }
-        //Attempt to match the local address against a simple radio version
-        else if(o instanceof RadioIdentifier ri)
-        {
-            return getValue() != 0 && ri.getValue() != 0 && getValue().equals(ri.getValue());
+                    getRadio() == fqri.getRadio() &&
+                    getIdentifierClass() == fqri.getIdentifierClass() &&
+                    getForm() == fqri.getForm() &&
+                    getRole() == fqri.getRole() &&
+                    getProtocol() == fqri.getProtocol();
         }
 
-        return super.equals(o);
+        return false;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getClass(), getWacn(), getSystem(), getRadio(), getIdentifierClass(), getForm(),
+                getRole(), getProtocol());
     }
 }

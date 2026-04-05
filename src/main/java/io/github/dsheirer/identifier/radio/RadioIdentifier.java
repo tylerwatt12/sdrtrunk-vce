@@ -26,13 +26,13 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
-import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import java.util.Objects;
 
 /**
  * Radio identifier.
  *
- * Note: this class overrides the .equals method to ensure that all radios and subclasses can be compared using
- * the radio value, regardless if it is a simple radio or a fully qualified radio identifier.
+ * Note: equality is limited to the concrete radio identifier type so that subclasses with additional identity
+ * fields can define coherent equals/hashCode implementations.
  */
 public abstract class RadioIdentifier extends IntegerIdentifier
 {
@@ -48,8 +48,7 @@ public abstract class RadioIdentifier extends IntegerIdentifier
     }
 
     /**
-     * Overrides to compare just the radio value, class, form, role and protocol.  This allows a fully qualified
-     * radio identifier to be equivalent to a standard radio identifier for the traffic channel manager.
+     * Overrides to compare the radio value, identifier details, protocol, and concrete type.
      */
     @Override
     public boolean equals(Object o)
@@ -59,15 +58,22 @@ public abstract class RadioIdentifier extends IntegerIdentifier
             return true;
         }
 
-        if(o instanceof RadioIdentifier radio)
+        if(o == null || getClass() != o.getClass())
         {
-            return (getValue().intValue() == radio.getValue().intValue()) &&
-                    getIdentifierClass() == radio.getIdentifierClass() &&
-                    getForm() == radio.getForm() &&
-                    getRole() == radio.getRole() &&
-                    getProtocol() == radio.getProtocol();
+            return false;
         }
 
-        return false;
+        RadioIdentifier radio = (RadioIdentifier)o;
+        return Objects.equals(getValue(), radio.getValue()) &&
+                getIdentifierClass() == radio.getIdentifierClass() &&
+                getForm() == radio.getForm() &&
+                getRole() == radio.getRole() &&
+                getProtocol() == radio.getProtocol();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getClass(), getValue(), getIdentifierClass(), getForm(), getRole(), getProtocol());
     }
 }
