@@ -193,49 +193,43 @@ public class PatchGroupManager
     {
         if(identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER && identifier.getRole() == Role.TO)
         {
-            if(identifier.getForm() == Form.TALKGROUP)
+            if(identifier.getForm() == Form.TALKGROUP && identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
             {
-                if(identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+                int id = talkgroupIdentifier.getValue();
+
+                PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+
+                if(tracker != null)
                 {
-                    int id = talkgroupIdentifier.getValue();
-
-                    PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
-
-                    if(tracker != null)
+                    if(tracker.isStale(referenceTimestamp))
                     {
-                        if(tracker.isStale(referenceTimestamp))
-                        {
-                            mPatchGroupTrackerMap.remove(id);
-                        }
-                        else
-                        {
-                            //Perform substitution - return patch group instead of the original talkgroup
-                            return tracker.getPatchGroupIdentifier(referenceTimestamp);
-                        }
+                        mPatchGroupTrackerMap.remove(id);
+                    }
+                    else
+                    {
+                        //Perform substitution - return patch group instead of the original talkgroup
+                        return tracker.getPatchGroupIdentifier(referenceTimestamp);
                     }
                 }
             }
-            else if(identifier.getForm() == Form.PATCH_GROUP)
+            else if(identifier.getForm() == Form.PATCH_GROUP && identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
             {
-                if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+                int id = patchGroupIdentifier.getValue().getPatchGroup().getValue();
+
+                PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+
+                if(tracker != null)
                 {
-                    int id = patchGroupIdentifier.getValue().getPatchGroup().getValue();
-
-                    PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
-
-                    if(tracker != null)
+                    if(tracker.isStale(referenceTimestamp) ||
+                            tracker.getPatchGroupIdentifier(referenceTimestamp).getValue().getVersion() !=
+                                    patchGroupIdentifier.getValue().getVersion())
                     {
-                        if(tracker.isStale(referenceTimestamp) ||
-                                tracker.getPatchGroupIdentifier(referenceTimestamp).getValue().getVersion() !=
-                                        patchGroupIdentifier.getValue().getVersion())
-                        {
-                            mPatchGroupTrackerMap.put(id, new PatchGroupTracker(patchGroupIdentifier, referenceTimestamp));
-                        }
-                        else
-                        {
-                            //Perform substitution - return patch group instead of the original talkgroup
-                            return tracker.getPatchGroupIdentifier(referenceTimestamp);
-                        }
+                        mPatchGroupTrackerMap.put(id, new PatchGroupTracker(patchGroupIdentifier, referenceTimestamp));
+                    }
+                    else
+                    {
+                        //Perform substitution - return patch group instead of the original talkgroup
+                        return tracker.getPatchGroupIdentifier(referenceTimestamp);
                     }
                 }
             }
