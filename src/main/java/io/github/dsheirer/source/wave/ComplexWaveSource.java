@@ -121,7 +121,6 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
     public int getBufferSampleCount()
     {
         return mBufferSampleCount;
-//        return (int)(getSampleRate() / 20.0d);
     }
 
     /**
@@ -322,7 +321,7 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
 
     private void broadcast(int byteLocation)
     {
-        int frameLocation = (int)(byteLocation / mBytesPerFrame);
+        int frameLocation = (byteLocation / mBytesPerFrame);
 
         if(mFrameLocationListener != null)
         {

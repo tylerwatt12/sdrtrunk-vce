@@ -61,31 +61,6 @@ public class TunerFrequencyErrorMonitor implements Listener<SourceEvent>
         }
     }
 
-    /**
-     * Calculates the average frequency error measurement value from discrete measurements received from
-     * the decoders over the interval period.
-     */
-    private void process()
-    {
-        mMeasurementsQueue.drainTo(mProcessingMeasurements);
-
-        if(mProcessingMeasurements.size() > 0)
-        {
-            int sum = 0;
-
-            for(Integer measurement: mProcessingMeasurements)
-            {
-                sum += measurement;
-            }
-
-            //Note: the measurements are the frequency correction being applied to each channel to compensate
-            //for the error int the channel.  So, we report the negated value as the current error measurement
-            broadcast(-(sum / mProcessingMeasurements.size()));
-
-            mProcessingMeasurements.clear();
-        }
-    }
-
     private void broadcast(int averageError)
     {
         mTuner.getTunerController().setMeasuredFrequencyError(averageError);
@@ -123,6 +98,31 @@ public class TunerFrequencyErrorMonitor implements Listener<SourceEvent>
      */
     public class Processor implements Runnable
     {
+        /**
+         * Calculates the average frequency error measurement value from discrete measurements received from
+         * the decoders over the interval period.
+         */
+        private void process()
+        {
+            mMeasurementsQueue.drainTo(mProcessingMeasurements);
+
+            if(!mProcessingMeasurements.isEmpty())
+            {
+                int sum = 0;
+
+                for(Integer measurement: mProcessingMeasurements)
+                {
+                    sum += measurement;
+                }
+
+                //Note: the measurements are the frequency correction being applied to each channel to compensate
+                //for the error int the channel.  So, we report the negated value as the current error measurement
+                broadcast(-(sum / mProcessingMeasurements.size()));
+
+                mProcessingMeasurements.clear();
+            }
+        }
+
         @Override
         public void run()
         {

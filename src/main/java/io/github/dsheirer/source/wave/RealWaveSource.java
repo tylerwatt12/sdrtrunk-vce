@@ -261,7 +261,7 @@ public class RealWaveSource extends Source implements IControllableFileSource, A
 
     private void broadcast(int byteLocation)
     {
-        int frameLocation = (int)(byteLocation / mBytesPerFrame);
+        int frameLocation = (byteLocation / mBytesPerFrame);
 
         if(mFrameLocationListener != null)
         {
