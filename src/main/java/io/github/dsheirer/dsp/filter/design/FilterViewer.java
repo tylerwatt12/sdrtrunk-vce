@@ -21,20 +21,15 @@ package io.github.dsheirer.dsp.filter.design;
 
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
-import io.github.dsheirer.dsp.window.WindowType;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class FilterViewer extends Application
 {
-
-    /**
-     * Developer tool to visualize filter designs
-     */
-    public FilterViewer()
-    {
-    }
+    private static final Logger mLog = LoggerFactory.getLogger(FilterViewer.class);
 
     @Override
     public void start(Stage primaryStage) throws Exception
@@ -56,9 +51,6 @@ public class FilterViewer extends Application
      */
     private float[] getFilter()
     {
-        int filterLength = 31;
-        WindowType windowType = WindowType.BLACKMAN_HARRIS_7;
-
         FIRFilterSpecification specification = FIRFilterSpecification
                 .lowPassBuilder()
                 .sampleRate(12500)
@@ -75,13 +67,8 @@ public class FilterViewer extends Application
         }
         catch(Exception fde) //FilterDesignException
         {
-            System.out.println("Error");
+            mLog.error("Error creating filter taps", fde);
         }
-
-        //        float[] taps = FilterFactory.getHighPass(8000, 3000, filterLength, windowType);
-//        float[] taps = FilterFactory.getRootRaisedCosine(50000.0 / 4800.0, 20, 0.2f);
-
-//        taps = HilbertTransform.HALF_BAND_FILTER_47_TAP;
 
         if(taps == null)
         {

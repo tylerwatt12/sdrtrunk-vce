@@ -80,7 +80,7 @@ public class SampleTimestampManager
     {
         if(mSampleCount > 0)
         {
-            return mReferenceTimestamp + (long)((double)mSampleCount / mSamplesPerMilliSecond);
+            return mReferenceTimestamp + (long)(mSampleCount / mSamplesPerMilliSecond);
         }
 
         return mReferenceTimestamp;

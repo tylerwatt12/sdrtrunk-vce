@@ -65,9 +65,6 @@ public class PolyphaseChannelizerFilterFactory
         FIRFilterSpecification.FrequencyBand passBand = new FIRFilterSpecification.FrequencyBand(sampleRate, passBandStart,
             passBandStop, 1.0, passRipple, 1.0);
 
-        //Use the filter order as the weighting for the pass band edge frequency
-//        double weight = order;
-
         FIRFilterSpecification.FrequencyBand transitionBand = new FIRFilterSpecification.FrequencyBand(sampleRate,
             channelBandwidth, channelBandwidth, OBJECTIVE_BAND_EDGE_COEFFICIENT_AMPLITUDE, transitionRipple, 5.0);
 

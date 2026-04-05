@@ -47,7 +47,6 @@ public class VectorComplexFIRFilter64Bit implements IComplexFilter
     {
         VectorUtilities.checkSpecies(VECTOR_SPECIES);
 
-        //Size the coefficients array to a multiple of the vector species length, large enough to hold the taps;
         int arrayLength = VECTOR_SPECIES.length();
 
         while(arrayLength < (coefficients.length * 2))
@@ -102,7 +101,9 @@ public class VectorComplexFIRFilter64Bit implements IComplexFilter
 
         float[] filtered = new float[samples.length];
 
-        FloatVector accumulator, buffer, filter;
+        FloatVector accumulator;
+        FloatVector buffer;
+        FloatVector filter;
 
         for(int bufferPointer = 0; bufferPointer < samples.length; bufferPointer += 2)
         {

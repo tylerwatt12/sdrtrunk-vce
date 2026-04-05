@@ -23,6 +23,8 @@ import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.window.WindowType;
 import org.apache.commons.math3.util.FastMath;
 import org.jtransforms.fft.FloatFFT_1D;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.text.DecimalFormat;
 
@@ -31,6 +33,7 @@ import java.text.DecimalFormat;
  */
 public class HalfBandDecimationFilterAnalysis
 {
+    private static final Logger mLog = LoggerFactory.getLogger(HalfBandDecimationFilterAnalysis.class);
     private static final int FFT_SIZE = 4096;
     private static FloatFFT_1D FFT = new FloatFFT_1D(FFT_SIZE);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.0");
@@ -67,7 +70,7 @@ public class HalfBandDecimationFilterAnalysis
             {
                 float[] taps = getTaps(length, windowType);
                 float[] dft = getDFT(taps);
-                float[] decibels = convertDFTToDecibel(dft, FFT_SIZE / 2);
+                float[] decibels = convertDFTToDecibel(dft);
                 float x2Cutoff = getCutoff(BY_2, decibels);
                 float x225Cutoff = getCutoff(BY_2_25, decibels);
                 float x250Cutoff = getCutoff(BY_2_50, decibels);
@@ -100,7 +103,7 @@ public class HalfBandDecimationFilterAnalysis
                 sb.append(DECIMAL_FORMAT.format(x1024Cutoff)).append("\n");
             }
 
-            System.out.println(sb.toString());
+            mLog.info(sb.toString());
         }
     }
 
@@ -145,7 +148,7 @@ public class HalfBandDecimationFilterAnalysis
         return dft;
     }
 
-    public static float[] convertDFTToDecibel(float[] dft, int tapLength)
+    public static float[] convertDFTToDecibel(float[] dft)
     {
         float[] decibels = new float[dft.length / 2];
 

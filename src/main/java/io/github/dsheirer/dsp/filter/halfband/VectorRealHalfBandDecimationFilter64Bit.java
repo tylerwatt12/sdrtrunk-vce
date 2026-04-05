@@ -48,7 +48,6 @@ public class VectorRealHalfBandDecimationFilter64Bit implements IRealDecimationF
     {
         VectorUtilities.checkSpecies(VECTOR_SPECIES);
 
-        //Size the coefficients array to a multiple of the vector species length, large enough to hold the taps;
         int arrayLength = VECTOR_SPECIES.length();
 
         while(arrayLength < coefficients.length)
@@ -97,7 +96,9 @@ public class VectorRealHalfBandDecimationFilter64Bit implements IRealDecimationF
 
         float[] filtered = new float[samples.length / 2];
 
-        FloatVector accumulator, buffer, filter;
+        FloatVector accumulator;
+        FloatVector buffer;
+        FloatVector filter;
 
         for(int bufferPointer = 0; bufferPointer < samples.length; bufferPointer += 2)
         {

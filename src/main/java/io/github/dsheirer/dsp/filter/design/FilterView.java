@@ -35,8 +35,6 @@ public class FilterView extends BorderPane
     private NumberAxis mImpulseXAxis;
     private NumberAxis mImpulseYAxis;
     private CurveFittedAreaChart mDFTChart;
-    private NumberAxis mDFTXAxis;
-    private NumberAxis mDFTYAxis;
     private static final int FFT_SIZE = 4096;
     private FloatFFT_1D mFFT = new FloatFFT_1D(FFT_SIZE);
 
@@ -74,10 +72,10 @@ public class FilterView extends BorderPane
         hbox.getChildren().add(mImpulseChart);
         HBox.setHgrow(mImpulseChart, Priority.ALWAYS);
 
-        mDFTXAxis = new NumberAxis(0.0, FFT_SIZE / 2, FFT_SIZE / 8);
-        mDFTYAxis = new NumberAxis(-200.0, 10.0, 10.0);
+        NumberAxis dftXAxis = new NumberAxis(0.0, FFT_SIZE / 2, FFT_SIZE / 8);
+        NumberAxis dftYAxis = new NumberAxis(-200.0, 10.0, 10.0);
 
-        mDFTChart = new CurveFittedAreaChart(mDFTXAxis, mDFTYAxis);
+        mDFTChart = new CurveFittedAreaChart(dftXAxis, dftYAxis);
         mDFTChart.setLegendVisible(false);
         mDFTChart.setHorizontalGridLinesVisible(false);
         mDFTChart.setVerticalGridLinesVisible(false);

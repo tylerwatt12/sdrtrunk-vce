@@ -28,6 +28,10 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class DcRemovalFilterFactory
 {
+    private DcRemovalFilterFactory()
+    {
+    }
+
     /**
      * Creates the optimal DC removal filter for this computer
      * @param gain to apply to DC removal

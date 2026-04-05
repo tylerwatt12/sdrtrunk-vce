@@ -216,32 +216,6 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     }
 
     /**
-     * Starts/adds the channel source to receive channelized sample buffers, registering with the tuner to receive
-     * sample buffers when this is the first channel.
-     *
-     * @param channelSource to start
-     */
-    private void startChannelSource(PolyphaseChannelSource channelSource)
-    {
-        synchronized(mBufferDispatcher)
-        {
-            //Note: the polyphase channel source has already been added to the mChannelSources in getChannel() method
-            checkChannelizerConfiguration();
-
-            mPolyphaseChannelizer.addChannel(channelSource);
-            mSourceEventBroadcaster.broadcast(SourceEvent.channelCountChange(getTunerChannelCount()));
-
-            //If this is the first channel, register to start the sample buffers flowing
-            if(mPolyphaseChannelizer.getRegisteredChannelCount() == 1)
-            {
-                mNativeBufferProvider.addBufferListener(mBufferDispatcher);
-                mPolyphaseChannelizer.start();
-                mBufferDispatcher.start();
-            }
-        }
-    }
-
-    /**
      * Stops/removes the channel source from receiving channelized sample buffers and deregisters from the tuner
      * when this is the last channel being sourced.
      *
@@ -320,69 +294,6 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     }
 
     /**
-     * Creates or updates the channelizer to process the incoming sample rate and updates any channel processors.
-     *
-     * Note: this method should only be invoked on the mBufferProcessor thread or prior to starting the mBufferProcessor.
-     * Sample rate source events will normally arrive via the incoming complex buffer stream from the mBufferProcessor
-     * and will be handled as they arrive.
-     */
-    private void checkChannelizerConfiguration()
-    {
-        //Channel calculator is always in sync with the tuner's current sample rate
-        double tunerSampleRate = mChannelCalculator.getSampleRate();
-
-        //If the channelizer is not setup, or setup to the wrong sample rate, recreate it
-        if(mPolyphaseChannelizer == null || FastMath.abs(mPolyphaseChannelizer.getSampleRate() - tunerSampleRate) > 0.5)
-        {
-            if(mPolyphaseChannelizer != null && mPolyphaseChannelizer.getRegisteredChannelCount() > 0)
-            {
-                throw new IllegalStateException("Polyphase Channelizer cannot be changed to a new sample rate while " +
-                    "channels are currently sourced.  Ensure you remove all tuner channels before changing tuner " +
-                    "sample rate.  Current channel count:" +
-                    mPolyphaseChannelizer.getRegisteredChannelCount());
-            }
-
-            try
-            {
-                mPolyphaseChannelizer = new ComplexPolyphaseChannelizerM2(tunerSampleRate,
-                    POLYPHASE_CHANNELIZER_TAPS_PER_CHANNEL);
-            }
-            catch(IllegalArgumentException iae)
-            {
-                mLog.error("Could not create polyphase channelizer for sample rate [" + tunerSampleRate + "]", iae);
-            }
-            catch(FilterDesignException fde)
-            {
-                mLog.error("Could not create filter for polyphase channelizer for sample rate [" + tunerSampleRate + "]", fde);
-            }
-
-            //Clear any previous channel synthesis filters so they can be recreated for the new channel sample rate
-            mOutputProcessorFilters.clear();
-        }
-    }
-
-    /**
-     * Updates each of the output processors for any changes in the tuner's center frequency or sample rate, which
-     * would cause the output processors to change the polyphase channelizer results channel(s) that the processor is
-     * consuming
-     */
-    private void updateOutputProcessors()
-    {
-        for(PolyphaseChannelSource channelSource: mChannelSources)
-        {
-            try
-            {
-                channelSource.updateOutputProcessor(mChannelCalculator, mFilterManager);
-            }
-            catch(IllegalArgumentException _)
-            {
-                mLog.error("Error updating polyphase channel source output processor following tuner frequency or sample rate change");
-                stopChannelSource(channelSource);
-            }
-        }
-    }
-
-    /**
      * Sorted set of currently sourced tuner channels being provided by this channel manager.  The set is ordered by
      * frequency (low to high).
      */
@@ -427,6 +338,74 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
      */
     private class ChannelSourceEventListener implements Listener<SourceEvent>
     {
+        /**
+         * Creates or updates the channelizer to process the incoming sample rate and updates any channel processors.
+         *
+         * Note: this method should only be invoked on the mBufferProcessor thread or prior to starting the mBufferProcessor.
+         * Sample rate source events will normally arrive via the incoming complex buffer stream from the mBufferProcessor
+         * and will be handled as they arrive.
+         */
+        private void checkChannelizerConfiguration()
+        {
+            //Channel calculator is always in sync with the tuner's current sample rate
+            double tunerSampleRate = mChannelCalculator.getSampleRate();
+
+            //If the channelizer is not setup, or setup to the wrong sample rate, recreate it
+            if(mPolyphaseChannelizer == null || FastMath.abs(mPolyphaseChannelizer.getSampleRate() - tunerSampleRate) > 0.5)
+            {
+                if(mPolyphaseChannelizer != null && mPolyphaseChannelizer.getRegisteredChannelCount() > 0)
+                {
+                    throw new IllegalStateException("Polyphase Channelizer cannot be changed to a new sample rate while " +
+                        "channels are currently sourced.  Ensure you remove all tuner channels before changing tuner " +
+                        "sample rate.  Current channel count:" +
+                        mPolyphaseChannelizer.getRegisteredChannelCount());
+                }
+
+                try
+                {
+                    mPolyphaseChannelizer = new ComplexPolyphaseChannelizerM2(tunerSampleRate,
+                        POLYPHASE_CHANNELIZER_TAPS_PER_CHANNEL);
+                }
+                catch(IllegalArgumentException iae)
+                {
+                    mLog.error("Could not create polyphase channelizer for sample rate [" + tunerSampleRate + "]", iae);
+                }
+                catch(FilterDesignException fde)
+                {
+                    mLog.error("Could not create filter for polyphase channelizer for sample rate [" + tunerSampleRate + "]", fde);
+                }
+
+                //Clear any previous channel synthesis filters so they can be recreated for the new channel sample rate
+                mOutputProcessorFilters.clear();
+            }
+        }
+
+        /**
+         * Starts/adds the channel source to receive channelized sample buffers, registering with the tuner to receive
+         * sample buffers when this is the first channel.
+         *
+         * @param channelSource to start
+         */
+        private void startChannelSource(PolyphaseChannelSource channelSource)
+        {
+            synchronized(mBufferDispatcher)
+            {
+                //Note: the polyphase channel source has already been added to the mChannelSources in getChannel() method
+                checkChannelizerConfiguration();
+
+                mPolyphaseChannelizer.addChannel(channelSource);
+                mSourceEventBroadcaster.broadcast(SourceEvent.channelCountChange(getTunerChannelCount()));
+
+                //If this is the first channel, register to start the sample buffers flowing
+                if(mPolyphaseChannelizer.getRegisteredChannelCount() == 1)
+                {
+                    mNativeBufferProvider.addBufferListener(mBufferDispatcher);
+                    mPolyphaseChannelizer.start();
+                    mBufferDispatcher.start();
+                }
+            }
+        }
+
         @Override
         public void receive(SourceEvent sourceEvent)
         {
@@ -478,6 +457,27 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     public class NativeBufferReceiver implements Listener<INativeBuffer>
     {
         private boolean mOutputProcessorUpdateRequired = false;
+
+        /**
+         * Updates each of the output processors for any changes in the tuner's center frequency or sample rate, which
+         * would cause the output processors to change the polyphase channelizer results channel(s) that the processor
+         * is consuming.
+         */
+        private void updateOutputProcessors()
+        {
+            for(PolyphaseChannelSource channelSource: mChannelSources)
+            {
+                try
+                {
+                    channelSource.updateOutputProcessor(mChannelCalculator, mFilterManager);
+                }
+                catch(IllegalArgumentException _)
+                {
+                    mLog.error("Error updating polyphase channel source output processor following tuner frequency or sample rate change");
+                    stopChannelSource(channelSource);
+                }
+            }
+        }
 
         /**
          * Processes tuner center frequency change source events to flag when output processors need updating.

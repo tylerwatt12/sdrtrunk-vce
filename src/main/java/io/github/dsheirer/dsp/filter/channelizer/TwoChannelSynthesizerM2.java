@@ -48,8 +48,6 @@ public class TwoChannelSynthesizerM2
     private float[] mSerpentineDataBuffer;
     private float[] mIQInterleavedFilter;
     private float[] mFilterVectorProduct;
-    private float mIAccumulator;
-    private float mQAccumulator;
     private FloatFFT_1D mFFT = new FloatFFT_1D(2);
     private boolean mTopBlockFlag = true;
 
@@ -152,17 +150,17 @@ public class TwoChannelSynthesizerM2
             }
 
             //Accumulate output I/Q samples from vector product
-            mIAccumulator = 0.0f;
-            mQAccumulator = 0.0f;
+            float iAccumulator = 0.0f;
+            float qAccumulator = 0.0f;
 
             for(int y = 0; y < mFilterVectorProduct.length; y += 2)
             {
-                mIAccumulator += mFilterVectorProduct[y];
-                mQAccumulator += mFilterVectorProduct[y + 1];
+                iAccumulator += mFilterVectorProduct[y];
+                qAccumulator += mFilterVectorProduct[y + 1];
             }
 
-            i[x] = mIAccumulator;
-            q[x] = mQAccumulator;
+            i[x] = iAccumulator;
+            q[x] = qAccumulator;
 
             mTopBlockFlag = !mTopBlockFlag;
         }

@@ -55,32 +55,4 @@ public class ScalarDcRemovalFilter implements IDcRemovalFilter
 
         return samples;
     }
-
-    public static void main(String[] args)
-    {
-        System.out.println("Starting ...");
-        Random random = new Random();
-        ScalarDcRemovalFilter scalarFilter = new ScalarDcRemovalFilter(0.15f);
-        VectorDcRemovalFilter vectorFilter = new VectorDcRemovalFilter(0.15f);
-
-        float dcOffset = 0.03f;
-        float[] samples = new float[8192];
-
-        for(int y = 0; y < samples.length; y++)
-        {
-            samples[y] = (random.nextFloat() * 2.0f) - 1.0f + dcOffset;
-        }
-
-        long start = System.currentTimeMillis();
-
-        for(int x = 0; x < 1_000_000; x++)
-        {
-//            scalarFilter.filter(samples);
-            vectorFilter.filter(samples);
-        }
-
-        long duration = System.currentTimeMillis() - start;
-
-        System.out.println("Finished - Duration: " + duration);
-    }
 }

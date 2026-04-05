@@ -23,7 +23,6 @@ public class IIRSinglePoleDCRemovalFilter
     private float mAlpha;
     private float mPreviousInput = 0.0f;
     private float mPreviousOutput = 0.0f;
-    private float mCurrentOutput = 0.0f;
 
     /**
      * IIR single-pole DC removal filter, as described by J M de Freitas in
@@ -46,12 +45,12 @@ public class IIRSinglePoleDCRemovalFilter
      */
     public float filter(float sample)
     {
-        mCurrentOutput = (sample - mPreviousInput) + (mAlpha * mPreviousOutput);
+        float currentOutput = (sample - mPreviousInput) + (mAlpha * mPreviousOutput);
 
         mPreviousInput = sample;
-        mPreviousOutput = mCurrentOutput;
+        mPreviousOutput = currentOutput;
 
-        return mCurrentOutput;
+        return currentOutput;
     }
 
     /**

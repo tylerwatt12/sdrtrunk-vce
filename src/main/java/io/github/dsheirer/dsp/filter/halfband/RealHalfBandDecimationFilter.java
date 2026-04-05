@@ -89,7 +89,7 @@ public class RealHalfBandDecimationFilter implements IRealDecimationFilter
 
         float[] filtered = new float[samples.length / 2];
 
-        float accumulator = 0.0f;
+        float accumulator;
         int half = mBufferOverlap / 2;
 
         for(int bufferPointer = 0; bufferPointer < samples.length; bufferPointer += 2)
@@ -111,50 +111,5 @@ public class RealHalfBandDecimationFilter implements IRealDecimationFilter
         }
 
         return filtered;
-    }
-
-    public static void main(String[] args)
-    {
-        Random random = new Random();
-
-        int sampleSize = 2048;
-
-        float[] samples = new float[sampleSize];
-        for(int x = 0; x < samples.length; x++)
-        {
-            samples[x] = random.nextFloat() * 2.0f - 1.0f;
-        }
-
-        float[] coefficients = FilterFactory.getHalfBand(63, WindowType.BLACKMAN);
-
-//        RealHalfBandDecimationFilter filter = new RealHalfBandDecimationFilter(coefficients);
-//        VectorRealHalfBandDecimationFilter63Tap64Bit vectorFilter64 = new VectorRealHalfBandDecimationFilter63Tap64Bit(coefficients);
-//        VectorRealHalfBandDecimationFilter63Tap128Bit vectorFilter128 = new VectorRealHalfBandDecimationFilter63Tap128Bit(coefficients);
-//        VectorRealHalfBandDecimationFilter63Tap256Bit vectorFilter256 = new VectorRealHalfBandDecimationFilter63Tap256Bit(coefficients);
-//        VectorRealHalfBandDecimationFilter23Tap512Bit vectorFilter512 = new VectorRealHalfBandDecimationFilter23Tap512Bit(coefficients);
-        VectorRealHalfBandDecimationFilter256Bit vectorFilter = new VectorRealHalfBandDecimationFilter256Bit(coefficients);
-
-        double accumulator = 0.0d;
-
-        int iterations = 10_000_000;
-
-        long start = System.currentTimeMillis();
-
-        for(int x = 0; x < iterations; x++)
-        {
-//            float[] filtered = filter.decimateReal(samples);
-//            float[] filtered = vectorFilter256.decimateReal(samples);
-            float[] filtered = vectorFilter.decimateReal(samples);
-//            float[] vfiltered = vectorFilterGeneric.decimateReal(samples);
-            accumulator += filtered[3];
-        }
-
-//        System.out.println("REG:" + Arrays.toString(filtered));
-//        System.out.println("VEC:" + Arrays.toString(vfiltered));
-        double elapsed = System.currentTimeMillis() - start;
-
-        DecimalFormat df = new DecimalFormat("0.000");
-        System.out.println("Accumulator: " + accumulator);
-        System.out.println("Test Complete.  Elapsed Time: " + df.format(elapsed / 1000.0d) + " seconds");
     }
 }

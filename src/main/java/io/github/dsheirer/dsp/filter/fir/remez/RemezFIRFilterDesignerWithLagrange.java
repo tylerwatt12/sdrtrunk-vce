@@ -226,29 +226,6 @@ public class RemezFIRFilterDesignerWithLagrange
         }
 
         return mLagrangeInterpolator.value(cosineOfFrequency);
-
-//    	double numerator = 0.0;
-//    	double denominator = 0.0;
-//
-//		for( int k = 0; k < mExtremalIndices.size() - 1; k++ )
-//    	{
-//    		double cosineDelta = cosineOfFrequency - mGrid.getCosineFrequencyGrid()[ mExtremalIndices.get( k ) ];
-//
-//    		//If this frequency is close to one of the polynomial points, use the polynomial point for the response
-//    		if( Math.abs( cosineDelta ) < 1.0e-7 )
-//    		{
-//    			return mIdealFrequencyResponse[ k ];
-//    		}
-//    		else
-//    		{
-//    			double dkOverCosineDelta = mD[ k ] / cosineDelta;
-//
-//        		numerator += dkOverCosineDelta * mIdealFrequencyResponse[ k ];
-//        		denominator += dkOverCosineDelta;
-//    		}
-//    	}
-//
-//    	return numerator / denominator;
     }
 
     /**
@@ -358,7 +335,6 @@ public class RemezFIRFilterDesignerWithLagrange
                     }
 
                     b[k] = b[k].multiply(BigDecimal.valueOf(1.0 / denominator));
-//        			b[ k ] *= 1.0 / denominator;
                 }
             }
         }

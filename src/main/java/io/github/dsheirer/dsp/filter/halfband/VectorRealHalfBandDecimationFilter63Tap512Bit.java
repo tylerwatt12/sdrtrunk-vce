@@ -96,7 +96,9 @@ public class VectorRealHalfBandDecimationFilter63Tap512Bit implements IRealDecim
 
         float[] filtered = new float[samples.length / 2];
 
-        FloatVector accumulator, buffer, filter;
+        FloatVector accumulator;
+        FloatVector buffer;
+        FloatVector filter;
 
         for(int bufferPointer = 0; bufferPointer < samples.length; bufferPointer += 2)
         {

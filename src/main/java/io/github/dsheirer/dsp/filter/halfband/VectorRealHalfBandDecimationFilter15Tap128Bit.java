@@ -101,7 +101,10 @@ public class VectorRealHalfBandDecimationFilter15Tap128Bit implements IRealDecim
         FloatVector filter3 = FloatVector.fromArray(VECTOR_SPECIES, mCoefficients, 8);
         FloatVector filter4 = FloatVector.fromArray(VECTOR_SPECIES, mCoefficients, 12);
 
-        FloatVector product1, product2, product3, product4;
+        FloatVector product1;
+        FloatVector product2;
+        FloatVector product3;
+        FloatVector product4;
 
         for(int bufferPointer = 0; bufferPointer < samples.length; bufferPointer += 2)
         {

@@ -91,43 +91,4 @@ public class RealFIRFilter implements IRealFilter
 
         return filtered;
     }
-
-    public static void main(String[] args)
-    {
-        Random random = new Random();
-
-        int sampleSize = 2048;
-
-        float[] samples = new float[sampleSize];
-        for(int x = 0; x < samples.length; x++)
-        {
-            samples[x] = random.nextFloat() * 2.0f - 1.0f;
-        }
-
-        float[] coefficients = FilterFactory.getLowPass(1000, 250, 99, WindowType.BLACKMAN);
-
-        RealFIRFilter filter = new RealFIRFilter(coefficients);
-        double accumulator = 0.0d;
-
-        int iterations = 1_000_000;
-
-        long start = System.currentTimeMillis();
-
-        for(int x = 0; x < iterations; x++)
-        {
-            float[] filtered = filter.filter(samples);
-//            float[] filtered = vectorFilter.filter(samples);
-//            float[] vfiltered = vectorFilter.filter(samples);
-            accumulator += filtered[3];
-        }
-
-//        System.out.println("REG:" + Arrays.toString(filtered));
-//        System.out.println("VEC:" + Arrays.toString(vfiltered));
-
-        double elapsed = (double)System.currentTimeMillis() - start;
-
-        DecimalFormat df = new DecimalFormat("0.000");
-        System.out.println("Accumulator: " + accumulator);
-        System.out.println("Test Complete.  Elapsed Time: " + df.format(elapsed / 1000.0d) + " seconds");
-    }
 }

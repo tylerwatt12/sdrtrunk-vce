@@ -61,27 +61,4 @@ public class VectorDcRemovalFilter implements IDcRemovalFilter
 
         return samples;
     }
-
-    public static void main(String[] args)
-    {
-        System.out.println("Starting ...");
-        Random random = new Random();
-        VectorDcRemovalFilter filter = new VectorDcRemovalFilter(0.15f);
-
-        float dcOffset = 0.03f;
-
-        for(int x = 0; x < 10; x++)
-        {
-            float[] samples = new float[8192];
-
-            for(int y = 0; y < samples.length; y++)
-            {
-                samples[y] = (random.nextFloat() * 2.0f) - 1.0f + dcOffset;
-            }
-
-            samples = filter.filter(samples);
-        }
-
-        System.out.println("Finished!");
-    }
 }

@@ -441,30 +441,4 @@ public class PrimeCicDecimationFilter
             return designer.getImpulseResponse();
         }
     }
-
-    public static void main(String[] args)
-    {
-        double sampleRate = 25.0;
-        int decimation = 5;
-        IRealOscillator oscillator = OscillatorFactory.getRealOscillator(1.0, sampleRate);
-
-        try
-        {
-            PrimeCicDecimationFilter filter = new PrimeCicDecimationFilter(sampleRate, decimation, 1.5, 2.0);
-
-            for(int x = 0; x < 20; x++)
-            {
-                float[] samples = oscillator.generate(5000);
-                float[] decimated = filter.decimate(samples);
-                System.out.println(Arrays.toString(decimated));
-            }
-
-        }
-        catch(FilterDesignException fde)
-        {
-            fde.printStackTrace();
-        }
-
-
-    }
 }

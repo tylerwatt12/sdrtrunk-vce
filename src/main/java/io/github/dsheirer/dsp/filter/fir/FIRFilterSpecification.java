@@ -840,32 +840,6 @@ public class FIRFilterSpecification
         }
     }
 
-    // /**
-    // * Converts the set of band amplitude values into a set of weights
-    // * normalized to the largest band amplitude value
-    // */
-    // private static double[] getBandWeights( double... amplitudes )
-    // {
-    // double maximum = 0.0;
-    //
-    // for ( double amplitude : amplitudes )
-    // {
-    // if ( amplitude > maximum )
-    // {
-    // maximum = amplitude;
-    // }
-    // }
-    //
-    // double[] weights = new double[ amplitudes.length ];
-    //
-    // for ( int x = 0; x < amplitudes.length; x++ )
-    // {
-    // weights[ x ] = maximum / amplitudes[ x ];
-    // }
-    //
-    // return weights;
-    // }
-
     /**
      * Estimates filter length for a two-band (high or low pass) FIR filter.
      *
