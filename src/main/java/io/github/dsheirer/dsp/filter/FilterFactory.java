@@ -96,7 +96,7 @@ public class FilterFactory
 
         //Transfer the IDFT results to the return array
         float[] coefficients = new float[length];
-        int middleCoefficient = (int)(length / 2);
+        int middleCoefficient = (length / 2);
 
         if(length % 2 == 0) //Even length
         {
@@ -199,7 +199,7 @@ public class FilterFactory
 
         if(length % 2 == 0) //even length
         {
-            int binCount = (int)((FastMath.round((float)frequency / (float)sampleRate * (float)length)));
+            int binCount = (int)FastMath.round(frequency / (float)sampleRate * length);
 
             for(int x = 0; x < binCount; x++)
             {
@@ -209,7 +209,7 @@ public class FilterFactory
         }
         else //odd length
         {
-            int binCount = (int)((FastMath.round((float)frequency / (float)sampleRate * (float)length + 0.5)));
+            int binCount = (int)FastMath.round(frequency / (float)sampleRate * length + 0.5);
 
             unityArray[0] = 1.0f;
 
@@ -382,7 +382,7 @@ public class FilterFactory
     {
         double frequency = ((double)stop - (double)pass) / sampleRate;
 
-        return (int)(FastMath.round((double)attenuation / (22.0d * frequency)));
+        return (int)(FastMath.round(attenuation / (22.0d * frequency)));
     }
 
     /**
@@ -404,7 +404,7 @@ public class FilterFactory
                 + "integer multiple of sample rate");
         }
 
-        int decimation = (int)(sampleRate / decimatedRate);
+        int decimation = (sampleRate / decimatedRate);
 
         //Decimation rates below 20 will use single stage polyphase filter
         if(decimation < 20)
@@ -432,7 +432,7 @@ public class FilterFactory
             {
                 rates = new int[2];
 
-                int stage2 = (int)(decimation / stage1);
+                int stage2 = (decimation / stage1);
 
                 if(stage1 > stage2)
                 {
@@ -480,12 +480,12 @@ public class FilterFactory
      */
     private static Set<Integer> getFactors(int value)
     {
-        Set<Integer> factors = new TreeSet<Integer>();
+        Set<Integer> factors = new TreeSet<>();
 
         /* Brute force */
         for(int x = 1; x <= value; x++)
         {
-            int remainder = (int)(value / x);
+            int remainder = (value / x);
 
             if(remainder * x == value)
             {
@@ -512,13 +512,11 @@ public class FilterFactory
     {
         double ratio = getBandwidthRatio(passFrequency, stopFrequency);
 
-        double numerator = 1.0d - (FastMath.sqrt((double)decimation * ratio / (2.0d - ratio)));
+        double numerator = 1.0d - (FastMath.sqrt(decimation * ratio / (2.0d - ratio)));
 
         double denominator = 2.0d - (ratio * (decimation + 1.0d));
 
-        int retVal = (int)(2.0d * decimation * (numerator / denominator));
-
-        return retVal;
+        return (int)(2.0d * decimation * (numerator / denominator));
     }
 
     /**
@@ -562,7 +560,7 @@ public class FilterFactory
 
         //Transfer the IDFT results to the odd length return array
         float[] coefficients = new float[taps];
-        int middleCoefficient = (int)(taps / 2);
+        int middleCoefficient = (taps / 2);
 
         //Bin 0 of the idft is our center coefficient
         coefficients[middleCoefficient] = frequencyResponse[0];
@@ -576,7 +574,6 @@ public class FilterFactory
         }
 
         //Apply the window against the coefficients
-//		coefficients = Window.apply( window, coefficients );
 
         normalize(coefficients);
 
@@ -588,12 +585,12 @@ public class FilterFactory
         float[] cicArray = new float[length * 2];
 
         int binCount = (int)((FastMath.round(
-            (double)frequency / (double)sampleRate * 2.0d * (double)length)));
+            (double)frequency / (double)sampleRate * 2.0d * length)));
 
         cicArray[0] = 1.0f;
 
-        float unityResponse = (float)(FastMath.sin(1.0d / (double)length) /
-            (1.0d / (double)length));
+        float unityResponse = (float)(FastMath.sin(1.0d / length) /
+            (1.0d / length));
 
         for(int x = 1; x <= binCount; x++)
         {
@@ -646,7 +643,8 @@ public class FilterFactory
             double x2 = 4.0 * alpha * index / samplesPerSymbol;
             double x3 = x2 * x2 - 1.0;
 
-            double numerator, denominator;
+            double numerator;
+            double denominator;
 
             if(FastMath.abs(x3) >= 0.000001)
             {
@@ -792,7 +790,7 @@ public class FilterFactory
     {
         int filterLength = (channels * tapsPerChannel) - 1;
 
-        double cutoff = (channelBandwidth * 1.10) / (channelSampleRate * (double)channels);
+        double cutoff = (channelBandwidth * 1.10) / (channelSampleRate * channels);
 
         //Design the prototype synthesizer with 105% of the channel bandwidth produced by the channelizer.
         float[] taps = FilterFactory.getKaiserSinc(filterLength, cutoff, 80.0f);

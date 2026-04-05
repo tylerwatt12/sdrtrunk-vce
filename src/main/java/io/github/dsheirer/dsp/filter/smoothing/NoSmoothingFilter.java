@@ -13,11 +13,6 @@ public class NoSmoothingFilter extends SmoothingFilter
 		return data;
 	}
 
-	public static float[] getCoefficients( int points )
-	{
-		return null;
-	}
-	
 	public int getPointSize()
 	{
 		return SMOOTHING_DEFAULT;

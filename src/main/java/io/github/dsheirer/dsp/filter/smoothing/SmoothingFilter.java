@@ -22,7 +22,7 @@ public abstract class SmoothingFilter
 	private float[] mNewCoefficients;
 	private boolean mNewCoefficientsAvailable;
 	
-	public SmoothingFilter( Map<Integer,float[]> coefficients, int index )
+	protected SmoothingFilter( Map<Integer,float[]> coefficients, int index )
 	{
 		mCoefficientMap = coefficients;
 		

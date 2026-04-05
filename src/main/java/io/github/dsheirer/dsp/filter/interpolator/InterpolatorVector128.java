@@ -34,7 +34,8 @@ public class InterpolatorVector128 extends VectorInterpolator
     protected float vectorFilter(float[] samples, int offset, int index)
     {
         FloatVector accumulator = FloatVector.zero(VECTOR_SPECIES);
-        FloatVector tapsVector, sampleVector;
+        FloatVector tapsVector;
+        FloatVector sampleVector;
 
         tapsVector = FloatVector.fromArray(VECTOR_SPECIES, TAPS[index], 0);
         sampleVector = FloatVector.fromArray(VECTOR_SPECIES, samples, offset);

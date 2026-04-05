@@ -37,12 +37,12 @@ public class BooleanAveragingFilter implements Listener<Boolean>
 		mBufferLength = length;
 		
 		/* Round up */
-		mThreshold = (int)( length / 2) + ( length % 2 );
+		mThreshold = ( length / 2) + ( length % 2 );
 	}
 	
 	public void receive( Boolean value )
 	{
-		if( value )
+		if( value != null && value )
 		{
 			mBuffer.set( mBufferPointer );
 		}

@@ -36,7 +36,7 @@ public class RectangularSmoothingFilter extends SmoothingFilter
 	{
 		float[] coefficients = new float[ points ];
 		
-		Arrays.fill( coefficients, 1.0f / (float)points );
+		Arrays.fill( coefficients, 1.0f / points );
 		
 		return coefficients;
 	}

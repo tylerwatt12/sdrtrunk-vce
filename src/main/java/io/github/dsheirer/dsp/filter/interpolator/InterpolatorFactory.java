@@ -28,6 +28,10 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class InterpolatorFactory
 {
+    private InterpolatorFactory()
+    {
+    }
+
     /**
      * Selects and instantiates the best interpolator version, scalar or vector, based on previous calibration.
      * @return interpolator

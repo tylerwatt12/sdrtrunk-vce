@@ -100,7 +100,7 @@ public class InterpolatorScalar extends Interpolator
 
 		for(int x = 0; x < 16; x++)
         {
-            samples[x] = (float) FastMath.sin(TWO_PI * (double)x / 8.0);
+            samples[x] = (float) FastMath.sin(TWO_PI * x / 8.0);
         }
 
         mLog.debug("Samples: " + Arrays.toString(samples));

@@ -24,6 +24,10 @@ package io.github.dsheirer.dsp.filter.interpolator;
  */
 public class LinearInterpolator
 {
+    private LinearInterpolator()
+    {
+    }
+
     /**
      * Calculates an interpolated value between x1 and x2 at a linear position mu between 0.0 and 1.0
      * @param x1 first value

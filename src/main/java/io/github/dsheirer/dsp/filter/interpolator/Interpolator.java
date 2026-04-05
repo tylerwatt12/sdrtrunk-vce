@@ -24,7 +24,7 @@ public abstract class Interpolator
 	public static final int NTAPS = 8;
 	public static final int NSTEPS = 128;
 
-	public static final float TAPS[][] = new float[][] 
+	protected static final float[][] TAPS = new float[][]
 	{
 		  //    -4            -3            -2            -1             0             1             2             3                mu
 		  {  0.00000e+00f,  0.00000e+00f,  0.00000e+00f,  0.00000e+00f,  1.00000e+00f,  0.00000e+00f,  0.00000e+00f,  0.00000e+00f }, //   0/128
