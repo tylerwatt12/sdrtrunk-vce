@@ -38,7 +38,7 @@ public class AudioProviderStereo extends AudioProvider
 {
     private final AudioChannel mAudioChannelLeft;
     private final AudioChannel mAudioChannelRight;
-    private static final ByteBuffer SILENCE = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * 4);
+    private final ByteBuffer mSilence = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * 4);
 
     /**
      * Constructs an instance.
@@ -86,7 +86,7 @@ public class AudioProviderStereo extends AudioProvider
         //If we didn't get audio from either channel send silence buffer
         if(left == null && right == null)
         {
-            return SILENCE;
+            return mSilence;
         }
 
         if(left == null)
