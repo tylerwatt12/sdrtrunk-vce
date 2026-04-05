@@ -32,6 +32,9 @@ import java.util.Optional;
 
 public class IcecastMetadata
 {
+    private IcecastMetadata()
+    {
+    }
 
     /**
      * Creates the title for a metadata update

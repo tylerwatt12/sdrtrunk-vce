@@ -32,13 +32,6 @@ public class IcecastCodecFactory implements ProtocolCodecFactory
     private ProtocolEncoder mProtocolEncoder;
     private ProtocolDecoder mProtocolDecoder;
 
-    /**
-     * Factory for codecs to process Icecast string protocol and byte array audio frames for use with Apache Mina
-     */
-    public IcecastCodecFactory()
-    {
-    }
-
     @Override
     public ProtocolEncoder getEncoder(IoSession ioSession) throws Exception
     {

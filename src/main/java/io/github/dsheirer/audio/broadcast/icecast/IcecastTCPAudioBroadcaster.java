@@ -49,8 +49,8 @@ import org.slf4j.LoggerFactory;
 public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster
 {
     private static final Logger mLog = LoggerFactory.getLogger(IcecastTCPAudioBroadcaster.class);
-    private final static String TERMINATOR = "\n";
-    private final static String SEPARATOR = ":";
+    private static final String TERMINATOR = "\n";
+    private static final String SEPARATOR = ":";
     private static final long RECONNECT_INTERVAL_MILLISECONDS = 3000; //3 seconds
     private static final long CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS = 5000; //5 seconds
     private static final int WRITE_TIMEOUT_SECONDS = 5;
@@ -172,27 +172,24 @@ public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster
 
             mStreamingSession = null;
 
-            Runnable runnable = new Runnable()
+            ThreadPool.CACHED.submit(() ->
             {
-                @Override
-                public void run()
+                if(mVerboseLogging)
                 {
+                    mLog.info("Attempting connection ...");
+                }
+                setBroadcastState(BroadcastState.CONNECTING);
+
+                try
+                {
+                    ConnectFuture future = mSocketConnector
+                        .connect(new InetSocketAddress(getBroadcastConfiguration().getHost(),
+                            getBroadcastConfiguration().getPort()));
+
                     if(mVerboseLogging)
                     {
-                        mLog.info("Attempting connection ...");
+                        mLog.info("Socket created - asynchronous connect requested - entering wait period");
                     }
-                    setBroadcastState(BroadcastState.CONNECTING);
-
-                    try
-                    {
-                        ConnectFuture future = mSocketConnector
-                            .connect(new InetSocketAddress(getBroadcastConfiguration().getHost(),
-                                getBroadcastConfiguration().getPort()));
-
-                        if(mVerboseLogging)
-                        {
-                            mLog.info("Socket created - asynchronous connect requested - entering wait period");
-                        }
 
                         boolean connected = future.await(CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
 
@@ -263,10 +260,7 @@ public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster
 
                     disconnect();
                     mConnecting.set(false);
-                }
-            };
-
-            ThreadPool.CACHED.submit(runnable);
+            });
         }
 
         return connected();

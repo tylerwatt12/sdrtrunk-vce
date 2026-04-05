@@ -47,12 +47,12 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     private String mURL;
     private boolean mInline = true;
 
-    public IcecastConfiguration(BroadcastFormat format)
+    protected IcecastConfiguration(BroadcastFormat format)
     {
         super(format);
     }
 
-    public IcecastConfiguration()
+    protected IcecastConfiguration()
     {
         this(BroadcastFormat.MP3);
     }
@@ -304,37 +304,17 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     public boolean hasInline()
     {
         // Bitrate must be known to calculate metadata interval
-        return mInline != false && hasBitRate();
+        return mInline && hasBitRate();
     }
 
     @Override
     public boolean isValid()
     {
-        if(!super.isValid())
-        {
-            return false;
-        }
-        else if(getUserName() == null)
-        {
-            return false;
-        }
-        else if(getMountPoint() == null)
-        {
-            return false;
-        }
-        else if(getChannels() != 1)
-        {
-            return false;
-        }
-        else if(getSampleRate() <= 0)
-        {
-            return false;
-        }
-        else if(getBitRate() <= 0)
-        {
-            return false;
-        }
-
-        return true;
+        return super.isValid() &&
+            getUserName() != null &&
+            getMountPoint() != null &&
+            getChannels() == 1 &&
+            getSampleRate() > 0 &&
+            getBitRate() > 0;
     }
 }

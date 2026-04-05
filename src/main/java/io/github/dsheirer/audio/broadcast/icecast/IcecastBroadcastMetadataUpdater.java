@@ -47,7 +47,7 @@ import java.util.List;
 public class IcecastBroadcastMetadataUpdater implements IBroadcastMetadataUpdater
 {
     private static final Logger mLog = LoggerFactory.getLogger(IcecastBroadcastMetadataUpdater.class);
-    private final static String UTF8 = "UTF-8";
+    private static final String UTF8 = "UTF-8";
     private HttpClient mHttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
     private IcecastConfiguration mIcecastConfiguration;
     private AliasModel mAliasModel;
@@ -105,64 +105,66 @@ public class IcecastBroadcastMetadataUpdater implements IBroadcastMetadataUpdate
             final String metadataUpdateURL = sb.toString();
             URI uri = URI.create(metadataUpdateURL);
 
-            ThreadPool.CACHED.submit(new Runnable()
+            ThreadPool.CACHED.submit(() ->
             {
-                @Override
-                public void run()
+                try
                 {
-                    try
+                    HttpRequest request = HttpRequest.newBuilder()
+                        .uri(uri)
+                        .header(IcecastHeader.AUTHORIZATION.getValue(), mIcecastConfiguration.getBase64EncodedCredentials())
+                        .header(IcecastHeader.USER_AGENT.getValue(), SystemProperties.getInstance().getApplicationName())
+                        .GET()
+                        .build();
+
+                    HttpResponse<String> response = submitMetadataUpdate(request, metadataUpdateURL);
+
+                    if(response != null)
                     {
-                        HttpRequest request = HttpRequest.newBuilder()
-                            .uri(uri)
-                            .header(IcecastHeader.AUTHORIZATION.getValue(), mIcecastConfiguration.getBase64EncodedCredentials())
-                            .header(IcecastHeader.USER_AGENT.getValue(), SystemProperties.getInstance().getApplicationName())
-                            .GET()
-                            .build();
-
-                        HttpResponse<String> response = null;
-
-                        try
+                        if(response.statusCode() == 200)
                         {
-                            response = mHttpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                            mConnectionLoggingSuppressed = false;
                         }
-                        catch(IOException ioe)
+                        else
                         {
                             if(!mConnectionLoggingSuppressed)
                             {
-                                mLog.error("IO Error submitting Icecast metadata update [" +
-                                    (metadataUpdateURL != null ? metadataUpdateURL : "no url"), ioe);
+                                mLog.info("Error submitting Icecast 2 Metadata update to URL [" + metadataUpdateURL +
+                                    "] HTTP Response Code [" + response.statusCode() + "] Body [" + response.body() + "]");
                                 mConnectionLoggingSuppressed = true;
                             }
                         }
-                        catch(InterruptedException ie)
-                        {
-                            mLog.error("Interrupted Exception Error", ie);
-                        }
-
-                        if(response != null)
-                        {
-                            if(response.statusCode() == 200)
-                            {
-                                mConnectionLoggingSuppressed = false;
-                            }
-                            else
-                            {
-                                if(!mConnectionLoggingSuppressed)
-                                {
-                                    mLog.info("Error submitting Icecast 2 Metadata update to URL [" + metadataUpdateURL +
-                                        "] HTTP Response Code [" + response.statusCode() + "] Body [" + response.body() + "]");
-                                    mConnectionLoggingSuppressed = true;
-                                }
-                            }
-                        }
                     }
-                    catch(Throwable t)
-                    {
-                        mLog.error("There was an error submitting an Icecast metadata update", t);
-                    }
+                }
+                catch(Throwable t)
+                {
+                    mLog.error("There was an error submitting an Icecast metadata update", t);
                 }
             });
         }
+    }
+
+    private HttpResponse<String> submitMetadataUpdate(HttpRequest request, String metadataUpdateURL)
+    {
+        try
+        {
+            return mHttpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        }
+        catch(IOException ioe)
+        {
+            if(!mConnectionLoggingSuppressed)
+            {
+                mLog.error("IO Error submitting Icecast metadata update [" +
+                    (metadataUpdateURL != null ? metadataUpdateURL : "no url"), ioe);
+                mConnectionLoggingSuppressed = true;
+            }
+        }
+        catch(InterruptedException ie)
+        {
+            Thread.currentThread().interrupt();
+            mLog.error("Interrupted Exception Error", ie);
+        }
+
+        return null;
     }
 
 }

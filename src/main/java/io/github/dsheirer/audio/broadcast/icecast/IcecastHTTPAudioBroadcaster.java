@@ -55,6 +55,7 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster
     private static final long CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS = 5000; // 5 seconds
     private static final long RECONNECT_INTERVAL_MILLISECONDS = 30000; //30 seconds
     private static final String HTTP_1_0_OK_HEX_DUMP = "48 54 54 50 2F 31 2E 30 20 32 30 30 20 4F 4B";
+    private static final String STRING_LABEL = "String [";
 
     private NioSocketConnector mSocketConnector;
     private IoSession mStreamingSession = null;
@@ -146,82 +147,98 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster
                 mSocketConnector.setConnectTimeoutMillis(CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS);
                 mSocketConnector.setConnectTimeoutCheckInterval(1000);
 
-//                LoggingFilter loggingFilter = new LoggingFilter(IcecastHTTPAudioBroadcaster.class);
-//                loggingFilter.setMessageReceivedLogLevel(LogLevel.DEBUG);
-//                mSocketConnector.getFilterChain().addLast("logger", loggingFilter);
-
                 mSocketConnector.getFilterChain().addLast("codec", new HttpClientCodec());
                 mSocketConnector.setHandler(new IcecastHTTPIOHandler());
             }
 
             mStreamingSession = null;
 
-            Runnable runnable = new Runnable()
+            ThreadPool.CACHED.submit(() ->
             {
-                @Override
-                public void run()
+                setBroadcastState(BroadcastState.CONNECTING);
+
+                try
                 {
-                    setBroadcastState(BroadcastState.CONNECTING);
+                    ConnectFuture future = mSocketConnector
+                        .connect(new InetSocketAddress(getBroadcastConfiguration().getHost(),
+                            getBroadcastConfiguration().getPort()));
 
-                    try {
-                        ConnectFuture future = mSocketConnector
-                            .connect(new InetSocketAddress(getBroadcastConfiguration().getHost(),
-                                getBroadcastConfiguration().getPort()));
+                    boolean connected = awaitConnection(future);
 
-                        boolean connected;
-                        try {
-                            connected = future.await(CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-							if (mConnectionFailureLogged.compareAndSet(false, true)) {
-								mLog.debug("HTTP connect attempt interrupted");
-							}
-                            setBroadcastState(BroadcastState.DISCONNECTED);
-                            mLastConnectionAttempt = System.currentTimeMillis();
-                            future.cancel();
-                            disconnect();
-                            return;
+                    if(Thread.currentThread().isInterrupted())
+                    {
+                        return;
+                    }
+
+                    if(connected && future.isConnected())
+                    {
+                        mStreamingSession = future.getSession();
+                        mConnecting.set(false);
+                        mConnectionFailureLogged.set(false);
+                    }
+                    else
+                    {
+                        if(mConnectionFailureLogged.compareAndSet(false, true))
+                        {
+                            mLog.debug("HTTP connect attempt timed out ({} ms) or not connected",
+                                CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS);
                         }
-
-                        if (connected && future.isConnected()) {
-                            mStreamingSession = future.getSession();
-                            mConnecting.set(false);
-							mConnectionFailureLogged.set(false);
-                            return;
-                        } else {
-							if (mConnectionFailureLogged.compareAndSet(false, true)) {
-								mLog.debug("HTTP connect attempt timed out ({} ms) or not connected",
-										   CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS);
-							}
-                            setBroadcastState(BroadcastState.DISCONNECTED);
-                            mLastConnectionAttempt = System.currentTimeMillis();
-                            future.cancel();
-                            disconnect();
-                        }
-                    } catch (RuntimeIoException rie) {
-                        Throwable throwableCause = rie.getCause();
                         setBroadcastState(BroadcastState.DISCONNECTED);
-						if (mConnectionFailureLogged.compareAndSet(false, true)) {
-							if (throwableCause != null) {
-								mLog.debug("Failed to connect", rie);
-							} else {
-								mLog.debug("Failed to connect - no exception is available");
-							}
-						}
                         mLastConnectionAttempt = System.currentTimeMillis();
+                        future.cancel();
                         disconnect();
-                    } finally {
-                        if (!connected()) {
-                            mConnecting.set(false);
-                        }
                     }
                 }
-            };
-
-            ThreadPool.CACHED.submit(runnable);
+                catch(RuntimeIoException rie)
+                {
+                        Throwable throwableCause = rie.getCause();
+                        setBroadcastState(BroadcastState.DISCONNECTED);
+                        if(mConnectionFailureLogged.compareAndSet(false, true))
+                        {
+                            if(throwableCause != null)
+                            {
+                                mLog.debug("Failed to connect", rie);
+                            }
+                            else
+                            {
+                                mLog.debug("Failed to connect - no exception is available");
+                            }
+                        }
+                        mLastConnectionAttempt = System.currentTimeMillis();
+                        disconnect();
+                }
+                finally
+                {
+                    if(!connected())
+                    {
+                        mConnecting.set(false);
+                        }
+                }
+            });
         }
 
         return connected();
+    }
+
+    private boolean awaitConnection(ConnectFuture future)
+    {
+        try
+        {
+            return future.await(CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS);
+        }
+        catch(InterruptedException ie)
+        {
+            Thread.currentThread().interrupt();
+            if(mConnectionFailureLogged.compareAndSet(false, true))
+            {
+                mLog.debug("HTTP connect attempt interrupted");
+            }
+            setBroadcastState(BroadcastState.DISCONNECTED);
+            mLastConnectionAttempt = System.currentTimeMillis();
+            future.cancel();
+            disconnect();
+            return false;
+        }
     }
 
 
@@ -372,7 +389,7 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster
                                     }
                                     else
                                     {
-                                        mLog.error("String [" + getStreamName() + "] - HTTP 403 protocol decoder error - message:\n\n" + message);
+                                        mLog.error(STRING_LABEL + getStreamName() + "] - HTTP 403 protocol decoder error - message:\n\n" + message);
                                         setBroadcastState(BroadcastState.DISCONNECTED);
                                         disconnect();
                                     }
@@ -386,13 +403,13 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster
                                     }
                                     else
                                     {
-                                        mLog.error("String [" + getStreamName() + "] - HTTP 401 protocol decoder error - message:\n\n" + message);
+                                        mLog.error(STRING_LABEL + getStreamName() + "] - HTTP 401 protocol decoder error - message:\n\n" + message);
                                         setBroadcastState(BroadcastState.DISCONNECTED);
                                         disconnect();
                                     }
                                     break;
                                 default:
-                                        mLog.error("String [" + getStreamName() + "] - HTTP protocol decoder error - message:\n\n" + message);
+                                        mLog.error(STRING_LABEL + getStreamName() + "] - HTTP protocol decoder error - message:\n\n" + message);
                                         setBroadcastState(BroadcastState.DISCONNECTED);
                                         disconnect();
                             }

@@ -30,7 +30,7 @@ public abstract class IcecastAudioBroadcaster extends AudioStreamingBroadcaster
     private IBroadcastMetadataUpdater mMetadataUpdater;
     protected AliasModel mAliasModel;
 
-    public IcecastAudioBroadcaster(BroadcastConfiguration broadcastConfiguration, InputAudioFormat inputAudioFormat,
+    protected IcecastAudioBroadcaster(BroadcastConfiguration broadcastConfiguration, InputAudioFormat inputAudioFormat,
                                    MP3Setting mp3Setting, AliasModel aliasModel)
     {
         super(broadcastConfiguration, inputAudioFormat, mp3Setting);

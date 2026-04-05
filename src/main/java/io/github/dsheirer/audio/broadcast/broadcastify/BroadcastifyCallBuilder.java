@@ -33,13 +33,6 @@ public class BroadcastifyCallBuilder
     private List<Part> mParts = new ArrayList<>();
 
     /**
-     * Constructs an instance
-     */
-    public BroadcastifyCallBuilder()
-    {
-    }
-
-    /**
      * Access the static multi-part boundary string
      */
     public String getBoundary()

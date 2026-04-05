@@ -36,14 +36,6 @@ public class IcecastEncoder extends ProtocolEncoderAdapter
     private static final Charset mCharset = StandardCharsets.UTF_8;
     private static final int MAX_LINE_LENGTH = 2147483647;
 
-    /**
-     * Icecast Protocol Encoder is an Apache Mina compliant protocol encoder that supports Icecast string-based
-     * connection negotiation as well as byte array audio frame data.
-     */
-    public IcecastEncoder()
-    {
-    }
-
     @Override
     public void encode(IoSession session, Object message, ProtocolEncoderOutput out) throws Exception
     {
