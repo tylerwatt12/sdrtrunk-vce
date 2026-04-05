@@ -25,6 +25,10 @@ import java.util.BitSet;
  */
 public class Checksum
 {
+	private Checksum()
+	{
+	}
+
 	public static boolean validate7BitChecksum( BitSet message,
 									byte messageChecksum,
 									ChecksumType checksumType )

@@ -24,7 +24,7 @@ public class P25_1_2_Node extends Node
      * Hamming error values indicating the number of bits set in each indexed value, 0-15.  XOR the
      * transmitted 4-bit value against the reference 4-bit value to obtain the lookup index to this array.
      */
-    public static final int[] HAMMING_ERROR_COUNT = new int[]{0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
+    private static final int[] HAMMING_ERROR_COUNT = new int[]{0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
 
     /**
      * P25 Finite State Machine 1/2 Rate transition matrix.
@@ -32,7 +32,7 @@ public class P25_1_2_Node extends Node
      * Note: these transmitted bit values are translated from TIA-102 BAAA Table 7-2 encoder state
      * table constellation values.
      */
-    public static final int[][] TRANSITION_MATRIX = new int[][]
+    private static final int[][] TRANSITION_MATRIX = new int[][]
     {
         {2,12,1,15},//0,15,12,3
         {14,0,13,3},//4,11,8,7

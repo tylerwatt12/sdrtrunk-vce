@@ -21,13 +21,13 @@ package io.github.dsheirer.edac.trellis;
 public class P25_3_4_Node extends Node
 {
     //Hamming error values indicating the number of bits set in each indexed value, 0-15
-    public static final int[] HAMMING_ERROR_COUNT = new int[]{0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
+    private static final int[] HAMMING_ERROR_COUNT = new int[]{0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
 
     /**
      * Trellis encoder state transition table.  Note: this table is converted from the ICD state
      * transition table where the table symbol is converted to the transmitted bit value.
      */
-    public static final int[][] TRANSITION_MATRIX = new int[][]
+    private static final int[][] TRANSITION_MATRIX = new int[][]
     {
         {2,13,14,1,7,8,11,4},
         {14,1,7,8,11,4,2,13},

@@ -33,7 +33,7 @@ public abstract class ViterbiDecoder
      * @param inputBitLength for coding (e.g. 3/4 rate input bit length is 3)
      * @param outputBitLength for coding (e.g. 3/4 rate output bit length is 4)
      */
-    public ViterbiDecoder(int inputBitLength, int outputBitLength)
+    protected ViterbiDecoder(int inputBitLength, int outputBitLength)
     {
         mInputBitLength = inputBitLength;
         mOutputBitLength = outputBitLength;

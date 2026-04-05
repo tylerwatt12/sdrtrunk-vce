@@ -34,6 +34,10 @@ import java.util.BitSet;
  */
 public class CRCFleetsync
 {
+	private CRCFleetsync()
+	{
+	}
+
 	private static short[] sCHECKSUMS = new short[] {
 		0x740A, // 111010000001010 Bit 0
 		0x3A05, // 011101000000101 Bit 1
@@ -109,7 +113,7 @@ public class CRCFleetsync
 	 */
 	public static CRC check( BitSet msg )
 	{
-		CRC crc = CRC.UNKNOWN;
+		CRC crc;
 		
 		int calculated = 1; //Starting value
 

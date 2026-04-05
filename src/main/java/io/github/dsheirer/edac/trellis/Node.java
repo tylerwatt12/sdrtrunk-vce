@@ -31,7 +31,7 @@ public abstract class Node
      * @param inputValue for this node
      * @param transmittedOutputValue for this node
      */
-    public Node(int inputValue, int transmittedOutputValue)
+    protected Node(int inputValue, int transmittedOutputValue)
     {
         mInputValue = inputValue;
         mTransmittedOutputValue = transmittedOutputValue;

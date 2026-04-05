@@ -39,9 +39,8 @@ public class Binary40_9_16
     private static final Map<Long,BinaryMessage> CODEWORD_MAP_TS2 = new TreeMap<>();
     private static final IntField CHANNEL_NUMBER = IntField.range(2, 3);
     private static final IntField ISCH_LOCATION = IntField.range(4, 5);
-    private static final IntField WORD = IntField.range(0, 8);
 
-    public Binary40_9_16()
+    static
     {
         for(int x = 0; x < 512; x++)
         {
@@ -71,16 +70,18 @@ public class Binary40_9_16
         Collections.sort(keys);
         for(Long key: keys)
         {
-            BinaryMessage message = CODEWORD_MAP_TS1.get(key);
-            int distance = getDistance(key, keys);
+            getDistance(key, keys);
         }
         List<Long> keys2 = new ArrayList<>(CODEWORD_MAP_TS2.keySet());
         Collections.sort(keys2);
         for(Long key: keys2)
         {
-            BinaryMessage message = CODEWORD_MAP_TS2.get(key);
-            int distance = getDistance(key, keys);
+            getDistance(key, keys);
         }
+    }
+
+    private Binary40_9_16()
+    {
     }
 
     /**
@@ -128,155 +129,5 @@ public class Binary40_9_16
         }
 
         return codeword;
-    }
-
-    /**
-     * Calculates the checksum (ie codeword) from the set bits in the message.
-     * @param message with set bits, 0-8
-     * @return
-     */
-    private static long calculateChecksum(BinaryMessage message)
-    {
-        long calculated = 0; //Starting value
-
-        /* Iterate the set bits and XOR running checksum with lookup value */
-        for(int i = message.nextSetBit(0); i < 9; i = message.nextSetBit(i + 1))
-        {
-            calculated ^= CHECKSUMS[i];
-        }
-
-        return calculated;
-    }
-
-//    /**
-//     * Performs error detection and returns a corrected copy of the 24-bit
-//     * message that starts at the start index.
-//     *
-//     * @param message - source message containing startIndex + 24 bits length
-//     * @return - corrected 24-bit galois value
-//     */
-//    public static int checkAndCorrect(CorrectedBinaryMessage message)
-//    {
-//        boolean parityError = message.cardinality() % 2 != 0;
-//
-//        long syndrome = getSyndrome(message);
-//
-//        /* No errors */
-//        if(syndrome == 0)
-//        {
-//            if(parityError)
-//            {
-//                message.flip(23);
-//                message.incrementCorrectedBitCount(1);
-//                return 1;
-//            }
-//
-//            return 0;
-//        }
-//
-//        /* Get original message value */
-//        int original = message.getInt(0, 22);
-//
-//        int index = -1;
-//        int syndromeWeight = 3;
-//        int errors = 0;
-//
-//        while(index < 23)
-//        {
-//            if(index != -1)
-//            {
-//                /* restore the previous flipped bit */
-//                if(index > 0)
-//                {
-//                    message.flip(index - 1);
-//                }
-//
-//                message.flip(index);
-//
-//                syndromeWeight = 2;
-//            }
-//
-//            syndrome = getSyndrome(message);
-//
-//            if(syndrome > 0)
-//            {
-//                for(int i = 0; i < 23; i++)
-//                {
-//
-//                    errors = Long.bitCount(syndrome);
-//
-//                    if(errors <= syndromeWeight)
-//                    {
-//                        message.xor(12, 11, syndrome);
-//
-//                        message.rotateRight(i, 0, 22);
-//
-//                        if(index >= 0)
-//                        {
-//                            errors++;
-//                        }
-//
-//                        int corrected = message.getInt(0, 22);
-//
-//                        if(Integer.bitCount(original ^ corrected) > 3)
-//                        {
-//                            return 2;
-//                        }
-//
-//                        return 1;
-//                    }
-//                    else
-//                    {
-//                        message.rotateLeft(0, 22);
-//                        syndrome = getSyndrome(message);
-//                    }
-//                }
-//
-//                index++;
-//            }
-//        }
-//
-//        return 2;
-//    }
-
-    private static long getSyndrome(BinaryMessage message)
-    {
-        long calculated = calculateChecksum(message);
-        long checksum = message.getInt(12, 22);
-        return (checksum ^ calculated);
-    }
-
-    public static void main(String[] args)
-    {
-//        Binary40_9_16 edac = new Binary40_9_16();
-
-        long mask = 0xFFFFFFFFFFl;
-        long sync = 0x575D57F7FFl;
-        long syncLeft = Long.rotateLeft(sync, 2) & mask;
-        long syncRight = Long.rotateRight(sync, 2) & mask;
-        System.out.println("Mask: " + Long.toBinaryString(sync));
-        System.out.println("Left: " + Long.toBinaryString(syncLeft));
-        System.out.println("Right: " + Long.toBinaryString(syncRight));
-
-        int distanceLeft = Long.bitCount(sync ^ syncLeft);
-        int distanceRight = Long.bitCount( sync ^ syncRight);
-
-        System.out.println("Left: " + distanceLeft);
-        System.out.println("Right: " + distanceRight);
-
-        System.out.println("Finished!");
-
-
-//        CorrectedBinaryMessage bm = new CorrectedBinaryMessage(BinaryMessage.loadHex("F3BB20"));
-//        CorrectedBinaryMessage bm = new CorrectedBinaryMessage(BinaryMessage.loadHex("F0C5C0"));
-//        CorrectedBinaryMessage bm = new CorrectedBinaryMessage(BinaryMessage.loadHex("AFAC00"));
-//
-//        System.out.println("M:" + bm.toHexString());
-//        int a = Binary40_9_16.checkAndCorrect(bm);
-//        System.out.println("M:" + bm.toHexString());
-//
-//        System.out.println("A:" + a);
-
-
     }
 }

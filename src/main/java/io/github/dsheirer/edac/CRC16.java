@@ -27,6 +27,10 @@ import io.github.dsheirer.bits.IntField;
  */
 public class CRC16
 {
+    private CRC16()
+    {
+    }
+
     /**
      * Calculates the 16-bit CRC checksum for the message using polynomial 0x1021 and residual 0xFFFF
      * @param message with transmitted 16-bit checksum at the end.

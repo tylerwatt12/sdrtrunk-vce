@@ -21,7 +21,7 @@ package io.github.dsheirer.edac.trellis;
 public class DMR_3_4_Node extends Node
 {
     //Hamming error values indicating the number of bits set in each indexed value, 0-15
-    public static final int[] HAMMING_ERROR_COUNT = new int[]{0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
+    private static final int[] HAMMING_ERROR_COUNT = new int[]{0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
 
     /**
      * Transmitted quad-bit value, derived from ETSI TS 102-361-1, Table B.7 Trellis encoder state transition table
@@ -29,7 +29,7 @@ public class DMR_3_4_Node extends Node
      * Note: the B.7 table contains constellation point ID numbers that have to be converted into actual bit values
      * where the bits represent the dibit pair for the constellation point.
      */
-    public static final int[][] DMR_TRANSITION_MATRIX = new int[][]
+    private static final int[][] DMR_TRANSITION_MATRIX = new int[][]
     {
         {2,13,14,1,7,8,11,4},
         {14,1,7,8,11,4,2,13},

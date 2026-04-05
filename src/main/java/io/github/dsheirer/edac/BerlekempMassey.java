@@ -40,7 +40,6 @@ public class BerlekempMassey
 
     /* Codeword Length: NN = 2 ** MM - 1 */
     private int NN;
-    private int MAX_NN;
 
     /* Hamming distance between codewords: NN - KK + 1 = 2 * TT + 1 */
     private int KK;
@@ -79,7 +78,7 @@ public class BerlekempMassey
         MM = bitSize;
         NN = n;
         KK = k;
-        TT = (int)Math.floor((NN - KK) / 2);
+        TT = (int)Math.floor((NN - KK) / 2.0);
 
         //Since this may be a shortened code, setup arrays to the max size of NN
         int maxNN = (int)Math.pow(2, MM) - 1;
@@ -159,7 +158,8 @@ public class BerlekempMassey
      */
     private void gen_poly()
     {
-        int i, j;
+        int i;
+        int j;
 
         gg[0] = 2; /* primitive element alpha = 2  for GF(2**mm)  */
         gg[1] = 1; /* g(x) = (X+alpha) initially */
@@ -217,7 +217,8 @@ public class BerlekempMassey
     can be returned as error flags to the calling routine if desired.   */
     public boolean decode(final int[] input, int[] output) //input, output
     {
-        int u, q;
+        int u;
+        int q;
         int[][] elp = new int[NN - KK + 2][NN - KK];
         int[] d = new int[NN - KK + 2];
         int[] l = new int[NN - KK + 2];
@@ -340,7 +341,6 @@ public class BerlekempMassey
                         }
                         while(j > 0);
                     }
-                    ;
 
                     /* have now found q such that d[u]!=0 and u_lu[q] is maximum */
                     /* store degree of new elp polynomial */
@@ -424,7 +424,6 @@ public class BerlekempMassey
                             reg[j] = (reg[j] + j) % NN;
                             q ^= alpha_to[reg[j]];
                         }
-                        ;
                     }
 
                     if(q == 0) /* store root and error location number indices */
@@ -433,9 +432,7 @@ public class BerlekempMassey
                         loc[count] = NN - i;
                         count++;
                     }
-                    ;
                 }
-                ;
 
                 if(count == l[u]) /* no. roots = degree of elp hence <= tt errors */
                 {
@@ -469,7 +466,6 @@ public class BerlekempMassey
 
                         z[i] = index_of[z[i]]; /* put into index form */
                     }
-                    ;
 
                     /* evaluate errors at locations given by error location numbers loc[i] */
                     for(int i = 0; i < NN; i++)
