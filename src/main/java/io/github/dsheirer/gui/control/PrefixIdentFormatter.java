@@ -27,42 +27,24 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Text formatter for talkgroups that use prefix and ident format that constrains values to specified minimum and
- * maximum valid values.
+ * Text formatter for talkgroups that use prefix-ident format.
  */
 public class PrefixIdentFormatter extends TextFormatter<Integer>
 {
 
     /**
      * Constructs an instance
-     * @param minimum allowed value
-     * @param maximum allowed value
      */
-    public PrefixIdentFormatter(int minimum, int maximum)
+    public PrefixIdentFormatter()
     {
-        super(new PrefixIdentIntegerStringConverter(), null, new PrefixIdentFilter(minimum, maximum));
+        super(new PrefixIdentIntegerStringConverter(), null, new PrefixIdentFilter());
     }
 
     /**
-     * Formatted text change filter that only allows formatted characters where the converted decimal value
-     * is also constrained within minimum and maximum valid values.
+     * Formatted text change filter that only allows valid prefix-ident input.
      */
     public static class PrefixIdentFilter implements UnaryOperator<Change>
     {
-        private int mMinimum;
-        private int mMaximum;
-
-        public PrefixIdentFilter(int minimum, int maximum)
-        {
-            mMinimum = minimum;
-            mMaximum = maximum;
-        }
-
-        private boolean isValid(Integer value)
-        {
-            return value != null && mMinimum <= value && value <= mMaximum;
-        }
-
         @Override
         public Change apply(Change change)
         {
@@ -145,9 +127,7 @@ public class PrefixIdentFormatter extends TextFormatter<Integer>
                     //do nothing
                 }
 
-                int talkgroup = (a << 13) + b;
-
-                return talkgroup;
+                return (a << 13) + b;
             }
 
             return null;

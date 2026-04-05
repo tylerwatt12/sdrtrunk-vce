@@ -299,7 +299,7 @@ public class TalkgroupRangeEditor extends IdentifierEditor<TalkgroupRange>
         details.add(new TalkgroupDetail(Protocol.APCO25, IntegerFormat.HEXADECIMAL, new HexFormatter(0,65535),
                 new HexFormatter(0,65535), "Format: 0 - FFFF"));
         details.add(new TalkgroupDetail(Protocol.FLEETSYNC, IntegerFormat.FORMATTED,
-                new PrefixIdentFormatter(0,0xFFFFF), new PrefixIdentFormatter(0,0xFFFFF),
+                new PrefixIdentFormatter(), new PrefixIdentFormatter(),
                 "Format: PPP-IIII = Prefix (0-127), Ident (0-8191)"));
         details.add(new TalkgroupDetail(Protocol.LTR, IntegerFormat.FORMATTED, new LtrFormatter(),
                 new LtrFormatter(), "Format: A-HH-TTT = Area (0-1), Home (0-31), Talkgroup (0-255)"));
@@ -308,7 +308,7 @@ public class TalkgroupRangeEditor extends IdentifierEditor<TalkgroupRange>
         details.add(new TalkgroupDetail(Protocol.MDC1200, IntegerFormat.HEXADECIMAL, new HexFormatter(0,0xFFFF),
                 new HexFormatter(0,0xFFFF), "Format: 0 - FFFF"));
         details.add(new TalkgroupDetail(Protocol.MPT1327, IntegerFormat.FORMATTED,
-                new PrefixIdentFormatter(0,0xFFFFF), new PrefixIdentFormatter(0,0xFFFFF),
+                new PrefixIdentFormatter(), new PrefixIdentFormatter(),
                 "Format: PPP-IIII = Prefix (0-127), Ident (1-8191)"));
         details.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.DECIMAL, new IntegerFormatter(0,65535),
                 new IntegerFormatter(0,65535), "Format 0 - 65535"));

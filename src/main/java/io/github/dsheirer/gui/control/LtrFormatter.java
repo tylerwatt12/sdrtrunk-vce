@@ -46,10 +46,6 @@ public class LtrFormatter extends TextFormatter<Integer>
      */
     public static class LtrFilter implements UnaryOperator<Change>
     {
-        public LtrFilter()
-        {
-        }
-
         @Override
         public Change apply(Change change)
         {
