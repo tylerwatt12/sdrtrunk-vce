@@ -33,7 +33,6 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -59,7 +58,6 @@ public class DiagnosticMonitor
     private ScheduledFuture<?> mBlockedThreadMonitorHandle;
     private BlockedThreadMonitor mMonitor = new BlockedThreadMonitor();
     private boolean mUserAlertedToBlockedThreadCondition = false;
-    private Map<Integer,Integer> mBlockedThreadDetectionCountMap = new HashMap<>();
     private boolean mHeadless;
 
     /**
@@ -110,63 +108,6 @@ public class DiagnosticMonitor
         }
 
         mBlockedThreadMonitorHandle = null;
-    }
-
-    /**
-     * Checks for blocked threads and on discovery, generates a diagnostic report and notifies the user (once).
-     */
-    private void checkForBlockedThreads()
-    {
-        if(!mUserAlertedToBlockedThreadCondition)
-        {
-            try
-            {
-                ThreadMXBean bean = ManagementFactory.getThreadMXBean();
-
-                long ids[] = bean.findDeadlockedThreads();
-
-                if(ids != null)
-                {
-                    mUserAlertedToBlockedThreadCondition = true;
-
-                    ThreadInfo threadInfo[] = bean.getThreadInfo(ids);
-
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("sdrtrunk detected a critical application error with a threading deadlock, described as follows:\n");
-
-                    for (ThreadInfo threadInfo1 : threadInfo)
-                    {
-                        sb.append("Thread ID[").append(threadInfo1.getThreadId());
-                        sb.append("] Name [").append(threadInfo1.getThreadName());
-                        sb.append("] Lock [").append(threadInfo1.getLockName());
-                        sb.append("] Owned By [ID:").append(threadInfo1.getLockOwnerId());
-                        sb.append(" | NAME:").append(threadInfo1.getLockName());
-                        sb.append("]\n");
-                    }
-
-                    LOGGER.error(sb.toString());
-                    Path reportPath = generateProcessingDiagnosticReport(sb + DIVIDER);
-                    LOGGER.error("Thread deadlock report generated: " + reportPath);
-
-                    if(!mHeadless)
-                    {
-                        String title = "sdrtrunk: Critical Error Detected";
-                        String message = "The sdrtrunk application has detected a thread deadlock situation.\n" +
-                                         "The application may degrade over time and eventually run out of memory.\n" +
-                                         "A diagnostic report was generated.  Please open an issue on the GitHub\n" +
-                                         "website and attach this diagnostic report:\n\n" + reportPath.toString();
-                        JOptionPane.showMessageDialog(null, message, title, JOptionPane.ERROR_MESSAGE);
-                    }
-                }
-            }
-            catch(Exception e)
-            {
-                LOG_SUPPRESSOR.error("run error", 1, "Error while monitoring for deadlocked " +
-                        "threads: " + e.getLocalizedMessage());
-                //Set the flag so that we don't try to run again.
-                mUserAlertedToBlockedThreadCondition = true;
-            }
-        }
     }
 
     /**
@@ -224,11 +165,11 @@ public class DiagnosticMonitor
 
         for(Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet())
         {
-            sb.append(entry.getKey() + " " + entry.getKey().getState()).append("\n");
+            sb.append(entry.getKey()).append(" ").append(entry.getKey().getState()).append("\n");
 
             for(StackTraceElement ste : entry.getValue())
             {
-                sb.append("\tat " + ste).append("\n");
+                sb.append("\tat ").append(ste).append("\n");
             }
 
             sb.append("\n\n");
@@ -284,15 +225,16 @@ public class DiagnosticMonitor
         try {
             Enumeration<URL> resources = getClass().getClassLoader().getResources("META-INF/MANIFEST.MF");
             while (resources.hasMoreElements()) {
-                try {
-                    Manifest manifest = new Manifest(resources.nextElement().openStream());
-                    Attributes atts = manifest.getMainAttributes();
-                    Boolean hasTitle = atts.containsValue("sdrtrunk project");
-                    if (hasTitle) {
-                        return atts;
-                    }
-                } catch (IOException E) {
+                Attributes atts = loadManifestAttributes(resources.nextElement());
+
+                if(atts == null)
+                {
                     return null;
+                }
+
+                if(atts.containsValue("sdrtrunk project"))
+                {
+                    return atts;
                 }
             }
         }
@@ -304,11 +246,81 @@ public class DiagnosticMonitor
         return null;
     }
 
+    private Attributes loadManifestAttributes(URL resource)
+    {
+        try
+        {
+            Manifest manifest = new Manifest(resource.openStream());
+            return manifest.getMainAttributes();
+        }
+        catch(IOException e)
+        {
+            return null;
+        }
+    }
+
     /**
      * Runnable to periodically check for blocked threads
      */
     public class BlockedThreadMonitor implements Runnable
     {
+        /**
+         * Checks for blocked threads and on discovery, generates a diagnostic report and notifies the user (once).
+         */
+        private void checkForBlockedThreads()
+        {
+            if(!mUserAlertedToBlockedThreadCondition)
+            {
+                try
+                {
+                    ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+
+                    long[] ids = bean.findDeadlockedThreads();
+
+                    if(ids != null)
+                    {
+                        mUserAlertedToBlockedThreadCondition = true;
+
+                        ThreadInfo[] threadInfo = bean.getThreadInfo(ids);
+
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("sdrtrunk detected a critical application error with a threading deadlock, described as follows:\n");
+
+                        for(ThreadInfo threadInfo1: threadInfo)
+                        {
+                            sb.append("Thread ID[").append(threadInfo1.getThreadId());
+                            sb.append("] Name [").append(threadInfo1.getThreadName());
+                            sb.append("] Lock [").append(threadInfo1.getLockName());
+                            sb.append("] Owned By [ID:").append(threadInfo1.getLockOwnerId());
+                            sb.append(" | NAME:").append(threadInfo1.getLockName());
+                            sb.append("]\n");
+                        }
+
+                        LOGGER.error(sb.toString());
+                        Path reportPath = generateProcessingDiagnosticReport(sb + DIVIDER);
+                        LOGGER.error("Thread deadlock report generated: " + reportPath);
+
+                        if(!mHeadless)
+                        {
+                            String title = "sdrtrunk: Critical Error Detected";
+                            String message = "The sdrtrunk application has detected a thread deadlock situation.\n" +
+                                "The application may degrade over time and eventually run out of memory.\n" +
+                                "A diagnostic report was generated.  Please open an issue on the GitHub\n" +
+                                "website and attach this diagnostic report:\n\n" + reportPath;
+                            JOptionPane.showMessageDialog(null, message, title, JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                }
+                catch(Exception e)
+                {
+                    LOG_SUPPRESSOR.error("run error", 1, "Error while monitoring for deadlocked " +
+                        "threads: " + e.getLocalizedMessage());
+                    //Set the flag so that we don't try to run again.
+                    mUserAlertedToBlockedThreadCondition = true;
+                }
+            }
+        }
+
         @Override
         public void run()
         {
@@ -316,9 +328,9 @@ public class DiagnosticMonitor
             {
                 checkForBlockedThreads();
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                LOG_SUPPRESSOR.error("Error", 3, "Error while checking for blocked threads", t);
+                LOG_SUPPRESSOR.error("Error", 3, "Error while checking for blocked threads", e);
             }
         }
     }

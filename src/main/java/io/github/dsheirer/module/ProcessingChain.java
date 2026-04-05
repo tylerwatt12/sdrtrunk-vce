@@ -862,15 +862,8 @@ public class ProcessingChain implements Listener<ChannelEvent>
         {
             for(Module module : mModules)
             {
-                if(module instanceof ComplexSamplesWaveRecorder)
-                {
-                    recordingModules.add(module);
-                }
-                else if(module instanceof MBECallSequenceRecorder)
-                {
-                    recordingModules.add(module);
-                }
-                else if(module instanceof BinaryRecorder)
+                if(module instanceof ComplexSamplesWaveRecorder || module instanceof MBECallSequenceRecorder ||
+                    module instanceof BinaryRecorder)
                 {
                     recordingModules.add(module);
                 }
