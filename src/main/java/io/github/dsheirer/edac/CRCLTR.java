@@ -63,6 +63,10 @@ public class CRCLTR
 		0x43  //Free 0 
 	};
 
+	private CRCLTR()
+	{
+	}
+
 	/**
 	 * Determines if message bits 10 - 34 pass the LTR CRC checksum
 	 * contained in bits 35 - 41, using a lookup table of CRC checksum values

@@ -183,11 +183,11 @@ public class MacMessageFactory
 
         if(dataUnitID.isFACCH())
         {
-            passesCRC = CRCP25.crc12_FACCH(message);
+            passesCRC = CRCP25.crc12Facch(message);
         }
         else if(dataUnitID.isLCCH())
         {
-            passesCRC = CRCP25.crc16_LCCH(message);
+            passesCRC = CRCP25.crc16Lcch(message);
 
             if(passesCRC)
             {
@@ -196,7 +196,7 @@ public class MacMessageFactory
         }
         else if(dataUnitID.isSACCH())
         {
-            passesCRC = CRCP25.crc12_SACCH(message);
+            passesCRC = CRCP25.crc12Sacch(message);
         }
 
         if(!passesCRC)

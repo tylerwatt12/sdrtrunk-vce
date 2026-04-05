@@ -105,8 +105,6 @@ public class CRCUtil
     public enum Parity
     {EVEN, ODD, NONE}
 
-    ;
-
     /* Determines the parity (number of 1 bits) for the value */
     public static Parity parity(long value)
     {
@@ -139,7 +137,7 @@ public class CRCUtil
             BinaryMessage polySet = new BinaryMessage(crcSize + i + 1);
             polySet.load(i, crcSize + 1, polynomial);
             message.xor(polySet);
-            System.out.println(message.toString());
+            mLog.debug(message.toString());
         }
 
         return message;
@@ -233,7 +231,7 @@ public class CRCUtil
         }
 
         sb.append("};");
-        System.out.println("Checksums:\n" + sb);
+        mLog.debug("Checksums:\n{}", sb);
 
         String hex = "7CFC0039420170452A4F9970000000000000000000D05";
         CorrectedBinaryMessage message = new CorrectedBinaryMessage(BinaryMessage.loadHex(hex));
@@ -247,7 +245,7 @@ public class CRCUtil
             i >= messageStart && i < messageSize;
             i = message.nextSetBit(i + 1))
         {
-            System.out.println("Bit [" + i + "] is set");
+            mLog.debug("Bit [{}] is set", i);
             calculated ^= checksums[i];
         }
 

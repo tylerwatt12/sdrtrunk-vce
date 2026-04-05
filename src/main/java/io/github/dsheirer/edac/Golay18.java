@@ -30,6 +30,9 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Golay18
 {
+    private Golay18()
+    {
+    }
 
     /**
      * Performs error detection and correction.
@@ -41,7 +44,7 @@ public class Golay18
         CorrectedBinaryMessage temp = new CorrectedBinaryMessage(24);
         temp.load(6, 18, value);
 
-        int errorsCorrected = Golay24.checkAndCorrect(temp, 0);
+        Golay24.checkAndCorrect(temp, 0);
 
         int correctedValue = temp.getInt(6, 23);
 

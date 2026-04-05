@@ -40,6 +40,10 @@ public class CRCPassport
 {
     private static final byte sFILL_00 = (byte)0x00;
 
+    private CRCPassport()
+    {
+    }
+
     private static byte[] sCHECKSUMS = new byte[]
         {
             (byte)0x6E, //DCC 1
@@ -102,8 +106,6 @@ public class CRCPassport
      */
     public static CRC check(BitSet msg)
     {
-        CRC crc = CRC.UNKNOWN;
-
         byte calculated = 0x0; //Starting value for an OSW
 
         //Iterate bits that are set and XOR running checksum with lookup value
@@ -115,16 +117,7 @@ public class CRCPassport
         //Apply the message checksum to derive the residual
         calculated ^= getChecksum(msg);
 
-        switch((byte)calculated)
-        {
-            case sFILL_00:
-                crc = CRC.PASSED;
-                break;
-            default:
-                crc = CRC.FAILED_CRC;
-        }
-
-        return crc;
+        return calculated == sFILL_00 ? CRC.PASSED : CRC.FAILED_CRC;
     }
 
     public static byte getResidual(BitSet msg)
@@ -178,6 +171,7 @@ public class CRCPassport
         switch(residual)
         {
             case 1:
+            case 153:
             case 136:
                 msg.flip(67);
                 msg.incrementCorrectedBitCount(1);
@@ -198,15 +192,13 @@ public class CRCPassport
                 msg.flip(67);
                 msg.incrementCorrectedBitCount(2);
                 break;
-            case 153:
-                msg.flip(67);
-                msg.incrementCorrectedBitCount(1);
-                break;
             case 142:
                 msg.flip(65);
                 msg.flip(66);
                 msg.flip(67);
                 msg.incrementCorrectedBitCount(3);
+                break;
+            default:
                 break;
         }
 
