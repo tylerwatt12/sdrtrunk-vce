@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.bits;
 
+import java.util.Arrays;
+
 /**
  * Defines a fragmented or non-contiguous bit field within a binary message.
  * @param indices for the bits in the field.
@@ -27,10 +29,46 @@ public record FragmentedIntField(int... indices)
 {
     public FragmentedIntField
     {
+        indices = indices.clone();
+
         if(indices.length > 32)
         {
             throw new IllegalArgumentException("Integer field indices size [" + indices.length + "] cannot exceed 32-bits for an integer");
         }
+    }
+
+    @Override
+    public int[] indices()
+    {
+        return indices.clone();
+    }
+
+    @Override
+    public boolean equals(Object o)
+    {
+        if(this == o)
+        {
+            return true;
+        }
+
+        if(!(o instanceof FragmentedIntField that))
+        {
+            return false;
+        }
+
+        return Arrays.equals(indices, that.indices);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Arrays.hashCode(indices);
+    }
+
+    @Override
+    public String toString()
+    {
+        return "FragmentedIntField[indices=" + Arrays.toString(indices) + "]";
     }
 
     /**
