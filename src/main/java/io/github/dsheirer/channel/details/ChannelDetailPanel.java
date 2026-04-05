@@ -74,14 +74,7 @@ public class ChannelDetailPanel extends JPanel implements Listener<ProcessingCha
         buttonPanel.add(mNameLabel);
 
         JButton refreshButton = new JButton("Refresh");
-        refreshButton.addActionListener(new ActionListener()
-        {
-            @Override
-            public void actionPerformed(ActionEvent e)
-            {
-                receive(mProcessingChain);
-            }
-        });
+        refreshButton.addActionListener(e -> receive(mProcessingChain));
         buttonPanel.add(refreshButton);
 
         add(buttonPanel, "wrap");
@@ -101,8 +94,16 @@ public class ChannelDetailPanel extends JPanel implements Listener<ProcessingCha
 
         final String system = channel != null ? channel.getSystem() : null;
         final String site = channel != null ? channel.getSite() : null;
-        final String name = channel != null ?
-            (channel.getChannelType() == Channel.ChannelType.TRAFFIC ? "Traffic Channel" : channel.getName()) : null;
+        final String name;
+
+        if(channel != null)
+        {
+            name = channel.getChannelType() == Channel.ChannelType.TRAFFIC ? "Traffic Channel" : channel.getName();
+        }
+        else
+        {
+            name = null;
+        }
 
         final String details;
 
@@ -122,16 +123,11 @@ public class ChannelDetailPanel extends JPanel implements Listener<ProcessingCha
             details = EMPTY_DETAILS;
         }
 
-        EventQueue.invokeLater(new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                mSystemLabel.setText(system);
-                mSiteLabel.setText(site);
-                mNameLabel.setText(name);
-                mDetailTextPane.setText(details);
-            }
+        EventQueue.invokeLater(() -> {
+            mSystemLabel.setText(system);
+            mSiteLabel.setText(site);
+            mNameLabel.setText(name);
+            mDetailTextPane.setText(details);
         });
     }
 }

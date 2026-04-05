@@ -306,12 +306,6 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     @Override
     public void receive(IdentifierUpdateNotification update)
     {
-//        mLog.debug("Received update: " + update +
-//            " class:" + update.getIdentifier().getIdentifierClass() +
-//            " form:" + update.getIdentifier().getForm() +
-//            " role:" + update.getIdentifier().getRole() +
-//            " class:" + update.getIdentifier().getClass());
-
         Identifier<?> identifier = update.getIdentifier();
 
         switch(identifier.getIdentifierClass())

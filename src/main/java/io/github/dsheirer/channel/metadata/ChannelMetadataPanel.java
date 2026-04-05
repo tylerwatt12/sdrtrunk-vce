@@ -23,7 +23,6 @@ import com.google.common.base.Joiner;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.playlist.channel.ViewChannelRequest;
@@ -53,6 +52,7 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
 import javax.swing.JTable;
 import javax.swing.SwingConstants;
 import javax.swing.event.ListSelectionEvent;
@@ -63,7 +63,6 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
 {
 
     private static final String TABLE_PREFERENCE_KEY = "channel.metadata.panel";
-    private ChannelModel mChannelModel;
     private ChannelProcessingManager mChannelProcessingManager;
     private IconModel mIconModel;
     private UserPreferences mUserPreferences;
@@ -71,7 +70,6 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
     private Broadcaster<ProcessingChain> mSelectedProcessingChainBroadcaster = new Broadcaster<>();
     private Map<State,Color> mBackgroundColors = new EnumMap<>(State.class);
     private Map<State,Color> mForegroundColors = new EnumMap<>(State.class);
-    private JTableColumnWidthMonitor mTableColumnMonitor;
     private Channel mUserSelectedChannel;
 
     /**
@@ -79,7 +77,6 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
      */
     public ChannelMetadataPanel(PlaylistManager playlistManager, IconModel iconModel, UserPreferences userPreferences)
     {
-        mChannelModel = playlistManager.getChannelModel();
         mChannelProcessingManager = playlistManager.getChannelProcessingManager();
         mIconModel = iconModel;
         mUserPreferences = userPreferences;
@@ -116,10 +113,10 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
             .setCellRenderer(new FrequencyCellRenderer());
 
         //Add a table column width monitor to store/restore column widths
-        mTableColumnMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY);
+        new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY);
 
-        JScrollPane scrollPane = new JScrollPane(mTable, JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
-            JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        JScrollPane scrollPane = new JScrollPane(mTable, ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS,
+            ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
 
         add(scrollPane);
 
@@ -198,7 +195,7 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
 
         public FrequencyCellRenderer()
         {
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
 
         @Override
@@ -227,7 +224,7 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
     {
         public AliasCellRenderer()
         {
-            setHorizontalAlignment(JLabel.LEFT);
+            setHorizontalAlignment(SwingConstants.LEFT);
         }
 
         @Override
@@ -268,13 +265,13 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
      */
     public abstract class IdentifierCellRenderer extends DefaultTableCellRenderer
     {
-        private final static String EMPTY_VALUE = "-----";
+        private static final String EMPTY_VALUE = "-----";
         private TalkgroupFormatPreference mTalkgroupFormatPreference;
 
-        public IdentifierCellRenderer(TalkgroupFormatPreference talkgroupFormatPreference)
+        protected IdentifierCellRenderer(TalkgroupFormatPreference talkgroupFormatPreference)
         {
             mTalkgroupFormatPreference = talkgroupFormatPreference;
-            setHorizontalAlignment(JLabel.CENTER);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
 
         @Override
