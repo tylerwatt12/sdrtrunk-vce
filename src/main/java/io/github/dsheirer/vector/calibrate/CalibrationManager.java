@@ -56,6 +56,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Determines the optimal (scalar vs vector) class to use for the current CPU architecture.
  */
+@SuppressWarnings("java:S6548")
 public class CalibrationManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(CalibrationManager.class);
@@ -282,7 +283,7 @@ public class CalibrationManager
     public static void main(String[] args)
     {
         CalibrationManager manager = getInstance();
-//        manager.reset();
+
         manager.reset(CalibrationType.DIFFERENTIAL_DEMODULATOR);
 
         if(!manager.isCalibrated())
@@ -308,8 +309,7 @@ public class CalibrationManager
                 sb1.append("\t").append(type.name()).append("\t").append(manager.getCalibration(type).getImplementation()).append("\n");
             }
         }
-        System.out.println(sb1);
-
-        System.out.println("Complete");
+        mLog.info(sb1.toString());
+        mLog.info("Complete");
     }
 }

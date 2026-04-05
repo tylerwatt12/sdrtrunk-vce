@@ -32,6 +32,7 @@ public abstract class Calibration
 {
     protected static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.0");
     public static final Logger mLog = LoggerFactory.getLogger(Calibration.class);
+    private final Random mRandom = new Random();
     private Preferences mPreferences = Preferences.userNodeForPackage(Calibration.class);
     private CalibrationType mType;
     private Implementation mImplementation;
@@ -40,7 +41,7 @@ public abstract class Calibration
      * Constructs an instance
      * @param type
      */
-    public Calibration(CalibrationType type)
+    protected Calibration(CalibrationType type)
     {
         mType = type;
     }
@@ -111,12 +112,10 @@ public abstract class Calibration
      */
     protected float[] getFloatSamples(int size)
     {
-        Random random = new Random();
-
         float[] samples = new float[size];
         for(int x = 0; x < samples.length; x++)
         {
-            samples[x] = random.nextFloat() * 2.0f - 1.0f;
+            samples[x] = mRandom.nextFloat() * 2.0f - 1.0f;
         }
 
         return samples;
@@ -129,12 +128,10 @@ public abstract class Calibration
      */
     protected float[] getPositiveFloatSamples(int size)
     {
-        Random random = new Random();
-
         float[] samples = new float[size];
         for(int x = 0; x < samples.length; x++)
         {
-            samples[x] = random.nextFloat();
+            samples[x] = mRandom.nextFloat();
         }
 
         return samples;
@@ -147,12 +144,10 @@ public abstract class Calibration
      */
     protected short[] getShortSamples(int size)
     {
-        Random random = new Random();
-
         short[] samples = new short[size];
         for(int x = 0; x < samples.length; x++)
         {
-            samples[x] = (short)((random.nextFloat() * 2.0f - 1.0f) * Short.MAX_VALUE);
+            samples[x] = (short)((mRandom.nextFloat() * 2.0f - 1.0f) * Short.MAX_VALUE);
         }
 
         return samples;

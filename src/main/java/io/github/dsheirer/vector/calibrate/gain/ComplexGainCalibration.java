@@ -77,7 +77,7 @@ public class ComplexGainCalibration extends Calibration
         i = getFloatSamples(BUFFER_SIZE);
         q = getFloatSamples(BUFFER_SIZE);
 
-        scalarMean.clear();;
+        scalarMean.clear();
         for(int x = 0; x < TEST_ITERATIONS; x++)
         {
             long score = testScalar(i, q);

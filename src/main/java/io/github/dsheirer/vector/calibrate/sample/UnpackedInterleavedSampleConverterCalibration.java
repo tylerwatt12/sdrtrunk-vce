@@ -86,6 +86,7 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
 
                 mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER WARMUP - VECTOR 512: " + DECIMAL_FORMAT.format(vectorMean.getResult()));
             }
+            // fall through
             case 8:
             {
                 Mean vectorMean = new Mean();
@@ -98,6 +99,7 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
 
                 mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER WARMUP - VECTOR 256: " + DECIMAL_FORMAT.format(vectorMean.getResult()));
             }
+            // fall through
             case 4:
             {
                 Mean vectorMean = new Mean();
@@ -110,18 +112,9 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
 
                 mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER WARMUP - VECTOR 128: " + DECIMAL_FORMAT.format(vectorMean.getResult()));
             }
+            // fall through
             case 2:
-            {
-                Mean vectorMean = new Mean();
-
-                for(int x = 0; x < WARMUP_ITERATIONS; x++)
-                {
-                    long score = calibrateVector64(samples, residualI, residualQ);
-                    vectorMean.increment(score);
-                }
-
-                mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER WARMUP - VECTOR 64: " + DECIMAL_FORMAT.format(vectorMean.getResult()));
-            }
+                logVector64Warmup(samples, residualI, residualQ);
 
             //Test Phase ....
             scalarMean.clear();
@@ -158,6 +151,7 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
 
                     mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER - VECTOR 512: " + DECIMAL_FORMAT.format(vectorMean.getResult()));
                 }
+                // fall through
                 case 8:
                 {
                     Mean vectorMean = new Mean();
@@ -176,6 +170,7 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
 
                     mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER - VECTOR 256: " + DECIMAL_FORMAT.format(vectorMean.getResult()));
                 }
+                // fall through
                 case 4:
                 {
                     Mean vectorMean = new Mean();
@@ -194,6 +189,7 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
 
                     mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER - VECTOR 128: " + DECIMAL_FORMAT.format(vectorMean.getResult()));
                 }
+                // fall through
                 case 2:
                 {
                     Mean vectorMean = new Mean();
@@ -215,6 +211,20 @@ public class UnpackedInterleavedSampleConverterCalibration extends Calibration
         }
 
         mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER - SET OPTIMAL IMPLEMENTATION TO: " + getImplementation());
+    }
+
+    private void logVector64Warmup(short[] samples, short[] residualI, short[] residualQ)
+    {
+        Mean vectorMean = new Mean();
+
+        for(int x = 0; x < WARMUP_ITERATIONS; x++)
+        {
+            long score = calibrateVector64(samples, residualI, residualQ);
+            vectorMean.increment(score);
+        }
+
+        mLog.info("UNPACKED INTERLEAVED SAMPLE CONVERTER WARMUP - VECTOR 64: " +
+            DECIMAL_FORMAT.format(vectorMean.getResult()));
     }
 
     private long calibrateScalar(short[] samples, short[] residualI, short[] residualQ)

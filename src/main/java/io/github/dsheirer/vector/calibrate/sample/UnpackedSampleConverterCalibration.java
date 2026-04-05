@@ -85,6 +85,7 @@ public class UnpackedSampleConverterCalibration extends Calibration
 
                 mLog.info("UNPACKED SAMPLE CONVERTER WARMUP - VECTOR 512: " + DECIMAL_FORMAT.format(vector512Mean.getResult()));
             }
+            // fall through
             case 8:
             {
                 Mean vector256Mean = new Mean();
@@ -96,6 +97,7 @@ public class UnpackedSampleConverterCalibration extends Calibration
 
                 mLog.info("UNPACKED SAMPLE CONVERTER WARMUP - VECTOR 256: " + DECIMAL_FORMAT.format(vector256Mean.getResult()));
             }
+            // fall through
             case 4:
             {
                 Mean vector128Mean = new Mean();
@@ -107,6 +109,7 @@ public class UnpackedSampleConverterCalibration extends Calibration
 
                 mLog.info("UNPACKED SAMPLE CONVERTER WARMUP - VECTOR 128: " + DECIMAL_FORMAT.format(vector128Mean.getResult()));
             }
+            // fall through
             case 2:
             {
                 Mean vector64Mean = new Mean();
@@ -153,6 +156,7 @@ public class UnpackedSampleConverterCalibration extends Calibration
                     setImplementation(Implementation.VECTOR_SIMD_512);
                 }
             }
+            // fall through
             case 8:
             {
                 Mean vector256Mean = new Mean();
@@ -169,6 +173,7 @@ public class UnpackedSampleConverterCalibration extends Calibration
                     setImplementation(Implementation.VECTOR_SIMD_256);
                 }
             }
+            // fall through
             case 4:
             {
                 Mean vector128Mean = new Mean();
@@ -185,6 +190,7 @@ public class UnpackedSampleConverterCalibration extends Calibration
                     setImplementation(Implementation.VECTOR_SIMD_128);
                 }
             }
+            // fall through
             case 2:
             {
                 Mean vector64Mean = new Mean();
