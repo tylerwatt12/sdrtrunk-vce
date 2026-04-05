@@ -60,6 +60,7 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
     private VBox mFrequencyBoxContainer;
     private Spinner<Integer> mChannelRotationDelaySpinner;
     private boolean mAllowMultipleFrequencies = false;
+    private int mFrequencyRotationDefault = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT;
     private int mFrequencyRotationMinimum = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM;
     private int mFrequencyRotationMaximum = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MAXIMUM;
 
@@ -309,7 +310,7 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
                 new Tooltip("Delay on each frequency before rotating to next when seeking to next active channel frequency"));
             mChannelRotationDelaySpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
             SpinnerValueFactory<Integer> svf = new SpinnerValueFactory.IntegerSpinnerValueFactory(mFrequencyRotationMinimum,
-                mFrequencyRotationMaximum, mFrequencyRotationMinimum, 50);
+                mFrequencyRotationMaximum, mFrequencyRotationDefault, 50);
             mChannelRotationDelaySpinner.setValueFactory(svf);
             mChannelRotationDelaySpinner.getValueFactory().valueProperty()
                 .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
