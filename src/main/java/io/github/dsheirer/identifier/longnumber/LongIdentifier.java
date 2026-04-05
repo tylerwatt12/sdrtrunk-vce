@@ -32,7 +32,7 @@ import java.util.Objects;
  */
 public abstract class LongIdentifier extends Identifier<Long>
 {
-    public LongIdentifier(Long value, IdentifierClass identifierClass, Form form, Role role)
+    protected LongIdentifier(Long value, IdentifierClass identifierClass, Form form, Role role)
     {
         super(value, identifierClass, form, role);
     }

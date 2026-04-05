@@ -26,7 +26,7 @@ import io.github.dsheirer.identifier.Role;
 
 public abstract class IPV4Identifier extends Identifier<IPV4Address>
 {
-    public IPV4Identifier(IPV4Address value, Role role)
+    protected IPV4Identifier(IPV4Address value, Role role)
     {
         super(value, IdentifierClass.USER_NETWORK_ADDRESS, Form.IPV4_ADDRESS, role);
     }

@@ -29,7 +29,7 @@ public abstract class EncryptionKey implements Comparable<EncryptionKey>
     private int mAlgorithm;
     private int mKey;
 
-    public EncryptionKey(int algorithm, int key)
+    protected EncryptionKey(int algorithm, int key)
     {
         mAlgorithm = algorithm;
         mKey = key;

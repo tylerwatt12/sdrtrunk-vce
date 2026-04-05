@@ -64,7 +64,7 @@ public class IPV4Address
             case 2:
                 return ((mIPAddress & 0xFF00) >> 8);
             case 3:
-                return ((mIPAddress & 0xFF));
+                return (mIPAddress & 0xFF);
             default:
                 throw new IllegalArgumentException("Invalid Octet index: " + index);
         }

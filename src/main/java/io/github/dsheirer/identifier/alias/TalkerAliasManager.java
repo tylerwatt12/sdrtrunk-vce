@@ -41,13 +41,6 @@ public class TalkerAliasManager
     private Map<Integer,TalkerAliasIdentifier> mAliasMap = new ConcurrentHashMap<>();
 
     /**
-     * Constructs an instance
-     */
-    public TalkerAliasManager()
-    {
-    }
-
-    /**
      * Updates the alias for the
      * @param identifier
      * @param alias
@@ -126,7 +119,7 @@ public class TalkerAliasManager
         sb.append("  Radio\tTalker Alias (TA-)\n");
         List<Integer> radios = new ArrayList<>(mAliasMap.keySet());
 
-        if(radios.size() > 0)
+        if(!radios.isEmpty())
         {
             Collections.sort(radios);
             for(Integer radio : radios)

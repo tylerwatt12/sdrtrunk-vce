@@ -32,7 +32,7 @@ import java.util.Objects;
  */
 public abstract class IntegerIdentifier extends Identifier<Integer>
 {
-    public IntegerIdentifier(int value, IdentifierClass identifierClass, Form form, Role role)
+    protected IntegerIdentifier(int value, IdentifierClass identifierClass, Form form, Role role)
     {
         super(value, identifierClass, form, role);
     }

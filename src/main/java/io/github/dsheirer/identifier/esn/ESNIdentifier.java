@@ -25,6 +25,7 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Objects;
 
 public class ESNIdentifier extends StringIdentifier implements Comparable<ESNIdentifier>
 {
@@ -68,5 +69,11 @@ public class ESNIdentifier extends StringIdentifier implements Comparable<ESNIde
     public boolean equals(Object o) {
         if (!(o instanceof ESNIdentifier)) return false;
         return compareTo((ESNIdentifier) o) == 0;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hashCode(getValue());
     }
 }

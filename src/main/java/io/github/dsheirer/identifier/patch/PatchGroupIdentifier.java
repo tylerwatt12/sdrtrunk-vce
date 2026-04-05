@@ -27,7 +27,7 @@ import io.github.dsheirer.identifier.Role;
 
 public abstract class PatchGroupIdentifier extends Identifier<PatchGroup>
 {
-    public PatchGroupIdentifier(PatchGroup value)
+    protected PatchGroupIdentifier(PatchGroup value)
     {
         super(value, IdentifierClass.USER, Form.PATCH_GROUP, Role.TO);
     }

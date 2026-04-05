@@ -59,7 +59,6 @@ public class IconModel
 
     private AtomicBoolean mSavingIcons = new AtomicBoolean();
     private ObservableList<Icon> mIcons = FXCollections.observableArrayList(Icon.extractor());
-    private StringProperty mDefaultIconName = new SimpleStringProperty();
     private Map<String,ImageIcon> mResizedIcons = new HashMap<>();
     private Icon mDefaultIcon;
     private IconSet mStandardIcons;
@@ -221,7 +220,7 @@ public class IconModel
         {
             double scale = (double) original.getIconHeight() / (double) height;
 
-            int scaledWidth = (int) ((double) original.getIconWidth() / scale);
+            int scaledWidth = (int) (original.getIconWidth() / scale);
 
             Image scaledImage = original.getImage().getScaledInstance(scaledWidth,
                 height, java.awt.Image.SCALE_SMOOTH);
@@ -302,68 +301,6 @@ public class IconModel
         }
 
         return mIconLockFilePath;
-    }
-
-    /**
-     * Saves the current playlist
-     */
-    private void save()
-    {
-        IconSet iconSet = new IconSet();
-        iconSet.setDefaultIcon(getDefaultIcon().getName());
-        iconSet.setIcons(new ArrayList<>(mIcons));
-
-        //Create a backup copy of the current playlist
-        if(Files.exists(getIconFilePath()))
-        {
-            try
-            {
-                Files.copy(getIconFilePath(), getIconBackupFilePath(), StandardCopyOption.REPLACE_EXISTING);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error creating backup copy of current icons prior to saving updates [" +
-                    getIconFilePath().toString() + "]", e);
-            }
-        }
-
-        //Create a temporary lock file to signify that we're in the process of updating the playlist
-        if(!Files.exists(getIconLockFilePath()))
-        {
-            try
-            {
-                Files.createFile(getIconLockFilePath());
-            }
-            catch(IOException e)
-            {
-                mLog.error("Error creating temporary lock file prior to saving icons [" +
-                    getIconLockFilePath().toString() + "]", e);
-            }
-        }
-
-        try(OutputStream out = Files.newOutputStream(getIconFilePath()))
-        {
-            JacksonXmlModule xmlModule = new JacksonXmlModule();
-            xmlModule.setDefaultUseWrapper(false);
-            ObjectMapper objectMapper = new XmlMapper(xmlModule);
-            objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-            objectMapper.writeValue(out, iconSet);
-            out.flush();
-
-            //Remove the playlist lock file to indicate that we successfully saved the file
-            if(Files.exists(getIconLockFilePath()))
-            {
-                Files.delete(getIconLockFilePath());
-            }
-        }
-        catch(IOException ioe)
-        {
-            mLog.error("IO error while writing icons to a file [" + getIconFilePath().toString() + "]", ioe);
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error while saving icons [" + getIconFilePath().toString() + "]", e);
-        }
     }
 
     /**
@@ -476,7 +413,61 @@ public class IconModel
         @Override
         public void run()
         {
-            save();
+            IconSet iconSet = new IconSet();
+            iconSet.setDefaultIcon(getDefaultIcon().getName());
+            iconSet.setIcons(new ArrayList<>(mIcons));
+
+            //Create a backup copy of the current playlist
+            if(Files.exists(getIconFilePath()))
+            {
+                try
+                {
+                    Files.copy(getIconFilePath(), getIconBackupFilePath(), StandardCopyOption.REPLACE_EXISTING);
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error creating backup copy of current icons prior to saving updates [" +
+                        getIconFilePath().toString() + "]", e);
+                }
+            }
+
+            //Create a temporary lock file to signify that we're in the process of updating the playlist
+            if(!Files.exists(getIconLockFilePath()))
+            {
+                try
+                {
+                    Files.createFile(getIconLockFilePath());
+                }
+                catch(IOException e)
+                {
+                    mLog.error("Error creating temporary lock file prior to saving icons [" +
+                        getIconLockFilePath().toString() + "]", e);
+                }
+            }
+
+            try(OutputStream out = Files.newOutputStream(getIconFilePath()))
+            {
+                JacksonXmlModule xmlModule = new JacksonXmlModule();
+                xmlModule.setDefaultUseWrapper(false);
+                ObjectMapper objectMapper = new XmlMapper(xmlModule);
+                objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
+                objectMapper.writeValue(out, iconSet);
+                out.flush();
+
+                //Remove the playlist lock file to indicate that we successfully saved the file
+                if(Files.exists(getIconLockFilePath()))
+                {
+                    Files.delete(getIconLockFilePath());
+                }
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("IO error while writing icons to a file [" + getIconFilePath().toString() + "]", ioe);
+            }
+            catch(Exception e)
+            {
+                mLog.error("Error while saving icons [" + getIconFilePath().toString() + "]", e);
+            }
 
             mSavingIcons.set(false);
         }

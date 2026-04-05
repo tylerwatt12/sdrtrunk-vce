@@ -33,7 +33,7 @@ public abstract class TalkerAliasIdentifier extends StringIdentifier
      * Constructs an instance.
      * @param value of the string/alias identifier
      */
-    public TalkerAliasIdentifier(String value)
+    protected TalkerAliasIdentifier(String value)
     {
         super(value, IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
     }

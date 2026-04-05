@@ -34,7 +34,7 @@ public abstract class LocationIdentifier extends Identifier<Point>
      * @param value location
      * @param role to or from
      */
-    public LocationIdentifier(Point value, Role role)
+    protected LocationIdentifier(Point value, Role role)
     {
         super(value, IdentifierClass.USER, Form.LOCATION, role);
     }
