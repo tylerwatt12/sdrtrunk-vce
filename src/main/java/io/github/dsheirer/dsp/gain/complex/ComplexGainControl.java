@@ -35,10 +35,6 @@ public class ComplexGainControl implements IComplexGainControl
      * is applied against the delta between current gain value and a recalculated
      * gain value to limit how quickly the gain value will increase or decrease.
      */
-    public ComplexGainControl()
-    {
-    }
-
     /**
      * Processes the complex I & Q samples and applies gain to achieve an objective unity
      * gain for the single sample in the buffer that has the largest envelope.

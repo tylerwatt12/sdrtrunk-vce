@@ -48,13 +48,13 @@ public class AutomaticGainControl
     private static final float DECAY_RISE_ALPHA = 1.0f - (float)FastMath.exp(-1.0 / (SAMPLE_RATE * DECAY * .001 * DECAY_RISEFALL_RATIO));
     private static final float DECAY_FALL_ALPHA = 1.f - (float)FastMath.exp(-1.0 / (SAMPLE_RATE * DECAY * .001));
     /* Keep max input and output the same */
-    private static final float MAX_AMPLITUDE = 1.0f; //1.0;
-    private static final float MAX_MANUAL_AMPLITUDE = 1.0f; //1.0;
+    private static final float MAX_AMPLITUDE = 1.0f;
+    private static final float MAX_MANUAL_AMPLITUDE = 1.0f;
     /* Specifies AGC manual gain in dB if AGC is not active ( 0 to 100 dB) */
     private static final float MANUAL_GAIN = 0.0f;
     private static final float MANUAL_AGC_GAIN = MAX_MANUAL_AMPLITUDE * (float)FastMath.pow(10.0, MANUAL_GAIN / 20.0);
     /* Limit output to about 3db of maximum */
-    private static final float AGC_OUT_SCALE = 0.95f; //0.7f;
+    private static final float AGC_OUT_SCALE = 0.95f;
     /* Specifies dB reduction in output at knee from max output level (0 - 10dB) */
     private static final float SLOPE_FACTOR = 2.0f;
     /* Specifies the threshold when the AGC kicks in (nominal range -160 to 0 dB) */
@@ -78,8 +78,8 @@ public class AutomaticGainControl
      */
     public AutomaticGainControl()
     {
-        System.out.println("Fixed gain: " + FIXED_GAIN + " Knee: " + KNEE + " Gain Slope:" + GAIN_SLOPE);
-        System.out.println("Manual gain: " + MANUAL_AGC_GAIN);
+        mLog.debug("Fixed gain: {} Knee: {} Gain Slope:{}", FIXED_GAIN, KNEE, GAIN_SLOPE);
+        mLog.debug("Manual gain: {}", MANUAL_AGC_GAIN);
     }
 
     public void reset()
@@ -171,9 +171,8 @@ public class AutomaticGainControl
                 gain = AGC_OUT_SCALE * (float)FastMath.pow(10.0, magnitude * (GAIN_SLOPE - 1.0));
             }
 
-            System.out.println("Current Mag: " + currentMagnitude + " Delay Mag: " + delayedMagnitude +
-                    " Peak:" + mPeakMagnitude + " Gain:" + gain +
-                    " Attack Avg:" + mAttackAverage + " Decay Avg:" + mDecayAverage);
+            mLog.debug("Current Mag: {} Delay Mag: {} Peak:{} Gain:{} Attack Avg:{} Decay Avg:{}",
+                currentMagnitude, delayedMagnitude, mPeakMagnitude, gain, mAttackAverage, mDecayAverage);
         }
 
         if(gain < mMinGain)

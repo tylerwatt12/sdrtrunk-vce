@@ -42,7 +42,9 @@ public class VectorComplexGainControl implements IComplexGainControl
         VectorUtilities.checkComplexArrayLength(i, q, VECTOR_SPECIES);
 
         //Determine the largest envelope
-        FloatVector iAbs, qAbs, maxEnvelope;
+        FloatVector iAbs;
+        FloatVector qAbs;
+        FloatVector maxEnvelope;
 
         maxEnvelope = FloatVector.zero(VECTOR_SPECIES).add(MINIMUM_ENVELOPE);
 

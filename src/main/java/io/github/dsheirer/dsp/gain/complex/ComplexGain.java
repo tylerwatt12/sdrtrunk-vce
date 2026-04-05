@@ -32,7 +32,7 @@ public abstract class ComplexGain
      * Constructs an instance
      * @param gain to apply to complex samples
      */
-    public ComplexGain(float gain)
+    protected ComplexGain(float gain)
     {
         mGain = gain;
     }
@@ -78,5 +78,5 @@ public abstract class ComplexGain
      * @param timestamp of the first sample
      * @return amplified samples
      */
-    public abstract ComplexSamples apply(float[] i, float q[], long timestamp);
+    public abstract ComplexSamples apply(float[] i, float[] q, long timestamp);
 }

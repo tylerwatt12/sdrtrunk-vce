@@ -28,6 +28,9 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class MagnitudeFactory
 {
+    private MagnitudeFactory()
+    {
+    }
 
     /**
      * Creates a magnitude implementation using calibration data to select the optimal

@@ -29,6 +29,10 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class ComplexGainFactory
 {
+    private ComplexGainFactory()
+    {
+    }
+
     /**
      * Instantiates the optimal complex gain control implementation for this hardware,
      * as determined by the Calibration Manager.

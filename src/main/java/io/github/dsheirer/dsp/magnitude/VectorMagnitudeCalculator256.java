@@ -36,7 +36,9 @@ public class VectorMagnitudeCalculator256 implements IMagnitudeCalculator
         VectorUtilities.checkComplexArrayLength(i, q, VECTOR_SPECIES);
         float[] magnitude = new float[i.length];
 
-        FloatVector iVector, qVector, result;
+        FloatVector iVector;
+        FloatVector qVector;
+        FloatVector result;
         for(int x = 0; x < i.length; x += VECTOR_SPECIES.length())
         {
             iVector = FloatVector.fromArray(VECTOR_SPECIES, i, x);
