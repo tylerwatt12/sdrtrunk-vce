@@ -85,7 +85,7 @@ public abstract class AliasID
     private SimpleStringProperty mValueProperty = new SimpleStringProperty();
     private BooleanProperty mOverlapProperty = new SimpleBooleanProperty();
 
-    public AliasID()
+    protected AliasID()
     {
     }
 

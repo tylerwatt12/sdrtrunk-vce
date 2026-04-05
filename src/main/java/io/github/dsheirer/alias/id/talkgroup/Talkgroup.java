@@ -24,6 +24,7 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -150,5 +151,27 @@ public class Talkgroup extends AliasID implements Comparable<Talkgroup>
         {
             return getProtocol().compareTo(other.getProtocol());
         }
+    }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        if(this == obj)
+        {
+            return true;
+        }
+
+        if(!(obj instanceof Talkgroup other))
+        {
+            return false;
+        }
+
+        return getProtocol() == other.getProtocol() && getValue() == other.getValue();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getProtocol(), getValue());
     }
 }

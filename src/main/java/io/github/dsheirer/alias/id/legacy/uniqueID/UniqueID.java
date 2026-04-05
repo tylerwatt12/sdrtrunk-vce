@@ -25,10 +25,6 @@ public class UniqueID extends AliasID
 {
     private int mUid;
 
-    public UniqueID()
-    {
-    }
-
     @Override
     public boolean isAudioIdentifier()
     {

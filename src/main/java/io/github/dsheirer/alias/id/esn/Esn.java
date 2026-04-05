@@ -24,10 +24,6 @@ import io.github.dsheirer.alias.id.AliasIDType;
 public class Esn extends AliasID
 {
 	private String mEsn;
-	
-	public Esn()
-	{
-	}
 
 	@Override
 	public boolean isAudioIdentifier()

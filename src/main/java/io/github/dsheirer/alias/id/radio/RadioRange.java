@@ -26,6 +26,7 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Objects;
 
 /**
  * Integer radio identifier range of values with protocol.
@@ -204,5 +205,29 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
         {
             return getProtocol().compareTo(other.getProtocol());
         }
+    }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        if(this == obj)
+        {
+            return true;
+        }
+
+        if(!(obj instanceof RadioRange other))
+        {
+            return false;
+        }
+
+        return getProtocol() == other.getProtocol() &&
+            getMinRadio() == other.getMinRadio() &&
+            getMaxRadio() == other.getMaxRadio();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getProtocol(), getMinRadio(), getMaxRadio());
     }
 }

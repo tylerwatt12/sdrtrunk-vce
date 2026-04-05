@@ -34,20 +34,27 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public enum RadioFormat
 {
-    APCO25("********", 0, 0xFFFFFF, "0 to 16,777,215",
+    APCO25(0, 0xFFFFFF, "0 to 16,777,215",
         "<html>APCO25 valid range is 0 to 16,777,215"),
-    DMR("********", 0, 0xFFFFFF, "0 to 16,777,215",
+    DMR(0, 0xFFFFFF, "0 to 16,777,215",
         "<html>DMR unit id valid range is 0 to 16,777,215"),
-    PASSPORT("********", 0, 0x7FFFFF, "0 to 8,388,607",
+    PASSPORT(0, 0x7FFFFF, "0 to 8,388,607",
         "<html>PASSPORT valid range is 0 to 8,388,607"),
-    UNKNOWN("********", 1, 0xFFFFFF, "1 to 16,777,215",
+    UNKNOWN(1, 0xFFFFFF, "1 to 16,777,215",
         "Unknown protocol valid value range is 1-16,777,215");
+
+    private static final String EIGHT_DIGIT_MASK = "********";
 
     private String mMask;
     private int mMinimumValue;
     private int mMaximumValue;
     private String mValidRangeDescription;
     private String mValidRangeHelpText;
+
+    RadioFormat(int minimumValue, int maximumValue, String validRangeDescription, String validRangeHelpText)
+    {
+        this(EIGHT_DIGIT_MASK, minimumValue, maximumValue, validRangeDescription, validRangeHelpText);
+    }
 
     RadioFormat(String mask, int minimumValue, int maximumValue, String validRangeDescription, String validRangeHelpText)
     {

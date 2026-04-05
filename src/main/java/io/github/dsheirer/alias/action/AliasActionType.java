@@ -30,6 +30,7 @@ public enum AliasActionType
 		mLabel = label;
 	}
 	
+	@Override
 	public String toString()
 	{
 		return mLabel;

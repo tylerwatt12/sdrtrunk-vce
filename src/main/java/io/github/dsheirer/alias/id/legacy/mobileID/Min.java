@@ -29,10 +29,6 @@ public class Min extends AliasID
 {
     private String mMin;
 
-    public Min()
-    {
-    }
-
     @Override
     public boolean isAudioIdentifier()
     {

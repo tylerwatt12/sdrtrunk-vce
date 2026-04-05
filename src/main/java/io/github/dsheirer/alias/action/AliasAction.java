@@ -46,7 +46,7 @@ public abstract class AliasAction
 {
     private SimpleStringProperty mValueProperty = new SimpleStringProperty();
 
-    public AliasAction()
+    protected AliasAction()
     {
     }
 

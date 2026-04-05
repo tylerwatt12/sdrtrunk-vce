@@ -93,12 +93,13 @@ public class ScriptAction extends RecurringAction
 
             while((line = reader.readLine()) != null)
             {
-                sb.append(line + "\n");
+                sb.append(line);
+                sb.append('\n');
             }
 
             if(exitCode != 0)
             {
-                throw new RuntimeException("Exit Code: " + exitCode + " Console:" + sb.toString());
+                throw new IllegalStateException("Exit Code: " + exitCode + " Console:" + sb.toString());
             }
         }
     }

@@ -25,10 +25,6 @@ public class SiteID extends AliasID
 {
     private String mSite;
 
-    public SiteID()
-    {
-    }
-
     @Override
     public boolean isAudioIdentifier()
     {
@@ -60,9 +56,8 @@ public class SiteID extends AliasID
     @Override
     public boolean matches(AliasID otherID)
     {
-        return otherID != null &&
-            otherID instanceof SiteID &&
-            getSite().contentEquals(((SiteID)otherID).getSite());
+        return otherID instanceof SiteID siteID &&
+            getSite().contentEquals(siteID.getSite());
     }
 
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")

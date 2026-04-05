@@ -28,10 +28,6 @@ public class MPT1327ID extends AliasID
 {
     private String mID;
 
-    public MPT1327ID()
-    {
-    }
-
     @Override
     public boolean isAudioIdentifier()
     {

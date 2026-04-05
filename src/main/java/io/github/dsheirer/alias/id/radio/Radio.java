@@ -27,6 +27,7 @@ import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Objects;
 
 /**
  * Integer radio identifier with protocol.
@@ -114,6 +115,28 @@ public class Radio extends AliasID implements Comparable<Radio>
         }
 
         return false;
+    }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        if(this == obj)
+        {
+            return true;
+        }
+
+        if(!(obj instanceof Radio other))
+        {
+            return false;
+        }
+
+        return getProtocol() == other.getProtocol() && getValue() == other.getValue();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getProtocol(), getValue());
     }
 
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")

@@ -34,27 +34,29 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public enum TalkgroupFormat
 {
-    AM("*****", 1, 0xFFFF, "1 to 65,535",
+    AM(1, 0xFFFF,
             "AM valid value range is 1-65,535"),
-    APCO25("********", 0, 0xFFFF, "0 to 65,535",
-        "<html>APCO25 talkgroup valid range is 0 to 65,535"),
-    DMR("********", 0, 0xFFFFFF, "0 to 16,777,215",
-        "<html>DMR talkgroup valid range is 0 to 16,777,215"),
+    APCO25(0, 0xFFFF,
+        "<html>APCO25 talkgroup valid range is 0 to 65,535", true),
+    DMR(0, 0xFFFFFF,
+        "<html>DMR talkgroup valid range is 0 to 16,777,215", true),
     FLEETSYNC("###-####", 0, 0x7FFFFF, "001-0001 to 127-8192",
         "<html>Fleetsync valid ranges are 1-127(prefix)<br>and 1-8192(ident) (ie. 001-0001 to 127-8192)"),
     LTR("##-###", 0x101, 0x3FFF, "01-001 to 20-255",
         "<html>LTR valid ranges are 1-20(repeater) and 1-255(talkgroup) (ie. 01-001 to 20-255)"),
-    MDC1200("*****", 1, 0xFFFF, "1 to 65,535",
+    MDC1200(1, 0xFFFF,
         "MDC-1200 valid value range is 1-65,535"),
     MPT1327("###-####", 1, 0x7FFFFF, "000-0001 to 127-8192",
         "<html>MPT-1327 valid ranges are 0-127(prefix)<br>and 1-8192(ident) (ie. 000-0001 to 127-8192)"),
-    NBFM("*****", 1, 0xFFFF, "1 to 65,535",
+    NBFM(1, 0xFFFF,
             "NBFM valid value range is 1-65,535"),
-    PASSPORT("*****", 1, 0xFFFF, "1 to 65,535",
+    PASSPORT(1, 0xFFFF,
         "Passport valid value range is 1-65,535"),
-    UNKNOWN("********", 1, 0xFFFFFF, "1 to 16,777,215",
-        "Unknown protocol valid value range is 1-16,777,215");
+    UNKNOWN(1, 0xFFFFFF,
+        "Unknown protocol valid value range is 1-16,777,215", true);
 
+    private static final String FIVE_DIGIT_MASK = "*****";
+    private static final String EIGHT_DIGIT_MASK = "********";
     private String mMask;
     private int mMinimumValue;
     private int mMaximumValue;
@@ -68,6 +70,23 @@ public enum TalkgroupFormat
         mMaximumValue = maximumValue;
         mValidRangeDescription = validRangeDescription;
         mValidRangeHelpText = validRangeHelpText;
+    }
+
+    TalkgroupFormat(int minimumValue, int maximumValue, String validRangeHelpText)
+    {
+        this(FIVE_DIGIT_MASK, minimumValue, maximumValue, getValidRangeDescription(minimumValue, maximumValue),
+            validRangeHelpText);
+    }
+
+    TalkgroupFormat(int minimumValue, int maximumValue, String validRangeHelpText, boolean useEightDigitMask)
+    {
+        this(useEightDigitMask ? EIGHT_DIGIT_MASK : FIVE_DIGIT_MASK, minimumValue, maximumValue,
+            getValidRangeDescription(minimumValue, maximumValue), validRangeHelpText);
+    }
+
+    private static String getValidRangeDescription(int minimumValue, int maximumValue)
+    {
+        return minimumValue + " to " + String.format("%,d", maximumValue);
     }
 
     public String getMask()

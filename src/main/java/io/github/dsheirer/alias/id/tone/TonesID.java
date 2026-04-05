@@ -105,7 +105,6 @@ public class TonesID extends AliasID implements ListChangeListener<Tone>
                     if(thisTones.get(x).getAmbeTone() != otherTones.get(x).getAmbeTone())
                     {
                         match = false;
-                        continue;
                     }
                 }
             }

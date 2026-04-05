@@ -28,10 +28,6 @@ public class MDC1200ID extends AliasID
 {
     private String mID;
 
-    public MDC1200ID()
-    {
-    }
-
     @Override
     public boolean isAudioIdentifier()
     {

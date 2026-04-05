@@ -29,10 +29,6 @@ public class UserStatusID extends AliasID
 {
     private int mStatus;
 
-    public UserStatusID()
-    {
-    }
-
     @Override
     public boolean isAudioIdentifier()
     {

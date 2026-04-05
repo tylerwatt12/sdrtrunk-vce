@@ -23,6 +23,7 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
+import java.util.Objects;
 
 /**
  * Digital Coded Squelch (DCS) tone identifier
@@ -92,8 +93,35 @@ public class Dcs extends AliasID implements Comparable<Dcs>
     }
 
     @Override
+    public boolean equals(Object obj)
+    {
+        if(this == obj)
+        {
+            return true;
+        }
+
+        if(!(obj instanceof Dcs other))
+        {
+            return false;
+        }
+
+        return Objects.equals(getDCSCode(), other.getDCSCode());
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getDCSCode());
+    }
+
+    @Override
     public int compareTo(Dcs o)
     {
+        if(o == null)
+        {
+            return 1;
+        }
+
         if(isValid())
         {
             if(o.isValid())
@@ -106,6 +134,6 @@ public class Dcs extends AliasID implements Comparable<Dcs>
             }
         }
 
-        return -1;
+        return o.isValid() ? -1 : 0;
     }
 }

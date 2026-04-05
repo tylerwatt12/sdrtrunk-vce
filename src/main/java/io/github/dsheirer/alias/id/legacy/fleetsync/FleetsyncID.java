@@ -26,10 +26,6 @@ import io.github.dsheirer.alias.id.AliasIDType;
 public class FleetsyncID extends AliasID
 {
 	private String mID;
-	
-	public FleetsyncID()
-	{
-	}
 
 	@Override
 	public boolean isAudioIdentifier()
