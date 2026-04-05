@@ -33,7 +33,7 @@ import javax.sound.sampled.AudioFormat;
  */
 public class AudioProviderMono extends AudioProvider
 {
-    private static final ByteBuffer SILENCE = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * 2);
+    private final ByteBuffer mSilence = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * 2);
     private final AudioChannel mAudioChannel;
 
     /**
@@ -69,7 +69,7 @@ public class AudioProviderMono extends AudioProvider
                 mAudioChannel.clearMetadata();
             }
 
-            return SILENCE;
+            return mSilence;
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * 2).order(ByteOrder.LITTLE_ENDIAN);
