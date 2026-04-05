@@ -32,7 +32,7 @@ import io.github.dsheirer.identifier.Role;
  */
 public abstract class ToneIdentifier extends Identifier<ToneSequence>
 {
-    public ToneIdentifier(ToneSequence value)
+    protected ToneIdentifier(ToneSequence value)
     {
         super(value, IdentifierClass.USER, Form.TONE, Role.FROM);
     }
