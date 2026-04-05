@@ -32,6 +32,10 @@ public class ComplexMixerFactory
 {
     private static final Logger mLog = LoggerFactory.getLogger(ComplexMixerFactory.class);
 
+    private ComplexMixerFactory()
+    {
+    }
+
     /**
      * Creates an instance of the optimal implementation of a complex mixer for this hardware.
      * @param frequency of the mixing oscillator

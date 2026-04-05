@@ -107,7 +107,9 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
         float cosAngle = (float)(FastMath.cos(getAnglePerSample() * VECTOR_SPECIES.length()));
         float sinAngle = (float)(FastMath.sin(getAnglePerSample() * VECTOR_SPECIES.length()));
 
-        FloatVector gain, inphase, quadrature;
+        FloatVector gain;
+        FloatVector inphase;
+        FloatVector quadrature;
 
         int gainCounter = 0;
 
@@ -163,7 +165,9 @@ public class VectorComplexOscillator extends AbstractOscillator implements IComp
         float cosAngle = (float)(FastMath.cos(getAnglePerSample() * VECTOR_SPECIES.length()));
         float sinAngle = (float)(FastMath.sin(getAnglePerSample() * VECTOR_SPECIES.length()));
 
-        FloatVector gain, inphase, quadrature;
+        FloatVector gain;
+        FloatVector inphase;
+        FloatVector quadrature;
 
         for(int samplePointer = 0; samplePointer < sampleCount; samplePointer += VECTOR_SPECIES.length())
         {

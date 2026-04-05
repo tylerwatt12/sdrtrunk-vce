@@ -27,8 +27,6 @@ import org.apache.commons.math3.util.FastMath;
  */
 public class ScalarComplexOscillator extends AbstractOscillator implements IComplexOscillator
 {
-    private float mCosineAngle;
-    private float mSineAngle;
     private float mPreviousInphase = 1.0f;
     private float mPreviousQuadrature = 0.0f;
 
@@ -50,9 +48,6 @@ public class ScalarComplexOscillator extends AbstractOscillator implements IComp
     protected void update()
     {
         super.update();
-        float angle = getAnglePerSample();
-        mCosineAngle = (float)FastMath.cos(getAnglePerSample());
-        mSineAngle = (float)FastMath.sin(getAnglePerSample());
     }
 
     @Override
@@ -62,7 +57,9 @@ public class ScalarComplexOscillator extends AbstractOscillator implements IComp
         float cosineAngle = (float)FastMath.cos(getAnglePerSample());
         float sineAngle = (float)FastMath.sin(getAnglePerSample());
 
-        float previousInphase, previousQuadrature, gain;
+        float previousInphase;
+        float previousQuadrature;
+        float gain;
 
         previousInphase = mPreviousInphase;
         previousQuadrature = mPreviousQuadrature;
@@ -103,7 +100,9 @@ public class ScalarComplexOscillator extends AbstractOscillator implements IComp
         float cosineAngle = (float)FastMath.cos(getAnglePerSample());
         float sineAngle = (float)FastMath.sin(getAnglePerSample());
 
-        float previousInphase, previousQuadrature, gain;
+        float previousInphase;
+        float previousQuadrature;
+        float gain;
 
         previousInphase = mPreviousInphase;
         previousQuadrature = mPreviousQuadrature;

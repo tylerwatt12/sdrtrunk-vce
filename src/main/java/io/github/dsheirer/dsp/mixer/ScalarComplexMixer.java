@@ -62,7 +62,8 @@ public class ScalarComplexMixer extends ComplexMixer
         float[] iMixer = mixer.i();
         float[] qMixer = mixer.q();
 
-        float inphase, quadrature;
+        float inphase;
+        float quadrature;
 
         for(int x = 0; x < iSamples.length; x++)
         {
@@ -88,7 +89,8 @@ public class ScalarComplexMixer extends ComplexMixer
         float[] iMixer = mixer.i();
         float[] qMixer = mixer.q();
 
-        float inphase, quadrature;
+        float inphase;
+        float quadrature;
         int offset = 0;
 
         for(int x = 0; x < iMixer.length; x++)

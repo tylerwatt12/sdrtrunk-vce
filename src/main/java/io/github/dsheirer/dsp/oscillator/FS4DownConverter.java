@@ -30,9 +30,6 @@ public class FS4DownConverter
      *
      * See: Digital Signal Processing 3e, Lyons, p.674-675
      */
-    public FS4DownConverter()
-    {
-    }
 
     public float[] mixComplex(float[] samples)
     {
@@ -60,6 +57,8 @@ public class FS4DownConverter
                     samples[x] = -samples[x + 1];
                     samples[x + 1] = real;
                     break;
+                default:
+                    break;
             }
 
             pointer++;
@@ -77,7 +76,7 @@ public class FS4DownConverter
         int pointer = mPointer;
 
         float[] i = samples.i();
-        float[] q = samples.q();;
+        float[] q = samples.q();
 
         for(int x = 0; x < i.length; x++)
         {
@@ -99,6 +98,8 @@ public class FS4DownConverter
                     temp = i[x];
                     i[x] = -q[x];
                     q[x] = temp;
+                    break;
+                default:
                     break;
             }
 

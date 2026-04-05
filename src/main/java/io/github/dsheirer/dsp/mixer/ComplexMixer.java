@@ -38,7 +38,7 @@ public abstract class ComplexMixer
      * @param sampleRate to generate
      * @param disableSIMD to disable use of SIMD vector instructions.
      */
-    public ComplexMixer(double frequency, double sampleRate, boolean disableSIMD)
+    protected ComplexMixer(double frequency, double sampleRate, boolean disableSIMD)
     {
         if(disableSIMD)
         {
@@ -50,7 +50,7 @@ public abstract class ComplexMixer
         }
     }
 
-    public ComplexMixer(double frequency, double sampleRate)
+    protected ComplexMixer(double frequency, double sampleRate)
     {
         mOscillator = OscillatorFactory.getComplexOscillator(frequency, sampleRate);
     }

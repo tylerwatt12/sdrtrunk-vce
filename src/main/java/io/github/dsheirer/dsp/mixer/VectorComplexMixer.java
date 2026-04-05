@@ -58,7 +58,10 @@ public class VectorComplexMixer extends ComplexMixer
         float[] iMixer = mixer.i();
         float[] qMixer = mixer.q();
 
-        FloatVector iS, qS, iM, qM;
+        FloatVector iS;
+        FloatVector qS;
+        FloatVector iM;
+        FloatVector qM;
 
         for(int x = 0; x < iSamples.length; x += VECTOR_SPECIES.length())
         {

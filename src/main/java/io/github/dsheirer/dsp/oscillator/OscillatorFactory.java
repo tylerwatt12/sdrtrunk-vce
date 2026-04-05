@@ -30,6 +30,9 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class OscillatorFactory
 {
+    private OscillatorFactory()
+    {
+    }
 
     /**
      * Constructs an optimal implementation of a real sample oscillator using calibration data when available.

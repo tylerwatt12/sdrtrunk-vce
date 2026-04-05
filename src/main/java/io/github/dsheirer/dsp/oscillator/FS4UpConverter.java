@@ -26,9 +26,6 @@ public class FS4UpConverter
      *
      * See: Digital Signal Processing 3e, Lyons, p.674-675
      */
-    public FS4UpConverter()
-    {
-    }
 
     public float[] mixComplex(float[] samples)
     {
@@ -54,6 +51,8 @@ public class FS4UpConverter
                     real = samples[x];
                     samples[x] = samples[x + 1];
                     samples[x + 1] = -real;
+                    break;
+                default:
                     break;
             }
 
