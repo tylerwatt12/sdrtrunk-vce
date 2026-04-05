@@ -24,8 +24,6 @@ import java.util.concurrent.CountDownLatch;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JFrame;
 
@@ -34,7 +32,6 @@ import javax.swing.JFrame;
  */
 public class SymbolViewerFX implements ISymbolResultsListener
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(SymbolViewerFX.class.getName());
     private ISymbolResultsListener mListener;
 
     public SymbolViewerFX()
@@ -66,17 +63,6 @@ public class SymbolViewerFX implements ISymbolResultsListener
             mListener = viewer;
             Scene scene = new Scene(viewer, 1400, 1000);
 
-//            URL resource = getClass().getResource("/sdrtrunk_style.css");
-//
-//            if(resource != null)
-//            {
-//                scene.getStylesheets().add(resource.toExternalForm());
-//            }
-//            else
-//            {
-//                LOGGER.warn("Can't find stylesheet resource for sdrtrunk");
-//            }
-
             fxPanel.setScene(scene);
             fxPanel.setVisible(true);
 
@@ -98,7 +84,8 @@ public class SymbolViewerFX implements ISymbolResultsListener
         }
         catch(InterruptedException e)
         {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Symbol viewer initialization was interrupted", e);
         }
     }
 }

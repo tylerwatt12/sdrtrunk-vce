@@ -36,13 +36,6 @@ public class MessagePackager
     private MessagePackage mMessagePackage;
 
     /**
-     * Constructs an instance
-     */
-    public MessagePackager()
-    {
-    }
-
-    /**
      * Adds an audio segment.
      * @param audioSegment to add
      */
@@ -90,19 +83,16 @@ public class MessagePackager
      */
     public void add(IDecodeEvent event)
     {
-        if(mMessagePackage != null)
+        if(mMessagePackage != null && event instanceof DecodeEvent decodeEvent)
         {
-            if(event instanceof DecodeEvent decodeEvent)
+            try
             {
-                try
-                {
-                    DecodeEventSnapshot snapshot = decodeEvent.getSnapshot();
-                    mMessagePackage.add(snapshot);
-                }
-                catch(Exception e)
-                {
-                    e.printStackTrace();
-                }
+                DecodeEventSnapshot snapshot = decodeEvent.getSnapshot();
+                mMessagePackage.add(snapshot);
+            }
+            catch(Exception e)
+            {
+                e.printStackTrace();
             }
         }
     }

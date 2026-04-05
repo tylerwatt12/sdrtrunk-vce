@@ -186,17 +186,10 @@ public class RecentFilesMenu extends Menu implements EventHandler<ActionEvent>
     @Override
     public void handle(ActionEvent event)
     {
-        if(mFileSelectionListener != null)
+        if(mFileSelectionListener != null && event.getSource() instanceof MenuItem menuItem
+                && menuItem.getUserData() instanceof File file)
         {
-            if(event.getSource() instanceof MenuItem)
-            {
-                Object fileObject = ((MenuItem)event.getSource()).getUserData();
-
-                if(fileObject instanceof File)
-                {
-                    mFileSelectionListener.fileSelected((File)fileObject);
-                }
-            }
+            mFileSelectionListener.fileSelected(file);
         }
     }
 

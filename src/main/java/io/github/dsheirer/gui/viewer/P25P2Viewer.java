@@ -275,7 +275,6 @@ public class P25P2Viewer extends VBox
                 messageProcessor.setMessageListener(message -> {
                     if(!(message instanceof StuffBitsMessage))
                     {
-//                        System.out.println(message);
                         //Add the initial message to the packager so that it can be combined with any decoder state events.
                         messagePackager.add(message);
                         if(message.getTimeslot() == P25P1Message.TIMESLOT_1)
@@ -297,7 +296,6 @@ public class P25P2Viewer extends VBox
                     while(reader.hasNext())
                     {
                         ByteBuffer buffer = reader.next();
-//                        System.out.println("Processing Bytes " + buffer.capacity() + " / " + reader.getByteCounter());
                         messageFramer.receive(buffer);
                     }
                 }

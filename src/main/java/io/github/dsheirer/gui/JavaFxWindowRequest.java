@@ -24,7 +24,7 @@ package io.github.dsheirer.gui;
  */
 public abstract class JavaFxWindowRequest
 {
-    public JavaFxWindowRequest()
+    protected JavaFxWindowRequest()
     {
     }
 }

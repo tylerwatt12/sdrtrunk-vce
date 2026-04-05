@@ -110,7 +110,7 @@ public class ChannelStartProcessingRequestViewer extends HBox
 
             if(request.getChildDecodeEventHistory() != null)
             {
-                getChildDecodeHistoryLabel().setText(request.getChildDecodeEventHistory().getItems().size() + " items");
+                getChildDecodeHistoryLabel().setText(formatItemCount(request.getChildDecodeEventHistory().getItems().size()));
             }
             else
             {
@@ -119,7 +119,7 @@ public class ChannelStartProcessingRequestViewer extends HBox
 
             if(request.getParentDecodeEventHistory() != null)
             {
-                getParentDecodeHistoryLabel().setText(request.getParentDecodeEventHistory().getItems().size() + " items");
+                getParentDecodeHistoryLabel().setText(formatItemCount(request.getParentDecodeEventHistory().getItems().size()));
             }
             else
             {
@@ -128,7 +128,7 @@ public class ChannelStartProcessingRequestViewer extends HBox
 
             if(request.getPreloadDataContents() != null)
             {
-                getPreloadDataContentLabel().setText(request.getPreloadDataContents().size() + " items");
+                getPreloadDataContentLabel().setText(formatItemCount(request.getPreloadDataContents().size()));
             }
             else
             {
@@ -159,6 +159,11 @@ public class ChannelStartProcessingRequestViewer extends HBox
             getPreloadDataContentLabel().setText(null);
             getTrafficChannelManagerLabel().setText(null);
         }
+    }
+
+    private String formatItemCount(int count)
+    {
+        return count + " items";
     }
 
     public Label getChannelConfigLabel()

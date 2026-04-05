@@ -29,13 +29,6 @@ public class ChannelView extends VBox
     private boolean mShowing = false;
 
     /**
-     * Constructs an instance.
-     */
-    public ChannelView()
-    {
-    }
-
-    /**
      * Indicates if this panel is currently showing.
       * @return true if showing.
      */

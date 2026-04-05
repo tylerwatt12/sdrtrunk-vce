@@ -67,6 +67,7 @@ import java.awt.AWTException;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.EventQueue;
+import java.awt.Frame;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
 import java.awt.Robot;
@@ -102,7 +103,9 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JSeparator;
 import javax.swing.KeyStroke;
+import javax.swing.SwingConstants;
 import javax.swing.UIManager;
+import javax.swing.WindowConstants;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import javax.swing.plaf.metal.MetalLookAndFeel;
@@ -370,7 +373,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mMainGui.setLocationRelativeTo(null);
         }
-        mMainGui.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         mMainGui.addWindowListener(new ShutdownMonitor());
 
         Dimension dimension = mUserPreferences.getSwingPreference().getDimension(WINDOW_FRAME_IDENTIFIER);
@@ -385,7 +388,6 @@ public class SDRTrunk implements Listener<TunerEvent>
             {
                 Dimension pref = mSpectralPanel.getPreferredSize();
                 mSpectralPanel.setPreferredSize(new Dimension(pref.width, spectral.height));
-                // mSpectralPanel.setSize(spectral);
             }
 
             Dimension controller = mUserPreferences.getSwingPreference().getDimension(CONTROLLER_PANEL_IDENTIFIER);
@@ -393,14 +395,13 @@ public class SDRTrunk implements Listener<TunerEvent>
             {
                 Dimension pref = mControllerPanel.getPreferredSize();
                 mControllerPanel.setPreferredSize(new Dimension(pref.width, controller.height));
-                // mControllerPanel.setSize(controller);
             }
 
             mMainGui.setSize(dimension);
 
             if(mUserPreferences.getSwingPreference().getMaximized(WINDOW_FRAME_IDENTIFIER, false))
             {
-                mMainGui.setExtendedState(JFrame.MAXIMIZED_BOTH);
+                mMainGui.setExtendedState(Frame.MAXIMIZED_BOTH);
             }
         }
         else
@@ -476,7 +477,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         diagnosticMenu.add(processingStatusReportMenuItem);
         diagnosticMenu.add(threadDumpReportMenuItem);
         fileMenu.add(diagnosticMenu);
-        fileMenu.add(new JSeparator(JSeparator.HORIZONTAL));
+        fileMenu.add(new JSeparator(SwingConstants.HORIZONTAL));
 
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> {
@@ -649,7 +650,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
         mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
         mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
-            (mMainGui.getExtendedState() & JFrame.MAXIMIZED_BOTH) == JFrame.MAXIMIZED_BOTH);
+            (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
         mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
         mJavaFxWindowManager.shutdown();

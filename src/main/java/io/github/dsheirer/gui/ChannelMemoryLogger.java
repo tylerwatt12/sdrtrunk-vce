@@ -12,9 +12,9 @@ public class ChannelMemoryLogger implements Runnable, ChannelEventListener
 {
 	private static final Logger mLog = LoggerFactory.getLogger( ChannelMemoryLogger.class );
 
-	public int mChannelCount;
-	public int mChannelProcessingCount;
-	public int mTrafficChannelCount;
+	private int mChannelCount;
+	private int mChannelProcessingCount;
+	private int mTrafficChannelCount;
 	
 	@Override
 	public void run()

@@ -39,7 +39,6 @@ import javafx.scene.layout.VBox;
 public class SyncVisualizer extends VBox implements ISyncResultsListener
 {
     private static final int SYMBOL_CHART_SERIES_COUNT = 2000;
-    private static final float SYMBOL = (float) (Math.PI / 4.0);
     private final NumberAxis mConstellationI = new NumberAxis();
     private final NumberAxis mConstellationQ = new NumberAxis();
     private final NumberAxis mSampleTiming = new NumberAxis();
@@ -98,7 +97,6 @@ public class SyncVisualizer extends VBox implements ISyncResultsListener
         hbox.getChildren().add(mConstellationChart);
         HBox.setHgrow(mEqualizerChart, Priority.ALWAYS);
         hbox.getChildren().add(mEqualizerChart);
-        //        VBox.setVgrow(hbox, Priority.ALWAYS);
 
         VBox.setVgrow(mSampleChart, Priority.ALWAYS);
         VBox.setVgrow(mSymbolChart, Priority.ALWAYS);

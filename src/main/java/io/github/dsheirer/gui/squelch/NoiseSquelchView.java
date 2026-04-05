@@ -102,9 +102,9 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
     /**
      * Noise squelch history buffer size for x-axis of the XY chart, in units of 10 milliseconds.
      */
-    private final int HISTORY_BUFFER_SIZE = 200; //200 x 10ms = 2,000ms / 2-second history view
+    private static final int HISTORY_BUFFER_SIZE = 200; //200 x 10ms = 2,000ms / 2-second history view
 
-    private final String NOT_AVAILABLE = "not available";
+    private static final String NOT_AVAILABLE = "not available";
     private final PlaylistManager mPlaylistManager;
     private final List<NoiseSquelchState> mSquelchStateHistory = new ArrayList<>();
     private INoiseSquelchController mController;
@@ -476,7 +476,16 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
                     mHysteresisCloseThresholdSeries.getData().get(x).setYValue(hysteresisCloseThreshold[x]);
                 }
 
-                getSquelchStateLabel().setText(finalSquelchOverride ? "Override" : finalSquelch ? "Closed" : "Open");
+                String squelchStateText;
+                if(finalSquelchOverride)
+                {
+                    squelchStateText = "Override";
+                }
+                else
+                {
+                    squelchStateText = finalSquelch ? "Closed" : "Open";
+                }
+                getSquelchStateLabel().setText(squelchStateText);
                 updateLabelNoise(noiseCurrentFinal);
                 updateLabelHysteresis(hysteresisCurrentFinal);
             }

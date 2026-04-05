@@ -170,83 +170,78 @@ public class DmrViewer extends VBox
             getSelectedFileLabel().setText("Loading ...");
             final boolean useCompressed = getUseCompressedTalkgroups().isSelected();
 
-            ThreadPool.CACHED.submit(new Runnable()
-            {
-                @Override
-                public void run()
+            ThreadPool.CACHED.submit(() -> {
+                List<MessagePackage> messagePackages = new ArrayList<>();
+                DMRCrcMaskManager crcMaskManager = new DMRCrcMaskManager(false);
+                DMRMessageFramer messageFramer = new DMRMessageFramer(crcMaskManager);
+                messageFramer.start();
+                DMRHardSymbolProcessor symbolProcessor = new DMRHardSymbolProcessor(messageFramer);
+                DecodeConfigDMR config = new DecodeConfigDMR();
+                config.setUseCompressedTalkgroups(useCompressed);
+                DMRMessageProcessor messageProcessor = new DMRMessageProcessor(config, crcMaskManager);
+                messageFramer.setListener(messageProcessor);
+                MessagePackager messagePackager = new MessagePackager();
+
+                //Setup a temporary event bus to capture channel start processing requests
+                EventBus eventBus = new EventBus("debug");
+                eventBus.register(messagePackager);
+                Channel empty = new Channel("Empty");
+                empty.setDecodeConfiguration(new DecodeConfigDMR());
+                DMRTrafficChannelManager trafficChannelManager = new DMRTrafficChannelManager(empty);
+                trafficChannelManager.setInterModuleEventBus(eventBus);
+
+                //Register to receive events
+                trafficChannelManager.addDecodeEventListener(messagePackager::add);
+                DMRDecoderState decoderState1 = new DMRDecoderState(empty, 1, trafficChannelManager);
+                Broadcaster<DecoderStateEvent> decoderStateEventBroadcaster1 = new Broadcaster<>();
+                decoderState1.setDecoderStateListener(decoderStateEventBroadcaster1);
+                decoderStateEventBroadcaster1.addListener(messagePackager::add);
+                DMRDecoderState decoderState2 = new DMRDecoderState(empty, 2, trafficChannelManager);
+                decoderState1.addDecodeEventListener(messagePackager::add);
+                decoderState1.start();
+
+                Broadcaster<DecoderStateEvent> decoderStateEventBroadcaster2 = new Broadcaster<>();
+                decoderState2.setDecoderStateListener(decoderStateEventBroadcaster2);
+                decoderStateEventBroadcaster2.addListener(messagePackager::add);
+                decoderState2.addDecodeEventListener(messagePackager::add);
+                decoderState2.start();
+
+                messageProcessor.setMessageListener(message -> {
+                    //Add the initial message to the packager so that it can be combined with any decoder state events.
+                    messagePackager.add(message);
+                    if(message.getTimeslot() == P25P1Message.TIMESLOT_1)
+                    {
+                        decoderState1.receive(message);
+                    }
+                    else if(message.getTimeslot() == P25P1Message.TIMESLOT_2)
+                    {
+                        decoderState2.receive(message);
+                    }
+
+                    //Collect the packaged message with events
+                    messagePackages.add(messagePackager.getMessageWithEvents());
+                });
+
+
+                try(BinaryReader reader = new BinaryReader(file.toPath(), 200))
                 {
-                    List<MessagePackage> messagePackages = new ArrayList<>();
-                    DMRCrcMaskManager crcMaskManager = new DMRCrcMaskManager(false);
-                    DMRMessageFramer messageFramer = new DMRMessageFramer(crcMaskManager);
-                    messageFramer.start();
-                    DMRHardSymbolProcessor symbolProcessor = new DMRHardSymbolProcessor(messageFramer);
-                    DecodeConfigDMR config = new DecodeConfigDMR();
-                    config.setUseCompressedTalkgroups(useCompressed);
-                    DMRMessageProcessor messageProcessor = new DMRMessageProcessor(config, crcMaskManager);
-                    messageFramer.setListener(messageProcessor);
-                    MessagePackager messagePackager = new MessagePackager();
-
-                    //Setup a temporary event bus to capture channel start processing requests
-                    EventBus eventBus = new EventBus("debug");
-                    eventBus.register(messagePackager);
-                    Channel empty = new Channel("Empty");
-                    empty.setDecodeConfiguration(new DecodeConfigDMR());
-                    DMRTrafficChannelManager trafficChannelManager = new DMRTrafficChannelManager(empty);
-                    trafficChannelManager.setInterModuleEventBus(eventBus);
-
-                    //Register to receive events
-                    trafficChannelManager.addDecodeEventListener(messagePackager::add);
-                    DMRDecoderState decoderState1 = new DMRDecoderState(empty, 1, trafficChannelManager);
-                    Broadcaster<DecoderStateEvent> decoderStateEventBroadcaster1 = new Broadcaster<>();
-                    decoderState1.setDecoderStateListener(decoderStateEventBroadcaster1);
-                    decoderStateEventBroadcaster1.addListener(messagePackager::add);
-                    DMRDecoderState decoderState2 = new DMRDecoderState(empty, 2, trafficChannelManager);
-                    decoderState1.addDecodeEventListener(messagePackager::add);
-                    decoderState1.start();
-
-                    Broadcaster<DecoderStateEvent> decoderStateEventBroadcaster2 = new Broadcaster<>();
-                    decoderState2.setDecoderStateListener(decoderStateEventBroadcaster2);
-                    decoderStateEventBroadcaster2.addListener(messagePackager::add);
-                    decoderState2.addDecodeEventListener(messagePackager::add);
-                    decoderState2.start();
-
-                    messageProcessor.setMessageListener(message -> {
-                        //Add the initial message to the packager so that it can be combined with any decoder state events.
-                        messagePackager.add(message);
-                        if(message.getTimeslot() == P25P1Message.TIMESLOT_1)
-                        {
-                            decoderState1.receive(message);
-                        }
-                        else if(message.getTimeslot() == P25P1Message.TIMESLOT_2)
-                        {
-                            decoderState2.receive(message);
-                        }
-
-                        //Collect the packaged message with events
-                        messagePackages.add(messagePackager.getMessageWithEvents());
-                    });
-
-
-                    try(BinaryReader reader = new BinaryReader(file.toPath(), 200))
+                    while(reader.hasNext())
                     {
-                        while(reader.hasNext())
-                        {
-                            ByteBuffer buffer = reader.next();
-                            symbolProcessor.receive(buffer);
-                        }
+                        ByteBuffer buffer = reader.next();
+                        symbolProcessor.receive(buffer);
                     }
-                    catch(Exception ioe)
-                    {
-                        ioe.printStackTrace();
-                    }
-
-                    Platform.runLater(() -> {
-                        getLoadingIndicator().setVisible(false);
-                        getSelectedFileLabel().setText(file.getName());
-                        mMessagePackages.addAll(messagePackages);
-                        getMessagePackageTableView().scrollTo(0);
-                    });
                 }
+                catch(Exception ioe)
+                {
+                    ioe.printStackTrace();
+                }
+
+                Platform.runLater(() -> {
+                    getLoadingIndicator().setVisible(false);
+                    getSelectedFileLabel().setText(file.getName());
+                    mMessagePackages.addAll(messagePackages);
+                    getMessagePackageTableView().scrollTo(0);
+                });
             });
         }
     }

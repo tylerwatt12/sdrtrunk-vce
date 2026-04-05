@@ -26,6 +26,8 @@ import io.github.dsheirer.util.ThreadPool;
 import java.util.Random;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Simple simulator with integrated timer to produce random noise squelch state values to support debug and testing of
@@ -33,6 +35,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class NoiseSquelchSimulator implements INoiseSquelchController
 {
+    private static final Logger mLog = LoggerFactory.getLogger(NoiseSquelchSimulator.class);
     private Listener<NoiseSquelchState> mListener;
     private float mNoiseOpenThreshold = 0.1f;
     private float mNoiseCloseThreshold = 0.2f;
@@ -41,7 +44,6 @@ public class NoiseSquelchSimulator implements INoiseSquelchController
     private int mHysteresis;
     private int mHysteresisCounter;
     private boolean mSquelchOverride;
-    private boolean mSquelch;
     private ScheduledFuture<?> mTimerFuture;
     private Random mRandom = new Random();
 
@@ -78,7 +80,7 @@ public class NoiseSquelchSimulator implements INoiseSquelchController
     {
         if(mHysteresisOpenThreshold != open || mHysteresisCloseThreshold != close)
         {
-            System.out.println("Setting hysteresis thresholds - open:" + open + " close:" + close);
+            mLog.debug("Setting hysteresis thresholds - open:{} close:{}", open, close);
             mHysteresisOpenThreshold = open;
             mHysteresisCloseThreshold = close;
         }
@@ -97,12 +99,12 @@ public class NoiseSquelchSimulator implements INoiseSquelchController
             mHysteresisCounter++;
             if(mHysteresisCounter > 10)
             {
-                mHysteresis = (int)(mRandom.nextFloat() * 10);
+                mHysteresis = mRandom.nextInt(10);
                 mHysteresis = Math.min(mHysteresis, mHysteresisCloseThreshold);
             }
             float noise = mRandom.nextFloat() * 0.5f;
-            mSquelch = noise > mNoiseOpenThreshold;
-            mListener.receive(new NoiseSquelchState(mSquelch, mSquelchOverride, noise, mNoiseOpenThreshold,
+            boolean squelch = noise > mNoiseOpenThreshold;
+            mListener.receive(new NoiseSquelchState(squelch, mSquelchOverride, noise, mNoiseOpenThreshold,
                     mNoiseCloseThreshold, mHysteresis, mHysteresisOpenThreshold, mHysteresisCloseThreshold));
         }
     }

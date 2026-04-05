@@ -24,8 +24,6 @@ import java.util.concurrent.CountDownLatch;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JFrame;
 
@@ -34,7 +32,6 @@ import javax.swing.JFrame;
  */
 public class SyncResultsViewer implements ISyncResultsListener
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(SyncResultsViewer.class.getName());
     private ISyncResultsListener mListener;
 
     public SyncResultsViewer()
@@ -85,17 +82,6 @@ public class SyncResultsViewer implements ISyncResultsListener
 
             Scene scene = new Scene(syncVisualizer, 1400, 1000);
 
-//            URL resource = getClass().getResource("/sdrtrunk_style.css");
-//
-//            if(resource != null)
-//            {
-//                scene.getStylesheets().add(resource.toExternalForm());
-//            }
-//            else
-//            {
-//                LOGGER.warn("Can't find stylesheet resource for sdrtrunk");
-//            }
-
             fxPanel.setScene(scene);
             fxPanel.setVisible(true);
 
@@ -117,7 +103,8 @@ public class SyncResultsViewer implements ISyncResultsListener
         }
         catch(InterruptedException e)
         {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Sync results viewer initialization was interrupted", e);
         }
     }
 }

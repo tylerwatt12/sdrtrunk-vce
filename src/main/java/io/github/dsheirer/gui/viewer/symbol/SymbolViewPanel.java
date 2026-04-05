@@ -38,7 +38,6 @@ import javafx.scene.layout.VBox;
  */
 public class SymbolViewPanel extends VBox implements ISymbolResultsListener
 {
-    private static final double TWO_PI = Math.PI * 2.0;
     private final NumberAxis mRawTiming = new NumberAxis();
     private final NumberAxis mRawValue = new NumberAxis(-1.1, 1.1, .1);
     private final NumberAxis mDemodulatedTiming = new NumberAxis();
@@ -151,7 +150,6 @@ public class SymbolViewPanel extends VBox implements ISymbolResultsListener
                     demodulatedSeriesI.getData().add(new XYChart.Data<>(x, demodulatedI));
                     demodulatedSeriesQ.getData().add(new XYChart.Data<>(x, demodulatedQ));
                     symbolsRaw.getData().add(new XYChart.Data<>(x, Math.atan2(demodulatedQ, demodulatedI)));
-//                    symbolsPLL.getData().add(new XYChart.Data<>(x, normalize(Math.atan2(demodulatedQ, demodulatedI) + pll)));
                 }
             }
 
@@ -202,11 +200,7 @@ public class SymbolViewPanel extends VBox implements ISymbolResultsListener
             symbolM3.getData().add(new XYChart.Data<>(rawI.length - 1, -3 * Math.PI / 4));
 
             symbolsWithPLL.getData().add((new XYChart.Data<>(points[0], symbolSequence[0])));
-//            symbolsWithPLL.getData().add((new XYChart.Data<>(points[1], symbolSequence[1])));
             symbolsWithPLL.getData().add((new XYChart.Data<>(points[2], symbolSequence[2])));
-//            symbolsWithoutPLL.getData().add((new XYChart.Data<>(points[0], normalize(symbolSequence[0] - pll))));
-//            symbolsWithoutPLL.getData().add((new XYChart.Data<>(points[1], normalize(symbolSequence[1] - pll))));
-//            symbolsWithoutPLL.getData().add((new XYChart.Data<>(points[2], normalize(symbolSequence[2] - pll))));
 
             mRawChart.getData().clear();
             mRawChart.getData().add(rawSeriesI);
@@ -222,34 +216,13 @@ public class SymbolViewPanel extends VBox implements ISymbolResultsListener
             mDemodulatedChart.getData().add(demodulatedDecisionQ);
             mSymbolChart.getData().clear();
             mSymbolChart.getData().add(symbolsRaw);
-//            mSymbolChart.getData().add(symbolsPLL);
             mSymbolChart.getData().add(symbolTiming);
             mSymbolChart.getData().add(symbolP3);
             mSymbolChart.getData().add(symbolP1);
             mSymbolChart.getData().add(symbolM1);
             mSymbolChart.getData().add(symbolM3);
             mSymbolChart.getData().add(symbolsWithPLL);
-//            mSymbolChart.getData().add(symbolsWithoutPLL);
             mDisplayText.setText("PLL: " + pll + " Sample Gain: " + sampleGain);
         });
-    }
-
-    /**
-     * Normalizes the value in radians to the range of +/-(2 * PI)
-     * @param value to normalize
-     * @return normalized value.
-     */
-    private static double normalize(double value)
-    {
-        if(value > Math.PI)
-        {
-            return value - TWO_PI;
-        }
-        else if(value < -Math.PI)
-        {
-            return value + TWO_PI;
-        }
-
-        return value;
     }
 }
