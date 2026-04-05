@@ -66,8 +66,7 @@ public class NegotiateBufferSize extends UltravoxMessage
         {
             try
             {
-                int bufferSize = Integer.parseInt(payload.substring(4));
-                return bufferSize;
+                return Integer.parseInt(payload.substring(4));
             }
             catch(Exception e)
             {

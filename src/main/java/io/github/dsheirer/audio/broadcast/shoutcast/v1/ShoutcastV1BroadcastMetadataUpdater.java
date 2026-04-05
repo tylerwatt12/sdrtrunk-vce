@@ -55,7 +55,7 @@ import org.slf4j.LoggerFactory;
 public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUpdater
 {
     private static final Logger mLog = LoggerFactory.getLogger(ShoutcastV1BroadcastMetadataUpdater.class);
-    private final static String UTF8 = "UTF-8";
+    private static final String UTF8 = "UTF-8";
 
     private ShoutcastV1Configuration mShoutcastV1Configuration;
     private AliasModel mAliasModel;
@@ -84,9 +84,6 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
         if(mSocketConnector == null)
         {
             mSocketConnector = new NioSocketConnector();
-
-//            mSocketConnector.getFilterChain().addLast("logger",
-//                new LoggingFilter(ShoutcastV1BroadcastMetadataUpdater.class));
 
             mSocketConnector.getFilterChain().addLast("http_client_codec", new HttpClientCodec());
 
@@ -134,42 +131,35 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
 
                 if(updateRequest != null)
                 {
-                    ThreadPool.CACHED.submit(new Runnable()
+                    ThreadPool.CACHED.submit(() ->
                     {
-                        @Override
-                        public void run()
+                        try
                         {
-                            try
-                            {
-                                ConnectFuture connectFuture = getSocketConnector()
-                                    .connect(new InetSocketAddress(mShoutcastV1Configuration.getHost(),
-                                        mShoutcastV1Configuration.getPort()));
-                                connectFuture.awaitUninterruptibly();
-                                IoSession session = connectFuture.getSession();
+                            ConnectFuture connectFuture = getSocketConnector()
+                                .connect(new InetSocketAddress(mShoutcastV1Configuration.getHost(),
+                                    mShoutcastV1Configuration.getPort()));
+                            connectFuture.awaitUninterruptibly();
+                            IoSession session = connectFuture.getSession();
 
-                                if(session != null)
-                                {
-                                    session.write(updateRequest);
-                                }
+                            if(session != null)
+                            {
+                                session.write(updateRequest);
                             }
-                            catch(Exception e)
+                        }
+                        catch(Exception e)
+                        {
+                            Throwable throwableCause = e.getCause();
+
+                            if(throwableCause instanceof ConnectException)
                             {
-                                Throwable throwableCause = e.getCause();
+                                //Do nothing, the server is unavailable
+                            }
+                            else if(!mStackTraceLoggingSuppressed)
+                            {
+                                mLog.error("Error sending metadata update.  Future errors will " +
+                                    "be suppressed", e);
 
-                                if(throwableCause instanceof ConnectException)
-                                {
-                                    //Do nothing, the server is unavailable
-                                }
-                                else
-                                {
-                                    if(!mStackTraceLoggingSuppressed)
-                                    {
-                                        mLog.error("Error sending metadata update.  Future errors will " +
-                                            "be suppressed", e);
-
-                                        mStackTraceLoggingSuppressed = true;
-                                    }
-                                }
+                                mStackTraceLoggingSuppressed = true;
                             }
                         }
                     });
@@ -286,10 +276,8 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
 
             Map<String,String> headers = new HashMap<>();
 
-            HttpRequestImpl request = new HttpRequestImpl(HttpVersion.HTTP_1_0, HttpMethod.GET, "/admin.cgi",
+            return new HttpRequestImpl(HttpVersion.HTTP_1_0, HttpMethod.GET, "/admin.cgi",
                 sb.toString(), headers);
-
-            return request;
         }
         catch(UnsupportedEncodingException e)
         {

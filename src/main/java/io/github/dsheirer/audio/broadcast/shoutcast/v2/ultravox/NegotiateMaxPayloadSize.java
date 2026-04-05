@@ -73,8 +73,7 @@ public class NegotiateMaxPayloadSize extends UltravoxMessage
         {
             try
             {
-                int maximumPayloadSize = Integer.parseInt(payload.substring(4));
-                return maximumPayloadSize;
+                return Integer.parseInt(payload.substring(4));
             }
             catch(Exception e)
             {

@@ -50,7 +50,6 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.util.ThreadPool;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -262,109 +261,102 @@ public class ShoutcastV2AudioStreamingBroadcaster extends AudioStreamingBroadcas
 
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" ?><metadata>");
 
-        try
+        sb.append(UltravoxMetadata.ALBUM_TITLE.asXML(getConfiguration().getName()));
+
+        sb.append(UltravoxMetadata.BROADCAST_CLIENT_APPLICATION.asXML(SystemProperties.getInstance().getApplicationName()));
+
+        if(getConfiguration().hasGenre())
         {
-            sb.append(UltravoxMetadata.ALBUM_TITLE.asXML(getConfiguration().getName()));
+            sb.append(UltravoxMetadata.GENRE.asXML(getConfiguration().getGenre()));
+        }
 
-            sb.append(UltravoxMetadata.BROADCAST_CLIENT_APPLICATION.asXML(SystemProperties.getInstance().getApplicationName()));
+        if(getConfiguration().hasURL())
+        {
+            sb.append(UltravoxMetadata.URL.asXML(getConfiguration().getURL()));
+        }
 
-            if(getConfiguration().hasGenre())
+        if(identifierCollection != null)
+        {
+            StringBuilder sbTitle2 = new StringBuilder();
+
+            AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
+
+            Identifier to = identifierCollection.getIdentifier(IdentifierClass.USER, Form.PATCH_GROUP, Role.TO);
+
+            if(to == null)
             {
-                sb.append(UltravoxMetadata.GENRE.asXML(getConfiguration().getGenre()));
+                to = identifierCollection.getIdentifier(IdentifierClass.USER, Form.TALKGROUP, Role.TO);
             }
 
-            if(getConfiguration().hasURL())
+            if(to == null)
             {
-                sb.append(UltravoxMetadata.URL.asXML(getConfiguration().getURL()));
+                List<Identifier> toIdentifiers = identifierCollection.getIdentifiers(Role.TO);
+
+                if(!toIdentifiers.isEmpty())
+                {
+                    to = toIdentifiers.get(0);
+                }
             }
 
-            if(identifierCollection != null)
+            if(to != null)
             {
-                StringBuilder sbTitle2 = new StringBuilder();
+                List<Alias> aliases = aliasList.getAliases(to);
 
-                AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
+                //Check for 'Stream As Talkgroup' alias and use this instead of the decoded TO value.
+                Optional<Alias> streamAs = aliases.stream().filter(alias -> alias.getStreamTalkgroupAlias() != null).findFirst();
 
-                Identifier to = identifierCollection.getIdentifier(IdentifierClass.USER, Form.PATCH_GROUP, Role.TO);
-
-                if(to == null)
+                if(streamAs.isPresent())
                 {
-                    to = identifierCollection.getIdentifier(IdentifierClass.USER, Form.TALKGROUP, Role.TO);
-                }
-
-                if(to == null)
-                {
-                    List<Identifier> toIdentifiers = identifierCollection.getIdentifiers(Role.TO);
-
-                    if(!toIdentifiers.isEmpty())
-                    {
-                        to = toIdentifiers.get(0);
-                    }
-                }
-
-                if(to != null)
-                {
-                    List<Alias> aliases = aliasList.getAliases(to);
-
-                    //Check for 'Stream As Talkgroup' alias and use this instead of the decoded TO value.
-                    Optional<Alias> streamAs = aliases.stream().filter(alias -> alias.getStreamTalkgroupAlias() != null).findFirst();
-
-                    if(streamAs.isPresent())
-                    {
-                        sbTitle2.append("TO:").append(streamAs.get().getStreamTalkgroupAlias().getValue());
-                    }
-                    else
-                    {
-                        sbTitle2.append("TO:").append(to);
-
-                        if(!aliases.isEmpty())
-                        {
-                            sbTitle2.append(" ").append(Joiner.on(", ").skipNulls().join(aliases));
-                        }
-                    }
+                    sbTitle2.append("TO:").append(streamAs.get().getStreamTalkgroupAlias().getValue());
                 }
                 else
                 {
-                    sbTitle2.append("TO:UNKNOWN");
-                }
-
-                Identifier from = identifierCollection.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
-
-                if(from == null)
-                {
-                    List<Identifier> fromIdentifiers = identifierCollection.getIdentifiers(Role.FROM);
-
-                    if(!fromIdentifiers.isEmpty())
-                    {
-                        from = fromIdentifiers.get(0);
-                    }
-                }
-
-                if(from != null)
-                {
-                    sbTitle2.append(" FROM:").append(from);
-
-                    List<Alias> aliases = aliasList.getAliases(from);
+                    sbTitle2.append("TO:").append(to);
 
                     if(!aliases.isEmpty())
                     {
                         sbTitle2.append(" ").append(Joiner.on(", ").skipNulls().join(aliases));
                     }
                 }
-                else
-                {
-                    sbTitle2.append(" FROM:UNKNOWN");
-                }
-
-                sb.append(UltravoxMetadata.TITLE_2.asXML(sbTitle2.toString()));
             }
             else
             {
-                sb.append(UltravoxMetadata.TITLE_2.asXML("Scanning ..."));
+                sbTitle2.append("TO:UNKNOWN");
             }
+
+            Identifier from = identifierCollection.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+
+            if(from == null)
+            {
+                List<Identifier> fromIdentifiers = identifierCollection.getIdentifiers(Role.FROM);
+
+                if(!fromIdentifiers.isEmpty())
+                {
+                    from = fromIdentifiers.get(0);
+                }
+            }
+
+            if(from != null)
+            {
+                sbTitle2.append(" FROM:").append(from);
+
+                List<Alias> aliases = aliasList.getAliases(from);
+
+                if(!aliases.isEmpty())
+                {
+                    sbTitle2.append(" ").append(Joiner.on(", ").skipNulls().join(aliases));
+                }
+            }
+            else
+            {
+                sbTitle2.append(" FROM:UNKNOWN");
+            }
+
+            sb.append(UltravoxMetadata.TITLE_2.asXML(sbTitle2.toString()));
         }
-        catch(UnsupportedEncodingException uee)
+        else
         {
-            mLog.error("UTF-8 Encoding is not supported - shoutcast/ultravox metadata will not be updated");
+            sb.append(UltravoxMetadata.TITLE_2.asXML("Scanning ..."));
         }
 
         sb.append("</metadata>");

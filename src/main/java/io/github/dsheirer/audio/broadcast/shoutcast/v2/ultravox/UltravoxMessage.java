@@ -30,20 +30,19 @@ public abstract class UltravoxMessage
     public static final String VALID_RESPONSE_PAYLOAD_PREFIX = "ACK:";
     public static final String ERROR_RESPONSE_PREFIX = "NAK:";
 
-    public static final int[] SYNC = {0,1,2,3,4,5,6,7};
-    public static final int[] RESERVED = {8,9,10,11};
+    private static final int[] SYNC = {0,1,2,3,4,5,6,7};
     public static final int REQUIRED_DELIVERY = 12;
-    public static final int[] SEND_QUEUE_PRIORITY = {13,14,15};
-    public static final int[] MESSAGE_CLASS = {16,17,18,19};
-    public static final int[] MESSAGE_CLASS_AND_TYPE = {16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
-    public static final int[] PAYLOAD_LENGTH = {32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47};
+    private static final int[] SEND_QUEUE_PRIORITY = {13,14,15};
+    private static final int[] MESSAGE_CLASS = {16,17,18,19};
+    private static final int[] MESSAGE_CLASS_AND_TYPE = {16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
+    private static final int[] PAYLOAD_LENGTH = {32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47};
 
     private BinaryMessage mMessage;
 
     /**
      * Constructs a ultravox from the byte array
      */
-    public UltravoxMessage(byte[] data)
+    protected UltravoxMessage(byte[] data)
     {
         mMessage = new BinaryMessage(data.length * 8);
 
@@ -61,7 +60,7 @@ public abstract class UltravoxMessage
      *
      * @param ultravoxMessageType type of ultravox
      */
-    public UltravoxMessage(UltravoxMessageType ultravoxMessageType)
+    protected UltravoxMessage(UltravoxMessageType ultravoxMessageType)
     {
         mMessage = new BinaryMessage(56);
 

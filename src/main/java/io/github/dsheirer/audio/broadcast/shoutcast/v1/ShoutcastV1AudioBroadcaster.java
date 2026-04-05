@@ -126,9 +126,6 @@ public class ShoutcastV1AudioBroadcaster extends AudioStreamingBroadcaster
                 mSocketConnector = new NioSocketConnector();
                 mSocketConnector.setConnectTimeoutCheckInterval(10000);
 
-//                mSocketConnector.getFilterChain().addLast("logger",
-//                    new LoggingFilter(ShoutcastV1AudioBroadcaster.class));
-
                 mSocketConnector.getFilterChain().addLast("codec",
                     new ProtocolCodecFilter(new TextLineCodecFactory()));
 
@@ -137,52 +134,46 @@ public class ShoutcastV1AudioBroadcaster extends AudioStreamingBroadcaster
 
             mStreamingSession = null;
 
-            Runnable runnable = new Runnable()
+            ThreadPool.CACHED.submit(() ->
             {
-                @Override
-                public void run()
+                setBroadcastState(BroadcastState.CONNECTING);
+
+                try
                 {
-                    setBroadcastState(BroadcastState.CONNECTING);
-
-                    try
-                    {
-                        ConnectFuture future = mSocketConnector
-                            .connect(new InetSocketAddress(getBroadcastConfiguration().getHost(),
-                                getBroadcastConfiguration().getPort()));
-                        future.awaitUninterruptibly();
-                        mStreamingSession = future.getSession();
-                    }
-                    catch(RuntimeIoException rie)
-                    {
-                        Throwable throwableCause = rie.getCause();
-
-                        if(throwableCause instanceof ConnectException)
-                        {
-                            setBroadcastState(BroadcastState.NO_SERVER);
-                        }
-                        else if(throwableCause != null)
-                        {
-                            setBroadcastState(BroadcastState.ERROR);
-                            mLog.debug("Failed to connect", rie);
-                        }
-                        else
-                        {
-                            setBroadcastState(BroadcastState.ERROR);
-                            mLog.debug("Failed to connect - no exception is available");
-                        }
-
-                        disconnect();
-                    }
-                    catch(Throwable t)
-                    {
-                        disconnect();
-                    }
-
-                    mConnecting.set(false);
+                    ConnectFuture future = mSocketConnector
+                        .connect(new InetSocketAddress(getBroadcastConfiguration().getHost(),
+                            getBroadcastConfiguration().getPort()));
+                    future.awaitUninterruptibly();
+                    mStreamingSession = future.getSession();
                 }
-            };
+                catch(RuntimeIoException rie)
+                {
+                    Throwable throwableCause = rie.getCause();
 
-            ThreadPool.CACHED.submit(runnable);
+                    if(throwableCause instanceof ConnectException)
+                    {
+                        setBroadcastState(BroadcastState.NO_SERVER);
+                    }
+                    else if(throwableCause != null)
+                    {
+                        setBroadcastState(BroadcastState.ERROR);
+                        mLog.debug("Failed to connect", rie);
+                    }
+                    else
+                    {
+                        setBroadcastState(BroadcastState.ERROR);
+                        mLog.debug("Failed to connect - no exception is available");
+                    }
+
+                    disconnect();
+                }
+                catch(Throwable t)
+                {
+                    disconnect();
+                }
+
+                mConnecting.set(false);
+            });
         }
 
         return connected();

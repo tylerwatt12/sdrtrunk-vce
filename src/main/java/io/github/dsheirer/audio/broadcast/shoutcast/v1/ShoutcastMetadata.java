@@ -52,6 +52,7 @@ public enum ShoutcastMetadata
 
     public static final String COMMAND_TERMINATOR = "\n";
 
+    @Override
     public String toString()
     {
         return mTag;

@@ -18,7 +18,7 @@
  ******************************************************************************/
 package io.github.dsheirer.audio.broadcast.shoutcast.v2.ultravox;
 
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 
 public enum UltravoxMetadata
 {
@@ -60,11 +60,11 @@ public enum UltravoxMetadata
      * @param value to enclose in XML tags
      * @return xml tag wrapped value
      */
-    public String asXML(String value) throws UnsupportedEncodingException
+    public String asXML(String value)
     {
         StringBuilder sb = new StringBuilder();
         sb.append("<").append(getXMLTag()).append(">");
-        sb.append(new String(value.getBytes(), "UTF-8"));
+        sb.append(new String(value.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8));
         sb.append("</").append(getXMLTag()).append(">");
 
         return sb.toString();

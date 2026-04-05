@@ -20,6 +20,10 @@ package io.github.dsheirer.audio.broadcast.shoutcast.v2.ultravox;
 
 public class UltravoxMessageFactory
 {
+    private UltravoxMessageFactory()
+    {
+    }
+
     /**
      * Creates an empty ultravox of the specified ultravox type for sending to the server
      */
@@ -125,7 +129,7 @@ public class UltravoxMessageFactory
     {
         if(data != null && data.length > 4)
         {
-            int value = (data[2] << 8) + data[3];
+            int value = ((data[2] & 0xFF) << 8) + (data[3] & 0xFF);
 
             return UltravoxMessageType.fromValue(value);
         }
