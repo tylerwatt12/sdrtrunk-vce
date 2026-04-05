@@ -9,8 +9,8 @@ import javax.swing.*;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
 import java.awt.geom.Ellipse2D;
 import java.util.List;
 
@@ -21,10 +21,8 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
 	private int mSampleRate;
 	private int mSymbolRate;
 	private float mSamplesPerSymbol;
-	private float mCounter = 0;
 	private float mOffset = 0;
-	private CircularBuffer<Complex> mBuffer =
-						new CircularBuffer<Complex>( 5000 );
+	private CircularBuffer<Complex> mBuffer =new CircularBuffer<>( 5000 );
 	private Complex mPrevious = new Complex( 1, 1 );
 	
 	public ConstellationViewer( int sampleRate, int symbolRate )
@@ -40,7 +38,7 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
 	{
 		setPreferredSize( new Dimension( 200,200 ) );
 		
-		addMouseListener( new MouseListener()
+		addMouseListener( new MouseAdapter()
 		{
 			@Override
 			public void mouseClicked( MouseEvent e )
@@ -54,11 +52,6 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
 					menu.show( ConstellationViewer.this, e.getX(), e.getY() );
 				}
 			}
-			
-			public void mouseReleased( MouseEvent e ) {}
-			public void mousePressed( MouseEvent e ) {}
-			public void mouseExited( MouseEvent e ) {}
-			public void mouseEntered( MouseEvent e ) {}
 		} );
 	}
 
@@ -103,11 +96,11 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
     	
     	double scale = 0.5d;
     	
-    	mCounter = 0;
+    	float counter = 0;
     	
     	for( Complex sample: samples )
     	{
-    		if( mCounter > ( mOffset + mSamplesPerSymbol ) )
+    		if( counter > ( mOffset + mSamplesPerSymbol ) )
     		{
         		/**
         		 * Multiply the current sample against the complex conjugate of the
@@ -136,7 +129,7 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
         			 * serves as the instantaneous amplitude of the demodulated signal
         			 */
         			double denominator = 1.0d / i;
-        			angle = FastMath.atan( (double)q * denominator );
+        			angle = FastMath.atan( q * denominator );
         		}
         		
         		Ellipse2D.Double ellipse = 
@@ -145,10 +138,10 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
         		
         		graphics.draw( ellipse );
         		
-        		mCounter -= mSamplesPerSymbol;
+        		counter -= mSamplesPerSymbol;
     		}
 
-    		mCounter++;
+    		counter += 1.0f;
     	}
     }
     
@@ -158,7 +151,7 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
 
         public TimingOffsetItem( int maxValue, int currentValue )
         {
-        	super( JSlider.HORIZONTAL, 0, maxValue, currentValue );
+        	super( SwingConstants.HORIZONTAL, 0, maxValue, currentValue );
 
         	setMajorTickSpacing( 10 );
         	setMinorTickSpacing( 5 );
@@ -173,7 +166,7 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
         {
     		int value = ((JSlider)event.getSource()).getValue();
     		
-    		setOffset( (float)value / 10.0f );
+    		setOffset( value / 10.0f );
         }
     }
 }
