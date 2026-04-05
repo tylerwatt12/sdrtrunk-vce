@@ -27,40 +27,27 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Text formatter for integer values displayed and edited as LTR formatted values that constrains values to
- * specified minimum and maximum valid values.
+ * Text formatter for integer values displayed and edited as LTR formatted values (area-lcn-talkgroup).
+ * Valid ranges are enforced by protocol: area 0-1, LCN 0-31, talkgroup 0-255.
  */
 public class LtrFormatter extends TextFormatter<Integer>
 {
 
     /**
      * Constructs an instance
-     * @param minimum allowed value
-     * @param maximum allowed value
      */
-    public LtrFormatter(int minimum, int maximum)
+    public LtrFormatter()
     {
-        super(new LtrIntegerStringConverter(), null, new LtrFilter(minimum, maximum));
+        super(new LtrIntegerStringConverter(), null, new LtrFilter());
     }
 
     /**
-     * Formatted text change filter that only allows formatted characters where the converted decimal value
-     * is also constrained within minimum and maximum valid values.
+     * Formatted text change filter that only allows valid LTR-formatted input.
      */
     public static class LtrFilter implements UnaryOperator<Change>
     {
-        private int mMinimum;
-        private int mMaximum;
-
-        public LtrFilter(int minimum, int maximum)
+        public LtrFilter()
         {
-            mMinimum = minimum;
-            mMaximum = maximum;
-        }
-
-        private boolean isValid(Integer value)
-        {
-            return value != null && mMinimum <= value && value <= mMaximum;
         }
 
         @Override
@@ -159,9 +146,7 @@ public class LtrFormatter extends TextFormatter<Integer>
                     //do nothing
                 }
 
-                int talkgroup = (a << 13) + (b << 8) + c;
-
-                return talkgroup;
+                return (a << 13) + (b << 8) + c;
             }
 
             return null;
