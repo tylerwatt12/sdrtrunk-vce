@@ -32,7 +32,7 @@ public abstract class DFTResultsConverter implements DFTResultsListener, DFTResu
 	 * DFT Results Converter - for converting the output of the JTransforms
 	 * FFT library real and complex forward results
 	 */
-	public DFTResultsConverter()
+	protected DFTResultsConverter()
 	{
 	}
 

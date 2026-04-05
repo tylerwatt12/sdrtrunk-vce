@@ -22,8 +22,6 @@ package io.github.dsheirer.spectrum.menu;
 import io.github.dsheirer.spectrum.ComplexDftProcessor;
 
 import javax.swing.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 
 public class FrameRateItem extends JCheckBoxMenuItem
 {
@@ -44,14 +42,6 @@ public class FrameRateItem extends JCheckBoxMenuItem
     		setSelected( true );
     	}
     	
-    	addActionListener( new ActionListener() 
-    	{
-			@Override
-            public void actionPerformed( ActionEvent arg0 )
-            {
-				mComplexDftProcessor.setFrameRate( mFrameRate );
-            }
-		} );
+    	addActionListener( event -> mComplexDftProcessor.setFrameRate( mFrameRate ) );
     }
 }
-

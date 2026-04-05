@@ -23,8 +23,6 @@ import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.spectrum.ComplexDftProcessor;
 
 import javax.swing.JCheckBoxMenuItem;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 
 public class FFTWindowTypeItem extends JCheckBoxMenuItem
 {
@@ -45,13 +43,6 @@ public class FFTWindowTypeItem extends JCheckBoxMenuItem
             setSelected(true);
         }
 
-        addActionListener(new ActionListener()
-        {
-            @Override public void actionPerformed(ActionEvent arg0)
-            {
-                mComplexDftProcessor.setWindowType(mWindowType);
-            }
-        });
+        addActionListener(event -> mComplexDftProcessor.setWindowType(mWindowType));
     }
 }
-

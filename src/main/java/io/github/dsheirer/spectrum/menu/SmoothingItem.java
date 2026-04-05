@@ -23,13 +23,12 @@ package io.github.dsheirer.spectrum.menu;
 import io.github.dsheirer.dsp.filter.smoothing.SmoothingFilter;
 import io.github.dsheirer.spectrum.SpectralDisplayAdjuster;
 
-import javax.swing.JLabel;
 import javax.swing.JSlider;
+import javax.swing.SwingConstants;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
-import java.util.Hashtable;
 
 public class SmoothingItem extends JSlider implements ChangeListener
 {
@@ -40,7 +39,7 @@ public class SmoothingItem extends JSlider implements ChangeListener
 
     public SmoothingItem(SpectralDisplayAdjuster adjuster, int defaultValue)
     {
-        super(JSlider.HORIZONTAL,
+        super(SwingConstants.HORIZONTAL,
             SmoothingFilter.SMOOTHING_MINIMUM,
             SmoothingFilter.SMOOTHING_MAXIMUM,
             adjuster.getSmoothing());
@@ -54,18 +53,11 @@ public class SmoothingItem extends JSlider implements ChangeListener
         setPaintTicks(true);
         setPaintLabels(true);
 
-        Hashtable<Integer,JLabel> labels = new Hashtable<>();
-        labels.put(3, new JLabel("3"));
-        labels.put(9, new JLabel("9"));
-        labels.put(15, new JLabel("15"));
-        labels.put(21, new JLabel("21"));
-        labels.put(27, new JLabel("27"));
-
-        setLabelTable(labels);
+        setLabelTable(createStandardLabels(6, 3));
 
         addChangeListener(this);
 
-        addMouseListener(new MouseListener()
+        addMouseListener(new MouseAdapter()
         {
             @Override
             public void mouseClicked(MouseEvent event)
@@ -74,22 +66,6 @@ public class SmoothingItem extends JSlider implements ChangeListener
                 {
                     SmoothingItem.this.setValue(mDefaultValue);
                 }
-            }
-
-            public void mouseReleased(MouseEvent arg0)
-            {
-            }
-
-            public void mousePressed(MouseEvent arg0)
-            {
-            }
-
-            public void mouseExited(MouseEvent arg0)
-            {
-            }
-
-            public void mouseEntered(MouseEvent arg0)
-            {
             }
         });
     }

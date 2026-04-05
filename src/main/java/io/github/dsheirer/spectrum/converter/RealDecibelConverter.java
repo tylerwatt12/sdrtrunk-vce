@@ -4,11 +4,6 @@ import org.apache.commons.math3.util.FastMath;
 
 public class RealDecibelConverter extends DFTResultsConverter
 {
-
-	public RealDecibelConverter()
-	{
-	}
-	
 	/**
 	 * Converts the output of the JTransforms FloatFFT_1D.realForward()
 	 * calculation into a normalized power spectrum in decibels, per description
@@ -19,7 +14,7 @@ public class RealDecibelConverter extends DFTResultsConverter
 	@Override
     public void receive( float[] results )
     {
-		float dftBinSizeScalor = 1.0f / (float)results.length;
+		float dftBinSizeScalor = 1.0f / results.length;
 		
 		float[] processed = new float[ results.length / 4 ];
 

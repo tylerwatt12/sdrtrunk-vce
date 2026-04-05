@@ -5,8 +5,8 @@ import io.github.dsheirer.spectrum.SpectralDisplayAdjuster;
 import javax.swing.*;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
 
 public class AveragingItem extends JSlider implements ChangeListener
 {
@@ -17,7 +17,7 @@ public class AveragingItem extends JSlider implements ChangeListener
     
     public AveragingItem( SpectralDisplayAdjuster adjuster, int defaultValue )
     {
-    	super( JSlider.HORIZONTAL, 1, 20, adjuster.getAveraging() );
+    	super( SwingConstants.HORIZONTAL, 1, 20, adjuster.getAveraging() );
     	mDefaultValue = defaultValue;
     	
     	mAdjuster = adjuster;
@@ -29,7 +29,7 @@ public class AveragingItem extends JSlider implements ChangeListener
     	
     	addChangeListener( this );
 
-    	addMouseListener( new MouseListener()
+    	addMouseListener( new MouseAdapter()
 		{
 			@Override
 			public void mouseClicked( MouseEvent event )
@@ -39,11 +39,6 @@ public class AveragingItem extends JSlider implements ChangeListener
 					AveragingItem.this.setValue( mDefaultValue );
 				}
 			}
-			
-			public void mouseReleased( MouseEvent arg0 ) {}
-			public void mousePressed( MouseEvent arg0 ) {}
-			public void mouseExited( MouseEvent arg0 ) {}
-			public void mouseEntered( MouseEvent arg0 ) {}
 		} );
     }
 

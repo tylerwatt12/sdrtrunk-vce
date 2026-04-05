@@ -4,8 +4,6 @@ import io.github.dsheirer.spectrum.DFTSize;
 import io.github.dsheirer.spectrum.IDFTWidthChangeProcessor;
 
 import javax.swing.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 
 public class DFTSizeItem extends JCheckBoxMenuItem
 {
@@ -26,13 +24,6 @@ public class DFTSizeItem extends JCheckBoxMenuItem
     		setSelected( true );
     	}
     	
-    	addActionListener( new ActionListener() 
-    	{
-			@Override
-            public void actionPerformed( ActionEvent arg0 )
-            {
-				mDFTProcessor.setDFTSize( mDFTSize );
-            }
-		} );
+    	addActionListener( event -> mDFTProcessor.setDFTSize( mDFTSize ) );
     }
 }

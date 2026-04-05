@@ -4,8 +4,6 @@ import io.github.dsheirer.dsp.filter.smoothing.SmoothingFilter.SmoothingType;
 import io.github.dsheirer.spectrum.SpectralDisplayAdjuster;
 
 import javax.swing.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 
 public class SmoothingTypeItem extends JCheckBoxMenuItem
 {
@@ -23,13 +21,6 @@ public class SmoothingTypeItem extends JCheckBoxMenuItem
 	
 		setSelected( mAdjuster.getSmoothingType() == type );
 
-		addActionListener( new ActionListener()
-		{
-			@Override
-			public void actionPerformed( ActionEvent e )
-			{
-				mAdjuster.setSmoothingType( mSmoothingType );
-			}
-		} );
+		addActionListener( event -> mAdjuster.setSmoothingType( mSmoothingType ) );
 	}
 }

@@ -19,6 +19,7 @@
 package io.github.dsheirer.source;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 public class SourceEvent
 {
@@ -57,10 +58,10 @@ public class SourceEvent
         REQUEST_START_SAMPLE_STREAM,
         REQUEST_STOP_SAMPLE_STREAM;
 
-        public static EnumSet<Event> NOTIFICATION_EVENTS =
-            EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_STOP_SAMPLE_STREAM);
-        public static EnumSet<Event> REQUEST_EVENTS =
-            EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_SAMPLE_RATE_CHANGE);
+        public static final Set<Event> NOTIFICATION_EVENTS =
+            Set.copyOf(EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_STOP_SAMPLE_STREAM));
+        public static final Set<Event> REQUEST_EVENTS =
+            Set.copyOf(EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_SAMPLE_RATE_CHANGE));
     }
 
     private Event mEvent;

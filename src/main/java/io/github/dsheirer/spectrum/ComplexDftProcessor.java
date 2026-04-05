@@ -128,7 +128,7 @@ public class ComplexDftProcessor<T extends INativeBuffer> implements Listener<T>
         {
             //Schedule the DFT to run calculations at a fixed rate
             int initialDelay = 0;
-            int period = (int) (1000 / mFrameRate);
+            int period = (1000 / mFrameRate);
 
             mProcessorTaskHandle = mExecutorService.scheduleAtFixedRate(new DFTCalculationTask(), initialDelay, period,
                 TimeUnit.MILLISECONDS);
@@ -165,50 +165,6 @@ public class ComplexDftProcessor<T extends INativeBuffer> implements Listener<T>
         mDftBufferManager.add(buffer);
     }
 
-    private void calculate()
-    {
-        //We always send the previous calculated samples - this should improve the screen rendering since the frame
-        //rate will always occur on an even rhythm.  Any delays caused by processing will be absorbed and not impact
-        //the screen rendering.
-        dispatch(mPreviousSamples);
-
-        try
-        {
-            //If this throws an IO exception, the buffer queue is (temporarily) empty and we return from the method
-            float[] samples = mDftBufferManager.get(mDFTSize.getSize());
-            WindowFactory.apply(mWindow, samples);
-            mFFT.complexForward(samples);
-            mPreviousSamples = samples;
-        }
-        catch(IOException ioe)
-        {
-            //Not enough samples available, dispatch the previous samples again
-        }
-        catch(Exception e)
-        {
-            if(e instanceof InterruptedException)
-            {
-                mLog.info("FFT Library interrupted exception - this is normal during application shutdown");
-            }
-            else
-            {
-                mLog.error("Error while calculating FFT results", e);
-            }
-        }
-    }
-
-    /**
-     * Takes a calculated DFT results set, reformats the data, and sends it
-     * out to all registered listeners.
-     */
-    private void dispatch(float[] results)
-    {
-        for (DFTResultsConverter mListener : mListeners)
-        {
-            mListener.receive(results);
-        }
-    }
-
     public void addConverter(DFTResultsConverter listener)
     {
         mListeners.add(listener);
@@ -216,6 +172,81 @@ public class ComplexDftProcessor<T extends INativeBuffer> implements Listener<T>
 
     private class DFTCalculationTask implements Runnable
     {
+        /**
+         * Checks for a queued FFT width change request and applies it. This method is only accessed by the scheduled
+         * executor that gains access to run a calculate method, thus providing thread safety.
+         */
+        private void checkFFTSize()
+        {
+            if(mNewDFTSize.getSize() != mDFTSize.getSize())
+            {
+                mDFTSize = mNewDFTSize;
+                updateWindow();
+                mFFT = new FloatFFT_1D(mDFTSize.getSize());
+            }
+        }
+
+        /**
+         * Takes a calculated DFT results set, reformats the data, and sends it
+         * out to all registered listeners.
+         */
+        private void dispatch(float[] results)
+        {
+            for(DFTResultsConverter mListener: mListeners)
+            {
+                mListener.receive(results);
+            }
+        }
+
+        private void calculate()
+        {
+            //We always send the previous calculated samples - this should improve the screen rendering since the frame
+            //rate will always occur on an even rhythm.  Any delays caused by processing will be absorbed and not impact
+            //the screen rendering.
+            dispatch(mPreviousSamples);
+
+            try
+            {
+                //If this throws an IO exception, the buffer queue is (temporarily) empty and we return from the method
+                float[] samples = mDftBufferManager.get(mDFTSize.getSize());
+                WindowFactory.apply(mWindow, samples);
+                mFFT.complexForward(samples);
+                mPreviousSamples = samples;
+            }
+            catch(IOException ioe)
+            {
+                //Not enough samples available, dispatch the previous samples again
+            }
+            catch(Exception e)
+            {
+                if(hasInterruptedExceptionCause(e))
+                {
+                    mLog.info("FFT Library interrupted exception - this is normal during application shutdown");
+                }
+                else
+                {
+                    mLog.error("Error while calculating FFT results", e);
+                }
+            }
+        }
+
+        private boolean hasInterruptedExceptionCause(Throwable throwable)
+        {
+            Throwable current = throwable;
+
+            while(current != null)
+            {
+                if(current instanceof InterruptedException)
+                {
+                    return true;
+                }
+
+                current = current.getCause();
+            }
+
+            return false;
+        }
+
         @Override
         public void run()
         {
@@ -233,21 +264,6 @@ public class ComplexDftProcessor<T extends INativeBuffer> implements Listener<T>
             {
                 mLog.error("error during dft processor calculation task", e);
             }
-        }
-    }
-
-    /**
-     * Checks for a queued FFT width change request and applies it.  This
-     * method will only be accessed by the scheduled executor that gains
-     * access to run a calculate method, thus providing thread safety.
-     */
-    private void checkFFTSize()
-    {
-        if(mNewDFTSize.getSize() != mDFTSize.getSize())
-        {
-            mDFTSize = mNewDFTSize;
-            updateWindow();
-            mFFT = new FloatFFT_1D(mDFTSize.getSize());
         }
     }
 

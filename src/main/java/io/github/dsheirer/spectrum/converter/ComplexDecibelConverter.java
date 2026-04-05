@@ -58,22 +58,15 @@ import org.apache.commons.math3.util.FastMath;
  */
 public class ComplexDecibelConverter extends DFTResultsConverter
 {
-	/**
-	 * Converts the output of the JTransforms FloatFFT_1D.complexForward() calculation into the power spectrum in
-	 * decibels, normalized to the sample bit depth.
-	 */
-	public ComplexDecibelConverter()
-	{
-	}
-
 	public static float[] convert(float[] results)
 	{
 		int halfResults = results.length / 2;
-		float dftBinSizeScalor = 1.0f / (float) halfResults;
+		float dftBinSizeScalor = 1.0f / halfResults;
 		float[] processed = new float[halfResults];
 		int middle = processed.length / 2;
 
-		float temp, decibels;
+		float temp;
+		float decibels;
 		for(int x = 0; x < results.length; x += 2)
 		{
 			//Calculate the magnitude squared (power) value from each bin's real and imaginary value and scale it to the
