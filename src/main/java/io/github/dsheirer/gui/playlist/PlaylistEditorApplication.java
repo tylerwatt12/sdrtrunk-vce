@@ -36,12 +36,10 @@ import javafx.stage.Stage;
  */
 public class PlaylistEditorApplication extends Application
 {
-    private Stage mStage;
     private Parent mPlaylistEditor;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences = new UserPreferences();
     private PlaylistManager mPlaylistManager;
-    private JavaFxWindowManager mJavaFxWindowManager;
 
     public PlaylistEditorApplication()
     {
@@ -52,17 +50,16 @@ public class PlaylistEditorApplication extends Application
         mPlaylistManager = new PlaylistManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, new IconModel());
 
         mPlaylistManager.init();
-        mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mPlaylistManager);
+        new JavaFxWindowManager(mUserPreferences, mTunerManager, mPlaylistManager);
     }
 
     @Override
     public void start(Stage primaryStage) throws Exception
     {
-        mStage = primaryStage;
-        mStage.setTitle("Playlist Editor");
+        primaryStage.setTitle("Playlist Editor");
         Scene scene = new Scene(getPlaylistEditor(), 1000, 750);
-        mStage.setScene(scene);
-        mStage.show();
+        primaryStage.setScene(scene);
+        primaryStage.show();
     }
 
     private Parent getPlaylistEditor()

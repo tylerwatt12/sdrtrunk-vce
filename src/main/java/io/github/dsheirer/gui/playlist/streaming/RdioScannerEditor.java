@@ -88,6 +88,7 @@ public class RdioScannerEditor extends AbstractBroadcastEditor<RdioScannerConfig
     @Override
     public void dispose()
     {
+        // Nothing to dispose
     }
 
     @Override
@@ -175,7 +176,7 @@ public class RdioScannerEditor extends AbstractBroadcastEditor<RdioScannerConfig
             GridPane.setConstraints(getHostTextField(), 1, row);
             mEditorPane.getChildren().add(getHostTextField());
 
-            Label apiPath = new Label("/api/call-upload");
+            Label apiPath = new Label(API_PATH);
             GridPane.setHalignment(apiPath, HPos.LEFT);
             GridPane.setConstraints(apiPath, 2, row);
             mEditorPane.getChildren().add(apiPath);

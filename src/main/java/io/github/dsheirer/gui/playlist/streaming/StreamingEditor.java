@@ -402,29 +402,25 @@ public class StreamingEditor extends SplitPane
 
             TableColumn<ConfiguredBroadcast,Boolean> enabledColumn = new TableColumn("Enabled");
             enabledColumn.setCellValueFactory(new PropertyValueFactory<>("enabled"));
-            enabledColumn.setCellFactory(param -> {
-                TableCell<ConfiguredBroadcast,Boolean> tableCell = new TableCell<>()
+            enabledColumn.setCellFactory(param -> new TableCell<>()
+            {
+                @Override
+                protected void updateItem(Boolean item, boolean empty)
                 {
-                    @Override
-                    protected void updateItem(Boolean item, boolean empty)
+                    setAlignment(Pos.CENTER);
+                    setText(null);
+
+                    if(empty || item == null || !item)
                     {
-                        setAlignment(Pos.CENTER);
-                        setText(null);
-
-                        if(empty || item == null || !item)
-                        {
-                            setGraphic(null);
-                        }
-                        else
-                        {
-                            IconNode iconNode = new IconNode(FontAwesome.CHECK);
-                            iconNode.setFill(Color.GREEN);
-                            setGraphic(iconNode);
-                        }
+                        setGraphic(null);
                     }
-                };
-
-                return tableCell;
+                    else
+                    {
+                        IconNode iconNode = new IconNode(FontAwesome.CHECK);
+                        iconNode.setFill(Color.GREEN);
+                        setGraphic(iconNode);
+                    }
+                }
             });
 
             TableColumn nameColumn = new TableColumn("Name");
@@ -504,7 +500,7 @@ public class StreamingEditor extends SplitPane
         {
             //Only fire when the modification property changes from true to false.  Set the selection to null and then
             //reselect the broadcast to get the streams tab to refresh
-            if(oldValue != null && newValue != null && oldValue && !newValue)
+            if(Boolean.TRUE.equals(oldValue) && Boolean.FALSE.equals(newValue))
             {
                 ConfiguredBroadcast configuredBroadcast = getConfiguredBroadcastTableView().getSelectionModel().getSelectedItem();
 

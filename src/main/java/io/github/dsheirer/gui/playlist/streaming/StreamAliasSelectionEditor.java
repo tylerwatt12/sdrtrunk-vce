@@ -163,9 +163,7 @@ public class StreamAliasSelectionEditor extends VBox
         {
             mSearchField = TextFields.createClearableTextField();
             mSearchField.setDisable(true);
-            mSearchField.textProperty().addListener((observable, oldValue, newValue) -> {
-                updateListFilters();
-            });
+            mSearchField.textProperty().addListener((observable, oldValue, newValue) -> updateListFilters());
         }
 
         return mSearchField;
@@ -411,10 +409,6 @@ public class StreamAliasSelectionEditor extends VBox
         private String mStreamName;
         private String mFilterText;
 
-        public AvailableAliasPredicate()
-        {
-        }
-
         public void setStreamName(String streamName)
         {
             mStreamName = streamName;
@@ -438,22 +432,9 @@ public class StreamAliasSelectionEditor extends VBox
                 return true;
             }
 
-            if(alias.getAliasListName() != null && alias.getAliasListName().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            if(alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            if(alias.getName() != null && alias.getName().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            return false;
+            return (alias.getAliasListName() != null && alias.getAliasListName().toLowerCase().contains(mFilterText)) ||
+                (alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mFilterText)) ||
+                (alias.getName() != null && alias.getName().toLowerCase().contains(mFilterText));
         }
     }
 
@@ -464,10 +445,6 @@ public class StreamAliasSelectionEditor extends VBox
     {
         private String mStreamName;
         private String mFilterText;
-
-        public SelectedAliasPredicate()
-        {
-        }
 
         public void setStreamName(String streamName)
         {
@@ -490,21 +467,9 @@ public class StreamAliasSelectionEditor extends VBox
             {
                 return true;
             }
-            if(alias.getAliasListName() != null && alias.getAliasListName().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            if(alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-            if(alias.getName() != null && alias.getName().toLowerCase().contains(mFilterText))
-            {
-                return true;
-            }
-
-            return false;
+            return (alias.getAliasListName() != null && alias.getAliasListName().toLowerCase().contains(mFilterText)) ||
+                (alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mFilterText)) ||
+                (alias.getName() != null && alias.getName().toLowerCase().contains(mFilterText));
         }
     }
 }

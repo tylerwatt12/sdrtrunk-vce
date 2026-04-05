@@ -45,7 +45,7 @@ public abstract class IcecastStreamEditor extends AbstractStreamEditor<IcecastCo
     private TextField mGenreTextField;
     private TextField mURLTextField;
 
-    public IcecastStreamEditor(PlaylistManager playlistManager)
+    protected IcecastStreamEditor(PlaylistManager playlistManager)
     {
         super(playlistManager);
     }

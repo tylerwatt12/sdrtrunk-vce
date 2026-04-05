@@ -27,6 +27,10 @@ import io.github.dsheirer.playlist.PlaylistManager;
  */
 public class StreamEditorFactory
 {
+    private StreamEditorFactory()
+    {
+    }
+
     /**
      * Creates a new editor for the specified broadcast server type
      * @param broadcastServerType to edit

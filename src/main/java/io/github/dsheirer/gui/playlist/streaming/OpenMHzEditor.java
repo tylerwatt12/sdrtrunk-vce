@@ -87,6 +87,7 @@
      @Override
      public void dispose()
      {
+        // Nothing to dispose
      }
 
      @Override

@@ -31,7 +31,7 @@ public abstract class Editor<T> extends VBox
     private T mItem;
     private BooleanProperty mModifiedProperty = new SimpleBooleanProperty();
 
-    public Editor()
+    protected Editor()
     {
         setMaxWidth(Double.MAX_VALUE);
     }
