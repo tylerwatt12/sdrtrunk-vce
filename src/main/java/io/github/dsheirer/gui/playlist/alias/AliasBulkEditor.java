@@ -234,7 +234,7 @@ public class AliasBulkEditor extends Editor<List<Alias>>
     {
         if(mApplyColorButton == null)
         {
-            mApplyColorButton = new Button("Apply");
+            mApplyColorButton = createApplyButton();
             mApplyColorButton.setOnAction(event ->
             {
                 startChange();
@@ -284,9 +284,7 @@ public class AliasBulkEditor extends Editor<List<Alias>>
             mIconNodeComboBox.setCellFactory(new IconCellFactory());
             mIconNodeComboBox.getSelectionModel().selectedItemProperty()
                     .addListener((observable, oldValue, newValue) ->
-                    {
-                        getApplyIconButton().setDisable(newValue == null);
-                    });
+                        getApplyIconButton().setDisable(newValue == null));
         }
 
         return mIconNodeComboBox;
@@ -296,27 +294,23 @@ public class AliasBulkEditor extends Editor<List<Alias>>
     {
         if(mApplyIconButton == null)
         {
-            mApplyIconButton = new Button("Apply");
+            mApplyIconButton = createApplyButton();
             mApplyIconButton.setDisable(true);
-            mApplyIconButton.setOnAction(new EventHandler<ActionEvent>()
+            mApplyIconButton.setOnAction(event ->
             {
-                @Override
-                public void handle(ActionEvent event)
+                startChange();
+
+                Icon icon = getIconNodeComboBox().getSelectionModel().getSelectedItem();
+
+                if(icon != null)
                 {
-                    startChange();
-
-                    Icon icon = getIconNodeComboBox().getSelectionModel().getSelectedItem();
-
-                    if(icon != null)
+                    for(Alias alias : getItem())
                     {
-                        for(Alias alias : getItem())
-                        {
-                            alias.setIconName(icon.getName());
-                        }
+                        alias.setIconName(icon.getName());
                     }
-
-                    endChange();
                 }
+
+                endChange();
             });
         }
 
@@ -373,36 +367,32 @@ public class AliasBulkEditor extends Editor<List<Alias>>
     {
         if(mApplyMonitorButton == null)
         {
-            mApplyMonitorButton = new Button("Apply");
-            mApplyMonitorButton.setOnAction(new EventHandler<ActionEvent>()
+            mApplyMonitorButton = createApplyButton();
+            mApplyMonitorButton.setOnAction(event ->
             {
-                @Override
-                public void handle(ActionEvent event)
+                startChange();
+
+                boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
+                Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
+                if(canMonitor)
                 {
-                    startChange();
-
-                    boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
-                    Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
-                    if(canMonitor)
+                    if(priority == null)
                     {
-                        if(priority == null)
-                        {
-                            priority = io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY;
-                        }
+                        priority = io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY;
                     }
-                    else
-                    {
-                        priority = io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR;
-                    }
-
-                    final Integer pri = priority;
-                    for(Alias alias : getItem())
-                    {
-                        alias.setCallPriority(pri);
-                    }
-
-                    endChange();
                 }
+                else
+                {
+                    priority = io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR;
+                }
+
+                final Integer pri = priority;
+                for(Alias alias : getItem())
+                {
+                    alias.setCallPriority(pri);
+                }
+
+                endChange();
             });
         }
 
@@ -413,19 +403,24 @@ public class AliasBulkEditor extends Editor<List<Alias>>
     {
         if(mApplyRecordButton == null)
         {
-            mApplyRecordButton = new Button("Apply");
+            mApplyRecordButton = createApplyButton();
             mApplyRecordButton.setOnAction(event -> {
                 startChange();
-                boolean record = getRecordToggleSwitch().isSelected();
+                boolean recordable = getRecordToggleSwitch().isSelected();
                 for(Alias alias : getItem())
                 {
-                    alias.setRecordable(record);
+                    alias.setRecordable(recordable);
                 }
                 endChange();
             });
         }
 
         return mApplyRecordButton;
+    }
+
+    private Button createApplyButton()
+    {
+        return new Button("Apply");
     }
 
     /**
@@ -445,7 +440,7 @@ public class AliasBulkEditor extends Editor<List<Alias>>
             gridPane.add(iconLabel, 0, 0);
             gridPane.add(textLabel, 1, 0);
 
-            ListCell<Icon> cell = new ListCell<>()
+            return new ListCell<>()
             {
                 @Override
                 protected void updateItem(Icon item, boolean empty)
@@ -465,8 +460,6 @@ public class AliasBulkEditor extends Editor<List<Alias>>
                     }
                 }
             };
-
-            return cell;
         }
     }
 }

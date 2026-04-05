@@ -185,9 +185,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
             //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
             alert.setResizable(true);
-            alert.onShownProperty().addListener(e -> {
-                Platform.runLater(() -> alert.setResizable(false));
-            });
+            alert.onShownProperty().addListener(e ->
+                Platform.runLater(() -> alert.setResizable(false)));
 
             Optional<ButtonType> result = alert.showAndWait();
 
@@ -303,7 +302,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         {
             mAliasListNameComboBox = new ComboBox<>(mPlaylistManager.getAliasModel().aliasListNames());
             mAliasListNameComboBox.getSelectionModel().selectedItemProperty()
-                    .addListener((ObservableValue<? extends String> observable, String oldValue, String newValue) ->
+                    .addListener((ObservableValue<String> observable, String oldValue, String newValue) ->
                     {
                         getNewAliasButton().setDisable(newValue == null || newValue.contentEquals(AliasModel.NO_ALIAS_LIST));
                         update();
@@ -466,31 +465,26 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             TableColumn<Alias, Boolean> errorsColumn = new TableColumn<>("Error");
             errorsColumn.setPrefWidth(120);
             errorsColumn.setCellValueFactory(new PropertyValueFactory<>("overlap"));
-            errorsColumn.setCellFactory(param ->
+            errorsColumn.setCellFactory(param -> new TableCell<>()
             {
-                TableCell<Alias, Boolean> tableCell = new TableCell<>()
+                @Override
+                protected void updateItem(Boolean item, boolean empty)
                 {
-                    @Override
-                    protected void updateItem(Boolean item, boolean empty)
+                    setAlignment(Pos.CENTER);
+                    setText(null);
+
+                    if(empty || item == null || !item)
                     {
-                        setAlignment(Pos.CENTER);
-                        setText(null);
-
-                        if(empty || item == null || !item)
-                        {
-                            setGraphic(null);
-                        }
-                        else
-                        {
-                            IconNode iconNode = new IconNode(FontAwesome.EXCLAMATION_CIRCLE);
-                            iconNode.setFill(Color.RED);
-                            setGraphic(iconNode);
-                            setText("Identifier Overlap");
-                        }
+                        setGraphic(null);
                     }
-                };
-
-                return tableCell;
+                    else
+                    {
+                        IconNode iconNode = new IconNode(FontAwesome.EXCLAMATION_CIRCLE);
+                        iconNode.setFill(Color.RED);
+                        setGraphic(iconNode);
+                        setText("Identifier Overlap");
+                    }
+                }
             });
 
 
@@ -500,9 +494,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasTableView.setPlaceholder(getPlaceholderLabel());
             mAliasTableView.setItems(getAliasSortedList());
             mAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-            mAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener<Alias>)c -> {
-                Platform.runLater(() -> setAliases(mAliasTableView.getSelectionModel().getSelectedItems()));
-            });
+            mAliasTableView.getSelectionModel().getSelectedItems().addListener(
+                (ListChangeListener<Alias>)c -> Platform.runLater(() -> setAliases(mAliasTableView.getSelectionModel().getSelectedItems())));
         }
 
         return mAliasTableView;
@@ -840,7 +833,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         @Override
         public TableCell<Alias, Integer> call(TableColumn<Alias, Integer> param)
         {
-            TableCell tableCell = new TableCell<Alias, Integer>()
+            return new TableCell<Alias, Integer>()
             {
                 @Override
                 protected void updateItem(Integer item, boolean empty)
@@ -876,8 +869,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                     }
                 }
             };
-
-            return tableCell;
         }
     }
 
@@ -886,7 +877,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         @Override
         public TableCell<Alias, String> call(TableColumn<Alias, String> param)
         {
-            TableCell<Alias, String> tableCell = new TableCell<>()
+            return new TableCell<>()
             {
                 @Override
                 protected void updateItem(String item, boolean empty)
@@ -921,8 +912,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                     }
                 }
             };
-
-            return tableCell;
         }
     }
 
