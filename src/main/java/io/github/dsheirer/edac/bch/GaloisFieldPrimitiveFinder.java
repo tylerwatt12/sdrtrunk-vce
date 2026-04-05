@@ -59,25 +59,4 @@ public class GaloisFieldPrimitiveFinder
 
         return (x == 1);
     }
-
-    public static void main(String[] args)
-    {
-        GaloisFieldPrimitiveFinder finder;
-
-        //Search: M=2 to M=9
-        for(int m = 2; m < 10; m++)
-        {
-            finder = new GaloisFieldPrimitiveFinder(m);
-            System.out.println("Searching for M: " + m);
-            for(int i = 0; i < (1 << m); i++)
-            {
-                //Skip polynomials divisible by X or X+1
-                int candidate = i | (1 << m);
-                if(finder.isPrimitive(candidate))
-                {
-                    System.out.println("M:" + m + " Primitive: " + String.format("0x%X", candidate));
-                }
-            }
-        }
-    }
 }

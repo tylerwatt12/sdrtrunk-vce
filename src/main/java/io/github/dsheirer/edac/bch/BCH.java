@@ -128,7 +128,7 @@ public abstract class BCH
             sum = 0;
             for(j = 0; j < mM; j++)
             {
-                sum ^= a_pow(i * (1 << j));
+                sum ^= aPow(i * (1 << j));
             }
 
             if(sum != 0)
@@ -143,10 +143,10 @@ public abstract class BCH
 
         for(x = 0; (x <= mN) && remaining != 0; x++)
         {
-            y = gf_sqr(x) ^ x;
+            y = gfSqr(x) ^ x;
             for(i = 0; i < 2; i++)
             {
-                r = a_log(y);
+                r = aLog(y);
 
                 if(y != 0 && (r < mM) && xi[r] == 0)
                 {
@@ -169,7 +169,7 @@ public abstract class BCH
     /*
      * Finds the error roots of the error locator polynomial, using BTZ algorithm
      */
-    public int[] find_poly_roots(GFPoly poly, int k)
+    public int[] findPolyRoots(GFPoly poly, int k)
     {
         int[] roots = new int[0];
 
@@ -177,27 +177,27 @@ public abstract class BCH
         {
             /* handle low degree polynomials with ad hoc techniques */
             case 1:
-                roots = find_poly_deg1_roots(poly);
+                roots = findPolyDeg1Roots(poly);
                 break;
             case 2:
-                roots = find_poly_deg2_roots(poly);
+                roots = findPolyDeg2Roots(poly);
                 break;
             case 3:
-                roots = find_poly_deg3_roots(poly);
+                roots = findPolyDeg3Roots(poly);
                 break;
             case 4:
-                roots = find_poly_deg4_roots(poly);
+                roots = findPolyDeg4Roots(poly);
                 break;
             default:
                 /* factor polynomial using Berlekamp Trace Algorithm (BTA) */
                 if (poly.mDegree != 0 && (k <= mM))
                 {
-                    GFPoly[] factors = factor_polynomial(k, poly);
+                    GFPoly[] factors = factorPolynomial(k, poly);
 
                     if (factors != null && factors.length == 2)
                     {
-                        int[] aRoots = find_poly_roots(factors[0], k + 1);
-                        int[] bRoots = find_poly_roots(factors[1], k + 1);
+                        int[] aRoots = findPolyRoots(factors[0], k + 1);
+                        int[] bRoots = findPolyRoots(factors[1], k + 1);
 
                         roots = new int[aRoots.length + bRoots.length];
 
@@ -206,7 +206,7 @@ public abstract class BCH
                     }
                     else if (factors != null && factors.length > 0)
                     {
-                        roots = find_poly_roots(factors[0], k + 1);
+                        roots = findPolyRoots(factors[0], k + 1);
                     }
                 }
 
@@ -219,7 +219,7 @@ public abstract class BCH
     /*
      * Factors a polynomial using Berlekamp Trace algorithm (BTA)
      */
-    public GFPoly[] factor_polynomial(int k, GFPoly f)
+    public GFPoly[] factorPolynomial(int k, GFPoly f)
     {
         GFPoly f2 = new GFPoly(2 * mT);
         GFPoly q = new GFPoly(2 * mT);
@@ -231,19 +231,19 @@ public abstract class BCH
         f.copyTo(g);
 
         /* tk = Tr(a^k.X) mod f */
-        tk = compute_trace_bk_mod(k, f, z);
+        tk = computeTraceBkMod(k, f, z);
 
         if (tk.mDegree > 0)
         {
             f.copyTo(f2);
 
             /* compute g = gcd(f, tk) (destructive operation) */
-            gcd = gf_poly_gcd(f2, tk);
+            gcd = gfPolyGcd(f2, tk);
 
             if (gcd.mDegree < f.mDegree)
             {
                 /* compute h=f/gcd(f,tk); this will modify f and q */
-                gf_poly_div(f, gcd, q);
+                gfPolyDiv(f, gcd, q);
                 GFPoly[] results = new GFPoly[2];
                 results[0] = gcd;
                 results[1] = q;
@@ -259,13 +259,13 @@ public abstract class BCH
     /*
      * Compute polynomial Euclidean division quotient in GF(2^m)[X]
      */
-    public void gf_poly_div(GFPoly a, GFPoly b, GFPoly q)
+    public void gfPolyDiv(GFPoly a, GFPoly b, GFPoly q)
     {
         if (a.mDegree >= b.mDegree)
         {
             q.mDegree = a.mDegree - b.mDegree;
             /* compute a mod b (modifies a) */
-            gf_poly_mod(a, b);
+            gfPolyMod(a, b);
             /* quotient is stored in upper part of polynomial a */
             System.arraycopy(a.mC, b.mDegree, q.mC, 0, 1 + q.mDegree);
         }
@@ -280,7 +280,7 @@ public abstract class BCH
     /*
      * Compute polynomial GCD (Greatest Common Divisor) in GF(2^m)[X]
      */
-    public GFPoly gf_poly_gcd(GFPoly a, GFPoly b)
+    public GFPoly gfPolyGcd(GFPoly a, GFPoly b)
     {
         GFPoly tmp;
 
@@ -293,7 +293,7 @@ public abstract class BCH
 
         while (b.mDegree > 0)
         {
-            gf_poly_mod(a, b);
+            gfPolyMod(a, b);
             tmp = b;
             b = a;
             a = tmp;
@@ -307,7 +307,7 @@ public abstract class BCH
      * Given a polynomial f and an integer k, compute Tr(a^kX) mod f
      * This is used in Berlekamp Trace algorithm for splitting polynomials
      */
-    public GFPoly compute_trace_bk_mod(int k, GFPoly f, GFPoly z)
+    public GFPoly computeTraceBkMod(int k, GFPoly f, GFPoly z)
     {
         int m = mM;
         int i;
@@ -334,7 +334,7 @@ public abstract class BCH
                 }
 
                 outTK.mC[j] ^= z.mC[j];
-                z.mC[2 * j] = gf_sqr(z.mC[j]);
+                z.mC[2 * j] = gfSqr(z.mC[j]);
                 z.mC[2 * j + 1] = 0;
             }
 
@@ -347,7 +347,7 @@ public abstract class BCH
             {
                 z.mDegree *= 2;
                 /* z^(2(i+1)) mod f = (z^(2^i) mod f)^2 mod f */
-                gf_poly_mod(z, f);
+                gfPolyMod(z, f);
             }
         }
 
@@ -362,7 +362,7 @@ public abstract class BCH
     /*
      * compute polynomial Euclidean division remainder in GF(2^m)[X]
      */
-    public void gf_poly_mod(GFPoly a, GFPoly b)
+    public void gfPolyMod(GFPoly a, GFPoly b)
     {
         if (a.mDegree < b.mDegree)
         {
@@ -377,13 +377,13 @@ public abstract class BCH
         int[] c = Arrays.copyOf(a.mC, a.mC.length);
         int d = b.mDegree;
 
-        int[] rep = gf_poly_logrep(b);
+        int[] rep = gfPolyLogRep(b);
 
         for (j = a.mDegree; j >= d; j--)
         {
             if (c[j] != 0)
             {
-                la = a_log(c[j]);
+                la = aLog(c[j]);
                 p = j-d;
 
                 for (i = 0; i < d; i++, p++)
@@ -392,7 +392,7 @@ public abstract class BCH
 
                     if (m >= 0)
                     {
-                        c[p] ^= a_pow_tab[mod_s(m + la)];
+                        c[p] ^= a_pow_tab[modS(m + la)];
                     }
                 }
             }
@@ -413,18 +413,18 @@ public abstract class BCH
     /*
      * Build monic, log-based representation of a polynomial
      */
-    public int[] gf_poly_logrep(GFPoly a)
+    public int[] gfPolyLogRep(GFPoly a)
     {
         int i;
         int d = a.mDegree;
-        int l = mN - a_log(a.mC[a.mDegree]);
+        int l = mN - aLog(a.mC[a.mDegree]);
 
         int[] rep = new int[d];
 
         /* represent 0 values with -1; warning, rep[d] is not set to 1 */
         for (i = 0; i < d; i++)
         {
-            rep[i] = a.mC[i] != 0 ? mod_s(a_log(a.mC[i]) + l) : -1;
+            rep[i] = a.mC[i] != 0 ? modS(aLog(a.mC[i]) + l) : -1;
         }
 
         return rep;
@@ -433,14 +433,14 @@ public abstract class BCH
     /*
      * Compute root r of a degree 1 polynomial over GF(2^m) (returned as log(1/r))
      */
-    public int[] find_poly_deg1_roots(GFPoly poly)
+    public int[] findPolyDeg1Roots(GFPoly poly)
     {
         int[] roots = new int[1];
 
         if(poly.mC[0] != 0)
         {
             /* poly[X] = bX+c with c!=0, root=c/b */
-            roots[0] = mod_s(mN - a_log_tab[poly.mC[0]] + a_log_tab[poly.mC[1]]);
+            roots[0] = modS(mN - a_log_tab[poly.mC[0]] + a_log_tab[poly.mC[1]]);
         }
 
         return roots;
@@ -449,7 +449,7 @@ public abstract class BCH
     /*
      * Compute roots of a degree 2 polynomial over GF(2^m)
      */
-    public int[] find_poly_deg2_roots(GFPoly poly)
+    public int[] findPolyDeg2Roots(GFPoly poly)
     {
         int[] roots = new int[poly.mDegree];
 
@@ -469,7 +469,7 @@ public abstract class BCH
             l2 = a_log_tab[poly.mC[2]];
 
             /* using z=a/bX, transform aX^2+bX+c into z^2+z+u (u=ac/b^2) */
-            u = a_pow(l0 + l2 + 2 * (mN - l1));
+            u = aPow(l0 + l2 + 2 * (mN - l1));
             /*
              * let u = sum(li.a^i) i=0..m-1; then compute r = sum(li.xi):
              * r^2+r = sum(li.(xi^2+xi)) = sum(li.(a^i+Tr(a^i).a^k)) =
@@ -486,7 +486,7 @@ public abstract class BCH
             }
 
             /* verify root */
-            if((gf_sqr(r) ^ r) == u)
+            if((gfSqr(r) ^ r) == u)
             {
                 /* reverse z=a/bX transformation and compute log(1/r) */
                 roots[n++] = modulo(2 * mN - l1 - a_log_tab[r] + l2);
@@ -500,7 +500,7 @@ public abstract class BCH
     /*
      * Compute roots of a degree 3 polynomial over GF(2^m)
      */
-    public int[] find_poly_deg3_roots(GFPoly poly)
+    public int[] findPolyDeg3Roots(GFPoly poly)
     {
         int[] roots = new int[poly.mDegree];
 
@@ -519,24 +519,24 @@ public abstract class BCH
         {
             /* transform polynomial into monic X^3 + a2X^2 + b2X + c2 */
             e3 = poly.mC[3];
-            c2 = gf_div(poly.mC[0], e3);
-            b2 = gf_div(poly.mC[1], e3);
-            a2 = gf_div(poly.mC[2], e3);
+            c2 = gfDiv(poly.mC[0], e3);
+            b2 = gfDiv(poly.mC[1], e3);
+            a2 = gfDiv(poly.mC[2], e3);
 
             /* (X+a2)(X^3+a2X^2+b2X+c2) = X^4+aX^2+bX+c (affine) */
-            c = gf_mul(a2, c2);           /* c = a2c2      */
-            b = gf_mul(a2, b2) ^ c2;        /* b = a2b2 + c2 */
-            a = gf_sqr(a2) ^ b2;            /* a = a2^2 + b2 */
+            c = gfMul(a2, c2);           /* c = a2c2      */
+            b = gfMul(a2, b2) ^ c2;        /* b = a2b2 + c2 */
+            a = gfSqr(a2) ^ b2;            /* a = a2^2 + b2 */
 
             /* find the 4 roots of this affine polynomial */
-            if(find_affine4_roots(a, b, c, tmp) == 4)
+            if(findAffine4Roots(a, b, c, tmp) == 4)
             {
                 /* remove a2 from final list of roots */
                 for(i = 0; i < 4; i++)
                 {
                     if(tmp[i] != a2)
                     {
-                        roots[n++] = a_ilog(tmp[i]);
+                        roots[n++] = aILog(tmp[i]);
                     }
                 }
             }
@@ -548,7 +548,7 @@ public abstract class BCH
     /*
      * Compute roots of a degree 4 polynomial over GF(2^m)
      */
-    public int[] find_poly_deg4_roots(GFPoly poly)
+    public int[] findPolyDeg4Roots(GFPoly poly)
     {
         int[] roots = new int[poly.mDegree];
 
@@ -572,10 +572,10 @@ public abstract class BCH
 
         /* transform polynomial into monic X^4 + aX^3 + bX^2 + cX + d */
         e4 = poly.mC[4];
-        d = gf_div(poly.mC[0], e4);
-        c = gf_div(poly.mC[1], e4);
-        b = gf_div(poly.mC[2], e4);
-        a = gf_div(poly.mC[3], e4);
+        d = gfDiv(poly.mC[0], e4);
+        c = gfDiv(poly.mC[1], e4);
+        b = gfDiv(poly.mC[2], e4);
+        a = gfDiv(poly.mC[3], e4);
 
         /* use Y=1/X transformation to get an affine polynomial */
         if (a != 0)
@@ -584,10 +584,10 @@ public abstract class BCH
             if (c != 0)
             {
                 /* compute e such that e^2 = c/a */
-                f = gf_div(c, a);
-                l = a_log(f);
+                f = gfDiv(c, a);
+                l = aLog(f);
                 l += ((l & 1) != 0) ? mN : 0;
-                e = a_pow(l / 2);
+                e = aPow(l / 2);
 
                 /*
                  * use transformation z=X+e:
@@ -596,8 +596,8 @@ public abstract class BCH
                  * z^4 + az^3 + (ae+b)z^2 + e^4+be^2+d
                  * z^4 + az^3 +     b'z^2 + d'
                  */
-                d = a_pow(2 * l) ^ gf_mul(b, f) ^ d;
-                b = gf_mul(a, e) ^ b;
+                d = aPow(2 * l) ^ gfMul(b, f) ^ d;
+                b = gfMul(a, e) ^ b;
             }
 
             /* now, use Y=1/X to get Y^4 + b/dY^2 + a/dY + 1/d */
@@ -607,9 +607,9 @@ public abstract class BCH
                 return new int[0];
             }
 
-            c2 = gf_inv(d);
-            b2 = gf_div(a, d);
-            a2 = gf_div(b, d);
+            c2 = gfInv(d);
+            b2 = gfDiv(a, d);
+            a2 = gfDiv(b, d);
         } else {
             /* polynomial is already affine */
             c2 = d;
@@ -617,13 +617,13 @@ public abstract class BCH
             a2 = b;
         }
         /* find the 4 roots of this affine polynomial */
-        if (find_affine4_roots(a2, b2, c2, roots) == 4)
+        if (findAffine4Roots(a2, b2, c2, roots) == 4)
         {
             for (i = 0; i < 4; i++)
             {
                 /* post-process roots (reverse transformations) */
-                f = a != 0 ? gf_inv(roots[i]) : roots[i];
-                roots[i] = a_ilog(f ^ e);
+                f = a != 0 ? gfInv(roots[i]) : roots[i];
+                roots[i] = aILog(f ^ e);
             }
         }
 
@@ -634,7 +634,7 @@ public abstract class BCH
      * This function builds and solves a linear system for finding roots of a degree
      * 4 affine monic polynomial X^4+aX^2+bX+c over GF(2^m).
      */
-    public int find_affine4_roots(int a, int b, int c, int[] roots)
+    public int findAffine4Roots(int a, int b, int c, int[] roots)
     {
         int i;
         int j;
@@ -644,14 +644,14 @@ public abstract class BCH
         int t;
         int[] rows = new int[16];
 
-        j = a_log(b);
-        k = a_log(a);
+        j = aLog(b);
+        k = aLog(a);
         rows[0] = c;
 
         /* buid linear system to solve X^4+aX^2+bX+c = 0 */
         for(i = 0; i < m; i++)
         {
-            rows[i + 1] = a_pow_tab[4 * i] ^ (a != 0 ? a_pow_tab[mod_s(k)] : 0) ^ (b != 0 ? a_pow_tab[mod_s(j)] : 0);
+            rows[i + 1] = a_pow_tab[4 * i] ^ (a != 0 ? a_pow_tab[modS(k)] : 0) ^ (b != 0 ? a_pow_tab[modS(j)] : 0);
             j++;
             k += 2;
         }
@@ -670,14 +670,14 @@ public abstract class BCH
             }
         }
 
-        return solve_linear_system(rows, roots, 4);
+        return solveLinearSystem(rows, roots, 4);
     }
 
     /*
      * Solve an m x m linear system in GF(2) with an expected number of solutions,
      * and return the number of found solutions
      */
-    public int solve_linear_system(int[] rows, int[] sol, int nsol)
+    public int solveLinearSystem(int[] rows, int[] sol, int nsol)
     {
         int m = mM;
         int tmp;
@@ -801,7 +801,7 @@ public abstract class BCH
      * @param syn syndromes
      * @return error locator polynomial (elp)
      */
-    public GFPoly compute_error_locator_polynomial(int[] syn)
+    public GFPoly computeErrorLocatorPolynomial(int[] syn)
     {
         int i;
         int j;
@@ -829,13 +829,13 @@ public abstract class BCH
                 k = 2 * i - pp;
                 elp.copyTo(elp_copy); // reimplemented
                 /* e[i+1](X) = e[i](X)+di*dp^-1*X^2(i-p)*e[p](X) */
-                tmp = a_log(d) + mN - a_log(pd);
+                tmp = aLog(d) + mN - aLog(pd);
                 for(j = 0; j <= pelp.mDegree; j++)
                 {
                     if(pelp.mC[j] > 0)
                     {
-                        l = a_log(pelp.mC[j]);
-                        elp.mC[j + k] ^= a_pow(tmp + l);
+                        l = aLog(pelp.mC[j]);
+                        elp.mC[j + k] ^= aPow(tmp + l);
                     }
                 }
                 /* compute l[i+1] = max(l[i]->c[l[p]+2*(i-p]) */
@@ -879,22 +879,22 @@ public abstract class BCH
         return a_pow_tab[(a_log_tab[a] + a_log_tab[b]) % mN];
     }
 
-    private int gf_sqr(int a)
+    private int gfSqr(int a)
     {
-        return a > 0 ? a_pow_tab[mod_s(2 * a_log_tab[a])] : 0;
+        return a > 0 ? a_pow_tab[modS(2 * a_log_tab[a])] : 0;
     }
 
-    private int gf_mul(int a, int b)
+    private int gfMul(int a, int b)
     {
-        return (a != 0 && b != 0) ? a_pow_tab[mod_s(a_log_tab[a] + a_log_tab[b])] : 0;
+        return (a != 0 && b != 0) ? a_pow_tab[modS(a_log_tab[a] + a_log_tab[b])] : 0;
     }
 
-    private int gf_div(int a, int b)
+    private int gfDiv(int a, int b)
     {
-        return a != 0 ? a_pow_tab[mod_s(a_log_tab[a] + mN - a_log_tab[b])] : 0;
+        return a != 0 ? a_pow_tab[modS(a_log_tab[a] + mN - a_log_tab[b])] : 0;
     }
 
-    private int gf_inv(int a)
+    private int gfInv(int a)
     {
         return a_pow_tab[mN - a_log_tab[a]];
     }
@@ -955,14 +955,14 @@ public abstract class BCH
         {
             for(j = 0; j < twoT; j += 2)
             {
-                syndromes[j] ^= a_pow((j + 1) * (nMinus1 - i));
+                syndromes[j] ^= aPow((j + 1) * (nMinus1 - i));
             }
         }
 
         //Calculate the even syndromes as squaring of the odd syndromes: v(a^(2j)) = v(a^j)^2
         for(j = 0; j < mT; j++)
         {
-            syndromes[2 * j + 1] = gf_sqr(syndromes[j]);
+            syndromes[2 * j + 1] = gfSqr(syndromes[j]);
         }
 
         return syndromes;
@@ -1012,18 +1012,18 @@ public abstract class BCH
         buildDegree2Base();
     }
 
-    public int a_log(int value)
+    public int aLog(int value)
     {
         return a_log_tab[value];
     }
 
-    public int a_ilog(int x)
+    public int aILog(int x)
     {
-        return mod_s(mN - a_log_tab[x]);
+        return modS(mN - a_log_tab[x]);
     }
 
 
-    public int a_pow(int value)
+    public int aPow(int value)
     {
         return a_pow_tab[modulo(value)];
     }
@@ -1039,7 +1039,7 @@ public abstract class BCH
         return v;
     }
 
-    public int mod_s(int v)
+    public int modS(int v)
     {
         return (v < mN ? v : v - mN);
     }
@@ -1051,10 +1051,10 @@ public abstract class BCH
     public void decode(CorrectedBinaryMessage message)
     {
         int[] syndromes = computeSyndromes(message);
-        GFPoly elp = compute_error_locator_polynomial(syndromes);
+        GFPoly elp = computeErrorLocatorPolynomial(syndromes);
         int elpDegree = elp.mDegree;
         int k = 1; //Recursive call argument
-        int[] roots = find_poly_roots(elp, k);
+        int[] roots = findPolyRoots(elp, k);
 
         if(roots.length != elpDegree)
         {
