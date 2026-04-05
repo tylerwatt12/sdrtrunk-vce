@@ -7,7 +7,6 @@ import org.rauschig.jarchivelib.ArchiverFactory;
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -34,26 +33,25 @@ public class ZipUtility
      *
      * @param listFiles A collection of files and directories
      * @param destZipFile The path of the destination zip file
-     * @throws FileNotFoundException
      * @throws IOException
      */
-    public void zip(List<File> listFiles, String destZipFile) throws FileNotFoundException,
-        IOException
+    public void zip(List<File> listFiles, String destZipFile) throws IOException
     {
-        ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(destZipFile));
-        for(File file : listFiles)
+        try(ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(destZipFile)))
         {
-            if(file.isDirectory())
+            for(File file : listFiles)
             {
-                zipDirectory(file, file.getName(), zos);
+                if(file.isDirectory())
+                {
+                    zipDirectory(file, file.getName(), zos);
+                }
+                else
+                {
+                    zipFile(file, zos);
+                }
             }
-            else
-            {
-                zipFile(file, zos);
-            }
+            zos.flush();
         }
-        zos.flush();
-        zos.close();
     }
 
     /**
@@ -61,12 +59,11 @@ public class ZipUtility
      *
      * @param files a String array containing file paths
      * @param destZipFile The path of the destination zip file
-     * @throws FileNotFoundException
      * @throws IOException
      */
-    public void zip(String[] files, String destZipFile) throws FileNotFoundException, IOException
+    public void zip(String[] files, String destZipFile) throws IOException
     {
-        List<File> listFiles = new ArrayList<File>();
+        List<File> listFiles = new ArrayList<>();
 
         for(int i = 0; i < files.length; i++)
         {
@@ -82,11 +79,9 @@ public class ZipUtility
      * @param folder the directory to be  added
      * @param parentFolder the path of parent directory
      * @param zos the current zip output stream
-     * @throws FileNotFoundException
      * @throws IOException
      */
-    private void zipDirectory(File folder, String parentFolder, ZipOutputStream zos) throws
-        FileNotFoundException, IOException
+    private void zipDirectory(File folder, String parentFolder, ZipOutputStream zos) throws IOException
     {
         if(folder == null || folder.listFiles() == null)
         {
@@ -104,14 +99,14 @@ public class ZipUtility
                 }
 
                 zos.putNextEntry(new ZipEntry(parentFolder + "/" + file.getName()));
-                BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file));
-                long bytesRead = 0;
-                byte[] bytesIn = new byte[BUFFER_SIZE];
-                int read = 0;
-                while((read = bis.read(bytesIn)) != -1)
+                try(BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file)))
                 {
-                    zos.write(bytesIn, 0, read);
-                    bytesRead += read;
+                    byte[] bytesIn = new byte[BUFFER_SIZE];
+                    int read = 0;
+                    while((read = bis.read(bytesIn)) != -1)
+                    {
+                        zos.write(bytesIn, 0, read);
+                    }
                 }
                 zos.closeEntry();
             }
@@ -123,20 +118,19 @@ public class ZipUtility
      *
      * @param file the file to be added
      * @param zos the current zip output stream
-     * @throws FileNotFoundException
      * @throws IOException
      */
-    private void zipFile(File file, ZipOutputStream zos) throws FileNotFoundException, IOException
+    private void zipFile(File file, ZipOutputStream zos) throws IOException
     {
         zos.putNextEntry(new ZipEntry(file.getName()));
-        BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file));
-        long bytesRead = 0;
-        byte[] bytesIn = new byte[BUFFER_SIZE];
-        int read = 0;
-        while((read = bis.read(bytesIn)) != -1)
+        try(BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file)))
         {
-            zos.write(bytesIn, 0, read);
-            bytesRead += read;
+            byte[] bytesIn = new byte[BUFFER_SIZE];
+            int read = 0;
+            while((read = bis.read(bytesIn)) != -1)
+            {
+                zos.write(bytesIn, 0, read);
+            }
         }
         zos.closeEntry();
     }

@@ -29,15 +29,12 @@ import java.util.concurrent.ScheduledExecutorService;
 public class ThreadPool
 {
     private static final Logger mLog = LoggerFactory.getLogger(ThreadPool.class);
-    public static ScheduledExecutorService SCHEDULED =
+    public static final ScheduledExecutorService SCHEDULED =
             Executors.newScheduledThreadPool(4, new NamingThreadFactory("sdrtrunk scheduled"));
-    public static ExecutorService CACHED =
+    public static final ExecutorService CACHED =
             Executors.newCachedThreadPool(new NamingThreadFactory("sdrtrunk cached"));
 
-    /**
-     * Application-wide shared thread pools and scheduled executor service.
-     */
-    public ThreadPool()
+    private ThreadPool()
     {
     }
 

@@ -30,6 +30,10 @@ import java.util.Iterator;
  */
 public class FileUtil
 {
+    private FileUtil()
+    {
+    }
+
     /**
      * Recursively searches for the named file starting in the specified directory.
      * @param directory to search for the file
@@ -40,27 +44,29 @@ public class FileUtil
     {
         if(Files.isDirectory(directory))
         {
-            DirectoryStream<Path> stream = Files.newDirectoryStream(directory);
-            Iterator<Path> it = stream.iterator();
-            Path path = null;
-            while(it.hasNext())
+            try(DirectoryStream<Path> stream = Files.newDirectoryStream(directory))
             {
-                path = it.next();
-
-                if(Files.isDirectory(path))
+                Iterator<Path> it = stream.iterator();
+                Path path = null;
+                while(it.hasNext())
                 {
-                    Path candidate = findFile(path, name);
+                    path = it.next();
 
-                    if(candidate != null)
+                    if(Files.isDirectory(path))
                     {
-                        return candidate;
+                        Path candidate = findFile(path, name);
+
+                        if(candidate != null)
+                        {
+                            return candidate;
+                        }
                     }
-                }
-                else
-                {
-                    if(path.endsWith(name))
+                    else
                     {
-                        return path;
+                        if(path.endsWith(name))
+                        {
+                            return path;
+                        }
                     }
                 }
             }

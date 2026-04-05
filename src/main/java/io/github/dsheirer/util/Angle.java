@@ -21,6 +21,9 @@ import org.apache.commons.math3.util.FastMath;
 
 public class Angle
 {
+    private Angle()
+    {
+    }
 
 	public static double degreesFromRadians( double radians )
 	{

@@ -32,6 +32,10 @@ import org.jdesktop.swingx.mapviewer.GeoPosition;
  */
 public class PacketUtil
 {
+    private PacketUtil()
+    {
+    }
+
     /**
      * Extracts a plottable position from a packet.
      * @param packet to inspect and process

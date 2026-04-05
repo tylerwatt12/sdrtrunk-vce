@@ -23,6 +23,10 @@ public class StringUtils
     private static final String[] ILLEGAL_FILENAME_CHARACTERS = {"#", "%", "&", "{", "}", "\\", "<", ">",
             "*", "?", "/", " ", "$", "!", "'", "\"", ":", "@", "+", "`", "|", "=", ","};
 
+    private StringUtils()
+    {
+    }
+
     /**
      * Compares string a to b and returns true if a is non-null and non-empty, b is non-null and non-empty, and
      * a is equal to b.

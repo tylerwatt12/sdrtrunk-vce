@@ -45,6 +45,10 @@ import org.apache.commons.math3.util.FastMath;
 
 public class ArcTangent
 {
+    private ArcTangent()
+    {
+    }
+
 	public static final double sTANGENT_MAP_RESOLUTION = 0.003921549;
 	public static final double sRADIANS_PER_DEGREE = 0.017453293;
 	public static final int sTANGENT_MAP_SIZE = 256;
@@ -182,9 +186,9 @@ public class ArcTangent
 		}
 		else
 		{
-			alpha = z * (double)( sTANGENT_MAP_SIZE - .5 );
+			alpha = z * ( sTANGENT_MAP_SIZE - .5 );
 			index = (int)alpha;
-			alpha -= (double)index;
+			alpha -= index;
 			
 			//Determine base angle based on quadrant and add or subtract table
 			//value from base angle, based on quadrant
@@ -250,13 +254,6 @@ public class ArcTangent
 				}
 			}
 		}
-		
-//		//Check for negative radian angle value
-//		
-//		if( angle < 0 )
-//		{
-//			angle += 2 * Math.PI;
-//		}
 		
 		return angle;
 	}

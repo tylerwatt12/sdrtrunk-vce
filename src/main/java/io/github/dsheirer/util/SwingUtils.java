@@ -26,6 +26,10 @@ import java.awt.EventQueue;
  */
 public class SwingUtils
 {
+    private SwingUtils()
+    {
+    }
+
     /**
      * Runs the runnable on the swing dispatch thread
      */

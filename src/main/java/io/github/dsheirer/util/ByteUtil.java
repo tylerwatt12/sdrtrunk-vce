@@ -24,6 +24,10 @@ package io.github.dsheirer.util;
  */
 public class ByteUtil
 {
+    private ByteUtil()
+    {
+    }
+
     /**
      * Converts a byte array to an integer using big endian format.
      * @param bytes containing four bytes.
@@ -35,7 +39,7 @@ public class ByteUtil
         if(bytes == null || bytes.length < (offset + 4))
         {
             throw new IllegalArgumentException("Conversion to integer requires byte array with at least 4 bytes - " +
-                    "length:" + bytes.length + " offset:" + offset);
+                "length:" + (bytes == null ? "null" : bytes.length) + " offset:" + offset);
         }
 
         int value = (bytes[offset + 3] & 0xFF) << 24;

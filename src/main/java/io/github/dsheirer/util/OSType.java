@@ -21,6 +21,7 @@ package io.github.dsheirer.util;
 
 import java.util.EnumSet;
 import java.util.Locale;
+import java.util.Set;
 
 public enum OSType
 {
@@ -38,9 +39,14 @@ public enum OSType
 
     UNKNOWN;
 
-    public static EnumSet<OSType> LINUX_TYPES = EnumSet.of(LINUX_X86_32, LINUX_X86_64, LINUX_ARM_32, LINUX_AARCH_64);
-    public static EnumSet<OSType> OSX_TYPES = EnumSet.of(OSX_AARCH_64, OSX_X86_64);
-    public static EnumSet<OSType> WINDOWS_TYPES = EnumSet.of(WINDOWS_AARCH_64, WINDOWS_X86_32, WINDOWS_X86_64);
+    private static final String AMD64 = "amd64";
+    private static final String AARCH64 = "aarch64";
+
+    public static final Set<OSType> LINUX_TYPES =
+        Set.copyOf(EnumSet.of(LINUX_X86_32, LINUX_X86_64, LINUX_ARM_32, LINUX_AARCH_64));
+    public static final Set<OSType> OSX_TYPES = Set.copyOf(EnumSet.of(OSX_AARCH_64, OSX_X86_64));
+    public static final Set<OSType> WINDOWS_TYPES =
+        Set.copyOf(EnumSet.of(WINDOWS_AARCH_64, WINDOWS_X86_32, WINDOWS_X86_64));
 
     /**
      * Indicates if this enumeration entry is a Windows type
@@ -73,7 +79,7 @@ public enum OSType
 
         if(os.contains("win"))
         {
-            if(arch.contains("amd64"))
+            if(arch.contains(AMD64))
             {
                 return OSType.WINDOWS_X86_64;
             }
@@ -81,7 +87,7 @@ public enum OSType
             {
                 return OSType.WINDOWS_X86_32;
             }
-            else if(arch.contains("aarch64"))
+            else if(arch.contains(AARCH64))
             {
                 return OSType.WINDOWS_AARCH_64;
             }
@@ -89,11 +95,11 @@ public enum OSType
 
         if(os.contains("mac") || os.contains("darwin") || os.contains("osx"))
         {
-            if(arch.contains("amd64") || arch.contains("x86_64"))
+            if(arch.contains(AMD64) || arch.contains("x86_64"))
             {
                 return OSType.OSX_X86_64;
             }
-            else if(arch.contains("aarch64"))
+            else if(arch.contains(AARCH64))
             {
                 return OSType.OSX_AARCH_64;
             }
@@ -101,7 +107,7 @@ public enum OSType
 
         if(os.contains("nux") || os.contains("nix") || os.contains("aix"))
         {
-            if(arch.contains("amd64"))
+            if(arch.contains(AMD64))
             {
                 return OSType.LINUX_X86_64;
             }
@@ -109,7 +115,7 @@ public enum OSType
             {
                 return OSType.LINUX_X86_32;
             }
-            else if(arch.contains("aarch64"))
+            else if(arch.contains(AARCH64))
             {
                 return OSType.LINUX_AARCH_64;
             }

@@ -34,8 +34,8 @@ public class XTEA
     private static final int MASK3 = 0xFF000000;
 
     //Pre-calculated sub keys derived from encryption key
-    private int mSubKeys1[] = new int[32];
-    private int mSubKeys2[] = new int[32];
+    private int[] mSubKeys1 = new int[32];
+    private int[] mSubKeys2 = new int[32];
 
     /**
      * XTEA block cipher encryption using 128 bit encryption key and 64 bit plain text block size with 32 Feistel rounds.
@@ -62,17 +62,18 @@ public class XTEA
     {
         Validate.isTrue(key.length == 16);
 
-        int keyInts[] = new int[8];
+        int[] keyInts = new int[8];
         
         //Convert the key to an array of integers
         for (int i = 0; i < 16; i += 4)
         {
-            keyInts[i / 4] = ((key[i + 3] << 0)) & MASK0 | ((key[i + 2]) << 8) & MASK1 |
-                             ((key[i + 1]) << 16) & MASK2 | ((key[i + 0]) << 24) & MASK3;
+            keyInts[i / 4] = (key[i + 3]        & MASK0) | (key[i + 2] <<  8) & MASK1 |
+                             (key[i + 1] << 16) & MASK2  | (key[i + 0] << 24) & MASK3;
         }
 
         //Calculate subkeys for each Feistel round
-        int sum, cycle;
+        int sum;
+        int cycle;
 
         for (sum = 0, cycle = 0; cycle < 32; cycle++)
         {
@@ -99,9 +100,9 @@ public class XTEA
         Validate.isTrue(plainText.length == 8);
 
         //Convert the 8 bytes of plaintext to 2 integers
-        int result0 = (plainText[3] << 0) & MASK0 | (plainText[2] << 8) & MASK1 |
+        int result0 = (plainText[3])       & MASK0 | (plainText[2] <<  8) & MASK1 |
                       (plainText[1] << 16) & MASK2 | (plainText[0] << 24) & MASK3;
-        int result1 = (plainText[7] << 0) & MASK0 | (plainText[6] << 8) & MASK1 |
+        int result1 = (plainText[7])       & MASK0 | (plainText[6] <<  8) & MASK1 |
                       (plainText[5] << 16) & MASK2 | (plainText[4] << 24) & MASK3;
         
         //Unrolled loop for all Feistel rounds

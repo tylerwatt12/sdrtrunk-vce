@@ -18,17 +18,27 @@
  */
 package io.github.dsheirer.util;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 public class TimeStamp
 {
-    public static SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyyMMdd");
-    public static SimpleDateFormat TIME_FORMAT = new SimpleDateFormat("HHmmss");
-    public static SimpleDateFormat TIME_WITH_MILLISECONDS_FORMAT = new SimpleDateFormat("HHmmss.SSS");
-    public static SimpleDateFormat DATE_TIME_FORMAT = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss");
-    public static SimpleDateFormat DATE_TIME_FORMAT_FILE = new SimpleDateFormat("yyyyMMdd_HHmmss");
-    public static SimpleDateFormat DATE_TIME_MILLIS_FORMAT = new SimpleDateFormat("yyyyMMdd HHmmss.SSS");
+    private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
+    public static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(SYSTEM_ZONE);
+    public static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HHmmss").withZone(SYSTEM_ZONE);
+    public static final DateTimeFormatter TIME_WITH_MILLISECONDS_FORMAT =
+        DateTimeFormatter.ofPattern("HHmmss.SSS").withZone(SYSTEM_ZONE);
+    public static final DateTimeFormatter DATE_TIME_FORMAT =
+        DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss").withZone(SYSTEM_ZONE);
+    public static final DateTimeFormatter DATE_TIME_FORMAT_FILE =
+        DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(SYSTEM_ZONE);
+    public static final DateTimeFormatter DATE_TIME_MILLIS_FORMAT =
+        DateTimeFormatter.ofPattern("yyyyMMdd HHmmss.SSS").withZone(SYSTEM_ZONE);
+
+    private TimeStamp()
+    {
+    }
 
     /**
      * Returns the current system date formatted as yyyy-MM-dd
@@ -43,7 +53,7 @@ public class TimeStamp
      */
     public static synchronized String getFormattedDate(long timestamp)
     {
-        return DATE_FORMAT.format(new Date(timestamp));
+        return DATE_FORMAT.format(Instant.ofEpochMilli(timestamp));
     }
 
     /**
@@ -53,7 +63,7 @@ public class TimeStamp
      */
     public static String getFileFormattedDateTime(long timestamp)
     {
-        return DATE_TIME_FORMAT_FILE.format(new Date(timestamp));
+        return DATE_TIME_FORMAT_FILE.format(Instant.ofEpochMilli(timestamp));
     }
 
     /**
@@ -72,7 +82,7 @@ public class TimeStamp
      */
     public static String getFormattedDateTime(long timestamp)
     {
-        return DATE_TIME_FORMAT.format(new Date(timestamp));
+        return DATE_TIME_FORMAT.format(Instant.ofEpochMilli(timestamp));
     }
 
     /**
@@ -97,7 +107,7 @@ public class TimeStamp
      */
     public static synchronized String getFormattedTime(long timestamp)
     {
-        return TIME_FORMAT.format(new Date(timestamp));
+        return TIME_FORMAT.format(Instant.ofEpochMilli(timestamp));
     }
 
     /**
@@ -105,7 +115,7 @@ public class TimeStamp
      */
     public static synchronized String getFormattedTimeWithMilliseconds(long timestamp)
     {
-        return TIME_WITH_MILLISECONDS_FORMAT.format(new Date(timestamp));
+        return TIME_WITH_MILLISECONDS_FORMAT.format(Instant.ofEpochMilli(timestamp));
     }
 
     /**
@@ -157,4 +167,3 @@ public class TimeStamp
     }
 
 }
-

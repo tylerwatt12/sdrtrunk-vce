@@ -52,6 +52,6 @@ public class ColorIcon implements Icon
 	@Override
     public int getIconHeight()
     {
-	    return sSIZE;
+	    return getIconWidth();
     }
 }
