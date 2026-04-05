@@ -22,7 +22,6 @@
  import java.net.http.HttpRequest;
  import java.util.ArrayList;
  import java.util.List;
- import java.lang.*;
  import java.io.ByteArrayOutputStream;
  import java.io.IOException;
 
@@ -35,13 +34,6 @@
      private static final String BOUNDARY = "--sdrtrunk-sdrtrunk-sdrtrunk";
      private List<Part> mParts = new ArrayList<>();
      private byte[] audioBytes = null; 
-
-     /**
-      * Constructs an instance
-      */
-     public OpenMHzBuilder()
-     {
-     }
 
      /**
       * Access the static multi-part boundary string
@@ -163,7 +155,7 @@
          }
          catch(IOException e)
          {
-             //mLog.error("Rdio Scanner API - unable to create POST reqeust.");
+             // ByteArrayOutputStream writes do not fail under normal use.
          }
 
          return HttpRequest.BodyPublishers.ofByteArray(outputStream.toByteArray());

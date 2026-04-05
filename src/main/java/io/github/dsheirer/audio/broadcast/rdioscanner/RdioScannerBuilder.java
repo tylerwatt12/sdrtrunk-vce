@@ -22,7 +22,6 @@ package io.github.dsheirer.audio.broadcast.rdioscanner;
 import java.net.http.HttpRequest;
 import java.util.ArrayList;
 import java.util.List;
-import java.lang.*;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
@@ -36,13 +35,6 @@ public class RdioScannerBuilder
     private List<Part> mParts = new ArrayList<>();
     private byte[] audioBytes = null;
     private String audioName = null;
-
-    /**
-     * Constructs an instance
-     */
-    public RdioScannerBuilder()
-    {
-    }
 
     /**
      * Access the static multi-part boundary string
@@ -174,7 +166,7 @@ public class RdioScannerBuilder
         }
         catch(IOException e)
         {
-            //mLog.error("Rdio Scanner API - unable to create POST reqeust.");
+            // ByteArrayOutputStream writes are in-memory and are not expected to fail here.
         }
 
         return HttpRequest.BodyPublishers.ofByteArray(outputStream.toByteArray());
