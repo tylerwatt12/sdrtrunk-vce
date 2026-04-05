@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.audio.playback;
 
+import java.util.Objects;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Mixer;
@@ -119,5 +120,27 @@ public class AudioPlaybackDeviceDescriptor implements Comparable<AudioPlaybackDe
         }
 
         return getMixerInfo().getDescription().compareTo(other.getMixerInfo().getDescription());
+    }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        if(this == obj)
+        {
+            return true;
+        }
+        if(!(obj instanceof AudioPlaybackDeviceDescriptor other))
+        {
+            return false;
+        }
+
+        return Objects.equals(getMixerInfo().getDescription(), other.getMixerInfo().getDescription()) &&
+            getAudioFormat().getChannels() == other.getAudioFormat().getChannels();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(getMixerInfo().getDescription(), getAudioFormat().getChannels());
     }
 }

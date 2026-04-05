@@ -34,6 +34,10 @@ import javax.sound.sampled.Mixer;
  */
 public class AudioPlaybackDeviceManager
 {
+    private AudioPlaybackDeviceManager()
+    {
+    }
+
     /**
      * Always returns the first available device in the system.
      */
@@ -131,23 +135,6 @@ public class AudioPlaybackDeviceManager
                                     }
                                 }
                                 //TODO: remove the 2 channels max restriction once supported
-//                                else if(audioFormat.getChannels() > 2 && audioFormat.getChannels() <= 8)
-//                                {
-//                                    if(audioFormat.getSampleRate() == AudioSystem.NOT_SPECIFIED)
-//                                    {
-//                                        discoveredFormats.add(audioFormat);
-//                                        //Modify the format for 8 kHz sample rate
-//                                        AudioFormat updatedFormat = new AudioFormat(AudioFormat.Encoding.PCM_SIGNED,
-//                                                8000, 16, audioFormat.getChannels(), audioFormat.getFrameSize(),
-//                                                8000, false);
-//                                        devices.add(new AudioPlaybackDeviceDescriptor(mixerInfo, updatedFormat));
-//                                    }
-//                                    else if(audioFormat.getSampleRate() == 8000)
-//                                    {
-//                                        discoveredFormats.add(audioFormat);
-//                                        devices.add(new AudioPlaybackDeviceDescriptor(mixerInfo, audioFormat));
-//                                    }
-//                                }
                             }
                         }
                     }
@@ -157,15 +144,5 @@ public class AudioPlaybackDeviceManager
 
         Collections.sort(devices);
         return devices;
-    }
-
-
-    static void main()
-    {
-        List<AudioPlaybackDeviceDescriptor> devices = getAudioPlaybackDevices();
-        for(AudioPlaybackDeviceDescriptor device : devices)
-        {
-            System.out.println(device);
-        }
     }
 }

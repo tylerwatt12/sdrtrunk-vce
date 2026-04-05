@@ -107,151 +107,6 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
         mNewAudioSegmentQueue.add(audioSegment);
     }
 
-    /**
-     * Processes new audio segments and automatically assigns them to audio outputs.
-     *
-     * Note: this method is intended to be repeatedly invoked by a scheduled processing thread.
-     */
-    private void processAudioSegments()
-    {
-        //Process new audio segments queue.  If segment has audio, queue it for replay, otherwise place in pending queue
-        AudioSegment newSegment = mNewAudioSegmentQueue.poll();
-
-        while(newSegment != null)
-        {
-            if(newSegment.isDuplicate() &&
-               mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled())
-            {
-                newSegment.decrementConsumerCount();
-            }
-            else if(newSegment.hasAudio())
-            {
-                mAudioSegments.add(newSegment);
-            }
-            else
-            {
-                mPendingAudioSegments.add(newSegment);
-            }
-
-            newSegment = mNewAudioSegmentQueue.poll();
-        }
-
-        //Transfer pending audio segments that now have audio or that completed without ever having audio
-        if(!mPendingAudioSegments.isEmpty())
-        {
-            Iterator<AudioSegment> it = mPendingAudioSegments.iterator();
-
-            AudioSegment audioSegment;
-
-            while(it.hasNext())
-            {
-                audioSegment = it.next();
-
-                if(audioSegment.isDuplicate() &&
-                   mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled())
-                {
-                    it.remove();
-                    audioSegment.decrementConsumerCount();
-                }
-                else if(audioSegment.hasAudio())
-                {
-                    //Queue it up for replay
-                    it.remove();
-                    mAudioSegments.add(audioSegment);
-                }
-                else if(audioSegment.completeProperty().get())
-                {
-                    //Rare situation: the audio segment completed but never had audio ... dispose it
-                    it.remove();
-                    audioSegment.decrementConsumerCount();
-                }
-            }
-        }
-
-        //Process all audio segments that have audio
-        if(!mAudioSegments.isEmpty())
-        {
-            Iterator<AudioSegment> it = mAudioSegments.iterator();
-            AudioSegment audioSegment;
-
-            //Remove any audio segments flagged as do not monitor.  Don't remove completed segments yet, because
-            //we want to give them a brief chance at playback.  Automatically assign linked audio segments to the
-            //current audio output for audio continuity
-            while(it.hasNext())
-            {
-                audioSegment = it.next();
-
-                if(audioSegment.isDoNotMonitor() || (audioSegment.isDuplicate() &&
-                   mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled()))
-                {
-                    it.remove();
-                    audioSegment.decrementConsumerCount();
-                }
-                else if(audioSegment.isLinked())
-                {
-                    mAudioChannelsLock.lock();
-
-                    try
-                    {
-                        for(AudioChannel audioOutput: mAudioOutput.getAudioProvider().getAudioChannels())
-                        {
-                            if(audioOutput.isLinkedTo(audioSegment))
-                            {
-                                it.remove();
-                                audioOutput.play(audioSegment);
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        mAudioChannelsLock.unlock();
-                    }
-                }
-            }
-
-            //Sort audio segments by playback priority and assign to empty audio outputs
-            if(!mAudioSegments.isEmpty())
-            {
-                mAudioSegments.sort(mAudioSegmentPrioritySorter);
-                mAudioChannelsLock.lock();
-
-                try
-                {
-                    //Assign empty audio outputs first
-                    for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
-                    {
-                        if(audioChannel.isEmpty())
-                        {
-                            audioChannel.play(mAudioSegments.removeFirst());
-                            if(mAudioSegments.isEmpty())
-                            {
-                                return;
-                            }
-                        }
-                    }
-                }
-                finally
-                {
-                    mAudioChannelsLock.unlock();
-                }
-            }
-
-            //Remove any audio segments marked as complete that didn't get assigned to an output
-            it = mAudioSegments.iterator(); //reset the iterator
-            while(it.hasNext())
-            {
-                audioSegment = it.next();
-
-                if(audioSegment.completeProperty().get() || (audioSegment.isDuplicate() &&
-                   mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled()))
-                {
-                    it.remove();
-                    audioSegment.decrementConsumerCount();
-                }
-            }
-        }
-    }
-
     public void dispose()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
@@ -337,8 +192,6 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                         mAudioOutput = new AudioOutput(audioDevice, new AudioProviderStereo(mUserPreferences));
                         break;
                     default:
-//                        mAudioOutput = new AudioOutput(audioDevice, new AudioProviderMultiChannel(mUserPreferences,
-//                                audioDevice.getAudioFormat()));
                         throw new AudioException("Unsupported mixer channel configuration channel count: " + channelCount);
                 }
 
@@ -413,6 +266,151 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
     {
         private final AtomicBoolean mProcessing = new AtomicBoolean();
 
+        /**
+         * Processes new audio segments and automatically assigns them to audio outputs.
+         *
+         * Note: this method is intended to be repeatedly invoked by a scheduled processing thread.
+         */
+        private void processAudioSegments()
+        {
+            //Process new audio segments queue.  If segment has audio, queue it for replay, otherwise place in pending queue
+            AudioSegment newSegment = mNewAudioSegmentQueue.poll();
+
+            while(newSegment != null)
+            {
+                if(newSegment.isDuplicate() &&
+                   mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled())
+                {
+                    newSegment.decrementConsumerCount();
+                }
+                else if(newSegment.hasAudio())
+                {
+                    mAudioSegments.add(newSegment);
+                }
+                else
+                {
+                    mPendingAudioSegments.add(newSegment);
+                }
+
+                newSegment = mNewAudioSegmentQueue.poll();
+            }
+
+            //Transfer pending audio segments that now have audio or that completed without ever having audio
+            if(!mPendingAudioSegments.isEmpty())
+            {
+                Iterator<AudioSegment> it = mPendingAudioSegments.iterator();
+
+                AudioSegment audioSegment;
+
+                while(it.hasNext())
+                {
+                    audioSegment = it.next();
+
+                    if(audioSegment.isDuplicate() &&
+                       mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled())
+                    {
+                        it.remove();
+                        audioSegment.decrementConsumerCount();
+                    }
+                    else if(audioSegment.hasAudio())
+                    {
+                        //Queue it up for replay
+                        it.remove();
+                        mAudioSegments.add(audioSegment);
+                    }
+                    else if(audioSegment.completeProperty().get())
+                    {
+                        //Rare situation: the audio segment completed but never had audio ... dispose it
+                        it.remove();
+                        audioSegment.decrementConsumerCount();
+                    }
+                }
+            }
+
+            //Process all audio segments that have audio
+            if(!mAudioSegments.isEmpty())
+            {
+                Iterator<AudioSegment> it = mAudioSegments.iterator();
+                AudioSegment audioSegment;
+
+                //Remove any audio segments flagged as do not monitor.  Don't remove completed segments yet, because
+                //we want to give them a brief chance at playback.  Automatically assign linked audio segments to the
+                //current audio output for audio continuity
+                while(it.hasNext())
+                {
+                    audioSegment = it.next();
+
+                    if(audioSegment.isDoNotMonitor() || (audioSegment.isDuplicate() &&
+                       mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled()))
+                    {
+                        it.remove();
+                        audioSegment.decrementConsumerCount();
+                    }
+                    else if(audioSegment.isLinked())
+                    {
+                        mAudioChannelsLock.lock();
+
+                        try
+                        {
+                            for(AudioChannel audioOutput: mAudioOutput.getAudioProvider().getAudioChannels())
+                            {
+                                if(audioOutput.isLinkedTo(audioSegment))
+                                {
+                                    it.remove();
+                                    audioOutput.play(audioSegment);
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            mAudioChannelsLock.unlock();
+                        }
+                    }
+                }
+
+                //Sort audio segments by playback priority and assign to empty audio outputs
+                if(!mAudioSegments.isEmpty())
+                {
+                    mAudioSegments.sort(mAudioSegmentPrioritySorter);
+                    mAudioChannelsLock.lock();
+
+                    try
+                    {
+                        //Assign empty audio outputs first
+                        for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
+                        {
+                            if(audioChannel.isEmpty())
+                            {
+                                audioChannel.play(mAudioSegments.removeFirst());
+                                if(mAudioSegments.isEmpty())
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        mAudioChannelsLock.unlock();
+                    }
+                }
+
+                //Remove any audio segments marked as complete that didn't get assigned to an output
+                it = mAudioSegments.iterator(); //reset the iterator
+                while(it.hasNext())
+                {
+                    audioSegment = it.next();
+
+                    if(audioSegment.completeProperty().get() || (audioSegment.isDuplicate() &&
+                       mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled()))
+                    {
+                        it.remove();
+                        audioSegment.decrementConsumerCount();
+                    }
+                }
+            }
+        }
+
         @Override
         public void run()
         {
@@ -422,9 +420,9 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 {
                     processAudioSegments();
                 }
-                catch(Throwable t)
+                catch(Exception e)
                 {
-                    mLog.error("Encountered error while processing audio segments", t);
+                    mLog.error("Encountered error while processing audio segments", e);
                 }
 
                 mProcessing.set(false);
