@@ -145,4 +145,10 @@ public class FilterElement<T> implements Comparable<FilterElement<T>>
 
         return false;
     }
+
+    @Override
+    public int hashCode()
+    {
+        return toString().hashCode();
+    }
 }

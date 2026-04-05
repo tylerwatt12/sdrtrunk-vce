@@ -45,7 +45,7 @@ public abstract class Filter<T,K> implements IFilter<T>
      * Constructs an instance
      * @param name of this filter
      */
-    public Filter(String name)
+    protected Filter(String name)
     {
         mName = name;
     }

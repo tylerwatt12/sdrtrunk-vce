@@ -26,17 +26,19 @@ import java.util.EventObject;
 import java.util.List;
 import net.miginfocom.swing.MigLayout;
 
+import javax.swing.AbstractCellEditor;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTree;
-import javax.swing.event.CellEditorListener;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreeCellEditor;
 import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreeSelectionModel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Editor panel for managing the state of a filter set.
@@ -46,6 +48,7 @@ import javax.swing.tree.TreeSelectionModel;
 public class FilterEditorPanel<T> extends JPanel
 {
     private static final long serialVersionUID = 1L;
+    private static final Logger mLog = LoggerFactory.getLogger(FilterEditorPanel.class);
     private JTree mTree;
     private DefaultTreeModel mModel;
     private FilterSet<T> mFilterSet;
@@ -260,7 +263,7 @@ public class FilterEditorPanel<T> extends JPanel
         }
         else
         {
-            System.out.println("Can't evaluate - node is null");
+            mLog.debug("Can't evaluate - node is null");
         }
 
         return null;
@@ -273,6 +276,7 @@ public class FilterEditorPanel<T> extends JPanel
     {
         private static final long serialVersionUID = 1L;
 
+        @Override
         public Component getTreeCellRendererComponent(JTree tree, Object treeNode, boolean selected, boolean expanded,
                                                       boolean leaf, int row, boolean hasFocus)
         {
@@ -387,7 +391,7 @@ public class FilterEditorPanel<T> extends JPanel
     /**
      * Editor for filter tree nodes
      */
-    public class FilterTreeCellEditor implements TreeCellEditor
+    public class FilterTreeCellEditor extends AbstractCellEditor implements TreeCellEditor
     {
         @Override
         public Component getTreeCellEditorComponent(JTree tree, Object node, boolean isSelected, boolean expanded, boolean leaf, int row)
@@ -409,12 +413,6 @@ public class FilterEditorPanel<T> extends JPanel
         }
 
         @Override
-        public void addCellEditorListener(CellEditorListener l) {}
-
-        @Override
-        public void cancelCellEditing() {}
-
-        @Override
         public Object getCellEditorValue()
         {
             return null;
@@ -425,10 +423,6 @@ public class FilterEditorPanel<T> extends JPanel
         {
             return true;
         }
-
-        @Override
-        public void removeCellEditorListener(CellEditorListener l) {}
-
         @Override
         public boolean shouldSelectCell(EventObject anEvent)
         {

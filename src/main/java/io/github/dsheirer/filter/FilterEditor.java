@@ -25,6 +25,7 @@ import net.miginfocom.swing.MigLayout;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JScrollPane;
+import javax.swing.WindowConstants;
 
 /**
  * Filter editor
@@ -49,7 +50,7 @@ public class FilterEditor<T> extends JFrame
         setTitle(title);
         setSize(600, 400);
         setLocationRelativeTo(owner);
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         setLayout(new MigLayout("", "[grow,fill]", "[grow,fill][]"));
         mEditorPanel = new FilterEditorPanel<>(filterSet);
         JScrollPane scroller = new JScrollPane(mEditorPanel);
