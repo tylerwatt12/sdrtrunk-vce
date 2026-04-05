@@ -120,9 +120,9 @@ public class PlaylistManager implements Listener<ChannelEvent>
         //save the playlist when there are any changes
         mChannelModel.addListener(this);
 
-        mAliasModel.aliasList().addListener((ListChangeListener<Alias>)c -> schedulePlaylistSave());
+        mAliasModel.aliasList().addListener((ListChangeListener.Change<? extends Alias> c) -> schedulePlaylistSave());
 
-        mChannelMapModel.getChannelMaps().addListener((ListChangeListener<ChannelMap>)c -> schedulePlaylistSave());
+        mChannelMapModel.getChannelMaps().addListener((ListChangeListener.Change<? extends ChannelMap> c) -> schedulePlaylistSave());
 
         mBroadcastModel.addListener(broadcastEvent -> {
             switch(broadcastEvent.getEvent())
@@ -445,10 +445,10 @@ public class PlaylistManager implements Listener<ChannelEvent>
 
         PlaylistV2 playlist = new PlaylistV2();
 
-        playlist.setAliases(new ArrayList(mAliasModel.getAliases()));
-        playlist.setBroadcastConfigurations(new ArrayList(mBroadcastModel.getBroadcastConfigurations()));
-        playlist.setChannels(new ArrayList(mChannelModel.getChannels()));
-        playlist.setChannelMaps(new ArrayList(mChannelMapModel.getChannelMaps()));
+        playlist.setAliases(new ArrayList<>(mAliasModel.getAliases()));
+        playlist.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
+        playlist.setChannels(new ArrayList<>(mChannelModel.getChannels()));
+        playlist.setChannelMaps(new ArrayList<>(mChannelMapModel.getChannelMaps()));
         playlist.setVersion(PLAYLIST_CURRENT_VERSION);
 
         //Create a backup copy of the current playlist

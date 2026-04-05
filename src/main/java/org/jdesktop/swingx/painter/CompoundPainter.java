@@ -119,7 +119,8 @@ public class CompoundPainter<T> extends AbstractPainter<T>
 	/** Creates a new instance of CompoundPainter */
 	public CompoundPainter()
 	{
-		this((Painter<T>[]) null);
+		handler = new Handler(this);
+		setPainters(Collections.emptyList());
 	}
 
 	/**
@@ -129,6 +130,7 @@ public class CompoundPainter<T> extends AbstractPainter<T>
 	 *
 	 * @param painters array of painters, which will be painted in order
 	 */
+	@SafeVarargs
 	public CompoundPainter(Painter<T>... painters)
 	{
 		handler = new Handler(this);
@@ -192,6 +194,7 @@ public class CompoundPainter<T> extends AbstractPainter<T>
 	 *
 	 * @param painters array of painters, which will be painted in order
 	 */
+	@SuppressWarnings("unchecked")
 	public void setPainters(Painter<T>... painters)
 	{
 		List<? extends Painter<T>> l;

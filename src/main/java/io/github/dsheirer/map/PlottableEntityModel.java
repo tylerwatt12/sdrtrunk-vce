@@ -48,7 +48,7 @@ public class PlottableEntityModel extends AbstractTableModel implements Listener
     private static final int COLUMN_ALIAS_LIST = 2;
     private static final String[] COLUMN_NAMES = {"ID", "Alias", "List"};
     private static final String KEY_NO_ALIAS_LIST = "(no alias list)";
-    private Map<String,PlottableEntityHistory> mEntityHistoryMap = new HashMap();
+    private Map<String,PlottableEntityHistory> mEntityHistoryMap = new HashMap<>();
     private List<PlottableEntityHistory> mEntityHistories = new ArrayList<>();
     private List<IPlottableUpdateListener> mPlottableUpdateListeners = new ArrayList<>();
     private AliasModel mAliasModel;
