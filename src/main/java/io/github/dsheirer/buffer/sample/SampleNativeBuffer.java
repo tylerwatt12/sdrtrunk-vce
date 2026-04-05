@@ -78,7 +78,7 @@ public class SampleNativeBuffer extends AbstractNativeBuffer
     @Override
     public Iterator<ComplexSamples> iterator()
     {
-        return switch(mInterleavedImplementation)
+        return switch(mNonInterleavedImplementation)
         {
             case VECTOR_SIMD_512 -> new SampleBufferIteratorVector512Bits(mSamples, mResidualI, mResidualQ, mAverageDc, getTimestamp(), getSamplesPerMillisecond());
             case VECTOR_SIMD_256-> new SampleBufferIteratorVector256Bits(mSamples, mResidualI, mResidualQ, mAverageDc, getTimestamp(), getSamplesPerMillisecond());
