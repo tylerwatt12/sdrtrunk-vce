@@ -41,7 +41,7 @@ public enum PassportBand
     BAND_VHF( "VHF", 0 ),
     BAND_UNKNOWN( "UNK", 0 );
     
-    public static int CHANNEL_BANDWIDTH = 12500; //Hertz
+    private static final int CHANNEL_BANDWIDTH = 12500; //Hertz
     
     private String mDescription;
     private int mBase;

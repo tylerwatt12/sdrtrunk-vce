@@ -39,10 +39,6 @@ public class Tait1200DecoderState extends DecoderState
     public static final Protocol PROTOCOL_TAIT_1200 = Protocol.TAIT1200;
     private TreeSet<TaitIdentifier> mIdents = new TreeSet<>();
 
-    public Tait1200DecoderState()
-    {
-    }
-
     @Override
     public DecoderType getDecoderType()
     {
@@ -58,7 +54,10 @@ public class Tait1200DecoderState extends DecoderState
     }
 
     @Override
-    public void init() {}
+    public void init()
+    {
+        //No additional Tait-specific initialization is required here.
+    }
 
     @Override
     public void receive(IMessage message)
@@ -136,13 +135,9 @@ public class Tait1200DecoderState extends DecoderState
     @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == DecoderStateEvent.Event.REQUEST_RESET)
         {
-            case REQUEST_RESET:
-                resetState();
-                break;
-            default:
-                break;
+            resetState();
         }
     }
 }

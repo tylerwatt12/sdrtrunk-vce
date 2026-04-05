@@ -35,8 +35,6 @@ public class Tait1200Decoder extends AbstractAFSKDecoder implements IBinarySymbo
 
     private MessageFramer mMessageFramerGPS;
     private MessageFramer mMessageFramerANI;
-    private Tait1200GPSMessageProcessor mMessageAProcessor;
-    private Tait1200ANIMessageProcessor mMessageBProcessor;
 
     protected Tait1200Decoder(AFSK1200Decoder decoder)
     {
@@ -57,14 +55,14 @@ public class Tait1200Decoder extends AbstractAFSKDecoder implements IBinarySymbo
         mMessageFramerGPS = new MessageFramer(SyncPattern.TAIT_CCDI_GPS_MESSAGE.getPattern(), MESSAGE_LENGTH);
         mMessageFramerANI = new MessageFramer(SyncPattern.TAIT_SELCAL_MESSAGE.getPattern(), MESSAGE_LENGTH);
 
-        mMessageAProcessor = new Tait1200GPSMessageProcessor();
-        mMessageBProcessor = new Tait1200ANIMessageProcessor();
+        Tait1200GPSMessageProcessor messageAProcessor = new Tait1200GPSMessageProcessor();
+        Tait1200ANIMessageProcessor messageBProcessor = new Tait1200ANIMessageProcessor();
 
-        mMessageFramerGPS.addMessageListener(mMessageAProcessor);
-        mMessageFramerANI.addMessageListener(mMessageBProcessor);
+        mMessageFramerGPS.addMessageListener(messageAProcessor);
+        mMessageFramerANI.addMessageListener(messageBProcessor);
 
-        mMessageAProcessor.setMessageListener(getMessageListener());
-        mMessageBProcessor.setMessageListener(getMessageListener());
+        messageAProcessor.setMessageListener(getMessageListener());
+        messageBProcessor.setMessageListener(getMessageListener());
     }
 
     @Override

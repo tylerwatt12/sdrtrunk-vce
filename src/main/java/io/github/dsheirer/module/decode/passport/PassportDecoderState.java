@@ -45,6 +45,7 @@ import java.util.TreeSet;
 
 public class PassportDecoderState extends DecoderState
 {
+    private static final String NONE_LABEL = "  None\n";
 
     private Set<PassportTalkgroup> mTalkgroupsFirstHeard = new HashSet<>();
     private Set<PassportTalkgroup> mTalkgroups = new TreeSet<>();
@@ -57,10 +58,6 @@ public class PassportDecoderState extends DecoderState
     private int mSiteNumber;
     private PassportBand mSiteBand;
     private long mFrequency;
-
-    public PassportDecoderState()
-    {
-    }
 
     @Override
     public DecoderType getDecoderType()
@@ -248,7 +245,7 @@ public class PassportDecoderState extends DecoderState
 
         if(mSiteLCNs.isEmpty())
         {
-            sb.append("  None\n");
+            sb.append(NONE_LABEL);
         }
         else
         {
@@ -266,7 +263,7 @@ public class PassportDecoderState extends DecoderState
 
         if(mNeighborLCNs.isEmpty())
         {
-            sb.append("  None\n");
+            sb.append(NONE_LABEL);
         }
         else
         {
@@ -284,7 +281,7 @@ public class PassportDecoderState extends DecoderState
 
         if(mTalkgroups.isEmpty())
         {
-            sb.append("  None\n");
+            sb.append(NONE_LABEL);
         }
         else
         {
@@ -298,7 +295,7 @@ public class PassportDecoderState extends DecoderState
 
         if(mMobileIDs.isEmpty())
         {
-            sb.append("  None\n");
+            sb.append(NONE_LABEL);
         }
         else
         {
@@ -324,7 +321,10 @@ public class PassportDecoderState extends DecoderState
     }
 
     @Override
-    public void init() {}
+    public void init()
+    {
+        //No additional Passport-specific initialization is required here.
+    }
 
     protected void resetState()
     {

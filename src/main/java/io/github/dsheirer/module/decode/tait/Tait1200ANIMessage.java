@@ -32,41 +32,25 @@ import java.util.List;
 
 public class Tait1200ANIMessage extends Message
 {
+    private static final int[] FROM_DIGIT_1 = {36, 37, 38, 39, 40, 41, 42, 43};
+    private static final int[] FROM_DIGIT_2 = {44, 45, 46, 47, 48, 49, 50, 51};
+    private static final int[] FROM_DIGIT_3 = {52, 53, 54, 55, 56, 57, 58, 59};
+    private static final int[] FROM_DIGIT_4 = {60, 61, 62, 63, 64, 65, 66, 67};
+    private static final int[] FROM_DIGIT_5 = {68, 69, 70, 71, 72, 73, 74, 75};
+    private static final int[] FROM_DIGIT_6 = {76, 77, 78, 79, 80, 81, 82, 83};
+    private static final int[] FROM_DIGIT_7 = {84, 85, 86, 87, 88, 89, 90, 91};
+    private static final int[] FROM_DIGIT_8 = {92, 93, 94, 95, 96, 97, 98, 99};
 
-    public static int[] REVS_1 = {0, 1, 2, 3};
-    public static int[] SYNC = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
-    public static int[] SIZE = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35};
-    public static int[] FROM_DIGIT_1 = {36, 37, 38, 39, 40, 41, 42, 43};
-    public static int[] FROM_DIGIT_2 = {44, 45, 46, 47, 48, 49, 50, 51};
-    public static int[] FROM_DIGIT_3 = {52, 53, 54, 55, 56, 57, 58, 59};
-    public static int[] FROM_DIGIT_4 = {60, 61, 62, 63, 64, 65, 66, 67};
-    public static int[] FROM_DIGIT_5 = {68, 69, 70, 71, 72, 73, 74, 75};
-    public static int[] FROM_DIGIT_6 = {76, 77, 78, 79, 80, 81, 82, 83};
-    public static int[] FROM_DIGIT_7 = {84, 85, 86, 87, 88, 89, 90, 91};
-    public static int[] FROM_DIGIT_8 = {92, 93, 94, 95, 96, 97, 98, 99};
-    public static int[] CHECKSUM_1 = {100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-        110, 111, 112, 113, 114, 115};
-
-    public static int[] REVS_2 = {116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127,
-        128, 129, 130, 131};
-    public static int[] SIZE_2 = {188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198,
-        199, 200, 201, 202, 203};
-    public static int[] TO_DIGIT_1 = {204, 205, 206, 207, 208, 209, 210, 211};
-    public static int[] TO_DIGIT_2 = {212, 213, 214, 215, 216, 217, 218, 219};
-    public static int[] TO_DIGIT_3 = {220, 221, 222, 223, 224, 225, 226, 227};
-    public static int[] TO_DIGIT_4 = {228, 229, 230, 231, 232, 233, 234, 235};
-    public static int[] TO_DIGIT_5 = {236, 237, 238, 239, 240, 241, 242, 243};
-    public static int[] TO_DIGIT_6 = {244, 245, 246, 247, 248, 249, 250, 251};
-    public static int[] TO_DIGIT_7 = {252, 253, 254, 255, 256, 257, 258, 259};
-    public static int[] TO_DIGIT_8 = {260, 261, 262, 263, 264, 265, 266, 267};
-    public static int[] UNKNOWN_1 = {268, 269, 270, 271, 272, 273, 274, 275};
-    public static int[] CHECKSUM_2 = {276, 277, 278, 279, 280, 281, 282, 283, 284, 285,
-        286, 287, 288, 289, 290, 291};
-
-    private static SimpleDateFormat mSDF = new SimpleDateFormat("yyyyMMdd HHmmss");
+    private static final int[] TO_DIGIT_1 = {204, 205, 206, 207, 208, 209, 210, 211};
+    private static final int[] TO_DIGIT_2 = {212, 213, 214, 215, 216, 217, 218, 219};
+    private static final int[] TO_DIGIT_3 = {220, 221, 222, 223, 224, 225, 226, 227};
+    private static final int[] TO_DIGIT_4 = {228, 229, 230, 231, 232, 233, 234, 235};
+    private static final int[] TO_DIGIT_5 = {236, 237, 238, 239, 240, 241, 242, 243};
+    private static final int[] TO_DIGIT_6 = {244, 245, 246, 247, 248, 249, 250, 251};
+    private static final int[] TO_DIGIT_7 = {252, 253, 254, 255, 256, 257, 258, 259};
+    private static final int[] TO_DIGIT_8 = {260, 261, 262, 263, 264, 265, 266, 267};
 
     private CorrectedBinaryMessage mMessage;
-    private CRC mCRC;
     private TaitIdentifier mFromIdentifier;
     private TaitIdentifier mToIdentifier;
     private List<Identifier> mIdentifiers;
@@ -127,7 +111,6 @@ public class Tait1200ANIMessage extends Message
 
     public boolean isValid()
     {
-//    	return mCRC == CRC.PASSED || mCRC == CRC.CORRECTED;
         return true;
     }
 

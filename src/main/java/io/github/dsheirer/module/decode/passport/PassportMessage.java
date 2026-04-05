@@ -36,7 +36,11 @@ import java.util.List;
 
 public class PassportMessage extends Message
 {
-    private static final int[] SYNC = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+    private static final String CHANNEL_LABEL = " CHAN:";
+    private static final String FREE_LABEL = " FREE:";
+    private static final String SITE_LABEL = " SITE:";
+    private static final String TALKGROUP_LABEL = " TG:";
+
     private static final int[] DIGITAL_COLOR_CODE = {9, 10};
     private static final int[] CHANNEL_NUMBER = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21};
     private static final int[] SITE = {22, 23, 24, 25, 26, 27, 28};
@@ -46,7 +50,6 @@ public class PassportMessage extends Message
     private static final int[] SITE_BAND = {41, 42, 43, 44};
     private static final int[] TYPE = {45, 46, 47, 48};
     private static final int[] FREE = {49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59};
-    private static final int[] CHECKSUM = {60, 61, 62, 63, 64, 65, 66, 67};
 
     private CorrectedBinaryMessage mMessage;
     private CRC mCRC;
@@ -244,22 +247,11 @@ public class PassportMessage extends Message
     }
 
     /**
-     * Appends spaces to the end of the stringbuilder to make it length long
-     */
-    private void pad(StringBuilder sb, int length)
-    {
-        while(sb.length() < length)
-        {
-            sb.append(" ");
-        }
-    }
-
-    /**
      * Pads an integer value with additional zeroes to make it decimalPlaces long
      */
     public String format(int number, int decimalPlaces)
     {
-        return StringUtils.leftPad(Integer.valueOf(number).toString(), decimalPlaces, '0');
+        return StringUtils.leftPad(Integer.toString(number), decimalPlaces, '0');
     }
 
     public String format(String val, int places)
@@ -302,44 +294,44 @@ public class PassportMessage extends Message
                 break;
             case CA_PAGE:
                 sb.append(" PAGING TG:").append(getToIdentifier());
-                sb.append(" SITE:").append(format(getSite(), 3));
-                sb.append(" CHAN:").append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
-                sb.append(" FREE:").append(format(getFree(), 3)).append("/").append(getFreeFrequency());
+                sb.append(SITE_LABEL).append(format(getSite(), 3));
+                sb.append(CHANNEL_LABEL).append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
+                sb.append(FREE_LABEL).append(format(getFree(), 3)).append("/").append(getFreeFrequency());
                 break;
             case CA_STRT:
                 sb.append(" CALL TG:").append(getToIdentifier());
-                sb.append(" SITE:").append(format(getSite(), 3));
-                sb.append(" CHAN:").append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
-                sb.append(" FREE:").append(format(getFree(), 3)).append("/").append(getFreeFrequency());
+                sb.append(SITE_LABEL).append(format(getSite(), 3));
+                sb.append(CHANNEL_LABEL).append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
+                sb.append(FREE_LABEL).append(format(getFree(), 3)).append("/").append(getFreeFrequency());
                 break;
             case DA_STRT:
                 sb.append(" ** DATA TG:").append(getToIdentifier());
-                sb.append(" SITE:").append(format(getSite(), 3));
-                sb.append(" CHAN:").append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
-                sb.append(" FREE:").append(format(getFree(), 3)).append("/").append(getFreeFrequency());
+                sb.append(SITE_LABEL).append(format(getSite(), 3));
+                sb.append(CHANNEL_LABEL).append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
+                sb.append(FREE_LABEL).append(format(getFree(), 3)).append("/").append(getFreeFrequency());
                 break;
             case CA_ENDD:
                 sb.append(" END  TG:").append(getToIdentifier());
-                sb.append(" SITE:").append(format(getSite(), 3));
-                sb.append(" CHAN:").append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
-                sb.append(" FREE:").append(format(getFree(), 3)).append("/").append(getFreeFrequency());
+                sb.append(SITE_LABEL).append(format(getSite(), 3));
+                sb.append(CHANNEL_LABEL).append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
+                sb.append(FREE_LABEL).append(format(getFree(), 3)).append("/").append(getFreeFrequency());
                 break;
             case ID_RDIO:
                 sb.append(" MOBILE ID MIN:").append(getFromIdentifier());
-                sb.append(" FREE:").append(format(getFree(), 3)).append("/").append(getFreeFrequency());
+                sb.append(FREE_LABEL).append(format(getFree(), 3)).append("/").append(getFreeFrequency());
                 break;
             case ID_TGAS:
                 sb.append(" ASSIGN TALKGROUP:").append(getToIdentifier());
-                sb.append(" SITE:").append(format(getSite(), 3));
-                sb.append(" CHAN:").append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
+                sb.append(SITE_LABEL).append(format(getSite(), 3));
+                sb.append(CHANNEL_LABEL).append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
                 break;
             case RA_REGI:
                 sb.append(" RADIO REGISTER TG: ").append(getToIdentifier());
                 break;
             default:
                 sb.append(" UNKNOWN SITE:").append(format(getSite(), 3));
-                sb.append(" CHAN:").append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
-                sb.append(" FREE:");
+                sb.append(CHANNEL_LABEL).append(format(getLCN(), 4)).append("/").append(getLCNFrequency());
+                sb.append(FREE_LABEL);
                 int free = getFree();
                 sb.append(format(free, 3));
                 if(free > 0 && free < 896)
@@ -348,7 +340,7 @@ public class PassportMessage extends Message
                     sb.append(getFreeFrequency());
                 }
                 sb.append(" TYP:").append(format(getMessageTypeNumber(), 2));
-                sb.append(" TG:").append(getToIdentifier());
+                sb.append(TALKGROUP_LABEL).append(getToIdentifier());
                 break;
         }
 

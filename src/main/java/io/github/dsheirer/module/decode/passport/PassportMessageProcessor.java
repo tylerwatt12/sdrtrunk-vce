@@ -33,10 +33,6 @@ public class PassportMessageProcessor implements Listener<CorrectedBinaryMessage
     private IdleMessageFinder mIdleFinder = new IdleMessageFinder();
     private PassportMessage mIdleMessage;
 
-    public PassportMessageProcessor()
-    {
-    }
-
     @Override
     public void receive(CorrectedBinaryMessage buffer)
     {
@@ -74,13 +70,9 @@ public class PassportMessageProcessor implements Listener<CorrectedBinaryMessage
 
     public class IdleMessageFinder
     {
-        public Map<String,Integer> mMessageCounts = new HashMap<String,Integer>();
+        private Map<String,Integer> mMessageCounts = new HashMap<>();
 
-        public boolean mIdleMessageFound = false;
-
-        public IdleMessageFinder()
-        {
-        }
+        private boolean mIdleMessageFound = false;
 
         public void receive(PassportMessage message)
         {

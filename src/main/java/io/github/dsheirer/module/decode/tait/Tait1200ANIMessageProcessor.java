@@ -28,10 +28,6 @@ public class Tait1200ANIMessageProcessor implements Listener<CorrectedBinaryMess
 {
     private Listener<IMessage> mMessageListener;
 
-    public Tait1200ANIMessageProcessor()
-    {
-    }
-
     public void dispose()
     {
         mMessageListener = null;
