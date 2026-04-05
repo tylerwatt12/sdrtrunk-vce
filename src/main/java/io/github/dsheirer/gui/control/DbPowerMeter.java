@@ -129,7 +129,7 @@ public class DbPowerMeter extends JComponent
      */
     private List<Double> getScaleValues()
     {
-        double ascent = getFontMetrics(getFont()).getMaxAscent() * 2;
+        double ascent = getFontMetrics(getFont()).getMaxAscent() * 2.0;
         double labelCount = getHeight() / ascent;
         double interval = getExtent() / labelCount;
         List<Double> values = new ArrayList<>();
@@ -272,7 +272,7 @@ public class DbPowerMeter extends JComponent
      */
     public boolean isPeakVisible()
     {
-        return mPeakVisible & isValidValue(getPeak());
+        return mPeakVisible && isValidValue(getPeak());
     }
 
     /**
@@ -292,7 +292,7 @@ public class DbPowerMeter extends JComponent
      */
     public boolean isSquelchThresholdVisible()
     {
-        return mSquelchThresholdVisible & isValidValue(getSquelchThreshold());
+        return mSquelchThresholdVisible && isValidValue(getSquelchThreshold());
     }
 
     /**

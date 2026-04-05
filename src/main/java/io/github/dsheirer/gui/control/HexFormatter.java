@@ -126,7 +126,7 @@ public class HexFormatter extends TextFormatter<Integer>
 
             value = value.trim();
 
-            if (value.length() < 1) {
+            if (value.isEmpty()) {
                 return null;
             }
 

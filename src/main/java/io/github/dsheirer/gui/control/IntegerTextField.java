@@ -29,7 +29,7 @@ import javafx.util.converter.IntegerStringConverter;
  */
 public class IntegerTextField extends TextField
 {
-    private static final String REGEX = "[1-9][0-9]*";
+    private static final String REGEX = "[1-9]\\d*";
 
     /**
      * Constructs an instance

@@ -60,7 +60,8 @@ public class CurveFittedAreaChart extends AreaChart<Number, Number>
 			} else if ( element instanceof LineTo )
 			{
 				final LineTo line = (LineTo) element;
-				final double x = line.getX(), y = line.getY();
+				final double x = line.getX();
+				final double y = line.getY();
 				dataPoints[ i ] = new Point2D( x, y );
 			}
 		}
@@ -125,7 +126,7 @@ public class CurveFittedAreaChart extends AreaChart<Number, Number>
 					2 * firstControlPoints[ 0 ].getX() - dataPoints[ 0 ].getX(),
 					2 * firstControlPoints[ 0 ].getY()
 							- dataPoints[ 0 ].getY() );
-			return new Pair<Point2D[], Point2D[]>( firstControlPoints,
+			return new Pair<>( firstControlPoints,
 					secondControlPoints );
 		}
 
@@ -143,7 +144,7 @@ public class CurveFittedAreaChart extends AreaChart<Number, Number>
 		rhs[ n - 1 ] = ( 8 * dataPoints[ n - 1 ].getX()
 				+ dataPoints[ n ].getX() ) / 2.0;
 		// Get first control points X-values
-		double[] x = GetFirstControlPoints( rhs );
+		double[] x = getFirstControlPoints( rhs );
 
 		// Set right hand side Y values
 		for ( int i = 1; i < n - 1; ++i )
@@ -155,7 +156,7 @@ public class CurveFittedAreaChart extends AreaChart<Number, Number>
 		rhs[ n - 1 ] = ( 8 * dataPoints[ n - 1 ].getY()
 				+ dataPoints[ n ].getY() ) / 2.0;
 		// Get first control points Y-values
-		double[] y = GetFirstControlPoints( rhs );
+		double[] y = getFirstControlPoints( rhs );
 
 		// Fill output arrays.
 		firstControlPoints = new Point2D[ n ];
@@ -177,7 +178,7 @@ public class CurveFittedAreaChart extends AreaChart<Number, Number>
 						( dataPoints[ n ].getY() + y[ n - 1 ] ) / 2 );
 			}
 		}
-		return new Pair<Point2D[], Point2D[]>( firstControlPoints,
+		return new Pair<>( firstControlPoints,
 				secondControlPoints );
 	}
 
@@ -185,7 +186,7 @@ public class CurveFittedAreaChart extends AreaChart<Number, Number>
 	 * Solves a tridiagonal system for one of coordinates (x or y) of first
 	 * Bezier control points.
 	 */
-	private static double[] GetFirstControlPoints( double[] rhs )
+	private static double[] getFirstControlPoints( double[] rhs )
 	{
 		int n = rhs.length;
 		double[] x = new double[ n ]; // Solution vector.

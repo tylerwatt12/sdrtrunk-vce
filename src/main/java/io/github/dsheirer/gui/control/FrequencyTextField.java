@@ -39,7 +39,7 @@ public class FrequencyTextField extends JTextField
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(FrequencyTextField.class);
     //Value range: 0.000001 to 9999.999999
-    private static final String REGEX = "^[0-9]{0,4}[.]?[0-9]{0,6}$";
+    private static final String REGEX = "^\\d{0,4}[.]?\\d{0,6}$";
     //This lets users start typing a really small number like 1 Hertz ... 0.00000
     private static final String ZEROS_REGEX = "^0?([.]0{0,5})?$";
     private double mMinimum;

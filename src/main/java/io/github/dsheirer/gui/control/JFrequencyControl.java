@@ -25,21 +25,18 @@ import io.github.dsheirer.source.SourceException;
 import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.Font;
+import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
-import java.awt.event.KeyListener;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import net.miginfocom.swing.MigLayout;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -52,11 +49,10 @@ import javax.swing.JTextField;
 public class JFrequencyControl extends JPanel implements ISourceEventProcessor
 {
     private static final long serialVersionUID = 1L;
-    private static final Logger mLog = LoggerFactory.getLogger(JFrequencyControl.class);
     private List<ISourceEventProcessor> mProcessors = new ArrayList<>();
     private Color mHighlightColor = Color.YELLOW;
     private long mFrequency;
-    private HashMap<Integer,Digit> mDigits = new HashMap<Integer,Digit>();
+    private HashMap<Integer,Digit> mDigits = new HashMap<>();
 
     /**
      * Constructor
@@ -77,16 +73,7 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
 
         for(int x = 9; x >= 0; x--)
         {
-            Digit digit = null;
-
-            try
-            {
-                digit = new Digit(x);
-            }
-            catch(ParseException e)
-            {
-                mLog.error("JFrequencyControl - parse exception constructing a digit - " + e);
-            }
+            Digit digit = new Digit(x);
 
             if(digit != null)
             {
@@ -128,11 +115,9 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
     @Override
     public void process(SourceEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CHANGE)
         {
-            case NOTIFICATION_FREQUENCY_CHANGE:
-                EventQueue.invokeLater(() -> setFrequency(event.getValue().longValue(), false));
-                break;
+            EventQueue.invokeLater(() -> setFrequency(event.getValue().longValue(), false));
         }
     }
 
@@ -157,36 +142,6 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
     public long getFrequency()
     {
         return mFrequency;
-    }
-
-    /**
-     * Updates the frequency value according to the manually changed digit value.
-     */
-    private void updateFrequency()
-    {
-        long frequency = 0;
-
-        for(Digit digit : mDigits.values())
-        {
-            frequency += digit.getFrequency();
-        }
-
-        mFrequency = frequency;
-    }
-
-    /**
-     * Fires a source changed event
-     * @throws SourceException of there's an error
-     */
-    private void fireSourceChanged() throws SourceException
-    {
-        updateFrequency();
-        Iterator<ISourceEventProcessor> it = mProcessors.iterator();
-        SourceEvent event = SourceEvent.frequencyRequest(mFrequency);
-        while(it.hasNext())
-        {
-            it.next().process(event);
-        }
     }
 
     /**
@@ -231,9 +186,8 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
          * Constructor
          * @param position of the digit where a position of 1 is the ones unit of MHz and a position of -1 is the tenths
          * unit of MHz.
-         * @throws ParseException if there is an error
          */
-        private Digit(int position) throws ParseException
+        private Digit(int position)
         {
             super("0");
 
@@ -241,7 +195,14 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
             setToolTipText(getTooltip(mPower));
             Listener listener = new Listener();
 
-            this.addKeyListener(listener);
+            this.addKeyListener(new KeyAdapter()
+            {
+                @Override
+                public void keyReleased(KeyEvent e)
+                {
+                    listener.handleKeyReleased(e);
+                }
+            });
             this.addMouseListener(listener);
             this.addMouseWheelListener(listener);
         }
@@ -287,6 +248,9 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
                 case 9:
                     sb.append("1 Gigahertz");
                     break;
+                default:
+                    sb.append("unknown");
+                    break;
             }
 
             sb.append(" units.  Type a number, use up/down arrows, or click the upper/lower digit control to adjust");
@@ -304,7 +268,7 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
             //Strip the digits higher than this one
             long lower = frequency % (long)(FastMath.pow(10, mPower + 1));
             //Set the value to int value of dividing by 10 to this power
-            long value = (long)(lower / (long)(FastMath.pow(10, mPower)));
+            long value = (lower / (long)(FastMath.pow(10, mPower)));
             set(value, fireChangeEvent);
         }
 
@@ -355,14 +319,6 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
             {
                 set(mValue - 1, fireChangeEvent);
             }
-        }
-
-        /**
-         * Convenience wrapper to change amount and fire change event
-         */
-        private void set(long amount)
-        {
-            set(amount, true);
         }
 
         /**
@@ -439,18 +395,54 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
                 }
             }
 
-
             setText(String.valueOf(mValue));
             repaint();
         }
 
         /**
+         * Fires a source changed event
+         * @throws SourceException of there's an error
+         */
+        private void fireSourceChanged() throws SourceException
+        {
+            updateFrequency();
+            Iterator<ISourceEventProcessor> it = mProcessors.iterator();
+            SourceEvent event = SourceEvent.frequencyRequest(mFrequency);
+            while(it.hasNext())
+            {
+                it.next().process(event);
+            }
+        }
+
+        /**
+         * Updates the frequency value according to the manually changed digit value.
+         */
+        private void updateFrequency()
+        {
+            long frequency = 0;
+
+            for(Digit digit : mDigits.values())
+            {
+                frequency += digit.getFrequency();
+            }
+
+            mFrequency = frequency;
+        }
+
+        /**
          * Multiple Listener interface implementation
          */
-        private class Listener implements KeyListener, MouseListener, MouseWheelListener
+        private class Listener extends MouseAdapter implements MouseWheelListener
         {
-            @Override
-            public void keyReleased(KeyEvent e)
+            /**
+             * Convenience wrapper to change amount and fire change event
+             */
+            private void set(long amount)
+            {
+                Digit.this.set(amount, true);
+            }
+
+            private void handleKeyReleased(KeyEvent e)
             {
                 int key = e.getKeyCode();
 
@@ -529,11 +521,6 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
             }
 
             @Override
-            public void keyPressed(KeyEvent e) {}
-            @Override
-            public void keyTyped(KeyEvent e) {}
-
-            @Override
             public void mouseClicked(MouseEvent e)
             {
                 switch(e.getButton())
@@ -546,11 +533,10 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
                     case MouseEvent.BUTTON3:
                         decrement();
                         break;
+                    default:
+                        break;
                 }
             }
-
-            public void mousePressed(MouseEvent e) {}
-            public void mouseReleased(MouseEvent e) {}
 
             @Override
             public void mouseEntered(MouseEvent e)
