@@ -254,18 +254,7 @@ public class VectorCalibrationPreferenceEditor extends HBox
 
                             final String message = "\n\nCalibration [" + counter + "/" + calibrations.size() + "] - " + calibration.getType();
                             Platform.runLater(() -> getConsoleTextArea().appendText(message));
-
-                            try
-                            {
-                                calibration.calibrate();
-
-                                final double progress = (double)counter / (double)calibrations.size();
-                                Platform.runLater(() -> getProgressBar().setProgress(progress));
-                            }
-                            catch(CalibrationException ce)
-                            {
-                                mLog.error("Calibration error for " + calibration.getType(), ce);
-                            }
+                            performCalibration(calibration, (double)counter / (double)calibrations.size());
                         }
                     }
                     catch(Throwable t)
@@ -297,6 +286,19 @@ public class VectorCalibrationPreferenceEditor extends HBox
         }
 
         return mCalibratingLabel;
+    }
+
+    private void performCalibration(Calibration calibration, double progress)
+    {
+        try
+        {
+            calibration.calibrate();
+            Platform.runLater(() -> getProgressBar().setProgress(progress));
+        }
+        catch(CalibrationException ce)
+        {
+            mLog.error("Calibration error for " + calibration.getType(), ce);
+        }
     }
 
     private void updateControls()

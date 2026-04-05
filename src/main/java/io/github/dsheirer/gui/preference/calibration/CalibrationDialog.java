@@ -54,9 +54,7 @@ public class CalibrationDialog extends Dialog
 
         CheckBox doNotShowAgainCheckBox = new CheckBox("Do not show again");
         doNotShowAgainCheckBox.setOnAction(event ->
-        {
-            mUserPreferences.getVectorCalibrationPreference().setHideCalibrationDialog(doNotShowAgainCheckBox.isSelected());
-        });
+            mUserPreferences.getVectorCalibrationPreference().setHideCalibrationDialog(doNotShowAgainCheckBox.isSelected()));
 
         VBox.setVgrow(instructionsLabel, Priority.ALWAYS);
         VBox contentBox = new VBox();

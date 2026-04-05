@@ -106,10 +106,7 @@ public class SignalPowerView extends JPanel
         mSquelchAutoTrackCheckBox.setToolTipText("Enable or disable monitoring of the noise floor to auto-adjust the " +
                 "squelch threshold value maintaining a consistent level/buffer above the noise floor");
         mSquelchAutoTrackCheckBox.setEnabled(false);
-        mSquelchAutoTrackCheckBox.addActionListener(e ->
-        {
-            broadcast(SourceEvent.requestSquelchAutoTrack(mSquelchAutoTrackCheckBox.isSelected()));
-        });
+        mSquelchAutoTrackCheckBox.addActionListener(e -> broadcast(SourceEvent.requestSquelchAutoTrack(mSquelchAutoTrackCheckBox.isSelected())));
         valuePanel.add(mSquelchAutoTrackCheckBox, "span,left");
 
         add(valuePanel);
@@ -166,7 +163,7 @@ public class SignalPowerView extends JPanel
         mPeakLabel.setText("0");
         mPowerLabel.setText("0");
         mSquelchLabel.setEnabled(false);
-        mSquelchValueLabel.setText("Not Available");
+        mSquelchValueLabel.setText(NOT_AVAILABLE);
         mSquelchValueLabel.setEnabled(false);
         mSquelchUpButton.setEnabled(false);
         mSquelchDownButton.setEnabled(false);
