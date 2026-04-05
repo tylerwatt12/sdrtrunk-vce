@@ -47,7 +47,7 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
     private ITunerErrorListener mTunerErrorListener;
     private AtomicBoolean mRunning = new AtomicBoolean();
 
-    public Tuner(TunerController tunerController, ITunerErrorListener tunerErrorListener)
+    protected Tuner(TunerController tunerController, ITunerErrorListener tunerErrorListener)
     {
         mTunerController = tunerController;
         mTunerErrorListener = tunerErrorListener;
@@ -63,7 +63,7 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
      * @param tunerErrorListener to listen for tuner errors
      * @param channelizerType for the channelizer
      */
-    public Tuner(TunerController tunerController, ITunerErrorListener tunerErrorListener, ChannelizerType channelizerType)
+    protected Tuner(TunerController tunerController, ITunerErrorListener tunerErrorListener, ChannelizerType channelizerType)
     {
         this(tunerController, tunerErrorListener);
 

@@ -69,7 +69,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
      * that are being fed samples from the tuner.
      * @param tunerErrorListener to monitor errors produced from this tuner controller
      */
-    public TunerController(ITunerErrorListener tunerErrorListener)
+    protected TunerController(ITunerErrorListener tunerErrorListener)
     {
         mTunerErrorListener = tunerErrorListener;
         mFrequencyController = new FrequencyController(this);
@@ -181,7 +181,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
      */
     public long getBufferDuration()
     {
-        return (long)(1000.0 / (getSampleRate() / (double)getBufferSampleCount()));
+        return (long)(1000.0 / (getSampleRate() / getBufferSampleCount()));
     }
 
     /**
@@ -536,7 +536,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
      */
     public int getUsableHalfBandwidth()
     {
-        return (int)(getUsableBandwidth() / 2);
+        return (getUsableBandwidth() / 2);
     }
 
     /**
@@ -583,7 +583,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     {
         if(hasMeasuredFrequencyError())
         {
-            return mMeasuredFrequencyError / ((double)getFrequency() / 1E6d);
+            return mMeasuredFrequencyError / (getFrequency() / 1E6d);
         }
 
         return 0.0d;

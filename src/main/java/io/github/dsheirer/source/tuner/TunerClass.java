@@ -19,6 +19,7 @@
 package io.github.dsheirer.source.tuner;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Tuner Class enumeration
@@ -55,10 +56,11 @@ public enum TunerClass
 		return mDescription;
 	}
 
-	public static final EnumSet<TunerClass> SUPPORTED_USB_TUNERS = EnumSet.of(AIRSPY, AIRSPY_HF, HACKRF, HYDRASDR,
-			RTL2832, FUNCUBE_DONGLE_PRO, FUNCUBE_DONGLE_PRO_PLUS);
+	public static final Set<TunerClass> SUPPORTED_USB_TUNERS = Set.copyOf(EnumSet.of(AIRSPY, AIRSPY_HF, HACKRF,
+			HYDRASDR, RTL2832, FUNCUBE_DONGLE_PRO, FUNCUBE_DONGLE_PRO_PLUS));
 
-	public static final EnumSet<TunerClass> FUNCUBE_TUNERS = EnumSet.of(FUNCUBE_DONGLE_PRO, FUNCUBE_DONGLE_PRO_PLUS);
+	public static final Set<TunerClass> FUNCUBE_TUNERS =
+			Set.copyOf(EnumSet.of(FUNCUBE_DONGLE_PRO, FUNCUBE_DONGLE_PRO_PLUS));
 
 	/**
 	 * Indicates if this tuner class entry is a supported USB tuner class.
@@ -129,6 +131,8 @@ public enum TunerClass
 				return AIRSPY;
 			case 0x03EB800C:
 				return AIRSPY_HF;
+			default:
+				break;
 		}
 		
 		return TunerClass.UNKNOWN;

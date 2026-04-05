@@ -77,6 +77,7 @@ import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.Device;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
+import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceType;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.Rsp1Device;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.Rsp1aDevice;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.Rsp1bDevice;
@@ -142,6 +143,10 @@ import javax.sound.sampled.TargetDataLine;
 public class TunerFactory
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerFactory.class);
+
+    private TunerFactory()
+    {
+    }
 
     /**
      * Creates one or two (e.g. RSPduo) Discovered RSP tuner instances for the RSP device.
@@ -319,26 +324,21 @@ public class TunerFactory
         {
             Device device = api.getDevice(deviceInfo);
 
-            switch(device.getDeviceType())
+            if(device.getDeviceType() == DeviceType.RSPduo && device instanceof RspDuoDevice rspDuoDevice)
             {
-                case RSPduo:
-                    if(device instanceof RspDuoDevice rspDuoDevice)
-                    {
-                        switch(deviceInfo.getDeviceSelectionMode())
-                        {
-                            case MASTER_TUNER_1:
-                                IControlRspDuoTuner1 controlRspDuoTuner1 = new ControlRspDuoTuner1Master(rspDuoDevice, bridge);
-                                RspDuoTuner1Controller rspDuoTuner1Controller = new RspDuoTuner1Controller(controlRspDuoTuner1, tunerErrorListener);
-                                return new RspTuner(rspDuoTuner1Controller, tunerErrorListener, channelizerType);
-                            case SLAVE_TUNER_2:
-                                IControlRspDuoTuner2 controlRspDuoTuner2 = new ControlRspDuoTuner2Slave(rspDuoDevice, bridge);
-                                RspDuoTuner2Controller rspDuoTuner2Controller = new RspDuoTuner2Controller(controlRspDuoTuner2, tunerErrorListener);
-                                return new RspTuner(rspDuoTuner2Controller, tunerErrorListener, channelizerType);
-                            default:
-                                throw new SDRPlayException("This method only supports RSPduo single tuner configurations");
-                        }
-                    }
-                    break;
+                switch(deviceInfo.getDeviceSelectionMode())
+                {
+                    case MASTER_TUNER_1:
+                        IControlRspDuoTuner1 controlRspDuoTuner1 = new ControlRspDuoTuner1Master(rspDuoDevice, bridge);
+                        RspDuoTuner1Controller rspDuoTuner1Controller = new RspDuoTuner1Controller(controlRspDuoTuner1, tunerErrorListener);
+                        return new RspTuner(rspDuoTuner1Controller, tunerErrorListener, channelizerType);
+                    case SLAVE_TUNER_2:
+                        IControlRspDuoTuner2 controlRspDuoTuner2 = new ControlRspDuoTuner2Slave(rspDuoDevice, bridge);
+                        RspDuoTuner2Controller rspDuoTuner2Controller = new RspDuoTuner2Controller(controlRspDuoTuner2, tunerErrorListener);
+                        return new RspTuner(rspDuoTuner2Controller, tunerErrorListener, channelizerType);
+                    default:
+                        throw new SDRPlayException("This method only supports RSPduo single tuner configurations");
+                }
             }
         }
 
