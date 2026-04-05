@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.identifier.patch;
 
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
@@ -44,13 +45,6 @@ public class PatchGroupManager
 {
     private static final long PATCH_GROUP_FRESHNESS_THRESHOLD_MS = Duration.ofSeconds(30).toMillis();
     private Map<Integer,PatchGroupTracker> mPatchGroupTrackerMap = new HashMap<>();
-
-    /**
-     * Constructs an instance
-     */
-    public PatchGroupManager()
-    {
-    }
 
     /**
      * Summary listing of active patch groups
@@ -199,57 +193,51 @@ public class PatchGroupManager
     {
         if(identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER && identifier.getRole() == Role.TO)
         {
-            switch(identifier.getForm())
+            if(identifier.getForm() == Form.TALKGROUP)
             {
-                case TALKGROUP:
-                    if(identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+                if(identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+                {
+                    int id = talkgroupIdentifier.getValue();
+
+                    PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+
+                    if(tracker != null)
                     {
-                        int id = talkgroupIdentifier.getValue();
-
-                        PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
-
-                        if(tracker != null)
+                        if(tracker.isStale(referenceTimestamp))
                         {
-                            if(tracker.isStale(referenceTimestamp))
-                            {
-                                mPatchGroupTrackerMap.remove(id);
-                            }
-                            else
-                            {
-                                //Perform substitution - return patch group instead of the original talkgroup
-                                return tracker.getPatchGroupIdentifier(referenceTimestamp);
-                            }
+                            mPatchGroupTrackerMap.remove(id);
+                        }
+                        else
+                        {
+                            //Perform substitution - return patch group instead of the original talkgroup
+                            return tracker.getPatchGroupIdentifier(referenceTimestamp);
                         }
                     }
-                    break;
-                case PATCH_GROUP:
-                    if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+                }
+            }
+            else if(identifier.getForm() == Form.PATCH_GROUP)
+            {
+                if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+                {
+                    int id = patchGroupIdentifier.getValue().getPatchGroup().getValue();
+
+                    PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+
+                    if(tracker != null)
                     {
-                        int id = patchGroupIdentifier.getValue().getPatchGroup().getValue();
-
-                        PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
-
-                        if(tracker != null)
+                        if(tracker.isStale(referenceTimestamp) ||
+                                tracker.getPatchGroupIdentifier(referenceTimestamp).getValue().getVersion() !=
+                                        patchGroupIdentifier.getValue().getVersion())
                         {
-                            if(tracker.isStale(referenceTimestamp))
-                            {
-                                mPatchGroupTrackerMap.put(id, new PatchGroupTracker(patchGroupIdentifier, referenceTimestamp));
-                                mPatchGroupTrackerMap.remove(id);
-                            }
-                            else if(tracker.getPatchGroupIdentifier(referenceTimestamp).getValue().getVersion() !=
-                                            patchGroupIdentifier.getValue().getVersion())
-                            {
-                                mPatchGroupTrackerMap.put(id, new PatchGroupTracker(patchGroupIdentifier, referenceTimestamp));
-                                mPatchGroupTrackerMap.remove(id);
-                            }
-                            else
-                            {
-                                //Perform substitution - return patch group instead of the original talkgroup
-                                return tracker.getPatchGroupIdentifier(referenceTimestamp);
-                            }
+                            mPatchGroupTrackerMap.put(id, new PatchGroupTracker(patchGroupIdentifier, referenceTimestamp));
+                        }
+                        else
+                        {
+                            //Perform substitution - return patch group instead of the original talkgroup
+                            return tracker.getPatchGroupIdentifier(referenceTimestamp);
                         }
                     }
-                    break;
+                }
             }
         }
 
