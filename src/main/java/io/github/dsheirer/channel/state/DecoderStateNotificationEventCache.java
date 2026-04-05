@@ -29,10 +29,6 @@ public class DecoderStateNotificationEventCache
 {
     private Map<Integer,Map<State,DecoderStateEvent>> mTimeslotMap = new HashMap<>();
 
-    public DecoderStateNotificationEventCache()
-    {
-    }
-
     /**
      * Creates a decoder state notification event for the state and timeslot, or reuses a previously created event.
      * @param state for the decoder

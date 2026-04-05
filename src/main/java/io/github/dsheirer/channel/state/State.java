@@ -22,6 +22,7 @@
 package io.github.dsheirer.channel.state;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Details the set of states for a channel and the allowable transition states
@@ -162,8 +163,8 @@ public enum State
 
     private String mDisplayValue;
 
-    public static final EnumSet<State> SINGLE_CHANNEL_ACTIVE_STATES = EnumSet.of(ACTIVE, CALL, CONTROL, DATA, ENCRYPTED);
-    public static final EnumSet<State> MULTI_CHANNEL_ACTIVE_STATES = EnumSet.of(ACTIVE, CALL, CONTROL, DATA, ENCRYPTED, IDLE);
+    public static final Set<State> SINGLE_CHANNEL_ACTIVE_STATES = Set.copyOf(EnumSet.of(ACTIVE, CALL, CONTROL, DATA, ENCRYPTED));
+    public static final Set<State> MULTI_CHANNEL_ACTIVE_STATES = Set.copyOf(EnumSet.of(ACTIVE, CALL, CONTROL, DATA, ENCRYPTED, IDLE));
 
     private State(String displayValue)
     {

@@ -45,7 +45,7 @@ public abstract class DecoderState extends AbstractDecoderState
      * Constructs an instance
      * @param mutableIdentifierCollection to preload into this decoder state
      */
-    public DecoderState(MutableIdentifierCollection mutableIdentifierCollection)
+    protected DecoderState(MutableIdentifierCollection mutableIdentifierCollection)
     {
         mIdentifierCollection = mutableIdentifierCollection;
         mIdentifierCollection.update(new DecoderTypeConfigurationIdentifier(getDecoderType()));
@@ -54,7 +54,7 @@ public abstract class DecoderState extends AbstractDecoderState
     /**
      * Constructs an instance using an empty identifier collection.
      */
-    public DecoderState()
+    protected DecoderState()
     {
         this(new MutableIdentifierCollection());
         mConfigurationIdentifierListener = new ConfigurationIdentifierListener();
