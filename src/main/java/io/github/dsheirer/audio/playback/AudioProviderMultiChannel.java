@@ -36,7 +36,7 @@ import javax.sound.sampled.AudioFormat;
  */
 public class AudioProviderMultiChannel extends AudioProvider
 {
-    private static ByteBuffer SILENCE;
+    private final ByteBuffer mSilence;
     private final List<AudioChannel> mAudioChannels = new ArrayList<>();
     private final AudioFormat mAudioFormat;
 
@@ -47,7 +47,7 @@ public class AudioProviderMultiChannel extends AudioProvider
      */
     public AudioProviderMultiChannel(UserPreferences userPreferences, AudioFormat audioFormat)
     {
-        SILENCE = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * audioFormat.getChannels());
+        mSilence = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * audioFormat.getChannels());
 
         for(int channel = 0; channel < audioFormat.getChannels(); channel++)
         {
@@ -97,7 +97,7 @@ public class AudioProviderMultiChannel extends AudioProvider
 
         if(!hasAudio)
         {
-            return SILENCE;
+            return mSilence;
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(AudioChannel.SAMPLES_PER_INTERVAL * 2 *
