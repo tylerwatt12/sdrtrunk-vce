@@ -60,7 +60,6 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
     private VBox mFrequencyBoxContainer;
     private Spinner<Integer> mChannelRotationDelaySpinner;
     private boolean mAllowMultipleFrequencies = false;
-    private int mFrequencyRotationDefault = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT;
     private int mFrequencyRotationMinimum = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM;
     private int mFrequencyRotationMaximum = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MAXIMUM;
 
@@ -484,14 +483,13 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
             setSpacing(10);
             getChildren().add(getFrequencyField());
 
-            switch(buttons)
+            if(buttons == Buttons.ADD)
             {
-                case ADD:
-                    getChildren().add(getAddButton());
-                    break;
-                case REMOVE:
-                    getChildren().add(getRemoveButton());
-                    break;
+                getChildren().add(getAddButton());
+            }
+            else if(buttons == Buttons.REMOVE)
+            {
+                getChildren().add(getRemoveButton());
             }
         }
 

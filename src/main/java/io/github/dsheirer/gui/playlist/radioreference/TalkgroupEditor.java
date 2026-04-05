@@ -39,7 +39,6 @@ import javafx.scene.layout.Priority;
 
 public class TalkgroupEditor extends GridPane
 {
-    private UserPreferences mUserPreferences;
     private PlaylistManager mPlaylistManager;
     private TextField mAlphaTagTextField;
     private TextField mDescriptionTextField;

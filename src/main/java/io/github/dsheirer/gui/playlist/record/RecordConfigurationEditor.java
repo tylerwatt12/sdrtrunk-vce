@@ -98,7 +98,7 @@ public class RecordConfigurationEditor extends Editor<RecordConfiguration>
     @Override
     public void dispose()
     {
-
+        // Nothing to dispose
     }
 
     public class RecorderControl extends GridPane

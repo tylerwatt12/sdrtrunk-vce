@@ -59,7 +59,7 @@ public class FrequencyField extends TextField
             return null;
         };
 
-        TextFormatter<Double> formatter = new TextFormatter<Double>(new DoubleStringConverter(), null, filter);
+        TextFormatter<Double> formatter = new TextFormatter<>(new DoubleStringConverter(), null, filter);
         setTextFormatter(formatter);
     }
 

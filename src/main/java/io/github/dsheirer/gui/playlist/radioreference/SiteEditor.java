@@ -87,7 +87,6 @@ public class SiteEditor extends GridPane
     private static final String PRIMARY_CONTROL_CHANNEL = "d";
     private static final String TOGGLE_BUTTON_CONTROL = "Control";
     private static final String TOGGLE_BUTTON_P25_VOICE = "All P25 Voice";
-    private static final String PHASE_2_TDMA_MODULATION = "TDMA";
     private static final String PHASE_2_FLAVOR = "Phase II";
 
     private UserPreferences mUserPreferences;
@@ -250,12 +249,9 @@ public class SiteEditor extends GridPane
             case P25_PHASE1:
                 DecodeConfiguration p1config = DecoderFactory.getDecodeConfiguration(decoderType);
 
-                if(mRadioReferenceDecoder.isLSM(site))
+                if(mRadioReferenceDecoder.isLSM(site) && p1config instanceof DecodeConfigP25Phase1 p1)
                 {
-                    if(p1config instanceof DecodeConfigP25Phase1)
-                    {
-                        ((DecodeConfigP25Phase1)p1config).setModulation(Modulation.CQPSK);
-                    }
+                    p1.setModulation(Modulation.CQPSK);
                 }
                 return p1config;
             case P25_PHASE2:
@@ -397,7 +393,7 @@ public class SiteEditor extends GridPane
                 getGoToChannelEditorCheckBox().setVisible(true);
                 getSystemTextField().setText(system.getName());
                 getSiteTextField().setText(mCurrentSite.getCountyName());
-                getNameTextField().setText("Control");
+                getNameTextField().setText(TOGGLE_BUTTON_CONTROL);
 
                 if(!siteFrequencies.isEmpty())
                 {
@@ -547,11 +543,7 @@ public class SiteEditor extends GridPane
 
         if(controls.isEmpty())
         {
-            Alert alert = new Alert(Alert.AlertType.ERROR, "Site Has No Control Channel(s)", ButtonType.OK);
-            alert.setTitle("Create Channel Configuration");
-            alert.setHeaderText("Can't Create Channel Configuration");
-            alert.initOwner((getCreateChannelConfigurationButton()).getScene().getWindow());
-            alert.showAndWait();
+            showCreateChannelError("Site Has No Control Channel(s)");
             return;
         }
 
@@ -562,12 +554,9 @@ public class SiteEditor extends GridPane
             DecoderType decoderType = mRadioReferenceDecoder.getDecoderType(mCurrentSystem);
 
             //Phase 2 - inspect the site modulation and use Phase 2 for TDMA control channel, otherwise Phase 1
-            if(decoderType == DecoderType.P25_PHASE2)
+            if(decoderType == DecoderType.P25_PHASE2 && getFdmaControlToggleButton().isSelected())
             {
-                if(getFdmaControlToggleButton().isSelected())
-                {
-                    decoderType = DecoderType.P25_PHASE1;
-                }
+                decoderType = DecoderType.P25_PHASE1;
             }
 
             channel.setDecodeConfiguration(getDecodeConfiguration(decoderType, mCurrentSite.getSite(), mCurrentSystemInformation));
@@ -621,11 +610,7 @@ public class SiteEditor extends GridPane
 
         if(siteFrequencies.isEmpty())
         {
-            Alert alert = new Alert(Alert.AlertType.ERROR, "Site Has No Control or Alternate Channel(s)", ButtonType.OK);
-            alert.setTitle("Create Channel Configuration");
-            alert.setHeaderText("Can't Create Channel Configuration");
-            alert.initOwner((getCreateChannelConfigurationButton()).getScene().getWindow());
-            alert.showAndWait();
+            showCreateChannelError("Site Has No Control or Alternate Channel(s)");
             return;
         }
 
@@ -638,12 +623,9 @@ public class SiteEditor extends GridPane
                 DecoderType decoderType = mRadioReferenceDecoder.getDecoderType(mCurrentSystem);
 
                 //Phase 2 - inspect the site modulation and use Phase 2 for TDMA control channel, otherwise Phase 1
-                if(decoderType == DecoderType.P25_PHASE2)
+                if(decoderType == DecoderType.P25_PHASE2 && getFdmaControlToggleButton().isSelected())
                 {
-                    if(getFdmaControlToggleButton().isSelected())
-                    {
-                        decoderType = DecoderType.P25_PHASE1;
-                    }
+                    decoderType = DecoderType.P25_PHASE1;
                 }
 
                 channel.setDecodeConfiguration(getDecodeConfiguration(decoderType, mCurrentSite.getSite(),
@@ -723,11 +705,7 @@ public class SiteEditor extends GridPane
         if(siteFrequencies.isEmpty())
         {
             String context = (selectedOnly ? "Please select frequencies" : "Site has no channel frequencies");
-            Alert alert = new Alert(Alert.AlertType.ERROR, context, ButtonType.OK);
-            alert.setTitle("Create Channel Configuration");
-            alert.setHeaderText("Can't Create Channel Configuration");
-            alert.initOwner((getCreateChannelConfigurationButton()).getScene().getWindow());
-            alert.showAndWait();
+            showCreateChannelError(context);
             return;
         }
 
@@ -740,12 +718,9 @@ public class SiteEditor extends GridPane
                 DecoderType decoderType = mRadioReferenceDecoder.getDecoderType(mCurrentSystem);
 
                 //Phase 2 - inspect the site modulation and use Phase 2 for TDMA control channel, otherwise Phase 1
-                if(decoderType == DecoderType.P25_PHASE2)
+                if(decoderType == DecoderType.P25_PHASE2 && getFdmaControlToggleButton().isSelected())
                 {
-                    if(getFdmaControlToggleButton().isSelected())
-                    {
-                        decoderType = DecoderType.P25_PHASE1;
-                    }
+                    decoderType = DecoderType.P25_PHASE1;
                 }
 
                 channel.setDecodeConfiguration(getDecodeConfiguration(decoderType, mCurrentSite.getSite(),
@@ -820,7 +795,7 @@ public class SiteEditor extends GridPane
     {
         if(mP25ControlLabel == null)
         {
-            mP25ControlLabel = new Label("Control");
+            mP25ControlLabel = new Label(TOGGLE_BUTTON_CONTROL);
             mP25ControlLabel.setVisible(false);
         }
 
@@ -1023,7 +998,7 @@ public class SiteEditor extends GridPane
     {
         if(mControlToggleButton == null)
         {
-            mControlToggleButton = new ToggleButton("Control");
+            mControlToggleButton = new ToggleButton(TOGGLE_BUTTON_CONTROL);
         }
 
         return mControlToggleButton;
@@ -1162,19 +1137,24 @@ public class SiteEditor extends GridPane
                     {
                         createControlAndAlternatesChannel();
                     }
-                    else if(getSelectedToggleButton().isSelected())
-                    {
-                        createChannels(true);
-                    }
                     else
                     {
-                        createChannels(false);
+                        createChannels(getSelectedToggleButton().isSelected());
                     }
                 }
             });
         }
 
         return mCreateChannelConfigurationButton;
+    }
+
+    private void showCreateChannelError(String contentText)
+    {
+        Alert alert = new Alert(Alert.AlertType.ERROR, contentText, ButtonType.OK);
+        alert.setTitle("Create Channel Configuration");
+        alert.setHeaderText("Can't Create Channel Configuration");
+        alert.initOwner(getCreateChannelConfigurationButton().getScene().getWindow());
+        alert.showAndWait();
     }
 
     private CheckBox getGoToChannelEditorCheckBox()
@@ -1244,7 +1224,7 @@ public class SiteEditor extends GridPane
                 }
                 else if(use.equalsIgnoreCase(PRIMARY_CONTROL_CHANNEL))
                 {
-                    mType.setText("Control");
+                    mType.setText(TOGGLE_BUTTON_CONTROL);
                 }
                 else
                 {
@@ -1285,15 +1265,13 @@ public class SiteEditor extends GridPane
         {
             String use = param.getValue().getUse();
 
-            if(use != null)
+            if(PRIMARY_CONTROL_CHANNEL.equals(use))
             {
-                switch(use)
-                {
-                    case PRIMARY_CONTROL_CHANNEL:
-                        return new ReadOnlyObjectWrapper<>("Control");
-                    case ALTERNATE_CONTROL_CHANNEL:
-                        return new ReadOnlyObjectWrapper<>("Alt Control");
-                }
+                return new ReadOnlyObjectWrapper<>(TOGGLE_BUTTON_CONTROL);
+            }
+            else if(ALTERNATE_CONTROL_CHANNEL.equals(use))
+            {
+                return new ReadOnlyObjectWrapper<>("Alt Control");
             }
 
             return null;

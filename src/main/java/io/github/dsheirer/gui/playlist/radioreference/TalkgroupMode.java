@@ -63,8 +63,8 @@ public enum TalkgroupMode
                 return M;
             case "T":
                 return T;
+            default:
+                return TalkgroupMode.UNKNOWN;
         }
-
-        return TalkgroupMode.UNKNOWN;
     }
 }

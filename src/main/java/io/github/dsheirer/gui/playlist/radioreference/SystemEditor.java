@@ -222,46 +222,6 @@ public class SystemEditor extends VBox
         return mSystemComboBox;
     }
 
-    private boolean isSupported(System system)
-    {
-        return mRadioReferenceDecoder != null && mRadioReferenceDecoder.hasSupportedProtocol(system);
-    }
-
-    private String getType(System system)
-    {
-        if(mRadioReferenceDecoder == null)
-        {
-            try
-            {
-                initRadioReferenceDecoder();
-            }
-            catch (Throwable t)
-            {
-                mLog.error("Error retrieving system information", t);
-            }
-        }
-
-        if(mRadioReferenceDecoder != null)
-        {
-            Type type = mRadioReferenceDecoder.getType(system);
-            Flavor flavor = mRadioReferenceDecoder.getFlavor(system);
-
-            if(type != null)
-            {
-                if(flavor != null)
-                {
-                    return type.getName() + " " + flavor.getName();
-                }
-                else
-                {
-                    return type.getName();
-                }
-            }
-        }
-
-        return "Unknown";
-    }
-
     /**
      * Sets the system to be displayed in the editor and updates the system and talkgroup view editors
      */
@@ -356,7 +316,6 @@ public class SystemEditor extends VBox
         private HBox mHBox;
         private Label mName;
         private Label mProtocol;
-        private IconNode mIconNode;
 
         public SystemListCell()
         {
@@ -393,21 +352,62 @@ public class SystemEditor extends VBox
             {
                 mName.setText(item.getName());
                 mProtocol.setText(getType(item));
+                IconNode iconNode;
 
                 if(isSupported(item))
                 {
-                    mIconNode = new IconNode(FontAwesome.CHECK);
-                    mIconNode.setFill(Color.GREEN);
+                    iconNode = new IconNode(FontAwesome.CHECK);
+                    iconNode.setFill(Color.GREEN);
                 }
                 else
                 {
-                    mIconNode = new IconNode(FontAwesome.BAN);
-                    mIconNode.setFill(Color.RED);
+                    iconNode = new IconNode(FontAwesome.BAN);
+                    iconNode.setFill(Color.RED);
                 }
 
-                mProtocol.setGraphic(mIconNode);
+                mProtocol.setGraphic(iconNode);
                 setGraphic(mHBox);
             }
+        }
+
+        private boolean isSupported(System system)
+        {
+            return mRadioReferenceDecoder != null && mRadioReferenceDecoder.hasSupportedProtocol(system);
+        }
+
+        private String getType(System system)
+        {
+            if(mRadioReferenceDecoder == null)
+            {
+                try
+                {
+                    initRadioReferenceDecoder();
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error retrieving system information", e);
+                }
+            }
+
+            if(mRadioReferenceDecoder != null)
+            {
+                Type type = mRadioReferenceDecoder.getType(system);
+                Flavor flavor = mRadioReferenceDecoder.getFlavor(system);
+
+                if(type != null)
+                {
+                    if(flavor != null)
+                    {
+                        return type.getName() + " " + flavor.getName();
+                    }
+                    else
+                    {
+                        return type.getName();
+                    }
+                }
+            }
+
+            return "Unknown";
         }
     }
 

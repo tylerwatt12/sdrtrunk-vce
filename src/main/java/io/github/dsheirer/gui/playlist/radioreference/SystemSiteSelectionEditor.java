@@ -242,11 +242,8 @@ public class SystemSiteSelectionEditor extends GridPane
                     descriptionColumn);
             mSiteTableView.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
             mSiteTableView.getSelectionModel().selectedItemProperty()
-                .addListener((observable, oldValue, selected) ->
-                {
-                    getSiteEditor().setSite(selected, mCurrentSystem, mCurrentSystemInformation,
-                        mRadioReferenceDecoder);
-                });
+                .addListener((observable, oldValue, selected) -> getSiteEditor().setSite(
+                    selected, mCurrentSystem, mCurrentSystemInformation, mRadioReferenceDecoder));
         }
 
         return mSiteTableView;

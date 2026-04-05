@@ -32,7 +32,7 @@ public abstract class SourceConfigurationEditor<T extends SourceConfiguration> e
     private T mSourceConfiguration;
     private BooleanProperty mModifiedProperty = new SimpleBooleanProperty();
 
-    public SourceConfigurationEditor()
+    protected SourceConfigurationEditor()
     {
     }
 

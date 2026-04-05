@@ -528,9 +528,7 @@ public class RadioReferenceEditor extends BorderPane implements Consumer<Authori
             IconNode configureIcon = new IconNode(FontAwesome.COG);
             configureIcon.setFill(Color.GRAY);
             mLoginButton.setGraphic(configureIcon);
-            mLoginButton.setOnAction(event -> {
-                new LoginDialog(mUserPreferences).showAndWait().ifPresent(this);
-            });
+            mLoginButton.setOnAction(event -> new LoginDialog(mUserPreferences).showAndWait().ifPresent(this));
         }
 
         return mLoginButton;
@@ -693,7 +691,7 @@ public class RadioReferenceEditor extends BorderPane implements Consumer<Authori
                         getCountySystemEditor().setSystems(countyInfo.getSystems());
 
                         // Make a new list so we don't add our CountyAgency to the original list of agencies
-                        List<Agency> countyAgencies = new ArrayList<Agency>();
+                        List<Agency> countyAgencies = new ArrayList<>();
                         countyAgencies.add(new CountyAgency(countyInfo));
                         countyAgencies.addAll(countyInfo.getAgencies());
                         getCountyAgencyEditor().setAgencies(countyAgencies);

@@ -272,8 +272,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             }
         }
 
-        Protocol protocol = getRadioReferenceDecoder().getProtocol(getCurrentSystem());
-
         //If the protocol is supported then enable the talkgroup import controls
         boolean supported = getRadioReferenceDecoder().hasSupportedProtocol(getCurrentSystem());
         getImportAllTalkgroupsButton().setDisable(!supported);
@@ -680,10 +678,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         private String mFilterText;
         private Integer mCategory;
 
-        public TalkgroupFilter()
-        {
-        }
-
         public void setFilterText(String filterText)
         {
             mFilterText = filterText != null ? filterText.toLowerCase() : null;
@@ -711,25 +705,12 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                     return false;
                 }
 
-                if(aliasedTalkgroup.descriptionProperty().get() != null &&
-                    aliasedTalkgroup.descriptionProperty().get().toLowerCase().contains(mFilterText))
-                {
-                    return true;
-                }
-
-                if(aliasedTalkgroup.talkgroupProperty().get() != null &&
-                   aliasedTalkgroup.talkgroupProperty().get().toLowerCase().contains(mFilterText))
-                {
-                    return true;
-                }
-
-                if(aliasedTalkgroup.aliasProperty().get() != null &&
-                   aliasedTalkgroup.aliasProperty().get().toLowerCase().contains(mFilterText))
-                {
-                    return true;
-                }
-
-                return false;
+                return (aliasedTalkgroup.descriptionProperty().get() != null &&
+                        aliasedTalkgroup.descriptionProperty().get().toLowerCase().contains(mFilterText)) ||
+                    (aliasedTalkgroup.talkgroupProperty().get() != null &&
+                        aliasedTalkgroup.talkgroupProperty().get().toLowerCase().contains(mFilterText)) ||
+                    (aliasedTalkgroup.aliasProperty().get() != null &&
+                        aliasedTalkgroup.aliasProperty().get().toLowerCase().contains(mFilterText));
             }
             else if(mCategory != null)
             {
@@ -749,13 +730,8 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                     return true;
                 }
 
-                if(aliasedTalkgroup.aliasProperty().get() != null &&
-                    aliasedTalkgroup.aliasProperty().get().toLowerCase().contains(mFilterText))
-                {
-                    return true;
-                }
-
-                return false;
+                return aliasedTalkgroup.aliasProperty().get() != null &&
+                    aliasedTalkgroup.aliasProperty().get().toLowerCase().contains(mFilterText);
             }
         }
     }
