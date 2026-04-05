@@ -536,6 +536,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
                     {
                         fireTableCellUpdated(row, COLUMN_BROADCASTER_AGED_OFF_COUNT);
                     }
+                    break;
                 case BROADCASTER_ERROR_COUNT_CHANGE:
                     if(row >= 0)
                     {
