@@ -39,7 +39,7 @@ public class MultiSyncPatternMatcher
     private ISyncDetectListener mSyncDetectListener;
     private int mSyncLossThreshold;
     private int mBitCount;
-    private List<ISyncProcessor> mSyncProcessors = new ArrayList<ISyncProcessor>();
+    private List<ISyncProcessor> mSyncProcessors = new ArrayList<>();
 
     private long mBits = 0;
     private long mMask = 0;

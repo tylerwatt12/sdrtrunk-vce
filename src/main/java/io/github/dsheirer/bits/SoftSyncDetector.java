@@ -27,7 +27,6 @@ public class SoftSyncDetector implements ISyncProcessor
     private ISyncDetectListener mListener;
     private long mPattern;
     private int mThreshold;
-    private int mBitErrorCount;
 
     public SoftSyncDetector(long pattern, int threshold, ISyncDetectListener listener)
     {
@@ -58,11 +57,11 @@ public class SoftSyncDetector implements ISyncProcessor
         }
         else
         {
-            mBitErrorCount = Long.bitCount(difference);
+            int bitErrorCount = Long.bitCount(difference);
 
-            if(mBitErrorCount <= mThreshold)
+            if(bitErrorCount <= mThreshold)
             {
-                mListener.syncDetected(mBitErrorCount);
+                mListener.syncDetected(bitErrorCount);
                 return true;
             }
         }
