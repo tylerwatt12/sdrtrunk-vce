@@ -30,7 +30,7 @@ import java.util.Iterator;
 public class ByteNativeBuffer extends AbstractNativeBuffer
 {
     private static final int FRAGMENT_SIZE = 8192;
-    private final static float[] LOOKUP_VALUES;
+    private static final float[] LOOKUP_VALUES;
     private float mAverageDc;
 
     //Creates a static lookup table that converts the 8-bit valued range from 0 - 255 into scaled float values
@@ -41,7 +41,7 @@ public class ByteNativeBuffer extends AbstractNativeBuffer
 
         for(int x = 0; x < 256; x++)
         {
-            LOOKUP_VALUES[x] = ((float)x - 127.5f) / 128.0f;
+            LOOKUP_VALUES[x] = (x - 127.5f) / 128.0f;
         }
     }
 

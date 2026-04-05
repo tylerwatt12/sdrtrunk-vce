@@ -30,7 +30,7 @@ import java.util.Iterator;
 public class SignedByteNativeBuffer extends AbstractNativeBuffer
 {
     private static final int FRAGMENT_SIZE = 2048;
-    private final static float[] LOOKUP_VALUES;
+    private static final float[] LOOKUP_VALUES;
 
     //Creates a static lookup table that converts the signed byte values as:
     // Index   0 - 127: 0.0f to 1.0f
@@ -41,7 +41,7 @@ public class SignedByteNativeBuffer extends AbstractNativeBuffer
 
         for(int x = 0; x < 256; x++)
         {
-            LOOKUP_VALUES[x] = (float)((byte)x) / 128.0f;
+            LOOKUP_VALUES[x] = ((byte)x) / 128.0f;
         }
     }
 

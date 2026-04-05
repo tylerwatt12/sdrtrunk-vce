@@ -119,12 +119,12 @@ public class SignedByteNativeBufferFactory extends AbstractNativeBufferFactory
             qDcAccumulator += samples[x + 1];
         }
 
-        iDcAccumulator /= (samples.length / 2);
+        iDcAccumulator /= (samples.length / 2.0f);
         iDcAccumulator /= 128.0f;
         iDcAccumulator -= mIAverageDc;
         mIAverageDc += (iDcAccumulator * DC_FILTER_GAIN);
 
-        qDcAccumulator /= (samples.length / 2);
+        qDcAccumulator /= (samples.length / 2.0f);
         qDcAccumulator /= 128.0f;
         qDcAccumulator -= mQAverageDc;
         mQAverageDc += (qDcAccumulator * DC_FILTER_GAIN);

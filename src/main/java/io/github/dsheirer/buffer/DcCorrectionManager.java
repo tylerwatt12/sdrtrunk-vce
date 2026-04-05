@@ -26,9 +26,6 @@ import java.util.concurrent.TimeUnit;
  */
 public class DcCorrectionManager
 {
-//    private static Logger mLog = LoggerFactory.getLogger(DcCorrectionManager.class);
-//    private DecimalFormat mDecimalFormat = new DecimalFormat("0.00000");
-
     /**
      * Time (delay) interval for running DC removal calculations
      */
@@ -84,10 +81,6 @@ public class DcCorrectionManager
         {
             mDcCalculationsRemaining--;
         }
-
-//        mLog.info("DC: " + mDecimalFormat.format(mAverageDc) +
-//                " RES:" + mDecimalFormat.format(residualOffsetToRemove) +
-//                " REM:" + mDcCalculationsRemaining);
     }
 
     /**

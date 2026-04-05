@@ -129,8 +129,6 @@ public class FloatCircularBuffer
             }
         }
 
-//        System.out.println("Max [" + max + "] from " + Arrays.toString(mBuffer));
-
         return max;
     }
 
