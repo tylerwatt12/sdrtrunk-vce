@@ -87,7 +87,7 @@ public class GoertzelFilter
         samples = WindowFactory.apply(mWindowCoefficients, samples);
 
         // Process the samples
-        double s = 0.0D;
+        double s;
         double s_prev = 0.0D;
         double s_prev2 = 0.0D;
 
@@ -98,14 +98,10 @@ public class GoertzelFilter
             s_prev = s;
         }
 
-        //power = s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2 ;
-
         double magnitude = (s_prev2 * s_prev2) + (s_prev * s_prev) - (mCoefficient * s_prev * s_prev2);
         int binZero = getBinZeroPower(samples);
 
-        int power = (int)(20 * FastMath.log10(magnitude / binZero));
-
-        return power;
+        return (int)(20 * FastMath.log10(magnitude / binZero));
     }
 
     /**

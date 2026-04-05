@@ -37,7 +37,7 @@ public class FloatFIRFilter implements RealSampleListener
 	public FloatFIRFilter( float[] coefficients, float gain )
 	{
 		mCoefficients = coefficients;
-		mBuffer = new ArrayList<Float>();
+		mBuffer = new ArrayList<>();
 		mBufferSize = mCoefficients.length;
 		mGain = gain;
 		
@@ -146,7 +146,7 @@ public class FloatFIRFilter implements RealSampleListener
 		
 		//Last column will be the center coefficient index value for each row
 		mCenterCoefficientMapIndex = size - 1;
-		mCenterCoefficient = (int)( size / 2 );
+		mCenterCoefficient = ( size / 2 );
 		
 		//Setup the first row.  Offset is the first row's center coefficient value
 		//and will become the index value we place in the last column

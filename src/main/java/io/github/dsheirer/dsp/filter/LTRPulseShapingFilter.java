@@ -34,7 +34,7 @@ public class LTRPulseShapingFilter implements Listener<Boolean>
     {
 		boolean previous = mBuffer.get( mBufferPointer );
 		
-		if( current )
+		if( current != null && current )
 		{
 			mBuffer.set( mBufferPointer );
 		}
@@ -60,13 +60,11 @@ public class LTRPulseShapingFilter implements Listener<Boolean>
 			}
 		}
 		/* Or, a weak negative pulse */
-		else if( mBuffer.cardinality() == 3 )
+		else if( mBuffer.cardinality() == 3 &&
+			!mBuffer.get( mIndexes[ mBufferPointer][ 1 ] ) &&
+			!mBuffer.get( mIndexes[ mBufferPointer][ 2 ] ) )
 		{
-			if( !mBuffer.get( mIndexes[ mBufferPointer][ 1 ] ) && 
-				!mBuffer.get( mIndexes[ mBufferPointer][ 2 ] ) )
-			{
-				mBuffer.clear( mIndexes[ mBufferPointer][ 3 ] );
-			}
+			mBuffer.clear( mIndexes[ mBufferPointer][ 3 ] );
 		}
 		
 		if( mListener != null )

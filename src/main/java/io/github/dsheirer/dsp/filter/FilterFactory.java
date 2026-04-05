@@ -72,6 +72,7 @@ public class FilterFactory
     private static final Logger mLog = LoggerFactory.getLogger(FilterFactory.class);
     private static final double PERFECT_RECONSTRUCTION_GAIN_AT_BAND_EDGE = -6.020599842071533; //decibel(0.5, 0.0)
     private static final double MARGIN_OF_ERROR = 0.0003;
+    private static final String FREQUENCY_LABEL = "\tFrequency: ";
 
     /**
      * Generates coefficients for a unity-gain, windowed low-pass filter
@@ -287,12 +288,9 @@ public class FilterFactory
 
         int tapCount = getTapCount(sampleRate, passFrequency, stopFrequency, attenuation);
 
-        if(forceOddLength)
+        if(forceOddLength && tapCount % 2 == 0)
         {
-            if(tapCount % 2 == 0)
-            {
-                tapCount--;
-            }
+            tapCount--;
         }
 
         return getLowPass(sampleRate, passFrequency, tapCount, windowType);
@@ -325,12 +323,9 @@ public class FilterFactory
         /* reverse the stop and pass frequency to get the low pass variant */
         int tapCount = getTapCount(sampleRate, stopFrequency, passFrequency, attenuation);
 
-        if(forceOddLength)
+        if(forceOddLength && tapCount % 2 == 0)
         {
-            if(tapCount % 2 == 0)
-            {
-                tapCount--;
-            }
+            tapCount--;
         }
 
         return invert(getLowPass(sampleRate, stopFrequency, tapCount, windowType));
@@ -416,7 +411,7 @@ public class FilterFactory
         else
         {
             int optimalStage1 =
-                getOptimalStageOneRate(sampleRate, decimation, passFrequency, stopFrequency);
+                getOptimalStageOneRate(decimation, passFrequency, stopFrequency);
 
             Set<Integer> factors = getFactors(decimation);
 
@@ -502,13 +497,12 @@ public class FilterFactory
      *
      * Implements the algorithm described in Lyons, Understanding Digital Signal Processing, 3e, section 10.2.1, page 511.
      *
-     * @param sampleRate
      * @param decimation
      * @param passFrequency frequency of the pass band
      * @return optimum integer decimation rate for the first stage decimation
      * filter
      */
-    public static int getOptimalStageOneRate(int sampleRate, int decimation, long passFrequency, long stopFrequency)
+    public static int getOptimalStageOneRate(int decimation, long passFrequency, long stopFrequency)
     {
         double ratio = getBandwidthRatio(passFrequency, stopFrequency);
 
@@ -539,9 +533,9 @@ public class FilterFactory
      * @param outputSampleRate
      * @return
      */
-    public static float[] getCICCleanupFilter(int outputSampleRate, int passFrequency, int attenuation, WindowType window)
+    public static float[] getCICCleanupFilter(int outputSampleRate, int passFrequency, int attenuation)
     {
-        int taps = getTapCount(outputSampleRate, passFrequency, passFrequency + 1500,
+        int taps = getTapCount(outputSampleRate, passFrequency, passFrequency + 1500L,
             attenuation);
 
         /* Make tap count odd */
@@ -584,8 +578,8 @@ public class FilterFactory
     {
         float[] cicArray = new float[length * 2];
 
-        int binCount = (int)((FastMath.round(
-            (double)frequency / (double)sampleRate * 2.0d * length)));
+        int binCount = (int)FastMath.round(
+            (double)frequency / (double)sampleRate * 2.0d * length);
 
         cicArray[0] = 1.0f;
 
@@ -938,15 +932,15 @@ public class FilterFactory
             mLog.debug("Filter Length: " + (extendedTaps.length));
             mLog.debug("Requested Cutoff Frequency:  " + (sampleRate * bandEdge));
             mLog.debug("Actual Cutoff Frequency:  " + (sampleRate * cutoffFrequency));
-            mLog.debug("Attenuation at 0.25 Channels:  " + evaluate(taps, bandEdge * 0.25) + "\tFrequency: " + (sampleRate * bandEdge * 0.25) + "  [" + (bandEdge * 0.25) + "]");
-            mLog.debug("Attenuation at 0.50 Channels:  " + evaluate(taps, bandEdge * 0.50) + "\tFrequency: " + (sampleRate * bandEdge * 0.50) + "  [" + (bandEdge * 0.50) + "]");
-            mLog.debug("Attenuation at 0.75 Channels:  " + evaluate(taps, bandEdge * 0.75) + "\tFrequency: " + (sampleRate * bandEdge * 0.75) + "  [" + (bandEdge * 0.75) + "]");
+            mLog.debug("Attenuation at 0.25 Channels:  " + evaluate(taps, bandEdge * 0.25) + FREQUENCY_LABEL + (sampleRate * bandEdge * 0.25) + "  [" + (bandEdge * 0.25) + "]");
+            mLog.debug("Attenuation at 0.50 Channels:  " + evaluate(taps, bandEdge * 0.50) + FREQUENCY_LABEL + (sampleRate * bandEdge * 0.50) + "  [" + (bandEdge * 0.50) + "]");
+            mLog.debug("Attenuation at 0.75 Channels:  " + evaluate(taps, bandEdge * 0.75) + FREQUENCY_LABEL + (sampleRate * bandEdge * 0.75) + "  [" + (bandEdge * 0.75) + "]");
             mLog.debug("Attenuation        OBJECTIVE:  " + PERFECT_RECONSTRUCTION_GAIN_AT_BAND_EDGE);
-            mLog.debug("Attenuation at 1.00 Channels:  " + evaluate(taps, bandEdge * 1.00) + "\tFrequency: " + (sampleRate * bandEdge * 1.0) + "  [" + (bandEdge * 1.0) + "]");
-            mLog.debug("Attenuation at 1.25 Channels:  " + evaluate(taps, bandEdge * 1.25) + "\tFrequency: " + (sampleRate * bandEdge * 1.25) + "  [" + (bandEdge * 1.25) + "]");
-            mLog.debug("Attenuation at 1.50 Channels:  " + evaluate(taps, bandEdge * 1.50) + "\tFrequency: " + (sampleRate * bandEdge * 1.5) + "  [" + (bandEdge * 1.5) + "]");
-            mLog.debug("Attenuation at 1.75 Channels:  " + evaluate(taps, bandEdge * 1.75) + "\tFrequency: " + (sampleRate * bandEdge * 1.75) + "  [" + (bandEdge * 1.75) + "]");
-            mLog.debug("Attenuation at 2.00 Channels:  " + evaluate(taps, bandEdge * 2.00) + "\tFrequency: " + (sampleRate * bandEdge * 2.0) + "  [" + (bandEdge * 2.0) + "]");
+            mLog.debug("Attenuation at 1.00 Channels:  " + evaluate(taps, bandEdge * 1.00) + FREQUENCY_LABEL + (sampleRate * bandEdge * 1.0) + "  [" + (bandEdge * 1.0) + "]");
+            mLog.debug("Attenuation at 1.25 Channels:  " + evaluate(taps, bandEdge * 1.25) + FREQUENCY_LABEL + (sampleRate * bandEdge * 1.25) + "  [" + (bandEdge * 1.25) + "]");
+            mLog.debug("Attenuation at 1.50 Channels:  " + evaluate(taps, bandEdge * 1.50) + FREQUENCY_LABEL + (sampleRate * bandEdge * 1.5) + "  [" + (bandEdge * 1.5) + "]");
+            mLog.debug("Attenuation at 1.75 Channels:  " + evaluate(taps, bandEdge * 1.75) + FREQUENCY_LABEL + (sampleRate * bandEdge * 1.75) + "  [" + (bandEdge * 1.75) + "]");
+            mLog.debug("Attenuation at 2.00 Channels:  " + evaluate(taps, bandEdge * 2.00) + FREQUENCY_LABEL + (sampleRate * bandEdge * 2.0) + "  [" + (bandEdge * 2.0) + "]");
         }
 
         return extendedTaps;

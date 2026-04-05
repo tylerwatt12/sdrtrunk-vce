@@ -40,17 +40,28 @@ import org.apache.commons.math3.util.FastMath;
  ***************************************************************************/
 // http://en.wikipedia.org/wiki/Digital_biquad_filter
 
-final public class IIRBiQuadraticFilter {
+public final class IIRBiQuadraticFilter {
 
     public enum Type {
-
         BANDPASS, LOWPASS, HIGHPASS, NOTCH, PEAK, LOWSHELF, HIGHSHELF
-    };
-    double a0, a1, a2, b0, b1, b2;
-    double x1, x2, y, y1, y2;
+    }
+    double a0;
+    double a1;
+    double a2;
+    double b0;
+    double b1;
+    double b2;
+    double x1;
+    double x2;
+    double y;
+    double y1;
+    double y2;
     double gain_abs;
-    Type type;
-    double center_freq, sample_rate, Q, gainDB;
+    Type   type;
+    double center_freq;
+    double sample_rate;
+    double Q;
+    double gainDB;
 
     public IIRBiQuadraticFilter() {
     }
@@ -174,7 +185,7 @@ final public class IIRBiQuadraticFilter {
     }
 
     // provide a static decibel result for testing
-    public double log_result(double f) 
+    public double logResult(double f)
     {
         double r;
         try {

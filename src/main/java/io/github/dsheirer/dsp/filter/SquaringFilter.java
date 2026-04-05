@@ -24,13 +24,6 @@ public class SquaringFilter implements RealSampleListener
 {
 	private Listener<Boolean> mListener;
 	
-	/**
-	 * Transforms a short sample waveform into a square wave
-	 */
-	public SquaringFilter()
-	{
-	}
-
 	@Override
     public void receive( float sample )
     {
