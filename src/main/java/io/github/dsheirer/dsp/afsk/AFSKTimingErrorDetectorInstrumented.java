@@ -19,7 +19,7 @@ import javafx.beans.property.SimpleIntegerProperty;
 
 public class AFSKTimingErrorDetectorInstrumented extends AFSKTimingErrorDetector
 {
-    public SimpleIntegerProperty timingError = new SimpleIntegerProperty();
+    private final SimpleIntegerProperty timingError = new SimpleIntegerProperty();
 
     /**
      * Constructs the detector for the specified samples per symbol.
@@ -44,6 +44,11 @@ public class AFSKTimingErrorDetectorInstrumented extends AFSKTimingErrorDetector
     public int getDetectedZeroCrossing()
     {
         return mDetectedZeroCrossing;
+    }
+
+    public SimpleIntegerProperty timingErrorProperty()
+    {
+        return timingError;
     }
 
     public boolean[] getBuffer()

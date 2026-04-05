@@ -34,7 +34,6 @@ public class AFSKTimingErrorDetector
     protected boolean[] mBuffer;
     protected int mDetectedZeroCrossing;
     protected float mSymbolMiddle;
-    private int mZeroCrossingCount;
 
     /**
      * Constructs the detector for the specified samples per symbol.
@@ -44,7 +43,7 @@ public class AFSKTimingErrorDetector
     public AFSKTimingErrorDetector(int samplesPerSymbol)
     {
         mBuffer = new boolean[samplesPerSymbol];
-        mSymbolMiddle = (float)(samplesPerSymbol - 1) / 2.0f;
+        mSymbolMiddle = (samplesPerSymbol - 1) / 2.0f;
     }
 
     /**
@@ -70,23 +69,23 @@ public class AFSKTimingErrorDetector
      */
     public int getError()
     {
-        mZeroCrossingCount = 0;
+        int zeroCrossingCount = 0;
 
         for(int x = 0; x < mBuffer.length - 1; x++)
         {
             if(mBuffer[x] ^ mBuffer[x + 1])
             {
                 mDetectedZeroCrossing = x + 1;
-                mZeroCrossingCount++;
+                zeroCrossingCount++;
 
-                if(mZeroCrossingCount > 1)
+                if(zeroCrossingCount > 1)
                 {
                     return 0; //Too many crossings
                 }
             }
         }
 
-        if(mZeroCrossingCount == 1)
+        if(zeroCrossingCount == 1)
         {
             if(mDetectedZeroCrossing > mSymbolMiddle)
             {

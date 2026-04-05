@@ -23,7 +23,6 @@ public class AFSKSampleBuffer
     protected int mDelayLinePointer = 0;
 
     private int mHalfIntegerSamplesPerSymbol;
-    private int mPositiveSampleDecisionCount;
     protected int mTwiceSamplesPerSymbol;
     protected int mSymbolStart;
     protected int mSymbolEnd;
@@ -56,7 +55,7 @@ public class AFSKSampleBuffer
      */
     public void receive(boolean sample)
     {
-        mSymbolSamplingPoint--;
+        mSymbolSamplingPoint -= 1.0f;
 
         mDelayLine[mDelayLinePointer] = sample;
         mDelayLine[mDelayLinePointer + mTwiceSamplesPerSymbol] = sample;
@@ -99,7 +98,7 @@ public class AFSKSampleBuffer
      */
     public boolean getSymbol()
     {
-        mPositiveSampleDecisionCount = 0;
+        int positiveSampleDecisionCount = 0;
 
         mSymbolStart = mDelayLinePointer;
         mSymbolEnd = mDelayLinePointer + mSamplesPerSymbol - 1;
@@ -108,10 +107,10 @@ public class AFSKSampleBuffer
         {
             if(mDelayLine[x])
             {
-                mPositiveSampleDecisionCount++;
+                positiveSampleDecisionCount++;
             }
         }
 
-        return mPositiveSampleDecisionCount > mHalfIntegerSamplesPerSymbol;
+        return positiveSampleDecisionCount > mHalfIntegerSamplesPerSymbol;
     }
 }

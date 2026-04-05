@@ -44,7 +44,7 @@ public class AFSK1200Decoder implements Listener<float[]>
     }
 
     public static final double SAMPLE_RATE = 7200.0d;
-    public static final int SAMPLES_PER_SYMBOL = 6; //SAMPLE_RATE / 1200 baud;
+    public static final int SAMPLES_PER_SYMBOL = 6;
 
     //Correlation period of 8 samples works well and should align nicely with SIMD intrinsic vector sizes
     public static final int CORRELATION_PERIOD = SAMPLES_PER_SYMBOL + 2;
@@ -100,6 +100,7 @@ public class AFSK1200Decoder implements Listener<float[]>
      */
     public void dispose()
     {
+        //No explicit cleanup is required because this decoder does not own disposable resources.
     }
 
     /**
@@ -186,7 +187,6 @@ public class AFSK1200Decoder implements Listener<float[]>
         private float[] mReferenceSamples;
         private float[] mDemodulatedSamples;
         private float[] mCorrelationValues;
-        private float mCorrelationAccumulator;
 
         /**
          * Constructs a correlator instance,
@@ -229,17 +229,17 @@ public class AFSK1200Decoder implements Listener<float[]>
                 System.arraycopy(mDemodulatedSamples, 1, mDemodulatedSamples, 0, mDemodulatedSamples.length - 1);
                 mDemodulatedSamples[mDemodulatedSamples.length - 1] = samples[x];
 
-                mCorrelationAccumulator = 0.0f;
+                float correlationAccumulator = 0.0f;
 
                 for(y = 0; y < mDemodulatedSamples.length; y++)
                 {
-                    mCorrelationAccumulator += mDemodulatedSamples[y] * mReferenceSamples[y];
+                    correlationAccumulator += mDemodulatedSamples[y] * mReferenceSamples[y];
                 }
 
                 //Add the absolute value of correlation accumulator value to the averaging buffer and store the current
                 //average as the correlation value for this sample.  We use absolute value because we don't care if the
                 //signal is out of phase with the reference samples
-                mCorrelationValues[x] = mAveragingBuffer.get(FastMath.abs(mCorrelationAccumulator));
+                mCorrelationValues[x] = mAveragingBuffer.get(FastMath.abs(correlationAccumulator));
             }
 
             return mCorrelationValues;
