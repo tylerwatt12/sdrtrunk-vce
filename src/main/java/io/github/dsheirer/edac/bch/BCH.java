@@ -73,8 +73,8 @@ public abstract class BCH
     /**
      * Lookup tables.  Note: naming convention is from the original C++ implementation.
      */
-    public int[] a_pow_tab;
-    public int[] a_log_tab;
+    private int[] a_pow_tab;
+    private int[] a_log_tab;
     private int[] xi_tab;
 
     /**
@@ -904,8 +904,8 @@ public abstract class BCH
      */
     public static class GFPoly
     {
-        public int mDegree = 0;
-        public int[] mC; //Coefficients
+        private int mDegree = 0;
+        private int[] mC; //Coefficients
 
         /**
          * Constructs an instance with the specified size, or number of coefficients.
