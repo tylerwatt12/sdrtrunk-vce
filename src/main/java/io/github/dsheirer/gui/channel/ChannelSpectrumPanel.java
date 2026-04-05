@@ -45,8 +45,8 @@ import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import io.github.dsheirer.spectrum.converter.DFTResultsConverter;
 import java.awt.Component;
 import java.awt.EventQueue;
+import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
-import java.awt.event.ComponentListener;
 import java.awt.event.MouseEvent;
 import java.net.URL;
 import java.text.DecimalFormat;
@@ -75,13 +75,14 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(ChannelSpectrumPanel.class);
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
+    private static final String GROW_FILL = "[grow,fill]";
     private final PlaylistManager mPlaylistManager;
     private ProcessingChain mProcessingChain;
     private final ComplexSamplesToNativeBufferModule mSampleStreamTapModule = new ComplexSamplesToNativeBufferModule();
     private final ComplexDftProcessor mComplexDftProcessor = new ComplexDftProcessor();
     private SpectrumPanel mSpectrumPanel;
     private final FrequencyOverlayPanel mFrequencyOverlayPanel;
-    private final SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
+    private final transient SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
     private final SpinnerNumberModel mNoiseFloorSpinnerModel;
     private final JLabel mEstimatedCarrierOffsetFrequencyValueLabel;
     private boolean mPanelVisible = false;
@@ -101,13 +102,13 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
         mPlaylistManager = playlistManager;
         mNoiseSquelchView = new NoiseSquelchView(mPlaylistManager);
         mSignalPowerView = new SignalPowerView(mPlaylistManager);
-        setLayout(new MigLayout("insets 0", "[grow,fill]", "[grow,fill]"));
+        setLayout(new MigLayout("insets 0", GROW_FILL, GROW_FILL));
 
         JPanel fftPanel = new JPanel();
-        fftPanel.setLayout(new MigLayout("insets 0", "[grow,fill]", "[][grow,fill]"));
+        fftPanel.setLayout(new MigLayout("insets 0", GROW_FILL, "[]" + GROW_FILL));
 
         JPanel labelPanel = new JPanel();
-        labelPanel.setLayout(new MigLayout("insets 2", "[grow,fill][grow,fill,left][right][][]", ""));
+        labelPanel.setLayout(new MigLayout("insets 2", GROW_FILL + "[grow,fill,left][right][][]", ""));
         labelPanel.add(new JLabel("Channel Spectrum    "));
 
         mEstimatedCarrierOffsetFrequencyValueLabel = new JLabel(getPaddedCarrierOffsetLabel(0));
@@ -162,8 +163,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
                 }
             }
         });
-        //This is a debug button to log the current settings to the app log.
-//        labelPanel.add(mLogIndexesButton);
 
         fftPanel.add(labelPanel, "wrap");
 
@@ -220,7 +219,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
         mSplitPane.add(fftPanel, JSplitPane.LEFT);
         mSplitPane.add(mNoiseSquelchPanel, JSplitPane.RIGHT);
         add(mSplitPane);
-//        mSplitPane.setDividerLocation(0.5);
 
         mSampleStreamTapModule.setListener(mComplexDftProcessor);
         DFTResultsConverter DFTResultsConverter = new ComplexDecibelConverter();
@@ -295,22 +293,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
             mSpectrumPanel.clearSpectrum();
             mDftProcessing = false;
         }
-    }
-
-    /**
-     * Updates the CarrierOffsetProcessor's current carrier offset tracking frequency
-     * @param carrierOffsetFrequency that is currently measured/estimated.
-     */
-    private void updateEstimatedCarrierOffsetFrequency(long carrierOffsetFrequency)
-    {
-        //Note: we flip the sign on the error measurement because the value represents the amount of offset the PLL
-        //has to apply to move the signal to center/baseband
-        EventQueue.invokeLater(() -> {
-            mEstimatedCarrierOffsetFrequencyValueLabel.setText(getPaddedCarrierOffsetLabel(carrierOffsetFrequency));
-            mEstimatedCarrierOffsetFrequencyValueLabel.setEnabled(true);
-        });
-
-        mFrequencyOverlayPanel.setEstimatedCarrierOffsetFrequency(carrierOffsetFrequency);
     }
 
     private void broadcast(SourceEvent sourceEvent)
@@ -435,13 +417,29 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
 
             mSignalPowerView.receive(sourceEvent);
         }
+
+        /**
+         * Updates the CarrierOffsetProcessor's current carrier offset tracking frequency
+         * @param carrierOffsetFrequency that is currently measured/estimated.
+         */
+        private void updateEstimatedCarrierOffsetFrequency(long carrierOffsetFrequency)
+        {
+            //Note: we flip the sign on the error measurement because the value represents the amount of offset the PLL
+            //has to apply to move the signal to center/baseband
+            EventQueue.invokeLater(() -> {
+                mEstimatedCarrierOffsetFrequencyValueLabel.setText(getPaddedCarrierOffsetLabel(carrierOffsetFrequency));
+                mEstimatedCarrierOffsetFrequencyValueLabel.setEnabled(true);
+            });
+
+            mFrequencyOverlayPanel.setEstimatedCarrierOffsetFrequency(carrierOffsetFrequency);
+        }
     }
 
     /**
      * Monitors the sizing of the layered pane and resizes the spectrum and
      * channel panels whenever the layered pane is resized
      */
-    public class ResizeListener implements ComponentListener
+    public class ResizeListener extends ComponentAdapter
     {
         @Override public void componentResized(ComponentEvent e)
         {
@@ -450,10 +448,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
             mSpectrumPanel.setBounds(0, 0, c.getWidth(), c.getHeight());
             mFrequencyOverlayPanel.setBounds(0, 0, c.getWidth(), c.getHeight());
         }
-
-        @Override public void componentHidden(ComponentEvent arg0) {}
-        @Override public void componentMoved(ComponentEvent arg0) {}
-        @Override public void componentShown(ComponentEvent arg0) {}
     }
 
     /**

@@ -39,8 +39,6 @@ import io.github.dsheirer.spectrum.SpectrumPanel;
 import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import java.awt.Dimension;
 import java.awt.EventQueue;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.List;
 import net.miginfocom.swing.MigLayout;
@@ -53,10 +51,8 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
-import javax.swing.JToggleButton;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
+import javax.swing.WindowConstants;
 
 public class ChannelizerViewer2 extends JFrame
 {
@@ -77,6 +73,11 @@ public class ChannelizerViewer2 extends JFrame
     private DFTSize mMainPanelDFTSize = DFTSize.FFT32768;
     private DFTSize mChannelPanelDFTSize = DFTSize.FFT04096;
     private TestTuner mTestTuner = new TestTuner(new LoggingTunerErrorListener());
+    private static final String INSETS_ZERO = "insets 0 0 0 0";
+    private static final String GROW_FILL = "[grow,fill]";
+    private static final String PUSH_ALIGN_RIGHT = "push,align right";
+    private static final String SOURCE_EVENT_HANDLER_LOG =
+        "Source Event!  Add handler support for this to channelizer viewer";
 
     /**
      * GUI Test utility for researching polyphase channelizers.
@@ -90,8 +91,8 @@ public class ChannelizerViewer2 extends JFrame
     {
         setTitle("Polyphase Channelizer Viewer");
         setSize(1200, 700);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL));
         setLocationRelativeTo(null);
         add(getPrimaryPanel());
     }
@@ -101,7 +102,7 @@ public class ChannelizerViewer2 extends JFrame
         if(mPrimaryPanel == null)
         {
             mPrimaryPanel = new JPanel();
-            mPrimaryPanel.setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[][][grow,fill][grow,fill]"));
+            mPrimaryPanel.setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, "[][]" + GROW_FILL + GROW_FILL));
             mPrimaryPanel.add(getSpectrumPanel(), "wrap");
             mPrimaryPanel.add(getControlPanel(), "wrap");
             mPrimaryPanel.add(getTopChannelArrayPanel(), "wrap");
@@ -130,7 +131,7 @@ public class ChannelizerViewer2 extends JFrame
         if(mControlPanel == null)
         {
             mControlPanel = new JPanel();
-            mControlPanel.setLayout(new MigLayout("insets 0 0 0 0", "", ""));
+            mControlPanel.setLayout(new MigLayout(INSETS_ZERO, "", ""));
 
             mControlPanel.add(new JLabel("Tone:"), "align left");
             long minimumFrequency = -(long)mTestTuner.getTunerController().getSampleRate() / 2 + 1;
@@ -140,16 +141,11 @@ public class ChannelizerViewer2 extends JFrame
             SpinnerNumberModel model = new SpinnerNumberModel(toneFrequency, minimumFrequency, maximumFrequency,
                 100);
 
-            model.addChangeListener(new ChangeListener()
-            {
-                @Override
-                public void stateChanged(ChangeEvent e)
-                {
-                    long toneFrequency = model.getNumber().longValue();
-                    mTestTuner.getTunerController().setToneFrequency(toneFrequency);
-                    mToneFrequencyLabel.setText(String.valueOf(getToneFrequency()));
-                    mCenterFrequencyLabel.setText(String.valueOf(getCenterFrequency()));
-                }
+            model.addChangeListener(e -> {
+                long selectedToneFrequency = model.getNumber().longValue();
+                mTestTuner.getTunerController().setToneFrequency(selectedToneFrequency);
+                mToneFrequencyLabel.setText(String.valueOf(getToneFrequency()));
+                mCenterFrequencyLabel.setText(String.valueOf(getCenterFrequency()));
             });
 
             JSpinner spinner = new JSpinner(model);
@@ -157,16 +153,16 @@ public class ChannelizerViewer2 extends JFrame
             mControlPanel.add(spinner);
             mControlPanel.add(new JLabel("Hz"));
 
-            mControlPanel.add(new JLabel("Tone Frequency:"), "push,align right");
+            mControlPanel.add(new JLabel("Tone Frequency:"), PUSH_ALIGN_RIGHT);
             mToneFrequencyLabel = new JLabel(String.valueOf(getToneFrequency()));
             mControlPanel.add(mToneFrequencyLabel, "push,align left");
 
-            mControlPanel.add(new JLabel("Center Frequency:"), "push,align right");
+            mControlPanel.add(new JLabel("Center Frequency:"), PUSH_ALIGN_RIGHT);
             mCenterFrequencyLabel = new JLabel(String.valueOf(getCenterFrequency()));
             mControlPanel.add(mCenterFrequencyLabel, "push,align left");
 
-            mControlPanel.add(getBottomFrameAddChannelButton(), "push,align right");
-            mControlPanel.add(getTopFrameAddChannelButton(), "push,align right");
+            mControlPanel.add(getBottomFrameAddChannelButton(), PUSH_ALIGN_RIGHT);
+            mControlPanel.add(getTopFrameAddChannelButton(), PUSH_ALIGN_RIGHT);
         }
 
         return mControlPanel;
@@ -178,27 +174,22 @@ public class ChannelizerViewer2 extends JFrame
         {
             mTopFrameAddChannelButton = new JButton("Top - Add Channel");
 
-            mTopFrameAddChannelButton.addActionListener(new ActionListener()
-            {
-                @Override
-                public void actionPerformed(ActionEvent e)
+            mTopFrameAddChannelButton.addActionListener(e -> {
+                String value = JOptionPane.showInputDialog(ChannelizerViewer2.this, "Frequency?");
+
+                if(value != null && !value.isEmpty())
                 {
-                    String value = JOptionPane.showInputDialog(ChannelizerViewer2.this, "Frequency?");
-
-                    if(value != null && !value.isEmpty())
+                    try
                     {
-                        try
-                        {
-                            int frequency = Integer.parseInt(value);
+                        int frequency = Integer.parseInt(value);
 
-                            TunerChannel tunerChannel = new TunerChannel(frequency, CHANNEL_BANDWIDTH);
+                        TunerChannel tunerChannel = new TunerChannel(frequency, CHANNEL_BANDWIDTH);
 
-                            getTopChannelArrayPanel().addChannel(tunerChannel);
-                        }
-                        catch(Exception e1)
-                        {
-                            mLog.error("Can't parse frequency from value: " + value, e1);
-                        }
+                        getTopChannelArrayPanel().addChannel(tunerChannel);
+                    }
+                    catch(Exception e1)
+                    {
+                        mLog.error("Can't parse frequency from value: " + value, e1);
                     }
                 }
             });
@@ -213,27 +204,22 @@ public class ChannelizerViewer2 extends JFrame
         {
             mBottomFrameAddChannelButton = new JButton("Bottom - Add Channel");
 
-            mBottomFrameAddChannelButton.addActionListener(new ActionListener()
-            {
-                @Override
-                public void actionPerformed(ActionEvent e)
+            mBottomFrameAddChannelButton.addActionListener(e -> {
+                String value = JOptionPane.showInputDialog(ChannelizerViewer2.this, "Frequency?");
+
+                if(value != null && !value.isEmpty())
                 {
-                    String value = JOptionPane.showInputDialog(ChannelizerViewer2.this, "Frequency?");
-
-                    if(value != null && !value.isEmpty())
+                    try
                     {
-                        try
-                        {
-                            int frequency = Integer.parseInt(value);
+                        int frequency = Integer.parseInt(value);
 
-                            TunerChannel tunerChannel = new TunerChannel(frequency, CHANNEL_BANDWIDTH);
+                        TunerChannel tunerChannel = new TunerChannel(frequency, CHANNEL_BANDWIDTH);
 
-                            getBottomChannelArrayPanel().addChannel(tunerChannel);
-                        }
-                        catch(Exception e1)
-                        {
-                            mLog.error("Can't parse frequency from value: " + value, e1);
-                        }
+                        getBottomChannelArrayPanel().addChannel(tunerChannel);
+                    }
+                    catch(Exception e1)
+                    {
+                        mLog.error("Can't parse frequency from value: " + value, e1);
                     }
                 }
             });
@@ -281,12 +267,12 @@ public class ChannelizerViewer2 extends JFrame
 
         private void init()
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "fill", "fill"));
+            setLayout(new MigLayout(INSETS_ZERO, "fill", "fill"));
         }
 
         public void addChannel(TunerChannel tunerChannel)
         {
-            ChannelPanel channelPanel = new ChannelPanel(mSettingsManager, CHANNEL_BANDWIDTH * 2,
+            ChannelPanel channelPanel = new ChannelPanel(mSettingsManager, CHANNEL_BANDWIDTH * 2.0,
                 tunerChannel.getFrequency(), CHANNEL_BANDWIDTH);
             channelPanel.setDFTSize(mChannelPanelDFTSize);
 
@@ -332,7 +318,7 @@ public class ChannelizerViewer2 extends JFrame
 
         public PrimarySpectrumPanel(SettingsManager settingsManager, double sampleRate)
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+            setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL));
             mSpectrumPanel = new SpectrumPanel(settingsManager);
             mSpectrumPanel.setSampleSize(16);
             add(mSpectrumPanel);
@@ -355,7 +341,7 @@ public class ChannelizerViewer2 extends JFrame
         @Override
         public void process(SourceEvent event) throws SourceException
         {
-            mLog.debug("Source Event!  Add handler support for this to channelizer viewer");
+            mLog.debug(SOURCE_EVENT_HANDLER_LOG);
         }
     }
 
@@ -365,12 +351,10 @@ public class ChannelizerViewer2 extends JFrame
         private ComplexDftProcessor mComplexDftProcessor = new ComplexDftProcessor();
         private ComplexDecibelConverter mComplexDecibelConverter = new ComplexDecibelConverter();
         private SpectrumPanel mSpectrumPanel;
-        private JToggleButton mLoggingButton;
-        private boolean mLoggingEnabled;
 
         public ChannelPanel(SettingsManager settingsManager, double sampleRate, long frequency, int bandwidth)
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill][grow,fill][grow,fill]", "[grow,fill][]"));
+            setLayout(new MigLayout(INSETS_ZERO, GROW_FILL + GROW_FILL + GROW_FILL, GROW_FILL + "[]"));
             mSpectrumPanel = new SpectrumPanel(settingsManager);
             mSpectrumPanel.setSampleSize(16);
             add(mSpectrumPanel, "span");
@@ -386,9 +370,7 @@ public class ChannelizerViewer2 extends JFrame
             {
                 mLog.debug("Channel: " + mSource.getTunerChannel() + " Rate:" + mSource.getSampleRate());
                 mSource.setListener((Listener<ComplexSamples>) complexSamples ->
-                {
-                    mComplexDftProcessor.receive(new FloatNativeBuffer(complexSamples.toInterleaved()));
-                });
+                    mComplexDftProcessor.receive(new FloatNativeBuffer(complexSamples.toInterleaved())));
 
                 if(mSource instanceof PolyphaseChannelSource pcs)
                 {                    List<Integer> indexes = pcs.getOutputProcessorIndexes();
@@ -429,8 +411,6 @@ public class ChannelizerViewer2 extends JFrame
                 add(new JLabel("NO SRC:" + frequency));
             }
 
-            mLoggingButton = new JToggleButton("Logging");
-            mLoggingButton.addActionListener(e -> mLoggingEnabled = mLoggingButton.isSelected());
         }
 
         public TunerChannelSource getSource()
@@ -452,7 +432,7 @@ public class ChannelizerViewer2 extends JFrame
         @Override
         public void process(SourceEvent event) throws SourceException
         {
-            mLog.debug("Source Event!  Add handler support for this to channelizer viewer");
+            mLog.debug(SOURCE_EVENT_HANDLER_LOG);
         }
     }
 
@@ -460,13 +440,6 @@ public class ChannelizerViewer2 extends JFrame
     {
         final ChannelizerViewer2 frame = new ChannelizerViewer2();
 
-        EventQueue.invokeLater(new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                frame.setVisible(true);
-            }
-        });
+        EventQueue.invokeLater(() -> frame.setVisible(true));
     }
 }

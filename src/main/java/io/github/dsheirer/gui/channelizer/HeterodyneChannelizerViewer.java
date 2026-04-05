@@ -38,8 +38,6 @@ import io.github.dsheirer.spectrum.SpectrumPanel;
 import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import java.awt.Dimension;
 import java.awt.EventQueue;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -53,8 +51,7 @@ import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.JToggleButton;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
+import javax.swing.WindowConstants;
 
 public class HeterodyneChannelizerViewer extends JFrame
 {
@@ -69,13 +66,17 @@ public class HeterodyneChannelizerViewer extends JFrame
     private JLabel mToneFrequencyLabel;
     private PrimarySpectrumPanel mPrimarySpectrumPanel;
     private ChannelArrayPanel mChannelPanel;
-    private DiscreteIndexChannelArrayPanel mDiscreteIndexChannelPanel;
     private int mChannelCount;
     private int mChannelsPerRow;
     private long mBaseFrequency = 100000000;  //100 MHz
     private DFTSize mMainPanelDFTSize = DFTSize.FFT04096;
     private DFTSize mChannelPanelDFTSize = DFTSize.FFT04096;
     private TestTuner mTestTuner;
+    private static final String INSETS_ZERO = "insets 0 0 0 0";
+    private static final String GROW_FILL = "[grow,fill]";
+    private static final String PUSH_ALIGN_RIGHT = "push,align right";
+    private static final String SOURCE_EVENT_HANDLER_LOG =
+        "Source Event!  Add handler support for this to channelizer viewer";
 
     /**
      * GUI Test utility for researching channelizers.
@@ -92,8 +93,8 @@ public class HeterodyneChannelizerViewer extends JFrame
     {
         setTitle("Heterodyne Channelizer Viewer");
         setSize(1200, 800);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL));
         setLocationRelativeTo(null);
         add(getPrimaryPanel());
     }
@@ -103,11 +104,10 @@ public class HeterodyneChannelizerViewer extends JFrame
         if(mPrimaryPanel == null)
         {
             mPrimaryPanel = new JPanel();
-            mPrimaryPanel.setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[][][grow,fill][grow,fill]"));
+            mPrimaryPanel.setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, "[][]" + GROW_FILL + GROW_FILL));
             mPrimaryPanel.add(getSpectrumPanel(), "wrap");
             mPrimaryPanel.add(getControlPanel(), "wrap");
             mPrimaryPanel.add(getChannelArrayPanel(), "wrap");
-//            mPrimaryPanel.add(getDiscreteIndexChannelPanel());
         }
 
         return mPrimaryPanel;
@@ -132,7 +132,7 @@ public class HeterodyneChannelizerViewer extends JFrame
         if(mControlPanel == null)
         {
             mControlPanel = new JPanel();
-            mControlPanel.setLayout(new MigLayout("insets 0 0 0 0", "", ""));
+            mControlPanel.setLayout(new MigLayout(INSETS_ZERO, "", ""));
 
             mControlPanel.add(new JLabel("Tone:"), "align left");
             long minimumFrequency = -(long)mTestTuner.getTunerController().getSampleRate() / 2 + 1;
@@ -142,15 +142,10 @@ public class HeterodyneChannelizerViewer extends JFrame
             SpinnerNumberModel model = new SpinnerNumberModel(toneFrequency, minimumFrequency, maximumFrequency,
                 100);
 
-            model.addChangeListener(new ChangeListener()
-            {
-                @Override
-                public void stateChanged(ChangeEvent e)
-                {
-                    long toneFrequency = model.getNumber().longValue();
-                    mTestTuner.getTunerController().setToneFrequency(toneFrequency);
-                    mToneFrequencyLabel.setText(String.valueOf(getToneFrequency()));
-                }
+            model.addChangeListener(e -> {
+                long selectedToneFrequency = model.getNumber().longValue();
+                mTestTuner.getTunerController().setToneFrequency(selectedToneFrequency);
+                mToneFrequencyLabel.setText(String.valueOf(getToneFrequency()));
             });
 
             JSpinner spinner = new JSpinner(model);
@@ -158,11 +153,11 @@ public class HeterodyneChannelizerViewer extends JFrame
             mControlPanel.add(spinner);
             mControlPanel.add(new JLabel("Hz"));
 
-            mControlPanel.add(new JLabel("Frequency:"), "push,align right");
+            mControlPanel.add(new JLabel("Frequency:"), PUSH_ALIGN_RIGHT);
             mToneFrequencyLabel = new JLabel(String.valueOf(getToneFrequency()));
             mControlPanel.add(mToneFrequencyLabel, "push,align left");
 
-            mControlPanel.add(new JLabel("Channels: " + mChannelCount), "push,align right");
+            mControlPanel.add(new JLabel("Channels: " + mChannelCount), PUSH_ALIGN_RIGHT);
         }
 
         return mControlPanel;
@@ -183,16 +178,6 @@ public class HeterodyneChannelizerViewer extends JFrame
         return mChannelPanel;
     }
 
-    private DiscreteIndexChannelArrayPanel getDiscreteIndexChannelPanel()
-    {
-        if(mDiscreteIndexChannelPanel == null)
-        {
-            mDiscreteIndexChannelPanel = new DiscreteIndexChannelArrayPanel();
-        }
-
-        return mDiscreteIndexChannelPanel;
-    }
-
     public class ChannelArrayPanel extends JPanel
     {
         private final Logger mLog = LoggerFactory.getLogger(ChannelArrayPanel.class);
@@ -210,10 +195,7 @@ public class HeterodyneChannelizerViewer extends JFrame
 
         private void init()
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "fill", "fill"));
-
-            double spectralBandwidth = mTestTuner.getTunerController().getSampleRate();
-            double halfSpectralBandwidth = spectralBandwidth / 2.0;
+            setLayout(new MigLayout(INSETS_ZERO, "fill", "fill"));
 
             int channelToLog = -1;
 
@@ -225,7 +207,7 @@ public class HeterodyneChannelizerViewer extends JFrame
 
                 mLog.debug("Channel " + x + "/" + mChannelCount + " Frequency: " + frequency);
 
-                ChannelPanel channelPanel = new ChannelPanel(mSettingsManager, CHANNEL_BANDWIDTH * 2, frequency, CHANNEL_BANDWIDTH, (x == channelToLog));
+                ChannelPanel channelPanel = new ChannelPanel(mSettingsManager, CHANNEL_BANDWIDTH * 2.0, frequency, CHANNEL_BANDWIDTH, (x == channelToLog));
                 channelPanel.setDFTSize(mChannelPanelDFTSize);
 
                 if(x % mChannelsPerRow == mChannelsPerRow - 1)
@@ -255,7 +237,7 @@ public class HeterodyneChannelizerViewer extends JFrame
 
         private void init()
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "fill", "fill"));
+            setLayout(new MigLayout(INSETS_ZERO, "fill", "fill"));
 
             ChannelSpecification channelSpecification = new ChannelSpecification(25000.0, 12500, 6000.0, 6250.0);
             for(int x = 0; x < mChannelCount; x++)
@@ -315,7 +297,7 @@ public class HeterodyneChannelizerViewer extends JFrame
 
         public PrimarySpectrumPanel(SettingsManager settingsManager, double sampleRate)
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+            setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL));
             mSpectrumPanel = new SpectrumPanel(settingsManager);
             mSpectrumPanel.setSampleSize(28);
             add(mSpectrumPanel);
@@ -338,7 +320,7 @@ public class HeterodyneChannelizerViewer extends JFrame
         @Override
         public void process(SourceEvent event) throws SourceException
         {
-            mLog.debug("Source Event!  Add handler support for this to channelizer viewer");
+            mLog.debug(SOURCE_EVENT_HANDLER_LOG);
         }
     }
 
@@ -349,11 +331,10 @@ public class HeterodyneChannelizerViewer extends JFrame
         private ComplexDecibelConverter mComplexDecibelConverter = new ComplexDecibelConverter();
         private SpectrumPanel mSpectrumPanel;
         private JToggleButton mLoggingButton;
-        private boolean mLoggingEnabled;
 
         public ChannelPanel(SettingsManager settingsManager, double sampleRate, long frequency, int bandwidth, boolean enableLogging)
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "[center,grow,fill][]", "[grow,fill][]"));
+            setLayout(new MigLayout(INSETS_ZERO, "[center,grow,fill][]", GROW_FILL + "[]"));
             mSpectrumPanel = new SpectrumPanel(settingsManager);
             mSpectrumPanel.setSampleSize(32);
             add(mSpectrumPanel, "span");
@@ -386,16 +367,8 @@ public class HeterodyneChannelizerViewer extends JFrame
             }
 
             mLoggingButton = new JToggleButton("Logging");
-            mLoggingButton.addActionListener(new ActionListener()
-            {
-                @Override
-                public void actionPerformed(ActionEvent e)
-                {
-                    mLoggingEnabled = mLoggingButton.isSelected();
-                }
+            mLoggingButton.addActionListener(e -> {
             });
-//            add(mLoggingButton);
-
         }
 
         public TunerChannelSource getSource()
@@ -417,7 +390,7 @@ public class HeterodyneChannelizerViewer extends JFrame
         @Override
         public void process(SourceEvent event) throws SourceException
         {
-            mLog.debug("Source Event!  Add handler support for this to channelizer viewer");
+            mLog.debug(SOURCE_EVENT_HANDLER_LOG);
         }
     }
 
@@ -435,40 +408,27 @@ public class HeterodyneChannelizerViewer extends JFrame
         public DiscreteChannelPanel(SettingsManager settingsManager, TunerChannelSource source, int index)
         {
             mSource = source;
-            setLayout(new MigLayout("insets 0 0 0 0", "[center,grow,fill][]", "[grow,fill][]"));
+            setLayout(new MigLayout(INSETS_ZERO, "[center,grow,fill][]", GROW_FILL + "[]"));
             mSpectrumPanel = new SpectrumPanel(settingsManager);
             mSpectrumPanel.setSampleSize(32);
             add(mSpectrumPanel, "span");
             add(new JLabel("Index:" + index));
 
             mLoggingButton = new JToggleButton("Logging");
-            mLoggingButton.addActionListener(new ActionListener()
-            {
-                @Override
-                public void actionPerformed(ActionEvent e)
-                {
-                    mLoggingEnabled = mLoggingButton.isSelected();
-                }
-            });
-//            add(mLoggingButton);
+            mLoggingButton.addActionListener(e -> mLoggingEnabled = mLoggingButton.isSelected());
 
             mComplexDftProcessor.addConverter(mComplexDecibelConverter);
             mComplexDecibelConverter.addListener(mSpectrumPanel);
 
             if(mSource != null)
             {
-                mSource.setListener(new Listener<ComplexSamples>()
-                {
-                    @Override
-                    public void receive(ComplexSamples complexSamples)
+                mSource.setListener(complexSamples -> {
+                    if(mLoggingEnabled)
                     {
-                        if(mLoggingEnabled)
-                        {
-                            mLog.debug("Samples:" + Arrays.toString(complexSamples.toInterleaved().samples()));
-                        }
-
-                        mComplexDftProcessor.receive(new FloatNativeBuffer(complexSamples.toInterleaved()));
+                        mLog.debug("Samples:" + Arrays.toString(complexSamples.toInterleaved().samples()));
                     }
+
+                    mComplexDftProcessor.receive(new FloatNativeBuffer(complexSamples.toInterleaved()));
                 });
 
                 mSource.start();
@@ -498,76 +458,7 @@ public class HeterodyneChannelizerViewer extends JFrame
         @Override
         public void process(SourceEvent event) throws SourceException
         {
-            mLog.debug("Source Event!  Add handler support for this to channelizer viewer");
-        }
-    }
-
-
-    public static void main(String[] args)
-    {
-        boolean useGUI = true;
-
-        if(useGUI)
-        {
-            final HeterodyneChannelizerViewer frame = new HeterodyneChannelizerViewer();
-
-            EventQueue.invokeLater(new Runnable()
-            {
-                @Override
-                public void run()
-                {
-                    frame.setVisible(true);
-                }
-            });
-        }
-        else
-        {
-            TestTuner tuner = new TestTuner(new LoggingTunerErrorListener());
-
-            List<TunerChannel> tunerChannels = getTunerChannels(tuner);
-
-            List<TunerChannelSource> sources = new ArrayList<>();
-
-            int maxSourceCount = 30;
-            int sourceCount = 0;
-            for(TunerChannel tunerChannel : tunerChannels)
-            {
-                if(sourceCount < maxSourceCount)
-                {
-                    TunerChannelSource source = tuner.getChannelSourceManager().getSource(tunerChannel,
-                            null, "test");
-
-                    if(source != null)
-                    {
-                        sources.add(source);
-                        sourceCount++;
-                    }
-                    else
-                    {
-                        mLog.debug("Couldn't get source for: " + tunerChannel);
-                    }
-                }
-            }
-
-            mLog.debug("Starting [" + sources.size() + "] tuner channel sources");
-
-            for(TunerChannelSource tunerChannelSource : sources)
-            {
-                tunerChannelSource.setListener(new Listener<ComplexSamples>()
-                {
-                    @Override
-                    public void receive(ComplexSamples complexSamples)
-                    {
-                    }
-                });
-
-                tunerChannelSource.start();
-            }
-
-            while(true)
-            {
-                ;
-            }
+            mLog.debug(SOURCE_EVENT_HANDLER_LOG);
         }
     }
 }

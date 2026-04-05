@@ -46,17 +46,17 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
+import javax.swing.WindowConstants;
 
 public class SynthesizerViewer extends JFrame
 {
     private static final Logger mLog = LoggerFactory.getLogger(SynthesizerViewer.class);
 
-    private static final int CHANNEL_BANDWIDTH = 12500;
     private static final int CHANNEL_SAMPLE_RATE = 25000;
     private static final int CHANNEL_FFT_FRAME_RATE = 20; //frames per second
     private static final int DATA_GENERATOR_FRAME_RATE = 50; //frames per second
+    private static final String INSETS_ZERO = "insets 0 0 0 0";
+    private static final String GROW_FILL = "[grow,fill]";
 
     private SettingsManager mSettingsManager = new SettingsManager();
     private JPanel mPrimaryPanel;
@@ -85,8 +85,8 @@ public class SynthesizerViewer extends JFrame
     {
         setTitle("Polyphase Synthesizer Viewer");
         setSize(500, 400);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL));
         setLocationRelativeTo(null);
         add(getPrimaryPanel());
     }
@@ -96,7 +96,7 @@ public class SynthesizerViewer extends JFrame
         if(mPrimaryPanel == null)
         {
             mPrimaryPanel = new JPanel();
-            mPrimaryPanel.setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill][grow,fill]", "[grow,fill][grow,fill]"));
+            mPrimaryPanel.setLayout(new MigLayout(INSETS_ZERO, GROW_FILL + GROW_FILL, GROW_FILL + GROW_FILL));
             mPrimaryPanel.add(getSpectrumPanel(), "span");
             mPrimaryPanel.add(getChannel1Panel());
             mPrimaryPanel.add(getChannel2Panel());
@@ -149,7 +149,7 @@ public class SynthesizerViewer extends JFrame
 
         public PrimarySpectrumPanel(SettingsManager settingsManager)
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+            setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL));
             mSpectrumPanel = new SpectrumPanel(settingsManager);
             mSpectrumPanel.setSampleSize(16);
             add(mSpectrumPanel);
@@ -176,11 +176,10 @@ public class SynthesizerViewer extends JFrame
         private ComplexDftProcessor mComplexDftProcessor = new ComplexDftProcessor();
         private ComplexDecibelConverter mComplexDecibelConverter = new ComplexDecibelConverter();
         private SpectrumPanel mSpectrumPanel;
-        private boolean mLoggingEnabled = false;
 
         public ChannelPanel(SettingsManager settingsManager, ChannelControlPanel channelControlPanel)
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill][]"));
+            setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL + "[]"));
             mSpectrumPanel = new SpectrumPanel(settingsManager);
             mSpectrumPanel.setSampleSize(16);
             add(mSpectrumPanel, "wrap");
@@ -234,18 +233,13 @@ public class SynthesizerViewer extends JFrame
 
         public ChannelControlPanel()
         {
-            setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
+            setLayout(new MigLayout(INSETS_ZERO, GROW_FILL, GROW_FILL));
             add(new JLabel("Tone:"), "align right");
 
             SpinnerNumberModel model = new SpinnerNumberModel(DEFAULT_FREQUENCY, MIN_FREQUENCY, MAX_FREQUENCY, 100);
-            model.addChangeListener(new ChangeListener()
-            {
-                @Override
-                public void stateChanged(ChangeEvent e)
-                {
-                    long toneFrequency = model.getNumber().longValue();
-                    mOscillator.setFrequency(toneFrequency);
-                }
+            model.addChangeListener(e -> {
+                long toneFrequency = model.getNumber().longValue();
+                mOscillator.setFrequency(toneFrequency);
             });
 
             JSpinner spinner = new JSpinner(model);
@@ -262,7 +256,6 @@ public class SynthesizerViewer extends JFrame
     public class DataGenerationManager implements Runnable
     {
         private TwoChannelSynthesizerM2 mSynthesizer;
-        private FS4DownConverter mFS4DownConverter = new FS4DownConverter();
         private int mSamplesPerCycle = CHANNEL_SAMPLE_RATE / DATA_GENERATOR_FRAME_RATE;
 
         public DataGenerationManager()
