@@ -31,10 +31,6 @@ public class ComplexSamplesToNativeBufferModule extends Module implements ICompl
 {
     private Listener<INativeBuffer> mNativeBufferListener;
 
-    public ComplexSamplesToNativeBufferModule()
-    {
-    }
-
     @Override
     public Listener<ComplexSamples> getComplexSamplesListener()
     {
@@ -76,12 +72,12 @@ public class ComplexSamplesToNativeBufferModule extends Module implements ICompl
     }
 
     @Override
-    public void reset() {}
+    public void reset() { /* no action required */ }
 
     @Override
-    public void start() {}
+    public void start() { /* no action required */ }
 
     @Override
-    public void stop() {}
+    public void stop() { /* no action required */ }
 
 }

@@ -23,7 +23,7 @@ public abstract class RealSampleAdapter implements ISampleAdapter<float[]>
     /**
      * Constructs a real sample adapter
      */
-    public RealSampleAdapter()
+    protected RealSampleAdapter()
     {
     }
 }

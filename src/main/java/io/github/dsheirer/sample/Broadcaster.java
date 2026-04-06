@@ -29,16 +29,9 @@ import org.slf4j.LoggerFactory;
  */
 public class Broadcaster<T> implements Listener<T>
 {
-    private static LoggingSuppressor sLoggingSuppressor;
+    private static final LoggingSuppressor sLoggingSuppressor =
+            new LoggingSuppressor(LoggerFactory.getLogger(Broadcaster.class));
     private List<Listener<T>> mListeners = new CopyOnWriteArrayList<>();
-
-    /**
-     * Constructs an instance
-     */
-    public Broadcaster()
-    {
-        sLoggingSuppressor = new LoggingSuppressor(LoggerFactory.getLogger(Broadcaster.class));
-    }
 
     /**
      * Implements the Listener<T> interface to receive an element and broadcast that element to all registered

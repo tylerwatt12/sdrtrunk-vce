@@ -29,14 +29,6 @@ import java.nio.ByteOrder;
 public class ComplexShortAdapter implements ISampleAdapter<INativeBuffer>
 {
     private ByteOrder mByteOrder = ByteOrder.LITTLE_ENDIAN;
-    private ByteBuffer mByteBuffer;
-
-    /**
-     * Constructs a real sample adapter
-     */
-    public ComplexShortAdapter()
-    {
-    }
 
     @Override
     public INativeBuffer convert(byte[] samples)
@@ -45,14 +37,14 @@ public class ComplexShortAdapter implements ISampleAdapter<INativeBuffer>
 
         int pointer = 0;
 
-        mByteBuffer = ByteBuffer.wrap(samples);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(samples);
 
         /* Set endian to correct byte ordering */
-        mByteBuffer.order(mByteOrder);
+        byteBuffer.order(mByteOrder);
 
-        while(mByteBuffer.hasRemaining())
+        while(byteBuffer.hasRemaining())
         {
-            convertedSamples[pointer] = (float) mByteBuffer.getShort() / 32768.0f;
+            convertedSamples[pointer] = byteBuffer.getShort() / 32768.0f;
             pointer++;
         }
 

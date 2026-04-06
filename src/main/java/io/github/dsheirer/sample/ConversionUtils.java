@@ -31,6 +31,10 @@ import java.nio.ShortBuffer;
  */
 public class ConversionUtils
 {
+    private ConversionUtils()
+    {
+    }
+
     public static float[] convertFromSigned16BitSamples(byte[] bytes)
     {
         return convertFromSigned16BitSamples(ByteBuffer.wrap(bytes));

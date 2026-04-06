@@ -31,7 +31,6 @@ public class RealChannelShortAdapter extends RealSampleAdapter
 {
     private ByteOrder mByteOrder = ByteOrder.LITTLE_ENDIAN;
     private MixerChannel mMixerChannel;
-    private ByteBuffer mByteBuffer;
 
     public RealChannelShortAdapter(MixerChannel channel)
     {
@@ -46,28 +45,28 @@ public class RealChannelShortAdapter extends RealSampleAdapter
     {
         float[] convertedSamples = new float[samples.length / 4];
 
-        mByteBuffer = ByteBuffer.wrap(samples);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(samples);
 
         /* Set endian to correct byte ordering */
-        mByteBuffer.order(mByteOrder);
+        byteBuffer.order(mByteOrder);
 
         int pointer = 0;
 
-        while(mByteBuffer.hasRemaining())
+        while(byteBuffer.hasRemaining())
         {
             if(mMixerChannel == MixerChannel.LEFT)
             {
-                convertedSamples[pointer++] = (float) mByteBuffer.getShort() / 32768.0f;
+                convertedSamples[pointer++] = byteBuffer.getShort() / 32768.0f;
 
                 //Throw away the right channel
-                mByteBuffer.getShort();
+                byteBuffer.getShort();
             }
             else
             {
                 //Throw away the left channel
-                mByteBuffer.getShort();
+                byteBuffer.getShort();
 
-                convertedSamples[pointer++] = (float) mByteBuffer.getShort() / 32768.0f;
+                convertedSamples[pointer++] = byteBuffer.getShort() / 32768.0f;
             }
         }
 

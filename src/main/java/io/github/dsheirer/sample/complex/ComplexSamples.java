@@ -19,6 +19,9 @@
 
 package io.github.dsheirer.sample.complex;
 
+import java.util.Arrays;
+import java.util.Objects;
+
 /**
  * Wrapper for a complex sample array where I and Q samples are in separate arrays.
  */
@@ -48,6 +51,26 @@ public record ComplexSamples(float[] i, float[] q, long timestamp)
     public int length()
     {
         return i().length;
+    }
+
+    @Override
+    public boolean equals(Object o)
+    {
+        if(this == o) return true;
+        if(!(o instanceof ComplexSamples other)) return false;
+        return timestamp == other.timestamp && Arrays.equals(i, other.i) && Arrays.equals(q, other.q);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(timestamp, Arrays.hashCode(i), Arrays.hashCode(q));
+    }
+
+    @Override
+    public String toString()
+    {
+        return "ComplexSamples[length=" + i.length + ", timestamp=" + timestamp + "]";
     }
 
     /**

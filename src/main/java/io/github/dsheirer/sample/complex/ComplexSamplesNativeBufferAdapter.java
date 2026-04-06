@@ -21,6 +21,7 @@ package io.github.dsheirer.sample.complex;
 
 import io.github.dsheirer.buffer.INativeBuffer;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 /**
  * Adapts a single complex samples buffer to be compatible as an INativeBuffer instance.
@@ -67,7 +68,7 @@ public class ComplexSamplesNativeBufferAdapter implements INativeBuffer
      */
     public class ComplexSamplesIterator implements Iterator<ComplexSamples>
     {
-        public boolean mHasNext = true;
+        private boolean mHasNext = true;
 
         @Override
         public boolean hasNext()
@@ -78,6 +79,10 @@ public class ComplexSamplesNativeBufferAdapter implements INativeBuffer
         @Override
         public ComplexSamples next()
         {
+            if(!mHasNext)
+            {
+                throw new NoSuchElementException();
+            }
             mHasNext = false;
             return mComplexSamples;
         }
@@ -88,7 +93,7 @@ public class ComplexSamplesNativeBufferAdapter implements INativeBuffer
      */
     public class InterleavedComplexSamplesIterator implements Iterator<InterleavedComplexSamples>
     {
-        public boolean mHasNext = true;
+        private boolean mHasNext = true;
 
         @Override
         public boolean hasNext()
@@ -99,6 +104,10 @@ public class ComplexSamplesNativeBufferAdapter implements INativeBuffer
         @Override
         public InterleavedComplexSamples next()
         {
+            if(!mHasNext)
+            {
+                throw new NoSuchElementException();
+            }
             mHasNext = false;
             return mComplexSamples.toInterleaved();
         }

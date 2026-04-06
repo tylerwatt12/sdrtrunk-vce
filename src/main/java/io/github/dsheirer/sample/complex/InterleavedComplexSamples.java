@@ -20,6 +20,8 @@
 package io.github.dsheirer.sample.complex;
 
 import io.github.dsheirer.sample.buffer.ITimestamped;
+import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * Complex samples array that incorporates a timestamp for the first complex sample.
@@ -42,5 +44,25 @@ public record InterleavedComplexSamples(float[] samples, long timestamp) impleme
         }
 
         return new ComplexSamples(i, q, timestamp());
+    }
+
+    @Override
+    public boolean equals(Object o)
+    {
+        if(this == o) return true;
+        if(!(o instanceof InterleavedComplexSamples other)) return false;
+        return timestamp == other.timestamp && Arrays.equals(samples, other.samples);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(timestamp, Arrays.hashCode(samples));
+    }
+
+    @Override
+    public String toString()
+    {
+        return "InterleavedComplexSamples[length=" + samples.length + ", timestamp=" + timestamp + "]";
     }
 }
