@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.dmr;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
@@ -169,18 +170,22 @@ public class DMRCrcMaskManager
                 mTrackerMap.put(mask, new MaskTracker(timestamp));
             }
 
-            Iterator<Map.Entry<Integer,MaskTracker>> it = mTrackerMap.entrySet().iterator();
-            {
-                while(it.hasNext())
-                {
-                    if(it.next().getValue().isStale(timestamp))
-                    {
-                        it.remove();
-                    }
-                }
-            }
+            removeStaleEntries(timestamp);
 
             return valid;
+        }
+
+        private void removeStaleEntries(long timestamp)
+        {
+            Iterator<Map.Entry<Integer,MaskTracker>> it = mTrackerMap.entrySet().iterator();
+
+            while(it.hasNext())
+            {
+                if(it.next().getValue().isStale(timestamp))
+                {
+                    it.remove();
+                }
+            }
         }
 
         @Override
@@ -277,6 +282,20 @@ public class DMRCrcMaskManager
                 mObservationCount = Integer.MAX_VALUE;
             }
             mLastUpdated = timestamp;
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if(this == o) return true;
+            if(!(o instanceof MaskTracker other)) return false;
+            return mObservationCount == other.mObservationCount && mLastUpdated == other.mLastUpdated;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(mObservationCount, mLastUpdated);
         }
 
         /**
