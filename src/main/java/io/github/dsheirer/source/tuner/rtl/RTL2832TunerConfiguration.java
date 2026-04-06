@@ -49,12 +49,12 @@ public abstract class RTL2832TunerConfiguration extends TunerConfiguration
      * @param minimumFrequency tunable
      * @param maximumFrequency tunable
      */
-    public RTL2832TunerConfiguration(long minimumFrequency, long maximumFrequency)
+    protected RTL2832TunerConfiguration(long minimumFrequency, long maximumFrequency)
     {
         super(minimumFrequency, maximumFrequency);
     }
 
-    public RTL2832TunerConfiguration(String uniqueID)
+    protected RTL2832TunerConfiguration(String uniqueID)
     {
         super(uniqueID);
     }

@@ -35,7 +35,8 @@ import javax.usb.UsbException;
  */
 public abstract class R8xEmbeddedTuner extends EmbeddedTuner
 {
-    public static final byte[] BIT_REV_LOOKUP_TABLE = {(byte) 0x0, (byte) 0x8, (byte) 0x4, (byte) 0xC, (byte) 0x2,
+    private static final String LABEL_AUTOMATIC = "Automatic";
+    private static final byte[] BIT_REV_LOOKUP_TABLE = {(byte) 0x0, (byte) 0x8, (byte) 0x4, (byte) 0xC, (byte) 0x2,
             (byte) 0xA, (byte) 0x6, (byte) 0xE, (byte) 0x1, (byte) 0x9, (byte) 0x5, (byte) 0xD, (byte) 0x3, (byte) 0xB,
             (byte) 0x7, (byte) 0xF};
     public static final long MINIMUM_TUNABLE_FREQUENCY_HZ = 3180000;
@@ -64,7 +65,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
      * @param adapter to control the RTL2832 interface.
      * @param vcoPowerRef power reference.
      */
-    public R8xEmbeddedTuner(RTL2832TunerController.ControllerAdapter adapter, int vcoPowerRef)
+    protected R8xEmbeddedTuner(RTL2832TunerController.ControllerAdapter adapter, int vcoPowerRef)
     {
         super(adapter);
         mVcoPowerRef = vcoPowerRef;
@@ -141,7 +142,8 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
      */
     private static int bitReverse(int value)
     {
-        return BIT_REV_LOOKUP_TABLE[value & 0x0F] << 4 | BIT_REV_LOOKUP_TABLE[(value & 0xF0) >> 4];
+        return (BIT_REV_LOOKUP_TABLE[ value & 0x0F] & 0xFF) << 4 |
+               (BIT_REV_LOOKUP_TABLE[(value & 0xF0) >> 4] & 0xFF);
     }
 
     @Override
@@ -302,7 +304,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
         writeRegister(Register.CP_CUR, cp_cur, controlI2C);
         writeRegister(Register.DIVIDER_BUFFER_CURRENT, div_buf_cur, controlI2C);
         writeRegister(Register.FILTER_CURRENT, (byte) 0x40, controlI2C);
-        /* if( type != TUNER_ANALOG_TV ) ... */
+        /* type != TUNER_ANALOG_TV ... */
         writeRegister(Register.LNA_TOP, (byte) 0x00, controlI2C);
         writeRegister(Register.MIXER_TOP2, (byte) 0x00, controlI2C);
         writeRegister(Register.PRE_DETECT, (byte) 0x00, controlI2C);
@@ -343,7 +345,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
             /* XTAL capacitor 0pF for PLL */
             writeRegister(Register.PLL_XTAL_CAPACITOR, (byte) 0x00, controlI2C);
 
-            setPLL(56000 * 1000, controlI2C);
+            setPLL(56000 * 1000L, controlI2C);
 
             /* Start trigger */
             writeRegister(Register.CALIBRATION_TRIGGER, (byte) 0x10, controlI2C);
@@ -569,6 +571,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
             mSetting = setting;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -585,7 +588,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
      */
     public enum LNAGain
     {
-        AUTOMATIC("Automatic", 0x00),
+        AUTOMATIC(LABEL_AUTOMATIC, 0x00),
         GAIN_0("0", 0x10),
         GAIN_9("9", 0x11),
         GAIN_21("21", 0x12),
@@ -612,6 +615,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
             mSetting = setting;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -631,7 +635,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
      */
     public enum MixerGain
     {
-        AUTOMATIC("Automatic", 0x10),
+        AUTOMATIC(LABEL_AUTOMATIC, 0x10),
         GAIN_0("1", 0x00),
         GAIN_5("2", 0x01),
         GAIN_15("3", 0x02),
@@ -658,6 +662,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
             mSetting = setting;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -674,7 +679,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
      */
     public enum MasterGain
     {
-        AUTOMATIC("Automatic", VGAGain.GAIN_312, LNAGain.AUTOMATIC, MixerGain.AUTOMATIC),
+        AUTOMATIC(LABEL_AUTOMATIC, VGAGain.GAIN_312, LNAGain.AUTOMATIC, MixerGain.AUTOMATIC),
         MANUAL("Manual", VGAGain.GAIN_210, LNAGain.GAIN_248, MixerGain.GAIN_123),
         GAIN_0("0", VGAGain.GAIN_210, LNAGain.GAIN_0, MixerGain.GAIN_0),
         GAIN_9("9", VGAGain.GAIN_210, LNAGain.GAIN_9, MixerGain.GAIN_0),
@@ -720,6 +725,7 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
             mMixerGain = mixer;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -994,12 +1000,10 @@ public abstract class R8xEmbeddedTuner extends EmbeddedTuner
             {
                 return mDividerNumber - 1;
             }
-            else if(vcoFineTune > vcoPowerRef)
+            else
             {
                 return mDividerNumber + 1;
             }
-
-            return mDividerNumber;
         }
 
         public int getMixerDivider()

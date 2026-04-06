@@ -41,7 +41,7 @@ public abstract class EmbeddedTuner
      * Constructs an instance
      * @param adapter exposing the interfaces of the parent RTL2832TunerController
      */
-    public EmbeddedTuner(RTL2832TunerController.ControllerAdapter adapter)
+    protected EmbeddedTuner(RTL2832TunerController.ControllerAdapter adapter)
     {
         mAdapter = adapter;
     }

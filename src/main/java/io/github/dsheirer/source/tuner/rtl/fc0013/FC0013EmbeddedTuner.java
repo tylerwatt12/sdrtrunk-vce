@@ -23,7 +23,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.EmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerController;
-import java.text.DecimalFormat;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.usb4java.LibUsbException;
@@ -60,7 +60,6 @@ import org.usb4java.LibUsbException;
 public class FC0013EmbeddedTuner extends EmbeddedTuner
 {
     private static final Logger mLog = LoggerFactory.getLogger(FC0013EmbeddedTuner.class);
-    private DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.000000");
     public static final long MINIMUM_TUNABLE_FREQUENCY_HZ = 13_500_000;
     public static final long MAXIMUM_TUNABLE_FREQUENCY_HZ = 1_907_999_890l;
     private static final double USABLE_BANDWIDTH_PERCENT = 0.95;
@@ -215,7 +214,7 @@ public class FC0013EmbeddedTuner extends EmbeddedTuner
      * @return frequency
      * @throws SourceException never
      */
-    public long getTunedFrequency() throws SourceException
+    public synchronized long getTunedFrequency() throws SourceException
     {
         return mTunedFrequency;
     }
@@ -335,8 +334,7 @@ public class FC0013EmbeddedTuner extends EmbeddedTuner
         {
             throw new IllegalArgumentException("Fractional value [" + fractional + "] must be in range 0-65,535");
         }
-        double exactFrequency = divider.calculate(pm, am, fractional);
-        long frequency = (long)exactFrequency;
+        divider.calculate(pm, am, fractional);
         byte register5 = divider.getRegister5();
         register5 |= 0x07; //modified for Realtek demod
 
@@ -394,7 +392,7 @@ public class FC0013EmbeddedTuner extends EmbeddedTuner
             write(Register.R0E, (byte)0x00, false);
             write(Register.R0E, (byte)0x00, false);
             calibration = readRegister(Register.R0E, false) & 0x3F;
-            if((!vcoSelect & calibration < 0x02) || (vcoSelect & calibration > 0x3C))
+            if((!vcoSelect && calibration < 0x02) || (vcoSelect && calibration > 0x3C))
             {
                 String msg = "Unable to tune frequency [" + fractional + "] PLL calibration [" + Integer.toHexString(calibration).toUpperCase() + "] out of limits [02-3C]";
                 mLog.error(msg);

@@ -34,7 +34,7 @@ public abstract class R8xTunerConfiguration extends RTL2832TunerConfiguration
     /**
      * Default constructor for JAXB
      */
-    public R8xTunerConfiguration()
+    protected R8xTunerConfiguration()
     {
         super(R8xEmbeddedTuner.MINIMUM_TUNABLE_FREQUENCY_HZ, R8xEmbeddedTuner.MAXIMUM_TUNABLE_FREQUENCY_HZ);
     }
@@ -44,7 +44,7 @@ public abstract class R8xTunerConfiguration extends RTL2832TunerConfiguration
      *
      * @param uniqueID for the tuner
      */
-    public R8xTunerConfiguration(String uniqueID)
+    protected R8xTunerConfiguration(String uniqueID)
     {
         super(uniqueID);
     }

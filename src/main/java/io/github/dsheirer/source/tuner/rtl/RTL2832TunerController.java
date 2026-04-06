@@ -29,7 +29,7 @@ import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReentrantLock;
@@ -56,7 +56,7 @@ public class RTL2832TunerController extends USBTunerController
     public static final long TIMEOUT_US = 1000000l; //uSeconds
     public static final byte REQUEST_ZERO = (byte) 0;
     public static final byte EEPROM_ADDRESS = (byte) 0xA0;
-    public static final byte[] FIR_FILTER_COEFFICIENTS = {(byte) 0xCA, (byte) 0xDC, (byte) 0xD7, (byte) 0xD8,
+    private static final byte[] FIR_FILTER_COEFFICIENTS = {(byte) 0xCA, (byte) 0xDC, (byte) 0xD7, (byte) 0xD8,
             (byte) 0xE0, (byte) 0xF2, (byte) 0x0E, (byte) 0x35, (byte) 0x06, (byte) 0x50, (byte) 0x9C, (byte) 0x0D,
             (byte) 0x71, (byte) 0x11, (byte) 0x14, (byte) 0x71, (byte) 0x74, (byte) 0x19, (byte) 0x41, (byte) 0xA5};
     public static final SampleRate DEFAULT_SAMPLE_RATE = SampleRate.RATE_2_400MHZ;
@@ -256,7 +256,6 @@ public class RTL2832TunerController extends USBTunerController
         }
         catch(Exception e)
         {
-//            mLog.error("Error on device stop", e);
             //No-op
         }
     }
@@ -299,7 +298,7 @@ public class RTL2832TunerController extends USBTunerController
 
     private void setIFFrequency(int frequency) throws LibUsbException
     {
-        long ifFrequency = ((long) TWO_TO_22_POWER * (long) frequency) / (long) mOscillatorFrequency * -1;
+        long ifFrequency = ((long) TWO_TO_22_POWER * (long) frequency) / mOscillatorFrequency * -1;
 
         /* Write byte 2 (high) */
         writeDemodRegister(Page.ONE, (short) 0x19, (short) (Long.rotateRight(ifFrequency, 16) & 0x3F), 1);
@@ -570,7 +569,6 @@ public class RTL2832TunerController extends USBTunerController
 
         boolean isEnabledAlready = isI2CRepeaterEnabled();
         if (isEnabledAlready != enabled) {
-           // mLog.info("trying to " + (enabled ? "enable" : "disable") + " i2c repeater, which is currently " + (isEnabledAlready ? "enabled" : "disabled"));
             writeDemodRegister(Page.ONE, address, value, 1);
         }
     }
@@ -960,14 +958,6 @@ public class RTL2832TunerController extends USBTunerController
         }
     }
 
-    /**
-     * Determines the size of USB transfer buffers according to the sample rate
-     */
-    private int getUSBTransferBufferSize(double sampleRate)
-    {
-        return USB_TRANSFER_BUFFER_SIZE;
-    }
-
     public void setSampleRateFrequencyCorrection(int ppm) throws SourceException
     {
         int offset = -ppm * TWO_TO_22_POWER / 1_000_000;
@@ -1044,7 +1034,7 @@ public class RTL2832TunerController extends USBTunerController
             {
                 mLog.error("error while reading eeprom byte [" + x + "/" + length + "] aborting eeprom read and " +
                         "returning partially filled descriptor byte array", e);
-                x = length;
+                break;
             }
         }
 
@@ -1228,6 +1218,7 @@ public class RTL2832TunerController extends USBTunerController
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -1296,7 +1287,7 @@ public class RTL2832TunerController extends USBTunerController
     public class Descriptor
     {
         private byte[] mData;
-        private ArrayList<String> mLabels = new ArrayList<String>();
+        private ArrayList<String> mLabels = new ArrayList<>();
 
         public Descriptor(byte[] data)
         {
@@ -1399,7 +1390,7 @@ public class RTL2832TunerController extends USBTunerController
             byte[] data = Arrays.copyOfRange(mData, start + 2, start + length);
 
             /* Translate the bytes as UTF-16 Little Endian and store the label */
-            String label = new String(data, Charset.forName("UTF-16LE"));
+            String label = new String(data, StandardCharsets.UTF_16LE);
             mLabels.add(label);
             return start + length;
         }
