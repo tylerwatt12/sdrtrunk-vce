@@ -61,12 +61,25 @@ public class LtrNetRadioIdentifier extends TalkgroupIdentifier implements Compar
     @Override
     public int compareTo(LtrNetRadioIdentifier o)
     {
-        return getValue().compareTo(o.getValue());
+        int comparison = getValue().compareTo(o.getValue());
+
+        if(comparison == 0)
+        {
+            comparison = getRole().compareTo(o.getRole());
+        }
+
+        return comparison;
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof LtrNetRadioIdentifier)) return false;
-        return compareTo((LtrNetRadioIdentifier) o) == 0;
+    public boolean equals(Object o)
+    {
+        return super.equals(o);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return super.hashCode();
     }
 }

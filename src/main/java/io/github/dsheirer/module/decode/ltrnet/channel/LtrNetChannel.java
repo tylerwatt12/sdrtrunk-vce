@@ -114,4 +114,10 @@ public class LtrNetChannel implements IChannelDescriptor, Comparable<LtrNetChann
         if (!(o instanceof LtrNetChannel)) return false;
         return compareTo((LtrNetChannel) o) == 0;
     }
+
+    @Override
+    public int hashCode()
+    {
+        return Integer.hashCode(getChannel());
+    }
 }

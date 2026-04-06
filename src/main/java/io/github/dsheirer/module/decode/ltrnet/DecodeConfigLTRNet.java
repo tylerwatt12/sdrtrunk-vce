@@ -28,10 +28,6 @@ public class DecodeConfigLTRNet extends DecodeConfiguration
 {
     private MessageDirection mMessageDirection = MessageDirection.OSW;
 
-    public DecodeConfigLTRNet()
-    {
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {

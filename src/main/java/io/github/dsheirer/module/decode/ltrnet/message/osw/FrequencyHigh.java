@@ -31,7 +31,7 @@ public abstract class FrequencyHigh extends Frequency
     /**
      * Constructs a message
      */
-    public FrequencyHigh(CorrectedBinaryMessage message, long timestamp)
+    protected FrequencyHigh(CorrectedBinaryMessage message, long timestamp)
     {
         super(message, timestamp);
     }

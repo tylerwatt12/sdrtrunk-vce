@@ -29,7 +29,7 @@ public abstract class Frequency extends LtrNetOswMessage
     /**
      * Constructs a message
      */
-    public Frequency(CorrectedBinaryMessage message, long timestamp)
+    protected Frequency(CorrectedBinaryMessage message, long timestamp)
     {
         super(message, timestamp);
     }

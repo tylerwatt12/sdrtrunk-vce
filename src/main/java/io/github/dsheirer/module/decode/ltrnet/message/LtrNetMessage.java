@@ -43,7 +43,7 @@ public abstract class LtrNetMessage extends Message
     private LTRTalkgroup mTalkgroup;
     private MessageDirection mMessageDirection;
 
-    public LtrNetMessage(CorrectedBinaryMessage message, MessageDirection direction, long timestamp)
+    protected LtrNetMessage(CorrectedBinaryMessage message, MessageDirection direction, long timestamp)
     {
         super(timestamp);
         mMessage = message;

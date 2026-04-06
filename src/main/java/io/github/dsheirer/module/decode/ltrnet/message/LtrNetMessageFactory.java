@@ -51,67 +51,73 @@ import io.github.dsheirer.module.decode.ltrnet.message.osw.TransmitFrequencyLow;
  */
 public class LtrNetMessageFactory
 {
+    private LtrNetMessageFactory()
+    {
+    }
+
     public static LtrNetMessage create(MessageDirection messageDirection, CorrectedBinaryMessage message, long timestamp)
     {
-        switch(messageDirection)
+        if(messageDirection == MessageDirection.ISW)
         {
-            case ISW:
-                //Flip all of the message bits since ISW messages are inverted
-                message.flip(0, 40);
+            //Flip all of the message bits since ISW messages are inverted
+            message.flip(0, 40);
 
-                LtrNetMessageType iswType = LtrNetIswMessage.getMessageType(message);
+            LtrNetMessageType iswType = LtrNetIswMessage.getMessageType(message);
 
-                switch(iswType)
-                {
-                    case ISW_CALL_END:
-                        return new IswCallEnd(message, timestamp);
-                    case ISW_CALL_START:
-                        return new IswCallStart(message, timestamp);
-                    case ISW_REGISTRATION_REQUEST_ESN_HIGH:
-                        return new RegistrationRequestEsnHigh(message, timestamp);
-                    case ISW_REGISTRATION_REQUEST_ESN_LOW:
-                        return new RegistrationRequestEsnLow(message, timestamp);
-                    case ISW_REQUEST_ACCESS:
-                        return new RequestAccess(message, timestamp);
-                    case ISW_UNIQUE_ID:
-                        return new IswUniqueId(message, timestamp);
-                    case ISW_UNKNOWN:
-                    default:
-                        return new IswUnknown(message, timestamp);
-                }
-            case OSW:
-                LtrNetMessageType oswType = LtrNetOswMessage.getMessageType(message);
+            switch(iswType)
+            {
+                case ISW_CALL_END:
+                    return new IswCallEnd(message, timestamp);
+                case ISW_CALL_START:
+                    return new IswCallStart(message, timestamp);
+                case ISW_REGISTRATION_REQUEST_ESN_HIGH:
+                    return new RegistrationRequestEsnHigh(message, timestamp);
+                case ISW_REGISTRATION_REQUEST_ESN_LOW:
+                    return new RegistrationRequestEsnLow(message, timestamp);
+                case ISW_REQUEST_ACCESS:
+                    return new RequestAccess(message, timestamp);
+                case ISW_UNIQUE_ID:
+                    return new IswUniqueId(message, timestamp);
+                case ISW_UNKNOWN:
+                default:
+                    return new IswUnknown(message, timestamp);
+            }
+        }
 
-                switch(oswType)
-                {
-                    case OSW_CALL_END:
-                        return new OswCallEnd(message, timestamp);
-                    case OSW_CALL_START:
-                        return new OswCallStart(message, timestamp);
-                    case OSW_CHANNEL_MAP_HIGH:
-                        return new ChannelMapHigh(message, timestamp);
-                    case OSW_CHANNEL_MAP_LOW:
-                        return new ChannelMapLow(message, timestamp);
-                    case OSW_SYSTEM_IDLE:
-                        return new SystemIdle(message, timestamp);
-                    case OSW_NEIGHBOR_ID:
-                        return new NeighborId(message, timestamp);
-                    case OSW_RECEIVE_FREQUENCY_HIGH:
-                        return new ReceiveFrequencyHigh(message, timestamp);
-                    case OSW_RECEIVE_FREQUENCY_LOW:
-                        return new ReceiveFrequencyLow(message, timestamp);
-                    case OSW_REGISTRATION_ACCEPT:
-                        return new RegistrationAccept(message, timestamp);
-                    case OSW_SITE_ID:
-                        return new SiteId(message, timestamp);
-                    case OSW_TRANSMIT_FREQUENCY_HIGH:
-                        return new TransmitFrequencyHigh(message, timestamp);
-                    case OSW_TRANSMIT_FREQUENCY_LOW:
-                        return new TransmitFrequencyLow(message, timestamp);
-                    case OSW_UNKNOWN:
-                    default:
-                        return new OswUnknown(message, timestamp);
-                }
+        if(messageDirection == MessageDirection.OSW)
+        {
+            LtrNetMessageType oswType = LtrNetOswMessage.getMessageType(message);
+
+            switch(oswType)
+            {
+                case OSW_CALL_END:
+                    return new OswCallEnd(message, timestamp);
+                case OSW_CALL_START:
+                    return new OswCallStart(message, timestamp);
+                case OSW_CHANNEL_MAP_HIGH:
+                    return new ChannelMapHigh(message, timestamp);
+                case OSW_CHANNEL_MAP_LOW:
+                    return new ChannelMapLow(message, timestamp);
+                case OSW_SYSTEM_IDLE:
+                    return new SystemIdle(message, timestamp);
+                case OSW_NEIGHBOR_ID:
+                    return new NeighborId(message, timestamp);
+                case OSW_RECEIVE_FREQUENCY_HIGH:
+                    return new ReceiveFrequencyHigh(message, timestamp);
+                case OSW_RECEIVE_FREQUENCY_LOW:
+                    return new ReceiveFrequencyLow(message, timestamp);
+                case OSW_REGISTRATION_ACCEPT:
+                    return new RegistrationAccept(message, timestamp);
+                case OSW_SITE_ID:
+                    return new SiteId(message, timestamp);
+                case OSW_TRANSMIT_FREQUENCY_HIGH:
+                    return new TransmitFrequencyHigh(message, timestamp);
+                case OSW_TRANSMIT_FREQUENCY_LOW:
+                    return new TransmitFrequencyLow(message, timestamp);
+                case OSW_UNKNOWN:
+                default:
+                    return new OswUnknown(message, timestamp);
+            }
         }
 
         return null;

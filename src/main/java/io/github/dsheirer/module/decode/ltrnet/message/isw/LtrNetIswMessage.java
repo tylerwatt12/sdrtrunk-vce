@@ -30,7 +30,7 @@ public abstract class LtrNetIswMessage extends LtrNetMessage
     /**
      * LTR-Net Inbound (mobile - to tower) Message
      */
-    public LtrNetIswMessage(CorrectedBinaryMessage message, long timestamp)
+    protected LtrNetIswMessage(CorrectedBinaryMessage message, long timestamp)
     {
         super(message, MessageDirection.ISW, timestamp);
 
@@ -70,6 +70,8 @@ public abstract class LtrNetIswMessage extends LtrNetMessage
                     return LtrNetMessageType.ISW_REGISTRATION_REQUEST_ESN_LOW;
                 case 29:
                     return LtrNetMessageType.ISW_REGISTRATION_REQUEST_ESN_HIGH;
+                default:
+                    return LtrNetMessageType.ISW_UNKNOWN;
             }
         }
         else if(channel > 0)
@@ -84,6 +86,8 @@ public abstract class LtrNetIswMessage extends LtrNetMessage
                     return LtrNetMessageType.ISW_CALL_END;
                 case 31:
                     return LtrNetMessageType.ISW_REQUEST_ACCESS;
+                default:
+                    return LtrNetMessageType.ISW_UNKNOWN;
             }
         }
 

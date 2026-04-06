@@ -31,7 +31,7 @@ public abstract class FrequencyLow extends Frequency
     /**
      * Constructs a message
      */
-    public FrequencyLow(CorrectedBinaryMessage message, long timestamp)
+    protected FrequencyLow(CorrectedBinaryMessage message, long timestamp)
     {
         super(message, timestamp);
     }
