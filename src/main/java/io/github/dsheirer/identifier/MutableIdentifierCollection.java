@@ -199,16 +199,12 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
 
             if(existing != null)
             {
-                if(!existing.equals(identifier))
-                {
-                    remove(existing);
-                    add(identifier);
-                }
                 //Always replace a radio identifier with a fully qualified variant of itself
-                else if(existing instanceof  RadioIdentifier &&
+                if(!existing.equals(identifier) ||
+                        (existing instanceof RadioIdentifier &&
                         !(existing instanceof FullyQualifiedRadioIdentifier) &&
                         identifier instanceof FullyQualifiedRadioIdentifier &&
-                        existing.getValue().equals(identifier.getValue()))
+                        existing.getValue().equals(identifier.getValue())))
                 {
                     remove(existing);
                     add(identifier);
@@ -387,7 +383,8 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
      */
     public IdentifierCollection copyOf()
     {
-        IdentifierCollection copy = new IdentifierCollection(getIdentifiers(), getTimeslot());
+        IdentifierCollection copy = new IdentifierCollection(getIdentifiers());
+        copy.setTimeslot(getTimeslot());
         return copy;
     }
 }

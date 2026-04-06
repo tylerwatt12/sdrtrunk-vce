@@ -19,6 +19,7 @@
 package io.github.dsheirer.identifier;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Identifier form.  Indicates the type of identifier.
@@ -74,7 +75,7 @@ public enum Form
     /**
      * Entity forms that are used to identify entities in P25 call events.
      */
-    public static EnumSet<Form> ENTITY_FORMS = EnumSet.of(Form.RADIO, Form.TALKGROUP, Form.PATCH_GROUP, Form.TELEPHONE_NUMBER);
+    private static final Set<Form> ENTITY_FORMS = EnumSet.of(Form.RADIO, Form.TALKGROUP, Form.PATCH_GROUP, Form.TELEPHONE_NUMBER);
 
     /**
      * Indicates if this form is a form that can be used to identify an entity

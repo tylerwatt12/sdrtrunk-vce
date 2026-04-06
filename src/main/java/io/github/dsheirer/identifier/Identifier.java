@@ -33,7 +33,7 @@ public abstract class Identifier<T>
     private Form mForm;
     private Role mRole;
 
-    public Identifier(T value, IdentifierClass identifierClass, Form form, Role role)
+    protected Identifier(T value, IdentifierClass identifierClass, Form form, Role role)
     {
         mValue = value;
         mIdentifierClass = identifierClass;

@@ -59,11 +59,6 @@ public class IdentifierCollection
 
     public IdentifierCollection(Collection<Identifier> identifiers)
     {
-        this(identifiers, 0);
-    }
-
-    public IdentifierCollection(Collection<Identifier> identifiers, int timeslot)
-    {
         for(Identifier identifier: identifiers)
         {
             if(identifier == null)
