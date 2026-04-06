@@ -19,6 +19,9 @@
 
 package io.github.dsheirer.preference.playback;
 
+import java.util.Arrays;
+import java.util.Objects;
+
 /**
  * Request to play a test tone over the currently employed audio playback device.
  *
@@ -33,4 +36,24 @@ public record PlayTestAudioRequest(float[] audio, int channel)
     {
         return channel == ALL_CHANNELS;
     }
-};
+
+    @Override
+    public boolean equals(Object o)
+    {
+        if(this == o) return true;
+        if(!(o instanceof PlayTestAudioRequest other)) return false;
+        return channel == other.channel && Arrays.equals(audio, other.audio);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(Arrays.hashCode(audio), channel);
+    }
+
+    @Override
+    public String toString()
+    {
+        return "PlayTestAudioRequest[audio length=" + audio.length + ", channel=" + channel + "]";
+    }
+}

@@ -100,19 +100,6 @@ public class JTableColumnWidthMonitor
     }
 
     /**
-     * Stores the current column widths to the user preferences
-     */
-    private void storeColumnWidths()
-    {
-        TableColumnModel model = mTable.getColumnModel();
-
-        for(int x = 0; x < model.getColumnCount(); x++)
-        {
-            mUserPreferences.getSwingPreference().setInt(getColumnKey(x), model.getColumn(x).getWidth());
-        }
-    }
-
-    /**
      * Constructs a preference key for the column number
      */
     private String getColumnKey(int column)
@@ -135,13 +122,25 @@ public class JTableColumnWidthMonitor
         }
 
         @Override
-        public void columnAdded(TableColumnModelEvent e){}
+        public void columnAdded(TableColumnModelEvent e)
+        {
+            /* no action required */
+        }
         @Override
-        public void columnRemoved(TableColumnModelEvent e){}
+        public void columnRemoved(TableColumnModelEvent e)
+        {
+            /* no action required */
+        }
         @Override
-        public void columnMoved(TableColumnModelEvent e){}
+        public void columnMoved(TableColumnModelEvent e)
+        {
+            /* no action required */
+        }
         @Override
-        public void columnSelectionChanged(ListSelectionEvent e){}
+        public void columnSelectionChanged(ListSelectionEvent e)
+        {
+            /* no action required */
+        }
     }
 
     public class ColumnWidthSaveTask implements Runnable
@@ -150,7 +149,13 @@ public class JTableColumnWidthMonitor
         @Override
         public void run()
         {
-            storeColumnWidths();
+            TableColumnModel model = mTable.getColumnModel();
+
+            for(int x = 0; x < model.getColumnCount(); x++)
+            {
+                mUserPreferences.getSwingPreference().setInt(getColumnKey(x), model.getColumn(x).getWidth());
+            }
+
             mSaveInProgress.set(false);
         }
     }

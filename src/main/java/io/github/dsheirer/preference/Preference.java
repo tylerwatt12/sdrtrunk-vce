@@ -28,7 +28,7 @@ public abstract class Preference
 {
     private Listener<PreferenceType> mPreferenceUpdateListener;
 
-    public Preference(Listener<PreferenceType> updateListener)
+    protected Preference(Listener<PreferenceType> updateListener)
     {
         mPreferenceUpdateListener = updateListener;
     }

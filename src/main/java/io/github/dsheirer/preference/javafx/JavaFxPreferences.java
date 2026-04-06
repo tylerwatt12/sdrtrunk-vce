@@ -44,10 +44,6 @@ public class JavaFxPreferences
     private Preferences mPreferences = Preferences.userNodeForPackage(JavaFxPreferences.class);
     private List<StageMonitor> mStageMonitors = new ArrayList<>();
 
-    public JavaFxPreferences()
-    {
-    }
-
     /**
      * Monitors a stage size and location so that it can be restored to the same location on application startup.
      * @param stage to monitor

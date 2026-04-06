@@ -22,8 +22,6 @@ package io.github.dsheirer.preference.swing;
 
 
 import java.awt.Dimension;
-import java.awt.GraphicsDevice;
-import java.awt.GraphicsEnvironment;
 import java.awt.Point;
 import java.util.prefs.Preferences;
 
@@ -40,10 +38,6 @@ public class SwingPreference
     private static final String MAXIMIZED = ".maximized";
 
     private Preferences mPreferences = Preferences.userNodeForPackage(SwingPreference.class);
-
-    public SwingPreference()
-    {
-    }
 
     /**
      * Returns the stored swing related integer value
@@ -77,8 +71,7 @@ public class SwingPreference
 
         if(x != Integer.MAX_VALUE && y != Integer.MAX_VALUE)
         {
-            Point location = new Point(x,y);
-            return location;
+            return new Point(x,y);
         }
 
         return null;
@@ -140,24 +133,4 @@ public class SwingPreference
         mPreferences.putInt(key + SIZE_WIDTH, dimension.width);
     }
 
-    /**
-     * Tests a stored window location to determine if it can be displayed on the currently available
-     * graphics display devices so that we don't position a window at a previously available location
-     * that is not currently available.
-     *
-     * @param location to test
-     * @return true if the location is displayable.
-     */
-    private boolean isValidWindowLocation(Point location)
-    {
-        for(GraphicsDevice gd:GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices())
-        {
-            if(gd.getDefaultConfiguration().getBounds().contains(location))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 }
