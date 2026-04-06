@@ -136,10 +136,9 @@ dependencies {
 def os = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem
 
 /**
- * This is needed for the JDK23 vector API ... until it moves out of incubation or preview
+ * The Vector API is still incubating and must be enabled explicitly.
  */
 tasks.withType(JavaCompile) {
-    options.compilerArgs.add("--enable-preview") //Project Panama Vector API is still in incubator
     options.compilerArgs.add("--add-modules=jdk.incubator.vector") //Project Panama Vector API is still in incubator
 }
 
@@ -150,7 +149,6 @@ def jvmArgsWindows =
         ['--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED', //Needed for controls-fx.jar
          '--add-exports=java.desktop/com.sun.java.swing.plaf.windows=ALL-UNNAMED', //windows users for JIDE
          '--add-modules=jdk.incubator.vector',   //Project Panama Vector API is still in incubator
-         '--enable-preview', //Project Panama Vector API is still in incubator
          '--enable-native-access=ALL-UNNAMED', //Suppress unsafe warnings for FFM API Foreign Memory calls
          '--enable-native-access=javafx.graphics', //JDK24 - suppress restricted java.lang.System calls
          '--sun-misc-unsafe-memory-access=allow', //JDK24 - suppress sun.misc.Unsafe::allocateMemory warning
@@ -163,7 +161,6 @@ def jvmArgsWindows =
 def jvmArgsLinux =
         ['--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED', //Needed for controls-fx.jar
          '--add-modules=jdk.incubator.vector',   //Needed while Project Panama API is still in incubator
-         '--enable-preview', //Project Panama Vector & Foreign Function APIs remain in incubator
          '--sun-misc-unsafe-memory-access=allow', //JDK24 - suppress sun.misc.Unsafe::allocateMemory warning
          '-XX:+UseCompactObjectHeaders',   //JDK25 - use compact object headers
          '--enable-native-access=javafx.graphics', //JDK24 - suppress restricted java.lang.System calls
