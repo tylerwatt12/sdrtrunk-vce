@@ -41,7 +41,6 @@ public class MPT1327Decoder extends AbstractAFSKDecoder implements IBinarySymbol
 
     private MessageFramer mControlMessageFramer;
     private MessageFramer mTrafficMessageFramer;
-    private MPT1327MessageProcessor mMessageProcessor;
     private BinaryToByteBufferAssembler mBinaryToByteBufferAssembler = new BinaryToByteBufferAssembler(512);
 
     protected MPT1327Decoder(AFSK1200Decoder decoder, Sync sync)
@@ -67,11 +66,11 @@ public class MPT1327Decoder extends AbstractAFSKDecoder implements IBinarySymbol
         mTrafficMessageFramer = new MessageFramer(sync.getTrafficSyncPattern().getPattern(), MESSAGE_LENGTH);
 
         //Fully decoded and framed messages processor
-        mMessageProcessor = new MPT1327MessageProcessor();
-        mMessageProcessor.setMessageListener(getMessageListener());
+        MPT1327MessageProcessor messageProcessor = new MPT1327MessageProcessor();
+        messageProcessor.setMessageListener(getMessageListener());
 
-        mControlMessageFramer.addMessageListener(mMessageProcessor);
-        mTrafficMessageFramer.addMessageListener(mMessageProcessor);
+        mControlMessageFramer.addMessageListener(messageProcessor);
+        mTrafficMessageFramer.addMessageListener(messageProcessor);
     }
 
     public void process(boolean symbol)
@@ -90,6 +89,7 @@ public class MPT1327Decoder extends AbstractAFSKDecoder implements IBinarySymbol
     @Override
     public void reset()
     {
+        /* no action required */
     }
 
     @Override

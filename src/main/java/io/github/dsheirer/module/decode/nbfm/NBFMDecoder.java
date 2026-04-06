@@ -182,13 +182,22 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
      * Module interface methods - unused.
      */
     @Override
-    public void reset() {}
+    public void reset()
+    {
+        /* no action required */
+    }
 
     @Override
-    public void start() {}
+    public void start()
+    {
+        /* no action required */
+    }
 
     @Override
-    public void stop() {}
+    public void stop()
+    {
+        /* no action required */
+    }
 
     /**
      * Broadcasts the demodulated, resampled to 8 kHz audio samples to the registered listener.

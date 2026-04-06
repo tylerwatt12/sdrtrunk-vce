@@ -25,12 +25,7 @@ import io.github.dsheirer.sample.Listener;
 
 public class MPT1327MessageProcessor implements Listener<CorrectedBinaryMessage>
 {
-
     private Listener<IMessage> mMessageListener;
-
-    public MPT1327MessageProcessor()
-    {
-    }
 
     public void dispose()
     {

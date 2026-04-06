@@ -36,13 +36,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     private int mSquelchHysteresisOpenThreshold = NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD;
     private int mSquelchHysteresisCloseThreshold = NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD;
 
-    /**
-     * Constructs an instance
-     */
-    public DecodeConfigNBFM()
-    {
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {

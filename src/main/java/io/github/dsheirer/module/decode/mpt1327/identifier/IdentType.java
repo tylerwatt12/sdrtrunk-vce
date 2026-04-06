@@ -71,6 +71,8 @@ public enum IdentType
                 return TSC_TRUNKING_SYSTEM_CONTROLLER;
             case 8191:
                 return ALLI_ALL_CALL;
+            default:
+                break;
         }
 
         if(8136 <= ident && ident <= 8180)

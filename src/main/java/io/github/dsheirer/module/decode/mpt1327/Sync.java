@@ -48,6 +48,7 @@ public enum Sync
         return mTrafficSyncPattern;
     }
 
+    @Override
     public String toString()
     {
         return getLabel();
