@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.jmbe.github;
 
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,7 +28,7 @@ import java.util.regex.Pattern;
  */
 public class Version implements Comparable<Version>
 {
-    public final static Pattern VERSION_PATTERN = Pattern.compile("v?(\\d{1,5}).(\\d{1,5}).(\\d{1,5})(\\w*)");
+    public static final Pattern VERSION_PATTERN = Pattern.compile("v?(\\d{1,5}).(\\d{1,5}).(\\d{1,5})(\\w*)");
 
     private Integer mMajor;
     private Integer mMinor;
@@ -96,7 +97,7 @@ public class Version implements Comparable<Version>
 
                 String rawPatch = m.group(4);
 
-                if(rawPatch != null && rawPatch.length() >= 1)
+                if(rawPatch != null && !rawPatch.isEmpty())
                 {
                     patch = rawPatch.charAt(0);
                 }
@@ -167,25 +168,28 @@ public class Version implements Comparable<Version>
     {
         if(hasMajor() && other.hasMajor())
         {
-            if(getMajor() != other.getMajor())
+            int majorCmp = Integer.compare(getMajor(), other.getMajor());
+            if(majorCmp != 0)
             {
-                return Integer.compare(getMajor(), other.getMajor());
+                return majorCmp;
             }
             else
             {
                 if(hasMinor() && other.hasMinor())
                 {
-                    if(getMinor() != other.getMinor())
+                    int minorCmp = Integer.compare(getMinor(), other.getMinor());
+                    if(minorCmp != 0)
                     {
-                        return Integer.compare(getMinor(), other.getMinor());
+                        return minorCmp;
                     }
                     else
                     {
                         if(hasRelease() && other.hasRelease())
                         {
-                            if(getRelease() != other.getRelease())
+                            int releaseCmp = Integer.compare(getRelease(), other.getRelease());
+                            if(releaseCmp != 0)
                             {
-                                return Integer.compare(getRelease(), other.getRelease());
+                                return releaseCmp;
                             }
                             else
                             {
@@ -222,5 +226,19 @@ public class Version implements Comparable<Version>
         {
             return hasMajor() ? -1 : 1;
         }
+    }
+
+    @Override
+    public boolean equals(Object o)
+    {
+        if(this == o) return true;
+        if(!(o instanceof Version other)) return false;
+        return compareTo(other) == 0;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(mMajor, mMinor, mRelease, mPatch);
     }
 }

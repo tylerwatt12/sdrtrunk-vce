@@ -52,6 +52,13 @@ public class JmbeCreator
     public static final String GITHUB_JMBE_RELEASES_URL = "https://api.github.com/repos/dsheirer/jmbe/releases";
     public static final String CREATOR_SCRIPT_LINUX = "creator";
     public static final String CREATOR_SCRIPT_WINDOWS = "creator.bat";
+    private static final String OS_LINUX = "linux";
+    private static final String OS_OSX = "osx";
+    private static final String OS_WINDOWS = "windows";
+    private static final String ARCH_AARCH64 = "aarch64";
+    private static final String ARCH_ARM32 = "arm32";
+    private static final String ARCH_X86_32 = "_32";
+    private static final String ARCH_X86_64 = "_64";
 
     private StringProperty mConsoleOutput = new SimpleStringProperty();
     private BooleanProperty mCompleteProperty = new SimpleBooleanProperty();
@@ -160,35 +167,7 @@ public class JmbeCreator
                         {
                             ProcessBuilder processBuilder = new ProcessBuilder();
                             processBuilder.command(script.toString(), mLibraryPath.toString());
-
-                                try
-                                {
-                                    Process process = processBuilder.start();
-                                    BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-                                    String line;
-                                    while((line = reader.readLine()) != null)
-                                    {
-                                        printToConsole(line);
-                                    }
-
-                                    int exitCode = process.waitFor();
-
-                                    if(exitCode == 0)
-                                    {
-                                        printToConsole("Library Created Successfully!");
-                                        Platform.runLater(() -> completeProperty().set(true));
-                                    }
-                                    else
-                                    {
-                                        terminateWithErrors("Failed: Exit Code [" + exitCode + "]");
-                                        mLog.error("Script failed with exit code: " + exitCode);
-                                    }
-                                }
-                                catch(InterruptedException ie)
-                                {
-                                    terminateWithErrors("Failed: Script Process was interrupted");
-                                    mLog.error("Interrupted", ie);
-                                }
+                            runScript(processBuilder);
                         }
                         else
                         {
@@ -246,6 +225,42 @@ public class JmbeCreator
     }
 
     /**
+     * Runs the build script using the given process builder and handles the result.
+     */
+    private void runScript(ProcessBuilder processBuilder) throws IOException
+    {
+        try
+        {
+            Process process = processBuilder.start();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            while((line = reader.readLine()) != null)
+            {
+                printToConsole(line);
+            }
+
+            int exitCode = process.waitFor();
+
+            if(exitCode == 0)
+            {
+                printToConsole("Library Created Successfully!");
+                Platform.runLater(() -> completeProperty().set(true));
+            }
+            else
+            {
+                terminateWithErrors("Failed: Exit Code [" + exitCode + "]");
+                mLog.error("Script failed with exit code: " + exitCode);
+            }
+        }
+        catch(InterruptedException ie)
+        {
+            Thread.currentThread().interrupt();
+            terminateWithErrors("Failed: Script Process was interrupted");
+            mLog.error("Interrupted", ie);
+        }
+    }
+
+    /**
      * Attempts to find the correct JMBE creator for this operating system and architecture for the specified release
      * @param release to find
      * @return JMBE creator asset or null.
@@ -287,23 +302,23 @@ public class JmbeCreator
             switch(osType)
             {
                 case LINUX_AARCH_64:
-                    return name.contains("linux") && name.contains("aarch64");
+                    return name.contains(OS_LINUX) && name.contains(ARCH_AARCH64);
                 case LINUX_ARM_32:
-                    return name.contains("linux") && name.contains("arm32");
+                    return name.contains(OS_LINUX) && name.contains(ARCH_ARM32);
                 case LINUX_X86_32:
-                    return name.contains("linux") && name.contains("_32");
+                    return name.contains(OS_LINUX) && name.contains(ARCH_X86_32);
                 case LINUX_X86_64:
-                    return name.contains("linux") && name.contains("_64");
+                    return name.contains(OS_LINUX) && name.contains(ARCH_X86_64);
                 case OSX_AARCH_64:
-                    return name.contains("osx") && name.contains("aarch64");
+                    return name.contains(OS_OSX) && name.contains(ARCH_AARCH64);
                 case OSX_X86_64:
-                    return name.contains("osx") && name.contains("_64");
+                    return name.contains(OS_OSX) && name.contains(ARCH_X86_64);
                 case WINDOWS_AARCH_64:
-                    return name.contains("windows") && name.contains("aarch64");
+                    return name.contains(OS_WINDOWS) && name.contains(ARCH_AARCH64);
                 case WINDOWS_X86_32:
-                    return name.contains("windows") && name.contains("_32");
+                    return name.contains(OS_WINDOWS) && name.contains(ARCH_X86_32);
                 case WINDOWS_X86_64:
-                    return name.contains("windows") && name.contains("_64");
+                    return name.contains(OS_WINDOWS) && name.contains(ARCH_X86_64);
                 case UNKNOWN:
                 default:
                     return false;

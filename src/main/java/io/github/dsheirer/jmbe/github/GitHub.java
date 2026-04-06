@@ -73,6 +73,11 @@ public class GitHub
             return response.body();
 
         }
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            mLog.error("Error downloading source code from GitHub", e);
+        }
         catch(Exception e)
         {
             mLog.error("Error downloading source code from GitHub", e);
@@ -104,7 +109,12 @@ public class GitHub
                 mLog.error("Error while fetching latest releases - HTTP:" + response.statusCode());
             }
         }
-        catch(IOException | InterruptedException e)
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            mLog.error("Error while detecting the current release version of JMBE library", e);
+        }
+        catch(IOException e)
         {
             mLog.error("Error while detecting the current release version of JMBE library", e);
         }
@@ -136,12 +146,9 @@ public class GitHub
                         JsonObject releaseObject = child.getAsJsonObject();
                         Version version = getVersion(releaseObject);
 
-                        if(version != null)
+                        if(version != null && (release == null || release.getVersion().compareTo(version) < 0))
                         {
-                            if(release == null || release.getVersion().compareTo(version) < 0)
-                            {
-                                release = new Release(version, releaseObject);
-                            }
+                            release = new Release(version, releaseObject);
                         }
                     }
                 }
