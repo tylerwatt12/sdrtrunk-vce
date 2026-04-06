@@ -29,8 +29,7 @@ import io.github.dsheirer.source.tuner.rtl.e4k.E4KEmbeddedTuner.E4KGain;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KEmbeddedTuner.E4KLNAGain;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KEmbeddedTuner.E4KMixerGain;
 import io.github.dsheirer.source.tuner.ui.TunerEditor;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+
 import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -233,25 +232,20 @@ public class E4KTunerEditor extends TunerEditor<RTL2832Tuner, E4KTunerConfigurat
         if(mIfGainCombo == null)
         {
             mIfGainCombo = new JComboBox<>(E4KEmbeddedTuner.IFGain.values());
-            mIfGainCombo.addActionListener(new ActionListener()
-            {
-                @Override
-                public void actionPerformed(ActionEvent e)
+            mIfGainCombo.addActionListener(e -> {
+                if(!isLoading())
                 {
-                    if(!isLoading())
+                    try
                     {
-                        try
-                        {
-                            E4KEmbeddedTuner.IFGain selected = (E4KEmbeddedTuner.IFGain) getIfGainCombo().getSelectedItem();
-                            getEmbeddedTuner().setIFGain(selected, true);
-                            save();
-                        }
-                        catch(LibUsbException lue)
-                        {
-                            JOptionPane.showMessageDialog(E4KTunerEditor.this, "E4000 Tuner Controller - "
-                                    + "couldn't apply the IF setting - " + lue.getLocalizedMessage());
-                            mLog.error("E4000 Tuner Controller - couldn't apply IF gain setting", e);
-                        }
+                        E4KEmbeddedTuner.IFGain selected = (E4KEmbeddedTuner.IFGain) getIfGainCombo().getSelectedItem();
+                        getEmbeddedTuner().setIFGain(selected, true);
+                        save();
+                    }
+                    catch(LibUsbException lue)
+                    {
+                        JOptionPane.showMessageDialog(E4KTunerEditor.this, "E4000 Tuner Controller - "
+                                + "couldn't apply the IF setting - " + lue.getLocalizedMessage());
+                        mLog.error("E4000 Tuner Controller - couldn't apply IF gain setting", lue);
                     }
                 }
             });
