@@ -165,7 +165,7 @@ public class MixerReader<T>
             }
             catch(InterruptedException ie)
             {
-                //No-op ... we're shutting down
+                Thread.currentThread().interrupt();
             }
 
             mReaderThread = null;

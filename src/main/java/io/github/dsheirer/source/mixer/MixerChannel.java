@@ -18,6 +18,7 @@
 package io.github.dsheirer.source.mixer;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 public enum MixerChannel
 {
@@ -41,7 +42,7 @@ public enum MixerChannel
 	/**
 	 * Mixer Target Data Line (ie sample source) channel options
 	 */
-	public static EnumSet<MixerChannel> getTargetChannels()
+	public static Set<MixerChannel> getTargetChannels()
 	{
 		return EnumSet.of( LEFT,RIGHT,MONO );
 	}
@@ -49,7 +50,7 @@ public enum MixerChannel
 	/**
 	 * Mixer Source Data Line (ie sound card output) channel options
 	 */
-	public static EnumSet<MixerChannel> getSourceChannels()
+	public static Set<MixerChannel> getSourceChannels()
 	{
 		return EnumSet.of( MONO,STEREO );
 	}

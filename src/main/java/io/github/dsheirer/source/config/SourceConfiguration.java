@@ -65,6 +65,7 @@ public class SourceConfiguration extends Configuration
 
     private void setType(String type)
     {
+        // Jackson XML type metadata is handled by annotations; no backing field is stored here.
     }
 
     public String getDescription()

@@ -18,14 +18,10 @@
  ******************************************************************************/
 package io.github.dsheirer.source.heartbeat;
 
-public class Heartbeat
+/**
+ * Periodic pulse broadcast to subscribing modules within the demodulating chain so state and other attributes can be
+ * monitored on the primary demodulation and decoding thread.
+ */
+public record Heartbeat()
 {
-    /**
-     * Periodic pulse that is broadcast to subscribing modules within the demodulating chain so that
-     * monitoring of state and other attributes can occur on the primary demodulation and decoding
-     * thread.
-     */
-    public Heartbeat()
-    {
-    }
 }

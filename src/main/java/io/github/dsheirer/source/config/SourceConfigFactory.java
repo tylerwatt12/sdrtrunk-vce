@@ -19,6 +19,10 @@ import io.github.dsheirer.source.SourceType;
 
 public class SourceConfigFactory
 {
+    private SourceConfigFactory()
+    {
+    }
+
     public static SourceConfiguration getDefaultSourceConfiguration()
     {
         return getSourceConfiguration(SourceType.TUNER);

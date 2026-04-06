@@ -27,6 +27,7 @@ import io.github.dsheirer.source.tuner.MixerTunerType;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,15 +48,12 @@ public class MixerManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(MixerManager.class);
 
-    public MixerManager()
+    private MixerManager()
     {
-
     }
 
     public static RealMixerSource getSource(SourceConfiguration config)
     {
-        RealMixerSource retVal = null;
-
         if(config instanceof SourceConfigMixer)
         {
             SourceConfigMixer mixerConfig = (SourceConfigMixer)config;
@@ -262,43 +260,6 @@ public class MixerManager
         return null;
     }
 
-    private static TargetDataLine getTargetDataLine(Mixer.Info mixerInfo, AudioFormat format)
-    {
-        TargetDataLine retVal = null;
-
-        Mixer mixer = AudioSystem.getMixer(mixerInfo);
-
-        if(mixer != null)
-        {
-            try
-            {
-                for(Line line: mixer.getTargetLines())
-                {
-                    mLog.debug("Line: " + line.getLineInfo().toString());
-                }
-
-                for(Line line: mixer.getSourceLines())
-                {
-                    mLog.debug("Line: " + line.getLineInfo().toString());
-                }
-
-                Mixer.Info info = mixer.getMixerInfo();
-
-                mLog.debug(info.toString());
-
-                DataLine.Info datalineInfo = new DataLine.Info(TargetDataLine.class, format);
-
-                retVal = (TargetDataLine)mixer.getLine(datalineInfo);
-            }
-            catch(Exception e)
-            {
-                //Do nothing ... we couldn't get the TDL
-            }
-        }
-
-        return retVal;
-    }
-
     private static EnumSet<MixerChannel> getSupportedTargetChannels(Mixer mixer)
     {
         DataLine.Info stereoInfo = new DataLine.Info(TargetDataLine.class,
@@ -372,11 +333,6 @@ public class MixerManager
                     .append("\n");
 
             Mixer mixer = AudioSystem.getMixer(mixerInfo);
-            Line.Info lineInfo1 = mixer.getLineInfo();
-
-            String a = lineInfo1.toString();
-
-            Line.Info[] infos = mixer.getTargetLineInfo();
 
             Line.Info[] sourceLines = mixer.getSourceLineInfo();
 
@@ -407,7 +363,8 @@ public class MixerManager
 
                         if(mixerInfo.getName().startsWith("V"))
                         {
-                            sb.append("Iterating formats for " + mixerInfo.getName() + " " + mixerInfo.getDescription()).append("\n");
+                            sb.append("Iterating formats for ").append(mixerInfo.getName()).append(" ")
+                                    .append(mixerInfo.getDescription()).append("\n");
                             try
                             {
                                 Line line = mixer.getLine(lineInfo);
@@ -420,7 +377,7 @@ public class MixerManager
                                     tdl.start();
                                     byte[] bytes = new byte[1024];
                                     int read = tdl.read(bytes, 0, bytes.length);
-                                    sb.append("READ:" + read).append("\n");
+                                    sb.append("READ:").append(read).append("\n");
                                     tdl.close();
                                 }
                             }
@@ -447,9 +404,9 @@ public class MixerManager
     public static class InputMixerConfiguration
     {
         private Mixer mMixer;
-        private EnumSet<MixerChannel> mChannels;
+        private Set<MixerChannel> mChannels;
 
-        public InputMixerConfiguration(Mixer mixer, EnumSet<MixerChannel> channels)
+        public InputMixerConfiguration(Mixer mixer, Set<MixerChannel> channels)
         {
             mMixer = mixer;
             mChannels = channels;
@@ -465,7 +422,7 @@ public class MixerManager
             return mMixer.getMixerInfo().getName();
         }
 
-        public EnumSet<MixerChannel> getChannels()
+        public Set<MixerChannel> getChannels()
         {
             return mChannels;
         }
@@ -479,17 +436,5 @@ public class MixerManager
         {
             return mMixer.getMixerInfo().getName();
         }
-    }
-
-    public static void main(String[] args)
-    {
-        List<MixerChannelConfiguration> configs = MixerManager.getOutputMixers();
-
-        for(MixerChannelConfiguration config : configs)
-        {
-            System.out.println(config);
-        }
-
-        System.out.println(MixerManager.getMixerDevices());
     }
 }

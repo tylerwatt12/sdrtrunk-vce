@@ -82,7 +82,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
         {
             return mPreferredFrequency;
         }
-        else if(mFrequencies.size() > 0)
+        else if(!mFrequencies.isEmpty())
         {
             return mFrequencies.get(0);
         }

@@ -91,7 +91,7 @@ public class SourceConfigTuner extends SourceConfiguration
     @Override
     public String getDescription()
     {
-        return FREQUENCY_FORMAT.format((double)mFrequency / 1000000.0d) +
+        return FREQUENCY_FORMAT.format(mFrequency / 1000000.0d) +
             (mPreferredTuner != null ? "MHz PREFERRED TUNER:" + mPreferredTuner : "MHz");
     }
 

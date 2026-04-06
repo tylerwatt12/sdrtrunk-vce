@@ -99,10 +99,6 @@ public class MixerChannelConfiguration
 		{
 			return false;
 		}
-		if(mMixerChannel != other.mMixerChannel)
-		{
-			return false;
-		}
-        return true;
+        return mMixerChannel == other.mMixerChannel;
     }
 }

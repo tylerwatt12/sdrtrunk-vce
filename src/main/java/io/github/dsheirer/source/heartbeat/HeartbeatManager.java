@@ -27,13 +27,6 @@ public class HeartbeatManager
     private Broadcaster<Heartbeat> mHeartbeatBroadcaster = new Broadcaster<>();
 
     /**
-     * Broadcasts heartbeat as commanded and handles listener registration details.
-     */
-    public HeartbeatManager()
-    {
-    }
-
-    /**
      * Sends a heartbeat to all registered listeners
      */
     public void broadcast()

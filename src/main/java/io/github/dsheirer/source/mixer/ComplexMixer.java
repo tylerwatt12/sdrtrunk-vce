@@ -42,7 +42,7 @@ public class ComplexMixer
      */
     public ComplexMixer(TargetDataLine targetDataLine, AudioFormat format, String name, ISampleAdapter sampleAdapter)
     {
-        mMixerReader = new MixerReader<INativeBuffer>(format, targetDataLine, sampleAdapter);
+        mMixerReader = new MixerReader<>(format, targetDataLine, sampleAdapter);
         mName = name;
     }
 
