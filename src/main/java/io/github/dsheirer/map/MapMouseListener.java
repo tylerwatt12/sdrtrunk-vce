@@ -59,12 +59,9 @@ public class MapMouseListener extends MouseInputAdapter implements MouseWheelLis
 		double y = mJXMapViewer.getCenter().getY() - 
 				   (current.getY() - mPreviousPoint.getY() );
 
-		if ( !mJXMapViewer.isNegativeYAllowed() )
+		if ( !mJXMapViewer.isNegativeYAllowed() && y < 0 )
 		{
-			if ( y < 0 )
-			{
-				y = 0;
-			}
+			y = 0;
 		}
 
 		int maxHeight = (int)( mJXMapViewer.getTileFactory()
@@ -105,14 +102,7 @@ public class MapMouseListener extends MouseInputAdapter implements MouseWheelLis
 	@Override
 	public void mouseEntered( MouseEvent event )
 	{
-		SwingUtilities.invokeLater( new Runnable()
-		{
-			@Override
-			public void run()
-			{
-				mJXMapViewer.requestFocusInWindow();
-			}
-		});
+		SwingUtilities.invokeLater(() -> mJXMapViewer.requestFocusInWindow());
 	}
 
 	@Override
@@ -138,18 +128,10 @@ public class MapMouseListener extends MouseInputAdapter implements MouseWheelLis
 			JPopupMenu popup = new JPopupMenu();
 			
 			JMenuItem mapViewItem = new JMenuItem( "Set Default Location & Zoom" );
-			mapViewItem.addActionListener( new ActionListener() 
-			{
-				@Override
-                public void actionPerformed( ActionEvent arg0 )
-                {
-					GeoPosition position = mJXMapViewer
-							.convertPointToGeoPosition( mCurrentPoint );
-					
-					mSettingsManager.setMapViewSetting( "Default", position, 
-							mJXMapViewer.getZoom() );
-                }
-			} );
+			mapViewItem.addActionListener(arg0 -> {
+				GeoPosition position = mJXMapViewer.convertPointToGeoPosition(mCurrentPoint);
+				mSettingsManager.setMapViewSetting("Default", position, mJXMapViewer.getZoom());
+			});
 			popup.add( mapViewItem );
 			
 			popup.show( mJXMapViewer, event.getX(), event.getY() );

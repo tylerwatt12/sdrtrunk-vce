@@ -19,25 +19,21 @@
 package io.github.dsheirer.map;
 
 import io.github.dsheirer.alias.AliasModel;
-import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.sample.Listener;
 
 public class MapService implements Listener<IDecodeEvent>
 {
-    private IconModel mIconModel;
     private PlottableEntityModel mPlottableEntityModel;
 
     /**
      * Constructs an instance
      * @param aliasModel to lookup aliases
-     * @param iconModel to lookup icons from entity aliases.
      */
-    public MapService(AliasModel aliasModel, IconModel iconModel)
+    public MapService(AliasModel aliasModel)
     {
         mPlottableEntityModel = new PlottableEntityModel(aliasModel);
-        mIconModel = iconModel;
     }
 
     /**

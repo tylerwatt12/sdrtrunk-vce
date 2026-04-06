@@ -234,7 +234,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioRecordingManager);
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioStreamingManager);
 
-        MapService mapService = new MapService(aliasModel, mIconModel);
+        MapService mapService = new MapService(aliasModel);
         mPlaylistManager.getChannelProcessingManager().addDecodeEventListener(mapService);
 
         mNowPlayingDetailsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, true);

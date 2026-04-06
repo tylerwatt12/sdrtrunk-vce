@@ -32,8 +32,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.table.AbstractTableModel;
 
@@ -42,7 +40,6 @@ import javax.swing.table.AbstractTableModel;
  */
 public class PlottableEntityModel extends AbstractTableModel implements Listener<PlottableDecodeEvent>
 {
-    private final static Logger LOGGER = LoggerFactory.getLogger(PlottableEntityModel.class);
     private static final int COLUMN_ID = 0;
     private static final int COLUMN_ALIAS = 1;
     private static final int COLUMN_ALIAS_LIST = 2;
@@ -106,6 +103,7 @@ public class PlottableEntityModel extends AbstractTableModel implements Listener
             EventQueue.invokeLater(() -> {
                 Identifier from = plottableDecodeEvent.getIdentifierCollection().getFromIdentifier();
 
+                // Only create tracked entities from non-location FROM identifiers.
                 if(from != null && from.getForm() != Form.LOCATION)
                 {
                     AliasListConfigurationIdentifier aliasList = plottableDecodeEvent.getIdentifierCollection().getAliasListConfiguration();
@@ -132,10 +130,6 @@ public class PlottableEntityModel extends AbstractTableModel implements Listener
                     {
                         listener.addPlottableEntity(entityHistory);
                     }
-                }
-                else
-                {
-//                    LOGGER.warn("Received plottable decode event that does not contain a FROM identifier - cannot plot");
                 }
             });
         }
@@ -232,7 +226,7 @@ public class PlottableEntityModel extends AbstractTableModel implements Listener
                     }
                     else
                     {
-                        return "(no alias list)";
+                        return KEY_NO_ALIAS_LIST;
                     }
                 default:
                     throw new IllegalArgumentException("Unexpected column index");

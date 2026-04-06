@@ -37,6 +37,8 @@ import java.util.Random;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Map test track data generator.
@@ -45,6 +47,7 @@ import org.jdesktop.swingx.mapviewer.GeoPosition;
  */
 public class TrackGenerator
 {
+    private static final Logger mLog = LoggerFactory.getLogger(TrackGenerator.class);
     private static final GeoPosition DEFAULT_START_POSITION = new GeoPosition(43.048, -76.147);
     private final MapService mMapService;
     private final List<TrackElementGenerator> mTrackElementGenerators = new ArrayList<>();
@@ -109,8 +112,8 @@ public class TrackGenerator
      */
     public class TrackElementGenerator
     {
-        public static double EARTH_RADIUS_KM = 6378.137;
-        public static double ONE_SECOND = 1.0 / 60.0 / 60.0; //1 hour divided by 60 minutes divided by 60 seconds.
+        private static final double EARTH_RADIUS_KM = 6378.137;
+        private static final double ONE_SECOND = 1.0 / 60.0 / 60.0; //1 hour divided by 60 minutes divided by 60 seconds.
         private IdentifierCollection mIdentifierCollection;
         private double mSpeedKPH;
         private GeoPosition mPosition;
@@ -142,7 +145,7 @@ public class TrackGenerator
             {
                 long intervalMS = 500 + (mRandom.nextLong(1000));
                 mSpeedKPH /= (intervalMS / 1000.0);
-                System.out.println("Speed: " + mSpeedKPH);
+                mLog.debug("Speed: {}", mSpeedKPH);
                 mGeneratorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(this::update, 0, intervalMS, TimeUnit.MILLISECONDS);
             }
         }

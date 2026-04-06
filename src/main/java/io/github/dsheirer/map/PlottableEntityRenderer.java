@@ -123,7 +123,7 @@ public class PlottableEntityRenderer
              * Paint the label offset to the right of the icon
              */
             String label = (alias != null ? alias.getName() : entity.getIdentifier().toString());
-            paintLabel(graphics, point, label, (int)(icon.getIconWidth() / 2), 0);
+            paintLabel(graphics, point, label, (icon.getIconWidth() / 2), 0);
 
             /**
              * Cleanup

@@ -244,15 +244,7 @@ public class MapPanel extends JPanel implements IPlottableUpdateListener
         if(mMapZoomSpinner == null)
         {
             mMapZoomSpinnerModel = new SpinnerNumberModel(2, ZOOM_MINIMUM, ZOOM_MAXIMUM, 1);
-            mMapZoomSpinnerModel.addChangeListener(new ChangeListener()
-            {
-                @Override
-                public void stateChanged(ChangeEvent e)
-                {
-                    Number number = mMapZoomSpinnerModel.getNumber();
-                    mMapViewer.setZoom(number.intValue());
-                }
-            });
+            mMapZoomSpinnerModel.addChangeListener(e -> mMapViewer.setZoom(mMapZoomSpinnerModel.getNumber().intValue()));
 
             mMapZoomSpinner = new JSpinner(mMapZoomSpinnerModel);
         }

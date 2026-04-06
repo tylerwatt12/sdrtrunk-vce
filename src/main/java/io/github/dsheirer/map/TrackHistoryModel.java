@@ -39,13 +39,6 @@ public class TrackHistoryModel extends AbstractTableModel
     private final List<TimestampedGeoPosition> mTimestampedGeoPositions = new ArrayList<>();
 
     /**
-     * Constructs an instance
-     */
-    public TrackHistoryModel()
-    {
-    }
-
-    /**
      * Complete history for this entity.
      */
     public List<TimestampedGeoPosition> getTrackHistory()
@@ -149,8 +142,8 @@ public class TrackHistoryModel extends AbstractTableModel
                 return mDegreeFormat.format(geoPosition.getLatitude());
             case 2:
                 return mDegreeFormat.format(geoPosition.getLongitude());
+            default:
+                return null;
         }
-
-        return null;
     }
 }
