@@ -180,7 +180,7 @@ public class Rsp1bTunerEditor extends RspTunerEditor<Rsp1bTunerConfiguration>
         getRfNotchCheckBox().setEnabled(hasTuner());
         try
         {
-            getRfNotchCheckBox().setSelected(hasTuner() ? getTunerController().getControlRsp().isRfNotch() : false);
+            getRfNotchCheckBox().setSelected(hasTuner() && getTunerController().getControlRsp().isRfNotch());
         }
         catch(SDRPlayException se)
         {

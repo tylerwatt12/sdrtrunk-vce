@@ -30,6 +30,7 @@ import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.EventQueue;
+import java.lang.reflect.InvocationTargetException;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
@@ -64,7 +65,7 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     private List<DiscoveredTuner> mDiscoveredTuners = new CopyOnWriteArrayList<>();
     private List<Listener<TunerEvent>> mTunerEventListeners = new ArrayList<>();
     private DecimalFormat mFrequencyFormat = new DecimalFormat("0.00000");
-    private Lock mLock = new ReentrantLock();
+    private transient Lock mLock = new ReentrantLock();
     private TunerConfigurationManager mTunerConfigurationManager;
 
     /**
@@ -205,9 +206,14 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
             {
                 SwingUtilities.invokeAndWait(add);
             }
-            catch(Exception e)
+            catch(InterruptedException e)
             {
-                throw new RuntimeException("Error adding discovered tuner on EDT", e);
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Error adding discovered tuner on EDT", e);
+            }
+            catch(InvocationTargetException e)
+            {
+                throw new IllegalStateException("Error adding discovered tuner on EDT", e);
             }
         }
     }
@@ -270,6 +276,21 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     }
 
     /**
+     * Fires table rows deleted notification, logging any exception without propagating it.
+     */
+    private void fireTableRowsDeletedSafely(int index)
+    {
+        try
+        {
+            fireTableRowsDeleted(index, index);
+        }
+        catch(Exception e)
+        {
+            mLog.info("Exception firing table rows deleted for index [" + index + "]", e);
+        }
+    }
+
+    /**
      * Removes the Tuner from this model
      */
     public void removeDiscoveredTuner(DiscoveredTuner discoveredTuner)
@@ -286,15 +307,7 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
                 {
                     int index = mDiscoveredTuners.indexOf(discoveredTuner);
                     mDiscoveredTuners.remove(discoveredTuner);
-
-                    try
-                    {
-                        fireTableRowsDeleted(index, index);
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.info("Exception firing table rows deleted for index [" + index + "]", e);
-                    }
+                    fireTableRowsDeletedSafely(index);
                     removed = true;
                 }
             }

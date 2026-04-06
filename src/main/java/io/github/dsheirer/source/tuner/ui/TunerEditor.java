@@ -71,12 +71,13 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     private static final long DEFAULT_MAXIMUM_FREQUENCY = 9_999_999_999l;
     private static final String BUTTON_STATUS_ENABLE = "Enable";
     private static final String BUTTON_STATUS_DISABLE = "Disable";
+    private static final String TUNER_ACTION_FORMAT = "{} {} tuner";
     private static final long serialVersionUID = 1L;
     private UserPreferences mUserPreferences;
     private TunerManager mTunerManager;
     private DiscoveredTuner mDiscoveredTuner;
     private C mTunerConfiguration;
-    private FrequencyAndCorrectionChangeListener mFrequencyAndCorrectionChangeListener = new FrequencyAndCorrectionChangeListener();
+    private transient FrequencyAndCorrectionChangeListener mFrequencyAndCorrectionChangeListener = new FrequencyAndCorrectionChangeListener();
     private JFrequencyControl mFrequencyControl;
     private JSpinner mFrequencyCorrectionSpinner;
     private JButton mEnabledButton;
@@ -101,7 +102,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
      * Constructs an instance
      * @param tunerManager for requesting configuration saves.
      */
-    public TunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
+    protected TunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
@@ -351,9 +352,8 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
 
                         if(minimum < getMinimumTunableFrequency())
                         {
-                            JOptionPane.showMessageDialog(TunerEditor.this, "Frequency value [" +
-                                            getMinimumFrequencyTextField().getText() + "] is below the supported frequency range for this tuner",
-                                    "Invalid Frequency", JOptionPane.ERROR_MESSAGE);
+                            showInvalidFrequencyDialog(getMinimumFrequencyTextField().getText(),
+                                            "is below the supported frequency range for this tuner");
                             getMinimumFrequencyTextField().setFrequency(mExistingFrequency);
                             return;
                         }
@@ -369,10 +369,8 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                             }
                             else
                             {
-                                JOptionPane.showMessageDialog(TunerEditor.this, "Frequency value [" +
-                                                getMinimumFrequencyTextField().getText() + "] is invalid for current sample rate " +
-                                                "and maximum supported frequency for this tuner", "Invalid Frequency",
-                                        JOptionPane.ERROR_MESSAGE);
+                                showInvalidFrequencyDialog(getMinimumFrequencyTextField().getText(),
+                                                "is invalid for current sample rate and maximum supported frequency for this tuner");
                                 getMinimumFrequencyTextField().setFrequency(mExistingFrequency);
                                 return;
                             }
@@ -392,6 +390,17 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         }
 
         return mMinimumFrequencyTextField;
+    }
+
+    /**
+     * Shows an invalid frequency dialog.
+     * @param value the frequency text that failed validation.
+     * @param reason describing why the frequency is invalid.
+     */
+    private void showInvalidFrequencyDialog(String value, String reason)
+    {
+        JOptionPane.showMessageDialog(this, "Frequency value [" + value + "] " + reason,
+                "Invalid Frequency", JOptionPane.ERROR_MESSAGE);
     }
 
     /**
@@ -488,9 +497,8 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
 
                         if(maximum > getMaximumTunableFrequency())
                         {
-                            JOptionPane.showMessageDialog(TunerEditor.this, "Frequency value [" +
-                                    getMaximumFrequencyTextField().getText() + "] is above the supported frequency " +
-                                    "range for this tuner", "Invalid Frequency", JOptionPane.ERROR_MESSAGE);
+                            showInvalidFrequencyDialog(getMaximumFrequencyTextField().getText(),
+                                    "is above the supported frequency range for this tuner");
                             getMaximumFrequencyTextField().setFrequency(mExistingFrequency);
                             return;
                         }
@@ -506,10 +514,8 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                             }
                             else
                             {
-                                JOptionPane.showMessageDialog(TunerEditor.this, "Frequency value [" +
-                                                getMaximumFrequencyTextField().getText() + "] is invalid for current sample rate " +
-                                                "and minimum supported frequency for this tuner", "Invalid Frequency",
-                                        JOptionPane.ERROR_MESSAGE);
+                                showInvalidFrequencyDialog(getMaximumFrequencyTextField().getText(),
+                                                "is invalid for current sample rate and minimum supported frequency for this tuner");
                                 getMaximumFrequencyTextField().setFrequency(mExistingFrequency);
                                 return;
                             }
@@ -617,11 +623,11 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 switch(getEnabledButton().getText())
                 {
                     case BUTTON_STATUS_DISABLE:
-                        mLog.info("Disabling " + getDiscoveredTuner().getTunerClass() + " tuner");
+                        mLog.info(TUNER_ACTION_FORMAT, "Disabling", getDiscoveredTuner().getTunerClass());
                         ThreadPool.CACHED.execute(() -> getDiscoveredTuner().setEnabled(false));
                         break;
                     case BUTTON_STATUS_ENABLE:
-                        mLog.info("Enabling " + getDiscoveredTuner().getTunerClass() + " tuner");
+                        mLog.info(TUNER_ACTION_FORMAT, "Enabling", getDiscoveredTuner().getTunerClass());
                         ThreadPool.CACHED.execute(() -> getDiscoveredTuner().setEnabled(true));
                         break;
                     default:
@@ -644,7 +650,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             {
                 if(!hasTuner() && getDiscoveredTuner().getTunerStatus() == TunerStatus.ERROR)
                 {
-                    mLog.info("Restarting " + getDiscoveredTuner().getTunerClass() + " tuner");
+                    mLog.info(TUNER_ACTION_FORMAT, "Restarting", getDiscoveredTuner().getTunerClass());
                     ThreadPool.CACHED.execute(() -> getDiscoveredTuner().restart());
                 }
             });
@@ -742,12 +748,9 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         {
             tunerStatusUpdated();
 
-            if(current == TunerStatus.ENABLED)
+            if(current == TunerStatus.ENABLED && hasTuner())
             {
-                if(hasTuner())
-                {
-                    getTuner().addTunerEventListener(this);
-                }
+                getTuner().addTunerEventListener(this);
             }
         });
     }
@@ -755,11 +758,14 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     @Override
     public void receive(TunerEvent tunerEvent)
     {
-        switch(tunerEvent.getEvent())
+        //Note: called methods are responsible for executing on the swing thread.
+        if(tunerEvent.getEvent() == TunerEvent.Event.UPDATE_MEASURED_FREQUENCY_ERROR)
         {
-            //Note: called methods are responsible for executing on the swing thread.
-            case UPDATE_MEASURED_FREQUENCY_ERROR -> getFrequencyPanel().updateFrequencyError();
-            case UPDATE_FREQUENCY_ERROR -> getFrequencyPanel().updatePPM();
+            getFrequencyPanel().updateFrequencyError();
+        }
+        else if(tunerEvent.getEvent() == TunerEvent.Event.UPDATE_FREQUENCY_ERROR)
+        {
+            getFrequencyPanel().updatePPM();
         }
     }
 
@@ -967,8 +973,6 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
      */
     public class RecordingStatusListener implements IRecordingStatusListener
     {
-        private DecimalFormat mSizeFormat = new DecimalFormat("0.0");
-
         @Override
         public void update(int fileCount, String file, long size)
         {

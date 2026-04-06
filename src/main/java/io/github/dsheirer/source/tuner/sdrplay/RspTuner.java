@@ -72,27 +72,26 @@ public class RspTuner extends Tuner
     @Override
     public String getPreferredName()
     {
-        if(getRspTunerController().getControlRsp() instanceof IControlRspDuoTuner1 &&
-            getRspTunerController().getControlRsp().getDevice() != null)
+        IControlRsp controlRsp = getRspTunerController().getControlRsp();
+
+        if(controlRsp == null || controlRsp.getDevice() == null)
         {
-            return getRspTunerController().getControlRsp().getDevice().getDeviceType() +
-                " SER:" + getRspTunerController().getControlRsp().getDevice().getSerialNumber() + " Tuner 1";
+            return "RSP Tuner - Device Not Available";
         }
-        else if(getRspTunerController().getControlRsp() instanceof IControlRspDuoTuner2 &&
-                getRspTunerController().getControlRsp().getDevice() != null)
+
+        String base = controlRsp.getDevice().getDeviceType() + " SER:" + controlRsp.getDevice().getSerialNumber();
+
+        if(controlRsp instanceof IControlRspDuoTuner1)
         {
-            return getRspTunerController().getControlRsp().getDevice().getDeviceType() +
-                " SER:" + getRspTunerController().getControlRsp().getDevice().getSerialNumber() + " Tuner 2";
+            return base + " Tuner 1";
         }
-        else if(getRspTunerController().getControlRsp() instanceof IControlRsp &&
-                getRspTunerController().getControlRsp().getDevice() != null)
+        else if(controlRsp instanceof IControlRspDuoTuner2)
         {
-            return getRspTunerController().getControlRsp().getDevice().getDeviceType() +
-                    " SER:" + getRspTunerController().getControlRsp().getDevice().getSerialNumber();
+            return base + " Tuner 2";
         }
         else
         {
-            return "RSP Tuner - Device Not Available";
+            return base;
         }
     }
 

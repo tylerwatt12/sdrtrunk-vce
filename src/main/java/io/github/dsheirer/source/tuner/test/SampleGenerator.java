@@ -57,7 +57,6 @@ public class SampleGenerator
             throw new IllegalArgumentException("Sweep update rate cannot be greater than sample rate");
         }
 
-//        mComplexOscillator = OscillatorFactory.getComplexOscillator(frequency, sampleRate);
         IComplexOscillator oscillator = OscillatorFactory.getComplexOscillator(frequency, sampleRate);
         mComplexOscillator = new AWGNOscillator(oscillator, 0.003f);
 

@@ -49,7 +49,7 @@ public abstract class ControlRspDuo<T extends RspDuoTuner> extends ControlRsp<Rs
      *
      * @param device for the device, obtained from the API
      */
-    public ControlRspDuo(RspDuoDevice device)
+    protected ControlRspDuo(RspDuoDevice device)
     {
         super(device);
     }

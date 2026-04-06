@@ -58,7 +58,7 @@ public abstract class RspTunerController<I extends IControlRsp> extends TunerCon
      * @param controlRsp that is the RSP tuner
      * @param tunerErrorListener to monitor errors produced from this tuner controller
      */
-    public RspTunerController(I controlRsp, ITunerErrorListener tunerErrorListener)
+    protected RspTunerController(I controlRsp, ITunerErrorListener tunerErrorListener)
     {
         super(tunerErrorListener);
         mControlRsp = controlRsp;
@@ -130,22 +130,6 @@ public abstract class RspTunerController<I extends IControlRsp> extends TunerCon
             mNativeBufferBroadcaster.broadcast(buffer);
         }
 
-        if(reset)
-        {
-//            mLog.info(getControlRsp().getDeviceDescriptor().getDeviceType() + " - sample stream was reset");
-        }
-        if(parameters.isGainReductionChanged())
-        {
-//            mLog.info("^^^ Got a gain reduction change");
-        }
-        if(parameters.isRfFrequencyChanged())
-        {
-//            mLog.info("^^^ Got a frequency changed");
-        }
-        if(parameters.isSampleRateChanged())
-        {
-//            mLog.info("^^^ Got a sample rate changed");
-        }
     }
 
     /**

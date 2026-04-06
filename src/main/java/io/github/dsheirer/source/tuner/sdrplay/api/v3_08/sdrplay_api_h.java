@@ -38,10 +38,14 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.util.Arrays;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 public class sdrplay_api_h {
+
+    private static final Logger mLog = LoggerFactory.getLogger(sdrplay_api_h.class);
 
     sdrplay_api_h() {
         // Should not be called directly
@@ -54,7 +58,7 @@ public class sdrplay_api_h {
          String traceArgs = Arrays.stream(args)
                        .map(Object::toString)
                        .collect(Collectors.joining(", "));
-         System.out.printf("%s(%s)\n", name, traceArgs);
+         mLog.debug("{}({})", name, traceArgs);
     }
 
     static MemorySegment findOrThrow(String symbol) {

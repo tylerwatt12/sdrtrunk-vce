@@ -36,7 +36,7 @@ public abstract class DeviceParameters
      * Constructs an instance.
      * @param devParams for the DeviceParameters structure
      */
-    public DeviceParameters(MemorySegment devParams)
+    protected DeviceParameters(MemorySegment devParams)
     {
         mDevParams = devParams;
         mSamplingFrequency = new SamplingFrequency(sdrplay_api_DevParamsT.fsFreq(devParams));

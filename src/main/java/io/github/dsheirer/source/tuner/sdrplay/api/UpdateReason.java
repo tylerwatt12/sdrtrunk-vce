@@ -20,7 +20,9 @@
 package io.github.dsheirer.source.tuner.sdrplay.api;
 
 import io.github.dsheirer.source.tuner.sdrplay.api.v3_07.sdrplay_api_h;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Update reason.
@@ -93,7 +95,7 @@ public enum UpdateReason
         mDescription = description;
     }
 
-    public static EnumSet<UpdateReason> EXTENSIONS = EnumSet.range(EXTENSION_RSP_DX_HDR_ENABLE, EXTENSION_NONE);
+    private static final Set<UpdateReason> EXTENSIONS = EnumSet.range(EXTENSION_RSP_DX_HDR_ENABLE, EXTENSION_NONE);
 
 
     /**
@@ -101,7 +103,7 @@ public enum UpdateReason
      * non-blocking.  However, the device event listener responses are limited to just three events: Frequency, Gain,
      * and Sample Rate.  This constant describes the three update reasons that correspond to the device events.
      */
-    public static EnumSet<UpdateReason> ASYNC_UPDATE_RESPONSES = EnumSet.of(DEVICE_SAMPLE_RATE, TUNER_FREQUENCY_RF, TUNER_GAIN_REDUCTION);
+    public static final Set<UpdateReason> ASYNC_UPDATE_RESPONSES = Collections.unmodifiableSet(EnumSet.of(DEVICE_SAMPLE_RATE, TUNER_FREQUENCY_RF, TUNER_GAIN_REDUCTION));
 
     /**
      * Numeric value

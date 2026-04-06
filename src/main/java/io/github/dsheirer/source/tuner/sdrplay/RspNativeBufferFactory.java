@@ -34,7 +34,6 @@ import java.util.List;
  */
 public class RspNativeBufferFactory
 {
-    private RspSampleRate mRspSampleRate;
     private short[] mIResidual = new short[0];
     private short[] mQResidual = new short[0];
     private long mResidualTimestamp = System.currentTimeMillis();
@@ -57,7 +56,6 @@ public class RspNativeBufferFactory
      */
     public void setSampleRate(RspSampleRate sampleRate)
     {
-        mRspSampleRate = sampleRate;
         mSamplesPerMillisecond = sampleRate.getSamplesPerMillisecond();
     }
 

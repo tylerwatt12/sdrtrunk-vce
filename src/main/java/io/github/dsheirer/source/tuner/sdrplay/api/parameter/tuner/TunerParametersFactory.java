@@ -29,6 +29,10 @@ import java.lang.foreign.MemorySegment;
  */
 public class TunerParametersFactory
 {
+    private TunerParametersFactory()
+    {
+    }
+
     /**
      * Creats a tuner parameters instance for the specified device type
      * @param deviceType to create

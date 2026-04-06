@@ -71,9 +71,9 @@ public class Retry
                 {
                     Thread.sleep(pause);
                 }
-                catch(Exception e)
+                catch(InterruptedException e)
                 {
-                    //Do nothing
+                    Thread.currentThread().interrupt();
                 }
             }
         }

@@ -22,6 +22,7 @@ package io.github.dsheirer.source.tuner.sdrplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.Decimate;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.Bandwidth;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * RSP device Sample Rate, Bandwidth and Decimation enumeration
@@ -81,12 +82,12 @@ public enum RspSampleRate
     /**
      * Single tuner sample rates for all devices operating in single tuner mode
      */
-    public static final EnumSet<RspSampleRate> SINGLE_TUNER_SAMPLE_RATES = EnumSet.range(RATE_0_250, RATE_10_000);
+    private static final Set<RspSampleRate> SINGLE_TUNER_SAMPLE_RATES = EnumSet.range(RATE_0_250, RATE_10_000);
 
     /**
      * RSPduo dual-tuner mode sample rates
      */
-    public static final EnumSet<RspSampleRate> DUAL_TUNER_SAMPLE_RATES = EnumSet.range(DUO_RATE_0_500, DUO_RATE_2_000);
+    private static final Set<RspSampleRate> DUAL_TUNER_SAMPLE_RATES = EnumSet.range(DUO_RATE_0_500, DUO_RATE_2_000);
 
     /**
      * Sample Rate

@@ -27,6 +27,10 @@ import java.lang.foreign.MemorySegment;
  */
 public class DeviceParametersFactory
 {
+    private DeviceParametersFactory()
+    {
+    }
+
     /**
      * Create a device parameters instance
      * @param deviceType for the device

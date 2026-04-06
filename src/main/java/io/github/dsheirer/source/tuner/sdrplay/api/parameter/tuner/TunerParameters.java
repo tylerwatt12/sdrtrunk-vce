@@ -35,7 +35,7 @@ public abstract class TunerParameters
     /**
      * Constructs an instance from the foreign memory segment
      */
-    public TunerParameters(MemorySegment tunerParams)
+    protected TunerParameters(MemorySegment tunerParams)
     {
         mTunerParams = tunerParams;
         mRfFrequency = new RfFrequency(sdrplay_api_TunerParamsT.rfFreq(tunerParams));

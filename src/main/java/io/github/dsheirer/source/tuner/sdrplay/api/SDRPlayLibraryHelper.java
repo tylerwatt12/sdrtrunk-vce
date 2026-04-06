@@ -36,6 +36,11 @@ import org.slf4j.LoggerFactory;
  */
 public class SDRPlayLibraryHelper
 {
+    private SDRPlayLibraryHelper()
+    {
+        /* utility class */
+    }
+
     private static final Logger mLog = LoggerFactory.getLogger(SDRPlayLibraryHelper.class);
     private static final String SDRPLAY_API_LIBRARY_NAME = "sdrplay_api";
     private static final String SDRPLAY_API_PATH_LINUX = "/usr/local/lib/libsdrplay_api.so";

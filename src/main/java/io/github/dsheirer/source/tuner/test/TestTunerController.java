@@ -57,7 +57,6 @@ public class TestTunerController extends TunerController
         setUsableBandwidthPercentage(USABLE_BANDWIDTH_PERCENTAGE);
 
         int sweepRate = 0;  //Hz per interval
-//        long initialToneFrequency = SAMPLE_RATE / 2 + 100;
         long initialToneFrequency = 50000;
         mSampleGenerator = new SampleGenerator(SAMPLE_RATE, initialToneFrequency, sweepRate);
 

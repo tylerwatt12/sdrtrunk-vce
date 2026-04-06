@@ -41,7 +41,7 @@ public abstract class ControlRspDuoTuner1 extends ControlRspDuo<RspDuoTuner1> im
      *
      * @param device to control
      */
-    public ControlRspDuoTuner1(RspDuoDevice device)
+    protected ControlRspDuoTuner1(RspDuoDevice device)
     {
         super(device);
     }

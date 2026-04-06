@@ -21,6 +21,7 @@ package io.github.dsheirer.source.tuner.sdrplay.api.parameter.control;
 
 import io.github.dsheirer.source.tuner.sdrplay.api.v3_07.sdrplay_api_h;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Automatic Gain Control (AGC) Control (mode)
@@ -44,7 +45,7 @@ public enum AgcMode
         mDescription = description;
     }
 
-    public static EnumSet<AgcMode> SUPPORTED_MODES = EnumSet.of(ENABLE, DISABLE);
+    private static final Set<AgcMode> SUPPORTED_MODES = EnumSet.of(ENABLE, DISABLE);
 
     /**
      * Numeric value

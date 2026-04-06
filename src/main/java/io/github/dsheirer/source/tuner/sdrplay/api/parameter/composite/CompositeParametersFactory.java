@@ -29,6 +29,10 @@ import java.lang.foreign.MemorySegment;
  */
 public class CompositeParametersFactory
 {
+    private CompositeParametersFactory()
+    {
+    }
+
     /**
      * Creates a composite parameters instance for the specified device type
      * @param version of the api

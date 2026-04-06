@@ -58,7 +58,7 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
     /**
      * JAXB Constructor
      */
-    public RspTunerConfiguration()
+    protected RspTunerConfiguration()
     {
         super(RspTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ, RspTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ);
     }
@@ -67,7 +67,7 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
      * Constructs an instance with the specified unique id
      * @param uniqueId for the tuner
      */
-    public RspTunerConfiguration(String uniqueId)
+    protected RspTunerConfiguration(String uniqueId)
     {
         super(uniqueId);
     }

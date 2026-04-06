@@ -37,10 +37,6 @@ public class MasterSlaveBridge
     private RspDuoTuner1Controller mMaster;
     private RspDuoTuner2Controller mSlave;
 
-    public MasterSlaveBridge()
-    {
-    }
-
     /**
      * Sets the master tuner controller
      * @param master to set

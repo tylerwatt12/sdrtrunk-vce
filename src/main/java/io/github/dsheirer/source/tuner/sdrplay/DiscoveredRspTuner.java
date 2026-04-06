@@ -38,7 +38,7 @@ public abstract class DiscoveredRspTuner<R extends IControlRsp> extends Discover
      * Constructs an instance
      * @param deviceInfo to select the device from the API
      */
-    public DiscoveredRspTuner(DeviceInfo deviceInfo, ChannelizerType channelizerType)
+    protected DiscoveredRspTuner(DeviceInfo deviceInfo, ChannelizerType channelizerType)
     {
         mDeviceInfo = deviceInfo;
         mChannelizerType = channelizerType;

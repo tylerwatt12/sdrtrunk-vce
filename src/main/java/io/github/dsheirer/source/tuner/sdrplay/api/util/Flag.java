@@ -27,6 +27,10 @@ public class Flag
     public static final byte TRUE = 0x01;
     public static final byte FALSE = 0x00;
 
+    private Flag()
+    {
+    }
+
     /**
      * Evaluates the boolean value false (0x00) or true
      * @param value to evaluate

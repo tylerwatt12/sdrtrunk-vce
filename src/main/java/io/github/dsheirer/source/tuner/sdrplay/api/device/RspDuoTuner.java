@@ -40,7 +40,7 @@ public abstract class RspDuoTuner extends RspTuner<RspDuoDeviceParameters, RspDu
      * @param tunerParameters for this tuner
      * @param controlParameters for this device
      */
-    public RspDuoTuner(Device device, SDRplay sdrplay, TunerSelect tunerSelect, RspDuoDeviceParameters deviceParameters,
+    protected RspDuoTuner(Device device, SDRplay sdrplay, TunerSelect tunerSelect, RspDuoDeviceParameters deviceParameters,
                        RspDuoTunerParameters tunerParameters, ControlParameters controlParameters)
     {
         super(device, sdrplay, tunerSelect, deviceParameters, tunerParameters, controlParameters);

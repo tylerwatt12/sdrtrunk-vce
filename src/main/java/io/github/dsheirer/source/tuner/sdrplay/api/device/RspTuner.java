@@ -57,14 +57,6 @@ public abstract class RspTuner<D extends DeviceParameters, T extends TunerParame
     }
 
     /**
-     * SDRplay API
-     */
-    private SDRplay getSDRplay()
-    {
-        return mSDRplay;
-    }
-
-    /**
      * Parent device for this tuner
      */
     private Device getDevice()

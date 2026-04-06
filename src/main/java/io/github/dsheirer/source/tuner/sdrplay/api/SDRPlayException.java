@@ -24,7 +24,7 @@ package io.github.dsheirer.source.tuner.sdrplay.api;
  */
 public class SDRPlayException extends Exception
 {
-    private Status mStatus = Status.UNKNOWN;
+    private final Status mStatus;
 
     /**
      * Creates an exception
@@ -33,6 +33,7 @@ public class SDRPlayException extends Exception
     public SDRPlayException(String message)
     {
         super(message);
+        mStatus = Status.UNKNOWN;
     }
 
     /**
@@ -54,6 +55,7 @@ public class SDRPlayException extends Exception
     public SDRPlayException(String message, Throwable throwable)
     {
         super(message, throwable);
+        mStatus = Status.UNKNOWN;
     }
 
     public Status getStatus()

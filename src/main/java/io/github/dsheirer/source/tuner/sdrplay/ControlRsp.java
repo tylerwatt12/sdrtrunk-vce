@@ -58,7 +58,7 @@ public abstract class ControlRsp<T extends Device> implements IControlRsp
      * Constructs an instance
      * @param device for the device, obtained from the API
      */
-    public ControlRsp(T device)
+    protected ControlRsp(T device)
     {
         mDevice = device;
     }

@@ -40,6 +40,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -84,7 +85,7 @@ public class SDRplay
     /**
      * Controls logging of library load status so that it only gets logged once.  Set to false once initial logging complete
      */
-    private static boolean sLibraryLoadStatusLogging = true;
+    private static final AtomicBoolean sLibraryLoadStatusLogging = new AtomicBoolean(true);
 
     /**
      * Constructs an instance of the SDRPLay API
@@ -109,29 +110,21 @@ public class SDRplay
             mAvailable = false;
         }
 
-        if(isAvailable())
+        if(sLibraryLoadStatusLogging.getAndSet(false))
         {
-            if(sLibraryLoadStatusLogging)
+            if(isAvailable())
             {
                 mLog.info("API library v" + getVersion() + " - loaded");
             }
-        }
-        else
-        {
-            if(sLibraryLoadStatusLogging)
+            else if(!getVersion().isSupported())
             {
-                if(!getVersion().isSupported())
-                {
-                    mLog.info("API library is not available - unsupported version: " + getVersion());
-                }
-                else
-                {
-                    mLog.info("API library is not available.");
-                }
+                mLog.info("API library is not available - unsupported version: " + getVersion());
+            }
+            else
+            {
+                mLog.info("API library is not available.");
             }
         }
-
-        sLibraryLoadStatusLogging = false;
     }
 
     /**
@@ -441,19 +434,6 @@ public class SDRplay
         {
             throw new SDRPlayUpdateException(status, Arrays.stream(updateReasons).toList());
         }
-    }
-
-    /**
-     * Retrieve error information for the last error for the specified device.
-     *
-     * @param deviceSegment for the device
-     * @return error information
-     */
-    private ErrorInformation getLastError(MemorySegment deviceSegment)
-    {
-        MemorySegment errorAddress = sdrplay_api_h.sdrplay_api_GetLastError(deviceSegment);
-        MemorySegment errorSegment = errorAddress.reinterpret(sdrplay_api_ErrorInfoT.layout().byteSize(), getSharedArena(), null);
-        return new ErrorInformation(errorSegment);
     }
 
     /**

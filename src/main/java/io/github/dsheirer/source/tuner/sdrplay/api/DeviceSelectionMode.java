@@ -22,6 +22,7 @@ package io.github.dsheirer.source.tuner.sdrplay.api;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.RspDuoMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.TunerSelect;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Enumeration of modes that indicate how each SDRplay RSP device can be selected
@@ -54,9 +55,9 @@ public enum DeviceSelectionMode
     /**
      * Set of all selection modes available for the RSPduo
      */
-    public static final EnumSet<DeviceSelectionMode> MASTER_MODES = EnumSet.of(MASTER_TUNER_1);
-    public static final EnumSet<DeviceSelectionMode> SLAVE_MODES = EnumSet.of(SLAVE_TUNER_2);
-    public static final EnumSet<DeviceSelectionMode> SINGLE_TUNER_MODES = EnumSet.of(SINGLE_TUNER_1, SINGLE_TUNER_2);
+    private static final Set<DeviceSelectionMode> MASTER_MODES = EnumSet.of(MASTER_TUNER_1);
+    private static final Set<DeviceSelectionMode> SLAVE_MODES = EnumSet.of(SLAVE_TUNER_2);
+    private static final Set<DeviceSelectionMode> SINGLE_TUNER_MODES = EnumSet.of(SINGLE_TUNER_1, SINGLE_TUNER_2);
 
     /**
      * RSPduo mode associated with the selection mode

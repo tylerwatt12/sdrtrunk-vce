@@ -27,6 +27,10 @@ import java.lang.foreign.MemorySegment;
  */
 public class EventParametersFactory
 {
+    private EventParametersFactory()
+    {
+    }
+
     /**
      * Gain event callback parameters
      */

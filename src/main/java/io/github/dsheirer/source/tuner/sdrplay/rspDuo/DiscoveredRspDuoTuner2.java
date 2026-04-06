@@ -87,12 +87,10 @@ public class DiscoveredRspDuoTuner2 extends DiscoveredRspTuner<IControlRspDuoTun
                 {
                     mTuner.start();
 
-                    if(mMasterSlaveBridge != null)
+                    if(mMasterSlaveBridge != null &&
+                            mTuner.getTunerController() instanceof RspDuoTuner2Controller rspDuoTuner2Controller)
                     {
-                        if(mTuner.getTunerController() instanceof RspDuoTuner2Controller rspDuoTuner2Controller)
-                        {
-                            mMasterSlaveBridge.setSlave(rspDuoTuner2Controller);
-                        }
+                        mMasterSlaveBridge.setSlave(rspDuoTuner2Controller);
                     }
                 }
                 catch(Exception se)

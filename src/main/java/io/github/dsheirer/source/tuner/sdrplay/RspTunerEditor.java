@@ -39,6 +39,7 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSlider;
+import javax.swing.SwingConstants;
 import javax.swing.JToggleButton;
 
 /**
@@ -63,7 +64,7 @@ public abstract class RspTunerEditor<C extends RspTunerConfiguration> extends Tu
      * @param tunerManager to notify for state changes
      * @param discoveredTuner to be edited.
      */
-    public RspTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredRspTuner discoveredTuner)
+    protected RspTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredRspTuner discoveredTuner)
     {
         super(userPreferences, tunerManager, discoveredTuner);
     }
@@ -332,7 +333,7 @@ public abstract class RspTunerEditor<C extends RspTunerConfiguration> extends Tu
          */
         public LnaSlider()
         {
-            super(JSlider.HORIZONTAL, 0,9,9);
+            super(SwingConstants.HORIZONTAL, 0,9,9);
         }
 
         /**
@@ -364,7 +365,7 @@ public abstract class RspTunerEditor<C extends RspTunerConfiguration> extends Tu
          */
         public IfGainSlider()
         {
-            super(JSlider.HORIZONTAL, 0, 39, 30);
+            super(SwingConstants.HORIZONTAL, 0, 39, 30);
         }
 
         /**
