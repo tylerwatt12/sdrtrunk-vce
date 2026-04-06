@@ -87,7 +87,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     public SDRconnectTunerEditor(UserPreferences userPreferences, TunerManager tunerManager,
                                   DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, SDRconnectTuner.class, SDRconnectTunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

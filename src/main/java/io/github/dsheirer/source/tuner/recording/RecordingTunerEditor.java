@@ -43,7 +43,7 @@ public class RecordingTunerEditor extends TunerEditor<RecordingTuner,RecordingTu
      */
     public RecordingTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, RecordingTuner.class, RecordingTunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

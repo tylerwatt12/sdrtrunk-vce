@@ -76,7 +76,7 @@ public class HydraSdrTunerEditor extends TunerEditor<HydraSdrTuner, HydraSdrTune
      */
     public HydraSdrTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, HydraSdrTuner.class, HydraSdrTunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

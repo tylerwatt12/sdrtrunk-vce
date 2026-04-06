@@ -64,7 +64,7 @@ public class R8xTunerEditor extends TunerEditor<RTL2832Tuner, R8xTunerConfigurat
      */
     public R8xTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, RTL2832Tuner.class, R8xTunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

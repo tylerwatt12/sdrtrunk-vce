@@ -76,6 +76,8 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     private UserPreferences mUserPreferences;
     private TunerManager mTunerManager;
     private DiscoveredTuner mDiscoveredTuner;
+    private Class<T> mTunerClass;
+    private Class<C> mTunerConfigurationClass;
     private C mTunerConfiguration;
     private transient FrequencyAndCorrectionChangeListener mFrequencyAndCorrectionChangeListener = new FrequencyAndCorrectionChangeListener();
     private JFrequencyControl mFrequencyControl;
@@ -102,15 +104,18 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
      * Constructs an instance
      * @param tunerManager for requesting configuration saves.
      */
-    protected TunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
+    protected TunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner,
+                          Class<T> tunerClass, Class<C> tunerConfigurationClass)
     {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
         mDiscoveredTuner = discoveredTuner;
+        mTunerClass = tunerClass;
+        mTunerConfigurationClass = tunerConfigurationClass;
 
         if(mDiscoveredTuner != null && mDiscoveredTuner.hasTunerConfiguration())
         {
-            mTunerConfiguration = (C)mDiscoveredTuner.getTunerConfiguration();
+            mTunerConfiguration = mTunerConfigurationClass.cast(mDiscoveredTuner.getTunerConfiguration());
         }
 
         if(mDiscoveredTuner != null)
@@ -807,7 +812,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     {
         if(hasTuner())
         {
-            return (T)mDiscoveredTuner.getTuner();
+            return mTunerClass.cast(mDiscoveredTuner.getTuner());
         }
 
         return null;

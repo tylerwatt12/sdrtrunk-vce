@@ -64,9 +64,10 @@ public abstract class RspTunerEditor<C extends RspTunerConfiguration> extends Tu
      * @param tunerManager to notify for state changes
      * @param discoveredTuner to be edited.
      */
-    protected RspTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredRspTuner discoveredTuner)
+    protected RspTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredRspTuner discoveredTuner,
+                             Class<C> tunerConfigurationClass)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, RspTuner.class, tunerConfigurationClass);
     }
 
     private RspTunerController getTunerController()

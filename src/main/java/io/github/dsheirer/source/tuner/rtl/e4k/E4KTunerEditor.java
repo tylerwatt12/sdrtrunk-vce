@@ -67,7 +67,7 @@ public class E4KTunerEditor extends TunerEditor<RTL2832Tuner, E4KTunerConfigurat
      */
     public E4KTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, RTL2832Tuner.class, E4KTunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

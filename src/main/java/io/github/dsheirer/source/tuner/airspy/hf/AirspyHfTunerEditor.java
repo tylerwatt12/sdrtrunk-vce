@@ -57,7 +57,7 @@ public class AirspyHfTunerEditor extends TunerEditor<AirspyHfTuner,AirspyHfTuner
      */
     public AirspyHfTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, AirspyHfTuner.class, AirspyHfTunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

@@ -63,7 +63,7 @@ public class FC0013TunerEditor extends TunerEditor<RTL2832Tuner, FC0013TunerConf
      */
     public FC0013TunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, RTL2832Tuner.class, FC0013TunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

@@ -60,7 +60,7 @@ public class HackRFTunerEditor extends TunerEditor<HackRFTuner,HackRFTunerConfig
      */
     public HackRFTunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, HackRFTuner.class, HackRFTunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

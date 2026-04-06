@@ -64,7 +64,7 @@ public class RspDuoTuner2Editor extends RspTunerEditor<RspDuoTuner2Configuration
      */
     public RspDuoTuner2Editor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredRspTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, RspDuoTuner2Configuration.class);
         init();
         tunerStatusUpdated();
     }

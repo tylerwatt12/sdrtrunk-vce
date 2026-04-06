@@ -44,7 +44,7 @@ public class RTL2832UnknownTunerEditor extends TunerEditor<RTL2832Tuner, RTL2832
     public RTL2832UnknownTunerEditor(UserPreferences userPreferences, TunerManager tunerManager,
                                      DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, RTL2832Tuner.class, RTL2832TunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }

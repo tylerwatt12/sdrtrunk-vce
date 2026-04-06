@@ -54,7 +54,7 @@ public class FCD2TunerEditor extends TunerEditor<FCDTuner, FCD2TunerConfiguratio
      */
     public FCD2TunerEditor(UserPreferences userPreferences, TunerManager tunerManager, DiscoveredTuner discoveredTuner)
     {
-        super(userPreferences, tunerManager, discoveredTuner);
+        super(userPreferences, tunerManager, discoveredTuner, FCDTuner.class, FCD2TunerConfiguration.class);
         init();
         tunerStatusUpdated();
     }
