@@ -45,7 +45,7 @@ public abstract class DataMessageWithLinkControl extends DataMessage
      * @param timeslot for the DMR burst
      * @param linkControl message
      */
-    public DataMessageWithLinkControl(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach,
+    protected DataMessageWithLinkControl(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach,
                                       SlotType slotType, long timestamp, int timeslot, LCMessage linkControl)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);

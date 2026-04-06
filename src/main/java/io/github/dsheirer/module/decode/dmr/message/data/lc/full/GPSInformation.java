@@ -132,11 +132,4 @@ public class GPSInformation extends FullLCMessage
 
         return mIdentifiers;
     }
-
-    public static void main(String[] args)
-    {
-        CorrectedBinaryMessage cbm = new CorrectedBinaryMessage(BinaryMessage.loadHex("08000F8A177E3903C230"));
-        GPSInformation gps = new GPSInformation(cbm, 0, 1);
-        System.out.println(gps);
-    }
 }

@@ -39,7 +39,7 @@ public abstract class AbstractVoiceChannelUser extends FullLCMessage implements 
      *
      * @param message for the link control payload
      */
-    public AbstractVoiceChannelUser(CorrectedBinaryMessage message, long timestamp, int timeslot)
+    protected AbstractVoiceChannelUser(CorrectedBinaryMessage message, long timestamp, int timeslot)
     {
         super(message, timestamp, timeslot);
     }

@@ -46,7 +46,7 @@ public abstract class OctetDataHeader extends PacketSequenceHeader
      * @param timestamp message was received
      * @param timeslot for the DMR burst
      */
-    public OctetDataHeader(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType, long timestamp, int timeslot)
+    protected OctetDataHeader(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType, long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);
     }

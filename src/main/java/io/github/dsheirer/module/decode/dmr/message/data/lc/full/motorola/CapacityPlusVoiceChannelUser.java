@@ -39,7 +39,7 @@ public abstract class CapacityPlusVoiceChannelUser extends AbstractVoiceChannelU
      *
      * @param message for the link control payload
      */
-    public CapacityPlusVoiceChannelUser(CorrectedBinaryMessage message, long timestamp, int timeslot)
+    protected CapacityPlusVoiceChannelUser(CorrectedBinaryMessage message, long timestamp, int timeslot)
     {
         super(message, timestamp, timeslot);
     }

@@ -45,8 +45,14 @@ public class DMRSoftSyncDetectorVector128 extends DMRSoftSyncDetector
         FloatVector symbols5 = FloatVector.fromArray(VECTOR_SPECIES, mSymbols, mSymbolPointer + 16);
         FloatVector symbols6 = FloatVector.fromArray(VECTOR_SPECIES, mSymbols, mSymbolPointer + 20);
         FloatVector accumulator = FloatVector.zero(VECTOR_SPECIES);
-        FloatVector sync1, sync2, sync3, sync4, sync5, sync6;
-        float bestScore, candidate;
+        FloatVector sync1;
+        FloatVector sync2;
+        FloatVector sync3;
+        FloatVector sync4;
+        FloatVector sync5;
+        FloatVector sync6;
+        float bestScore;
+        float candidate;
 
         switch(mMode)
         {

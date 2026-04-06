@@ -44,6 +44,7 @@ public enum ApplicationType
         mLabel = label;
     }
 
+    @Override
     public String toString()
     {
         return mLabel;

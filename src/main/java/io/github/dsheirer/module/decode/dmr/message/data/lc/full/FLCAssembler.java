@@ -94,6 +94,7 @@ public class FLCAssembler
             case SINGLE_FRAGMENT:
                 //TODO: this is the reverse channel signalling embedded in voice frame F
                 dispatch();
+                break;
             default:
                 //Ignore
                 break;

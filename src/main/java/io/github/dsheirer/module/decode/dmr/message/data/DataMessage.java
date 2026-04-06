@@ -43,7 +43,7 @@ public abstract class DataMessage extends DMRBurst
      * @param timestamp message was received
      * @param timeslot for the DMR burst
      */
-    public DataMessage(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach,  SlotType slotType,
+    protected DataMessage(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach,  SlotType slotType,
                        long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, timestamp, timeslot);

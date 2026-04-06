@@ -32,13 +32,6 @@ public class DMRHardSyncDetector extends DMRSyncDetector
     private int mDelta;
     private DMRSyncPattern mDetectedPattern = DMRSyncPattern.UNKNOWN;
 
-    /**
-     * Constructs an instance
-     */
-    public DMRHardSyncDetector()
-    {
-    }
-
     public DMRSyncPattern getDetectedPattern()
     {
         return mDetectedPattern;

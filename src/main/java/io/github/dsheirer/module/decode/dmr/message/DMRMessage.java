@@ -32,7 +32,7 @@ public abstract class DMRMessage extends TimeslotMessage
      * Constructs an instance
      * @param timestamp for the message
      */
-    public DMRMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
+    protected DMRMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
     {
         super(message, timeslot, timestamp);
     }

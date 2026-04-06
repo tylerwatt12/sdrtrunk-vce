@@ -27,7 +27,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public abstract class ShortBurst
 {
-    private static final int[] CRC3 = new int[]{0, 1, 2};
     private static final int[] OPCODE = new int[]{8, 9, 10};
     private static final int[] FULL_MESSAGE = new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 
@@ -39,7 +38,7 @@ public abstract class ShortBurst
      *
      * @param message containing the delinterleaved and error-corrected short burst payload.
      */
-    public ShortBurst(CorrectedBinaryMessage message)
+    protected ShortBurst(CorrectedBinaryMessage message)
     {
         mMessage = message;
     }

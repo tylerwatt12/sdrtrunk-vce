@@ -37,13 +37,6 @@ public class SLCAssembler
     private BPTC_68_36 mBPTC = new BPTC_68_36();
 
     /**
-     * Constructs an instance
-     */
-    public SLCAssembler()
-    {
-    }
-
-    /**
      * Resets this assembler when a sync loss is detected to prevent malformed SLC messages.
      */
     public void reset()

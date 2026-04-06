@@ -38,7 +38,6 @@ public class DefinedShortDataHeader extends PacketSequenceHeader
     private static final int RESYNCHRONIZE_FLAG = 70;
     private static final int FULL_MESSAGE_FLAG = 71;
     private static final int[] BIT_PADDING = new int[]{72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] HEADER_CRC = new int[]{80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95};
 
     private List<Identifier> mIdentifiers;
 

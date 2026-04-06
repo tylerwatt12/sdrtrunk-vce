@@ -54,13 +54,6 @@ public class VoiceSuperFrameProcessor
     private byte[] mFragmentE;
 
     /**
-     * Constructor.
-     */
-    public VoiceSuperFrameProcessor()
-    {
-    }
-
-    /**
      * Indicates if this collector is in collecting mode.
      *
      * @return true if collecting.
@@ -118,12 +111,9 @@ public class VoiceSuperFrameProcessor
      */
     public void process(VoiceMessage voiceMessage)
     {
-        if(voiceMessage instanceof VoiceEMBMessage voiceEMB)
+        if(voiceMessage instanceof VoiceEMBMessage voiceEMB && voiceEMB.getEMB().isValid() && voiceEMB.getEMB().isEncrypted())
         {
-            if(voiceEMB.getEMB().isValid() && voiceEMB.getEMB().isEncrypted())
-            {
-                mEncrypted = true;
-            }
+            mEncrypted = true;
         }
 
         switch(voiceMessage.getSyncPattern())

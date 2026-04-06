@@ -46,10 +46,6 @@ public class DecodeConfigDMR extends DecodeConfiguration
     @JsonIgnore
     private DecodeEvent mChannelGrantEvent;
 
-    public DecodeConfigDMR()
-    {
-    }
-
     /**
      * Overrides the default value to indicate that DMR has two timeslots
      */

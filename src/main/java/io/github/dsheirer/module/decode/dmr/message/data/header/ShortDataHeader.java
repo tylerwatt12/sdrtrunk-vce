@@ -61,7 +61,7 @@ public abstract class ShortDataHeader extends OctetDataHeader
      * @param timestamp message was received
      * @param timeslot for the DMR burst
      */
-    public ShortDataHeader(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
+    protected ShortDataHeader(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
                            long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);

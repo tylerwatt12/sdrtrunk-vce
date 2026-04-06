@@ -37,13 +37,6 @@ public class PacketSequenceAssembler
     private PacketSequence mTimeslot2Sequence;
 
     /**
-     * Constructs an instance
-     */
-    public PacketSequenceAssembler()
-    {
-    }
-
-    /**
      * Gets the current packet sequence for the specified timeslot, constructing a new sequence as necessary.
      * @param timeslot of the packet sequence
      * @return timeslot sequence

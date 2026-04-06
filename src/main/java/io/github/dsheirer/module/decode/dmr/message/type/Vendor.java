@@ -32,7 +32,7 @@ public enum Vendor
     PROD_EL_SPA(5, "PROD-EL SPA"),
     MOTOROLA_CONNECT_PLUS(6, "MOTOROLA CON+"),
     RADIO_DATA_GMBH(7, "RADIO DATA GMBH"),
-    HYTERA_8(8, "HYTERA"),
+    HYTERA_8(8, Labels.HYTERA),
     ASELSAN(9, "ASELSAN"),
     KIRISUN(10, "KIRISUN"),
     DMR_ASSOCIATION(11, "DMR ASSOCIATION"),
@@ -46,12 +46,21 @@ public enum Vendor
     RADIO_ACTIVITY_SRL(60, "RADIO ACTIVITY SRL"),
     ZTE_TRUNKING(84, "ZTE TRUNKING"),
     TAIT(88, "TAIT"),
-    HYTERA_68(104, "HYTERA"),
+    HYTERA_68(104, Labels.HYTERA),
     VERTEX_STANDARD(119, "VERTEX STANDARD"),
     SIMOCO(120, "SIMOCO"),
     TEST(121, "TEST"),
-    HYTERA_88(136, "HYTERA"),
+    HYTERA_88(136, Labels.HYTERA),
     UNKNOWN(-1, "UNKNOWN");
+
+    private static final class Labels
+    {
+        private static final String HYTERA = "HYTERA";
+
+        private Labels()
+        {
+        }
+    }
 
     private int mValue;
     private String mLabel;

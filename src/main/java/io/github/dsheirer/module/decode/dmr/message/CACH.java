@@ -36,7 +36,7 @@ public class CACH
     //   0-6: bit error index location where bits are ordered as transmitted: 0, 1 ..., 6
     //    -1: valid/correct message
     //    -2: invalid message with 2 or more bit errors
-    public static final int[] BIT_ERROR_INDEXES = new int[]{-2, -2, -2, -2, -2, -2, -2, -2, -2, 5, 6, -1, 1, 2, 0, 4,
+    private static final int[] BIT_ERROR_INDEXES = new int[]{-2, -2, -2, -2, -2, -2, -2, -2, -2, 5, 6, -1, 1, 2, 0, 4,
             -2, 1, 4, 0, 5, 3, -1, 6, 0, 4, 1, 2, 6, -1, 3, 5, -2, -2, -2, -2, -2, -2, -2, -2, 4, 0, 2, 1, -1, 6, 5, -2,
             6, -1, 3, 5, 0, 4, 1, -2, 5, 3, -1, 6, 2, 1, 4, 0, -2, -2, -2, -2, -2, -2, -2, -2, 2, 1, 4, 0, 5, -2, -1, 6,
             3, 5, 6, -1, 1, -2, 0, 4, -1, 6, 5, 3, 4, 0, 2, 1, -2, -2, -2, -2, -2, -2, -2, -2, 6, -1, -2, 5, 0, 4, 1, 2,
@@ -55,7 +55,7 @@ public class CACH
     private static final int PAYLOAD_START = 7;
     private static final int PAYLOAD_END = 24;
 
-    public enum AccessType {IDLE, BUSY};
+    public enum AccessType {IDLE, BUSY}
 
     private CorrectedBinaryMessage mMessage;
     private boolean mValid;
@@ -223,102 +223,5 @@ public class CACH
         }
 
         return checksum;
-    }
-
-    public static void createHamming7_4BitErrorMap()
-    {
-        IntField valueField = IntField.range(0, 6);
-        Map<Integer, Integer> map = new HashMap<>();
-
-        //Link Control Start/Stop value 00 is not valid for CACH, so we'll mark these as invalid codewords (-2).
-        int invalidLCSSMask = 0x18; //0011000b
-
-        BinaryMessage parity0 = new BinaryMessage(7);
-        parity0.load(4, 3, 5);
-        BinaryMessage parity1 = new BinaryMessage(7);
-        parity1.load(4, 3, 7);
-        BinaryMessage parity2 = new BinaryMessage(7);
-        parity2.load(4, 3, 6);
-        BinaryMessage parity3 = new BinaryMessage(7);
-        parity3.load(4, 3, 3);
-
-        //There are 2^4 = 16 potential valid codewords
-        for(int x = 0; x < 16; x++)
-        {
-            BinaryMessage bm = new BinaryMessage(7);
-            bm.load(0, 4, x);
-
-            if(bm.get(0))
-            {
-                bm.xor(parity0);
-            }
-            if(bm.get(1))
-            {
-                bm.xor(parity1);
-            }
-            if(bm.get(2))
-            {
-                bm.xor(parity2);
-            }
-            if(bm.get(3))
-            {
-                bm.xor(parity3);
-            }
-
-            int value = bm.getInt(valueField);
-
-            //Ignore any legal codeword that has a value of 00 in the LCSS field.
-            if(((value & invalidLCSSMask) ^ invalidLCSSMask) == invalidLCSSMask)
-            {
-                continue;
-            }
-
-            //Use -1 to indicate no errors and we'll reserve -2 for invalid/non-correctable 2-bit errors.
-            map.put(value, -1);
-
-            //Iteratively induce single bit errors and record them into the map
-            for(int bitError = 0; bitError < 7; bitError++)
-            {
-                bm.flip(bitError);
-                value = bm.getInt(valueField);
-
-                //Ignore any bit combination with a 00 in the LCSS field.
-                if(((value & invalidLCSSMask) ^ invalidLCSSMask) != invalidLCSSMask)
-                {
-                    map.put(value, bitError);
-                }
-
-                bm.flip(bitError);
-            }
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("public static final int[] BIT_ERROR_INDEXES = new int[]{");
-
-        for(int z = 0; z < 128; z++)
-        {
-            if(map.containsKey(z))
-            {
-                sb.append(map.get(z));
-            }
-            else
-            {
-                sb.append("-2");
-            }
-
-            if(z != 127)
-            {
-                sb.append(",");
-            }
-        }
-
-        sb.append("};");
-
-        System.out.println(sb);
-    }
-
-    public static void main(String[] args)
-    {
-        createHamming7_4BitErrorMap();
     }
 }

@@ -28,6 +28,9 @@ import io.github.dsheirer.vector.calibrate.Implementation;
  */
 public class DMRSoftSyncDetectorFactory
 {
+    private DMRSoftSyncDetectorFactory()
+    {
+    }
 
     /**
      * Creates the implementation using calibration data to select the optimal

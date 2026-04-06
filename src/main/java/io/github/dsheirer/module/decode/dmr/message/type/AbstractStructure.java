@@ -34,7 +34,7 @@ public abstract class AbstractStructure
      * @param message that contains this structure
      * @param offset into the message to the start of this structure
      */
-    public AbstractStructure(CorrectedBinaryMessage message, int offset)
+    protected AbstractStructure(CorrectedBinaryMessage message, int offset)
     {
         mMessage = message;
         mOffset = offset;

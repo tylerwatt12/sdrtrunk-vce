@@ -33,10 +33,8 @@ import java.util.List;
  */
 public class CapacityPlusRestChannel extends ShortLCMessage implements ITimeslotFrequencyReceiver
 {
-    private static final int[] UNKNOWN = new int[]{12, 13, 14};
     private static final int[] REST_LSN = new int[]{15, 16, 17, 18, 19};
     private static final int[] SITE = new int[]{20, 21, 22, 23, 24};
-    private static final int[] UNKNOWN_2 = new int[]{25, 26, 27};
 
     private DmrRestLsn mRestChannel;
     private DMRSite mSite;

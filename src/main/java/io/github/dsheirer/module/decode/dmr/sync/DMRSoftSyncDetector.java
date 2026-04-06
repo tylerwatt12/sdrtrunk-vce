@@ -41,7 +41,7 @@ public abstract class DMRSoftSyncDetector extends DMRSyncDetector
     protected float[] mSymbols = new float[48]; //2x longer than 48-bit/24-dibit DMR sync patterns.
     protected int mSymbolPointer = 0;
 
-    public DMRSoftSyncDetector()
+    protected DMRSoftSyncDetector()
     {
     }
 

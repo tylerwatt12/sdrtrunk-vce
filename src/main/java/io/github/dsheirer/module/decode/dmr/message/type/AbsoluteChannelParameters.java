@@ -34,8 +34,6 @@ public class AbsoluteChannelParameters extends AbstractStructure
     private static final int[] OPCODE = new int[]{2, 3, 4, 5, 6, 7};
     private static final int[] COLOR_CODE = new int[]{12, 13, 14, 15};
 
-    //Note: the ICD only defines a value of 0 for this field, so it's currently unused.
-    private static final int[] CDEF_TYPE = new int[]{16, 17, 18, 19};
     private static final int[] LCN = new int[]{22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33};
     private static final int[] UPLINK_FREQUENCY_MHZ = new int[]{34, 35, 36, 37, 38, 39, 40, 41, 42, 43};
     private static final int[] UPLINK_FREQUENCY_125_HZ = new int[]{44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56};

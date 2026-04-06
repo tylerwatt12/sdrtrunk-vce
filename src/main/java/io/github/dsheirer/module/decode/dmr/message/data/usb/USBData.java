@@ -38,10 +38,6 @@ import java.util.List;
 public class USBData extends DataMessage
 {
     private static final int[] SERVICE_TYPE = new int[]{0, 1, 2, 3};
-    private static final int[] RESPONSE_DELAY = new int[]{4, 5};
-    private static final int PAYLOAD_CONTENT_FLAG = 6;
-    private static final int RESERVED_FLAG = 7;
-    private static final int PARAMETERS_START = 8;
     private static final int[] TARGET_RADIO = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
         72, 73, 74, 75, 76, 77, 78, 79};
 

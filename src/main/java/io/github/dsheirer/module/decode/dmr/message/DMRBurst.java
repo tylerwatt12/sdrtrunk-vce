@@ -42,7 +42,7 @@ public abstract class DMRBurst extends DMRMessage
      * @param message containing 288-bit DMR message with preliminary bit corrections indicated.
      * @param timestamp of the message
      */
-    public DMRBurst(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, long timestamp, int timeslot)
+    protected DMRBurst(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, long timestamp, int timeslot)
     {
         super(message, timestamp, timeslot);
         mSyncPattern = syncPattern;

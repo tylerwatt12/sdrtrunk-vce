@@ -49,7 +49,7 @@ public abstract class HyteraFullLC extends FullLCMessage implements IServiceOpti
      *
      * @param message for the link control payload
      */
-    public HyteraFullLC(CorrectedBinaryMessage message, long timestamp, int timeslot)
+    protected HyteraFullLC(CorrectedBinaryMessage message, long timestamp, int timeslot)
     {
         super(message, timestamp, timeslot);
     }

@@ -20,6 +20,7 @@ package io.github.dsheirer.module.decode.dmr.sync;
 
 import io.github.dsheirer.dsp.symbol.Dibit;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * DMR burst sync patterns enumeration.
@@ -88,16 +89,16 @@ public enum DMRSyncPattern
     }
 
     //Valid sync patterns (excluding the sync-less voice patterns)
-    public static final EnumSet<DMRSyncPattern> SYNC_PATTERNS = EnumSet.of(BASE_STATION_DATA, BASE_STATION_VOICE,
+    private static final Set<DMRSyncPattern> SYNC_PATTERNS = EnumSet.of(BASE_STATION_DATA, BASE_STATION_VOICE,
         MOBILE_STATION_DATA, MOBILE_STATION_VOICE, DIRECT_DATA_TIMESLOT_1, DIRECT_DATA_TIMESLOT_2,
             DIRECT_VOICE_TIMESLOT_1, DIRECT_VOICE_TIMESLOT_2);
 
     //Sync patterns containing a Common Announcement Channel (CACH)
-    private static final EnumSet<DMRSyncPattern> CACH_PATTERNS = EnumSet.of(BASE_STATION_DATA, BASE_STATION_VOICE,
+    private static final Set<DMRSyncPattern> CACH_PATTERNS = EnumSet.of(BASE_STATION_DATA, BASE_STATION_VOICE,
         BS_VOICE_FRAME_B, BS_VOICE_FRAME_C, BS_VOICE_FRAME_D, BS_VOICE_FRAME_E, BS_VOICE_FRAME_F);
 
     //Direct Mode TS 1 Sync Patterns
-    private static final EnumSet<DMRSyncPattern> DIRECT_MODE_TS1_PATTERNS = EnumSet.of(DIRECT_VOICE_TIMESLOT_1,
+    private static final Set<DMRSyncPattern> DIRECT_MODE_TS1_PATTERNS = EnumSet.of(DIRECT_VOICE_TIMESLOT_1,
             DIRECT_DATA_TIMESLOT_1);
 
     //Direct Mode TS 2 Sync Patterns
@@ -235,6 +236,7 @@ public enum DMRSyncPattern
     /**
      * String representation of the sync pattern
      */
+    @Override
     public String toString()
     {
         return mLabel;

@@ -38,7 +38,7 @@ public abstract class MultiCSBK extends CSBKMessage
      * @param header for the MBC sequence
      * @param continuationBlocks for the message
      */
-    public MultiCSBK(MBCHeader header, List<MBCContinuationBlock> continuationBlocks)
+    protected MultiCSBK(MBCHeader header, List<MBCContinuationBlock> continuationBlocks)
     {
         super(header.getSyncPattern(), header.getMessage(), header.getCACH(), header.getSlotType(),
               header.getTimestamp(), header.getTimeslot());

@@ -50,7 +50,6 @@ public class UDTHeader extends DataHeader
         55, 56, 57, 58, 59, 60, 61, 62, 63};
     private static final int[] PAD_NIBBLE = new int[]{64, 65, 66, 67, 68};
     private static final int SUPPLEMENTARY_DATA_FLAG = 72;
-    private static final int PROTECT_FLAG = 73;
     private static final int[] OPCODE = new int[]{74, 75, 76, 77, 78, 79};
 
     private IntegerIdentifier mDestinationLLID;

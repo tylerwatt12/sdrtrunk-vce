@@ -56,6 +56,10 @@ public class PacketSequenceMessageFactory
 {
     private static final Logger mLog = LoggerFactory.getLogger(PacketSequenceMessageFactory.class);
 
+    private PacketSequenceMessageFactory()
+    {
+    }
+
     /**
      * Creates a message from a packet sequence
       * @param packetSequence with message parts
@@ -81,7 +85,6 @@ public class PacketSequenceMessageFactory
                         case SHORT_DATA:
                             return createDefinedShortData(packetSequence, packet);
                         default:
-//                            mLog.info("Unknown Packet SAP: " + primaryHeader.getServiceAccessPoint() + " - returning unknown packet");
                             return new DMRPacketMessage(packetSequence, new UnknownPacket(packet, 0), packet,
                                     packetSequence.getTimeslot(), packetSequence.getPacketSequenceHeader().getTimestamp());
                     }
@@ -202,13 +205,6 @@ public class PacketSequenceMessageFactory
         }
         else
         {
-            if(packetSequence.getProprietaryDataHeader() != null)
-            {
-//                mLog.info("Unknown Proprietary Packet Header Type - creating unknown packet. Data Packet Format: " +
-//                        packetSequence.getPacketSequenceHeader().getDataPacketFormat() + " Proprietary Header: " +
-//                        packetSequence.getProprietaryDataHeader().getClass());
-            }
-
             return new DMRPacketMessage(packetSequence, new UnknownPacket(packet, 0), packet,
                 packetSequence.getTimeslot(), packetSequence.getPacketSequenceHeader().getTimestamp());
         }
@@ -224,16 +220,14 @@ public class PacketSequenceMessageFactory
     {
             int version = IPV4Header.getIPVersion(packet, 0);
 
-            switch(version)
+            if(version == 4)
             {
-                case 4:
-                    return new DMRPacketMessage(packetSequence, new IPV4Packet(packet, 0), packet,
-                        packetSequence.getTimeslot(), packetSequence.getPacketSequenceHeader().getTimestamp());
-                default:
-//                    mLog.info("Unrecognized IP Packet Version: " + version + " - returning unknown packet");
-                    return new DMRPacketMessage(packetSequence, new UnknownPacket(packet, 0), packet,
-                        packetSequence.getTimeslot(), packetSequence.getPacketSequenceHeader().getTimestamp());
+                return new DMRPacketMessage(packetSequence, new IPV4Packet(packet, 0), packet,
+                    packetSequence.getTimeslot(), packetSequence.getPacketSequenceHeader().getTimestamp());
             }
+
+            return new DMRPacketMessage(packetSequence, new UnknownPacket(packet, 0), packet,
+                packetSequence.getTimeslot(), packetSequence.getPacketSequenceHeader().getTimestamp());
     }
 
     /**
@@ -309,8 +303,6 @@ public class PacketSequenceMessageFactory
                     }
                 }
             }
-
-//            mLog.info("Packet Bytes:" + packet.size() + " MSG:" + packet.toHexString());
 
             return packet;
         }

@@ -37,7 +37,7 @@ public abstract class FullLCMessage extends LCMessage
      * Constructs an instance
      * @param message for link control payload
      */
-    public FullLCMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
+    protected FullLCMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
     {
         super(message, timestamp, timeslot);
     }

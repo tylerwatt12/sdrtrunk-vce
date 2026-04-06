@@ -37,9 +37,9 @@ public abstract class VoiceMessage extends DMRBurst
      * Initialization vector (IV) fragments can be embedded into the AMBE voice frame for late entry to encrypted calls
      * using bits 71, 67, 63, and 59 from the interleaved (ie transmitted order) voice frame.
      */
-    public static int[] FRAME_1_IV_FRAGMENT = new int[]{95, 91, 87, 83};
-    public static int[] FRAME_2_IV_FRAGMENT = new int[]{215, 211, 207, 203};
-    public static int[] FRAME_3_IV_FRAGMENT = new int[]{287, 283, 279, 275};
+    private static final int[] FRAME_1_IV_FRAGMENT = new int[]{95, 91, 87, 83};
+    private static final int[] FRAME_2_IV_FRAGMENT = new int[]{215, 211, 207, 203};
+    private static final int[] FRAME_3_IV_FRAGMENT = new int[]{287, 283, 279, 275};
 
     /**
      * DMR message frame.  This message is comprised of a 24-bit prefix and a 264-bit message frame.  Outbound base
@@ -49,7 +49,7 @@ public abstract class VoiceMessage extends DMRBurst
      * @param syncPattern
      * @param message containing 288-bit DMR message with preliminary bit corrections indicated.
      */
-    public VoiceMessage(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, long timestamp,
+    protected VoiceMessage(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, long timestamp,
                         int timeslot)
     {
         super(syncPattern, message, cach, timestamp, timeslot);

@@ -55,7 +55,7 @@ public abstract class PacketSequenceHeader extends DataHeader
      * @param timestamp message was received
      * @param timeslot for the DMR burst
      */
-    public PacketSequenceHeader(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType, long timestamp, int timeslot)
+    protected PacketSequenceHeader(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType, long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);
     }

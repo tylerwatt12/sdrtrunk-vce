@@ -35,7 +35,7 @@ public abstract class LCMessage extends DMRMessage
      * Constructs an instance
      * @param message containing link control data
      */
-    public LCMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
+    protected LCMessage(CorrectedBinaryMessage message, long timestamp, int timeslot)
     {
         super(message, timestamp, timeslot);
     }
