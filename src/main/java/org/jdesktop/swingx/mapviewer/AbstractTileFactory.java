@@ -469,7 +469,7 @@ public abstract class AbstractTileFactory extends TileFactory
 
 		try
 		{
-			URL url = new URL(a);
+			URL url = URI.create(a).toURL();
 
 			System.out.println("Fetching URL: " + url.getClass() + " " + url.toString());
 

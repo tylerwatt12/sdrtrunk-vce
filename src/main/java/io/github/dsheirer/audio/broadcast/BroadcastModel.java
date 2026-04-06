@@ -69,7 +69,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
         {"Stream Type", "Name", "Status", "Queued", "Streamed/Uploaded", "Aged Off", "Upload Error"};
 
     private ObservableList<ConfiguredBroadcast> mConfiguredBroadcasts =
-        FXCollections.observableArrayList(ConfiguredBroadcast.extractor());
+        FXCollections.<ConfiguredBroadcast>observableArrayList(ConfiguredBroadcast.extractor());
     private List<AudioRecording> mRecordingQueue = new CopyOnWriteArrayList<>();
     private Map<Integer,AbstractAudioBroadcaster> mBroadcasterMap = new HashMap<>();
     private AliasModel mAliasModel;
