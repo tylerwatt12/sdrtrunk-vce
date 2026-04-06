@@ -62,6 +62,25 @@ public class MDC1200Identifier extends TalkgroupIdentifier implements Comparable
     @Override
     public int compareTo(MDC1200Identifier other)
     {
-        return Integer.compare(getValue(), other != null ? other.getValue() : 0);
+        int comparison = Integer.compare(getValue(), other != null ? other.getValue() : 0);
+
+        if(comparison == 0 && other != null)
+        {
+            comparison = getRole().compareTo(other.getRole());
+        }
+
+        return comparison;
+    }
+
+    @Override
+    public boolean equals(Object o)
+    {
+        return super.equals(o);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return super.hashCode();
     }
 }

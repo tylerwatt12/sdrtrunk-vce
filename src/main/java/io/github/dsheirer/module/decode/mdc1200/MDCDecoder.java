@@ -33,9 +33,7 @@ public class MDCDecoder extends AbstractAFSKDecoder
 {
     private static final int MESSAGE_LENGTH = 304;
 
-    private NRZDecoder mNRZDecoder;
     private MessageFramer mMessageFramer;
-    private MDCMessageProcessor mMessageProcessor;
 
     public MDCDecoder()
     {
@@ -51,13 +49,13 @@ public class MDCDecoder extends AbstractAFSKDecoder
 
     private void init()
     {
-        mNRZDecoder = new NRZDecoder(NRZDecoder.MODE_INVERTED);
-        getDecoder().setSymbolProcessor(mNRZDecoder);
+        NRZDecoder nrzDecoder = new NRZDecoder(NRZDecoder.MODE_INVERTED);
+        getDecoder().setSymbolProcessor(nrzDecoder);
         mMessageFramer = new MessageFramer(SyncPattern.MDC1200.getPattern(), MESSAGE_LENGTH);
-        mNRZDecoder.setListener(mMessageFramer);
-        mMessageProcessor = new MDCMessageProcessor();
-        mMessageFramer.addMessageListener(mMessageProcessor);
-        mMessageProcessor.addMessageListener(getMessageListener());
+        nrzDecoder.setListener(mMessageFramer);
+        MDCMessageProcessor messageProcessor = new MDCMessageProcessor();
+        mMessageFramer.addMessageListener(messageProcessor);
+        messageProcessor.addMessageListener(getMessageListener());
     }
 
     @Override

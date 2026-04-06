@@ -31,10 +31,6 @@ public class MDCMessageProcessor implements Listener<CorrectedBinaryMessage>
 
     private Broadcaster<IMessage> mBroadcaster = new Broadcaster<>();
 
-    public MDCMessageProcessor()
-    {
-    }
-
     public void dispose()
     {
         mBroadcaster.dispose();
@@ -73,39 +69,6 @@ public class MDCMessageProcessor implements Listener<CorrectedBinaryMessage>
     public void removeMessageListener(Listener<IMessage> listener)
     {
         mBroadcaster.removeListener(listener);
-    }
-
-    /**
-     * Removes NRZ-I encoding from the entire buffer.  Assumes that the initial
-     * bit will be a 0 after decode, despite what is currently in the buffer,
-     * in order to maintain correct polarity of the decoded message.
-     */
-    private void removeNRZIEncoding(BinaryMessage buffer)
-    {
-        /**
-         * Clear bit position 0, the first bit of the sync pattern, to start
-         * the decode with the correct polarity
-         */
-        buffer.clear(0);
-
-        /**
-         * Set each bit according to the state of the previous bit using XOR
-         * as follows:
-         *
-         * 	0 = same as previous state
-         * 	1 = inverse of previous state
-         */
-        for(int x = 1; x < buffer.size(); x++)
-        {
-            if(buffer.get(x - 1) ^ buffer.get(x))
-            {
-                buffer.set(x);
-            }
-            else
-            {
-                buffer.clear(x);
-            }
-        }
     }
 
     /**
