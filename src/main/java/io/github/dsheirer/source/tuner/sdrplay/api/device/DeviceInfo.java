@@ -93,12 +93,14 @@ public class DeviceInfo
     }
 
     /**
-     * Clones this instance
-     * @return deep copy.
+     * Creates a copy of this instance.
+     * @return copy.
      */
-    public DeviceInfo clone()
+    public DeviceInfo copy()
     {
-        return new DeviceInfo(mDeviceType, mSerialNumber);
+        DeviceInfo copy = new DeviceInfo(mDeviceType, mSerialNumber);
+        copy.mDeviceSelectionMode = mDeviceSelectionMode;
+        return copy;
     }
 
     /**

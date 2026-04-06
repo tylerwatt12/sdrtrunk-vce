@@ -193,7 +193,7 @@ public class TunerFactory
                         deviceInfo.setDeviceSelectionMode(DeviceSelectionMode.MASTER_TUNER_1);
                         tuners.add(new DiscoveredRspDuoTuner1(deviceInfo, channelizerType, bridge));
 
-                        DeviceInfo deviceInfoTuner2 = deviceInfo.clone();
+                        DeviceInfo deviceInfoTuner2 = deviceInfo.copy();
                         deviceInfoTuner2.setDeviceSelectionMode(DeviceSelectionMode.SLAVE_TUNER_2);
                         tuners.add(new DiscoveredRspDuoTuner2(deviceInfoTuner2, channelizerType, bridge));
                         break;
