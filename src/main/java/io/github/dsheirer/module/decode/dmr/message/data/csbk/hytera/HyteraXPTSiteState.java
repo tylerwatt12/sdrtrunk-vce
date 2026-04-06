@@ -109,9 +109,9 @@ public class HyteraXPTSiteState extends CSBKMessage
                 return 4;
             case 2:
                 return 7;
+            default:
+                return 0;
         }
-
-        return 0;
     }
 
     /**
@@ -127,9 +127,9 @@ public class HyteraXPTSiteState extends CSBKMessage
                 return 5;
             case 2:
                 return 8;
+            default:
+                return 0;
         }
-
-        return 0;
     }
 
     /**
@@ -145,9 +145,9 @@ public class HyteraXPTSiteState extends CSBKMessage
                 return 6;
             case 2:
                 return 9;
+            default:
+                return 0;
         }
-
-        return 0;
     }
 
     /**

@@ -19,9 +19,11 @@
 
 package io.github.dsheirer.module.decode.dcs;
 
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * DCS codes as defined in ETSI TS 103 236 V1.1.1
@@ -213,12 +215,12 @@ public enum DCSCode
     /**
      * Inverted DCS codes
      */
-    public static final EnumSet<DCSCode> INVERTED_CODES = EnumSet.range(I023, I754);
+    public static final Set<DCSCode> INVERTED_CODES = Collections.unmodifiableSet(EnumSet.range(I023, I754));
 
     /**
      * Standard DCS codes
      */
-    public static final EnumSet<DCSCode> STANDARD_CODES = EnumSet.range(N023,N754);
+    public static final Set<DCSCode> STANDARD_CODES = Collections.unmodifiableSet(EnumSet.range(N023, N754));
 
     /**
      * Lookup map for quickly finding a DCS code from the transmitted value.

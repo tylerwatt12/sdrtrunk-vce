@@ -33,6 +33,10 @@ import java.util.List;
 public class CallTimerParameters extends Announcement
 {
     //Broadcast Parameters 1: 21-34
+    private static final String INTERNAL = "INTERNAL";
+    private static final String INFINITY = "INFINITY";
+    private static final String SECS = " SECS";
+    private static final String MINS = " MINS";
     private static final int[] EMERGENCY_TIMER = new int[]{21, 22, 23, 24, 25, 26, 27, 28, 29};
     private static final int[] PACKET_TIMER = new int[]{30, 31, 32, 33, 34};
 
@@ -99,34 +103,34 @@ public class CallTimerParameters extends Announcement
 
         if(timer == 0)
         {
-            return "INTERNAL";
+            return INTERNAL;
         }
         else if(1 <= timer && timer <= 10)
         {
-            return timer + " SECS";
+            return timer + SECS;
         }
         else if(11 <= timer && timer <= 20)
         {
-            return ((timer - 8) * 5) + " SECS";
+            return ((timer - 8) * 5) + SECS;
         }
         else if(21 <= timer && timer <= 28)
         {
-            return ((timer - 16) * 15) + " SECS";
+            return ((timer - 16) * 15) + SECS;
         }
         else if(29 <= timer && timer <= 40)
         {
-            return ((timer - 22) * .5) + " MINS";
+            return ((timer - 22) * .5) + MINS;
         }
         else if(41 <= timer && timer <= 51)
         {
-            return (timer - 31) + " MINS";
+            return (timer - 31) + MINS;
         }
         else if(52 <= timer && timer <= 510)
         {
-            return ((timer - 47) * 5) + " MINS";
+            return ((timer - 47) * 5) + MINS;
         }
 
-        return "INFINITY";
+        return INFINITY;
     }
 
     /**
@@ -147,34 +151,34 @@ public class CallTimerParameters extends Announcement
 
         if(timer == 0)
         {
-            return "INTERNAL";
+            return INTERNAL;
         }
         else if(1 <= timer && timer <= 5)
         {
-            return timer + " SECS";
+            return timer + SECS;
         }
         else if(6 <= timer && timer <= 10)
         {
-            return ((timer - 4) * 5) + " SECS";
+            return ((timer - 4) * 5) + SECS;
         }
         else if(11 <= timer && timer <= 12)
         {
-            return ((timer - 8) * 15) + " SECS";
+            return ((timer - 8) * 15) + SECS;
         }
         else if(13 <= timer && timer <= 20)
         {
-            return ((timer - 10) * .5) + " MINS";
+            return ((timer - 10) * .5) + MINS;
         }
         else if(21 <= timer && timer <= 25)
         {
-            return (timer - 15) + " MINS";
+            return (timer - 15) + MINS;
         }
         else if(26 <= timer && timer <= 30)
         {
-            return ((timer - 23) * 5) + " MINS";
+            return ((timer - 23) * 5) + MINS;
         }
 
-        return "INFINITY";
+        return INFINITY;
     }
 
     /**
@@ -195,26 +199,26 @@ public class CallTimerParameters extends Announcement
 
         if(timer == 0)
         {
-            return "INTERNAL";
+            return INTERNAL;
         }
         else if(1 <= timer && timer <= 59)
         {
-            return timer + " SECS";
+            return timer + SECS;
         }
         else if(60 <= timer && timer <= 107)
         {
-            return ((timer - 48) * 5) + " SECS";
+            return ((timer - 48) * 5) + SECS;
         }
         else if(108 <= timer && timer <= 138)
         {
-            return ((timer - 98) * .5) + " MINS";
+            return ((timer - 98) * .5) + MINS;
         }
         else if(139 <= timer && timer <= 4094)
         {
-            return (timer - 118) + " MINS";
+            return (timer - 118) + MINS;
         }
 
-        return "INFINITY";
+        return INFINITY;
     }
 
     /**
@@ -235,26 +239,26 @@ public class CallTimerParameters extends Announcement
 
         if(timer == 0)
         {
-            return "INTERNAL";
+            return INTERNAL;
         }
         else if(1 <= timer && timer <= 59)
         {
-            return timer + " SECS";
+            return timer + SECS;
         }
         else if(60 <= timer && timer <= 107)
         {
-            return ((timer - 48) * 5) + " SECS";
+            return ((timer - 48) * 5) + SECS;
         }
         else if(108 <= timer && timer <= 138)
         {
-            return ((timer - 98) * .5) + " MINS";
+            return ((timer - 98) * .5) + MINS;
         }
         else if(139 <= timer && timer <= 4094)
         {
-            return (timer - 118) + " MINS";
+            return (timer - 118) + MINS;
         }
 
-        return "INFINITY";
+        return INFINITY;
     }
 
     @Override

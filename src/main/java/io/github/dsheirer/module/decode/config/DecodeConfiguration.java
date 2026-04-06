@@ -55,7 +55,7 @@ public abstract class DecodeConfiguration extends Configuration
     public static final int CALL_TIMEOUT_MAXIMUM = 180;
     public static final int TRAFFIC_CHANNEL_LIMIT_DEFAULT = 20;
 
-    public DecodeConfiguration()
+    protected DecodeConfiguration()
     {
     }
 

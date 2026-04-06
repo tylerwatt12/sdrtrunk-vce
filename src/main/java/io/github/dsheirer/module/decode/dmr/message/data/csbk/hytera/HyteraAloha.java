@@ -41,16 +41,10 @@ public class HyteraAloha extends CSBKMessage
     //TODO: not sure what bits 16 to 31 are used for ... awaiting documentation.
     //TODO: bits 32 to 79 seem to align with the standard aloha.
 
-    private static final int[] RESERVED = new int[]{16, 17};
-    private static final int SITE_TIMESLOT_SYNCHRONIZATION = 18;
     private static final int[] VERSION = new int[]{19, 20, 21};
-    private static final int TIMING_OFFSET = 22;
     private static final int ACTIVE_NETWORK_CONNECTION_FLAG = 23;
     private static final int[] MASK = new int[]{24, 25, 26, 27, 28};
     private static final int[] SERVICE_FUNCTION = new int[]{29, 30};
-    private static final int[] N_RAND_WAIT = new int[]{31, 32, 33, 34};
-    private static final int REGISTRATION_REQUIRED_FLAG = 35;
-    private static final int[] BACKOFF = new int[]{36, 37, 38, 39};
     private static final int SYSTEM_IDENTITY_CODE_OFFSET = 40;
     private static final int[] RADIO = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
         73, 74, 75, 76, 77, 78, 79};

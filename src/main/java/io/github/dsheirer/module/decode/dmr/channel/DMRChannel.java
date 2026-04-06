@@ -45,7 +45,7 @@ public abstract class DMRChannel extends IntegerIdentifier implements IChannelDe
      * @param channel number or repeater number, one-based repeater number.
      * @param timeslot in range: 1 or 2
      */
-    public DMRChannel(int channel, int timeslot)
+    protected DMRChannel(int channel, int timeslot)
     {
         super(channel, IdentifierClass.NETWORK, Form.CHANNEL, Role.BROADCAST);
         Validate.inclusiveBetween(0, 2, timeslot, "Timeslot must be between 1 and 2");

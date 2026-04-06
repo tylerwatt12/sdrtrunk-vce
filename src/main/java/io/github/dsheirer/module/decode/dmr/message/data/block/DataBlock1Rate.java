@@ -29,7 +29,6 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
  */
 public class DataBlock1Rate extends DataBlock
 {
-    private static final int[] CRC = new int[]{7, 8, 9, 10, 11, 12, 13, 14, 15};
     private static final int CONFIRMED_PAYLOAD_START = 16;
     private static final int UNCONFIRMED_PAYLOAD_START = 0;
     private static final int PAYLOAD_END = 192;

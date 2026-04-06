@@ -34,12 +34,12 @@ public abstract class AbstractAFSKDecoder extends Decoder implements IRealBuffer
 {
     private AFSK1200Decoder mAFSK1200Decoder;
 
-    public AbstractAFSKDecoder(AFSK1200Decoder decoder)
+    protected AbstractAFSKDecoder(AFSK1200Decoder decoder)
     {
         mAFSK1200Decoder = decoder;
     }
 
-    public AbstractAFSKDecoder(AFSK1200Decoder.Output output)
+    protected AbstractAFSKDecoder(AFSK1200Decoder.Output output)
     {
         mAFSK1200Decoder = new AFSK1200Decoder(output);
     }

@@ -58,7 +58,7 @@ public abstract class ChannelGrant extends CSBKMessage implements ITimeslotFrequ
      * @param timestamp
      * @param timeslot
      */
-    public ChannelGrant(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
+    protected ChannelGrant(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
                         long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);
@@ -75,7 +75,7 @@ public abstract class ChannelGrant extends CSBKMessage implements ITimeslotFrequ
      * @param timeslot
      * @param multiBlock continuation containing absolute channel parameters
      */
-    public ChannelGrant(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
+    protected ChannelGrant(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
                         long timestamp, int timeslot, MBCContinuationBlock multiBlock)
     {
         this(syncPattern, message, cach, slotType, timestamp, timeslot);

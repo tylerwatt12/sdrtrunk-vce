@@ -45,13 +45,6 @@ public class TimeslotFrequency
     private StringProperty mDescriptionProperty = new SimpleStringProperty();
 
     /**
-     * Constructs an instance
-     */
-    public TimeslotFrequency()
-    {
-    }
-
-    /**
      * Creates a deep copy of this instance
      */
     public TimeslotFrequency copy()

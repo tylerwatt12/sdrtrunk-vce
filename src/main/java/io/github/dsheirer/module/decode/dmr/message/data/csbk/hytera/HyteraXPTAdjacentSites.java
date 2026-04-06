@@ -33,7 +33,8 @@ import java.util.List;
  */
 public class HyteraXPTAdjacentSites extends CSBKMessage
 {
-    private static final int[] SEQUENCE_NUMBER = new int[]{0, 1};
+    private static final String SITE_LABEL = " SITE:";
+    private static final String FREE_LABEL = " FREE:";
     private static final int[] SITE_1 = new int[]{16, 17, 18, 19, 20}; //Unknown: 21-23
     private static final int[] FREE_1 = new int[]{24, 25, 26, 27}; //Unknown: 28-31
     private static final int[] SITE_2 = new int[]{32, 33, 34, 35, 36}; //Unknown: 37-39
@@ -78,26 +79,26 @@ public class HyteraXPTAdjacentSites extends CSBKMessage
 
         if(hasSite1())
         {
-            sb.append(" SITE:").append(getSite1());
-            sb.append(" FREE:").append(getFree1());
+            sb.append(SITE_LABEL).append(getSite1());
+            sb.append(FREE_LABEL).append(getFree1());
         }
 
         if(hasSite2())
         {
-            sb.append(" SITE:").append(getSite2());
-            sb.append(" FREE:").append(getFree2());
+            sb.append(SITE_LABEL).append(getSite2());
+            sb.append(FREE_LABEL).append(getFree2());
         }
 
         if(hasSite3())
         {
-            sb.append(" SITE:").append(getSite3());
-            sb.append(" FREE:").append(getFree3());
+            sb.append(SITE_LABEL).append(getSite3());
+            sb.append(FREE_LABEL).append(getFree3());
         }
 
         if(hasSite4())
         {
-            sb.append(" SITE:").append(getSite4());
-            sb.append(" FREE:").append(getFree4());
+            sb.append(SITE_LABEL).append(getSite4());
+            sb.append(FREE_LABEL).append(getFree4());
         }
 
         sb.append(" MSG:").append(getMessage().toHexString());

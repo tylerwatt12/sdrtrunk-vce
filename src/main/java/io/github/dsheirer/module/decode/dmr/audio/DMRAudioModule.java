@@ -96,6 +96,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     @Override
     public void start()
     {
+        /* no action required */
     }
 
     /**
@@ -198,14 +199,9 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
                 //Process any ambe frames that were queued awaiting encryption state determination
                 if(!mQueuedAmbeFrames.isEmpty())
                 {
-                    if(!mEncryptedCall)
+                    for(byte[] queuedFrame: mQueuedAmbeFrames)
                     {
-                        for(byte[] queuedFrame: mQueuedAmbeFrames)
-                        {
-                            produceAudio(queuedFrame, timestamp);
-                        }
-
-                        mQueuedAmbeFrames.clear();
+                        produceAudio(queuedFrame, timestamp);
                     }
 
                     mQueuedAmbeFrames.clear();

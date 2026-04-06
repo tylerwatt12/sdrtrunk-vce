@@ -32,11 +32,7 @@ import java.util.List;
 @JsonSubTypes.Type(value = AuxDecodeConfiguration.class, name = "auxDecodeConfiguration")
 public class AuxDecodeConfiguration extends Configuration
 {
-    private List<DecoderType> mAuxDecoders = new ArrayList<DecoderType>();
-
-    public AuxDecodeConfiguration()
-    {
-    }
+    private List<DecoderType> mAuxDecoders = new ArrayList<>();
 
     @JacksonXmlProperty(isAttribute = false, localName = "aux_decoder")
     public List<DecoderType> getAuxDecoders()

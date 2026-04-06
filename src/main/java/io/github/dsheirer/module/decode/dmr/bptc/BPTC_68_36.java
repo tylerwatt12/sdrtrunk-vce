@@ -83,39 +83,4 @@ public class BPTC_68_36 extends BPTCBase
 
         return deinterleaved;
     }
-
-    public static void main(String[] args)
-    {
-        BPTC_68_36 bptc = new BPTC_68_36();
-
-        String ref = "10101001100001000000001101101111000000110011001110011111101011001100"; //No errors
-        String raw = "10101001100001000000001101101111000000110011001110011111101011001100"; //Under test
-        CorrectedBinaryMessage rawMessage = new CorrectedBinaryMessage(BinaryMessage.load(raw));
-        CorrectedBinaryMessage refMessage = new CorrectedBinaryMessage(BinaryMessage.load(ref));
-
-        bptc.logDiagnostic(rawMessage);
-
-        bptc.correct(rawMessage);
-
-        System.out.println("RAW: " + raw);
-        System.out.println("COR: " + rawMessage);
-        System.out.println("REF: " + ref);
-
-        rawMessage.xor(refMessage);
-        System.out.println("RES: " + rawMessage);
-
-        if(rawMessage.cardinality() > 0)
-        {
-            System.out.println("--------------------------------");
-            System.out.println("Residual Error Map:");
-            bptc.logErrorMap(rawMessage);
-            System.out.println("--------------------------------");
-        }
-
-        System.out.println("\n\n*********** TRUTH DATA ********************");
-        rawMessage = new CorrectedBinaryMessage(BinaryMessage.load(raw));
-        rawMessage.xor(refMessage);
-        System.out.println("XOR: " + rawMessage);
-        bptc.logErrorMap(rawMessage);
-    }
 }

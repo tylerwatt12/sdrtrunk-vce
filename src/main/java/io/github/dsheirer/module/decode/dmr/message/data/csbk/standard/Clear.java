@@ -45,6 +45,7 @@ import java.util.List;
 public class Clear extends CSBKMessage implements ITimeslotFrequencyReceiver
 {
     private static final int[] CHANNEL_NUMBER = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27};
+    private static final int MOVE_TO_TIMESLOT = 1; //Back to the control channel timeslot
     private static final int TALKGROUP_FLAG = 31;
     protected static final int[] DESTINATION = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
         48, 49, 50, 51, 52, 53, 54, 55};
@@ -92,7 +93,7 @@ public class Clear extends CSBKMessage implements ITimeslotFrequencyReceiver
         if(multiBlock != null)
         {
             mAbsoluteChannelParameters = new AbsoluteChannelParameters(multiBlock.getMessage(), 0,
-                getMoveToTimeslot());
+                MOVE_TO_TIMESLOT);
         }
     }
 
@@ -170,14 +171,6 @@ public class Clear extends CSBKMessage implements ITimeslotFrequencyReceiver
 
 
     /**
-     * Timeslot to use for the channel grant
-     */
-    private int getMoveToTimeslot()
-    {
-        return 1; //Back to the control channel timeslot
-    }
-
-    /**
      * Channel number to move to
      */
     private int getMoveToChannelNumber()
@@ -213,7 +206,7 @@ public class Clear extends CSBKMessage implements ITimeslotFrequencyReceiver
 
         if(mChannel == null)
         {
-            mChannel = new DMRTier3Channel(getMoveToChannelNumber(), getMoveToTimeslot());
+            mChannel = new DMRTier3Channel(getMoveToChannelNumber(), MOVE_TO_TIMESLOT);
         }
 
         return mChannel;

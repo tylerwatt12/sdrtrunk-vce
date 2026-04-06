@@ -40,10 +40,6 @@ import java.util.List;
  */
 public class HyteraCsbko44 extends CSBKMessage
 {
-    private static final int[] UNKNOWN_1 = new int[]{16, 17, 18, 19, 20, 21, 22, 23};
-
-    private List<Identifier> mIdentifiers;
-
     /**
      * Constructs an instance
      *

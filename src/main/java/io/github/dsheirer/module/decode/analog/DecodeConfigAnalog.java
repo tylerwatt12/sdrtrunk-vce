@@ -22,7 +22,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Decoder configuration for an squelching analog channel
@@ -35,7 +37,7 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
     /**
      * Constructs an instance
      */
-    public DecodeConfigAnalog()
+    protected DecodeConfigAnalog()
     {
         mBandwidth = getDefaultBandwidth();
     }
@@ -121,10 +123,10 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
         }
 
         //AM demodulator channel bandwidth options
-        public static EnumSet<Bandwidth> AM_BANDWIDTHS = EnumSet.of(BW_3_0, BW_5_0, BW_8_33, BW_15_0, BW_25_0);
+        public static final Set<Bandwidth> AM_BANDWIDTHS = Collections.unmodifiableSet(EnumSet.of(BW_3_0, BW_5_0, BW_8_33, BW_15_0, BW_25_0));
 
         //FM demodulator channel bandwidth options
-        public static EnumSet<Bandwidth> FM_BANDWIDTHS = EnumSet.of(BW_7_5, BW_12_5, BW_25_0);
+        public static final Set<Bandwidth> FM_BANDWIDTHS = Collections.unmodifiableSet(EnumSet.of(BW_7_5, BW_12_5, BW_25_0));
 
         /**
          * Indicates if this entry is valid for the AM decoder.

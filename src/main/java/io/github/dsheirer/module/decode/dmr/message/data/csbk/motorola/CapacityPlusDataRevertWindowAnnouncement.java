@@ -52,13 +52,10 @@ import java.util.List;
  */
 public class CapacityPlusDataRevertWindowAnnouncement extends CSBKMessage
 {
-    private static final int[] RESERVED = new int[]{16, 17, 18, 19, 20, 21, 22, 23,}; //Probably reserved for 32-bit addressing
     private static final int[] TARGET_RADIO = new int[]{24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
     private static final int[] WINDOW = new int[]{40, 41, 42, 43, 44, 45, 46, 47};
     private static final int[] SUPER_FRAME = new int[]{48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] UNKNOWN_1 = new int[]{56, 57, 58, 59, 60, 61, 62, 63}; //Always 0xFC
-    private static final int[] UNKNOWN_2 = new int[]{64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79}; //Always 0x0000
-
+ 
     private RadioIdentifier mTargetRadio;
     private List<Identifier> mIdentifiers;
 

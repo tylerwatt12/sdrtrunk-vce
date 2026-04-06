@@ -46,7 +46,7 @@ public class BPTC_196_96
     /**
      * DMR De-interleaving indices
      */
-    public static int[] BPTC_DEINTERLEAVE = new int[]{0, 181, 166, 151, 136, 121, 106, 91, 76, 61, 46, 31, 16, 1, 182,
+    private static final int[] BPTC_DEINTERLEAVE = new int[]{0, 181, 166, 151, 136, 121, 106, 91, 76, 61, 46, 31, 16, 1, 182,
         167, 152, 137, 122, 107, 92, 77, 62, 47, 32, 17, 2, 183, 168, 153, 138, 123, 108, 93, 78, 63, 48, 33, 18, 3,
         184, 169, 154, 139, 124, 109, 94, 79, 64, 49, 34, 19, 4, 185, 170, 155, 140, 125, 110, 95, 80, 65, 50, 35, 20,
         5, 186, 171, 156, 141, 126, 111, 96, 81, 66, 51, 36, 21, 6, 187, 172, 157, 142, 127, 112, 97, 82, 67, 52, 37,
@@ -59,7 +59,7 @@ public class BPTC_196_96
     /**
      * DMR Column Indices
      */
-    public static int[][] COLUMN_INDEXES = new int[][]{
+    private static final int[][] COLUMN_INDEXES = new int[][]{
         {1, 16, 31, 46, 61, 76, 91, 106, 121, 136, 151, 166, 181},
         {2, 17, 32, 47, 62, 77, 92, 107, 122, 137, 152, 167, 182},
         {3, 18, 33, 48, 63, 78, 93, 108, 123, 138, 153, 168, 183},
@@ -75,6 +75,10 @@ public class BPTC_196_96
         {13, 28, 43, 58, 73, 88, 103, 118, 133, 148, 163, 178, 193},
         {14, 29, 44, 59, 74, 89, 104, 119, 134, 149, 164, 179, 194},
         {15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195}};
+
+    private BPTC_196_96()
+    {
+    }
 
     /**
      * Performs de-interleave, error detect and correct and extracts a 96-bit message from the DMR BPTC(196,96)
@@ -218,72 +222,6 @@ public class BPTC_196_96
         }
 
         return intersection;
-    }
-
-    private static void logDiagnostic(CorrectedBinaryMessage message)
-    {
-        StringBuilder sb = new StringBuilder();
-        for(int row = 0; row < 13; row++)
-        {
-            int offset = (row * 15) + 1;
-            sb.append("Row ");
-            if(row < 10)
-            {
-                sb.append(" ").append(row);
-            }
-            else
-            {
-                sb.append(row);
-            }
-            sb.append(": ");
-            sb.append(message.getSubMessage(offset, offset + 16));
-            int index = getRowErrorIndex(row, message);
-            sb.append(" Index:").append(index == IHamming.NO_ERRORS ? "-": index);
-            sb.append("\n");
-        }
-
-        sb.append("Column Error Indices: ");
-        for(int column = 0; column < 15; column++)
-        {
-            int index = getColumnErrorIndex(column, message);
-            String label = index == IHamming.NO_ERRORS ? "-" : (index == 1000 ? "(bad)" : String.valueOf(index));
-            sb.append(column).append(":").append(label).append(" ");
-        }
-
-        System.out.println("Diagnostic:\n" + sb + "\n");
-    }
-
-    private static void logErrorMap(CorrectedBinaryMessage message)
-    {
-        StringBuilder sb = new StringBuilder();
-        for(int row = 0; row < 13; row++)
-        {
-            int offset = (row * 15) + 1;
-            sb.append("Row ");
-            if(row < 10)
-            {
-                sb.append(" ").append(row);
-            }
-            else
-            {
-                sb.append(row);
-            }
-            sb.append(": ");
-            sb.append(message.getSubMessage(offset, offset + 15));
-
-            sb.append(" ").append(offset).append(":").append(offset + 14).append(" =");
-
-            for(int index = offset; index < offset + 15; index++)
-            {
-                if(message.get(index))
-                {
-                    sb.append(" " + index);
-                }
-            }
-            sb.append("\n");
-        }
-
-        System.out.println("Error Map:\n" + sb + "\n");
     }
 
     /**
@@ -485,7 +423,7 @@ public class BPTC_196_96
 
                 //If our candidate index is part of the discovered solution, fail, otherwise return it as part of
                 // the solution.
-                if(solution.size() > 0)
+                if(!solution.isEmpty())
                 {
                     columns.clear(column);
                     return solution;
@@ -496,7 +434,7 @@ public class BPTC_196_96
                     {
                         List<Integer> solution2 = correctColumn(column2, message, columns, rows, depth + 1, pursue, path);
 
-                        if(solution2.size() > 0)
+                        if(!solution2.isEmpty())
                         {
                             columns.clear(column);
                             rows.clear(row);
@@ -549,7 +487,7 @@ public class BPTC_196_96
 
                 //If our candidate index is part of the discovered solution, fail, otherwise return it as part of
                 // the solution.
-                if(solution.size() > 0)
+                if(!solution.isEmpty())
                 {
                     rows.clear(row);
                     return solution;
@@ -560,7 +498,7 @@ public class BPTC_196_96
                     {
                         List<Integer> solution2 = correctRow(row2, message, columns, rows, depth + 1, pursue, path);
 
-                        if(solution2.size() > 0 && !solution2.contains(index))
+                        if(!solution2.isEmpty() && !solution2.contains(index))
                         {
                             columns.clear(column);
                             rows.clear(row);
@@ -636,35 +574,5 @@ public class BPTC_196_96
     public static int getRow(int index)
     {
         return (index - 1) / 15;
-    }
-
-    public static void main(String[] args)
-    {
-        String raw = "0000101111101000000100001010100001010000001000000011100000000000100000000000001000000000001000000000000010000000001111001010000100001000000001100000100001000111110101011111011111101001111011100010";
-        String ref = "0000101111100000000100001100100001010000001000000000000000000000000000000000000000000000000000000000000000000000001111001010000100001000000001110000100001011111110101011011011111101011111011100000";
-        CorrectedBinaryMessage rawMessage = new CorrectedBinaryMessage(BinaryMessage.load(raw));
-        CorrectedBinaryMessage refMessage = new CorrectedBinaryMessage(BinaryMessage.load(ref));
-
-//        correct2(refMessage);
-
-        boolean pursueShadows = true;
-        correct(rawMessage, pursueShadows);
-        System.out.println("RAW: " + raw);
-        System.out.println("COR: " + rawMessage);
-        System.out.println("REF: " + ref);
-
-        rawMessage.xor(refMessage);
-        System.out.println("RES: " + rawMessage);
-
-        if(rawMessage.cardinality() > 0)
-        {
-            System.out.println("Residual Error Map:");
-            logErrorMap(rawMessage);
-        }
-
-        rawMessage = new CorrectedBinaryMessage(BinaryMessage.load(raw));
-        rawMessage.xor(refMessage);
-        System.out.println("\n\nXOR: " + rawMessage);
-        logErrorMap(rawMessage);
     }
 }

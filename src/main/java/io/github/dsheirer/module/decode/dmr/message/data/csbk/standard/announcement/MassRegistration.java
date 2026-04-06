@@ -34,11 +34,6 @@ import java.util.List;
  */
 public class MassRegistration extends Announcement
 {
-    //Broadcast Parameters 1: 21-34
-    private static final int[] RESERVED = new int[]{21, 22, 23, 24, 25};
-    private static final int[] REGISTRATION_WINDOW = new int[]{26, 27, 28, 39};
-    private static final int[] ALOHA_MASK = new int[]{30, 31, 32, 33, 34};
-
     //Broadcast Parameters 2: 56-79
     private static final int[] DESTINATION_RADIO = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
         71, 72, 73, 74, 75, 76, 77, 78, 79};

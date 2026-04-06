@@ -33,10 +33,6 @@ public class DecodeConfigAM extends DecodeConfigAnalog implements ISquelchConfig
     private int mSquelchThreshold = -78;
     private boolean mSquelchAutoTrack = true;
 
-	public DecodeConfigAM()
-    {
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {

@@ -22,6 +22,8 @@ package io.github.dsheirer.module.decode.dmr.bptc;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.Hamming16;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Block Product Turbo Code 16/2 for decoding a DMR Voice Frame F payload from the 32-bit EMB field.
@@ -30,8 +32,13 @@ import io.github.dsheirer.edac.Hamming16;
  */
 public class BPTC_16_2
 {
+    private static final Logger mLog = LoggerFactory.getLogger(BPTC_16_2.class);
     private static final int[] DEINTERLEAVE = new int[]{0, 24, 1, 25, 2, 26, 3, 27, 4, 28, 5, 29, 6, 30, 7, 31, 8, 16,
             9, 17, 10, 18, 11, 19, 12, 20, 13, 21, 14, 22, 15, 23};
+
+    private BPTC_16_2()
+    {
+    }
 
     /**
      * Unscramble and perform FEC checks per paragraph B.2.2.1 for Non-Reverse Channel Single Burst
@@ -70,10 +77,10 @@ public class BPTC_16_2
     public static CorrectedBinaryMessage decodeReverseChannel(CorrectedBinaryMessage message)
     {
         CorrectedBinaryMessage deinterleaved = deinterleave(message);
-        System.out.println(" DEINTER: " + deinterleaved.toHexString());
+        mLog.debug(" DEINTER: {}", deinterleaved.toHexString());
         int fec = Hamming16.checkAndCorrect(deinterleaved, 0);
-        System.out.println(" DECODED: " + deinterleaved.toHexString());
-        System.out.println("FEC:" + fec);
+        mLog.debug(" DECODED: {}", deinterleaved.toHexString());
+        mLog.debug("FEC:{}", fec);
         if(fec == 2) //0 or 1 is good, 2 = uncorrectable errors
         {
             return null;
@@ -109,18 +116,5 @@ public class BPTC_16_2
         }
 
         return delinterleaved;
-    }
-
-    public static void main(String[] args)
-    {
-        String[] msgs = new String[]{"05030A03", "35003A00", "1C6D2C9E"};
-
-        for(String msg : msgs)
-        {
-            CorrectedBinaryMessage original = new CorrectedBinaryMessage(BinaryMessage.loadHex(msg));
-            System.out.println("ORIGINAL: " + original.toHexString());
-            CorrectedBinaryMessage decoded = decodeReverseChannel(original);
-            System.out.println("-------------------------");
-        }
     }
 }

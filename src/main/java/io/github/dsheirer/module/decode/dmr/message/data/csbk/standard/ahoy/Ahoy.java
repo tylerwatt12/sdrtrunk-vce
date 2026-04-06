@@ -34,8 +34,6 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
  */
 public abstract class Ahoy extends CSBKMessage
 {
-    private static final int[] SERVICE_OPTIONS_MIRROR = new int[]{16, 17, 18, 19, 20, 21, 22};
-    private static final int ENCRYPTED_SERVICE_OPTION_FLAG = 17;
     protected static final int SERVICE_KIND_FLAG = 23;
     private static final int AMBIENT_LISTENING_SERVICE_FLAG = 24;
     private static final int TALKGROUP_FLAG = 25;
@@ -58,7 +56,7 @@ public abstract class Ahoy extends CSBKMessage
      * @param timestamp
      * @param timeslot
      */
-    public Ahoy(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType, long timestamp, int timeslot)
+    protected Ahoy(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType, long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);
     }

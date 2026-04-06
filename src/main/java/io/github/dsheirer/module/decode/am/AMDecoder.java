@@ -133,16 +133,19 @@ public class AMDecoder extends SquelchControlDecoder implements ISourceEventList
     @Override
     public void reset()
     {
+        /* no action required */
     }
 
     @Override
     public void start()
     {
+        /* no action required */
     }
 
     @Override
     public void stop()
     {
+        /* no action required */
     }
 
     /**
@@ -154,8 +157,6 @@ public class AMDecoder extends SquelchControlDecoder implements ISourceEventList
         if(mResampledBufferListener != null)
         {
             mResampledBufferListener.receive(demodulatedSamples);
-//            //Apply audio gain and rebroadcast
-//            super.broadcast(mAGC.process(demodulatedSamples));
         }
     }
 

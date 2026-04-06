@@ -98,45 +98,4 @@ public class BPTC_128_77 extends BPTCBase
 
         return deinterleaved;
     }
-
-    public static void main(String[] args)
-    {
-        BPTC_128_77 bptc = new BPTC_128_77();
-        String deinterleavedRaw = "00000100000101010000001000111000100000000001001101000010001001000000000010101000111100000000001000011000100010110010100100100000";
-        CorrectedBinaryMessage deinterleaved = new CorrectedBinaryMessage(BinaryMessage.load(deinterleavedRaw));
-
-        String deinterleavedReference = "00000100000101010000011000111001100000000001001101000010001101100000000110101000111100000000101000011000100010110010100100100000"; //No errors
-        CorrectedBinaryMessage deinterleavedReferenceMessage = new CorrectedBinaryMessage(BinaryMessage.load(deinterleavedReference));
-
-//        String interleaved = "00000000000000000000000000010010000100010000001000000010000100010000001100000110001101100000001100000101001000010010010100110011"; //Under test
-//        CorrectedBinaryMessage interleavedMessage = new CorrectedBinaryMessage(BinaryMessage.load(interleaved));
-//        CorrectedBinaryMessage deinterleaved = deinterleave(interleavedMessage);
-
-
-        String deinterleavedUncorrected = deinterleaved.toString();
-        bptc.logDiagnostic(deinterleaved);
-        bptc.correct(deinterleaved);
-
-        System.out.println("DEINTERLEAVED: " + deinterleavedUncorrected);
-        System.out.println("    CORRECTED: " + deinterleaved);
-        System.out.println("    REFERENCE: " + deinterleavedReferenceMessage);
-
-        deinterleaved.xor(deinterleavedReferenceMessage);
-        System.out.println("        DELTA: " + deinterleaved);
-
-        if(deinterleaved.cardinality() > 0)
-        {
-            System.out.println("--------------------------------");
-            System.out.println("Residual Error Map:");
-            bptc.logErrorMap(deinterleaved);
-            System.out.println("Columns:" + bptc.getColumnErrors(deinterleaved) + " Rows:" + bptc.getRowErrors(deinterleaved));
-            System.out.println("--------------------------------");
-        }
-        else
-        {
-            System.out.println("--------------------------------");
-            System.out.println("Message Was Fully Corrected");
-            System.out.println("--------------------------------");
-        }
-    }
 }

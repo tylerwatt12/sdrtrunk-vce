@@ -86,7 +86,6 @@ public class ConnectPlusNeighborReport extends CSBKMessage
         }
 
         sb.append(" UNK:").append(getUnknownField());
-//        sb.append(" MSG:").append(getMessage().toHexString());
 
         return sb.toString();
     }

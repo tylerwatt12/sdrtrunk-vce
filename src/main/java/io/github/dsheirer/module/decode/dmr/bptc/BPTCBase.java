@@ -31,7 +31,7 @@ import java.util.List;
  */
 public abstract class BPTCBase
 {
-    public static int ERRORS_NOT_CORRECTED = -2;
+    protected static final int ERRORS_NOT_CORRECTED = -2;
     private IHamming mHamming;
     private int mColumnCount;
     private int mRowCount;
@@ -42,7 +42,7 @@ public abstract class BPTCBase
      * @param column count
      * @param row count
      */
-    public BPTCBase(IHamming hamming, int columnCount, int rowCount)
+    protected BPTCBase(IHamming hamming, int columnCount, int rowCount)
     {
         mHamming = hamming;
         mColumnCount = columnCount;
@@ -105,7 +105,7 @@ public abstract class BPTCBase
             {
                 List<Integer> solution = correctMultiBitErrors(row, message, columns, rows);
 
-                if(solution.size() > 0)
+                if(!solution.isEmpty())
                 {
                     correctedIndexes.addAll(solution);
                 }
@@ -291,35 +291,40 @@ public abstract class BPTCBase
 
         for(int row = rows.nextSetBit(0); row >= 0 && row < mRowCount; row = rows.nextSetBit(row + 1))
         {
-            for(int column1 = columns.nextSetBit(0); column1 >= 0; column1 = columns.nextSetBit(column1 + 1))
-            {
-                for(int column2 = columns.nextSetBit(column1 + 1); column2 >= 0; column2 = columns.nextSetBit(column2 + 1))
-                {
-                    int index1 = getIndex(column1, row);
-                    int index2 = getIndex(column2, row);
-                    message.flip(index1);
-                    message.flip(index2);
-
-                    if(isRowCorrect(row, message))
-                    {
-                        solution.add(index1);
-                        solution.add(index2);
-                        columns.clear(column1);
-                        columns.clear(column2);
-                        rows.clear(row);
-                        column1 = mColumnCount;
-                        column2 = mColumnCount;
-                    }
-                    else
-                    {
-                        message.flip(index1);
-                        message.flip(index2);
-                    }
-                }
-            }
+            correctRowTwoBitError(row, columns, rows, message, solution);
         }
 
         return solution;
+    }
+
+    private void correctRowTwoBitError(int row, BinaryMessage columns, BinaryMessage rows,
+                                       CorrectedBinaryMessage message, List<Integer> solution)
+    {
+        for(int column1 = columns.nextSetBit(0); column1 >= 0; column1 = columns.nextSetBit(column1 + 1))
+        {
+            for(int column2 = columns.nextSetBit(column1 + 1); column2 >= 0; column2 = columns.nextSetBit(column2 + 1))
+            {
+                int index1 = getIndex(column1, row);
+                int index2 = getIndex(column2, row);
+                message.flip(index1);
+                message.flip(index2);
+
+                if(isRowCorrect(row, message))
+                {
+                    solution.add(index1);
+                    solution.add(index2);
+                    columns.clear(column1);
+                    columns.clear(column2);
+                    rows.clear(row);
+                    return;
+                }
+                else
+                {
+                    message.flip(index1);
+                    message.flip(index2);
+                }
+            }
+        }
     }
 
     /**
@@ -423,67 +428,4 @@ public abstract class BPTCBase
         return Collections.emptyList();
     }
 
-    public void logErrorMap(CorrectedBinaryMessage message)
-    {
-        StringBuilder sb = new StringBuilder();
-        for(int row = 0; row < mRowCount; row++)
-        {
-            int offset = row * mColumnCount;
-            sb.append("Row ").append(row).append(": ");
-            sb.append(message.getSubMessage(offset, offset + mColumnCount));
-            sb.append(" (").append(offset).append(":").append(offset + mColumnCount).append(")");
-
-            for(int error = offset; error < offset + mColumnCount; error++)
-            {
-                if(message.get(error))
-                {
-                    sb.append(" ").append(error);
-                }
-            }
-
-            sb.append("\n");
-
-        }
-
-        System.out.println(sb);
-    }
-
-    public void logDiagnostic(CorrectedBinaryMessage message)
-    {
-        StringBuilder sb = new StringBuilder();
-        for(int row = 0; row < mRowCount; row++)
-        {
-            int offset = row * mColumnCount;
-            sb.append(" Row ").append(row).append(": ");
-            sb.append(message.getSubMessage(offset, offset + mColumnCount));
-            int index = getRowErrorIndex(row, message);
-            if(index != IHamming.NO_ERRORS)
-            {
-                sb.append(" < Index:").append(index);
-
-                if(index == IHamming.MULTIPLE_ERRORS)
-                {
-                    sb.append(" (2+ bit errors)");
-                }
-            }
-            sb.append("\n");
-        }
-
-        sb.append("Errors: ");
-
-        BinaryMessage columnErrors = getColumnErrors(message);
-        for(int column = 0; column < mColumnCount; column++)
-        {
-            if(columnErrors.get(column))
-            {
-                sb.append("^");
-            }
-            else
-            {
-                sb.append(".");
-            }
-        }
-
-        System.out.println("Diagnostic:\n" + sb + "\n");
-    }
 }

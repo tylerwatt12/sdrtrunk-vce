@@ -46,7 +46,6 @@ public class Hytera68Acknowledge extends CSBKMessage
     private static final int[] ACKNOWLEDGE_TYPE = new int[]{23, 24};
     //Note: acknowledge type is the first 2 bits of the reason code - intentional overlap
     private static final int[] REASON_CODE = new int[]{23, 24, 25, 26, 27, 28, 29, 30};
-    private static final int RESERVED = 31;
     private static final int[] TARGET_ADDRESS = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
             47, 48, 49, 50, 51, 52, 53, 54, 55};
     private static final int[] ADDITIONAL_INFO_SOURCE_ADDRESS = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,

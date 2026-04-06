@@ -43,7 +43,6 @@ public class AdjacentSiteInformation extends Announcement
     private static final int ACTIVE_NETWORK_CONNECTION_FLAG = 57;
     private static final int[] CONFIRMED_CHANNEL_PRIORITY = new int[]{58, 59, 60};
     private static final int[] ADJACENT_CHANNEL_PRIORITY = new int[]{61, 62, 63};
-    private static final int[] RESERVED = new int[]{64, 65, 66, 67};
     private static final int[] NEIGHBOR_CHANNEL_NUMBER = new int[]{68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
 
     private SystemIdentityCode mNeighborSystemIdentityCode;

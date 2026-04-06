@@ -98,13 +98,12 @@ public class AuthenticateRegisterRadioCheck extends Ahoy
      */
     public String getCommand()
     {
-        switch(getGateway())
+        if(getGateway() == Tier3Gateway.TSI)
         {
-            case TSI:
-                return "RADIO CHECK";
-            default:
-                return "AUTHENTICATE";
+            return "RADIO CHECK";
         }
+
+        return "AUTHENTICATE";
     }
 
     /**

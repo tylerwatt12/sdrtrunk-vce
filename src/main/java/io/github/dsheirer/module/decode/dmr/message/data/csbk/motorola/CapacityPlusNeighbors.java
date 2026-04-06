@@ -38,6 +38,8 @@ import java.util.List;
  */
 public class CapacityPlusNeighbors extends CSBKMessage implements ITimeslotFrequencyReceiver
 {
+    private static final String SITE_LABEL = " SITE:";
+    private static final String REST_LABEL = "-REST:";
     private static final int[] LC_START_STOP = new int[]{16, 17};
     private static final int[] REST_LSN = new int[]{19, 20, 21, 22, 23};
     private static final int ASYNC = 24;
@@ -97,33 +99,33 @@ public class CapacityPlusNeighbors extends CSBKMessage implements ITimeslotFrequ
 
         if(hasNeighbor(1))
         {
-            sb.append(" NEIGHBORS SITE:").append(getNeighbor1Site());
-            sb.append("-REST:").append(getNeighbor1Rest());
+            sb.append(" NEIGHBORS").append(SITE_LABEL).append(getNeighbor1Site());
+            sb.append(REST_LABEL).append(getNeighbor1Rest());
 
             if(hasNeighbor(2))
             {
-                sb.append(" SITE:").append(getNeighbor2Site());
-                sb.append("-REST:").append(getNeighbor2Rest());
+                sb.append(SITE_LABEL).append(getNeighbor2Site());
+                sb.append(REST_LABEL).append(getNeighbor2Rest());
 
                 if(hasNeighbor(3))
                 {
-                    sb.append(" SITE:").append(getNeighbor3Site());
-                    sb.append("-REST:").append(getNeighbor3Rest());
+                    sb.append(SITE_LABEL).append(getNeighbor3Site());
+                    sb.append(REST_LABEL).append(getNeighbor3Rest());
 
                     if(hasNeighbor(4))
                     {
-                        sb.append(" SITE:").append(getNeighbor4Site());
-                        sb.append("-REST:").append(getNeighbor4Rest());
+                        sb.append(SITE_LABEL).append(getNeighbor4Site());
+                        sb.append(REST_LABEL).append(getNeighbor4Rest());
 
                         if(hasNeighbor(5))
                         {
-                            sb.append(" SITE:").append(getNeighbor5Site());
-                            sb.append("-REST:").append(getNeighbor5Rest());
+                            sb.append(SITE_LABEL).append(getNeighbor5Site());
+                            sb.append(REST_LABEL).append(getNeighbor5Rest());
 
                             if(hasNeighbor(6))
                             {
-                                sb.append(" SITE:").append(getNeighbor6Site());
-                                sb.append("-REST:").append(getNeighbor6Rest());
+                                sb.append(SITE_LABEL).append(getNeighbor6Site());
+                                sb.append(REST_LABEL).append(getNeighbor6Rest());
                             }
                         }
                     }

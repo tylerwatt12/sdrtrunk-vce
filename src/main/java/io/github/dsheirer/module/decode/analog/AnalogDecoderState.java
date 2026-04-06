@@ -41,7 +41,7 @@ public abstract class AnalogDecoderState extends DecoderState implements ISource
     private DecodeEvent mDecodeEvent;
     private IChannelDescriptor mChannelDescriptor = null;
 
-    public AnalogDecoderState()
+    protected AnalogDecoderState()
     {
     }
 

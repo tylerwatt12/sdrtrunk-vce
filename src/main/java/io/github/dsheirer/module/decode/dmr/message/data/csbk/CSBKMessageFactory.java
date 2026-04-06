@@ -95,6 +95,10 @@ import java.util.List;
  */
 public class CSBKMessageFactory
 {
+    private CSBKMessageFactory()
+    {
+    }
+
     /**
      * Creates a CSBK Message
      * @param pattern that was transmitted
@@ -231,14 +235,13 @@ public class CSBKMessageFactory
                 case HYTERA_08_ANNOUNCEMENT:
                 case HYTERA_68_ANNOUNCEMENT:
                     AnnouncementType announcementType = HyteraAnnouncement.getAnnouncementType(message);
-                    switch(announcementType)
+                    if(announcementType == AnnouncementType.ADJACENT_SITE_INFORMATION)
                     {
-                        case ADJACENT_SITE_INFORMATION:
-                            csbk = new HyteraAdjacentSiteInformation(pattern, message, cach, slotType, timestamp, timeslot);
-                            break;
-                        default:
-                            csbk = new HyteraAnnouncement(pattern, message, cach, slotType, timestamp, timeslot);
-                            break;
+                        csbk = new HyteraAdjacentSiteInformation(pattern, message, cach, slotType, timestamp, timeslot);
+                    }
+                    else
+                    {
+                        csbk = new HyteraAnnouncement(pattern, message, cach, slotType, timestamp, timeslot);
                     }
                     break;
                 case HYTERA_68_XPT_PREAMBLE:
@@ -423,15 +426,14 @@ public class CSBKMessageFactory
             case HYTERA_08_ANNOUNCEMENT:
             case HYTERA_68_ANNOUNCEMENT:
                 AnnouncementType hyteraAnnouncementType = HyteraAnnouncement.getAnnouncementType(header.getMessage());
-                switch(hyteraAnnouncementType)
+                if(hyteraAnnouncementType == AnnouncementType.ADJACENT_SITE_INFORMATION)
                 {
-                    case ADJACENT_SITE_INFORMATION:
-                        csbk = new HyteraAdjacentSiteInformation(header.getSyncPattern(), header.getMessage(), header.getCACH(),
-                            header.getSlotType(), header.getTimestamp(), header.getTimeslot(), getBlock1(continuationBlocks));
-                        break;
-                    default:
-                        csbk = new UnknownMultiCSBK(header, continuationBlocks);
-                        break;
+                    csbk = new HyteraAdjacentSiteInformation(header.getSyncPattern(), header.getMessage(), header.getCACH(),
+                        header.getSlotType(), header.getTimestamp(), header.getTimeslot(), getBlock1(continuationBlocks));
+                }
+                else
+                {
+                    csbk = new UnknownMultiCSBK(header, continuationBlocks);
                 }
                 break;
             default:

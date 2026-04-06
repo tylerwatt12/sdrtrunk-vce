@@ -34,13 +34,6 @@ public class DCSDecoderState extends DecoderState
     private Map<DCSCode,Integer> mDcsCodeCountsMap = new HashMap<>();
     private DCSCode mCurrentCode = DCSCode.UNKNOWN;
 
-    /**
-     * Constructs an instance
-     */
-    public DCSDecoderState()
-    {
-    }
-
     @Override
     public DecoderType getDecoderType()
     {
@@ -71,13 +64,9 @@ public class DCSDecoderState extends DecoderState
     @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == DecoderStateEvent.Event.REQUEST_RESET)
         {
-            case REQUEST_RESET:
-                resetState();
-                break;
-            default:
-                break;
+            resetState();
         }
     }
 
@@ -114,5 +103,6 @@ public class DCSDecoderState extends DecoderState
     @Override
     public void init()
     {
+        /* no action required */
     }
 }

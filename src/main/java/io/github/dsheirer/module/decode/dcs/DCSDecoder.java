@@ -98,13 +98,6 @@ public class DCSDecoder extends Decoder implements IRealBufferListener, Listener
     private IRealFilter mLowPassFilter = FilterFactory.getRealFilter(sLowPassFilterCoefficients);
 
     /**
-     * Constructs an instance
-     */
-    public DCSDecoder()
-    {
-    }
-
-    /**
      * Decoder type
      */
     @Override
@@ -214,7 +207,7 @@ public class DCSDecoder extends Decoder implements IRealBufferListener, Listener
                         }
                     }
 
-                    mBaudCounter++;
+                    mBaudCounter += 1.0f;
 
                     //Update the current code value once we've processed a baud/symbol period of samples
                     if(mBaudCounter > BAUD_LENGTH)
@@ -269,24 +262,22 @@ public class DCSDecoder extends Decoder implements IRealBufferListener, Listener
         double xbar = 0;
         double ybar = samples[offset];
 
-//        double sumXX = 0;
         double sumXY = 0;
-        double fact1, dx, dy;
+        double fact1;
+        double dx;
+        double dy;
 
         for(int x = 1; x < SLOPE_CALCULATION_PERIOD; x++)
         {
             fact1 = 1.0 + x;
-//            final double fact2 = x / (1.0 + x);
             dx = x - xbar;
             dy = samples[offset + x] - ybar;
-//            sumXX += dx * dx * fact2;
             sumXY += dx * dy * (x / (1.0 + x));
             xbar += dx / fact1;
             ybar += dy / fact1;
         }
 
         //Transfer the sumXX value to SLOPE_CALCULATION_SUM_XX since it's a constant value
-//        mLog.info("SumXX: " + sumXX);
 
         return (float)(sumXY / SLOPE_CALCULATION_SUM_XX);
     }

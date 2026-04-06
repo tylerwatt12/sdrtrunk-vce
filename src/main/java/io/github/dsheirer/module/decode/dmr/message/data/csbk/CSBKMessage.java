@@ -53,7 +53,7 @@ public abstract class CSBKMessage extends DataMessage
      * @param timestamp
      * @param timeslot
      */
-    public CSBKMessage(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
+    protected CSBKMessage(DMRSyncPattern syncPattern, CorrectedBinaryMessage message, CACH cach, SlotType slotType,
                        long timestamp, int timeslot)
     {
         super(syncPattern, message, cach, slotType, timestamp, timeslot);
