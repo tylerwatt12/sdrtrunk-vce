@@ -9,19 +9,12 @@ public class HydraSdrDeviceInformation
 {
 	private static final Logger mLog =
 			LoggerFactory.getLogger( HydraSdrDeviceInformation.class );
+	private static final String UNKNOWN = "Unknown";
 
 	private HydraSdrTunerController.BoardID mBoardID = HydraSdrTunerController.BoardID.UNKNOWN;
-	private String mFirmwareVersion = "Unknown";
-	private String mPartNumber = "Unknown";
-	private String mSerialNumber = "Unknown";
-
-	/**
-	 * HydraSDR Device Information - provides parsing and access to device
-	 * information components.
-	 */
-	public HydraSdrDeviceInformation()
-	{
-	}
+	private String mFirmwareVersion = UNKNOWN;
+	private String mPartNumber = UNKNOWN;
+	private String mSerialNumber = UNKNOWN;
 
 	public void setBoardID( int boardID )
 	{

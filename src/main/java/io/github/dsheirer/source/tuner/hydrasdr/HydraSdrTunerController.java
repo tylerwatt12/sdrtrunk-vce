@@ -31,6 +31,7 @@ import java.nio.ByteOrder;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.Set;
 import java.util.List;
 import org.apache.commons.io.EndianUtils;
 import org.slf4j.Logger;
@@ -225,7 +226,7 @@ public class HydraSdrTunerController extends USBTunerController
     }
 
     @Override
-    public long getTunedFrequency() throws SourceException
+    public synchronized long getTunedFrequency() throws SourceException
     {
         return mFrequencyController.getTunedFrequency();
     }
@@ -552,7 +553,7 @@ public class HydraSdrTunerController extends USBTunerController
      */
     private static String formatSampleRate(int rate)
     {
-        return MHZ_FORMATTER.format((double) rate / 1E6d);
+        return MHZ_FORMATTER.format(rate / 1E6d);
     }
 
     /**
@@ -804,7 +805,10 @@ public class HydraSdrTunerController extends USBTunerController
 
         public static Gain getGain(GainMode mode, int value)
         {
-            assert (GAIN_MIN <= value && value <= GAIN_MAX);
+            if(value < GAIN_MIN || value > GAIN_MAX)
+            {
+                throw new IllegalArgumentException("Gain value [" + value + "] must be in range [" + GAIN_MIN + "-" + GAIN_MAX + "]");
+            }
 
             switch(mode)
             {
@@ -846,12 +850,12 @@ public class HydraSdrTunerController extends USBTunerController
             return GainMode.CUSTOM;
         }
 
-        public static EnumSet<Gain> getLinearityGains()
+        public static Set<Gain> getLinearityGains()
         {
             return EnumSet.range(LINEARITY_1, LINEARITY_22);
         }
 
-        public static EnumSet<Gain> getSensitivityGains()
+        public static Set<Gain> getSensitivityGains()
         {
             return EnumSet.range(SENSITIVITY_1, SENSITIVITY_22);
         }

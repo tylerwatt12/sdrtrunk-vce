@@ -513,6 +513,7 @@ public class FCD1TunerController extends FCDTunerController
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return getLabel();
@@ -569,6 +570,7 @@ public class FCD1TunerController extends FCDTunerController
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return getLabel();
@@ -616,6 +618,7 @@ public class FCD1TunerController extends FCDTunerController
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return getLabel();

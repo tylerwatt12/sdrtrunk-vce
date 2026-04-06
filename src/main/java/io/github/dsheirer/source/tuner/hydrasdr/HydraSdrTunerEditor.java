@@ -25,8 +25,7 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.source.tuner.ui.TunerEditor;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+
 import java.util.List;
 import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
@@ -41,7 +40,8 @@ import javax.swing.JOptionPane;
 import javax.swing.JSeparator;
 import javax.swing.JSlider;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.event.ChangeEvent;
+import javax.swing.SwingConstants;
+
 import javax.swing.event.ChangeListener;
 
 /**
@@ -291,7 +291,7 @@ public class HydraSdrTunerEditor extends TunerEditor<HydraSdrTuner, HydraSdrTune
     {
         if(mLNAGainSlider == null)
         {
-            mLNAGainSlider = new JSlider(JSlider.HORIZONTAL, HydraSdrTunerController.LNA_GAIN_MIN,
+            mLNAGainSlider = new JSlider(SwingConstants.HORIZONTAL, HydraSdrTunerController.LNA_GAIN_MIN,
                     HydraSdrTunerController.LNA_GAIN_MAX, HydraSdrTunerController.LNA_GAIN_MIN);
             mLNAGainSlider.setEnabled(false);
             mLNAGainSlider.setMajorTickSpacing(1);
@@ -336,34 +336,29 @@ public class HydraSdrTunerEditor extends TunerEditor<HydraSdrTuner, HydraSdrTune
     {
         if(mMixerGainSlider == null)
         {
-            mMixerGainSlider = new JSlider(JSlider.HORIZONTAL, HydraSdrTunerController.MIXER_GAIN_MIN,
+            mMixerGainSlider = new JSlider(SwingConstants.HORIZONTAL, HydraSdrTunerController.MIXER_GAIN_MIN,
                     HydraSdrTunerController.MIXER_GAIN_MAX, HydraSdrTunerController.MIXER_GAIN_MIN);
             mMixerGainSlider.setEnabled(false);
             mMixerGainSlider.setMajorTickSpacing(1);
             mMixerGainSlider.setPaintTicks(true);
-            mMixerGainSlider.addChangeListener(new ChangeListener()
-            {
-                @Override
-                public void stateChanged(ChangeEvent event)
+            mMixerGainSlider.addChangeListener(event -> {
+                int gain = mMixerGainSlider.getValue();
+
+                if(hasTuner() && !isLoading())
                 {
-                    int gain = mMixerGainSlider.getValue();
-
-                    if(hasTuner() && !isLoading())
+                    try
                     {
-                        try
-                        {
-                            getTuner().getController().setMixerGain(gain);
-                            save();
-                        }
-                        catch(Exception e)
-                        {
-                            mLog.error("Couldn't set HydraSDR Mixer gain to:" + gain, e);
-                            JOptionPane.showMessageDialog(mMixerGainSlider, "Couldn't set Mixer gain value to " + gain);
-                        }
+                        getTuner().getController().setMixerGain(gain);
+                        save();
                     }
-
-                    getMixerGainValueLabel().setText(String.valueOf(gain));
+                    catch(Exception e)
+                    {
+                        mLog.error("Couldn't set HydraSDR Mixer gain to:" + gain, e);
+                        JOptionPane.showMessageDialog(mMixerGainSlider, "Couldn't set Mixer gain value to " + gain);
+                    }
                 }
+
+                getMixerGainValueLabel().setText(String.valueOf(gain));
             });
         }
 
@@ -395,7 +390,7 @@ public class HydraSdrTunerEditor extends TunerEditor<HydraSdrTuner, HydraSdrTune
     {
         if(mIFGainSlider == null)
         {
-            mIFGainSlider = new JSlider(JSlider.HORIZONTAL, HydraSdrTunerController.IF_GAIN_MIN,
+            mIFGainSlider = new JSlider(SwingConstants.HORIZONTAL, HydraSdrTunerController.IF_GAIN_MIN,
                     HydraSdrTunerController.IF_GAIN_MAX, HydraSdrTunerController.IF_GAIN_MIN);
             mIFGainSlider.setEnabled(false);
             mIFGainSlider.setMajorTickSpacing(1);
@@ -450,7 +445,7 @@ public class HydraSdrTunerEditor extends TunerEditor<HydraSdrTuner, HydraSdrTune
     {
         if(mMasterGainSlider == null)
         {
-            mMasterGainSlider = new JSlider(JSlider.HORIZONTAL, HydraSdrTunerController.GAIN_MIN,
+            mMasterGainSlider = new JSlider(SwingConstants.HORIZONTAL, HydraSdrTunerController.GAIN_MIN,
                     HydraSdrTunerController.GAIN_MAX, HydraSdrTunerController.GAIN_MIN);
             mMasterGainSlider.setEnabled(false);
             mMasterGainSlider.setMajorTickSpacing(1);
@@ -512,30 +507,25 @@ public class HydraSdrTunerEditor extends TunerEditor<HydraSdrTuner, HydraSdrTune
         {
             mSampleRateCombo = new JComboBox<>();
             mSampleRateCombo.setEnabled(false);
-            mSampleRateCombo.addActionListener(new ActionListener()
-            {
-                @Override
-                public void actionPerformed(ActionEvent e)
+            mSampleRateCombo.addActionListener(e -> {
+                if(hasTuner() && !isLoading())
                 {
-                    if(hasTuner() && !isLoading())
+                    HydraSdrSampleRate rate = (HydraSdrSampleRate)mSampleRateCombo.getSelectedItem();
+
+                    try
                     {
-                        HydraSdrSampleRate rate = (HydraSdrSampleRate)mSampleRateCombo.getSelectedItem();
+                        getTuner().getController().setSampleRate(rate);
 
-                        try
-                        {
-                            getTuner().getController().setSampleRate(rate);
+                        //Adjust the min/max values for the sample rate.
+                        adjustForSampleRate(rate.getRate());
 
-                            //Adjust the min/max values for the sample rate.
-                            adjustForSampleRate(rate.getRate());
-
-                            save();
-                        }
-                        catch(Exception e1)
-                        {
-                            JOptionPane.showMessageDialog(HydraSdrTunerEditor.this,
-                                    "Couldn't set sample rate to " + rate.getLabel());
-                            mLog.error("Error setting HydraSDR sample rate", e1);
-                        }
+                        save();
+                    }
+                    catch(Exception e1)
+                    {
+                        JOptionPane.showMessageDialog(HydraSdrTunerEditor.this,
+                                "Couldn't set sample rate to " + rate.getLabel());
+                        mLog.error("Error setting HydraSDR sample rate", e1);
                     }
                 }
             });

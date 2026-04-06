@@ -242,7 +242,7 @@ public class FrequencyController
      */
     private long getTunedFrequency(long correctedFrequency)
     {
-        return (long)((double)correctedFrequency / (1.0 + (mFrequencyCorrection / 1000000.0)));
+        return (long)(correctedFrequency / (1.0 + (mFrequencyCorrection / 1000000.0)));
     }
 
     /**
@@ -254,7 +254,7 @@ public class FrequencyController
     @SuppressWarnings("unused")
     private long getCorrectedFrequency(long tunedFrequency)
     {
-        return (long)((double)tunedFrequency /
+        return (long)(tunedFrequency /
             (1.0 - (mFrequencyCorrection / 1000000.0)));
     }
 

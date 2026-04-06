@@ -45,7 +45,7 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(HeterodyneChannelSourceManager.class);
 
-    private final static int DELAY_BUFFER_DURATION_MILLISECONDS = 2000;
+    private static final int DELAY_BUFFER_DURATION_MILLISECONDS = 2000;
 
     private List<HalfBandTunerChannelSource> mChannelSources = new CopyOnWriteArrayList<>();
     private SortedSet<TunerChannel> mTunerChannels = new TreeSet<>();
@@ -255,44 +255,44 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
     }
 
     /**
-     * Creates a complex sample delay buffer and registers it with the tuner controller to start the flow
-     * of complex sample buffers from the tuner.
-     */
-    private void startDelayBuffer()
-    {
-        if(mSampleDelayBuffer == null)
-        {
-            long bufferDuration = mTunerController.getBufferDuration();
-
-            if(bufferDuration <= 0)
-            {
-                bufferDuration = 1;
-            }
-
-            int delayBufferSize = (int)(DELAY_BUFFER_DURATION_MILLISECONDS / bufferDuration);
-            mSampleDelayBuffer = new NativeSampleDelayBuffer(delayBufferSize, mTunerController.getBufferDuration());
-            mTunerController.addBufferListener(mSampleDelayBuffer);
-        }
-    }
-
-    /**
-     * De-registers the complex sample delay buffer and disposes of any queued reusable buffers.
-     */
-    private void stopDelayBuffer()
-    {
-        if(mSampleDelayBuffer != null && !mSampleDelayBuffer.hasListeners())
-        {
-            mTunerController.removeBufferListener(mSampleDelayBuffer);
-            mSampleDelayBuffer.dispose();
-            mSampleDelayBuffer = null;
-        }
-    }
-
-    /**
      * Processes channel source events
      */
     public class ChannelSourceEventProcessor implements Listener<SourceEvent>
     {
+        /**
+         * Creates a complex sample delay buffer and registers it with the tuner controller to start the flow
+         * of complex sample buffers from the tuner.
+         */
+        private void startDelayBuffer()
+        {
+            if(mSampleDelayBuffer == null)
+            {
+                long bufferDuration = mTunerController.getBufferDuration();
+
+                if(bufferDuration <= 0)
+                {
+                    bufferDuration = 1;
+                }
+
+                int delayBufferSize = (int)(DELAY_BUFFER_DURATION_MILLISECONDS / bufferDuration);
+                mSampleDelayBuffer = new NativeSampleDelayBuffer(delayBufferSize, mTunerController.getBufferDuration());
+                mTunerController.addBufferListener(mSampleDelayBuffer);
+            }
+        }
+
+        /**
+         * De-registers the complex sample delay buffer and disposes of any queued reusable buffers.
+         */
+        private void stopDelayBuffer()
+        {
+            if(mSampleDelayBuffer != null && !mSampleDelayBuffer.hasListeners())
+            {
+                mTunerController.removeBufferListener(mSampleDelayBuffer);
+                mSampleDelayBuffer.dispose();
+                mSampleDelayBuffer = null;
+            }
+        }
+
         @Override
         public void receive(SourceEvent sourceEvent)
         {

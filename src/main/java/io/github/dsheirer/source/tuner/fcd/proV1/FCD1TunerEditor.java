@@ -398,7 +398,7 @@ public class FCD1TunerEditor extends TunerEditor<FCDTuner,FCD1TunerConfiguration
         }
     }
 
-    public enum Correction {GAIN, PHASE, DC_INPHASE, DC_QUADRATURE};
+    public enum Correction {GAIN, PHASE, DC_INPHASE, DC_QUADRATURE}
 
     public class CorrectionSpinner extends JSpinner
     {

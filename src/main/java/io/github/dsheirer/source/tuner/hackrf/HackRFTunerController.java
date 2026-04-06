@@ -28,7 +28,9 @@ import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Set;
 import org.apache.commons.io.EndianUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +43,7 @@ public class HackRFTunerController extends USBTunerController
 {
     private static final Logger mLog = LoggerFactory.getLogger(HackRFTunerController.class);
 
-    public final static long USB_TIMEOUT_US = 1000000l; //uSeconds
+    public static final long USB_TIMEOUT_US = 1000000l; //uSeconds
     public static final int USB_TRANSFER_BUFFER_SIZE = 262144;
 
     public static final byte REQUEST_TYPE_IN = (byte)(LibUsb.ENDPOINT_IN | LibUsb.REQUEST_TYPE_VENDOR | LibUsb.RECIPIENT_DEVICE);
@@ -88,7 +90,9 @@ public class HackRFTunerController extends USBTunerController
                         return TunerType.HACKRF_JAWBREAKER;
                     case HACKRF_ONE:
                         return TunerType.HACKRF_ONE;
-                };
+                    default:
+                        break;
+                }
             }
             catch(UsbException ue)
             {
@@ -509,7 +513,7 @@ public class HackRFTunerController extends USBTunerController
             mFilter = filter;
         }
 
-        public static EnumSet<HackRFSampleRate> VALID_SAMPLE_RATES = EnumSet.range(RATE_1_75, RATE_20_0);
+        public static final Set<HackRFSampleRate> VALID_SAMPLE_RATES = Collections.unmodifiableSet(EnumSet.range(RATE_1_75, RATE_20_0));
 
         public int getRate()
         {
@@ -521,6 +525,7 @@ public class HackRFTunerController extends USBTunerController
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -604,6 +609,7 @@ public class HackRFTunerController extends USBTunerController
             mLabel = label;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -663,6 +669,7 @@ public class HackRFTunerController extends USBTunerController
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -690,6 +697,7 @@ public class HackRFTunerController extends USBTunerController
             return mValue;
         }
 
+        @Override
         public String toString()
         {
             return mValue + " dB";
@@ -746,6 +754,7 @@ public class HackRFTunerController extends USBTunerController
             return mValue;
         }
 
+        @Override
         public String toString()
         {
             return mValue + " dB";

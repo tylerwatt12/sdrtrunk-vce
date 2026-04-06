@@ -155,7 +155,7 @@ public class HackRFTunerEditor extends TunerEditor<HackRFTuner,HackRFTunerConfig
     {
         if(mVgaGainCombo == null)
         {
-            mVgaGainCombo = new JComboBox<HackRFVGAGain>(HackRFVGAGain.values());
+            mVgaGainCombo = new JComboBox<>(HackRFVGAGain.values());
             mVgaGainCombo.setToolTipText("<html>VGA Gain.  Adjust to set the baseband gain</html>");
             mVgaGainCombo.setEnabled(false);
             mVgaGainCombo.addActionListener(arg0 ->
@@ -192,7 +192,7 @@ public class HackRFTunerEditor extends TunerEditor<HackRFTuner,HackRFTunerConfig
     {
         if(mLnaGainCombo == null)
         {
-            mLnaGainCombo = new JComboBox<HackRFLNAGain>(HackRFLNAGain.values());
+            mLnaGainCombo = new JComboBox<>(HackRFLNAGain.values());
             mLnaGainCombo.setToolTipText("<html>LNA Gain.  Adjust to set the IF gain</html>");
             mLnaGainCombo.setEnabled(false);
             mLnaGainCombo.addActionListener(arg0 ->

@@ -4,8 +4,8 @@ public class FrequencyLimitException extends Exception
 {
     private static final long serialVersionUID = 1L;
 
-    private long mFrequencyLimit;
-    private long mRequestedFrequency;
+    private final long mFrequencyLimit;
+    private final long mRequestedFrequency;
 
     /**
      * Indicates that the requested frequency is outside of the tunable bounds

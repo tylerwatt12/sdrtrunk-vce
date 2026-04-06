@@ -26,8 +26,7 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import java.util.SortedSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 
 /**
  * Interface to define the functionality of a channel source manager for handling tuner channel management and source
@@ -35,8 +34,6 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class ChannelSourceManager implements ISourceEventProcessor
 {
-    private Logger mLogger = LoggerFactory.getLogger(ChannelSourceManager.class);
-
     private Broadcaster<SourceEvent> mSourceEventBroadcaster = new Broadcaster<>();
 
     /**

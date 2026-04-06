@@ -33,6 +33,10 @@ public class CenterFrequencyCalculator
     private static final Logger mLog = LoggerFactory.getLogger(CenterFrequencyCalculator.class);
     public static final long INVALID_FREQUENCY = -1;
 
+    private CenterFrequencyCalculator()
+    {
+    }
+
     /**
      * Determines the optimal center frequency for a given tuner and set of tuner channels.
      *
@@ -42,7 +46,7 @@ public class CenterFrequencyCalculator
      */
     public static long getCenterFrequency(TunerController tunerController, SortedSet<TunerChannel> channels)
     {
-        long candidateFrequency = INVALID_FREQUENCY;
+        long candidateFrequency;
 
         boolean isValidCandidateFrequency = true;
 

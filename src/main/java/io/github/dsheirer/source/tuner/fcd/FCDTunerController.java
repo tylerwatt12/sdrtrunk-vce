@@ -52,9 +52,10 @@ public abstract class FCDTunerController extends TunerController
     private static final Logger mLog = LoggerFactory.getLogger(FCDTunerController.class);
     private static final double USABLE_BANDWIDTH_PERCENT = 1.0;
     private static final int DC_SPIKE_AVOID_HALF_BANDWIDTH = 5000;
-    private final static byte FCD_INTERFACE = (byte) 0x2;
-    private final static byte FCD_ENDPOINT_IN = (byte) 0x82;
-    private final static byte FCD_ENDPOINT_OUT = (byte) 0x2;
+    private static final byte FCD_INTERFACE = (byte) 0x2;
+    private static final byte FCD_ENDPOINT_IN = (byte) 0x82;
+    private static final byte FCD_ENDPOINT_OUT = (byte) 0x2;
+    private static final String UNKNOWN = "UNKNOWN";
 
     private int mBus;
     private String mPortAddress;
@@ -78,7 +79,7 @@ public abstract class FCDTunerController extends TunerController
      * @param maxTunableFrequency of the tuner
      * @param tunerErrorListener to receive errors from this tuner
      */
-    public FCDTunerController(MixerTunerType tunerType, TargetDataLine mixerTDL, int bus, String portAddress,
+    protected FCDTunerController(MixerTunerType tunerType, TargetDataLine mixerTDL, int bus, String portAddress,
                               int minTunableFrequency, int maxTunableFrequency, ITunerErrorListener tunerErrorListener)
     {
         super(tunerErrorListener);
@@ -296,14 +297,7 @@ public abstract class FCDTunerController extends TunerController
             throw new SourceException("Can't claim interface on USB tuner - " + LibUsb.errorName(status));
         }
 
-        try
-        {
-            deviceStart();
-        }
-        catch(SourceException se)
-        {
-            throw se;
-        }
+        deviceStart();
     }
 
     /**
@@ -377,7 +371,7 @@ public abstract class FCDTunerController extends TunerController
             return sb.toString();
         }
 
-        return "UNKNOWN";
+        return UNKNOWN;
     }
 
     /**
@@ -396,7 +390,7 @@ public abstract class FCDTunerController extends TunerController
             return sb.toString();
         }
 
-        return "UNKNOWN";
+        return UNKNOWN;
     }
 
     /**
@@ -422,7 +416,7 @@ public abstract class FCDTunerController extends TunerController
             }
         }
 
-        return "UNKNOWN";
+        return UNKNOWN;
     }
 
     /**
@@ -485,7 +479,7 @@ public abstract class FCDTunerController extends TunerController
         {
             ByteBuffer buffer = send(FCDCommand.APP_GET_FREQUENCY_HZ);
             buffer.order(ByteOrder.LITTLE_ENDIAN);
-            return (int) (buffer.getInt(2) & 0xFFFFFFFF);
+            return (buffer.getInt(2) & 0xFFFFFFFF);
         }
         catch(Exception e)
         {

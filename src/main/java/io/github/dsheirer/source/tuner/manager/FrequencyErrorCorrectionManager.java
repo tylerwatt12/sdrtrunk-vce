@@ -33,8 +33,8 @@ public class FrequencyErrorCorrectionManager
     private static final Logger mLog = LoggerFactory.getLogger(FrequencyErrorCorrectionManager.class);
 
     private static final double FREQUENCY_CORRECTION_ERROR_THRESHOLD = 0.4;
-    private static final long AUTO_CORRECTION_OBSERVATION_PERIOD_MILLISECONDS = 30 * 1000; //30 seconds
-    private static final long INITIAL_AUTO_CORRECTION_OBSERVATION_PERIOD_MILLISECONDS = 5 * 1000; //5 seconds
+    private static final long AUTO_CORRECTION_OBSERVATION_PERIOD_MILLISECONDS = 30 * 1000L; //30 seconds
+    private static final long INITIAL_AUTO_CORRECTION_OBSERVATION_PERIOD_MILLISECONDS = 5 * 1000L; //5 seconds
     private long mObservationPeriodStart;
     private double mPPMRequired;
     private boolean mEnabled = true;
