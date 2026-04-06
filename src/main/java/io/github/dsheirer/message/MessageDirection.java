@@ -21,7 +21,9 @@
  */
 package io.github.dsheirer.message;
 
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Set;
 
 public enum MessageDirection
 {
@@ -35,8 +37,9 @@ public enum MessageDirection
 		mLabel = label;
 	}
 
-	public static EnumSet<MessageDirection> ORDERED_VALUES = EnumSet.of(OSW, ISW);
+	public static final Set<MessageDirection> ORDERED_VALUES = Collections.unmodifiableSet(EnumSet.of(OSW, ISW));
 	
+	@Override
 	public String toString()
 	{
 		return mLabel;

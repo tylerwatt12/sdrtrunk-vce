@@ -41,7 +41,7 @@ public abstract class TimeslotMessage extends AbstractMessage implements IMessag
      * @param timeslot for this message
      * @param timestamp for this message
      */
-    public TimeslotMessage(CorrectedBinaryMessage message, int offset, int timeslot, long timestamp)
+    protected TimeslotMessage(CorrectedBinaryMessage message, int offset, int timeslot, long timestamp)
     {
         super(message, offset);
         mTimeslot = timeslot;
@@ -54,7 +54,7 @@ public abstract class TimeslotMessage extends AbstractMessage implements IMessag
      * @param timeslot for this message
      * @param timestamp for this message
      */
-    public TimeslotMessage(CorrectedBinaryMessage message, int timeslot, long timestamp)
+    protected TimeslotMessage(CorrectedBinaryMessage message, int timeslot, long timestamp)
     {
         super(message);
         mTimeslot = timeslot;

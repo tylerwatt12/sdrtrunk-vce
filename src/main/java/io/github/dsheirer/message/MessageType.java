@@ -72,6 +72,7 @@ public enum MessageType
 		return mDisplayText;
 	}
 	
+	@Override
 	public String toString()
 	{
 		return getDisplayText();

@@ -51,7 +51,7 @@ public abstract class AbstractMessage
      * @param message containing the message bits.
      * @param offset to the start of the message within the corrected binary message.
      */
-    public AbstractMessage(CorrectedBinaryMessage message, int offset)
+    protected AbstractMessage(CorrectedBinaryMessage message, int offset)
     {
         mMessage = message;
         mOffset = offset;
@@ -61,7 +61,7 @@ public abstract class AbstractMessage
      * Constructs an instance.
      * @param message bits
      */
-    public AbstractMessage(CorrectedBinaryMessage message)
+    protected AbstractMessage(CorrectedBinaryMessage message)
     {
         this(message, 0);
     }
@@ -118,13 +118,13 @@ public abstract class AbstractMessage
     public String getIntAsHex(IntField field, int places)
     {
         int value = getInt(field);
-        String hex = Integer.toHexString(value).toUpperCase();
+        StringBuilder hex = new StringBuilder(Integer.toHexString(value).toUpperCase());
         while(hex.length() < places)
         {
-            hex = "0" + hex;
+            hex.insert(0, '0');
         }
 
-        return hex;
+        return hex.toString();
     }
 
     /**

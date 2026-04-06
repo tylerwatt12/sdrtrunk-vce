@@ -32,28 +32,14 @@ public class MessageProviderModule extends Module implements IMessageProvider
 {
     private Listener<IMessage> mMessageListener;
 
-    public MessageProviderModule()
-    {
-
-    }
+    @Override
+    public void reset() { /* no action required */ }
 
     @Override
-    public void reset()
-    {
-
-    }
+    public void start() { /* no action required */ }
 
     @Override
-    public void start()
-    {
-
-    }
-
-    @Override
-    public void stop()
-    {
-
-    }
+    public void stop() { /* no action required */ }
 
     public void receive(IMessage message)
     {

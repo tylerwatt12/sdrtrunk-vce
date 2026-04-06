@@ -33,7 +33,7 @@ public abstract class Message implements IMessage
     /**
      * Constructs a new message using current system time as the timestamp.
      */
-    public Message()
+    protected Message()
     {
         mTimestamp = System.currentTimeMillis();
     }
@@ -43,7 +43,7 @@ public abstract class Message implements IMessage
      *
      * @param timestamp for the message
      */
-    public Message(long timestamp)
+    protected Message(long timestamp)
     {
         mTimestamp = timestamp;
     }
