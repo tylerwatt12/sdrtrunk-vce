@@ -85,7 +85,6 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
                 ISourceEventListener, Listener<ComplexSamples>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(DMRDecoder.class);
-    private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");
     private static final int SYMBOL_RATE = 4800;
     private static final Map<Double,float[]> BASEBAND_FILTERS = new HashMap<>();
     private DifferentialDemodulatorFloat mDemodulator;
@@ -245,9 +244,9 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
             coefficients = FilterFactory.getTaps(specification);
             BASEBAND_FILTERS.put(sampleRate, coefficients);
         }
-        catch(Exception _) //FilterDesignException
+        catch(Exception e) //FilterDesignException
         {
-            System.out.println("Error");
+            LOGGER.error("Error designing low pass filter for sample rate [{}]", sampleRate, e);
         }
 
         if(coefficients == null)
@@ -351,157 +350,5 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
     public Listener<ComplexSamples> getComplexSamplesListener()
     {
         return this;
-    }
-
-    public static void main(String[] args)
-    {
-        LOGGER.info("Starting ...");
-
-        //        String directory = "D:\\DQPSK Equalizer Research\\"; //Windows
-        String directory = "/media/denny/T9/DQPSK Equalizer Research/"; //Linux
-        String file = directory + "DMR_1_CAPPLUS.wav";
-//        String file = directory + "DMR_2_CAPPLUS.wav";
-//        String file = directory + "DMR_3_CAPPLUS.wav";
-//        String file = directory + "20230819_064211_451250000_SaiaNet_Syracuse_Control_29_baseband.wav";
-//        String file = directory + "20230819_064344_454575000_JPJ_Communications_(DMR)_Madison_Control_28_baseband.wav";
-//        String file = directory + "DMR_4_20241213_Saianet.wav";
-//        String file = directory + "DMR_5_20241217_031219_451425000_SaiaNet_Onondaga_SaiaNet_Control_1_baseband.wav";
-//        String file = directory + "DMR_6_20241217_031511_451425000_SaiaNet_Onondaga_SaiaNet_Control_50_baseband.wav";
-//        String file = directory + "DMR_7_20241217_031651_451250000_SaiaNet_Onondaga_SaiaNet_Control_50_baseband.wav";
-//        String file = directory + "DMR_8_20241217_031845_461662500_SaiaNet_(Tier_III)_Onondaga_Control_25_baseband.wav";
-//        String file = directory + "DMR_9_CAPPLUS_encrypted_American_Airlines_Maricopa_Control_29_baseband.wav";
-//        String file = directory + "DMR_10_CAP_ENCRYPTED_20241222_035408_935487500_American_Airlines_Maricopa_Control_1_baseband.wav";
-//        String file = directory + "DMR_12_20250420_061639_451250000_SaiaNet_Onondaga_SaiaNet-Control_1_baseband.wav";
-//        String file = directory + "DMR_17_20250516_053150_451425000_SaiaNet_Onondaga_SaiaNet-Control_1_baseband.wav";
-//        String file = directory + "DMR_19_POLY_2CHAN_20250611_032038_451250000_SaiaNet_Onondaga_SaiaNet-Control_1_baseband.wav";
-
-        boolean autoReplay = false;
-
-        DMRDecoder decoder = new DMRDecoder(new DecodeConfigDMR(), false);
-        decoder.start();
-
-        UserPreferences userPreferences = new UserPreferences();
-        DMRAudioModule audio1 = new DMRAudioModule(userPreferences, new AliasList(""), DMRMessage.TIMESLOT_1);
-        DMRAudioModule audio2 = new DMRAudioModule(userPreferences, new AliasList(""), DMRMessage.TIMESLOT_2);
-
-        decoder.setMessageListener(new Listener<>()
-        {
-            private long mBitCounter = 1;
-            private int mBitErrorCounter;
-            private int mValidMessageCounter;
-            private int mTotalMessageCounter;
-
-            @Override
-            public void receive(IMessage iMessage)
-            {
-                int errors = 0;
-
-                if(iMessage.getTimeslot() == DMRMessage.TIMESLOT_1)
-                {
-                    audio1.receive(iMessage);
-                }
-                if(iMessage.getTimeslot() == DMRMessage.TIMESLOT_2)
-                {
-                    audio2.receive(iMessage);
-                }
-
-                if(iMessage instanceof DMRBurst burst)
-                {
-                    mBitCounter += 288;
-                    errors = burst.getMessage().getCorrectedBitCount();
-                    mTotalMessageCounter++;
-
-                    if(burst.isValid())
-                    {
-                        mBitErrorCounter += Math.max(errors, 0);
-                        mValidMessageCounter++;
-                    }
-                }
-                else if(iMessage instanceof LCMessage lcw)
-                {
-                    mTotalMessageCounter++;
-                    errors = lcw.getMessage().getCorrectedBitCount();
-                    if(lcw.isValid())
-                    {
-                        mBitErrorCounter += errors;
-                        mValidMessageCounter++;
-                    }
-                }
-
-                double bitErrorRate = (double)mBitErrorCounter / (double)mBitCounter * 100.0;
-
-                boolean logFLC = false;
-                boolean logSLC = false;
-                boolean logCACH = false;
-                boolean logIdles = false;
-                boolean logEverything = true;
-
-                if(iMessage instanceof SyncLossMessage)
-                {
-                    int a = 0;
-                }
-
-                if(!logEverything && logFLC)
-                {
-                    if(iMessage instanceof FullLCMessage)
-                    {
-                        System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                    }
-                    else if(iMessage instanceof Terminator terminator)
-                    {
-                        System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                    }
-                    else if(iMessage instanceof DataMessageWithLinkControl)
-                    {
-                        System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                    }
-                }
-
-                if(!logEverything && logCACH && iMessage instanceof DMRBurst burst && burst.hasCACH())
-                {
-                    System.out.println("CACH:" + burst.getCACH());
-                }
-
-                if(!logEverything && logSLC && iMessage instanceof ShortLCMessage)
-                {
-                    System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                }
-
-                if(logEverything)
-                {
-                    System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                }
-
-                if(!logEverything && logIdles && iMessage instanceof SyncLossMessage)
-                {
-                    System.out.println(">>MESSAGE: TS" + iMessage.getTimeslot() + " " + iMessage + " \t\t[" + errors + " | " + mBitErrorCounter + " | Valid:" + mValidMessageCounter + " Total:" + mTotalMessageCounter + " Msgs] Rate [" + DECIMAL_FORMAT.format(bitErrorRate) + " %]");
-                }
-            }
-        });
-
-        try(ComplexWaveSource source = new ComplexWaveSource(new File(file), autoReplay))
-        {
-            source.setListener(iNativeBuffer -> {
-                Iterator<ComplexSamples> it = iNativeBuffer.iterator();
-
-                while(it.hasNext())
-                {
-                    decoder.receive(it.next());
-                }
-            });
-            source.start();
-            decoder.setSampleRate(source.getSampleRate());
-
-            while(true)
-            {
-                source.next(2048, true);
-            }
-        }
-        catch(IOException ioe)
-        {
-            LOGGER.error("Error", ioe);
-        }
-
-        LOGGER.info("Finished");
     }
 }

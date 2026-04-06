@@ -684,6 +684,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void reset()
     {
+        /* no action required */
     }
 
     /**

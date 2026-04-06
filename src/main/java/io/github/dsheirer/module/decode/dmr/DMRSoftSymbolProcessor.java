@@ -203,14 +203,16 @@ public class DMRSoftSymbolProcessor
                 mBuffer[x] = Math.max(mBuffer[x], MAXIMUM_NEGATIVE_SAMPLE_PHASE);
             }
 
-            float softSymbol, primaryScore, secondaryScore;
+            float softSymbol;
+            float primaryScore;
+            float secondaryScore;
             double secondary;
             int secondaryIntegral;
 
             while(mBufferPointer < (mBufferLoadPointer - mBufferInterpolatorReservedRegion))
             {
                 mBufferPointer++;
-                mSamplePoint--;
+                mSamplePoint -= 1.0;
 
                 if(mSamplePoint < 1)
                 {
@@ -400,20 +402,19 @@ public class DMRSoftSymbolProcessor
 
         while(mSamplePoint < 0)
         {
-            mSamplePoint++;
+            mSamplePoint += 1.0;
             mBufferPointer--;
         }
 
         while(mSamplePoint > 1)
         {
-            mSamplePoint--;
+            mSamplePoint -= 1.0;
             mBufferPointer++;
         }
 
         boolean resample = !mEqualizerInitialized || (Math.abs(adjustment) > 0.25);
 
         updateEqualizer(pattern);
-//        visualizeSyncDetect(pattern, scoreCenter, true);
 
         //If the equalizer was just initialized or the timing error adjustment is high enough, resample the symbols.
         // Otherwise, overwrite the captured sync pattern in the delay buffer with the detected sync pattern to
@@ -492,13 +493,13 @@ public class DMRSoftSymbolProcessor
         {
             while(mSamplePoint < 0)
             {
-                mSamplePoint++;
+                mSamplePoint += 1.0;
                 mBufferPointer--;
             }
 
             while(mSamplePoint > 1)
             {
-                mSamplePoint--;
+                mSamplePoint -= 1.0;
                 mBufferPointer++;
             }
         }
@@ -625,7 +626,8 @@ public class DMRSoftSymbolProcessor
         }
         catch(InterruptedException e)
         {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for sync results viewer", e);
         }
     }
 
@@ -683,7 +685,8 @@ public class DMRSoftSymbolProcessor
         }
         catch(InterruptedException e)
         {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for sync results viewer", e);
         }
     }
 
