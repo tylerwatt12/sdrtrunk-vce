@@ -168,12 +168,10 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
                     {
                         mInitialSelectionComplete = false;
                         mSpectralDisplayPanel.clearTuner();
-                        ThreadPool.SCHEDULED.schedule(() -> SwingUtils.run(() ->
-                        {
-                            showFirstTuner();
-                        }), 1, TimeUnit.SECONDS);
+                        ThreadPool.SCHEDULED.schedule(() -> SwingUtils.run(this::showFirstTuner), 1, TimeUnit.SECONDS);
                     });
                 }
+                break;
             default:
                 break;
         }
