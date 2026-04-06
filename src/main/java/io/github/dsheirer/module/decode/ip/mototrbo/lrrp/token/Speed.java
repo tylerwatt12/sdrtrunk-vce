@@ -30,7 +30,7 @@ import java.text.DecimalFormat;
  */
 public class Speed extends Token
 {
-    private static final int[] SPEED = new int[]{8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+    private static final int[] SPEED_FIELD = new int[]{8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
     private static final double SPEED_MULTIPLIER = 0.01; //Units of 1/100 mph
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.00");
 
@@ -56,7 +56,7 @@ public class Speed extends Token
      */
     public double getSpeed()
     {
-        return getMessage().getInt(SPEED, getOffset()) * SPEED_MULTIPLIER;
+        return getMessage().getInt(SPEED_FIELD, getOffset()) * SPEED_MULTIPLIER;
     }
 
     @Override

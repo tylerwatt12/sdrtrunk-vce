@@ -25,6 +25,10 @@ import io.github.dsheirer.module.decode.ip.UnknownPacket;
 
 public class XCMPPacketFactory
 {
+    private XCMPPacketFactory()
+    {
+    }
+
     /**
      * Creates an XCMP Packet payload
      * @param message containing the full packet payload

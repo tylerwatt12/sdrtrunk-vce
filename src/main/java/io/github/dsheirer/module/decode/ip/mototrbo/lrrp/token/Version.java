@@ -26,7 +26,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Version extends Token
 {
-    private static final int[] VERSION = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
+    private static final int[] VERSION_FIELD = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
 
     /**
      * Constructs an instance of a heading token.
@@ -50,7 +50,7 @@ public class Version extends Token
      */
     public int getVersion()
     {
-        return getMessage().getInt(VERSION, getOffset());
+        return getMessage().getInt(VERSION_FIELD, getOffset());
     }
 
     @Override

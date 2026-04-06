@@ -45,14 +45,6 @@ public class LRRPHeader extends Header
     }
 
     /**
-     * Checks that the underlying message is long enough to contain the PDU
-     */
-    private void checkValid()
-    {
-        setValid(getMessage().size() >= (getOffset() + getLength() + getPayloadLength()));
-    }
-
-    /**
      * Integer value of the LRRP Packet type
      */
     public int getLrrpPacketTypeValue()

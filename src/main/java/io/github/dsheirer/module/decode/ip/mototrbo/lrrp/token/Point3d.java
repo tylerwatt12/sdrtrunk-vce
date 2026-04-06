@@ -59,7 +59,6 @@ public class Point3d extends Point2d
     @Override
     public String toString()
     {
-        CorrectedBinaryMessage sub = getMessage().getSubMessage(getOffset(), getOffset() + 87);
         return "POINT:" + getPosition() + " ALTITUDE:" + getAltitude() + " MTRS";
     }
 }

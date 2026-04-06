@@ -31,7 +31,7 @@ import java.text.DecimalFormat;
 public class Heading extends Token
 {
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("000.0");
-    private static final int[] HEADING = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
+    private static final int[] HEADING_FIELD = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
     private static final float HEADING_MULTIPLIER = 2.0f;
 
     /**
@@ -56,7 +56,7 @@ public class Heading extends Token
      */
     public float getHeading()
     {
-        return getMessage().getInt(HEADING, getOffset()) * HEADING_MULTIPLIER;
+        return getMessage().getInt(HEADING_FIELD, getOffset()) * HEADING_MULTIPLIER;
     }
 
     @Override

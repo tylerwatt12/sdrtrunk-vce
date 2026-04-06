@@ -39,6 +39,10 @@ import io.github.dsheirer.module.decode.p25.reference.IPHeaderCompression;
  */
 public class PacketMessageFactory
 {
+    private PacketMessageFactory()
+    {
+    }
+
     /**
      * Creates an IP packet message parser
      *
@@ -52,13 +56,12 @@ public class PacketMessageFactory
         {
             int version = IPV4Header.getIPVersion(message, offset);
 
-            switch(version)
+            if(version == 4)
             {
-                case 4:
-                    return new IPV4Packet(message, offset);
-                default:
-                    return new UnknownPacket(message, offset);
+                return new IPV4Packet(message, offset);
             }
+
+            return new UnknownPacket(message, offset);
         }
         else
         {
@@ -77,13 +80,12 @@ public class PacketMessageFactory
     {
         int version = IPV4Header.getIPVersion(message, offset);
 
-        switch(version)
+        if(version == 4)
         {
-            case 4:
-                return new IPV4Packet(message, offset);
-            default:
-                return new UnknownPacket(message, offset);
+            return new IPV4Packet(message, offset);
         }
+
+        return new UnknownPacket(message, offset);
    }
 
     /**
@@ -96,15 +98,17 @@ public class PacketMessageFactory
      */
     public static IPacket create(IPProtocol protocol, CorrectedBinaryMessage binaryMessage, int offset)
     {
-        switch(protocol)
+        if(protocol == IPProtocol.ICMP)
         {
-            case ICMP:
-                return new ICMPPacket(binaryMessage, offset);
-            case UDP:
-                return new UDPPacket(binaryMessage, offset);
-            default:
-                return new UnknownPacket(binaryMessage, offset);
+            return new ICMPPacket(binaryMessage, offset);
         }
+
+        if(protocol == IPProtocol.UDP)
+        {
+            return new UDPPacket(binaryMessage, offset);
+        }
+
+        return new UnknownPacket(binaryMessage, offset);
     }
 
     /**
@@ -144,15 +148,9 @@ public class PacketMessageFactory
                 break;
         }
 
-        switch(sourcePort.getValue())
+        if(sourcePort.getValue() == 231 && MCGPHeader.isCellocatorMessage(binaryMessage, offset))
         {
-            case 231:
-                //Cellocator
-                if(MCGPHeader.isCellocatorMessage(binaryMessage, offset))
-                {
-                    return MCGPMessageFactory.create(binaryMessage, offset);
-                }
-                break;
+            return MCGPMessageFactory.create(binaryMessage, offset);
         }
 
         //This is normally source or destination port 231, but can be on other ports as well.

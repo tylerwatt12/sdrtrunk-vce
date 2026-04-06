@@ -26,6 +26,10 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class TokenFactory
 {
+    private TokenFactory()
+    {
+    }
+
     public static Token createToken(String id, CorrectedBinaryMessage message, int offset, int remainingCharacterCount)
     {
         TokenType tokenType = TokenType.fromValue(id);

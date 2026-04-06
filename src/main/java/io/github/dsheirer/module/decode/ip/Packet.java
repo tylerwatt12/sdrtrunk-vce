@@ -32,7 +32,7 @@ public abstract class Packet implements IPacket
      * @param message containing the packet
      * @param offset to the packet within the message
      */
-    public Packet(CorrectedBinaryMessage message, int offset)
+    protected Packet(CorrectedBinaryMessage message, int offset)
     {
         mMessage = message;
         mOffset = offset;

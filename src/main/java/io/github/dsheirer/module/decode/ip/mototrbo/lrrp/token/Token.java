@@ -42,7 +42,7 @@ public abstract class Token
      * @param message containing the token and value
      * @param offset to the start of the token identifier
      */
-    public Token(CorrectedBinaryMessage message, int offset)
+    protected Token(CorrectedBinaryMessage message, int offset)
     {
         mMessage = message;
         mOffset = offset;

@@ -33,7 +33,7 @@ public abstract class Header implements IHeader
      * @param message containing the header
      * @param offset to the header within the message
      */
-    public Header(BinaryMessage message, int offset)
+    protected Header(BinaryMessage message, int offset)
     {
         mMessage = message;
         mOffset = offset;

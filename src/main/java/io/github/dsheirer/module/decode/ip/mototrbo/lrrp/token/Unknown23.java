@@ -30,8 +30,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Unknown23 extends Token
 {
-    private static final int[] UNKNOWN = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
-
     /**
      * Constructs an instance of a heading token.
      *

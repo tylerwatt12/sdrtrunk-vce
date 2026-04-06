@@ -123,9 +123,6 @@ public class LRRPPacket extends Packet
             }
             else
             {
-                String message = getMessage().getSubMessage(getOffset(), getOffset() + ((characterCount + 2) * 8)).toHexString();
-                int x = 0;
-
                 RequestedTokens requestedTokens = new RequestedTokens();
 
                 while(characterCount > 0 && offset < getMessage().size())
