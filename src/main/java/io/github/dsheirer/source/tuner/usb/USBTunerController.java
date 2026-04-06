@@ -67,9 +67,6 @@ public abstract class USBTunerController extends TunerController
     private AtomicBoolean mStreaming = new AtomicBoolean();
     private boolean mRunning = false;
 
-    //Troubleshooting libusb bug: https://github.com/DSheirer/sdrtrunk/issues/1253
-    private int mAnomalousTransfersDetected = 0;
-
     /**
      * USB tuner controller class. Provides auto-start and auto-stop function when complex buffer listeners are added
      * or removed from this tuner controller.
@@ -78,7 +75,7 @@ public abstract class USBTunerController extends TunerController
      * @param portAddress address USB
      * @param tunerErrorListener to receive errors from this tuner controller
      */
-    public USBTunerController(int bus, String portAddress, ITunerErrorListener tunerErrorListener)
+    protected USBTunerController(int bus, String portAddress, ITunerErrorListener tunerErrorListener)
     {
         super(tunerErrorListener);
         mBus = bus;
@@ -95,7 +92,7 @@ public abstract class USBTunerController extends TunerController
      * @param usablePercent bandwith in Hertz
      * @param tunerErrorListener to receive errors from this tuner controller
      */
-    public USBTunerController(int bus, String portAddress, long minimum, long maximum, int halfBandwidth, double usablePercent,
+    protected USBTunerController(int bus, String portAddress, long minimum, long maximum, int halfBandwidth, double usablePercent,
                               ITunerErrorListener tunerErrorListener)
     {
         this(bus, portAddress, tunerErrorListener);
@@ -289,6 +286,7 @@ public abstract class USBTunerController extends TunerController
         }
         catch(InterruptedException ie)
         {
+            Thread.currentThread().interrupt();
         }
 
         //Release transfers
@@ -530,7 +528,6 @@ public abstract class USBTunerController extends TunerController
         private boolean mAutoResubmitTransfers = false;
         private int mTransferErrorCount = 0;
         private List<Transfer> mErrorTransfers = new ArrayList<>();
-        private int mResubmitFailureLogCount = 0;
 
         /**
          * Creates USB Transfers to carry the streaming sample data.  Transfer buffers are backed by native memory
@@ -804,9 +801,10 @@ public abstract class USBTunerController extends TunerController
                 //for completed status and returning them to us to dispatch.
                 mThread.join(1000);
             }
-            catch(Exception e)
+            catch(InterruptedException ie)
             {
-                mLog.error("Error stopping LibUsb event processing thread - " + e.getLocalizedMessage());
+                Thread.currentThread().interrupt();
+                mLog.error("Interrupted while stopping LibUsb event processing thread", ie);
             }
 
             mThread = null;

@@ -22,6 +22,7 @@ package io.github.dsheirer.source.tuner.ui;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
+import io.github.dsheirer.source.tuner.TunerEvent;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
@@ -69,9 +70,6 @@ public class TunerViewPanel extends JPanel
     private DiscoveredTunerEditor mDiscoveredTunerEditor;
     private TunerConfigurationManager mTunerConfigurationManager;
     private JTable mTunerTable;
-    private JTableColumnWidthMonitor mColumnWidthMonitor;
-    private TableRowSorter<DiscoveredTunerModel> mRowSorter;
-    private JideSplitPane mSplitPane;
     private JButton mAddRecordingButton;
     private JButton mRemoveRecordingButton;
     private JButton mAddSDRconnectButton;
@@ -95,13 +93,13 @@ public class TunerViewPanel extends JPanel
     {
         setLayout(new MigLayout("insets 0 10 10 10", "[fill,grow]", "[fill,grow]"));
 
-        mRowSorter = new TableRowSorter<>(mDiscoveredTunerModel);
+        TableRowSorter<DiscoveredTunerModel> rowSorter = new TableRowSorter<>(mDiscoveredTunerModel);
         List<RowSorter.SortKey> sortKeys = new ArrayList<>();
         sortKeys.add(new RowSorter.SortKey(DiscoveredTunerModel.COLUMN_TUNER_TYPE, SortOrder.ASCENDING));
-        mRowSorter.setSortKeys(sortKeys);
+        rowSorter.setSortKeys(sortKeys);
 
         mTunerTable = new JTable(mDiscoveredTunerModel);
-        mTunerTable.setRowSorter(mRowSorter);
+        mTunerTable.setRowSorter(rowSorter);
         mTunerTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         mTunerTable.getSelectionModel().addListSelectionListener(event ->
         {
@@ -164,32 +162,27 @@ public class TunerViewPanel extends JPanel
 
         mDiscoveredTunerModel.addListener(tunerEvent ->
         {
-            switch(tunerEvent.getEvent())
+            if(tunerEvent.getEvent() == TunerEvent.Event.UPDATE_LOCK_STATE && tunerEvent.getTuner() != null)
             {
-                case UPDATE_LOCK_STATE:
-                    if(tunerEvent.getTuner() != null)
+                int row = mTunerTable.getSelectedRow();
+
+                if(row >= 0)
+                {
+                    int modelRow = mTunerTable.convertRowIndexToModel(row);
+                    DiscoveredTuner selectedTuner = mDiscoveredTunerModel.getDiscoveredTuner(modelRow);
+
+                    if(selectedTuner != null && selectedTuner.hasTuner() && tunerEvent.getTuner() == selectedTuner.getTuner())
                     {
-                        int row = mTunerTable.getSelectedRow();
-
-                        if(row >= 0)
-                        {
-                            int modelRow = mTunerTable.convertRowIndexToModel(row);
-                            DiscoveredTuner selectedTuner = mDiscoveredTunerModel.getDiscoveredTuner(modelRow);
-
-                            if(selectedTuner != null && selectedTuner.hasTuner() && tunerEvent.getTuner() == selectedTuner.getTuner())
-                            {
-                                mDiscoveredTunerEditor.setTunerLockState(selectedTuner.getTuner().getTunerController().isLockedSampleRate());
-                            }
-                        }
+                        mDiscoveredTunerEditor.setTunerLockState(selectedTuner.getTuner().getTunerController().isLockedSampleRate());
                     }
-                    break;
+                }
             }
         });
 
         TableCellRenderer errorCellRenderer = new TunerStatusCellRenderer();
         mTunerTable.getColumnModel().getColumn(DiscoveredTunerModel.COLUMN_TUNER_STATUS).setCellRenderer(errorCellRenderer);
 
-        mColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTunerTable, TABLE_PREFERENCE_KEY);
+        new JTableColumnWidthMonitor(mUserPreferences, mTunerTable, TABLE_PREFERENCE_KEY);
         JScrollPane tunerTableScroller = new JScrollPane(mTunerTable);
 
         JPanel tunerTablePanel = new JPanel();
@@ -208,13 +201,13 @@ public class TunerViewPanel extends JPanel
         JScrollPane editorScroller = new JScrollPane(mDiscoveredTunerEditor);
         editorScroller.setPreferredSize(new Dimension(200, 200));
 
-        mSplitPane = new JideSplitPane();
-        mSplitPane.setOrientation(JideSplitPane.VERTICAL_SPLIT);
-        mSplitPane.setShowGripper(true);
-        mSplitPane.add(tunerTablePanel);
-        mSplitPane.add(editorScroller);
+        JideSplitPane splitPane = new JideSplitPane();
+        splitPane.setOrientation(JideSplitPane.VERTICAL_SPLIT);
+        splitPane.setShowGripper(true);
+        splitPane.add(tunerTablePanel);
+        splitPane.add(editorScroller);
 
-        add(mSplitPane);
+        add(splitPane);
     }
 
     private JButton getAddRecordingButton()

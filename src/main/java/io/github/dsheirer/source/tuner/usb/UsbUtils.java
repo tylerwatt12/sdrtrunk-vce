@@ -33,6 +33,10 @@ import java.util.List;
 
 public class UsbUtils
 {
+    private UsbUtils()
+    {
+    }
+
     /**
      * Returns a List of currently connected usb devices
      */
@@ -40,8 +44,7 @@ public class UsbUtils
     {
         UsbServices services = UsbHostManager.getUsbServices();
         UsbHub root = services.getRootUsbHub();
-        List<UsbDevice> devices = new ArrayList<UsbDevice>(getHubDevices(root));
-        return devices;
+        return new ArrayList<>(getHubDevices(root));
     }
 
     /**
@@ -49,7 +52,7 @@ public class UsbUtils
      */
     public static List<UsbDevice> getHubDevices(UsbHub hub) throws UnsupportedEncodingException, UsbException
     {
-        List<UsbDevice> devices = new ArrayList<UsbDevice>();
+        List<UsbDevice> devices = new ArrayList<>();
         List<UsbDevice> children = hub.getAttachedUsbDevices();
 
         for(UsbDevice child : children)
