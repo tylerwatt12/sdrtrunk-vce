@@ -26,10 +26,4 @@ import io.github.dsheirer.module.ModuleEventBusMessage;
  */
 public class DecodeEventHistoryRequest implements ModuleEventBusMessage
 {
-    /**
-     * Constructs an instance
-     */
-    public DecodeEventHistoryRequest()
-    {
-    }
 }

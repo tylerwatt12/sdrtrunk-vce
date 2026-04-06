@@ -33,7 +33,6 @@ public class Fleetsync2Decoder extends AbstractAFSKDecoder
     //Message length - 5 x REVS + 16 x SYNC + 8 x 64Bit Blocks
     private static final int MESSAGE_LENGTH = 537;
     private MessageFramer mMessageFramer;
-    private Fleetsync2MessageProcessor mMessageProcessor;
 
     /**
      * Constructs a decoder for Fleetsync II protocol
@@ -62,9 +61,9 @@ public class Fleetsync2Decoder extends AbstractAFSKDecoder
     {
         mMessageFramer = new MessageFramer(SyncPattern.FLEETSYNC2.getPattern(), MESSAGE_LENGTH);
         getDecoder().setSymbolProcessor(mMessageFramer);
-        mMessageProcessor = new Fleetsync2MessageProcessor();
-        mMessageFramer.addMessageListener(mMessageProcessor);
-        mMessageProcessor.setMessageListener(getMessageListener());
+        Fleetsync2MessageProcessor messageProcessor = new Fleetsync2MessageProcessor();
+        mMessageFramer.addMessageListener(messageProcessor);
+        messageProcessor.setMessageListener(getMessageListener());
     }
 
     @Override

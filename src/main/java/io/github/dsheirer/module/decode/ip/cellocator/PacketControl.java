@@ -5,7 +5,7 @@ package io.github.dsheirer.module.decode.ip.cellocator;
  */
 public class PacketControl
 {
-    public enum Direction {TO_UNIT,FROM_UNIT};
+    public enum Direction {TO_UNIT,FROM_UNIT}
     private static final int BIT_MASK_DIRECTION = 0x80;
     private static final int BIT_MASK_OUT_OF_SPACE = 0x40;
     private int mValue;

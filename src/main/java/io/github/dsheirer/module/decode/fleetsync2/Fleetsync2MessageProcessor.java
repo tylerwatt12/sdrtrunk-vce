@@ -34,13 +34,6 @@ public class Fleetsync2MessageProcessor implements Listener<CorrectedBinaryMessa
 {
     private Listener<IMessage> mMessageListener;
 
-    /**
-     * Constructs a message processor
-     */
-    public Fleetsync2MessageProcessor()
-    {
-    }
-
     public void dispose()
     {
         mMessageListener = null;

@@ -57,7 +57,7 @@ public abstract class Fleetsync2Message extends Message
     private FleetsyncIdentifier mFromIdentifier;
     private FleetsyncIdentifier mToIdentifier;
 
-    public Fleetsync2Message(CorrectedBinaryMessage message, long timestamp)
+    protected Fleetsync2Message(CorrectedBinaryMessage message, long timestamp)
     {
         super(timestamp);
         mMessage = message;

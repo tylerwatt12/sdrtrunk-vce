@@ -26,6 +26,10 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class MCGPMessageFactory
 {
+    private MCGPMessageFactory()
+    {
+    }
+
     /**
      * Creates an MCGP packet message from the binary message at the specified binary message offset.
      * @param message containing transmitted bits

@@ -42,7 +42,7 @@ public abstract class MCGPPacket extends Packet
      * @param message containing the packet
      * @param offset to the packet within the message
      */
-    public MCGPPacket(MCGPHeader header, CorrectedBinaryMessage message, int offset)
+    protected MCGPPacket(MCGPHeader header, CorrectedBinaryMessage message, int offset)
     {
         super(message, offset);
         mHeader = header;

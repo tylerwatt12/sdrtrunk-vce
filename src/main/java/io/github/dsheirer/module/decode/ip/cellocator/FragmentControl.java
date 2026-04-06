@@ -5,7 +5,7 @@ package io.github.dsheirer.module.decode.ip.cellocator;
  */
 public class FragmentControl
 {
-    public enum Origination{UNIT,APPLICATION};
+    public enum Origination{UNIT,APPLICATION}
     private static final int BIT_MASK_ORIGINATION = 0x80;
     private static final int BIT_MASK_LAST_FRAGMENT = 0x40;
     private static final int BIT_MASK_FRAGMENT_INDEX = 0x3F;

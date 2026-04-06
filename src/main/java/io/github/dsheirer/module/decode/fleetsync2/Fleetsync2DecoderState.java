@@ -53,7 +53,10 @@ public class Fleetsync2DecoderState extends DecoderState
     }
 
     @Override
-    public void init() {}
+    public void init()
+    {
+        /* no action required */
+    }
 
     @Override
     public void receive(IMessage message)
@@ -157,13 +160,9 @@ public class Fleetsync2DecoderState extends DecoderState
     @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == DecoderStateEvent.Event.REQUEST_RESET)
         {
-            case REQUEST_RESET:
-                reset();
-                break;
-            default:
-                break;
+            reset();
         }
     }
 

@@ -38,7 +38,7 @@ public class ActivitySummaryFrame extends JFrame
 		setTitle( "Activity Summary" );
 		setLocationRelativeTo( displayOver );
 		setSize( 400, 400 );
-    	setDefaultCloseOperation( JFrame.DISPOSE_ON_CLOSE );
+    	setDefaultCloseOperation( WindowConstants.DISPOSE_ON_CLOSE );
     	setLayout( new MigLayout( "", "[grow,fill]", "[grow,fill][]" ) );
 
     	JTextArea summaryText = new JTextArea( summary );
@@ -49,23 +49,10 @@ public class ActivitySummaryFrame extends JFrame
 		add( scroller, "wrap" );
 		
 		JButton close = new JButton( "Close" );
-		close.addActionListener( new ActionListener() 
-		{
-			@Override
-            public void actionPerformed( ActionEvent e )
-            {
-				dispose();
-            }
-		} );
+		close.addActionListener( e -> dispose() );
 		
 		add( close );
 
-		EventQueue.invokeLater( new Runnable() 
-        {
-            public void run()
-            {
-        		setVisible( true );
-            }
-        } );
+		EventQueue.invokeLater( () -> setVisible( true ) );
 	}
 }

@@ -85,12 +85,25 @@ public class FleetsyncIdentifier extends TalkgroupIdentifier implements Comparab
     @Override
     public int compareTo(FleetsyncIdentifier o)
     {
-        return getValue().compareTo(o.getValue());
+        int comparison = getValue().compareTo(o.getValue());
+
+        if(comparison == 0)
+        {
+            comparison = getRole().compareTo(o.getRole());
+        }
+
+        return comparison;
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof FleetsyncIdentifier)) return false;
-        return compareTo((FleetsyncIdentifier) o) == 0;
+    public boolean equals(Object o)
+    {
+        return super.equals(o);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return super.hashCode();
     }
 }

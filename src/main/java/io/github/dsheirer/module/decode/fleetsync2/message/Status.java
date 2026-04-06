@@ -32,7 +32,7 @@ import java.util.List;
  */
 public class Status extends Fleetsync2Message
 {
-    private static int[] STATUS = {21, 22, 23, 24, 25, 26, 27};
+    private static final int[] STATUS_FIELD = {21, 22, 23, 24, 25, 26, 27};
 
     private FleetsyncStatus mStatusIdentifier;
     private List<Identifier> mIdentifers;
@@ -88,7 +88,7 @@ public class Status extends Fleetsync2Message
     {
         if(mStatusIdentifier == null)
         {
-            mStatusIdentifier = FleetsyncStatus.createUserStatus(getMessage().getInt(STATUS));
+            mStatusIdentifier = FleetsyncStatus.createUserStatus(getMessage().getInt(STATUS_FIELD));
         }
 
         return mStatusIdentifier;

@@ -39,13 +39,6 @@ public class MessageActivityModel extends ClearableHistoryModel<MessageItem> imp
     private SimpleDateFormat mSDFTime = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss");
 
     /**
-     * Constructor
-     */
-    public MessageActivityModel()
-    {
-    }
-
-    /**
      * Implements the listener interface and wraps the IMessage in table-compatible message item wrapper.
      * @param message to add to the model
      */

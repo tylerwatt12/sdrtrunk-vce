@@ -22,8 +22,8 @@ package io.github.dsheirer.module.decode.event;
 import io.github.dsheirer.filter.FilterEditor;
 import io.github.dsheirer.filter.FilterSet;
 import java.awt.EventQueue;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JButton;
@@ -183,7 +183,7 @@ public class HistoryManagementPanel<T> extends JPanel
             mHistorySlider.setMajorTickSpacing(500);
             mHistorySlider.setPaintTicks(false);
             mHistorySlider.setPaintLabels(false);
-            mHistorySlider.addMouseListener(new MouseListener()
+            mHistorySlider.addMouseListener(new MouseAdapter()
             {
                 @Override
                 public void mouseClicked(MouseEvent arg0)
@@ -194,10 +194,6 @@ public class HistoryManagementPanel<T> extends JPanel
                     }
                 }
 
-                public void mouseEntered(MouseEvent arg0) {}
-                public void mouseExited(MouseEvent arg0) {}
-                public void mousePressed(MouseEvent arg0) {}
-                public void mouseReleased(MouseEvent arg0) {}
             });
 
             mHistorySlider.setValue(mModel.getHistorySize());

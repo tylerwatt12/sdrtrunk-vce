@@ -19,7 +19,9 @@
 
 package io.github.dsheirer.module.decode.ip.cellocator;
 
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Cellocator MCGP Message Types enumeration with indicated message lengths.
@@ -54,8 +56,8 @@ public enum MCGPMessageType
         mLabel = label;
     }
 
-    public static EnumSet<MCGPMessageType> INBOUND = EnumSet.range(INBOUND_GENERIC_COMMAND, INBOUND_MODULAR_REQUEST);
-    public static EnumSet<MCGPMessageType> OUTBOUND = EnumSet.range(OUTBOUND_LOCATION_STATUS, OUTBOUND_FIRMWARE_UPDATE);
+    public static final Set<MCGPMessageType> INBOUND = Collections.unmodifiableSet(EnumSet.range(INBOUND_GENERIC_COMMAND, INBOUND_MODULAR_REQUEST));
+    public static final Set<MCGPMessageType> OUTBOUND = Collections.unmodifiableSet(EnumSet.range(OUTBOUND_LOCATION_STATUS, OUTBOUND_FIRMWARE_UPDATE));
 
     public int getValue()
     {
@@ -101,9 +103,9 @@ public enum MCGPMessageType
                 return INBOUND_MODULAR_REQUEST;
             case 10:
                 return OUTBOUND_FIRMWARE_UPDATE;
+            default:
+                return UNKNOWN;
         }
-
-        return UNKNOWN;
     }
 
     public static MCGPMessageType getOutboundMessageType(int value)

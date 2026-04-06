@@ -20,8 +20,8 @@
 package io.github.dsheirer.module.decode.event.filter;
 
 import com.jidesoft.swing.JideSplitButton;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
 
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -79,7 +79,7 @@ public class EventClearButton extends JideSplitButton
             slider.setPaintTicks(true);
             slider.setPaintLabels(true);
 
-            slider.addMouseListener(new MouseListener()
+            slider.addMouseListener(new MouseAdapter()
             {
                 @Override
                 public void mouseClicked(MouseEvent arg0)
@@ -88,22 +88,6 @@ public class EventClearButton extends JideSplitButton
                     {
                         slider.setValue(500); //default
                     }
-                }
-
-                public void mouseEntered(MouseEvent arg0)
-                {
-                }
-
-                public void mouseExited(MouseEvent arg0)
-                {
-                }
-
-                public void mousePressed(MouseEvent arg0)
-                {
-                }
-
-                public void mouseReleased(MouseEvent arg0)
-                {
                 }
             });
             return slider;

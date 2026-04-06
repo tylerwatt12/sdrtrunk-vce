@@ -30,6 +30,7 @@ import net.miginfocom.swing.MigLayout;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JScrollPane;
+import javax.swing.WindowConstants;
 
 /**
  * Event filter button that includes split button functionality to allow user to select filter items.
@@ -88,9 +89,9 @@ public class EventFilterButton<T> extends JideButton
             editor.setTitle(mTitle);
             editor.setLocationRelativeTo(EventFilterButton.this);
             editor.setSize(600, 400);
-            editor.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            editor.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
             editor.setLayout(new MigLayout("", "[grow,fill]", "[grow,fill][][]"));
-            FilterEditorPanel<T> panel = new FilterEditorPanel<T>(mFilterSet);
+            FilterEditorPanel<T> panel = new FilterEditorPanel<>(mFilterSet);
             JScrollPane scroller = new JScrollPane(panel);
             scroller.setViewportView(panel);
             editor.add(scroller, "wrap");
