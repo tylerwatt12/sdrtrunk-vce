@@ -25,8 +25,7 @@ import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
 import java.awt.Dimension;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+
 import java.io.File;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -42,6 +41,7 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import javax.swing.WindowConstants;
 import javax.swing.filechooser.FileFilter;
 
 /**
@@ -75,7 +75,7 @@ public class AddRecordingTunerDialog extends JFrame
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = tunerConfigurationManager;
 
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         setTitle("Select Recording File");
         setSize(new Dimension(500, 250));
 
@@ -170,7 +170,7 @@ public class AddRecordingTunerDialog extends JFrame
             if(mSelectedRecording == null)
             {
                 JOptionPane.showMessageDialog(AddRecordingTunerDialog.this,
-                    "Please select a recording file",
+                    SELECT_A_FILE,
                     "Select a Recording File",
                     JOptionPane.ERROR_MESSAGE);
                 return;
@@ -210,14 +210,7 @@ public class AddRecordingTunerDialog extends JFrame
         content.add(mAddButton, "grow,push");
 
         mCancelButton = new JButton("Cancel");
-        mCancelButton.addActionListener(new ActionListener()
-        {
-            @Override
-            public void actionPerformed(ActionEvent e)
-            {
-                AddRecordingTunerDialog.this.setVisible(false);
-            }
-        });
+        mCancelButton.addActionListener(e -> AddRecordingTunerDialog.this.setVisible(false));
         content.add(mCancelButton, "grow,push");
 
         setContentPane(content);

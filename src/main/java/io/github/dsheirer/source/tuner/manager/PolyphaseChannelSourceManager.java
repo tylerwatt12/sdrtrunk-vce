@@ -340,15 +340,6 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     }
 
     /**
-     * Indicates if the two frequencies have a spacing that is an integral multiple of the channel bandwidth.
-     */
-    private boolean isIntegralSpacing(long frequencyA, long frequencyB)
-    {
-        double delta = FastMath.abs(frequencyA - frequencyB);
-        return delta % mPolyphaseChannelManager.getChannelBandwidth() <= 1.0;
-    }
-
-    /**
      * Identifies the tuner channel frequency that has the best fit as an integral multiple of all of the other tuner
      * channels.  Using a polyphase channelizer to split each of the channels at a spacing of the channel sample rate,
      * best fit is defined as the lowest absolute miss distance for each channel from the integral centers

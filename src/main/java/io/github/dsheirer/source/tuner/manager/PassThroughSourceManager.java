@@ -125,25 +125,20 @@ public class PassThroughSourceManager extends ChannelSourceManager
     @Override
     public void process(SourceEvent event) throws SourceException
     {
-        switch(event.getEvent())
+        if(event.getEvent() == SourceEvent.Event.REQUEST_START_SAMPLE_STREAM &&
+                event.hasSource() && event.getSource() instanceof PassThroughChannelSource)
         {
-            case REQUEST_START_SAMPLE_STREAM:
-                if(event.hasSource() && event.getSource() instanceof PassThroughChannelSource)
-                {
-                    mTunerController.addBufferListener((PassThroughChannelSource)event.getSource());
-                    broadcast(SourceEvent.channelCountChange(mTunerChannels.size()));
-                }
-                break;
-            case REQUEST_STOP_SAMPLE_STREAM:
-                if(event.hasSource() && event.getSource() instanceof PassThroughChannelSource)
-                {
-                    PassThroughChannelSource source = (PassThroughChannelSource)event.getSource();
-                    mTunerController.removeBufferListener(source);
-                    mTunerChannels.remove(source.getTunerChannel());
-                    mTunerChannelSources.remove(source);
-                    broadcast(SourceEvent.channelCountChange(mTunerChannels.size()));
-                }
-                break;
+            mTunerController.addBufferListener((PassThroughChannelSource)event.getSource());
+            broadcast(SourceEvent.channelCountChange(mTunerChannels.size()));
+        }
+        else if(event.getEvent() == SourceEvent.Event.REQUEST_STOP_SAMPLE_STREAM &&
+                event.hasSource() && event.getSource() instanceof PassThroughChannelSource)
+        {
+            PassThroughChannelSource source = (PassThroughChannelSource)event.getSource();
+            mTunerController.removeBufferListener(source);
+            mTunerChannels.remove(source.getTunerChannel());
+            mTunerChannelSources.remove(source);
+            broadcast(SourceEvent.channelCountChange(mTunerChannels.size()));
         }
     }
 

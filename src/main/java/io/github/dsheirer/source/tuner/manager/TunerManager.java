@@ -159,7 +159,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 if(status == LibUsb.SUCCESS)
                 {
                     mLibUsbInitialized = true;
-                    //            LibUsb.setOption(mLibUsbApplicationContext, LibUsb.OPTION_LOG_LEVEL, LibUsb.LOG_LEVEL_DEBUG);
                     discoverUSBTuners();
                 }
             }
@@ -218,6 +217,35 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public void saveConfigurations()
     {
         mTunerConfigurationManager.saveConfigurations();
+    }
+
+    /**
+     * Retries the LibUsb get device list operation with warning logging enabled to diagnose error -99.
+     */
+    private void retryGetDeviceList(DeviceList deviceList)
+    {
+        try
+        {
+            mLog.info("LibUsb reported error -99 during get device list - increasing logging level and retrying");
+            LibUsb.setOption(mLibUsbApplicationContext, LibUsb.OPTION_LOG_LEVEL, LibUsb.LOG_LEVEL_WARNING);
+            int deviceCount = LibUsb.getDeviceList(mLibUsbApplicationContext, deviceList);
+            if(deviceCount >= 0)
+            {
+                mLog.info("LibUsb - get device list count [" + deviceCount + "] during retry");
+                LibUsb.freeDeviceList(deviceList, false);
+            }
+            else
+            {
+                mLog.info("LibUsb - get device list reported error [" + deviceCount + "/" +
+                        LibUsb.errorName(deviceCount) + "] during retry");
+            }
+            LibUsb.setOption(mLibUsbApplicationContext, LibUsb.OPTION_LOG_LEVEL, LibUsb.LOG_LEVEL_NONE);
+            mLog.info("LibUse - get device list reattempt complete - if additional logging was generated please notify developer");
+        }
+        catch(Exception e)
+        {
+            mLog.info("LibUsb error during get device list reattempt", e);
+        }
     }
 
     /**
@@ -282,28 +310,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 // again to see what's causing it.
                 else if(deviceCount == LibUsb.ERROR_OTHER)
                 {
-                    try
-                    {
-                        mLog.info("LibUsb reported error -99 during get device list - increasing logging level and retrying");
-                        LibUsb.setOption(mLibUsbApplicationContext, LibUsb.OPTION_LOG_LEVEL, LibUsb.LOG_LEVEL_WARNING);
-                        deviceCount = LibUsb.getDeviceList(mLibUsbApplicationContext, deviceList);
-                        if(deviceCount >=0)
-                        {
-                            mLog.info("LibUsb - get device list count [" + deviceCount + "] during retry");
-                            LibUsb.freeDeviceList(deviceList, false);
-                        }
-                        else
-                        {
-                            mLog.info("LibUsb - get device list reported error [" + deviceCount + "/" +
-                                    LibUsb.errorName(deviceCount) + "] during retry");
-                        }
-                        LibUsb.setOption(mLibUsbApplicationContext, LibUsb.OPTION_LOG_LEVEL, LibUsb.LOG_LEVEL_NONE);
-                        mLog.info("LibUse - get device list reattempt complete - if additional logging was generated please notify developer");
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.info("LibUsb error during get device list reattempt", e);
-                    }
+                    retryGetDeviceList(deviceList);
                 }
                 else
                 {
@@ -332,16 +339,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         {
             startAndConfigureTuner(discoveredUSBTuner);
         }
-    }
-
-    /**
-     * Stops and removes the USB tuner if it is currently discovered.
-     * @param bus usb for the tuner
-     * @param portAddress usb for the tuner
-     */
-    private DiscoveredTuner removeUsbTuner(int bus, String portAddress)
-    {
-        return mDiscoveredTunerModel.removeUsbTuner(bus, portAddress);
     }
 
     /**
@@ -739,52 +736,59 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             {
                 String portAddress = getPortAddress(device);
 
-                switch(event)
+                if(event == LibUsb.HOTPLUG_EVENT_DEVICE_ARRIVED)
                 {
-                    case LibUsb.HOTPLUG_EVENT_DEVICE_ARRIVED:
-                        DeviceDescriptor deviceDescriptor = new DeviceDescriptor();
-                        int status = LibUsb.getDeviceDescriptor(device, deviceDescriptor);
+                    DeviceDescriptor deviceDescriptor = new DeviceDescriptor();
+                    int status = LibUsb.getDeviceDescriptor(device, deviceDescriptor);
 
-                        if(status == LibUsb.SUCCESS)
+                    if(status == LibUsb.SUCCESS)
+                    {
+                        TunerClass tunerClass = TunerClass.lookup(deviceDescriptor.idVendor(), deviceDescriptor.idProduct());
+
+                        if(tunerClass.isSupportedUsbTuner())
                         {
-                            TunerClass tunerClass = TunerClass.lookup(deviceDescriptor.idVendor(), deviceDescriptor.idProduct());
+                            mLog.info("Tuner plug-in detected at USB Bus [" + bus + "] Port [" + port +
+                                    "] Tuner Class [" + tunerClass + "]");
+                            ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
+                            DiscoveredUSBTuner discoveredUSBTuner = new DiscoveredUSBTuner(tunerClass, bus,
+                                    portAddress, channelizerType);
 
-                            if(tunerClass.isSupportedUsbTuner())
+                            if(tunerClass.isFuncubeTuner())
                             {
-                                mLog.info("Tuner plug-in detected at USB Bus [" + bus + "] Port [" + port +
-                                        "] Tuner Class [" + tunerClass + "]");
-                                ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
-                                DiscoveredUSBTuner discoveredUSBTuner = new DiscoveredUSBTuner(tunerClass, bus,
-                                        portAddress, channelizerType);
-
-                                if(tunerClass.isFuncubeTuner())
-                                {
-                                    //Funcube tuners take a few moments to init the sound card interface.  Delay adding
-                                    //the tuner so that it can be started correctly.
-                                    ThreadPool.SCHEDULED.schedule(() ->
-                                    {
-                                        addUsbTuner(discoveredUSBTuner);
-                                    }, 2, TimeUnit.SECONDS);
-                                }
-                                else
-                                {
-                                    addUsbTuner(discoveredUSBTuner);
-                                }
+                                //Funcube tuners take a few moments to init the sound card interface.  Delay adding
+                                //the tuner so that it can be started correctly.
+                                ThreadPool.SCHEDULED.schedule(() ->
+                                    addUsbTuner(discoveredUSBTuner), 2, TimeUnit.SECONDS);
+                            }
+                            else
+                            {
+                                addUsbTuner(discoveredUSBTuner);
                             }
                         }
-                        break;
-                    case LibUsb.HOTPLUG_EVENT_DEVICE_LEFT:
-                        DiscoveredTuner removed = removeUsbTuner(bus, portAddress);
+                    }
+                }
+                else if(event == LibUsb.HOTPLUG_EVENT_DEVICE_LEFT)
+                {
+                    DiscoveredTuner removed = removeUsbTuner(bus, portAddress);
 
-                        if(removed != null)
-                        {
-                            mLog.info("Tuner Unplugged: " + removed.getId());
-                        }
-                        break;
+                    if(removed != null)
+                    {
+                        mLog.info("Tuner Unplugged: " + removed.getId());
+                    }
                 }
             }
 
             return HOTPLUG_CONTINUE_EVENT_SUPPORT;
+        }
+
+        /**
+         * Stops and removes the USB tuner if it is currently discovered.
+         * @param bus usb for the tuner
+         * @param portAddress usb for the tuner
+         */
+        private DiscoveredTuner removeUsbTuner(int bus, String portAddress)
+        {
+            return mDiscoveredTunerModel.removeUsbTuner(bus, portAddress);
         }
 
         /**

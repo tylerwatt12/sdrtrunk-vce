@@ -43,7 +43,6 @@ public class RecordingTunerController extends TunerController
     private ComplexWaveSource mComplexWaveSource;
     private String mPath;
     private long mCenterFrequency;
-    private boolean mRunning;
 
     /**
      * Constructs an instance
@@ -76,7 +75,7 @@ public class RecordingTunerController extends TunerController
             }
             catch(IOException ioe)
             {
-                mLog.error("Error", ioe);
+                mLog.error("Error opening recording file [" + mPath + "]", ioe);
                 setErrorMessage(ioe.getMessage() + " File:" + mPath);
                 return;
             }
@@ -91,7 +90,7 @@ public class RecordingTunerController extends TunerController
             }
             catch(IOException | UnsupportedAudioFileException e)
             {
-                mLog.error("Error", e);
+                mLog.error("Error starting recording file [" + mPath + "]", e);
                 setErrorMessage(e.getMessage() + " File:" + mPath);
                 return;
             }
@@ -104,7 +103,7 @@ public class RecordingTunerController extends TunerController
             }
             catch(SourceException e)
             {
-                mLog.error("Error", e);
+                mLog.error("Error configuring frequency/sample rate for recording [" + mPath + "]", e);
                 setErrorMessage(e.getMessage());
             }
         }
@@ -149,7 +148,7 @@ public class RecordingTunerController extends TunerController
     @Override
     public void setFrequency(long frequency) throws SourceException
     {
-//        mLog.debug("Set frequency [" + frequency + "] request ignored");
+        /* no action required */
     }
 
     /**
