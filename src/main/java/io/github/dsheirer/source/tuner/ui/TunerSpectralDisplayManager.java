@@ -31,6 +31,7 @@ import io.github.dsheirer.util.SwingUtils;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.List;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -43,7 +44,7 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
     private PlaylistManager mPlaylistManager;
     private SettingsManager mSettingsManager;
     private DiscoveredTunerModel mDiscoveredTunerModel;
-    private volatile ScheduledFuture<?> mInitialSelectionFuture;
+    private final AtomicReference<ScheduledFuture<?>> mInitialSelectionFuture = new AtomicReference<>();
     private volatile boolean mInitialSelectionComplete;
 
     /**
@@ -104,20 +105,30 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
      */
     public void retryShowFirstTuner(long interval, TimeUnit unit, int maxAttempts)
     {
-        if(mInitialSelectionComplete || (mInitialSelectionFuture != null && !mInitialSelectionFuture.isDone()))
+        if(mInitialSelectionComplete)
         {
             return;
         }
 
+        synchronized(mInitialSelectionFuture)
+        {
+            ScheduledFuture<?> existing = mInitialSelectionFuture.get();
+
+            if(existing != null && !existing.isDone())
+            {
+                return;
+            }
+        }
+
         final int[] attempts = new int[] {0};
-        mInitialSelectionFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> scheduledFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(() -> {
             if(mInitialSelectionComplete || attempts[0] >= maxAttempts)
             {
-                ScheduledFuture<?> future = mInitialSelectionFuture;
+                ScheduledFuture<?> existing = mInitialSelectionFuture.get();
 
-                if(future != null)
+                if(existing != null)
                 {
-                    future.cancel(false);
+                    existing.cancel(false);
                 }
 
                 return;
@@ -130,14 +141,28 @@ public class TunerSpectralDisplayManager implements Listener<TunerEvent>
             {
                 mDiscoveredTunerModel.broadcast(new TunerEvent(tuner, TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY));
 
-                ScheduledFuture<?> future = mInitialSelectionFuture;
+                ScheduledFuture<?> existing = mInitialSelectionFuture.get();
 
-                if(future != null)
+                if(existing != null)
                 {
-                    future.cancel(false);
+                    existing.cancel(false);
                 }
             }
         }, interval, interval, unit);
+
+        synchronized(mInitialSelectionFuture)
+        {
+            ScheduledFuture<?> existing = mInitialSelectionFuture.get();
+
+            if(existing != null && !existing.isDone())
+            {
+                scheduledFuture.cancel(false);
+            }
+            else
+            {
+                mInitialSelectionFuture.set(scheduledFuture);
+            }
+        }
     }
 
     @Override
