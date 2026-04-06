@@ -62,17 +62,12 @@ public class PassportTalkgroup extends TalkgroupIdentifier implements Comparable
     @Override
     public boolean equals(Object o)
     {
-        if(!(o instanceof PassportTalkgroup))
-        {
-            return false;
-        }
-
-        return compareTo((PassportTalkgroup)o) == 0;
+        return super.equals(o);
     }
 
     @Override
     public int hashCode()
     {
-        return Integer.hashCode(getValue());
+        return super.hashCode();
     }
 }

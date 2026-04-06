@@ -26,6 +26,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Objects;
+import org.apache.commons.lang3.StringUtils;
 
 public class ESNIdentifier extends StringIdentifier implements Comparable<ESNIdentifier>
 {
@@ -51,29 +52,49 @@ public class ESNIdentifier extends StringIdentifier implements Comparable<ESNIde
     @Override
     public int compareTo(ESNIdentifier o)
     {
-        if(getValue() == null)
+        if(o == null)
         {
             return 1;
         }
-        else if(o.getValue() == null)
+
+        int comparison = StringUtils.compare(getValue(), o.getValue());
+
+        if(comparison == 0)
         {
-            return -1;
+            comparison = getRole().compareTo(o.getRole());
         }
-        else
+
+        if(comparison == 0)
         {
-            return getValue().compareTo(o.getValue());
+            comparison = getProtocol().compareTo(o.getProtocol());
         }
+
+        return comparison;
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof ESNIdentifier)) return false;
-        return compareTo((ESNIdentifier) o) == 0;
+    public boolean equals(Object o)
+    {
+        if(this == o)
+        {
+            return true;
+        }
+
+        if(!(o instanceof ESNIdentifier other))
+        {
+            return false;
+        }
+
+        return Objects.equals(getValue(), other.getValue()) &&
+                getIdentifierClass() == other.getIdentifierClass() &&
+                getForm() == other.getForm() &&
+                getRole() == other.getRole() &&
+                getProtocol() == other.getProtocol();
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hashCode(getValue());
+        return Objects.hash(getValue(), getIdentifierClass(), getForm(), getRole(), getProtocol());
     }
 }

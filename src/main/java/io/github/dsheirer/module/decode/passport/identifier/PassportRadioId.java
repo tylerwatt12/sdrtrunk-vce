@@ -24,7 +24,6 @@ package io.github.dsheirer.module.decode.passport.identifier;
 
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
-import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 
 /**
@@ -63,22 +62,12 @@ public class PassportRadioId extends RadioIdentifier implements Comparable<Passp
     @Override
     public boolean equals(Object obj)
     {
-        if(this == obj)
-        {
-            return true;
-        }
-
-        if(!(obj instanceof PassportRadioId other))
-        {
-            return false;
-        }
-
-        return getValue() == other.getValue();
+        return super.equals(obj);
     }
 
     @Override
     public int hashCode()
     {
-        return Integer.hashCode(getValue());
+        return super.hashCode();
     }
 }

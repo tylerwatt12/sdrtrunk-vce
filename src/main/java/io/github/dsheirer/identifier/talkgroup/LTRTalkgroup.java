@@ -93,12 +93,25 @@ public class LTRTalkgroup extends TalkgroupIdentifier implements Comparable<LTRT
     @Override
     public int compareTo(LTRTalkgroup o)
     {
-        return getValue().compareTo(o.getValue());
+        int comparison = getValue().compareTo(o.getValue());
+
+        if(comparison == 0)
+        {
+            comparison = getRole().compareTo(o.getRole());
+        }
+
+        return comparison;
     }
 
     @Override
     public boolean equals(Object o)
     {
         return super.equals(o);
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return super.hashCode();
     }
 }

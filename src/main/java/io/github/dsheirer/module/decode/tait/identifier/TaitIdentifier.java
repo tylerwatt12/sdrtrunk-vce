@@ -66,28 +66,25 @@ public class TaitIdentifier extends StringIdentifier implements Comparable<TaitI
     @Override
     public int compareTo(TaitIdentifier other)
     {
-        return StringUtils.compare(getValue(), other != null ? other.getValue() : null);
+        int comparison = StringUtils.compare(getValue(), other != null ? other.getValue() : null);
+
+        if(comparison == 0 && other != null)
+        {
+            comparison = getRole().compareTo(other.getRole());
+        }
+
+        return comparison;
     }
 
     @Override
     public boolean equals(Object obj)
     {
-        if(this == obj)
-        {
-            return true;
-        }
-
-        if(!(obj instanceof TaitIdentifier other))
-        {
-            return false;
-        }
-
-        return Objects.equals(getValue(), other.getValue());
+        return super.equals(obj);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(getValue());
+        return super.hashCode();
     }
 }
