@@ -61,10 +61,7 @@ public class AirspyHfTunerController extends USBTunerController
     private boolean mAgcEnabled;
     private boolean mLnaEnabled;
     private long mTunedFrequency;
-    private static final int CALIBRATION_MAGIC = 0xA5CA71B0;
-    private int mCalibrationRecordMagicNumber;
     private int mCalibrationRecordPPB;
-    private int mCalibrationRecordVctcxo;
 
     /**
      * Constructs an instance
@@ -88,25 +85,9 @@ public class AirspyHfTunerController extends USBTunerController
 
         if(config instanceof AirspyHfTunerConfiguration airspyConfig)
         {
-            int sampleRate = airspyConfig.getSampleRate();
-
-            boolean found = false;
             //The tuner supports several sample rates, but in testing the only rate that seems to function
             //correctly is the 912kHz rate, which should be index 0.
-//            for(AirspyHfSampleRate rate: getAvailableSampleRates())
-//            {
-//                if(rate.getSampleRate() == sampleRate)
-//                {
-//                    setSampleRate(rate);
-//                    found = true;
-//                    break;
-//                }
-//            }
-
-            if(!found)
-            {
-                setSampleRate(getAvailableSampleRates().get(0));
-            }
+            setSampleRate(getAvailableSampleRates().get(0));
 
             try
             {
@@ -230,27 +211,24 @@ public class AirspyHfTunerController extends USBTunerController
      */
     public void setSampleRate(AirspyHfSampleRate sampleRate) throws SourceException
     {
-        if(sampleRate != null)
+        if(sampleRate != null && isSupportedSampleRate(sampleRate.getSampleRate()))
         {
-            if(isSupportedSampleRate(sampleRate.getSampleRate()))
+            getNativeBufferFactory().setSamplesPerMillisecond((float)sampleRate.getSampleRate() / 1000.0f);
+
+            LibUsb.clearHalt(getDeviceHandle(), USB_BULK_TRANSFER_ENDPOINT);
+            int status = writeIndex(Request.SET_SAMPLE_RATE, sampleRate.getIndex());
+
+            if(status != 0)
             {
-                getNativeBufferFactory().setSamplesPerMillisecond((float)sampleRate.getSampleRate() / 1000.0f);
-
-                LibUsb.clearHalt(getDeviceHandle(), USB_BULK_TRANSFER_ENDPOINT);
-                int status = writeIndex(Request.SET_SAMPLE_RATE, sampleRate.getIndex());
-
-                if(status != 0)
-                {
-                    throw new SourceException("Unable to set Airspy HF sample rate to: " + sampleRate);
-                }
-
-                mFrequencyController.setSampleRate(sampleRate.getSampleRate());
-                getNativeBufferFactory().setSamplesPerMillisecond(sampleRate.getSampleRate() / 1000.0f);
-                mCurrentSampleRate = sampleRate;
-
-                //Set the frequency again to adjust for any switch between ZIF & LIF
-                setTunedFrequency(mTunedFrequency);
+                throw new SourceException("Unable to set Airspy HF sample rate to: " + sampleRate);
             }
+
+            mFrequencyController.setSampleRate(sampleRate.getSampleRate());
+            getNativeBufferFactory().setSamplesPerMillisecond(sampleRate.getSampleRate() / 1000.0f);
+            mCurrentSampleRate = sampleRate;
+
+            //Set the frequency again to adjust for any switch between ZIF & LIF
+            setTunedFrequency(mTunedFrequency);
         }
     }
 
@@ -661,8 +639,6 @@ public class AirspyHfTunerController extends USBTunerController
     {
         byte[] bytes = read(Request.CONFIG_READ, 0, 256);
         IntBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
-        mCalibrationRecordMagicNumber = buffer.get(0);
         mCalibrationRecordPPB = buffer.get(1);
-        mCalibrationRecordVctcxo = buffer.get(2);
     }
 }

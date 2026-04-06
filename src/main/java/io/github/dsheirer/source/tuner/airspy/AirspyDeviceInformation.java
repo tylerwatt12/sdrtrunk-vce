@@ -7,21 +7,14 @@ import java.util.Arrays;
 
 public class AirspyDeviceInformation
 {
+	private static final String UNKNOWN = "Unknown";
 	private static final Logger mLog = 
 			LoggerFactory.getLogger( AirspyDeviceInformation.class );
 
 	private AirspyTunerController.BoardID mBoardID = AirspyTunerController.BoardID.UNKNOWN;
-	private String mFirmwareVersion = "Unknown";
-	private String mPartNumber = "Unknown";
-	private String mSerialNumber = "Unknown";
-
-	/**
-	 * Airspy Device Information - provides parsing and access to device
-	 * information components.
-	 */
-	public AirspyDeviceInformation()
-	{
-	}
+	private String mFirmwareVersion = UNKNOWN;
+	private String mPartNumber = UNKNOWN;
+	private String mSerialNumber = UNKNOWN;
 	
 	public void setBoardID( int boardID )
 	{

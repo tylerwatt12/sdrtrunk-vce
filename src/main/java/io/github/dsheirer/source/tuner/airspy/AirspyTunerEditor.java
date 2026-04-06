@@ -41,6 +41,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JSeparator;
 import javax.swing.JSlider;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.SwingConstants;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 
@@ -251,7 +252,7 @@ public class AirspyTunerEditor extends TunerEditor<AirspyTuner, AirspyTunerConfi
     {
         if(mLNAGainSlider == null)
         {
-            mLNAGainSlider = new JSlider(JSlider.HORIZONTAL, AirspyTunerController.LNA_GAIN_MIN,
+            mLNAGainSlider = new JSlider(SwingConstants.HORIZONTAL, AirspyTunerController.LNA_GAIN_MIN,
                     AirspyTunerController.LNA_GAIN_MAX, AirspyTunerController.LNA_GAIN_MIN);
             mLNAGainSlider.setEnabled(false);
             mLNAGainSlider.setMajorTickSpacing(1);
@@ -296,34 +297,30 @@ public class AirspyTunerEditor extends TunerEditor<AirspyTuner, AirspyTunerConfi
     {
         if(mMixerGainSlider == null)
         {
-            mMixerGainSlider = new JSlider(JSlider.HORIZONTAL, AirspyTunerController.MIXER_GAIN_MIN,
+            mMixerGainSlider = new JSlider(SwingConstants.HORIZONTAL, AirspyTunerController.MIXER_GAIN_MIN,
                     AirspyTunerController.MIXER_GAIN_MAX, AirspyTunerController.MIXER_GAIN_MIN);
             mMixerGainSlider.setEnabled(false);
             mMixerGainSlider.setMajorTickSpacing(1);
             mMixerGainSlider.setPaintTicks(true);
-            mMixerGainSlider.addChangeListener(new ChangeListener()
+            mMixerGainSlider.addChangeListener(event ->
             {
-                @Override
-                public void stateChanged(ChangeEvent event)
+                int gain = mMixerGainSlider.getValue();
+
+                if(hasTuner() && !isLoading())
                 {
-                    int gain = mMixerGainSlider.getValue();
-
-                    if(hasTuner() && !isLoading())
+                    try
                     {
-                        try
-                        {
-                            getTuner().getController().setMixerGain(gain);
-                            save();
-                        }
-                        catch(Exception e)
-                        {
-                            mLog.error("Couldn't set airspy Mixer gain to:" + gain, e);
-                            JOptionPane.showMessageDialog(mMixerGainSlider, "Couldn't set Mixer gain value to " + gain);
-                        }
+                        getTuner().getController().setMixerGain(gain);
+                        save();
                     }
-
-                    getMixerGainValueLabel().setText(String.valueOf(gain));
+                    catch(Exception e)
+                    {
+                        mLog.error("Couldn't set airspy Mixer gain to:" + gain, e);
+                        JOptionPane.showMessageDialog(mMixerGainSlider, "Couldn't set Mixer gain value to " + gain);
+                    }
                 }
+
+                getMixerGainValueLabel().setText(String.valueOf(gain));
             });
         }
 
@@ -355,7 +352,7 @@ public class AirspyTunerEditor extends TunerEditor<AirspyTuner, AirspyTunerConfi
     {
         if(mIFGainSlider == null)
         {
-            mIFGainSlider = new JSlider(JSlider.HORIZONTAL, AirspyTunerController.IF_GAIN_MIN,
+            mIFGainSlider = new JSlider(SwingConstants.HORIZONTAL, AirspyTunerController.IF_GAIN_MIN,
                     AirspyTunerController.IF_GAIN_MAX, AirspyTunerController.IF_GAIN_MIN);
             mIFGainSlider.setEnabled(false);
             mIFGainSlider.setMajorTickSpacing(1);
@@ -410,7 +407,7 @@ public class AirspyTunerEditor extends TunerEditor<AirspyTuner, AirspyTunerConfi
     {
         if(mMasterGainSlider == null)
         {
-            mMasterGainSlider = new JSlider(JSlider.HORIZONTAL, AirspyTunerController.GAIN_MIN,
+            mMasterGainSlider = new JSlider(SwingConstants.HORIZONTAL, AirspyTunerController.GAIN_MIN,
                     AirspyTunerController.GAIN_MAX, AirspyTunerController.GAIN_MIN);
             mMasterGainSlider.setEnabled(false);
             mMasterGainSlider.setMajorTickSpacing(1);
@@ -472,30 +469,26 @@ public class AirspyTunerEditor extends TunerEditor<AirspyTuner, AirspyTunerConfi
         {
             mSampleRateCombo = new JComboBox<>();
             mSampleRateCombo.setEnabled(false);
-            mSampleRateCombo.addActionListener(new ActionListener()
+            mSampleRateCombo.addActionListener(e ->
             {
-                @Override
-                public void actionPerformed(ActionEvent e)
+                if(hasTuner() && !isLoading())
                 {
-                    if(hasTuner() && !isLoading())
+                    AirspySampleRate rate = (AirspySampleRate)mSampleRateCombo.getSelectedItem();
+
+                    try
                     {
-                        AirspySampleRate rate = (AirspySampleRate)mSampleRateCombo.getSelectedItem();
+                        getTuner().getController().setSampleRate(rate);
 
-                        try
-                        {
-                            getTuner().getController().setSampleRate(rate);
+                        //Adjust the min/max values for the sample rate.
+                        adjustForSampleRate(rate.getRate());
 
-                            //Adjust the min/max values for the sample rate.
-                            adjustForSampleRate(rate.getRate());
-
-                            save();
-                        }
-                        catch(Exception e1)
-                        {
-                            JOptionPane.showMessageDialog(AirspyTunerEditor.this,
-                                    "Couldn't set sample rate to " + rate.getLabel());
-                            mLog.error("Error setting airspy sample rate", e1);
-                        }
+                        save();
+                    }
+                    catch(Exception e1)
+                    {
+                        JOptionPane.showMessageDialog(AirspyTunerEditor.this,
+                                "Couldn't set sample rate to " + rate.getLabel());
+                        mLog.error("Error setting airspy sample rate", e1);
                     }
                 }
             });
