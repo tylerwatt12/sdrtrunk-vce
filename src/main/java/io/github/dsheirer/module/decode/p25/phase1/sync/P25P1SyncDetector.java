@@ -29,6 +29,10 @@ public abstract class P25P1SyncDetector
     public static final long SYNC_MASK = 0xFFFFFFFFFFFFL;
     public static final long SYNC_PATTERN = 0x5575F5FF77FFL;
 
+    protected P25P1SyncDetector()
+    {
+    }
+
     /**
      * Converts the P25P1 sync pattern to a float array of ideal phase values for each Dibit to use for correlation
      * against a stream of transmitted symbol phases.

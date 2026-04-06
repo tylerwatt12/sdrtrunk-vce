@@ -49,7 +49,7 @@ public abstract class ExtendedSourceLinkControlWord extends LinkControlWord impl
      * @param timestamp of this message.
      * @param isTerminator to indicate if message is carried by a TDULC terminator message
      */
-    public ExtendedSourceLinkControlWord(CorrectedBinaryMessage message, long timestamp, boolean isTerminator)
+    protected ExtendedSourceLinkControlWord(CorrectedBinaryMessage message, long timestamp, boolean isTerminator)
     {
         super(message);
         mTimestamp = timestamp;

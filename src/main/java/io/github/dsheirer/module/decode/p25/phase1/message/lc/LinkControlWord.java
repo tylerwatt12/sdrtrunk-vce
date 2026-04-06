@@ -60,7 +60,7 @@ public abstract class LinkControlWord extends AbstractMessage
      *
      * @param message
      */
-    public LinkControlWord(CorrectedBinaryMessage message)
+    protected LinkControlWord(CorrectedBinaryMessage message)
     {
         super(message);
     }

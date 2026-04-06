@@ -44,13 +44,13 @@ public class StandardChannel implements IChannelDescriptor
     @Override
     public long getDownlinkFrequency()
     {
-        return mFrequency;
+        return getFrequency();
     }
 
     @Override
     public long getUplinkFrequency()
     {
-        return mFrequency;
+        return getFrequency();
     }
 
     @Override
@@ -81,6 +81,11 @@ public class StandardChannel implements IChannelDescriptor
     public Protocol getProtocol()
     {
         return Protocol.UNKNOWN;
+    }
+
+    private long getFrequency()
+    {
+        return mFrequency;
     }
 
     @Override

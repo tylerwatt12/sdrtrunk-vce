@@ -37,7 +37,7 @@ public abstract class VoiceLinkControlMessage extends LinkControlWord implements
      *
      * @param message
      */
-    public VoiceLinkControlMessage(CorrectedBinaryMessage message)
+    protected VoiceLinkControlMessage(CorrectedBinaryMessage message)
     {
         super(message);
     }

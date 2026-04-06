@@ -78,6 +78,10 @@ import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCUnitToU
  */
 public class LinkControlWordFactory
 {
+    private LinkControlWordFactory()
+    {
+    }
+
     /**
      * Creates a link control word from the binary message sequence.
      *

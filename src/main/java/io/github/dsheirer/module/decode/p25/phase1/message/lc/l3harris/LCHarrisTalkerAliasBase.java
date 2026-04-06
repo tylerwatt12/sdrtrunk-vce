@@ -38,7 +38,7 @@ public abstract class LCHarrisTalkerAliasBase extends LinkControlWord
      *
      * @param message
      */
-    public LCHarrisTalkerAliasBase(CorrectedBinaryMessage message)
+    protected LCHarrisTalkerAliasBase(CorrectedBinaryMessage message)
     {
         super(message);
     }
