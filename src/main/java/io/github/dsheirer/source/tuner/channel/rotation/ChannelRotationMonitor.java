@@ -105,14 +105,10 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     @Override
     public void receive(DecoderStateEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == DecoderStateEvent.Event.NOTIFICATION_CHANNEL_STATE &&
+            mActiveStates.contains(event.getState()))
         {
-            case NOTIFICATION_CHANNEL_STATE:
-                if(mActiveStates.contains(event.getState()))
-                {
-                    mLastActiveTimestamp = System.currentTimeMillis();
-                }
-                break;
+            mLastActiveTimestamp = System.currentTimeMillis();
         }
     }
 
@@ -170,6 +166,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     @Override
     public void reset()
     {
+        /* no action required */
     }
 
     @Override
@@ -182,9 +179,9 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
                 {
                     checkState();
                 }
-                catch(Throwable t)
+                catch(Exception e)
                 {
-                    mLog.warn("Error while checking state", t);
+                    mLog.warn("Error while checking state", e);
                 }
             };
 
@@ -203,4 +200,3 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
         }
     }
 }
-

@@ -94,4 +94,10 @@ public class TunerChannel implements Comparable<TunerChannel>
         if (!(o instanceof TunerChannel)) return false;
         return compareTo((TunerChannel) o) == 0;
     }
+
+    @Override
+    public int hashCode()
+    {
+        return Long.hashCode(getFrequency());
+    }
 }

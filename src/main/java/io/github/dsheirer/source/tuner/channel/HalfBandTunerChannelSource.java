@@ -41,9 +41,6 @@ public class HalfBandTunerChannelSource<T extends INativeBuffer> extends TunerCh
 {
     private static final Logger mLog = LoggerFactory.getLogger(HalfBandTunerChannelSource.class);
 
-    //Maximum number of filled buffers for the blocking queue
-    private static final int BUFFER_MAX_CAPACITY = 600;
-
     private Dispatcher<T> mBufferDispatcher;
     private ComplexMixer mFrequencyCorrectionMixer;
     private IRealDecimationFilter mIDecimationFilter;
@@ -80,7 +77,7 @@ public class HalfBandTunerChannelSource<T extends INativeBuffer> extends TunerCh
         mBufferDispatcher.setListener(new NativeBufferProcessor());
 
         //Setup the frequency mixer to the current source frequency
-        mChannelSampleRate = sampleRate / (double)decimation;
+        mChannelSampleRate = sampleRate / decimation;
         mTunerFrequency = tunerChannel.getFrequency();
         long frequencyOffset = mTunerFrequency - getTunerChannel().getFrequency();
         mFrequencyCorrectionMixer = ComplexMixerFactory.getMixer(frequencyOffset, sampleRate);
@@ -103,6 +100,7 @@ public class HalfBandTunerChannelSource<T extends INativeBuffer> extends TunerCh
     @Override
     public void dispose()
     {
+        /* no action required */
     }
 
     /**

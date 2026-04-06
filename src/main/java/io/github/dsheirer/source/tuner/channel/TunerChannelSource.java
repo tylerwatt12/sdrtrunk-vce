@@ -46,7 +46,7 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
      * @param tunerChannel describing the desired channel frequency and bandwidth/minimum sample rate
      * @param threadName for the channel's dispatcher
      */
-    public TunerChannelSource(Listener<SourceEvent> producerSourceEventListener, TunerChannel tunerChannel,
+    protected TunerChannelSource(Listener<SourceEvent> producerSourceEventListener, TunerChannel tunerChannel,
                               String threadName)
     {
         mProducerSourceEventListener = producerSourceEventListener;
