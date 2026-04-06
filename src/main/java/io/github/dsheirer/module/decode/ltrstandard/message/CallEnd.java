@@ -22,7 +22,6 @@ package io.github.dsheirer.module.decode.ltrstandard.message;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.message.MessageDirection;
 import io.github.dsheirer.module.decode.ltrstandard.LtrStandardMessageType;
 
 import java.util.ArrayList;
@@ -32,9 +31,9 @@ public class CallEnd extends LTRMessage
 {
     private List<Identifier> mIdentifiers;
 
-    public CallEnd(CorrectedBinaryMessage message, MessageDirection direction, CRC crc)
+    public CallEnd(CorrectedBinaryMessage message, CRC crc)
     {
-        super(message, direction, crc);
+        super(message, crc);
     }
 
     @Override

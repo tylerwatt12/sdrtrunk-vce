@@ -22,7 +22,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.identifier.talkgroup.LTRTalkgroup;
 import io.github.dsheirer.message.Message;
-import io.github.dsheirer.message.MessageDirection;
 import io.github.dsheirer.module.decode.ltrstandard.LtrStandardMessageType;
 import io.github.dsheirer.protocol.Protocol;
 
@@ -31,29 +30,24 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public abstract class LTRMessage extends Message
 {
-    public static final int[] SYNC = {0, 1, 2, 3, 4, 5, 6, 7, 8};
-    public static final int[] AREA = {9};
-    public static final int[] CHANNEL = {10, 11, 12, 13, 14};
-    public static final int[] HOME_REPEATER = {15, 16, 17, 18, 19};
-    public static final int[] GROUP = {20, 21, 22, 23, 24, 25, 26, 27};
-    public static final int[] FREE = {28, 29, 30, 31, 32};
-    public static final int[] CHECKSUM = {33, 34, 35, 36, 37, 38, 39};
+    private static final int[] AREA = {9};
+    private static final int[] CHANNEL = {10, 11, 12, 13, 14};
+    private static final int[] HOME_REPEATER = {15, 16, 17, 18, 19};
+    private static final int[] GROUP = {20, 21, 22, 23, 24, 25, 26, 27};
+    private static final int[] FREE = {28, 29, 30, 31, 32};
 
     private CorrectedBinaryMessage mMessage;
-    private MessageDirection mMessageDirection;
     private CRC mCRC;
     private LTRTalkgroup mTalkgroup;
 
     /**
      * Constructs the message
      * @param message containing the raw bits
-     * @param direction of the messsage, ISW or OSW
      * @param crc error check
      */
-    public LTRMessage(CorrectedBinaryMessage message, MessageDirection direction, CRC crc)
+    protected LTRMessage(CorrectedBinaryMessage message, CRC crc)
     {
         mMessage = message;
-        mMessageDirection = direction;
         mCRC = crc;
     }
 
@@ -91,7 +85,7 @@ public abstract class LTRMessage extends Message
      */
     public int getArea()
     {
-        return mMessage.getInt(AREA);
+        return getArea(mMessage);
     }
 
     /**
@@ -99,7 +93,7 @@ public abstract class LTRMessage extends Message
      */
     public int getChannel()
     {
-        return mMessage.getInt(CHANNEL);
+        return getChannel(mMessage);
     }
 
     /**
@@ -107,7 +101,7 @@ public abstract class LTRMessage extends Message
      */
     public int getHomeRepeater()
     {
-        return mMessage.getInt(HOME_REPEATER);
+        return getHomeRepeater(mMessage);
     }
 
     /**
@@ -115,7 +109,7 @@ public abstract class LTRMessage extends Message
      */
     public int getGroup()
     {
-        return mMessage.getInt(GROUP);
+        return getGroup(mMessage);
     }
 
     /**
@@ -123,7 +117,32 @@ public abstract class LTRMessage extends Message
      */
     public int getFree()
     {
-        return mMessage.getInt(FREE);
+        return getFree(mMessage);
+    }
+
+    public static int getArea(CorrectedBinaryMessage message)
+    {
+        return message.getInt(AREA);
+    }
+
+    public static int getChannel(CorrectedBinaryMessage message)
+    {
+        return message.getInt(CHANNEL);
+    }
+
+    public static int getHomeRepeater(CorrectedBinaryMessage message)
+    {
+        return message.getInt(HOME_REPEATER);
+    }
+
+    public static int getGroup(CorrectedBinaryMessage message)
+    {
+        return message.getInt(GROUP);
+    }
+
+    public static int getFree(CorrectedBinaryMessage message)
+    {
+        return message.getInt(FREE);
     }
 
     /**

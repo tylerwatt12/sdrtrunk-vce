@@ -64,29 +64,29 @@ public class LTRStandardMessageProcessor implements Listener<CorrectedBinaryMess
             {
                 LTRMessage message;
 
-                int channel = binaryMessage.getInt(LTRMessage.CHANNEL);
-                int home = binaryMessage.getInt(LTRMessage.HOME_REPEATER);
-                int free = binaryMessage.getInt(LTRMessage.FREE);
-                int group = binaryMessage.getInt(LTRMessage.GROUP);
+                int channel = LTRMessage.getChannel(binaryMessage);
+                int home = LTRMessage.getHomeRepeater(binaryMessage);
+                int free = LTRMessage.getFree(binaryMessage);
+                int group = LTRMessage.getGroup(binaryMessage);
 
                 if(isValidChannel(channel) && isValidChannel(home) && isValidFreeChannel(free))
                 {
                     if(channel == free && group == 255)
                     {
-                        message = new Idle(binaryMessage, mDirection, crc);
+                        message = new Idle(binaryMessage, crc);
                     }
                     else
                     {
-                        message = new Call(binaryMessage, mDirection, crc);
+                        message = new Call(binaryMessage, crc);
                     }
                 }
                 else if(channel == 31 && isValidChannel(home) && isValidFreeChannel(free))
                 {
-                    message = new CallEnd(binaryMessage, mDirection, crc);
+                    message = new CallEnd(binaryMessage, crc);
                 }
                 else
                 {
-                    message = new UnknownMessage(binaryMessage, mDirection, crc);
+                    message = new UnknownMessage(binaryMessage, crc);
                 }
 
                 mMessageListener.receive(message);

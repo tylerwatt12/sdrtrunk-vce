@@ -47,13 +47,13 @@ public class LtrChannel implements IChannelDescriptor, Comparable<LtrChannel>
     @Override
     public long getDownlinkFrequency()
     {
-        return mDownlink;
+        return getFrequency();
     }
 
     @Override
     public long getUplinkFrequency()
     {
-        return mDownlink;
+        return getFrequency();
     }
 
     @Override
@@ -97,6 +97,11 @@ public class LtrChannel implements IChannelDescriptor, Comparable<LtrChannel>
         return "TRANSMIT: " + getDownlinkFrequency();
     }
 
+    private long getFrequency()
+    {
+        return mDownlink;
+    }
+
     @Override
     public int compareTo(LtrChannel o)
     {
@@ -107,5 +112,11 @@ public class LtrChannel implements IChannelDescriptor, Comparable<LtrChannel>
     public boolean equals(Object o) {
         if (!(o instanceof LtrChannel)) return false;
         return compareTo((LtrChannel) o) == 0;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Integer.hashCode(getChannel());
     }
 }

@@ -22,7 +22,6 @@ package io.github.dsheirer.module.decode.ltrstandard.message;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.message.MessageDirection;
 import io.github.dsheirer.module.decode.ltrstandard.LtrStandardMessageType;
 
 import java.util.Collections;
@@ -33,9 +32,9 @@ import java.util.List;
  */
 public class Idle extends LTRMessage
 {
-    public Idle(CorrectedBinaryMessage message, MessageDirection direction, CRC crc)
+    public Idle(CorrectedBinaryMessage message, CRC crc)
     {
-        super(message, direction, crc);
+        super(message, crc);
     }
 
     @Override
