@@ -26,7 +26,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Objects;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 public class ESNIdentifier extends StringIdentifier implements Comparable<ESNIdentifier>
 {
@@ -57,7 +57,7 @@ public class ESNIdentifier extends StringIdentifier implements Comparable<ESNIde
             return 1;
         }
 
-        int comparison = StringUtils.compare(getValue(), o.getValue());
+        int comparison = Strings.CS.compare(getValue(), o.getValue());
 
         if(comparison == 0)
         {

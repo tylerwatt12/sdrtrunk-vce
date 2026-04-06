@@ -71,7 +71,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     private ObservableList<ConfiguredBroadcast> mConfiguredBroadcasts =
         FXCollections.<ConfiguredBroadcast>observableArrayList(ConfiguredBroadcast.extractor());
     private List<AudioRecording> mRecordingQueue = new CopyOnWriteArrayList<>();
-    private Map<Integer,AbstractAudioBroadcaster> mBroadcasterMap = new HashMap<>();
+    private Map<Integer,AbstractAudioBroadcaster<?>> mBroadcasterMap = new HashMap<>();
     private AliasModel mAliasModel;
     private Broadcaster<BroadcastEvent> mBroadcastEventBroadcaster = new Broadcaster<>();
     private transient BroadcastEventListener mBroadcastEventListener = new BroadcastEventListener();
@@ -291,7 +291,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     /**
      * Returns the broadcaster associated with the stream name or null if there is no broadcaster setup for the name.
      */
-    public AbstractAudioBroadcaster getBroadcaster(String streamName)
+    public AbstractAudioBroadcaster<?> getBroadcaster(String streamName)
     {
         BroadcastConfiguration broadcastConfiguration = getBroadcastConfiguration(streamName);
 
@@ -314,7 +314,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
 
                 if(channelName != null)
                 {
-                    AbstractAudioBroadcaster audioBroadcaster = getBroadcaster(channelName);
+                    AbstractAudioBroadcaster<?> audioBroadcaster = getBroadcaster(channelName);
 
                     if(audioBroadcaster != null)
                     {
@@ -342,7 +342,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
                 deleteBroadcaster(configuredBroadcast);
             }
 
-            final AbstractAudioBroadcaster audioBroadcaster = BroadcastFactory.getBroadcaster(broadcastConfiguration,
+            final AbstractAudioBroadcaster<?> audioBroadcaster = BroadcastFactory.getBroadcaster(broadcastConfiguration,
                     mAliasModel, mUserPreferences);
 
             if(audioBroadcaster != null)
@@ -373,7 +373,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
         {
             mBroadcasterMap.remove(configuredBroadcast.getBroadcastConfiguration().getId());
 
-            AbstractAudioBroadcaster broadcaster = configuredBroadcast.getAudioBroadcaster();
+            AbstractAudioBroadcaster<?> broadcaster = configuredBroadcast.getAudioBroadcaster();
             configuredBroadcast.setAudioBroadcaster(null);
 
             broadcaster.stop();
@@ -447,7 +447,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
      * @param broadcaster to search for
      * @return configured broadcast that matches, or null
      */
-    private ConfiguredBroadcast getConfiguredBroadcast(AbstractAudioBroadcaster broadcaster)
+    private ConfiguredBroadcast getConfiguredBroadcast(AbstractAudioBroadcaster<?> broadcaster)
     {
         for(ConfiguredBroadcast configuredBroadcast: mConfiguredBroadcasts)
         {
