@@ -20,7 +20,6 @@
 package io.github.dsheirer.service.radioreference;
 
 import com.google.common.annotations.VisibleForTesting;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.rrapi.RadioReferenceException;
 import io.github.dsheirer.rrapi.RadioReferenceService;
 import io.github.dsheirer.rrapi.response.Fault;
@@ -48,7 +47,6 @@ public class RadioReference
 
     public static final String SDRTRUNK_APP_KEY = "88969092";
     private RadioReferenceService mRadioReferenceService;
-    private UserPreferences mUserPreferences;
     private AuthorizationInformation mAuthorizationInformation;
     private StringProperty mUserName = new SimpleStringProperty();
     private StringProperty mPassword = new SimpleStringProperty();
@@ -66,15 +64,6 @@ public class RadioReference
         INVALID_LOGIN,
         EXPIRED_PREMIUM,
         VALID_PREMIUM;
-    }
-
-    /**
-     * Constructs an instance of the radio reference service
-     * @param userPreferences for user credentials and other settings
-     */
-    public RadioReference(UserPreferences userPreferences)
-    {
-        mUserPreferences = userPreferences;
     }
 
     /**
@@ -194,7 +183,7 @@ public class RadioReference
 
             mLog.info("Radio Reference Test Connection Result - user [" + userName + "] expiration [" + ui.getExpirationDate() + "]");
 
-            return CheckExpDate(ui.getExpirationDate());
+            return checkExpDate(ui.getExpirationDate());
         }
         catch (RadioReferenceException rre)
         {
@@ -226,7 +215,7 @@ public class RadioReference
      * @return Account Login Status
      */
     @VisibleForTesting
-    protected static LoginStatus CheckExpDate(String RRExpirationString)
+    protected static LoginStatus checkExpDate(String RRExpirationString)
     {
         try
         {
@@ -278,7 +267,7 @@ public class RadioReference
             if(userInfo != null)
             {
                 accountExpiresProperty().setValue(userInfo.getExpirationDate());
-                mLoginStatus = CheckExpDate(userInfo.getExpirationDate());
+                mLoginStatus = checkExpDate(userInfo.getExpirationDate());
             }
             else
             {
@@ -361,38 +350,5 @@ public class RadioReference
         }
 
         login();
-    }
-
-    public static void main(String[] args)
-    {
-        UserPreferences userPreferences = new UserPreferences();
-        RadioReference radioReference = new RadioReference(userPreferences);
-
-        AuthorizationInformation credentials = userPreferences.getRadioReferencePreference().getAuthorizationInformation();
-
-        if(credentials == null)
-        {
-            Scanner scanner = new Scanner(System.in);
-            System.out.print("Username: ");
-            String username = scanner.next();
-            System.out.print("Password: ");
-            String password = scanner.next();
-            credentials = getAuthorizatonInformation(username, password);
-        }
-
-        radioReference.setAuthorizationInformation(credentials);
-
-        if(radioReference.availableProperty().get())
-        {
-            try
-            {
-                UserInfo userInfo = radioReference.getService().getUserInfo();
-                System.out.println("User Name: " + userInfo.getUserName() + " Account Expires:" + userInfo.getExpirationDate());
-            }
-            catch(RadioReferenceException rre)
-            {
-                mLog.error("Error", rre);
-            }
-        }
     }
 }

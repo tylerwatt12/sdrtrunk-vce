@@ -103,7 +103,7 @@ public class PlaylistManager implements Listener<ChannelEvent>
         mIconModel = iconModel;
 
         mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
-        mRadioReference = new RadioReference(mUserPreferences);
+        mRadioReference = new RadioReference();
 
         mChannelModel = new ChannelModel(mAliasModel);
         mChannelProcessingManager = new ChannelProcessingManager(mChannelMapModel, eventLogManager, mTunerManager,
