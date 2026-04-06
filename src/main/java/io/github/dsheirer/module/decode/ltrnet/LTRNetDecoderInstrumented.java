@@ -19,11 +19,10 @@
 package io.github.dsheirer.module.decode.ltrnet;
 
 import io.github.dsheirer.dsp.fsk.LTRDecoderInstrumented;
-import javafx.beans.property.SimpleIntegerProperty;
 
 public class LTRNetDecoderInstrumented extends LTRNetDecoder
 {
-    public SimpleIntegerProperty bufferCount = new SimpleIntegerProperty();
+    private int mBufferCount;
 
     public LTRNetDecoderInstrumented(DecodeConfigLTRNet config)
     {
@@ -40,6 +39,6 @@ public class LTRNetDecoderInstrumented extends LTRNetDecoder
     {
         super.receive(demodulatedSamples);
 
-        bufferCount.setValue(bufferCount.intValue() + 1);
+        mBufferCount++;
     }
 }

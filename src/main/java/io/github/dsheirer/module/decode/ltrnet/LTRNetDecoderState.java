@@ -69,6 +69,8 @@ import java.util.TreeSet;
 
 public class LTRNetDecoderState extends DecoderState
 {
+    private static final String UNKNOWN_LABEL = "Unknown";
+
 
     private ChannelMapHigh mChannelMapHigh;
     private ChannelMapLow mChannelMapLow;
@@ -82,10 +84,6 @@ public class LTRNetDecoderState extends DecoderState
     private Set<ESNIdentifier> mESNIdentifiers = new TreeSet<>();
     private DecodeEvent mCurrentCallEvent;
     private LTRTalkgroup mCurrentCallTalkgroup;
-
-    public LTRNetDecoderState()
-    {
-    }
 
     @Override
     public DecoderType getDecoderType()
@@ -480,7 +478,7 @@ public class LTRNetDecoderState extends DecoderState
 
         sb.append("Activity Summary\n");
         sb.append("Decoder:\tLTR-Net\n\n");
-        sb.append("Site:\t").append(mCurrentSite != null ? mCurrentSite.getSiteID() : "Unknown").append("\n");
+        sb.append("Site:\t").append(mCurrentSite != null ? mCurrentSite.getSiteID() : UNKNOWN_LABEL).append("\n");
 
         sb.append("\nLCNs (transmit / receive)\n");
 
@@ -489,13 +487,13 @@ public class LTRNetDecoderState extends DecoderState
             for(int channel: mChannelMapLow.getChannels())
             {
                 LtrNetChannel ltrNetChannel = mChannelMap.get(channel);
-                sb.append("  ").append(channel).append(": ").append(ltrNetChannel != null ? ltrNetChannel.description() :
-                    "Unknown").append(mCurrentChannelNumber == channel ? " (Current)\n" : "\n");
+                sb.append("  ").append(channel).append(": ").append(getChannelDescription(ltrNetChannel))
+                    .append(mCurrentChannelNumber == channel ? " (Current)\n" : "\n");
             }
         }
         else
         {
-            sb.append("Channel Map 1-10: Unknown\n");
+            sb.append("Channel Map 1-10: ").append(UNKNOWN_LABEL).append("\n");
         }
 
         if(mChannelMapHigh != null)
@@ -503,20 +501,20 @@ public class LTRNetDecoderState extends DecoderState
             for(int channel: mChannelMapHigh.getChannels())
             {
                 LtrNetChannel ltrNetChannel = mChannelMap.get(channel);
-                sb.append("  ").append(channel).append(": ").append(ltrNetChannel != null ? ltrNetChannel.description() :
-                    "Unknown").append(mCurrentChannelNumber == channel ? " (Current)\n" : "\n");
+                sb.append("  ").append(channel).append(": ").append(getChannelDescription(ltrNetChannel))
+                    .append(mCurrentChannelNumber == channel ? " (Current)\n" : "\n");
             }
         }
         else
         {
-            sb.append("Channel Map 11-20: Unknown\n");
+            sb.append("Channel Map 11-20: ").append(UNKNOWN_LABEL).append("\n");
         }
 
         sb.append("\nNeighbor Sites (Rank: ID)\n");
 
         if(mNeighborMap.isEmpty())
         {
-            sb.append("  None\n");
+            appendNone(sb);
         }
         else
         {
@@ -532,7 +530,7 @@ public class LTRNetDecoderState extends DecoderState
 
         if(mTalkgroups.isEmpty())
         {
-            sb.append("  None\n");
+            appendNone(sb);
         }
         else
         {
@@ -549,7 +547,7 @@ public class LTRNetDecoderState extends DecoderState
 
         if(mLtrNetRadioIdentifiers.isEmpty())
         {
-            sb.append("  None\n");
+            appendNone(sb);
         }
         else
         {
@@ -566,7 +564,7 @@ public class LTRNetDecoderState extends DecoderState
 
         if(mESNIdentifiers.isEmpty())
         {
-            sb.append("  None\n");
+            appendNone(sb);
         }
         else
         {
@@ -582,8 +580,21 @@ public class LTRNetDecoderState extends DecoderState
         return sb.toString();
     }
 
+    private void appendNone(StringBuilder sb)
+    {
+        sb.append("  None\n");
+    }
+
+    private String getChannelDescription(LtrNetChannel ltrNetChannel)
+    {
+        return ltrNetChannel != null ? ltrNetChannel.description() : UNKNOWN_LABEL;
+    }
+
     @Override
-    public void init() {}
+    public void init()
+    {
+        /* no action required */
+    }
 
     /**
      * Resets the decoder state after a call or other decode event
@@ -614,13 +625,9 @@ public class LTRNetDecoderState extends DecoderState
     @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
-        switch(event.getEvent())
+        if(event.getEvent() == DecoderStateEvent.Event.REQUEST_RESET)
         {
-            case REQUEST_RESET:
-                resetState();
-                break;
-            default:
-                break;
+            resetState();
         }
     }
 }
