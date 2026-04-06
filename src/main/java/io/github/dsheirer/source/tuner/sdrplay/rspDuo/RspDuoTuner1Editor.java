@@ -30,7 +30,7 @@ import io.github.dsheirer.source.tuner.sdrplay.RspTunerEditor;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.control.AgcMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.RspDuoAmPort;
-import java.util.EnumSet;
+import java.util.Set;
 import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -262,7 +262,7 @@ public class RspDuoTuner1Editor extends RspTunerEditor<RspDuoTuner1Configuration
      * Updates the sample rates listed in the combobox.
      * @param sampleRates to use.
      */
-    private void setSampleRates(EnumSet<RspSampleRate> sampleRates)
+    private void setSampleRates(Set<RspSampleRate> sampleRates)
     {
         if(!sampleRates.isEmpty())
         {

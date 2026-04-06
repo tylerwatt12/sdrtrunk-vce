@@ -235,7 +235,8 @@ public class Rsp2TunerEditor extends RspTunerEditor<Rsp2TunerConfiguration>
     {
         if(mSampleRateCombo == null)
         {
-            RspSampleRate[] rspSampleRates = RspSampleRate.SINGLE_TUNER_SAMPLE_RATES.toArray(new RspSampleRate[RspSampleRate.SINGLE_TUNER_SAMPLE_RATES.size()]);
+            RspSampleRate[] rspSampleRates =
+                RspSampleRate.getSingleTunerSampleRates().toArray(new RspSampleRate[RspSampleRate.getSingleTunerSampleRates().size()]);
             mSampleRateCombo = new JComboBox<>(rspSampleRates);
             mSampleRateCombo.setEnabled(false);
             mSampleRateCombo.addActionListener(e -> {

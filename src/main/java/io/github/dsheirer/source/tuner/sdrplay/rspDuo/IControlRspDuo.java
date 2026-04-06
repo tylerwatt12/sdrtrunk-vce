@@ -22,7 +22,7 @@ package io.github.dsheirer.source.tuner.sdrplay.rspDuo;
 import io.github.dsheirer.source.tuner.sdrplay.IControlRsp;
 import io.github.dsheirer.source.tuner.sdrplay.RspSampleRate;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
-import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Control interface for RSPduo device (tuner 1 or 2)
@@ -33,7 +33,7 @@ public interface IControlRspDuo extends IControlRsp
      * Set of valid sample rates to use with the RSPduo in the current operating mode
      * @return supported sample rates or an empty set if you cannot set the sample rate on this tuner.
      */
-    EnumSet<RspSampleRate> getSupportedSampleRates();
+    Set<RspSampleRate> getSupportedSampleRates();
 
     /**
      * Indicates if the RF DAB notch is enabled (DAB broadcast band filter).

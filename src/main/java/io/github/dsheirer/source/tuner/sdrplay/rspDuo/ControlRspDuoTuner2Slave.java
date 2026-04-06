@@ -24,6 +24,7 @@ import io.github.dsheirer.source.tuner.sdrplay.api.DeviceSelectionMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.RspDuoDevice;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Control wrapper for an RSPduo Tuner 2 operating in dual-tuner mode as the slave device
@@ -72,7 +73,7 @@ public class ControlRspDuoTuner2Slave extends ControlRspDuoTuner2
     }
 
     @Override
-    public EnumSet<RspSampleRate> getSupportedSampleRates()
+    public Set<RspSampleRate> getSupportedSampleRates()
     {
         //In dual-tuner mode only the master device can set the sample rate
         return EnumSet.noneOf(RspSampleRate.class);

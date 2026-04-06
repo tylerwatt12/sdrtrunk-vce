@@ -23,7 +23,7 @@ import io.github.dsheirer.source.tuner.sdrplay.RspSampleRate;
 import io.github.dsheirer.source.tuner.sdrplay.api.DeviceSelectionMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.RspDuoDevice;
-import java.util.EnumSet;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,9 +62,9 @@ public class ControlRspDuoTuner1Master extends ControlRspDuoTuner1
     }
 
     @Override
-    public EnumSet<RspSampleRate> getSupportedSampleRates()
+    public Set<RspSampleRate> getSupportedSampleRates()
     {
-        return RspSampleRate.DUAL_TUNER_SAMPLE_RATES;
+        return RspSampleRate.getDualTunerSampleRates();
     }
 
     @Override
