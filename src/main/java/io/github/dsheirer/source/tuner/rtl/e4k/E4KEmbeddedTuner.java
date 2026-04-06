@@ -24,6 +24,7 @@ import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.EmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerController;
 import java.util.EnumSet;
+import java.util.Set;
 import org.usb4java.LibUsb;
 import org.usb4java.LibUsbException;
 
@@ -34,7 +35,6 @@ import javax.usb.UsbException;
  */
 public class E4KEmbeddedTuner extends EmbeddedTuner
 {
-
     public static final long MINIMUM_TUNABLE_FREQUENCY_HZ = 52000000;
     public static final long MAXIMUM_TUNABLE_FREQUENCY_HZ = 2200000000l;
     public static final double USABLE_BANDWIDTH_PERCENT = 0.95;
@@ -207,7 +207,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
         }
     }
 
-    public long getTunedFrequency() throws SourceException
+    public synchronized long getTunedFrequency() throws SourceException
     {
         try
         {
@@ -295,7 +295,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             /* Check for PLL lock */
             int lock = readE4KRegister(Register.SYNTH1, controlI2CRepeater);
 
-            if(!((lock & 0x1) == 0x1))
+            if((lock & 0x1) != 0x1)
             {
                 throw new SourceException("E4K tuner - couldn't achieve PLL lock for frequency [" + actualFrequency +
                         "] lock value [" + lock + "]");
@@ -315,7 +315,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
 
     private long calculateActualFrequency(PLL pll, byte z, int x)
     {
-        long whole = pll.getScaledOscillator() * (z & 0xFF);
+        long whole = pll.getScaledOscillator() * (long)(z & 0xFF);
 
         int fractional = (int) (pll.getScaledOscillator() *
                 ((double) x / (double) E4K_PLL_Y));
@@ -983,6 +983,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -1125,10 +1126,10 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
         /**
          * Filter ranges by frequency band
          */
-        public static EnumSet<RFFilter> VHFII_FILTERS = EnumSet.of(LP268, LP299);
-        public static EnumSet<RFFilter> VHFIII_FILTERS = EnumSet.of(LP509, LP656);
-        public static EnumSet<RFFilter> UHF_FILTERS = EnumSet.range(BP360, BP970);
-        public static EnumSet<RFFilter> LBAND_FILTERS = EnumSet.of(BP1300, BP1750);
+        private static final Set<RFFilter> VHFII_FILTERS = EnumSet.of(LP268, LP299);
+        private static final Set<RFFilter> VHFIII_FILTERS = EnumSet.of(LP509, LP656);
+        private static final Set<RFFilter> UHF_FILTERS = EnumSet.range(BP360, BP970);
+        private static final Set<RFFilter> LBAND_FILTERS = EnumSet.of(BP1300, BP1750);
 
         /**
          * Selects the appropriate filter for the frequency
@@ -1555,6 +1556,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -1617,6 +1619,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -1670,6 +1673,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -1736,8 +1740,8 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
     public enum E4KMixerGain
     {
         AUTOMATIC(-1, "Auto"),
-        GAIN_4(0, "4 db"),
-        GAIN_12(1, "12 db");
+        GAIN_4(0, 4),
+        GAIN_12(1, 12);
 
         private int mValue;
         private String mLabel;
@@ -1746,6 +1750,11 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
         {
             mValue = value;
             mLabel = label;
+        }
+
+        E4KMixerGain(int value, int gain)
+        {
+            this(value, gain + " db");
         }
 
         public static Register getRegister()
@@ -1768,6 +1777,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -1961,7 +1971,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
         /**
          * Set of linearity gains
          */
-        public static EnumSet<IFGain> LINEARITY_GAINS = EnumSet.range(LINEARITY_6, LINEARITY_60);
+        private static final Set<IFGain> LINEARITY_GAINS = EnumSet.range(LINEARITY_6, LINEARITY_60);
 
         /**
          * Indicates if this is a linearity or sensitivity mode
@@ -2021,6 +2031,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -2063,6 +2074,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -2120,6 +2132,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -2177,6 +2190,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -2200,14 +2214,14 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
 
     public enum IFStage5Gain
     {
-        GAIN_PLUS3(0x0, "3 db"),
-        GAIN_PLUS6(0x1, "6 db"),
-        GAIN_PLUS9(0x2, "9 db"),
-        GAIN_PLUS12(0x3, "12 db"),
-        GAIN_PLUS15A(0x4, "15 db"),
-        GAIN_PLUS15B(0x5, "15 db"),
-        GAIN_PLUS15C(0x6, "15 db"),
-        GAIN_PLUS15D(0x7, "15 db");
+        GAIN_PLUS3(0x0, 3),
+        GAIN_PLUS6(0x1, 6),
+        GAIN_PLUS9(0x2, 9),
+        GAIN_PLUS12(0x3, 12),
+        GAIN_PLUS15A(0x4, 15),
+        GAIN_PLUS15B(0x5, 15),
+        GAIN_PLUS15C(0x6, 15),
+        GAIN_PLUS15D(0x7, 15);
 
         private int mValue;
         private String mLabel;
@@ -2216,6 +2230,11 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
         {
             mValue = value;
             mLabel = label;
+        }
+
+        IFStage5Gain(int value, int gain)
+        {
+            this(value, gain + " db");
         }
 
         public static Register getRegister()
@@ -2238,6 +2257,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
@@ -2262,14 +2282,14 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
 
     public enum IFStage6Gain
     {
-        GAIN_PLUS3(0x00, "3 db"),
-        GAIN_PLUS6(0x08, "6 db"),
-        GAIN_PLUS9(0x10, "9 db"),
-        GAIN_PLUS12(0x18, "12 db"),
-        GAIN_PLUS15A(0x20, "15 db"),
-        GAIN_PLUS15B(0x28, "15 db"),
-        GAIN_PLUS15C(0x30, "15 db"),
-        GAIN_PLUS15D(0x38, "15 db");
+        GAIN_PLUS3(0x00, 3),
+        GAIN_PLUS6(0x08, 6),
+        GAIN_PLUS9(0x10, 9),
+        GAIN_PLUS12(0x18, 12),
+        GAIN_PLUS15A(0x20, 15),
+        GAIN_PLUS15B(0x28, 15),
+        GAIN_PLUS15C(0x30, 15),
+        GAIN_PLUS15D(0x38, 15);
 
         private int mValue;
         private String mLabel;
@@ -2278,6 +2298,11 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
         {
             mValue = value;
             mLabel = label;
+        }
+
+        IFStage6Gain(int value, int gain)
+        {
+            this(value, gain + " db");
         }
 
         public static Register getRegister()
@@ -2300,6 +2325,7 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return mLabel;
