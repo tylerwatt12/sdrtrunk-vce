@@ -58,8 +58,6 @@ public class CallbackFunctions
         mCallbackFunctionsMemorySegment = sdrplay_api_CallbackFnsT.allocate(arena);
         sdrplay_api_CallbackFnsT.EventCbFn(mCallbackFunctionsMemorySegment, eventFunction);
         sdrplay_api_CallbackFnsT.StreamACbFn(mCallbackFunctionsMemorySegment, streamAFunction);
-//        sdrplay_api_CallbackFnsT.EventCbFn$set(mCallbackFunctionsMemorySegment, eventFunction);
-//        sdrplay_api_CallbackFnsT.StreamACbFn$set(mCallbackFunctionsMemorySegment, streamAFunction);
     }
 
     /**
@@ -91,9 +89,6 @@ public class CallbackFunctions
         sdrplay_api_CallbackFnsT.EventCbFn(mCallbackFunctionsMemorySegment, eventFunction);
         sdrplay_api_CallbackFnsT.StreamACbFn(mCallbackFunctionsMemorySegment, streamAFunction);
         sdrplay_api_CallbackFnsT.StreamBCbFn(mCallbackFunctionsMemorySegment, streamBFunction);
-//        sdrplay_api_CallbackFnsT.EventCbFn$set(mCallbackFunctionsMemorySegment, eventFunction);
-//        sdrplay_api_CallbackFnsT.StreamACbFn$set(mCallbackFunctionsMemorySegment, streamAFunction);
-//        sdrplay_api_CallbackFnsT.StreamBCbFn$set(mCallbackFunctionsMemorySegment, streamBFunction);
     }
 
     /**

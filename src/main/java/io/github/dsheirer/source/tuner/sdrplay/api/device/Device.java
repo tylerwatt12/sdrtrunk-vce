@@ -62,7 +62,7 @@ public abstract class Device<T extends CompositeParameters<?,?>, R extends RspTu
      * @param sdrPlay api instance that created this device
      * @param deviceStruct to parse or access the fields of the device structure
      */
-    public Device(SDRplay sdrPlay, IDeviceStruct deviceStruct)
+    protected Device(SDRplay sdrPlay, IDeviceStruct deviceStruct)
     {
         mSDRplay = sdrPlay;
         mDeviceStruct = deviceStruct;
@@ -259,33 +259,6 @@ public abstract class Device<T extends CompositeParameters<?,?>, R extends RspTu
         }
     }
 
-    private String toString(UpdateReason ... updateReasons)
-    {
-        StringBuilder sb = new StringBuilder();
-
-        boolean first = true;
-
-        for(UpdateReason updateReason: updateReasons)
-        {
-            if(first)
-            {
-                sb.append("[");
-            }
-            else
-            {
-                sb.append(", ");
-            }
-
-            sb.append(updateReason.name());
-
-            first = false;
-        }
-
-        sb.append("]");
-
-        return sb.toString();
-    }
-
     /**
      * Asynchronous update request.  This method should only be used for Frequency, Gain and Sample Rate updates.
      * @param tunerSelect tuner being updated
@@ -330,7 +303,6 @@ public abstract class Device<T extends CompositeParameters<?,?>, R extends RspTu
      */
     public void acknowledgePowerOverload(TunerSelect tunerSelect) throws SDRPlayException
     {
-//        mLog.info("Acknowledging power overload message for tuner [" + tunerSelect + "]");
 
         //There's a bug (feature?) in the API ... when you un-initialize the device, it causes a power overload event
         // and if you acknowledge it, you get an error that the device is not initialized.
@@ -545,7 +517,7 @@ public abstract class Device<T extends CompositeParameters<?,?>, R extends RspTu
          */
         private void processQueuesAfterDelay(long delay)
         {
-            mExecutorService.schedule(() -> processQueues(), delay, TimeUnit.MILLISECONDS);
+            mExecutorService.schedule(this::processQueues, delay, TimeUnit.MILLISECONDS);
         }
 
         /**
@@ -583,23 +555,20 @@ public abstract class Device<T extends CompositeParameters<?,?>, R extends RspTu
                                 {
                                     CompletedAsyncUpdate completedUpdate = mCompletedUpdateQueue.poll();
 
-                                    if(completedUpdate != null)
+                                    if(completedUpdate != null && futureUpdate.matches(completedUpdate))
                                     {
-                                        if(futureUpdate.matches(completedUpdate))
-                                        {
-                                            //Clear the remaining completed updates
-                                            mCompletedUpdateQueue.clear();
+                                        //Clear the remaining completed updates
+                                        mCompletedUpdateQueue.clear();
 
-                                            //Remove and (successfully) complete the current future
-                                            mUpdateQueue.remove();
-                                            futureUpdate.setResult(Status.SUCCESS);
+                                        //Remove and (successfully) complete the current future
+                                        mUpdateQueue.remove();
+                                        futureUpdate.setResult(Status.SUCCESS);
 
-                                            //Signal to immediately reprocess the queue
-                                            processing = true;
+                                        //Signal to immediately reprocess the queue
+                                        processing = true;
 
-                                            //Break out of the completed update queue processing
-                                            break;
-                                        }
+                                        //Break out of the completed update queue processing
+                                        break;
                                     }
                                 }
                             }

@@ -87,8 +87,6 @@ public class StreamCallbackAdapter implements sdrplay_api_StreamCallback_t.Funct
                     long arrayByteSize = ValueLayout.JAVA_SHORT.byteSize() * sampleCount;
                     MemorySegment iSamples = iSamplesPointer.reinterpret(arrayByteSize, confinedArena, null);
                     MemorySegment qSamples = qSamplesPointer.reinterpret(arrayByteSize, confinedArena, null);
-//                    MemorySegment iSamples = MemorySegment.ofAddress(iSamplesPointer.address(), arrayByteSize, confinedArena.scope());
-//                    MemorySegment qSamples = MemorySegment.ofAddress(qSamplesPointer.address(), arrayByteSize, confinedArena.scope());
                     short[] i = iSamples.toArray(ValueLayout.JAVA_SHORT);
                     short[] q = qSamples.toArray(ValueLayout.JAVA_SHORT);
                     mStreamListener.processStream(i, q, parameters, Flag.evaluate(reset));

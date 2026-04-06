@@ -34,6 +34,10 @@ import java.util.List;
  */
 public class DeviceFactory
 {
+    private DeviceFactory()
+    {
+    }
+
     /**
      * Creates a foreign memory segment for a DeviceT array, appropriate for the specified version.
      * @param version value
@@ -93,9 +97,7 @@ public class DeviceFactory
         else if(version == Version.V3_07)
         {
             devicesArray.elements(sdrplay_api_DeviceT.layout()).limit(count).forEach(memorySegment ->
-            {
-                deviceStructs.add(DeviceFactory.createDeviceStruct(version, memorySegment));
-            });
+                deviceStructs.add(DeviceFactory.createDeviceStruct(version, memorySegment)));
         }
         else
         {
