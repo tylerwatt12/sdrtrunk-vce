@@ -85,7 +85,7 @@ public enum MCGPMessageType
                 {
                     return OUTBOUND_LOCATION_STATUS;
                 }
-                break;
+                return UNKNOWN;
             case 1:
                 return INBOUND_PROGRAMMING_COMMAND;
             case 3:

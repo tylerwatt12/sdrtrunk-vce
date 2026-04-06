@@ -85,9 +85,6 @@ public class ICMPPacket extends Packet
         {
             if(getHeader().isValid())
             {
-                int offset = getOffset();
-                int headerLength = getHeader().getLength();
-                int totalOffset = offset + headerLength;
                 mPayload = PacketMessageFactory.create(getMessage(), getOffset() + getHeader().getLength());
             }
             else

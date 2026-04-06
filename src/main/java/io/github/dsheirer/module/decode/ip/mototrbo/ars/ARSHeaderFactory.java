@@ -23,6 +23,10 @@ import io.github.dsheirer.bits.BinaryMessage;
 
 public class ARSHeaderFactory
 {
+    private ARSHeaderFactory()
+    {
+    }
+
     public static ARSHeader create(ARSPDUType pduType, BinaryMessage message, int offset)
     {
         switch(pduType)

@@ -39,17 +39,9 @@ public abstract class ARSHeader extends Header
      * @param message containing the header
      * @param offset to the header within the message
      */
-    public ARSHeader(BinaryMessage message, int offset)
+    protected ARSHeader(BinaryMessage message, int offset)
     {
         super(message, offset);
-    }
-
-    /**
-     * Checks that the underlying message is long enough to contain the PDU
-     */
-    private void checkValid()
-    {
-        setValid(getMessage().size() >= (getOffset() + getLength() + getPayloadLength()));
     }
 
     /**

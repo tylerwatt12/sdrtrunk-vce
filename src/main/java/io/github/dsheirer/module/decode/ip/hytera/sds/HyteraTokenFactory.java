@@ -26,6 +26,10 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class HyteraTokenFactory
 {
+    private HyteraTokenFactory()
+    {
+    }
+
     /**
      * Creates a new parsed field instance
      * @param token that identifies the field type

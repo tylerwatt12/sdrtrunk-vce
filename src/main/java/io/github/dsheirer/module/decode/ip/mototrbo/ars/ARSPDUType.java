@@ -55,8 +55,8 @@ public enum ARSPDUType
                 return USER_REGISTRATION_ACKNOWLEDGEMENT;
             case 0xF:
                 return REGISTRATION_ACKNOWLEDGEMENT;
+            default:
+                return UNKNOWN;
         }
-
-        return UNKNOWN;
     }
 }

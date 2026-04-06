@@ -32,7 +32,7 @@ public abstract class HyteraToken
      * Constructs an instance
      * @param message containing both the token, run-length, and content
      */
-    public HyteraToken(CorrectedBinaryMessage message)
+    protected HyteraToken(CorrectedBinaryMessage message)
     {
         mMessage = message;
     }

@@ -41,6 +41,8 @@ import java.util.List;
  */
 public class HyteraSmsPacket implements IPacket
 {
+    private static final String INSUFFICIENT_DATA = "(insufficient data)";
+
     private HyteraTokenHeader mHeader;
     private String mSMS;
     private RadioIdentifier mSourceRadio;
@@ -236,7 +238,7 @@ public class HyteraSmsPacket implements IPacket
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 
@@ -254,7 +256,7 @@ public class HyteraSmsPacket implements IPacket
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 
@@ -272,7 +274,7 @@ public class HyteraSmsPacket implements IPacket
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 
@@ -290,7 +292,7 @@ public class HyteraSmsPacket implements IPacket
         }
         else
         {
-            return "(insufficient data)";
+            return INSUFFICIENT_DATA;
         }
     }
 

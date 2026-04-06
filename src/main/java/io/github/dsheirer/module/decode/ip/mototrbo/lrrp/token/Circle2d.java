@@ -60,7 +60,6 @@ public class Circle2d extends Point2d
     @Override
     public String toString()
     {
-        CorrectedBinaryMessage sub = getMessage().getSubMessage(getOffset(), getOffset() + 87);
         return "CIRCLE 2D POSITION:" + getPosition() + " RADIUS:" + DECIMAL_FORMAT.format(getRadius()) + " MTRS";
     }
 }

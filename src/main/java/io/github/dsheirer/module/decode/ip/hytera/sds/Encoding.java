@@ -28,7 +28,7 @@ import io.github.dsheirer.module.decode.dmr.message.type.HyteraEncodeFormat;
 public class Encoding extends HyteraToken
 {
     private static final int[] CONTENT_LENGTH = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] ENCODING = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
+    private static final int[] ENCODING_FORMAT = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
 
     /**
      * Constructs an instance
@@ -71,7 +71,7 @@ public class Encoding extends HyteraToken
      */
     private int getEncodingValue()
     {
-        return mMessage.getInt(ENCODING);
+        return mMessage.getInt(ENCODING_FORMAT);
     }
 
     @Override
