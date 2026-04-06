@@ -154,7 +154,7 @@ public class PlaylistPreference extends Preference
             if(path.toString().contentEquals(getPlaylist().toString()))
             {
                 hasCurrent = true;
-                continue;
+                break;
             }
         }
 
