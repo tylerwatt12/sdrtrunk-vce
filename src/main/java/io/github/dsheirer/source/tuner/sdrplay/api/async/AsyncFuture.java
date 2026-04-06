@@ -72,7 +72,7 @@ public class AsyncFuture<R> implements Future<R>
     /**
      * (Optional) error produced from the operation.
      */
-    public Throwable getError()
+    public synchronized Throwable getError()
     {
         return mError;
     }
@@ -80,7 +80,7 @@ public class AsyncFuture<R> implements Future<R>
     /**
      * Indicates if this future had an error during the operation
      */
-    public boolean hasError()
+    public synchronized boolean hasError()
     {
         return mError != null;
     }
@@ -107,7 +107,10 @@ public class AsyncFuture<R> implements Future<R>
             mLock.unlock();
         }
 
-        notifyAll();
+        synchronized(this)
+        {
+            notifyAll();
+        }
     }
 
     /**
@@ -176,9 +179,15 @@ public class AsyncFuture<R> implements Future<R>
     @Override
     public synchronized R get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException
     {
-        if(!mCompleted)
+        long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
+        while(!mCompleted)
         {
-            wait(unit.toMillis(timeout));
+            long remaining = deadline - System.currentTimeMillis();
+            if(remaining <= 0)
+            {
+                break;
+            }
+            wait(remaining);
         }
 
         if(!mCompleted)
