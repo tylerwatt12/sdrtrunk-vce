@@ -20,8 +20,6 @@ package io.github.dsheirer.settings;
 import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
 
 import javax.swing.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 
 /**
  * JMenuItem for selecting a color and automatically setting (saving) the
@@ -40,13 +38,6 @@ public class ColorSettingResetAllMenuItem extends JMenuItem
 
 		mSettingsManager = settingsManager;
 
-		addActionListener( new ActionListener() 
-		{
-			@Override
-            public void actionPerformed( ActionEvent e )
-            {
-				mSettingsManager.resetAllColorSettings();
-            }
-		} );
+		addActionListener( e -> mSettingsManager.resetAllColorSettings() );
 	}
 }

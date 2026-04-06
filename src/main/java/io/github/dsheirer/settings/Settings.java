@@ -24,36 +24,17 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.map.DefaultIcon;
 import io.github.dsheirer.map.MapIcon;
 import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
-import io.github.dsheirer.source.recording.RecordingConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 @JacksonXmlRootElement(localName = "SDRTrunk_settings")
 public class Settings
 {
-    private List<Setting> mSettings = new ArrayList<Setting>();
+    private List<Setting> mSettings = new ArrayList<>();
 
-    private List<TunerConfiguration> mTunerConfiguration = new ArrayList<TunerConfiguration>();
-
-    //No longer used
-    private List<RecordingConfiguration> mRecordingConfigurations = new ArrayList<RecordingConfiguration>();
-
-    public Settings()
-    {
-    }
-
-    @JacksonXmlProperty(isAttribute = false, localName = "recording_configuration")
-    public List<RecordingConfiguration> getRecordingConfigurations()
-    {
-        return Collections.emptyList();
-    }
-
-    public void setRecordingConfigurations(List<RecordingConfiguration> configs)
-    {
-    }
+    private List<TunerConfiguration> mTunerConfiguration = new ArrayList<>();
 
     @JacksonXmlProperty(isAttribute = false, localName = "tuner_configuration")
     public List<TunerConfiguration> getTunerConfigurations()
@@ -72,7 +53,7 @@ public class Settings
         return mSettings;
     }
 
-    public void setSettings(ArrayList<Setting> settings)
+    public void setSettings(List<Setting> settings)
     {
         mSettings = settings;
     }
@@ -131,7 +112,7 @@ public class Settings
     @JsonIgnore
     public List<ColorSetting> getColorSettings()
     {
-        ArrayList<ColorSetting> colors = new ArrayList<ColorSetting>();
+        ArrayList<ColorSetting> colors = new ArrayList<>();
 
         for(Setting setting : mSettings)
         {
@@ -172,9 +153,9 @@ public class Settings
         return null;
     }
 
-    public ArrayList<MapIcon> getMapIcons()
+    public List<MapIcon> getMapIcons()
     {
-        ArrayList<MapIcon> icons = new ArrayList<MapIcon>();
+        ArrayList<MapIcon> icons = new ArrayList<>();
 
         for(Setting setting : mSettings)
         {

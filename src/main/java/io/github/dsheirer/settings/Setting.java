@@ -37,11 +37,11 @@ public abstract class Setting
 {
     protected String mName;
 
-    public Setting()
+    protected Setting()
     {
     }
 
-    public Setting(String name)
+    protected Setting(String name)
     {
         mName = name;
     }

@@ -22,8 +22,6 @@ import io.github.dsheirer.util.ColorIcon;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 
 /**
  * JMenuItem for selecting a color and automatically setting (saving) the
@@ -50,20 +48,15 @@ public class ColorSettingMenuItem extends JMenuItem
 
 		this.setIcon( new ColorIcon( mCurrentColor ) );
 		
-		addActionListener( new ActionListener() 
-		{
-			@Override
-            public void actionPerformed( ActionEvent e )
-            {
-				Color newColor = JColorChooser.showDialog( ColorSettingMenuItem.this,
-	                     mColorSettingName.getDialogTitle(),
-	                     mCurrentColor );
+		addActionListener( e -> {
+			Color newColor = JColorChooser.showDialog( ColorSettingMenuItem.this,
+                     mColorSettingName.getDialogTitle(),
+                     mCurrentColor );
 
-				if( newColor != null )
-				{
-					mSettingsManager.setColorSetting( mColorSettingName, newColor );
-				}
-            }
+			if( newColor != null )
+			{
+				mSettingsManager.setColorSetting( mColorSettingName, newColor );
+			}
 		} );
 	}
 }

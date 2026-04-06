@@ -226,39 +226,6 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
         scheduleSettingsSave();
     }
 
-    private void save()
-    {
-        SystemProperties props = SystemProperties.getInstance();
-
-        Path settingsFolder = props.getApplicationFolder("settings");
-
-        String settingsDefault = props.get("settings.defaultFilename",
-            "settings.xml");
-
-        String settingsCurrent = props.get("settings.currentFilename",
-            settingsDefault);
-
-        Path settingsPath = settingsFolder.resolve(settingsCurrent);
-
-        try(OutputStream out = Files.newOutputStream(settingsPath))
-        {
-            JacksonXmlModule xmlModule = new JacksonXmlModule();
-            xmlModule.setDefaultUseWrapper(false);
-            ObjectMapper objectMapper = new XmlMapper(xmlModule);
-            objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-            objectMapper.writeValue(out, mSettings);
-            out.flush();
-        }
-        catch(IOException ioe)
-        {
-            mLog.error("IO error while writing the settings to a file [" + settingsPath + "]", ioe);
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error while saving settings file [" + settingsPath + "]", e);
-        }
-    }
-
     /**
      * Erases current settings and loads settings from the settingsPath filename,
      * if it exists.
@@ -353,12 +320,9 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
      */
     private void scheduleSettingsSave()
     {
-        if(!mLoadingSettings)
+        if(!mLoadingSettings && mSettingsSavePending.compareAndSet(false, true))
         {
-            if(mSettingsSavePending.compareAndSet(false, true))
-            {
-                ThreadPool.SCHEDULED.schedule(new SettingsSaveTask(), 2, TimeUnit.SECONDS);
-            }
+            ThreadPool.SCHEDULED.schedule(new SettingsSaveTask(), 2, TimeUnit.SECONDS);
         }
     }
 
@@ -373,7 +337,35 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
         {
             mSettingsSavePending.set(false);
 
-            save();
+            SystemProperties props = SystemProperties.getInstance();
+
+            Path settingsFolder = props.getApplicationFolder("settings");
+
+            String settingsDefault = props.get("settings.defaultFilename",
+                "settings.xml");
+
+            String settingsCurrent = props.get("settings.currentFilename",
+                settingsDefault);
+
+            Path settingsPath = settingsFolder.resolve(settingsCurrent);
+
+            try(OutputStream out = Files.newOutputStream(settingsPath))
+            {
+                JacksonXmlModule xmlModule = new JacksonXmlModule();
+                xmlModule.setDefaultUseWrapper(false);
+                ObjectMapper objectMapper = new XmlMapper(xmlModule);
+                objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
+                objectMapper.writeValue(out, mSettings);
+                out.flush();
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("IO error while writing the settings to a file [" + settingsPath + "]", ioe);
+            }
+            catch(Exception e)
+            {
+                mLog.error("Error while saving settings file [" + settingsPath + "]", e);
+            }
         }
     }
 }
