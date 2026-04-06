@@ -129,7 +129,6 @@ public class ApplicationLog
             ((ch.qos.logback.classic.Logger)logger).setLevel(Level.ALL);
             ((ch.qos.logback.classic.Logger)logger).addAppender(mRollingFileAppender);
 
-//            StatusPrinter.print(loggerContext);
             Attributes atts = findManifestAttributes();
             if (atts != null) {
                 mLog.info("SDRTrunk Version  : " + atts.getValue("Implementation-Version"));
@@ -188,15 +187,9 @@ public class ApplicationLog
         try {
             Enumeration<URL> resources = getClass().getClassLoader().getResources("META-INF/MANIFEST.MF");
             while (resources.hasMoreElements()) {
-                try {
-                    Manifest manifest = new Manifest(resources.nextElement().openStream());
-                    Attributes atts = manifest.getMainAttributes();
-                    Boolean hasTitle = atts.containsValue("sdrtrunk project");
-                    if (hasTitle) {
-                        return atts;
-                    }
-                } catch (IOException E) {
-                    return null;
+                Attributes atts = readManifestAttributes(resources.nextElement());
+                if(atts != null) {
+                    return atts;
                 }
             }
         }
@@ -206,5 +199,16 @@ public class ApplicationLog
         }
 
         return null;
+    }
+
+    private static Attributes readManifestAttributes(URL url) {
+        try {
+            Manifest manifest = new Manifest(url.openStream());
+            Attributes atts = manifest.getMainAttributes();
+            return atts.containsValue("sdrtrunk project") ? atts : null;
+        }
+        catch(IOException e) {
+            return null;
+        }
     }
 }

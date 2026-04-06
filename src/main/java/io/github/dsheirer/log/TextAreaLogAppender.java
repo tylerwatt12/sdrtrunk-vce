@@ -42,9 +42,6 @@ public class TextAreaLogAppender extends AppenderBase<ILoggingEvent>
     @Override
     protected void append(ILoggingEvent eventObject)
     {
-        Platform.runLater(() ->
-        {
-            mTextArea.appendText("\n" + eventObject.getMessage());
-        });
+        Platform.runLater(() -> mTextArea.appendText("\n" + eventObject.getMessage()));
     }
 }
