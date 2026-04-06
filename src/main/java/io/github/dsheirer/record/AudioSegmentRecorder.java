@@ -47,6 +47,10 @@ public class AudioSegmentRecorder
     public static final int MP3_BIT_RATE = 16;
     public static final boolean CONSTANT_BIT_RATE = false;
 
+    private AudioSegmentRecorder()
+    {
+    }
+
     /**
      * Records the audio segment to the specified path using the specified recording format
      * @param audioSegment to record
@@ -54,10 +58,10 @@ public class AudioSegmentRecorder
      * @param recordFormat to use (WAVE, MP3)
      * @throws IOException on any errors
      */
-    public static void record(AudioSegment audioSegment, Path path, RecordFormat recordFormat,
-                              UserPreferences userPreferences) throws IOException
+    public static void write(AudioSegment audioSegment, Path path, RecordFormat recordFormat,
+                             UserPreferences userPreferences) throws IOException
     {
-        record(audioSegment, path, recordFormat, userPreferences, audioSegment.getIdentifierCollection());
+        write(audioSegment, path, recordFormat, userPreferences, audioSegment.getIdentifierCollection());
     }
 
     /**
@@ -68,8 +72,8 @@ public class AudioSegmentRecorder
      * @param identifierCollection to use instead of the audioSegment's embedded collection.
      * @throws IOException on any errors
      */
-    public static void record(AudioSegment audioSegment, Path path, RecordFormat recordFormat,
-                              UserPreferences userPreferences, IdentifierCollection identifierCollection) throws IOException
+    public static void write(AudioSegment audioSegment, Path path, RecordFormat recordFormat,
+                             UserPreferences userPreferences, IdentifierCollection identifierCollection) throws IOException
     {
         switch(recordFormat)
         {

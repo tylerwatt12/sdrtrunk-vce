@@ -45,6 +45,10 @@ public class RecorderFactory
 {
     public static final float BASEBAND_SAMPLE_RATE = 25000.0f; //Default sample rate - source can override
 
+    private RecorderFactory()
+    {
+    }
+
     /**
      * Creates recorder modules based on the channel configuration details
      * @param userPreferences

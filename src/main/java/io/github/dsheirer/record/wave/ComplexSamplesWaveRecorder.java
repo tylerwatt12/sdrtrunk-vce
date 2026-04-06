@@ -113,19 +113,14 @@ public class ComplexSamplesWaveRecorder extends Module implements IComplexSample
             {
                 //Thread this operation so that it doesn't tie up the calling thread.  The wave writer
                 //close method will also rename the file and this can sometimes take a few seconds.
-                ThreadPool.CACHED.submit(new Runnable()
-                {
-                    @Override
-                    public void run()
+                ThreadPool.CACHED.submit(() -> {
+                    try
                     {
-                        try
-                        {
-                            mWriter.close();
-                        }
-                        catch(IOException ioe)
-                        {
-                            mLog.error("Error closing baseband I/Q recorder", ioe);
-                        }
+                        mWriter.close();
+                    }
+                    catch(IOException ioe)
+                    {
+                        mLog.error("Error closing baseband I/Q recorder", ioe);
                     }
                 });
             }
@@ -146,19 +141,14 @@ public class ComplexSamplesWaveRecorder extends Module implements IComplexSample
             {
                 //Thread this operation so that it doesn't tie up the calling thread.  The wave writer
                 //close method will also rename the file and this can sometimes take a few seconds.
-                ThreadPool.CACHED.submit(new Runnable()
-                {
-                    @Override
-                    public void run()
+                ThreadPool.CACHED.submit(() -> {
+                    try
                     {
-                        try
-                        {
-                            mWriter.close();
-                        }
-                        catch(IOException ioe)
-                        {
-                            mLog.error("Error closing baseband I/Q recorder", ioe);
-                        }
+                        mWriter.close();
+                    }
+                    catch(IOException ioe)
+                    {
+                        mLog.error("Error closing baseband I/Q recorder", ioe);
                     }
                 });
             }
@@ -179,9 +169,7 @@ public class ComplexSamplesWaveRecorder extends Module implements IComplexSample
     }
 
     @Override
-    public void reset()
-    {
-    }
+    public void reset() { /* no action required */ }
 
     @Override
     public Listener<SourceEvent> getSourceEventListener()
@@ -191,11 +179,9 @@ public class ComplexSamplesWaveRecorder extends Module implements IComplexSample
             @Override
             public void receive(SourceEvent sourceEvent)
             {
-                switch(sourceEvent.getEvent())
+                if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_SAMPLE_RATE_CHANGE)
                 {
-                    case NOTIFICATION_SAMPLE_RATE_CHANGE:
-                        setSampleRate(sourceEvent.getValue().floatValue());
-                        break;
+                    setSampleRate(sourceEvent.getValue().floatValue());
                 }
             }
         };
@@ -214,20 +200,14 @@ public class ComplexSamplesWaveRecorder extends Module implements IComplexSample
         @Override
         public void receive(ComplexSamples complexSamples)
         {
-            boolean error = false;
-
-            if(!error)
+            try
             {
-                try
-                {
-                    mWriter.writeData(ConversionUtils.convertToSigned16BitSamples(complexSamples));
-                }
-                catch(IOException ioe)
-                {
-                    mLog.error("IOException while writing I/Q buffers to wave recorder - stopping recorder", ioe);
-                    error = true;
-                    stop();
-                }
+                mWriter.writeData(ConversionUtils.convertToSigned16BitSamples(complexSamples));
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("IOException while writing I/Q buffers to wave recorder - stopping recorder", ioe);
+                stop();
             }
         }
     }

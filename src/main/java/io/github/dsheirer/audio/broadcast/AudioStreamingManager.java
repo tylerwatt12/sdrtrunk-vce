@@ -173,7 +173,7 @@ public class AudioStreamingManager implements Listener<AudioSegment>
 
             try
             {
-                AudioSegmentRecorder.record(audioSegment, path, RecordFormat.MP3, mUserPreferences, identifierCollection);
+                AudioSegmentRecorder.write(audioSegment, path, RecordFormat.MP3, mUserPreferences, identifierCollection);
 
                 AudioRecording audioRecording = new AudioRecording(path, broadcastChannels, identifierCollection,
                     audioSegment.getStartTimestamp(), length);

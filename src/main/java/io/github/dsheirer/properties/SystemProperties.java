@@ -26,7 +26,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.URL;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -50,14 +50,13 @@ public class SystemProperties
     private static String BUILD_TIMESTAMP = "Build-Timestamp";
 
     private static SystemProperties INSTANCE;
-    private static Properties mProperties;
+    private static final Properties mProperties = new Properties();
     private Path mPropertiesPath;
     private String mApplicationName;
     private AtomicBoolean mSavePending = new AtomicBoolean();
 
     private SystemProperties()
     {
-        mProperties = new Properties();
     }
 
     /**
@@ -100,7 +99,7 @@ public class SystemProperties
             archivePath = archivePath.substring(0, archivePath.length() - "/WEB-INF/classes".length()); // Required for wars
         }
 
-        try (InputStream input = new URL(archivePath + "/META-INF/MANIFEST.MF").openStream())
+        try (InputStream input = URI.create(archivePath + "/META-INF/MANIFEST.MF").toURL().openStream())
         {
             return new Manifest(input);
         }
@@ -276,9 +275,7 @@ public class SystemProperties
         {
             try
             {
-                boolean stored = Boolean.parseBoolean(value);
-
-                return stored;
+                return Boolean.parseBoolean(value);
             }
             catch(Exception e)
             {
@@ -303,9 +300,7 @@ public class SystemProperties
         {
             try
             {
-                int stored = Integer.parseInt(value);
-
-                return stored;
+                return Integer.parseInt(value);
             }
             catch(Exception e)
             {

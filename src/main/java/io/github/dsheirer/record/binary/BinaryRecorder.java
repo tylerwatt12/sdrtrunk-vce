@@ -93,21 +93,18 @@ public class BinaryRecorder extends Module implements IByteBufferListener
 
     public void stop()
     {
-        if(mRunning.compareAndSet(true, false))
+        if(mRunning.compareAndSet(true, false) && mBufferProcessor != null)
         {
-            if(mBufferProcessor != null)
-            {
-                mBufferProcessor.stop();
-                mBufferProcessor.setListener(null);
+            mBufferProcessor.stop();
+            mBufferProcessor.setListener(null);
 
-                try
-                {
-                    mBinaryWriter.stop();
-                }
-                catch(IOException ioe)
-                {
-                    mLog.error("Error stopping binary recorder", ioe);
-                }
+            try
+            {
+                mBinaryWriter.stop();
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("Error stopping binary recorder", ioe);
             }
         }
     }
@@ -140,9 +137,7 @@ public class BinaryRecorder extends Module implements IByteBufferListener
     }
 
     @Override
-    public void reset()
-    {
-    }
+    public void reset() { /* no action required */ }
 
     /**
      * Binary writer implementation for reusable byte buffers delivered from buffer processor

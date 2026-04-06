@@ -38,9 +38,10 @@ import io.github.dsheirer.properties.SystemProperties;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
-import java.text.SimpleDateFormat;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -51,9 +52,9 @@ public class AudioMetadataUtils
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioMetadataUtils.class);
 
-    private static final SimpleDateFormat SDF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
-    private static final SimpleDateFormat YEAR_SDF = new SimpleDateFormat("yyyy");
-    private static final Charset UTF_8 = Charset.forName("UTF-8");
+    private static final DateTimeFormatter SDF = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    private static final DateTimeFormatter YEAR_SDF = DateTimeFormatter.ofPattern("yyyy");
+    private static final Charset UTF_8 = StandardCharsets.UTF_8;
     private static final byte NULL_TERMINATOR = (byte)0x00;
     private static final String LIST_CHUNK_IDENTIFIER = "LIST";
     private static final String ID3_CHUNK_IDENTIFIER = "id3 ";
@@ -80,10 +81,11 @@ public class AudioMetadataUtils
         Map<AudioMetadata, String> audioMetadata = new EnumMap<>(AudioMetadata.class);
         StringBuilder comments = new StringBuilder();
         audioMetadata.put(AudioMetadata.COMPOSER, SystemProperties.getInstance().getApplicationName());
-        String dateCreated = SDF.format(new Date(System.currentTimeMillis()));
+        LocalDateTime now = LocalDateTime.now();
+        String dateCreated = SDF.format(now);
         audioMetadata.put(AudioMetadata.DATE_CREATED, dateCreated);
         comments.append("Date:").append(dateCreated).append(COMMENT_SEPARATOR);
-        audioMetadata.put(AudioMetadata.YEAR, YEAR_SDF.format(new Date(System.currentTimeMillis())));
+        audioMetadata.put(AudioMetadata.YEAR, YEAR_SDF.format(now));
         audioMetadata.put(AudioMetadata.GENRE, GENRE_SCANNER_AUDIO);
 
         if(identifierCollection != null)
@@ -122,8 +124,6 @@ public class AudioMetadataUtils
                 audioMetadata.put(AudioMetadata.ARTIST_NAME, sb.toString());
             }
             
-            sb = null;
-
             Identifier system = identifierCollection.getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
             if(system instanceof SystemConfigurationIdentifier)
             {

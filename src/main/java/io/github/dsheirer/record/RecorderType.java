@@ -22,6 +22,7 @@
 package io.github.dsheirer.record;
 
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Supported recorder types.
@@ -69,7 +70,7 @@ public enum RecorderType
     /**
      * Recorders available to all decoders
      */
-    public static final EnumSet<RecorderType> DEFAULT_RECORDER_TYPES = EnumSet.of(BASEBAND, TRAFFIC_BASEBAND);
+    private static final Set<RecorderType> DEFAULT_RECORDER_TYPES = EnumSet.of(BASEBAND, TRAFFIC_BASEBAND);
 
     RecorderType( String displayString )
     {

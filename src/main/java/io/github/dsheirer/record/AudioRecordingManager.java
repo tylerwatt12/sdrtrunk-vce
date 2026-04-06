@@ -107,19 +107,6 @@ public class AudioRecordingManager implements Listener<AudioSegment>
      */
     public void processCompletedAudioSegment(AudioSegment audioSegment)
     {
-        //Debug
-        if(audioSegment.getAudioBufferCount() == 0)
-        {
-//            mLog.debug("Audio Segment detected with 0 audio buffers");
-        }
-
-        List<Identifier> toIdentifiers = audioSegment.getIdentifierCollection().getIdentifiers(Role.TO);
-
-        if(toIdentifiers.isEmpty())
-        {
-//            mLog.debug("Audio Segment detected with NO TO identifiers");
-        }
-
         if(audioSegment.recordAudioProperty().get())
         {
             mCompletedAudioSegmentQueue.add(audioSegment);
@@ -150,7 +137,7 @@ public class AudioRecordingManager implements Listener<AudioSegment>
 
                 try
                 {
-                    AudioSegmentRecorder.record(audioSegment, path, recordFormat, mUserPreferences);
+                    AudioSegmentRecorder.write(audioSegment, path, recordFormat, mUserPreferences);
                 }
                 catch(IOException ioe)
                 {
@@ -367,9 +354,9 @@ public class AudioRecordingManager implements Listener<AudioSegment>
             {
                 processAudioSegments();
             }
-            catch(Throwable t)
+            catch(Exception e)
             {
-                mLog.error("Error while processing queued audio segments to recordings", t);
+                mLog.error("Error while processing queued audio segments to recordings", e);
             }
         }
     }

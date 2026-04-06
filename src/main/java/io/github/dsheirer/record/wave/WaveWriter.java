@@ -50,7 +50,7 @@ public class WaveWriter implements AutoCloseable
     public static final String DATA_CHUNK_ID = "data";
 
     private static final Pattern FILENAME_PATTERN = Pattern.compile("(.*_)(\\d+)(\\.tmp)");
-    public static final long MAX_WAVE_SIZE = 2l * (long)Integer.MAX_VALUE;
+    public static final long MAX_WAVE_SIZE = 2l * Integer.MAX_VALUE;
 
     private AudioFormat mAudioFormat;
     private int mFileRolloverCounter = 1;
@@ -127,7 +127,7 @@ public class WaveWriter implements AutoCloseable
 
         mFileChannel = (FileChannel.open(mFile, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW));
 
-        ByteBuffer header = getWaveHeader(mAudioFormat);
+        ByteBuffer header = getWaveHeader();
 
         while(header.hasRemaining())
         {
@@ -204,7 +204,7 @@ public class WaveWriter implements AutoCloseable
             int remaining = (int)(mMaxSize - mFileChannel.size());
 
             /* Ensure we write full frames to fill up the remaining size */
-            remaining -= (int)(remaining % mAudioFormat.getFrameSize());
+            remaining -= (remaining % mAudioFormat.getFrameSize());
 
             byte[] bytes = buffer.array();
 
@@ -442,7 +442,7 @@ public class WaveWriter implements AutoCloseable
     /**
      * Creates a wave file header with a format descriptor chunk
      */
-    public static ByteBuffer getWaveHeader(AudioFormat format)
+    public static ByteBuffer getWaveHeader()
     {
         ByteBuffer header = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
 

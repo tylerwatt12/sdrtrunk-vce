@@ -18,7 +18,9 @@
  */
 package io.github.dsheirer.protocol;
 
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Binary protocols supported within this application
@@ -57,10 +59,10 @@ public enum Protocol
         mBitRate = bitRate;
     }
 
-    public static EnumSet<Protocol> TALKGROUP_PROTOCOLS = EnumSet.of(AM, APCO25, DMR, FLEETSYNC, LTR, LTR_NET, MDC1200,
-        MPT1327, NBFM, PASSPORT);
+    public static final Set<Protocol> TALKGROUP_PROTOCOLS = Collections.unmodifiableSet(EnumSet.of(AM, APCO25, DMR,
+        FLEETSYNC, LTR, LTR_NET, MDC1200, MPT1327, NBFM, PASSPORT));
 
-    public static EnumSet<Protocol> RADIO_ID_PROTOCOLS = EnumSet.of(APCO25, DMR, PASSPORT);
+    private static final Set<Protocol> RADIO_ID_PROTOCOLS = EnumSet.of(APCO25, DMR, PASSPORT);
 
     @Override
     public String toString()
