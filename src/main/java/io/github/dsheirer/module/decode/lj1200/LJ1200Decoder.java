@@ -36,7 +36,6 @@ public class LJ1200Decoder extends AbstractAFSKDecoder implements IBinarySymbolP
 
     private MessageFramer mTowerMessageFramer;
     private MessageFramer mTransponderMessageFramer;
-    private LJ1200MessageProcessor mMessageProcessor;
 
     protected LJ1200Decoder(AFSK1200Decoder decoder)
     {
@@ -57,10 +56,10 @@ public class LJ1200Decoder extends AbstractAFSKDecoder implements IBinarySymbolP
 
         mTowerMessageFramer = new MessageFramer(SyncPattern.LJ1200.getPattern(), MESSAGE_LENGTH);
         mTransponderMessageFramer = new MessageFramer(SyncPattern.LJ1200_TRANSPONDER.getPattern(), MESSAGE_LENGTH);
-        mMessageProcessor = new LJ1200MessageProcessor();
-        mTowerMessageFramer.addMessageListener(mMessageProcessor);
-        mTransponderMessageFramer.addMessageListener(mMessageProcessor);
-        mMessageProcessor.setMessageListener(getMessageListener());
+        LJ1200MessageProcessor messageProcessor = new LJ1200MessageProcessor();
+        mTowerMessageFramer.addMessageListener(messageProcessor);
+        mTransponderMessageFramer.addMessageListener(messageProcessor);
+        messageProcessor.setMessageListener(getMessageListener());
     }
 
     @Override

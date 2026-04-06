@@ -36,23 +36,22 @@ public class LJ1200Message extends Message
 {
     private static final Logger mLog = LoggerFactory.getLogger(LJ1200Message.class);
 
-    public static final String[] REPLY_CODE = {"0", "1", "2", "3", "4", "5", "6", "7",
+    private static final String[] REPLY_CODE = {"0", "1", "2", "3", "4", "5", "6", "7",
         "8", "9", "A", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "P", "Q", "R", "S",
         "T", "U", "V", "W", "X", "Y"};
 
-    public static int[] SYNC = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    public static int[] VRC = {23, 22, 21, 20, 19, 18, 17, 16};
-    public static int[] LRC = {31, 30, 29, 28, 27, 26, 25, 24};
-    public static int[] FUNCTION = {35, 34, 33, 32};
-    public static int[] ADDRESS = {63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43,
+    private static final int[] VRC = {23, 22, 21, 20, 19, 18, 17, 16};
+    private static final int[] LRC = {31, 30, 29, 28, 27, 26, 25, 24};
+    private static final int[] FUNCTION = {35, 34, 33, 32};
+    private static final int[] ADDRESS = {63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43,
         42, 41, 40, 39, 38, 37, 36};
-    public static int[] REPLY_1 = {39, 38, 37, 36, 43};
-    public static int[] REPLY_2 = {42, 41, 40, 47, 46};
-    public static int[] REPLY_3 = {45, 44, 51, 50, 49};
-    public static int[] REPLY_4 = {48, 55, 54, 53, 52};
-    public static int[] REPLY_5 = {59, 58, 57, 56, 63};
+    private static final int[] REPLY_1 = {39, 38, 37, 36, 43};
+    private static final int[] REPLY_2 = {42, 41, 40, 47, 46};
+    private static final int[] REPLY_3 = {45, 44, 51, 50, 49};
+    private static final int[] REPLY_4 = {48, 55, 54, 53, 52};
+    private static final int[] REPLY_5 = {59, 58, 57, 56, 63};
 
-    public static int[] MESSAGE_CRC = {79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64};
+    private static final int[] MESSAGE_CRC = {79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64};
 
     private BinaryMessage mMessage;
     private CRC mCRC;
@@ -205,7 +204,7 @@ public class LJ1200Message extends Message
      */
     public String format(int number, int decimalPlaces)
     {
-        return StringUtils.leftPad(Integer.valueOf(number).toString(), decimalPlaces, '0');
+        return StringUtils.leftPad(Integer.toString(number), decimalPlaces, '0');
     }
 
     @Override
@@ -249,6 +248,7 @@ public class LJ1200Message extends Message
             return mLabel;
         }
 
+        @Override
         public String toString()
         {
             return getLabel();

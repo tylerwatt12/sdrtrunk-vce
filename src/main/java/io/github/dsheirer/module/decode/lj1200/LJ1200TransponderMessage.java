@@ -34,11 +34,7 @@ public class LJ1200TransponderMessage extends Message
 {
     private static final Logger mLog = LoggerFactory.getLogger(LJ1200TransponderMessage.class);
 
-    public static int[] SYNC = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-
-    public static int[] MESSAGE_CRC = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
-
-    private static SimpleDateFormat mSDF = new SimpleDateFormat("yyyyMMdd HHmmss");
+    private static final int[] MESSAGE_CRC = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
 
     private CorrectedBinaryMessage mMessage;
     private CRC mCRC;
@@ -75,8 +71,6 @@ public class LJ1200TransponderMessage extends Message
 
     public boolean isValid()
     {
-//    	return mCRC == CRC.PASSED || mCRC == CRC.CORRECTED;
-
         /* Override validity check until proper CRC is implemented */
         return true;
     }
@@ -109,7 +103,7 @@ public class LJ1200TransponderMessage extends Message
      */
     public String format(int number, int decimalPlaces)
     {
-        return StringUtils.leftPad(Integer.valueOf(number).toString(), decimalPlaces, '0');
+        return StringUtils.leftPad(Integer.toString(number), decimalPlaces, '0');
     }
 
     @Override

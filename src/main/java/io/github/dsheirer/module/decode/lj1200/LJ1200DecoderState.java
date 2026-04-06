@@ -38,11 +38,7 @@ import java.util.TreeSet;
 public class LJ1200DecoderState extends DecoderState
 {
 
-    private Set<String> mAddresses = new TreeSet<String>();
-
-    public LJ1200DecoderState()
-    {
-    }
+    private Set<String> mAddresses = new TreeSet<>();
 
     @Override
     public DecoderType getDecoderType()
@@ -147,5 +143,8 @@ public class LJ1200DecoderState extends DecoderState
     }
 
     @Override
-    public void init() {}
+    public void init()
+    {
+        /* no action required */
+    }
 }
