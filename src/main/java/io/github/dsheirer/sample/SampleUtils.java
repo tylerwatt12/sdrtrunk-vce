@@ -26,7 +26,12 @@ import org.apache.commons.math3.util.FastMath;
 
 public class SampleUtils
 {
-	public static final double TWO_PI = Math.PI * 2.0;
+	private static final double TWO_PI = Math.PI * 2.0;
+	private static final Random RANDOM = new Random();
+
+	private SampleUtils()
+	{
+	}
 
 	/**
 	 * Converts from an interleaved complex sample array to a sample record with the
@@ -60,7 +65,7 @@ public class SampleUtils
 	public static float[] interleave(ComplexSamples complexSamples)
 	{
 		float[] i = complexSamples.i();
-		float[] q = complexSamples.q();;
+		float[] q = complexSamples.q();
 
 		float[] complex = new float[i.length + q.length];
 
@@ -80,7 +85,6 @@ public class SampleUtils
 	 */
 	public static ComplexSamples generateComplex(int count)
 	{
-		Random random = new Random();
 
 		float[] i = new float[count];
 		float[] q = new float[count];
@@ -88,7 +92,7 @@ public class SampleUtils
 		for(int x = 0; x < i.length; x++)
 		{
 			//Random angle in radians in range of -PI to + PI
-			double angle = random.nextDouble() * TWO_PI - Math.PI;
+			double angle = RANDOM.nextDouble() * TWO_PI - Math.PI;
 
 			i[x] = (float)Math.cos(angle);
 			q[x] = (float)Math.sin(angle);
@@ -104,7 +108,6 @@ public class SampleUtils
 	 */
 	public static ComplexSamples generateComplexRandomVectorLength(int count)
 	{
-		Random random = new Random();
 		ComplexSamples unitySamples = generateComplex(count);
 		float[] i = unitySamples.i();
 		float[] q = unitySamples.q();
@@ -114,7 +117,7 @@ public class SampleUtils
 		//Apply random gain reduction to samples in range 0.5 to 1.0 gain
 		for(int x = 0; x < i.length; x++)
 		{
-			gain = 0.5f + random.nextFloat() / 2.0f;
+			gain = 0.5f + RANDOM.nextFloat() / 2.0f;
 			i[x] *= gain;
 			q[x] *= gain;
 		}

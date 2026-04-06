@@ -28,11 +28,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class OverflowableTransferQueue<E>
 {
 
-    public enum State {NORMAL, OVERFLOW};
+    public enum State {NORMAL, OVERFLOW}
     private IOverflowListener mOverflowListener;
     private Source mSourceOverflowListener;
 
-    protected LinkedTransferQueue<E> mQueue = new LinkedTransferQueue<E>();
+    protected LinkedTransferQueue<E> mQueue = new LinkedTransferQueue<>();
     protected AtomicInteger mCounter = new AtomicInteger();
     protected AtomicBoolean mOverflow = new AtomicBoolean();
     private int mMaximumSize;
@@ -67,7 +67,7 @@ public class OverflowableTransferQueue<E>
     {
         if(!mOverflow.get())
         {
-            mQueue.offer(e);
+            mQueue.add(e);
 
             int size = mCounter.incrementAndGet();
 
