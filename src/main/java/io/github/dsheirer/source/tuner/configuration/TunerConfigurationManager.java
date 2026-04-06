@@ -100,42 +100,6 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
     }
 
     /**
-     * Saves the current tuner configuration state to disk.
-     */
-    private void save()
-    {
-        TunerConfigurationState state = new TunerConfigurationState();
-
-        mLock.lock();
-
-        try
-        {
-            state.setDisabledTuners(new ArrayList<>(mDisabledTunerList));
-            state.setTunerConfigurations(new ArrayList<>(mTunerConfigurations));
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error", e);
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-
-        try
-        {
-            objectMapper.writeValue(getConfigurationFilePath().toFile(), state);
-        }
-        catch(IOException ioe)
-        {
-            mLog.error("Error writing tuner configuration state to file [" + getConfigurationFilePath() + "]", ioe);
-        }
-    }
-
-    /**
      * Schedules a configurations save task.  Subsequent calls to this method will be ignored until the
      * save event occurs, thus limiting repetitive saving to a minimum.
      */
@@ -351,6 +315,42 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
      */
     public class ConfigurationSaveTask implements Runnable
     {
+        /**
+         * Saves the current tuner configuration state to disk.
+         */
+        private void save()
+        {
+            TunerConfigurationState state = new TunerConfigurationState();
+
+            mLock.lock();
+
+            try
+            {
+                state.setDisabledTuners(new ArrayList<>(mDisabledTunerList));
+                state.setTunerConfigurations(new ArrayList<>(mTunerConfigurations));
+            }
+            catch(Exception e)
+            {
+                mLog.error("Error", e);
+            }
+            finally
+            {
+                mLock.unlock();
+            }
+
+            ObjectMapper objectMapper = new ObjectMapper();
+            objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
+
+            try
+            {
+                objectMapper.writeValue(getConfigurationFilePath().toFile(), state);
+            }
+            catch(IOException ioe)
+            {
+                mLog.error("Error writing tuner configuration state to file [" + getConfigurationFilePath() + "]", ioe);
+            }
+        }
+
         @Override
         public void run()
         {

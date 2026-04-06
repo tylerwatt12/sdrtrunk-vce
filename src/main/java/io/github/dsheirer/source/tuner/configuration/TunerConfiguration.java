@@ -71,7 +71,7 @@ public abstract class TunerConfiguration
     /**
      * Default constructor to support Jackson
      */
-    public TunerConfiguration(long minimumFrequency, long maximumFrequency)
+    protected TunerConfiguration(long minimumFrequency, long maximumFrequency)
     {
         mMinimumFrequency = minimumFrequency;
         mMaximumFrequency = maximumFrequency;
@@ -86,7 +86,7 @@ public abstract class TunerConfiguration
     /**
      * Normal constructor
      */
-    public TunerConfiguration(String uniqueID)
+    protected TunerConfiguration(String uniqueID)
     {
         mUniqueID = uniqueID;
     }

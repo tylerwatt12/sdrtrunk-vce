@@ -33,10 +33,6 @@ public class TunerConfigurationState
     private List<DisabledTuner> mDisabledTuners = new ArrayList();
     private List<TunerConfiguration> mTunerConfigurations = new ArrayList<>();
 
-    public TunerConfigurationState()
-    {
-    }
-
     /**
      * List of currently disabled tuners
      */
