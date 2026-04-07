@@ -49,6 +49,9 @@ that Sonar gets peeved about in anything more complicated than a Hello World.
 - I've got a parallel version of the jmbe library that this uses likewise lint-clean and optimized that can be used instead
 of the public version; if you auto-install the library in the configuration panels, you'll get the public version.
 - One key thread I'm presently pulling on is that the default P25 channel frequency rotation delay of 400ms might be a bit too aggressive; it seems fine for the most part, but in debug tracing I see it missing from time to time by ~200ms or so, and it seems as if it's being just a bit too quick to pull the trigger into rotation every so often.
+- I've limited the JVM maximum heap to 2GB in `build.gradle`, as my machine has 64GB, and thus apparently the JVM defaults
+decide that it's a 'server', and does a 25% of memory virtual allocation of 16GB, which is a bit on the generous side for
+the testing I'm doing at present; 2GB is more than enough. If you need more, just increase the settings in `build.gradle`.
 
 ## Developer Build and Packaging Notes
 This fork is built and smoke-tested with the Gradle wrapper and a Java 26 toolchain, currently using BellSoft Liberica Full JDK for JavaFX and packaging support.
