@@ -286,13 +286,7 @@ String targetOsxX86_64 = 'osx-x86_64-v' + version
 String targetWindowsX86_64 = 'windows-x86_64-v' + version
 String targetWindowsAarch64 = 'windows-aarch64-v' + version
 String macAppIcon = file('src/main/packaging/macos/sdr-trunk.icns').absolutePath
-String rawMacAppVersion = version.toString().find(/^\d+(?:\.\d+){0,2}/) ?: '1.0.0'
-List<String> macAppVersionParts = rawMacAppVersion.tokenize('.')
-if(macAppVersionParts && macAppVersionParts[0] == '0')
-{
-    macAppVersionParts[0] = '1'
-}
-String macAppVersion = macAppVersionParts.join('.')
+String macAppVersion = '1.0.0'
 
 /**
  * Optional pre-downloaded Java Development Kit (JDK) for each target OS and CPU.  These locations are hard-coded to the
