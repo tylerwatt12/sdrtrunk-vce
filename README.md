@@ -51,24 +51,23 @@ Common local checks:
 ./gradlew runtimeZipCurrent --warning-mode all
 ```
 
-The current macOS release packaging path uses direct `jlink`/`jpackage` Gradle tasks for the classpath application and produces:
+The current runtime zip path produces a conventional zip distribution:
 
 ```
 build/image/sdr-trunk.zip
-build/jpackage/sdrtrunk.app
 ```
 
-There is also an experimental JPMS bridge path:
+The macOS app image path uses JPMS:
 
 ```
 ./gradlew jpmsRun --warning-mode all
-./gradlew jpackageImageJpms --warning-mode all
+./gradlew image --warning-mode all
 ```
 
 The JPMS path builds an explicit `sdr.trunk` module from `src/jpms/java/module-info.java`, packages dependencies into a curated `build/jpms-mods` module directory, and produces:
 
 ```
-build/jpackage-jpms/sdrtrunk-jpms.app
+build/image/sdrtrunk.app
 ```
 
 That path currently uses an `open module` descriptor so Jackson/XML configuration binding and other reflective code paths continue to work while modular packaging is validated. Two dependency bridges are generated during the JPMS build: a merged `usb4java` jar so Apple Silicon native resources are visible from the `usb4java` module, and a renamed `lame.jar` so the `java-lame` dependency has a valid automatic module name.

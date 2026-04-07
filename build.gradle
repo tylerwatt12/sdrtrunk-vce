@@ -458,22 +458,10 @@ runtime {
     additive.set(true)
     addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
 
-    if(os.isMacOsX())
-    {
-        jpackage {
-            imageName = 'sdrtrunk'
-            imageOutputDir = layout.buildDirectory.dir('jpackage').get().asFile
-            installerName = 'sdrtrunk'
-            appVersion = macAppVersion
-            imageOptions = ['--icon', macAppIcon]
-        }
-    }
 }
 
 /**
  * Creates a release package for the current operating system.
- *
- * Note: macOS uses jpackage to build and zip a native .app bundle so the Dock name/icon come from the app bundle.
  *
  * Usage: gradle runtimeZipCurrent
  * Usage: gradlew runtimeZipCurrent   (windows - using gradlew)
@@ -481,15 +469,12 @@ runtime {
  */
 if(os.isMacOsX())
 {
-    def macJpackageOutputDir = layout.buildDirectory.dir('jpackage')
-    def macAppBundle = layout.buildDirectory.dir('jpackage/sdrtrunk.app')
-    def macJpmsJpackageOutputDir = layout.buildDirectory.dir('jpackage-jpms')
-    def macJpmsAppBundle = layout.buildDirectory.dir('jpackage-jpms/sdrtrunk-jpms.app')
+    def macImageOutputDir = layout.buildDirectory.dir('image')
+    def macAppBundle = layout.buildDirectory.dir('image/sdrtrunk.app')
     def macRuntimeImageDir = layout.buildDirectory.dir('jre-current')
-    def macInstallLibDir = layout.buildDirectory.dir('install/sdr-trunk/lib')
+    def macInstallDistDir = layout.buildDirectory.dir('install/sdr-trunk')
+    def macRuntimeZipRootDir = layout.buildDirectory.dir('runtime-current/sdr-trunk')
     def macIconFile = layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns')
-    def mainJarName = tasks.named('jar').flatMap { it.archiveFileName }
-    def mainClassName = application.mainClass
 
     tasks.register('jreCurrent', Exec) {
         inputs.property('runtimeModules', runtimeModules)
@@ -511,12 +496,32 @@ if(os.isMacOsX())
         }
     }
 
-    tasks.register('jpackageImageCurrent', Exec) {
+    tasks.register('runtimeImageCurrent', Sync) {
         dependsOn('jreCurrent', 'installDist')
 
-        inputs.dir(macInstallLibDir)
-        inputs.dir(macRuntimeImageDir)
+        into(macRuntimeZipRootDir)
+        from(macInstallDistDir)
+        from(macRuntimeImageDir) {
+            into 'runtime'
+        }
+    }
+
+    tasks.register('runtimeZipCurrent', Zip) {
+        dependsOn('runtimeImageCurrent')
+
+        archiveFileName = 'sdr-trunk.zip'
+        destinationDirectory = layout.buildDirectory.dir('image')
+        from(layout.buildDirectory.dir('runtime-current')) {
+            include 'sdr-trunk/**'
+        }
+    }
+
+    tasks.register('image', Exec) {
+        dependsOn('jreCurrent', 'syncJpmsMods')
+
+        inputs.dir(jpmsModsDir)
         inputs.file(macIconFile)
+        inputs.dir(macRuntimeImageDir)
         outputs.dir(macAppBundle)
 
         doFirst {
@@ -524,68 +529,8 @@ if(os.isMacOsX())
 
             def jpackageArgs = [
                     '--type', 'app-image',
-                    '--dest', macJpackageOutputDir.get().asFile.absolutePath,
-                    '--input', macInstallLibDir.get().asFile.absolutePath,
+                    '--dest', macImageOutputDir.get().asFile.absolutePath,
                     '--name', 'sdrtrunk',
-                    '--main-jar', mainJarName.get(),
-                    '--main-class', mainClassName.get(),
-                    '--runtime-image', macRuntimeImageDir.get().asFile.absolutePath,
-                    '--app-version', macAppVersion,
-                    '--icon', macAppIcon
-            ]
-
-            jvmArgsMac.each { jvmArg ->
-                jpackageArgs.add('--java-options')
-                jpackageArgs.add(jvmArg)
-            }
-
-            executable = "${java26Home.get()}/bin/jpackage"
-            args = jpackageArgs
-        }
-
-        doLast {
-            File infoPlist = new File(macAppBundle.get().asFile, 'Contents/Info.plist')
-
-            if(!infoPlist.exists())
-            {
-                throw new GradleException("Unable to locate macOS app Info.plist: ${infoPlist}")
-            }
-
-            def runPlistBuddy = { String command, boolean failOnError ->
-                Process process = new ProcessBuilder('/usr/libexec/PlistBuddy', '-c', command, infoPlist.absolutePath)
-                        .redirectErrorStream(true)
-                        .start()
-                String output = process.inputStream.text
-                int exitCode = process.waitFor()
-
-                if(failOnError && exitCode != 0)
-                {
-                    throw new GradleException("PlistBuddy failed (${exitCode}) for ${infoPlist}: ${output}")
-                }
-            }
-
-            ['CFBundleName', 'CFBundleDisplayName', 'CFBundleExecutable'].each { key ->
-                runPlistBuddy("Delete :${key}", false)
-                runPlistBuddy("Add :${key} string sdrtrunk", true)
-            }
-        }
-    }
-
-    tasks.register('jpackageImageJpms', Exec) {
-        dependsOn('jreCurrent', 'syncJpmsMods')
-
-        inputs.dir(jpmsModsDir)
-        inputs.file(macIconFile)
-        inputs.dir(macRuntimeImageDir)
-        outputs.dir(macJpmsAppBundle)
-
-        doFirst {
-            macJpmsAppBundle.get().asFile.deleteDir()
-
-            def jpackageArgs = [
-                    '--type', 'app-image',
-                    '--dest', macJpmsJpackageOutputDir.get().asFile.absolutePath,
-                    '--name', 'sdrtrunk-jpms',
                     '--module-path', jpmsModsDir.get().asFile.absolutePath,
                     '--module', jpmsMainModule,
                     '--runtime-image', macRuntimeImageDir.get().asFile.absolutePath,
@@ -600,16 +545,6 @@ if(os.isMacOsX())
 
             executable = "${java26Home.get()}/bin/jpackage"
             args = jpackageArgs
-        }
-    }
-
-    tasks.register('runtimeZipCurrent', Zip) {
-        dependsOn('jpackageImageCurrent')
-
-        archiveFileName = 'sdr-trunk.zip'
-        destinationDirectory = layout.buildDirectory.dir('image')
-        from(layout.buildDirectory.dir('jpackage')) {
-            include 'sdrtrunk.app/**'
         }
     }
 }
