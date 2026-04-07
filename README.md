@@ -11,13 +11,14 @@ doesn't give a lot of warning; as an example, the [Tubbs Fire](https://en.wikipe
 much the stuff of nightmare.
 
 We have a mix of VHF voice (CalFire) in the 150MHz band, as the wildland fire folks like simple things that work under
-extreme abuse; VHF voice is not a big deal to handle. Practically everyone else is on a UHF P25 Phase 2 system, with the
-control channel on Phase 1 FDMA, and the working channels on Phase 2 TDMA. You've got to bring some decent equipment
-to decode the Phase 2 stuff, as PPM drift from the oscillators is going to result in CRC errors and bad decodes. I
-struggled with getting my usual junk drawer of RTL-SDR v4 dongles to work reliably with it, and ultimately decided
-to go with better radios, settling on SDRPlay nRSP-ST models.
+extreme abuse. Practically everyone else is on a UHF P25 Phase 2 system, with the control channel on Phase 1 FDMA, and
+the working channels on Phase 2 TDMA. You've got to bring some decent equipment to decode the Phase 2 stuff, as PPM
+drift from the oscillators is going to result in CRC errors and bad decodes. I struggled with getting my usual junk
+drawer of RTL-SDR v4 dongles to work reliably with it, and ultimately decided to go with better radios, settling on
+SDRPlay nRSP-ST models.
 
-As with any of the RSP models, these network RSPs are communicated with via `SDRconnect`.
+As with any of the RSP models, these network RSPs are communicated with via
+[SDRconnect](https://www.sdrplay.com/sdrconnect/).
 
 ## Experimental Notes
 The SDRconnect work in this fork was inspired by, and partially based on, W2NJL's SDRconnect-related work here:
