@@ -23,6 +23,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
 import ch.qos.logback.classic.filter.ThresholdFilter;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.rolling.RollingFileAppender;
 import ch.qos.logback.core.rolling.TimeBasedRollingPolicy;
 import com.google.common.eventbus.Subscribe;
@@ -50,7 +51,7 @@ public class ApplicationLog
     private static final int APPLICATION_LOG_MAX_HISTORY = 10;
 
     private UserPreferences mUserPreferences;
-    private RollingFileAppender mRollingFileAppender;
+    private RollingFileAppender<ILoggingEvent> mRollingFileAppender;
     private Path mApplicationLogPath;
 
     /**
@@ -99,7 +100,7 @@ public class ApplicationLog
             encoder.setPattern("%-25(%d{yyyyMMdd HHmmss.SSS} [%thread]) %-5level %logger{30} - %msg  %memory_usage%n");
             encoder.start();
 
-            mRollingFileAppender = new RollingFileAppender();
+            mRollingFileAppender = new RollingFileAppender<>();
             mRollingFileAppender.setContext(loggerContext);
             mRollingFileAppender.setAppend(true);
             mRollingFileAppender.setName("FILE");
@@ -115,7 +116,7 @@ public class ApplicationLog
             mRollingFileAppender.addFilter(thresholdFilter);
 
             String pattern = logfile.toString().replace(APPLICATION_LOG_FILENAME, "%d{yyyyMMdd}_" + APPLICATION_LOG_FILENAME);
-            TimeBasedRollingPolicy rollingPolicy = new TimeBasedRollingPolicy<>();
+            TimeBasedRollingPolicy<ILoggingEvent> rollingPolicy = new TimeBasedRollingPolicy<>();
             rollingPolicy.setContext(loggerContext);
             rollingPolicy.setFileNamePattern(pattern);
             rollingPolicy.setMaxHistory(APPLICATION_LOG_MAX_HISTORY);
@@ -125,9 +126,10 @@ public class ApplicationLog
             mRollingFileAppender.setRollingPolicy(rollingPolicy);
             mRollingFileAppender.start();
 
-            Logger logger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
-            ((ch.qos.logback.classic.Logger)logger).setLevel(Level.ALL);
-            ((ch.qos.logback.classic.Logger)logger).addAppender(mRollingFileAppender);
+            ch.qos.logback.classic.Logger rootLogger =
+                    loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+            rootLogger.setLevel(Level.TRACE);
+            rootLogger.addAppender(mRollingFileAppender);
 
             Attributes atts = findManifestAttributes();
             if (atts != null) {
@@ -173,8 +175,9 @@ public class ApplicationLog
             mLog.info("Stopping application logging");
             mRollingFileAppender.stop();
             LoggerContext loggerContext = (LoggerContext)LoggerFactory.getILoggerFactory();
-            Logger logger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
-            ((ch.qos.logback.classic.Logger)logger).detachAppender(mRollingFileAppender);
+            ch.qos.logback.classic.Logger rootLogger =
+                    loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+            rootLogger.detachAppender(mRollingFileAppender);
             mRollingFileAppender = null;
         }
     }
