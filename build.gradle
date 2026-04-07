@@ -323,33 +323,6 @@ def configure(org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs) {
     rt.extension.imageZip.set(layout.buildDirectory.file('image/sdr-trunk.zip'))
 }
 
-def patchMacInfoPlist(File appBundle, String displayName) {
-    File infoPlist = new File(appBundle, 'Contents/Info.plist')
-
-    if(!infoPlist.exists())
-    {
-        throw new GradleException("Unable to locate macOS app Info.plist: ${infoPlist}")
-    }
-
-    def runPlistBuddy = { String command, boolean failOnError ->
-        Process process = new ProcessBuilder('/usr/libexec/PlistBuddy', '-c', command, infoPlist.absolutePath)
-                .redirectErrorStream(true)
-                .start()
-        String output = process.inputStream.text
-        int exitCode = process.waitFor()
-
-        if(failOnError && exitCode != 0)
-        {
-            throw new GradleException("PlistBuddy failed (${exitCode}) for ${infoPlist}: ${output}")
-        }
-    }
-
-    ['CFBundleName', 'CFBundleDisplayName', 'CFBundleExecutable'].each { key ->
-        runPlistBuddy("Delete :${key}", false)
-        runPlistBuddy("Add :${key} string ${displayName}", true)
-    }
-}
-
 runtime {
     distDir.set(layout.buildDirectory.dir('install/sdr-trunk'))
     javaHome.set(java26Home)
@@ -389,6 +362,10 @@ if(os.isMacOsX())
     def macJpackageOutputDir = layout.buildDirectory.dir('jpackage')
     def macAppBundle = layout.buildDirectory.dir('jpackage/sdrtrunk.app')
     def macRuntimeImageDir = layout.buildDirectory.dir('jre-current')
+    def macInstallLibDir = layout.buildDirectory.dir('install/sdr-trunk/lib')
+    def macIconFile = layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns')
+    def mainJarName = tasks.named('jar').flatMap { it.archiveFileName }
+    def mainClassName = application.mainClass
 
     tasks.register('jreCurrent', Exec) {
         inputs.property('runtimeModules', runtimeModules)
@@ -413,9 +390,9 @@ if(os.isMacOsX())
     tasks.register('jpackageImageCurrent', Exec) {
         dependsOn('jreCurrent', 'installDist')
 
-        inputs.dir(layout.buildDirectory.dir('install/sdr-trunk/lib'))
+        inputs.dir(macInstallLibDir)
         inputs.dir(macRuntimeImageDir)
-        inputs.file(layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns'))
+        inputs.file(macIconFile)
         outputs.dir(macAppBundle)
 
         doFirst {
@@ -424,10 +401,10 @@ if(os.isMacOsX())
             def jpackageArgs = [
                     '--type', 'app-image',
                     '--dest', macJpackageOutputDir.get().asFile.absolutePath,
-                    '--input', layout.buildDirectory.dir('install/sdr-trunk/lib').get().asFile.absolutePath,
+                    '--input', macInstallLibDir.get().asFile.absolutePath,
                     '--name', 'sdrtrunk',
-                    '--main-jar', tasks.named('jar').get().archiveFileName.get(),
-                    '--main-class', application.mainClass.get(),
+                    '--main-jar', mainJarName.get(),
+                    '--main-class', mainClassName.get(),
                     '--runtime-image', macRuntimeImageDir.get().asFile.absolutePath,
                     '--app-version', macAppVersion,
                     '--icon', macAppIcon
@@ -443,7 +420,30 @@ if(os.isMacOsX())
         }
 
         doLast {
-            patchMacInfoPlist(macAppBundle.get().asFile, 'sdrtrunk')
+            File infoPlist = new File(macAppBundle.get().asFile, 'Contents/Info.plist')
+
+            if(!infoPlist.exists())
+            {
+                throw new GradleException("Unable to locate macOS app Info.plist: ${infoPlist}")
+            }
+
+            def runPlistBuddy = { String command, boolean failOnError ->
+                Process process = new ProcessBuilder('/usr/libexec/PlistBuddy', '-c', command, infoPlist.absolutePath)
+                        .redirectErrorStream(true)
+                        .start()
+                String output = process.inputStream.text
+                int exitCode = process.waitFor()
+
+                if(failOnError && exitCode != 0)
+                {
+                    throw new GradleException("PlistBuddy failed (${exitCode}) for ${infoPlist}: ${output}")
+                }
+            }
+
+            ['CFBundleName', 'CFBundleDisplayName', 'CFBundleExecutable'].each { key ->
+                runPlistBuddy("Delete :${key}", false)
+                runPlistBuddy("Add :${key} string sdrtrunk", true)
+            }
         }
     }
 
