@@ -39,6 +39,14 @@ every tuner type; it exists because SDRconnect has requirements the other tuner 
 - Note that 5MHz bandwidth, Full IQ is going to require almost exactly 20MBps (note, that's megabytes, not megabits) of network bandwidth per RSP in play, so be cognizant of that in terms of your network setup; oodles of RSPs is going to require oodles of bandwidth. Ideally, keep everything on the same switch and don't cross a router, and I'd avoid using WiFi.
 - All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful, but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's something you'd like to do, have at it; proper attribution to W2NJL's work and my meager efforts here would be apropos in that case.
 - My present focus is on reliability; introducing dependency on a separate process creates some complications in terms of ensuring that the processes auto-recover from transient errors, crashes, etc., which isn't the case when talking directly to a dongle. The interface to the radios is fairly thin at the moment; I've only worked in rate and antenna selection so far, and  the radios offer a lot more in terms of tuning function. However, they are outstanding radios, and I haven't needed to do any tweaking yet, so it hasn't been a priority, and I'm not sure it will be -- heck, the things go down to 1KHz; if you can literally discern audio, how much tweaking do you need, really.
+- Gettting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
+to get along with JDK 26 a lot better than it got along with 25, at least on my system. I was encountering a lot of 'out of
+application memory' issues on a 64GB machine, so my thesis was that perhaps there was some application issue that was the
+root cause. This led to an absolutely epic lint run, which did correct a bunch of concerns, but also smoked out a few bugs, which I'll start feeding to the maintainer when he picks this up again. This now builds completely cleanly with zero
+warnings against JDK 26, and it's got a clean bill of health from Sonar, with the exception of the usual complexity metrics
+that Sonar gets peeved about in anything more complicated than a Hello World.
+- I've got a parallel version of the jmbe library that this uses likewise lint-clean and optimized that can be used instead
+of the public version; if you auto-install the library in the configuration panels, you'll get the public version.
 - One key thread I'm presently pulling on is that the default P25 channel frequency rotation delay of 400ms might be a bit too aggressive; it seems fine for the most part, but in debug tracing I see it missing from time to time by ~200ms or so, and it seems as if it's being just a bit too quick to pull the trigger into rotation every so often.
 
 ## Developer Build and Packaging Notes
@@ -71,6 +79,8 @@ build/image/sdrtrunk.app
 ```
 
 That path currently uses an `open module` descriptor so Jackson/XML configuration binding and other reflective code paths continue to work while modular packaging is validated. Two dependency bridges are generated during the JPMS build: a merged `usb4java` jar so Apple Silicon native resources are visible from the `usb4java` module, and a renamed `lame.jar` so the `java-lame` dependency has a valid automatic module name.
+
+The original maintainer's README starts here.
 
 # MacOS Tahoe 26.1 Users - Attention:
 Changes to USB support in Tahoe version 26.x cause sdrtrunk to fail to launch.  Do the following to install the latest libusb and create a symbolic link and then use the nightly build which includes an updated usb4java native library for Tahoe with ARM processor.  There may still be issue(s) with MacOS accessing your USB SDR tuners.
