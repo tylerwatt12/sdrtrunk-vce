@@ -297,7 +297,7 @@ def runtimeModules = [
  * @param jvmArgs to use (windows or linux)
  * @return configured task.
  */
-def configureRuntime(def task, List<String> jvmArgs) {
+def configureRuntime = { def task, List<String> jvmArgs ->
     //Use the correct set of JVM arguments
     task.extension.launcherData.get().jvmArgs = jvmArgs
     task.extension.launcherData.get().unixScriptTemplate = unixScriptTemplateFile
@@ -316,7 +316,7 @@ def configureRuntime(def task, List<String> jvmArgs) {
     task.extension.addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
 }
 
-def configure(org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs) {
+def configure = { org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs ->
     configureRuntime(rt, jvmArgs)
 
     //Runtime images have auto appended version in image zip name.  Override to include version in single target image.
