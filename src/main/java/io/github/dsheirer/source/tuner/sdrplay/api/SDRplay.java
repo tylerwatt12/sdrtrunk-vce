@@ -290,7 +290,7 @@ public class SDRplay
      * @param deviceHandle to device
      * @return constructed device composite parameters
      */
-    public CompositeParameters getCompositeParameters(DeviceType deviceType, MemorySegment deviceHandle) throws SDRPlayException
+    public CompositeParameters<?,?> getCompositeParameters(DeviceType deviceType, MemorySegment deviceHandle) throws SDRPlayException
     {
         //The GetDeviceParams function call returns a C pointer-to-pointer so we have to:
         // 1) Allocate native memory to receive the address

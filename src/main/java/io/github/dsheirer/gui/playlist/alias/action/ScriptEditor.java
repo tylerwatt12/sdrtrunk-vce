@@ -63,6 +63,8 @@ public class ScriptEditor extends ActionEditor<ScriptAction>
 
     public ScriptEditor()
     {
+        super(ScriptAction.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setMaxWidth(Double.MAX_VALUE);
         gridPane.setHgap(10);

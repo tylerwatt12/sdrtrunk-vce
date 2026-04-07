@@ -305,7 +305,7 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
     {
         if(mChannelRotationDelaySpinner == null)
         {
-            mChannelRotationDelaySpinner = new Spinner();
+            mChannelRotationDelaySpinner = new Spinner<>();
             mChannelRotationDelaySpinner.setTooltip(
                 new Tooltip("Delay on each frequency before rotating to next when seeking to next active channel frequency"));
             mChannelRotationDelaySpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);

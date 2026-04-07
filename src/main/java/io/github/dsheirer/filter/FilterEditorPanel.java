@@ -99,20 +99,20 @@ public class FilterEditorPanel<T> extends JPanel
      * @param filterSet to add to the tree
      * @param parent node for the filter set child tree node.
      */
-    private void addFilterSet(FilterSet<T> filterSet, DefaultMutableTreeNode parent)
+    private void addFilterSet(FilterSet<?> filterSet, DefaultMutableTreeNode parent)
     {
-        List<IFilter<T>> filters = filterSet.getFilters();
+        List<? extends IFilter<?>> filters = filterSet.getFilters();
 
-        for(IFilter<T> filter : filters)
+        for(IFilter<?> filter : filters)
         {
             DefaultMutableTreeNode childNode = new DefaultMutableTreeNode(filter);
             mModel.insertNodeInto(childNode, parent, parent.getChildCount());
 
-            if(filter instanceof FilterSet childFilterSet)
+            if(filter instanceof FilterSet<?> childFilterSet)
             {
                 addFilterSet(childFilterSet, childNode);
             }
-            else if(filter instanceof Filter childFilter)
+            else if(filter instanceof Filter<?,?> childFilter)
             {
                 addFilter(childFilter, childNode);
             }
@@ -125,9 +125,9 @@ public class FilterEditorPanel<T> extends JPanel
      * @param filter to add
      * @param parent tree node
      */
-    private void addFilter(Filter filter, DefaultMutableTreeNode parent)
+    private void addFilter(Filter<?,?> filter, DefaultMutableTreeNode parent)
     {
-        List<FilterElement<?>> elements = filter.getFilterElements();
+        List<? extends FilterElement<?>> elements = filter.getFilterElements();
 
         elements.sort(Comparator.comparing(FilterElement::getName));
 

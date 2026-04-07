@@ -47,7 +47,7 @@ public class RdioScannerEditor extends AbstractBroadcastEditor<RdioScannerConfig
      */
     public RdioScannerEditor(PlaylistManager playlistManager)
     {
-        super(playlistManager);
+        super(playlistManager, RdioScannerConfiguration.class);
     }
 
     @Override

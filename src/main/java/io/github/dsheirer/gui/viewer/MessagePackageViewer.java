@@ -154,27 +154,30 @@ public class MessagePackageViewer extends VBox
         {
             mDecoderStateEventTableView = new TableView<>();
 
-            TableColumn timeslotColumn = new TableColumn();
+            TableColumn<DecoderStateEvent, Object> timeslotColumn = new TableColumn<>();
             timeslotColumn.setPrefWidth(110);
             timeslotColumn.setText("Timeslot");
             timeslotColumn.setCellValueFactory(new PropertyValueFactory<>("timeslot"));
 
-            TableColumn stateColumn = new TableColumn();
+            TableColumn<DecoderStateEvent, Object> stateColumn = new TableColumn<>();
             stateColumn.setPrefWidth(110);
             stateColumn.setText("State");
             stateColumn.setCellValueFactory(new PropertyValueFactory<>("state"));
 
-            TableColumn eventColumn = new TableColumn();
+            TableColumn<DecoderStateEvent, Object> eventColumn = new TableColumn<>();
             eventColumn.setPrefWidth(110);
             eventColumn.setText("Event");
             eventColumn.setCellValueFactory(new PropertyValueFactory<>("event"));
 
-            TableColumn frequencyColumn = new TableColumn();
+            TableColumn<DecoderStateEvent, Object> frequencyColumn = new TableColumn<>();
             frequencyColumn.setPrefWidth(110);
             frequencyColumn.setText("Frequency");
             frequencyColumn.setCellValueFactory(new PropertyValueFactory<>("frequency"));
 
-            mDecoderStateEventTableView.getColumns().addAll(timeslotColumn, stateColumn, eventColumn, frequencyColumn);
+            mDecoderStateEventTableView.getColumns().add(timeslotColumn);
+            mDecoderStateEventTableView.getColumns().add(stateColumn);
+            mDecoderStateEventTableView.getColumns().add(eventColumn);
+            mDecoderStateEventTableView.getColumns().add(frequencyColumn);
         }
 
         return mDecoderStateEventTableView;
@@ -187,43 +190,48 @@ public class MessagePackageViewer extends VBox
             mDecodeEventTableView = new TableView<>();
             mDecodeEventTableView.setMaxWidth(Double.MAX_VALUE);
 
-            TableColumn startTimeColumn = new TableColumn();
+            TableColumn<DecodeEventSnapshot, Object> startTimeColumn = new TableColumn<>();
             startTimeColumn.setPrefWidth(110);
             startTimeColumn.setText("Start");
             startTimeColumn.setCellValueFactory(new PropertyValueFactory<>("timeStart"));
 
-            TableColumn durationColumn = new TableColumn();
+            TableColumn<DecodeEventSnapshot, Object> durationColumn = new TableColumn<>();
             durationColumn.setPrefWidth(110);
             durationColumn.setText("Duration");
             durationColumn.setCellValueFactory(new PropertyValueFactory<>("duration"));
 
-            TableColumn typeColumn = new TableColumn();
+            TableColumn<DecodeEventSnapshot, Object> typeColumn = new TableColumn<>();
             typeColumn.setPrefWidth(130);
             typeColumn.setText("Type");
             typeColumn.setCellValueFactory(new PropertyValueFactory<>("eventType"));
 
-            TableColumn channelDescriptorColumn = new TableColumn();
+            TableColumn<DecodeEventSnapshot, Object> channelDescriptorColumn = new TableColumn<>();
             channelDescriptorColumn.setPrefWidth(110);
             channelDescriptorColumn.setText("Channel");
             channelDescriptorColumn.setCellValueFactory(new PropertyValueFactory<>("channelDescriptor"));
 
-            TableColumn frequencyColumn = new TableColumn();
+            TableColumn<DecodeEventSnapshot, Object> frequencyColumn = new TableColumn<>();
             frequencyColumn.setPrefWidth(110);
             frequencyColumn.setText("Frequency");
             frequencyColumn.setCellValueFactory(new PropertyValueFactory<>("frequency"));
 
-            TableColumn hashcodeColumn = new TableColumn();
+            TableColumn<DecodeEventSnapshot, Object> hashcodeColumn = new TableColumn<>();
             hashcodeColumn.setPrefWidth(100);
             hashcodeColumn.setText("Hash ID");
             hashcodeColumn.setCellValueFactory(new PropertyValueFactory<>("originalHashCode"));
 
-            TableColumn detailsColumn = new TableColumn();
+            TableColumn<DecodeEventSnapshot, Object> detailsColumn = new TableColumn<>();
             detailsColumn.setPrefWidth(500);
             detailsColumn.setText("Details");
             detailsColumn.setCellValueFactory(new PropertyValueFactory<>("details"));
 
-            mDecodeEventTableView.getColumns().addAll(startTimeColumn, durationColumn, typeColumn, channelDescriptorColumn,
-                    frequencyColumn, hashcodeColumn, detailsColumn);
+            mDecodeEventTableView.getColumns().add(startTimeColumn);
+            mDecodeEventTableView.getColumns().add(durationColumn);
+            mDecodeEventTableView.getColumns().add(typeColumn);
+            mDecodeEventTableView.getColumns().add(channelDescriptorColumn);
+            mDecodeEventTableView.getColumns().add(frequencyColumn);
+            mDecodeEventTableView.getColumns().add(hashcodeColumn);
+            mDecodeEventTableView.getColumns().add(detailsColumn);
 
             mDecodeEventTableView.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) ->
             {

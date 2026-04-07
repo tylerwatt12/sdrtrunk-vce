@@ -196,7 +196,7 @@ public class StreamingEditor extends SplitPane
 
                 if(editorType == null || editorType != configType)
                 {
-                    AbstractBroadcastEditor editor = mEditorMap.get(configType);
+                    AbstractBroadcastEditor<?> editor = mEditorMap.get(configType);
 
                     if(editor == null)
                     {
@@ -221,7 +221,7 @@ public class StreamingEditor extends SplitPane
         BroadcastConfiguration broadcastConfiguration = configuredBroadcast != null ?
             configuredBroadcast.getBroadcastConfiguration() : null;
 
-        getCurrentEditor().setItem(broadcastConfiguration);
+        getCurrentEditor().setBroadcastConfiguration(broadcastConfiguration);
         getStreamAliasSelectionEditor().setBroadcastConfiguration(broadcastConfiguration);
     }
 
@@ -268,7 +268,7 @@ public class StreamingEditor extends SplitPane
         return mRadioReferenceLoginLabel;
     }
 
-    private AbstractBroadcastEditor getCurrentEditor()
+    private AbstractBroadcastEditor<?> getCurrentEditor()
     {
         if(mCurrentEditor == null)
         {
@@ -400,7 +400,7 @@ public class StreamingEditor extends SplitPane
                 "audio streaming configuration"));
             mConfiguredBroadcastTableView.setItems(mPlaylistManager.getBroadcastModel().getConfiguredBroadcasts());
 
-            TableColumn<ConfiguredBroadcast,Boolean> enabledColumn = new TableColumn("Enabled");
+            TableColumn<ConfiguredBroadcast,Boolean> enabledColumn = new TableColumn<>("Enabled");
             enabledColumn.setCellValueFactory(new PropertyValueFactory<>("enabled"));
             enabledColumn.setCellFactory(param -> new TableCell<>()
             {
@@ -423,23 +423,27 @@ public class StreamingEditor extends SplitPane
                 }
             });
 
-            TableColumn nameColumn = new TableColumn("Name");
+            TableColumn<ConfiguredBroadcast, String> nameColumn = new TableColumn<>("Name");
             nameColumn.setPrefWidth(300);
             nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
 
-            TableColumn typeColumn = new TableColumn();
+            TableColumn<ConfiguredBroadcast, BroadcastServerType> typeColumn = new TableColumn<>();
             typeColumn.setPrefWidth(125);
             typeColumn.setText("Format");
             typeColumn.setCellValueFactory(new PropertyValueFactory<>("broadcastServerType"));
 
 
-            TableColumn stateColumn = new TableColumn("Stream Status");
+            TableColumn<ConfiguredBroadcast, ?> stateColumn = new TableColumn<>("Stream Status");
             stateColumn.setCellValueFactory(new PropertyValueFactory<>("broadcastState"));
 
-            TableColumn errorColumn = new TableColumn("Last Error");
+            TableColumn<ConfiguredBroadcast, ?> errorColumn = new TableColumn<>("Last Error");
             errorColumn.setCellValueFactory(new PropertyValueFactory<>("lastBadBroadcastState"));
 
-            mConfiguredBroadcastTableView.getColumns().addAll(enabledColumn, nameColumn, typeColumn, stateColumn, errorColumn);
+            mConfiguredBroadcastTableView.getColumns().add(enabledColumn);
+            mConfiguredBroadcastTableView.getColumns().add(nameColumn);
+            mConfiguredBroadcastTableView.getColumns().add(typeColumn);
+            mConfiguredBroadcastTableView.getColumns().add(stateColumn);
+            mConfiguredBroadcastTableView.getColumns().add(errorColumn);
 
             mConfiguredBroadcastTableView.getSelectionModel().selectedItemProperty()
                     .addListener((observable, oldValue, newValue) -> setBroadcastConfiguration(newValue));

@@ -32,7 +32,6 @@ import org.apache.commons.math3.util.FastMath;
  * of the Long.rotate methods will wrap the MSB around to the LSB and
  * corrupt the matching value.
  */
-@Deprecated //remove after P25P2 decoder is updated
 public class MultiSyncPatternMatcher
 {
 

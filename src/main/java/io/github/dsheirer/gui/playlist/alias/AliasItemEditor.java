@@ -159,13 +159,13 @@ public class AliasItemEditor extends Editor<Alias>
     private TextField mStreamAsTalkgroupField;
     private TextFormatter<Integer> mStreamAsIntegerTextFormatter = new IntegerFormatter(1,0xFFFF);
 
-    private Map<AliasIDType,IdentifierEditor> mIdentifierEditorMap = new EnumMap<>(AliasIDType.class);
+    private Map<AliasIDType,IdentifierEditor<?>> mIdentifierEditorMap = new EnumMap<>(AliasIDType.class);
     private EmptyIdentifierEditor mEmptyIdentifierEditor = new EmptyIdentifierEditor();
-    private IdentifierEditor mIdentifierEditor;
+    private IdentifierEditor<?> mIdentifierEditor;
 
-    private Map<AliasActionType,ActionEditor> mActionEditorMap = new EnumMap<>(AliasActionType.class);
+    private Map<AliasActionType,ActionEditor<?>> mActionEditorMap = new EnumMap<>(AliasActionType.class);
     private EmptyActionEditor mEmptyActionEditor = new EmptyActionEditor();
-    private ActionEditor mActionEditor;
+    private ActionEditor<?> mActionEditor;
 
 
     public AliasItemEditor(PlaylistManager playlistManager, UserPreferences userPreferences)
@@ -175,7 +175,7 @@ public class AliasItemEditor extends Editor<Alias>
 
         //Listen for changes to the stream configurations and refresh the stream lists
         mPlaylistManager.getBroadcastModel().getConfiguredBroadcasts()
-            .addListener((ListChangeListener<ConfiguredBroadcast>)c -> updateStreamViews());
+            .addListener((ListChangeListener.Change<? extends ConfiguredBroadcast> c) -> updateStreamViews());
 
         MyEventBus.getGlobalEventBus().register(this);
 
@@ -218,7 +218,7 @@ public class AliasItemEditor extends Editor<Alias>
 
         if(selected != null)
         {
-            getIdentifierEditor().setItem(selected);
+            mIdentifierEditor.setAliasID(selected);
         }
     }
 
@@ -500,7 +500,7 @@ public class AliasItemEditor extends Editor<Alias>
         return mIdentifierEditorBox;
     }
 
-    private Editor<AliasID> getIdentifierEditor()
+    private Editor<?> getIdentifierEditor()
     {
         if(mIdentifierEditor == null)
         {
@@ -510,7 +510,7 @@ public class AliasItemEditor extends Editor<Alias>
         return mIdentifierEditor;
     }
 
-    private Editor<AliasAction> getActionEditor()
+    private Editor<?> getActionEditor()
     {
         if(mActionEditor == null)
         {
@@ -522,7 +522,7 @@ public class AliasItemEditor extends Editor<Alias>
 
     private void setAction(AliasAction aliasAction)
     {
-        ActionEditor editor = null;
+        ActionEditor<?> editor = null;
 
         if(aliasAction != null)
         {
@@ -555,7 +555,7 @@ public class AliasItemEditor extends Editor<Alias>
             getActionEditorBox().getChildren().add(mActionEditor);
         }
 
-        mActionEditor.setItem(aliasAction);
+        mActionEditor.setAliasAction(aliasAction);
 
         //Add the modification listener back to the editor
         mActionEditor.modifiedProperty().addListener(mActionEditorModificationListener);
@@ -632,7 +632,7 @@ public class AliasItemEditor extends Editor<Alias>
      */
     private void setIdentifier(AliasID aliasID)
     {
-        IdentifierEditor editor = null;
+        IdentifierEditor<?> editor = null;
 
         if(aliasID != null)
         {
@@ -666,7 +666,7 @@ public class AliasItemEditor extends Editor<Alias>
             getIdentifierEditorBox().getChildren().add(mIdentifierEditor);
         }
 
-        mIdentifierEditor.setItem(aliasID);
+        mIdentifierEditor.setAliasID(aliasID);
 
         //Add the modification listener back to the editor
         mIdentifierEditor.modifiedProperty().addListener(mIdentifierEditorModificationListener);
@@ -921,7 +921,7 @@ public class AliasItemEditor extends Editor<Alias>
             mSelectedStreamsView = new ListView<>();
             mSelectedStreamsView.setDisable(true);
             mSelectedStreamsView.setPrefHeight(75);
-            mSelectedStreamsView.getItems().addListener((ListChangeListener<BroadcastChannel>)c -> {
+            mSelectedStreamsView.getItems().addListener((ListChangeListener.Change<? extends BroadcastChannel> c) -> {
                 String title = "Streaming";
 
                 if(getSelectedStreamsView().getItems().size() > 0)
@@ -1152,7 +1152,7 @@ public class AliasItemEditor extends Editor<Alias>
             mIconNodeComboBox = new ComboBox<>();
             mIconNodeComboBox.setMaxWidth(Double.MAX_VALUE);
             mIconNodeComboBox.setDisable(true);
-            mIconNodeComboBox.setItems(new SortedList(mPlaylistManager.getIconModel().iconsProperty(), Ordering.natural()));
+            mIconNodeComboBox.setItems(new SortedList<>(mPlaylistManager.getIconModel().iconsProperty(), Ordering.natural()));
             mIconNodeComboBox.setCellFactory(new IconCellFactory());
             mIconNodeComboBox.getSelectionModel().selectedItemProperty()
                     .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));

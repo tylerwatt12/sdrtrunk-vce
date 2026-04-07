@@ -69,7 +69,7 @@ public class AMConfigurationEditor extends ChannelConfigurationEditor
     private TitledPane mRecordPane;
     private TitledPane mEventLogPane;
     private ToggleSwitch mBasebandRecordSwitch;
-    private SourceConfigurationEditor mSourceConfigurationEditor;
+    private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
     private SegmentedButton mBandwidthButton;
     private TextField mTalkgroupField;
     private TextField mSquelchThresholdField;
@@ -216,7 +216,7 @@ public class AMConfigurationEditor extends ChannelConfigurationEditor
         return mRecordPane;
     }
 
-    private SourceConfigurationEditor getSourceConfigurationEditor()
+    private SourceConfigurationEditor<SourceConfiguration> getSourceConfigurationEditor()
     {
         if(mSourceConfigurationEditor == null)
         {

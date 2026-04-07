@@ -25,7 +25,6 @@ import io.github.dsheirer.source.SourceEvent;
 /**
  * Monitors decode sync events to adaptively control frequency correction broadcasts.
  */
-@Deprecated //Remove after P25P2 decoder gets updated
 public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFrequencyErrorProcessor
 {
 

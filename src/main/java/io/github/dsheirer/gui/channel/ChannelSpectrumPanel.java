@@ -149,7 +149,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
                     LOGGER.info(sb.toString());
                     LOGGER.info("Output Processor: " + pcs.getStateDescription());
                 }
-                else if(source instanceof HalfBandTunerChannelSource<?> hbtcs)
+                else if(source instanceof HalfBandTunerChannelSource hbtcs)
                 {
                     StringBuilder sb = new StringBuilder();
                     sb.append("Heterodyne Channel - CF:").append(FREQUENCY_FORMAT.format(hbtcs.getFrequency() / 1E6d));

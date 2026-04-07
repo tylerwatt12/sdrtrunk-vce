@@ -46,7 +46,7 @@ import org.apache.mina.transport.socket.nio.NioSocketConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster
+public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster<IcecastTCPConfiguration>
 {
     private static final Logger mLog = LoggerFactory.getLogger(IcecastTCPAudioBroadcaster.class);
     private static final String TERMINATOR = "\n";

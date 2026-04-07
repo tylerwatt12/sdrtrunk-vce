@@ -43,6 +43,8 @@ public class UserStatusEditor extends IdentifierEditor<UserStatusID>
      */
     public UserStatusEditor()
     {
+        super(UserStatusID.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setHgap(5);
         gridPane.setVgap(3);

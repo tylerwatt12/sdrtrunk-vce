@@ -224,19 +224,20 @@ public class AliasViewByRecordingEditor extends VBox
             mNoRecordAliasTableView.setMaxHeight(Double.MAX_VALUE);
             mNoRecordAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
-            TableColumn nameColumn = new TableColumn();
+            TableColumn<Alias, String> nameColumn = new TableColumn<>();
             nameColumn.setText("Alias");
             nameColumn.setPrefWidth(200);
-            nameColumn.setCellValueFactory(new PropertyValueFactory<Alias,String>("name"));
+            nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
 
-            TableColumn groupColumn = new TableColumn();
+            TableColumn<Alias, String> groupColumn = new TableColumn<>();
             groupColumn.setText("Group");
             groupColumn.setPrefWidth(200);
             groupColumn.setCellValueFactory(new PropertyValueFactory<>("group"));
 
-            mNoRecordAliasTableView.getColumns().addAll(nameColumn, groupColumn);
+            mNoRecordAliasTableView.getColumns().add(nameColumn);
+            mNoRecordAliasTableView.getColumns().add(groupColumn);
             mNoRecordAliasTableView.setPlaceholder(new Label("No non-recordable aliases available"));
-            mNoRecordAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener<Alias>)c -> {
+            mNoRecordAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener.Change<? extends Alias> c) -> {
                 int selectedCount = mNoRecordAliasTableView.getSelectionModel().getSelectedItems().size();
                 getAddButton().setDisable(selectedCount != 1);
                 getAddAllButton().setDisable(selectedCount < 2);
@@ -262,19 +263,20 @@ public class AliasViewByRecordingEditor extends VBox
             mRecordAliasTableView.setMaxHeight(Double.MAX_VALUE);
             mRecordAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
-            TableColumn nameColumn = new TableColumn();
+            TableColumn<Alias, String> nameColumn = new TableColumn<>();
             nameColumn.setText("Alias");
             nameColumn.setPrefWidth(200);
-            nameColumn.setCellValueFactory(new PropertyValueFactory<Alias,String>("name"));
+            nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
 
-            TableColumn groupColumn = new TableColumn();
+            TableColumn<Alias, String> groupColumn = new TableColumn<>();
             groupColumn.setText("Group");
             groupColumn.setPrefWidth(200);
             groupColumn.setCellValueFactory(new PropertyValueFactory<>("group"));
 
-            mRecordAliasTableView.getColumns().addAll(nameColumn, groupColumn);
+            mRecordAliasTableView.getColumns().add(nameColumn);
+            mRecordAliasTableView.getColumns().add(groupColumn);
             mRecordAliasTableView.setPlaceholder(new Label("No recordable aliases available"));
-            mRecordAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener<Alias>)c -> {
+            mRecordAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener.Change<? extends Alias> c) -> {
                 int selectedCount = mRecordAliasTableView.getSelectionModel().getSelectedItems().size();
                 getRemoveButton().setDisable(selectedCount != 1);
                 getRemoveAllButton().setDisable(selectedCount < 2);
@@ -326,7 +328,7 @@ public class AliasViewByRecordingEditor extends VBox
             mAddAllButton.setAlignment(Pos.CENTER);
             mAddAllButton.setOnAction(event -> {
                 List<Alias> selectedAliases =
-                    new ArrayList(getNoRecordAliasTableView().getSelectionModel().getSelectedItems());
+                    new ArrayList<>(getNoRecordAliasTableView().getSelectionModel().getSelectedItems());
 
                 if(!selectedAliases.isEmpty())
                 {
@@ -377,7 +379,7 @@ public class AliasViewByRecordingEditor extends VBox
             mRemoveAllButton.setAlignment(Pos.CENTER);
             mRemoveAllButton.setOnAction(event -> {
                 List<Alias> selectedAliases =
-                    new ArrayList(getRecordAliasTableView().getSelectionModel().getSelectedItems());
+                    new ArrayList<>(getRecordAliasTableView().getSelectionModel().getSelectedItems());
 
                 if(!selectedAliases.isEmpty())
                 {

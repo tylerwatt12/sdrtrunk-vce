@@ -126,7 +126,7 @@ public class PlaylistManagerEditor extends HBox
         if(mPlaylistTableView == null)
         {
             mPlaylistTableView = new TableView<>();
-            TableColumn<Path,String> iconColumn = new TableColumn("Selected");
+            TableColumn<Path,String> iconColumn = new TableColumn<>("Selected");
             iconColumn.setPrefWidth(100);
             iconColumn.setCellFactory(new Callback<TableColumn<Path,String>,TableCell<Path,String>>()
             {
@@ -191,7 +191,8 @@ public class PlaylistManagerEditor extends HBox
             });
             pathColumn.setPrefWidth(650);
 
-            mPlaylistTableView.getColumns().addAll(iconColumn, pathColumn);
+            mPlaylistTableView.getColumns().add(iconColumn);
+            mPlaylistTableView.getColumns().add(pathColumn);
 
             mPlaylistTableView.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> updateButtons());
 

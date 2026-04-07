@@ -31,7 +31,7 @@ public class IdentifierEditorFactory
     {
     }
 
-    public static IdentifierEditor getEditor(AliasIDType type, UserPreferences userPreferences)
+    public static IdentifierEditor<?> getEditor(AliasIDType type, UserPreferences userPreferences)
     {
         switch(type)
         {

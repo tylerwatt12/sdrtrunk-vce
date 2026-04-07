@@ -36,7 +36,7 @@ public class StreamEditorFactory
      * @param broadcastServerType to edit
      * @return editor or the default unknown editor
      */
-    public static AbstractBroadcastEditor getEditor(BroadcastServerType broadcastServerType, PlaylistManager playlistManager)
+    public static AbstractBroadcastEditor<?> getEditor(BroadcastServerType broadcastServerType, PlaylistManager playlistManager)
     {
         switch(broadcastServerType)
         {

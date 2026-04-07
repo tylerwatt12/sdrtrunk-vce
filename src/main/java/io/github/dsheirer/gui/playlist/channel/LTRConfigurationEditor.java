@@ -61,7 +61,7 @@ public class LTRConfigurationEditor extends ChannelConfigurationEditor
     private TitledPane mRecordPane;
     private TitledPane mSourcePane;
     private SegmentedButton mDirectionButton;
-    private SourceConfigurationEditor mSourceConfigurationEditor;
+    private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
     private AuxDecoderConfigurationEditor mAuxDecoderConfigurationEditor;
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private RecordConfigurationEditor mRecordConfigurationEditor;
@@ -196,7 +196,7 @@ public class LTRConfigurationEditor extends ChannelConfigurationEditor
         return mRecordPane;
     }
 
-    private SourceConfigurationEditor getSourceConfigurationEditor()
+    private SourceConfigurationEditor<SourceConfiguration> getSourceConfigurationEditor()
     {
         if(mSourceConfigurationEditor == null)
         {

@@ -19,6 +19,7 @@
 package io.github.dsheirer.source.tuner.channel;
 
 import io.github.dsheirer.buffer.INativeBuffer;
+import io.github.dsheirer.buffer.INativeBufferListener;
 import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
@@ -37,11 +38,11 @@ import org.slf4j.LoggerFactory;
  * CIC decimation filter that requires the decimation rate to be an integer multiple.  Sample buffer processing
  * occurs on a scheduled runnable thread.
  */
-public class HalfBandTunerChannelSource<T extends INativeBuffer> extends TunerChannelSource implements Listener<T>
+public class HalfBandTunerChannelSource extends TunerChannelSource implements INativeBufferListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(HalfBandTunerChannelSource.class);
 
-    private Dispatcher<T> mBufferDispatcher;
+    private Dispatcher<INativeBuffer> mBufferDispatcher;
     private ComplexMixer mFrequencyCorrectionMixer;
     private IRealDecimationFilter mIDecimationFilter;
     private IRealDecimationFilter mQDecimationFilter;
@@ -73,7 +74,7 @@ public class HalfBandTunerChannelSource<T extends INativeBuffer> extends TunerCh
         mQDecimationFilter = DecimationFilterFactory.getRealDecimationFilter(decimation);
 
         //Set dispatcher to process 1/10 of estimated sample arrival rate, 20 times per second (up to 200% per interval)
-        mBufferDispatcher = new Dispatcher(threadName, 50, getHeartbeatManager());
+        mBufferDispatcher = new Dispatcher<>(threadName, 50, getHeartbeatManager());
         mBufferDispatcher.setListener(new NativeBufferProcessor());
 
         //Setup the frequency mixer to the current source frequency
@@ -107,7 +108,7 @@ public class HalfBandTunerChannelSource<T extends INativeBuffer> extends TunerCh
      * Primary interface for receiving incoming complex sample buffers to be frequency translated and decimated.
      */
     @Override
-    public void receive(T complexSamples)
+    public void receive(INativeBuffer complexSamples)
     {
         mBufferDispatcher.receive(complexSamples);
     }
@@ -174,10 +175,10 @@ public class HalfBandTunerChannelSource<T extends INativeBuffer> extends TunerCh
     /**
      * Processes native buffers received from the dispatcher and sends to the registered listener
      */
-    public class NativeBufferProcessor implements Listener<T>
+    public class NativeBufferProcessor implements Listener<INativeBuffer>
     {
         @Override
-        public void receive(T nativeBuffer)
+        public void receive(INativeBuffer nativeBuffer)
         {
             if(mSamplesListener != null)
             {

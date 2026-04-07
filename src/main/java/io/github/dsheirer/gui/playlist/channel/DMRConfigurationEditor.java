@@ -74,7 +74,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     private TitledPane mEventLogPane;
     private TitledPane mRecordPane;
     private TitledPane mSourcePane;
-    private SourceConfigurationEditor mSourceConfigurationEditor;
+    private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private RecordConfigurationEditor mRecordConfigurationEditor;
     private ToggleSwitch mIgnoreDataCallsButton;
@@ -237,7 +237,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         return mRecordPane;
     }
 
-    private SourceConfigurationEditor getSourceConfigurationEditor()
+    private SourceConfigurationEditor<SourceConfiguration> getSourceConfigurationEditor()
     {
         if(mSourceConfigurationEditor == null)
         {
@@ -279,21 +279,21 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             mTimeslotFrequencyTable = new TableView<>(FXCollections.observableArrayList(TimeslotFrequency.extractor()));
             mTimeslotFrequencyTable.setPrefHeight(100.0);
 
-            TableColumn<TimeslotFrequency,Number> numberColumn = new TableColumn("LCN");
+            TableColumn<TimeslotFrequency,Number> numberColumn = new TableColumn<>("LCN");
             numberColumn.setPrefWidth(75);
             numberColumn.setCellValueFactory(cellData -> cellData.getValue().getNumberProperty());
-            mTimeslotFrequencyTable.getColumns().addAll(numberColumn);
+            mTimeslotFrequencyTable.getColumns().add(numberColumn);
             mTimeslotFrequencyTable.getSortOrder().add(numberColumn);
 
-            TableColumn<TimeslotFrequency,Number> downlinkColumn = new TableColumn("Frequency (MHz)");
+            TableColumn<TimeslotFrequency,Number> downlinkColumn = new TableColumn<>("Frequency (MHz)");
             downlinkColumn.setCellValueFactory(cellData -> cellData.getValue().getDownlinkMHz());
             downlinkColumn.setPrefWidth(150);
-            mTimeslotFrequencyTable.getColumns().addAll(downlinkColumn);
+            mTimeslotFrequencyTable.getColumns().add(downlinkColumn);
 
-            TableColumn<TimeslotFrequency,String> lsnColumn = new TableColumn("IDs (TS1/TS2)");
+            TableColumn<TimeslotFrequency,String> lsnColumn = new TableColumn<>("IDs (TS1/TS2)");
             lsnColumn.setPrefWidth(225);
             lsnColumn.setCellValueFactory(new PropertyValueFactory<>("description"));
-            mTimeslotFrequencyTable.getColumns().addAll(lsnColumn);
+            mTimeslotFrequencyTable.getColumns().add(lsnColumn);
 
 
             mTimeslotFrequencyTable.getSelectionModel().selectedItemProperty()
@@ -504,7 +504,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mTrafficChannelPoolSizeSpinner == null)
         {
-            mTrafficChannelPoolSizeSpinner = new Spinner();
+            mTrafficChannelPoolSizeSpinner = new Spinner<>();
             mTrafficChannelPoolSizeSpinner.setDisable(true);
             mTrafficChannelPoolSizeSpinner.setTooltip(
                 new Tooltip("Maximum number of traffic channels that can be created by the decoder"));
@@ -527,7 +527,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mChannelRotationDelaySpinner == null)
         {
-            mChannelRotationDelaySpinner = new Spinner();
+            mChannelRotationDelaySpinner = new Spinner<>();
             mChannelRotationDelaySpinner.setDisable(true);
             mChannelRotationDelaySpinner.setTooltip(
                 new Tooltip("Delay on each frequency before rotating to next when seeking to next active channel frequency"));

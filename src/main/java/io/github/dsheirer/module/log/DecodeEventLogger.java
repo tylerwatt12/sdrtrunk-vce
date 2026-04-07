@@ -56,7 +56,7 @@ public class DecodeEventLogger extends EventLogger implements IDecodeEventListen
      */
     private final CSVFormat mCsvFormat = CSVFormat.Builder.create(CSVFormat.DEFAULT)
             .setQuoteMode(QuoteMode.ALL)
-            .build();
+            .get();
 
     public DecodeEventLogger(AliasModel aliasModel, Path logDirectory, String fileNameSuffix, long frequency)
     {

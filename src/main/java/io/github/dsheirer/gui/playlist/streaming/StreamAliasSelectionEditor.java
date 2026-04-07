@@ -211,24 +211,26 @@ public class StreamAliasSelectionEditor extends VBox
             mAvailableAliasTableView.setDisable(true);
             mAvailableAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
-            TableColumn aliasListNameColumn = new TableColumn();
+            TableColumn<Alias, String> aliasListNameColumn = new TableColumn<>();
             aliasListNameColumn.setText("Alias List");
             aliasListNameColumn.setPrefWidth(150);
             aliasListNameColumn.setCellValueFactory(new PropertyValueFactory<>("aliasListName"));
 
-            TableColumn groupColumn = new TableColumn();
+            TableColumn<Alias, String> groupColumn = new TableColumn<>();
             groupColumn.setText("Group");
             groupColumn.setPrefWidth(150);
             groupColumn.setCellValueFactory(new PropertyValueFactory<>("group"));
 
-            TableColumn nameColumn = new TableColumn();
+            TableColumn<Alias, String> nameColumn = new TableColumn<>();
             nameColumn.setText("Alias");
             nameColumn.setPrefWidth(150);
-            nameColumn.setCellValueFactory(new PropertyValueFactory<Alias,String>("name"));
+            nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
 
-            mAvailableAliasTableView.getColumns().addAll(aliasListNameColumn, groupColumn, nameColumn);
+            mAvailableAliasTableView.getColumns().add(aliasListNameColumn);
+            mAvailableAliasTableView.getColumns().add(groupColumn);
+            mAvailableAliasTableView.getColumns().add(nameColumn);
             mAvailableAliasTableView.setPlaceholder(new Label("No aliases available"));
-            mAvailableAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener<Alias>)c -> {
+            mAvailableAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener.Change<? extends Alias> c) -> {
                 int selectedCount = mAvailableAliasTableView.getSelectionModel().getSelectedItems().size();
                 getAddButton().setDisable(selectedCount != 1);
                 getAddAllButton().setDisable(selectedCount < 2);
@@ -255,24 +257,26 @@ public class StreamAliasSelectionEditor extends VBox
             mSelectedAliasTableView.setDisable(true);
             mSelectedAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
-            TableColumn aliasListNameColumn = new TableColumn();
+            TableColumn<Alias, String> aliasListNameColumn = new TableColumn<>();
             aliasListNameColumn.setText("Alias List");
             aliasListNameColumn.setPrefWidth(150);
             aliasListNameColumn.setCellValueFactory(new PropertyValueFactory<>("aliasListName"));
 
-            TableColumn groupColumn = new TableColumn();
+            TableColumn<Alias, String> groupColumn = new TableColumn<>();
             groupColumn.setText("Group");
             groupColumn.setPrefWidth(150);
             groupColumn.setCellValueFactory(new PropertyValueFactory<>("group"));
 
-            TableColumn nameColumn = new TableColumn();
+            TableColumn<Alias, String> nameColumn = new TableColumn<>();
             nameColumn.setText("Alias");
             nameColumn.setPrefWidth(150);
-            nameColumn.setCellValueFactory(new PropertyValueFactory<Alias,String>("name"));
+            nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
 
-            mSelectedAliasTableView.getColumns().addAll(aliasListNameColumn, groupColumn, nameColumn);
+            mSelectedAliasTableView.getColumns().add(aliasListNameColumn);
+            mSelectedAliasTableView.getColumns().add(groupColumn);
+            mSelectedAliasTableView.getColumns().add(nameColumn);
             mSelectedAliasTableView.setPlaceholder(new Label("No aliases selected"));
-            mSelectedAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener<Alias>)c -> {
+            mSelectedAliasTableView.getSelectionModel().getSelectedItems().addListener((ListChangeListener.Change<? extends Alias> c) -> {
                 int selectedCount = mSelectedAliasTableView.getSelectionModel().getSelectedItems().size();
                 getRemoveButton().setDisable(selectedCount != 1);
                 getRemoveAllButton().setDisable(selectedCount < 2);
@@ -329,7 +333,7 @@ public class StreamAliasSelectionEditor extends VBox
                 public void handle(ActionEvent event)
                 {
                     List<Alias> selectedAliases =
-                        new ArrayList(getAvailableAliasTableView().getSelectionModel().getSelectedItems());
+                        new ArrayList<>(getAvailableAliasTableView().getSelectionModel().getSelectedItems());
                     String stream = getSelectedStreamName();
 
                     if(!selectedAliases.isEmpty() && stream != null)
@@ -383,7 +387,7 @@ public class StreamAliasSelectionEditor extends VBox
             mRemoveAllButton.setAlignment(Pos.CENTER);
             mRemoveAllButton.setOnAction(event -> {
                 List<Alias> selectedAliases =
-                    new ArrayList(getSelectedAliasTableView().getSelectionModel().getSelectedItems());
+                    new ArrayList<>(getSelectedAliasTableView().getSelectionModel().getSelectedItems());
                 String stream = getSelectedStreamName();
 
                 if(!selectedAliases.isEmpty() && stream != null)

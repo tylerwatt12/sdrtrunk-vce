@@ -100,9 +100,15 @@ public abstract class Device<T extends CompositeParameters<?,?>, R extends RspTu
     {
         if(selected())
         {
-            mCompositeParameters = (T)getAPI().getCompositeParameters(getDeviceType(), getDeviceHandle());
+            mCompositeParameters = castCompositeParameters(
+                    getAPI().getCompositeParameters(getDeviceType(), getDeviceHandle()));
         }
     }
+
+    /**
+     * Narrows base composite parameters to the type for this device.
+     */
+    protected abstract T castCompositeParameters(CompositeParameters<?,?> compositeParameters);
 
     /**
      * Sets the debug logging level for this device.
@@ -484,8 +490,8 @@ public abstract class Device<T extends CompositeParameters<?,?>, R extends RspTu
     {
         private static final long UPDATE_QUEUE_PROCESSING_INTERVAL_MS = 75;
         private final ScheduledExecutorService mExecutorService = Executors.newSingleThreadScheduledExecutor();
-        private final Queue<AsyncUpdateFuture> mUpdateQueue = new ConcurrentLinkedQueue();
-        private final Queue<CompletedAsyncUpdate> mCompletedUpdateQueue = new ConcurrentLinkedQueue();
+        private final Queue<AsyncUpdateFuture> mUpdateQueue = new ConcurrentLinkedQueue<>();
+        private final Queue<CompletedAsyncUpdate> mCompletedUpdateQueue = new ConcurrentLinkedQueue<>();
         private final ReentrantLock mLock = new ReentrantLock();
 
         /**

@@ -21,11 +21,12 @@ package io.github.dsheirer.source.tuner.sdrplay.api.device;
 
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
+import io.github.dsheirer.source.tuner.sdrplay.api.parameter.composite.CompositeParameters;
 
 /**
  * Unknown or Unrecognized SDRplay Device
  */
-public class UnknownDevice extends Device
+public class UnknownDevice extends Device<CompositeParameters<?,?>, RspTuner<?,?>>
 {
     /**
      * Constructs an Unknown SDRPlay device from the foreign memory segment
@@ -39,7 +40,13 @@ public class UnknownDevice extends Device
     }
 
     @Override
-    public RspTuner getTuner() throws SDRPlayException
+    protected CompositeParameters<?,?> castCompositeParameters(CompositeParameters<?,?> compositeParameters)
+    {
+        return compositeParameters;
+    }
+
+    @Override
+    public RspTuner<?,?> getTuner() throws SDRPlayException
     {
         throw new SDRPlayException("Unrecognized device type.  Cannot construct tuner");
     }

@@ -358,7 +358,7 @@ public class DmrViewer extends VBox
                 if(KEY_CODE_COPY.match(event))
                 {
                     final Set<Integer> rows = new TreeSet<>();
-                    for (final TablePosition tablePosition : mMessagePackageTableView.getSelectionModel().getSelectedCells())
+                    for(final TablePosition<?, ?> tablePosition : mMessagePackageTableView.getSelectionModel().getSelectedCells())
                     {
                         rows.add(tablePosition.getRow());
                     }
@@ -399,27 +399,29 @@ public class DmrViewer extends VBox
                 }
             });
 
-            TableColumn timestampColumn = new TableColumn();
+            TableColumn<MessagePackage, Object> timestampColumn = new TableColumn<>();
             timestampColumn.setPrefWidth(110);
             timestampColumn.setText("Time");
             timestampColumn.setCellValueFactory(new PropertyValueFactory<>("timestamp"));
 
-            TableColumn timeslotColumn = new TableColumn();
+            TableColumn<MessagePackage, Number> timeslotColumn = new TableColumn<>();
             timeslotColumn.setPrefWidth(35);
             timeslotColumn.setText("TS");
             timeslotColumn.setCellValueFactory(new PropertyValueFactory<>("timeslot"));
 
-            TableColumn validColumn = new TableColumn();
+            TableColumn<MessagePackage, Boolean> validColumn = new TableColumn<>();
             validColumn.setPrefWidth(50);
             validColumn.setText("Valid");
             validColumn.setCellValueFactory(new PropertyValueFactory<>("valid"));
 
-            TableColumn messageColumn = new TableColumn();
+            TableColumn<MessagePackage, String> messageColumn = new TableColumn<>();
             messageColumn.setPrefWidth(1000);
             messageColumn.setText("Message");
-            messageColumn.setCellValueFactory((Callback<TableColumn.CellDataFeatures, ObservableValue>) param -> {
+            messageColumn.setCellValueFactory(param -> {
                 SimpleStringProperty property = new SimpleStringProperty();
-                if(param.getValue() instanceof MessagePackage messagePackage)
+                MessagePackage messagePackage = param.getValue();
+
+                if(messagePackage != null)
                 {
                     property.set(messagePackage.getMessage().toString());
                 }
@@ -427,23 +429,28 @@ public class DmrViewer extends VBox
                 return property;
             });
 
-            TableColumn decodeEventCountColumn = new TableColumn();
+            TableColumn<MessagePackage, Number> decodeEventCountColumn = new TableColumn<>();
             decodeEventCountColumn.setPrefWidth(50);
             decodeEventCountColumn.setText("Events");
             decodeEventCountColumn.setCellValueFactory(new PropertyValueFactory<>("decodeEventCount"));
 
-            TableColumn decoderStateEventCountColumn = new TableColumn();
+            TableColumn<MessagePackage, Number> decoderStateEventCountColumn = new TableColumn<>();
             decoderStateEventCountColumn.setPrefWidth(50);
             decoderStateEventCountColumn.setText("States");
             decoderStateEventCountColumn.setCellValueFactory(new PropertyValueFactory<>("decoderStateEventCount"));
 
-            TableColumn channelStartCountColumn = new TableColumn();
+            TableColumn<MessagePackage, Number> channelStartCountColumn = new TableColumn<>();
             channelStartCountColumn.setPrefWidth(50);
             channelStartCountColumn.setText("Starts");
             channelStartCountColumn.setCellValueFactory(new PropertyValueFactory<>("channelStartProcessingRequestCount"));
 
-            mMessagePackageTableView.getColumns().addAll(timestampColumn, validColumn, timeslotColumn, messageColumn,
-                    decodeEventCountColumn, decoderStateEventCountColumn, channelStartCountColumn);
+            mMessagePackageTableView.getColumns().add(timestampColumn);
+            mMessagePackageTableView.getColumns().add(validColumn);
+            mMessagePackageTableView.getColumns().add(timeslotColumn);
+            mMessagePackageTableView.getColumns().add(messageColumn);
+            mMessagePackageTableView.getColumns().add(decodeEventCountColumn);
+            mMessagePackageTableView.getColumns().add(decoderStateEventCountColumn);
+            mMessagePackageTableView.getColumns().add(channelStartCountColumn);
         }
 
         return mMessagePackageTableView;

@@ -81,7 +81,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     private UserPreferences mUserPreferences;
     private AliasItemEditor mAliasItemEditor;
     private AliasBulkEditor mAliasBulkEditor;
-    private Editor mCurrentEditor;
+    private Editor<?> mCurrentEditor;
     private TableView<Alias> mAliasTableView;
     private Label mPlaceholderLabel;
     private Button mNewAliasButton;
@@ -160,7 +160,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     /**
      * Sets the editor as the bottom alias editor, either single alias or bulk alias editor.
      */
-    private void setEditor(Editor editor)
+    private void setEditor(Editor<?> editor)
     {
         if(editor != mCurrentEditor)
         {
@@ -433,37 +433,37 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         {
             mAliasTableView = new TableView<>();
 
-            TableColumn nameColumn = new TableColumn();
+            TableColumn<Alias, String> nameColumn = new TableColumn<>();
             nameColumn.setText("Alias");
-            nameColumn.setCellValueFactory(new PropertyValueFactory<Alias, String>("name"));
+            nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
             nameColumn.setPrefWidth(140);
 
-            TableColumn groupColumn = new TableColumn();
+            TableColumn<Alias, String> groupColumn = new TableColumn<>();
             groupColumn.setText("Group");
             groupColumn.setCellValueFactory(new PropertyValueFactory<>("group"));
             groupColumn.setPrefWidth(140);
 
-            TableColumn<Alias, Integer> colorColumn = new TableColumn("Color");
+            TableColumn<Alias, Integer> colorColumn = new TableColumn<>("Color");
             colorColumn.setCellValueFactory(new PropertyValueFactory<>("color"));
             colorColumn.setCellFactory(new ColorizedCell());
 
-            TableColumn<Alias, String> iconColumn = new TableColumn("Icon");
+            TableColumn<Alias, String> iconColumn = new TableColumn<>("Icon");
             iconColumn.setCellValueFactory(new PropertyValueFactory<>("iconName"));
             iconColumn.setCellFactory(new IconTableCellFactory());
 
-            TableColumn<Alias, Integer> priorityColumn = new TableColumn("Listen");
+            TableColumn<Alias, Integer> priorityColumn = new TableColumn<>("Listen");
             priorityColumn.setCellFactory(new PriorityCellFactory());
             priorityColumn.setCellValueFactory(new PropertyValueFactory<>("priority"));
 
-            TableColumn<Alias, Boolean> recordColumn = new TableColumn("Record");
+            TableColumn<Alias, Boolean> recordColumn = new TableColumn<>("Record");
             recordColumn.setCellValueFactory(new PropertyValueFactory<>("recordable"));
             recordColumn.setCellFactory(new IconCell(FontAwesome.SQUARE, Color.RED));
 
-            TableColumn<Alias, Boolean> streamColumn = new TableColumn("Stream");
+            TableColumn<Alias, Boolean> streamColumn = new TableColumn<>("Stream");
             streamColumn.setCellValueFactory(new PropertyValueFactory<>("streamable"));
             streamColumn.setCellFactory(new IconCell(FontAwesome.VOLUME_UP, Color.DARKBLUE));
 
-            TableColumn<Alias, Integer> idsColumn = new TableColumn("IDs");
+            TableColumn<Alias, Integer> idsColumn = new TableColumn<>("IDs");
             idsColumn.setCellValueFactory(new IdentifierCountCell());
 
             TableColumn<Alias, Boolean> errorsColumn = new TableColumn<>("Error");
@@ -492,14 +492,22 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             });
 
 
-            mAliasTableView.getColumns().addAll(nameColumn, groupColumn, colorColumn, iconColumn, priorityColumn,
-                    recordColumn, streamColumn, idsColumn, errorsColumn);
+            mAliasTableView.getColumns().add(nameColumn);
+            mAliasTableView.getColumns().add(groupColumn);
+            mAliasTableView.getColumns().add(colorColumn);
+            mAliasTableView.getColumns().add(iconColumn);
+            mAliasTableView.getColumns().add(priorityColumn);
+            mAliasTableView.getColumns().add(recordColumn);
+            mAliasTableView.getColumns().add(streamColumn);
+            mAliasTableView.getColumns().add(idsColumn);
+            mAliasTableView.getColumns().add(errorsColumn);
 
             mAliasTableView.setPlaceholder(getPlaceholderLabel());
             mAliasTableView.setItems(getAliasSortedList());
             mAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
             mAliasTableView.getSelectionModel().getSelectedItems().addListener(
-                (ListChangeListener<Alias>)c -> Platform.runLater(() -> setAliases(mAliasTableView.getSelectionModel().getSelectedItems())));
+                (ListChangeListener.Change<? extends Alias> c) ->
+                    Platform.runLater(() -> setAliases(mAliasTableView.getSelectionModel().getSelectedItems())));
         }
 
         return mAliasTableView;

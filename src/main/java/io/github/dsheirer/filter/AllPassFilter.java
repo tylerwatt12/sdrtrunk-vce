@@ -42,7 +42,7 @@ public class AllPassFilter<T> extends Filter<T, String>
     }
 
 	@Override
-	public Function getKeyExtractor()
+	public Function<T, String> getKeyExtractor()
 	{
 		return mKeyExtractor;
 	}

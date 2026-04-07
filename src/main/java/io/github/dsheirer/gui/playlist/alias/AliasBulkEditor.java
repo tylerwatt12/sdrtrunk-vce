@@ -280,7 +280,7 @@ public class AliasBulkEditor extends Editor<List<Alias>>
         {
             mIconNodeComboBox = new ComboBox<>();
             mIconNodeComboBox.setMaxWidth(Double.MAX_VALUE);
-            mIconNodeComboBox.setItems(new SortedList(mPlaylistManager.getIconModel().iconsProperty(), Ordering.natural()));
+            mIconNodeComboBox.setItems(new SortedList<>(mPlaylistManager.getIconModel().iconsProperty(), Ordering.natural()));
             mIconNodeComboBox.setCellFactory(new IconCellFactory());
             mIconNodeComboBox.getSelectionModel().selectedItemProperty()
                     .addListener((observable, oldValue, newValue) ->

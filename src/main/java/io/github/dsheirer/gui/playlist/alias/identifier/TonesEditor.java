@@ -59,6 +59,8 @@ public class TonesEditor extends IdentifierEditor<TonesID>
 
     public TonesEditor()
     {
+        super(TonesID.class);
+
         VBox upDownBox = new VBox();
         upDownBox.setAlignment(Pos.CENTER);
         upDownBox.setSpacing(10);

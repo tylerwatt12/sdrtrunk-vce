@@ -111,7 +111,7 @@ public class SiteEditor extends GridPane
     private EnrichedSite mCurrentSite;
     private System mCurrentSystem;
     private SystemInformation mCurrentSystemInformation;
-    private ComboBox mAliasListNameComboBox;
+    private ComboBox<String> mAliasListNameComboBox;
     private Button mNewAliasListButton;
     private Label mP25ControlLabel;
     private SegmentedButton mP25ControlSegmentedButton;
@@ -356,7 +356,7 @@ public class SiteEditor extends GridPane
             }
             mSiteFrequencyTableView.getSortOrder().clear();
             mTypeColumn.setSortType(TableColumn.SortType.DESCENDING);
-            mSiteFrequencyTableView.getSortOrder().addAll(mTypeColumn);
+            mSiteFrequencyTableView.getSortOrder().add(mTypeColumn);
             getSiteFrequencyTableView().sort();
 
             if(!supported)
@@ -1078,18 +1078,20 @@ public class SiteEditor extends GridPane
             mSiteFrequencyTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
             mSiteFrequencyTableView.setPlaceholder(new Label("Please select a site to view frequencies"));
 
-            mTypeColumn = new TableColumn("Type");
+            mTypeColumn = new TableColumn<>("Type");
             mTypeColumn.setPrefWidth(100);
             mTypeColumn.setCellValueFactory(new TypeCellValueFactory());
 
-            TableColumn<SiteFrequency,Integer> lcnColumn = new TableColumn("LCN");
+            TableColumn<SiteFrequency,Integer> lcnColumn = new TableColumn<>("LCN");
             lcnColumn.setCellValueFactory(new PropertyValueFactory<>("logicalChannelNumber"));
 
-            TableColumn<SiteFrequency,String> frequencyColumn = new TableColumn("Frequency");
+            TableColumn<SiteFrequency,String> frequencyColumn = new TableColumn<>("Frequency");
             frequencyColumn.setPrefWidth(100);
             frequencyColumn.setCellValueFactory(new FrequencyCellValueFactory());
 
-            mSiteFrequencyTableView.getColumns().addAll(mTypeColumn, lcnColumn, frequencyColumn);
+            mSiteFrequencyTableView.getColumns().add(mTypeColumn);
+            mSiteFrequencyTableView.getColumns().add(lcnColumn);
+            mSiteFrequencyTableView.getColumns().add(frequencyColumn);
         }
 
         return mSiteFrequencyTableView;

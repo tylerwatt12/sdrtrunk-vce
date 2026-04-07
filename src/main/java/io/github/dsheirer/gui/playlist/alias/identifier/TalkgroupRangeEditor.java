@@ -64,6 +64,8 @@ public class TalkgroupRangeEditor extends IdentifierEditor<TalkgroupRange>
      */
     public TalkgroupRangeEditor(UserPreferences userPreferences)
     {
+        super(TalkgroupRange.class);
+
         mUserPreferences = userPreferences;
         mTalkgroupDetails = createTalkgroupDetails();
 

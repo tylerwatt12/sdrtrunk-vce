@@ -40,7 +40,8 @@ public class ComplexMixer
      * @param name - token name to use for this mixer
      * @param sampleAdapter - adapter to convert byte array data read from the mixer into ReusableComplexBuffer.
      */
-    public ComplexMixer(TargetDataLine targetDataLine, AudioFormat format, String name, ISampleAdapter sampleAdapter)
+    public ComplexMixer(TargetDataLine targetDataLine, AudioFormat format, String name,
+                        ISampleAdapter<INativeBuffer> sampleAdapter)
     {
         mMixerReader = new MixerReader<>(format, targetDataLine, sampleAdapter);
         mName = name;

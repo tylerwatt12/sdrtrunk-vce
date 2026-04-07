@@ -46,6 +46,7 @@ import org.controlsfx.control.ToggleSwitch;
 public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> extends Editor<T>
 {
     private PlaylistManager mPlaylistManager;
+    private Class<T> mItemClass;
     private Button mSaveButton;
     private Button mResetButton;
     private TextField mFormatField;
@@ -57,9 +58,10 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
      * Constructs an instance
      * @param playlistManager for access the stream manager
      */
-    protected AbstractBroadcastEditor(PlaylistManager playlistManager)
+    protected AbstractBroadcastEditor(PlaylistManager playlistManager, Class<T> itemClass)
     {
         mPlaylistManager = playlistManager;
+        mItemClass = itemClass;
         getFormatField().setText(getBroadcastServerType().toString());
 
         VBox buttonBox = new VBox();
@@ -81,6 +83,11 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
     protected abstract GridPane getEditorPane();
 
     public abstract BroadcastServerType getBroadcastServerType();
+
+    public void setBroadcastConfiguration(BroadcastConfiguration broadcastConfiguration)
+    {
+        setItem(broadcastConfiguration != null ? mItemClass.cast(broadcastConfiguration) : null);
+    }
 
     @Override
     public void setItem(T item)

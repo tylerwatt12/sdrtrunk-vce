@@ -67,7 +67,8 @@ import org.apache.mina.transport.socket.nio.NioSocketConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class ShoutcastV2AudioStreamingBroadcaster extends AudioStreamingBroadcaster implements IBroadcastMetadataUpdater
+public class ShoutcastV2AudioStreamingBroadcaster extends AudioStreamingBroadcaster<ShoutcastV2Configuration>
+        implements IBroadcastMetadataUpdater
 {
     private static final Logger mLog = LoggerFactory.getLogger(ShoutcastV2AudioStreamingBroadcaster.class);
     private static final long RECONNECT_INTERVAL_MILLISECONDS = 30000; //30 seconds

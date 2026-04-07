@@ -45,7 +45,7 @@ public class ShoutcastV1StreamEditor extends AbstractStreamEditor<ShoutcastV1Con
 
     public ShoutcastV1StreamEditor(PlaylistManager playlistManager)
     {
-        super(playlistManager);
+        super(playlistManager, ShoutcastV1Configuration.class);
     }
 
     @Override

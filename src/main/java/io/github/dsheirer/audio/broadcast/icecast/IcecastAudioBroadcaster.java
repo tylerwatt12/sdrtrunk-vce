@@ -20,18 +20,17 @@ package io.github.dsheirer.audio.broadcast.icecast;
 
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.AudioStreamingBroadcaster;
-import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.IBroadcastMetadataUpdater;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
 
-public abstract class IcecastAudioBroadcaster extends AudioStreamingBroadcaster
+public abstract class IcecastAudioBroadcaster<T extends IcecastConfiguration> extends AudioStreamingBroadcaster<T>
 {
     private IBroadcastMetadataUpdater mMetadataUpdater;
     protected AliasModel mAliasModel;
 
-    protected IcecastAudioBroadcaster(BroadcastConfiguration broadcastConfiguration, InputAudioFormat inputAudioFormat,
-                                   MP3Setting mp3Setting, AliasModel aliasModel)
+    protected IcecastAudioBroadcaster(T broadcastConfiguration, InputAudioFormat inputAudioFormat,
+                                      MP3Setting mp3Setting, AliasModel aliasModel)
     {
         super(broadcastConfiguration, inputAudioFormat, mp3Setting);
         mAliasModel = aliasModel;

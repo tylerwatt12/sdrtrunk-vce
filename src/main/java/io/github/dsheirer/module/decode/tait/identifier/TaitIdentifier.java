@@ -24,9 +24,7 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.protocol.Protocol;
-import org.apache.commons.lang3.StringUtils;
-
-import java.util.Objects;
+import org.apache.commons.lang3.Strings;
 
 /**
  * Tait-1200 String (ASCII) Identifier
@@ -66,7 +64,7 @@ public class TaitIdentifier extends StringIdentifier implements Comparable<TaitI
     @Override
     public int compareTo(TaitIdentifier other)
     {
-        int comparison = StringUtils.compare(getValue(), other != null ? other.getValue() : null);
+        int comparison = Strings.CS.compare(getValue(), other != null ? other.getValue() : null);
 
         if(comparison == 0 && other != null)
         {

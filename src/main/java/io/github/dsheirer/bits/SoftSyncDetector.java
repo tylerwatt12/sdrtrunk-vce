@@ -21,7 +21,6 @@ package io.github.dsheirer.bits;
 import io.github.dsheirer.dsp.symbol.ISyncDetectListener;
 import org.apache.commons.lang3.Validate;
 
-@Deprecated //Remove after P25P2 decoder is updated.
 public class SoftSyncDetector implements ISyncProcessor
 {
     private ISyncDetectListener mListener;

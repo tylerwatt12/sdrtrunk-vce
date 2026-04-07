@@ -232,15 +232,14 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
         {
             JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
-            if(value instanceof List<?>)
+            if(value instanceof List<?> aliases && aliases.stream().allMatch(Alias.class::isInstance))
             {
-                List<Alias> aliases = (List<Alias>)value;
-
                 if(!aliases.isEmpty())
                 {
                     label.setText(Joiner.on(", ").skipNulls().join(aliases));
-                    label.setIcon(mIconModel.getIcon(aliases.get(0).getIconName(), IconModel.DEFAULT_ICON_SIZE));
-                    label.setForeground(aliases.get(0).getDisplayColor());
+                    Alias firstAlias = Alias.class.cast(aliases.getFirst());
+                    label.setIcon(mIconModel.getIcon(firstAlias.getIconName(), IconModel.DEFAULT_ICON_SIZE));
+                    label.setForeground(firstAlias.getDisplayColor());
                 }
                 else
                 {

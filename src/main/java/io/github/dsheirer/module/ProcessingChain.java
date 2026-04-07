@@ -105,9 +105,9 @@ public class ProcessingChain implements Listener<ChannelEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(ProcessingChain.class);
 
-    private Broadcaster<float[]> mDemodulatedAudioBufferBroadcaster = new Broadcaster();
+    private Broadcaster<float[]> mDemodulatedAudioBufferBroadcaster = new Broadcaster<>();
     private Broadcaster<ComplexSamples> mBasebandComplexSamplesBroadcaster = new Broadcaster<>();
-    private Broadcaster<ByteBuffer> mDemodulatedBitstreamBufferBroadcaster = new Broadcaster();
+    private Broadcaster<ByteBuffer> mDemodulatedBitstreamBufferBroadcaster = new Broadcaster<>();
     private Broadcaster<AudioSegment> mAudioSegmentBroadcaster = new AudioSegmentBroadcaster<>();
     private Broadcaster<IDecodeEvent> mDecodeEventBroadcaster = new Broadcaster<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();

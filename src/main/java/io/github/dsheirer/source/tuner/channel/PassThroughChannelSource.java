@@ -20,6 +20,7 @@
 package io.github.dsheirer.source.tuner.channel;
 
 import io.github.dsheirer.buffer.INativeBuffer;
+import io.github.dsheirer.buffer.INativeBufferListener;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.ISourceEventListener;
@@ -35,7 +36,7 @@ import org.slf4j.LoggerFactory;
  * directly to the registered listener
  */
 public class PassThroughChannelSource extends TunerChannelSource implements ISourceEventListener,
-        Listener<INativeBuffer>
+        INativeBufferListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(PassThroughChannelSource.class);
     private TunerController mTunerController;

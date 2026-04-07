@@ -19,15 +19,18 @@
 
 package io.github.dsheirer.gui.playlist.alias.action;
 
+import io.github.dsheirer.alias.action.AliasAction;
 import javafx.scene.control.Label;
 
 /**
  * Unrecognized alias action editor
  */
-public class UnrecognizedActionEditor extends ActionEditor
+public class UnrecognizedActionEditor extends ActionEditor<AliasAction>
 {
     public UnrecognizedActionEditor()
     {
+        super(AliasAction.class);
+
         Label label = new Label("Unrecognized action type.");
         label.setWrapText(true);
         getChildren().add(label);

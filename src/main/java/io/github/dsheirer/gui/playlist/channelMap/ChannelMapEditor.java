@@ -597,22 +597,25 @@ public class ChannelMapEditor extends SplitPane
             {
                 mChannelRangeTableView = new TableView<>();
 
-                TableColumn<ChannelRange,Integer> firstColumn = new TableColumn("First");
-                firstColumn.setCellValueFactory(new PropertyValueFactory<ChannelRange,Integer>("firstChannel"));
+                TableColumn<ChannelRange,Integer> firstColumn = new TableColumn<>("First");
+                firstColumn.setCellValueFactory(new PropertyValueFactory<>("firstChannel"));
                 firstColumn.setCellFactory(param -> new ColorTableCell());
 
-                TableColumn<ChannelRange,Integer> lastColumn = new TableColumn("Last");
-                lastColumn.setCellValueFactory(new PropertyValueFactory<ChannelRange,Integer>("lastChannel"));
+                TableColumn<ChannelRange,Integer> lastColumn = new TableColumn<>("Last");
+                lastColumn.setCellValueFactory(new PropertyValueFactory<>("lastChannel"));
                 lastColumn.setCellFactory(param -> new ColorTableCell());
 
-                TableColumn<ChannelRange,Integer> baseColumn = new TableColumn("Base");
-                baseColumn.setCellValueFactory(new PropertyValueFactory<ChannelRange,Integer>("baseFrequency"));
+                TableColumn<ChannelRange,Integer> baseColumn = new TableColumn<>("Base");
+                baseColumn.setCellValueFactory(new PropertyValueFactory<>("baseFrequency"));
                 baseColumn.setPrefWidth(95);
 
-                TableColumn<ChannelRange,Integer> stepColumn = new TableColumn("Step");
-                stepColumn.setCellValueFactory(new PropertyValueFactory<ChannelRange,Integer>("stepSize"));
+                TableColumn<ChannelRange,Integer> stepColumn = new TableColumn<>("Step");
+                stepColumn.setCellValueFactory(new PropertyValueFactory<>("stepSize"));
 
-                mChannelRangeTableView.getColumns().addAll(firstColumn, lastColumn, baseColumn, stepColumn);
+                mChannelRangeTableView.getColumns().add(firstColumn);
+                mChannelRangeTableView.getColumns().add(lastColumn);
+                mChannelRangeTableView.getColumns().add(baseColumn);
+                mChannelRangeTableView.getColumns().add(stepColumn);
 
                 mChannelRangeTableView.getSelectionModel().selectedItemProperty()
                     .addListener((observable, oldValue, selected) -> {

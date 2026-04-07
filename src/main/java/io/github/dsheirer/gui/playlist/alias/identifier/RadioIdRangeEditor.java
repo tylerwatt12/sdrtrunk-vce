@@ -63,6 +63,8 @@ public class RadioIdRangeEditor extends IdentifierEditor<RadioRange>
      */
     public RadioIdRangeEditor(UserPreferences userPreferences)
     {
+        super(RadioRange.class);
+
         mUserPreferences = userPreferences;
         mRadioDetails = createRadioDetails();
 

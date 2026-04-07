@@ -47,6 +47,8 @@ public class EsnEditor extends IdentifierEditor<Esn>
      */
     public EsnEditor()
     {
+        super(Esn.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setHgap(5);
 

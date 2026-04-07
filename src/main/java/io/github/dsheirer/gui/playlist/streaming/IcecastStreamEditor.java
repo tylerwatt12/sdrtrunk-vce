@@ -47,7 +47,7 @@ public abstract class IcecastStreamEditor extends AbstractStreamEditor<IcecastCo
 
     protected IcecastStreamEditor(PlaylistManager playlistManager)
     {
-        super(playlistManager);
+        super(playlistManager, IcecastConfiguration.class);
     }
 
     @Override

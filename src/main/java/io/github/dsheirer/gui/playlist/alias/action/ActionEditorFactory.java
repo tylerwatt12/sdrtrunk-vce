@@ -30,7 +30,7 @@ public class ActionEditorFactory
     {
     }
 
-    public static ActionEditor getEditor(AliasActionType type)
+    public static ActionEditor<?> getEditor(AliasActionType type)
     {
         switch(type)
         {

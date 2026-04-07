@@ -54,15 +54,16 @@ public class CompositeParameters<D extends DeviceParameters, T extends TunerPara
      * @param deviceParamsT native memory sdrplay_api_DeviceParamsT structure
      * @param arena for allocating additional memory segments for the sub-structures.
      */
-    public CompositeParameters(Version version, DeviceType deviceType, MemorySegment deviceParamsT, Arena arena)
+    public CompositeParameters(Version version, DeviceType deviceType, MemorySegment deviceParamsT, Arena arena,
+                               Class<D> deviceParametersClass, Class<T> tunerParametersClass)
     {
         MemorySegment addressDevParams = sdrplay_api_DeviceParamsT.devParams(deviceParamsT);
         MemorySegment devParams = addressDevParams.reinterpret(sdrplay_api_DevParamsT.sizeof(), arena, null);
-        mDeviceParameters = (D) DeviceParametersFactory.create(deviceType, devParams);
+        mDeviceParameters = deviceParametersClass.cast(DeviceParametersFactory.create(deviceType, devParams));
 
         MemorySegment addressRxA = sdrplay_api_DeviceParamsT.rxChannelA(deviceParamsT);
         MemorySegment rxA = addressRxA.reinterpret(sdrplay_api_RxChannelParamsT.sizeof(), arena, null);
-        mTunerAParameters = (T) TunerParametersFactory.create(version, deviceType, rxA);
+        mTunerAParameters = tunerParametersClass.cast(TunerParametersFactory.create(version, deviceType, rxA));
 
         MemorySegment tunerACtrlParams = rxA.asSlice(sdrplay_api_RxChannelParamsT.ctrlParams$offset(), sdrplay_api_ControlParamsT.sizeof());
         mControlAParameters = new ControlParameters(tunerACtrlParams);

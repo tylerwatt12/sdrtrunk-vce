@@ -65,30 +65,30 @@ public class IdentifierCollectionViewer extends VBox
         {
             mIdentifierTableView = new TableView<>();
 
-            TableColumn classColumn = new TableColumn();
+            TableColumn<Identifier, Object> classColumn = new TableColumn<>();
             classColumn.setPrefWidth(110);
             classColumn.setText("Class");
             classColumn.setCellValueFactory(new PropertyValueFactory<>("identifierClass"));
 
-            TableColumn formColumn = new TableColumn();
+            TableColumn<Identifier, Object> formColumn = new TableColumn<>();
             formColumn.setPrefWidth(160);
             formColumn.setText("Form");
             formColumn.setCellValueFactory(new PropertyValueFactory<>("form"));
 
-            TableColumn roleColumn = new TableColumn();
+            TableColumn<Identifier, Object> roleColumn = new TableColumn<>();
             roleColumn.setPrefWidth(110);
             roleColumn.setText("Role");
             roleColumn.setCellValueFactory(new PropertyValueFactory<>("role"));
 
-            TableColumn valueColumn = new TableColumn();
+            TableColumn<Identifier, Object> valueColumn = new TableColumn<>();
             valueColumn.setPrefWidth(160);
             valueColumn.setText("Value");
             valueColumn.setCellValueFactory(new PropertyValueFactory<>("value"));
 
-            TableColumn textColumn = new TableColumn();
+            TableColumn<Identifier, String> textColumn = new TableColumn<>();
             textColumn.setPrefWidth(160);
             textColumn.setText("Text");
-            textColumn.setCellValueFactory((Callback<TableColumn.CellDataFeatures<Identifier<?>, String>, ObservableValue>) param -> {
+            textColumn.setCellValueFactory(param -> {
                 if(param.getValue() != null)
                 {
                     return new SimpleStringProperty(param.getValue().toString());
@@ -97,7 +97,11 @@ public class IdentifierCollectionViewer extends VBox
                 return null;
             });
 
-            mIdentifierTableView.getColumns().addAll(classColumn, formColumn, roleColumn, valueColumn, textColumn);
+            mIdentifierTableView.getColumns().add(classColumn);
+            mIdentifierTableView.getColumns().add(formColumn);
+            mIdentifierTableView.getColumns().add(roleColumn);
+            mIdentifierTableView.getColumns().add(valueColumn);
+            mIdentifierTableView.getColumns().add(textColumn);
         }
 
         return mIdentifierTableView;

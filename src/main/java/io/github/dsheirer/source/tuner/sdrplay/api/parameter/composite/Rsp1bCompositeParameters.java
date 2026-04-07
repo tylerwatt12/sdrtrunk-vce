@@ -42,6 +42,6 @@ public class Rsp1bCompositeParameters extends CompositeParameters<Rsp1aDevicePar
      */
     public Rsp1bCompositeParameters(Version version, MemorySegment deviceParams, Arena arena)
     {
-        super(version, DeviceType.RSP1B, deviceParams, arena);
+        super(version, DeviceType.RSP1B, deviceParams, arena, Rsp1aDeviceParameters.class, Rsp1aTunerParameters.class);
     }
 }

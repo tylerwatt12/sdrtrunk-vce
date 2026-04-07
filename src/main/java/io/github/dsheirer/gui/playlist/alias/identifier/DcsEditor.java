@@ -37,6 +37,8 @@ public class DcsEditor extends IdentifierEditor<Dcs>
      */
     public DcsEditor()
     {
+        super(Dcs.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setHgap(5);
 

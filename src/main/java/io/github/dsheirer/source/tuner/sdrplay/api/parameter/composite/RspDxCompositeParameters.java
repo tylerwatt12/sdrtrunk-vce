@@ -40,6 +40,6 @@ public class RspDxCompositeParameters extends CompositeParameters<RspDxDevicePar
      */
     public RspDxCompositeParameters(Version version, MemorySegment deviceParams, Arena arena)
     {
-        super(version, DeviceType.RSPdx, deviceParams, arena);
+        super(version, DeviceType.RSPdx, deviceParams, arena, RspDxDeviceParameters.class, RspDxTunerParameters.class);
     }
 }

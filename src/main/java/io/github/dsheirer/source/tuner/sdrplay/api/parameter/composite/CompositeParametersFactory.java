@@ -41,8 +41,8 @@ public class CompositeParametersFactory
      * @param arena to allocate additional memory structures
      * @return instance
      */
-    public static CompositeParameters create(Version version, DeviceType deviceType, MemorySegment deviceParams,
-                                             Arena arena)
+    public static CompositeParameters<?,?> create(Version version, DeviceType deviceType, MemorySegment deviceParams,
+                                                  Arena arena)
     {
         switch(deviceType)
         {

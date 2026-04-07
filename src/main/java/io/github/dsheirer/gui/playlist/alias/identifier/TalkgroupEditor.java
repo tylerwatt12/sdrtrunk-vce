@@ -61,6 +61,8 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
      */
     public TalkgroupEditor(UserPreferences userPreferences)
     {
+        super(Talkgroup.class);
+
         mUserPreferences = userPreferences;
 
         loadTalkgroupDetails();

@@ -60,6 +60,8 @@ public class RadioIdEditor extends IdentifierEditor<Radio>
      */
     public RadioIdEditor(UserPreferences userPreferences)
     {
+        super(Radio.class);
+
         mUserPreferences = userPreferences;
 
         loadRadioDetails();

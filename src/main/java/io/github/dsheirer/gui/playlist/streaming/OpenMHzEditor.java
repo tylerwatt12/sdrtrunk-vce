@@ -53,7 +53,7 @@
       */
      public OpenMHzEditor(PlaylistManager playlistManager)
      {
-         super(playlistManager);
+         super(playlistManager, OpenMHzConfiguration.class);
      }
 
      @Override

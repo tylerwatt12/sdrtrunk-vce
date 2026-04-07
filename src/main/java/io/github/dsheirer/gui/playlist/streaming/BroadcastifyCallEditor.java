@@ -54,7 +54,7 @@ public class BroadcastifyCallEditor extends AbstractBroadcastEditor<Broadcastify
      */
     public BroadcastifyCallEditor(PlaylistManager playlistManager)
     {
-        super(playlistManager);
+        super(playlistManager, BroadcastifyCallConfiguration.class);
     }
 
     @Override

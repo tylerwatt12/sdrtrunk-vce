@@ -49,7 +49,7 @@ import org.apache.mina.transport.socket.nio.NioSocketConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster
+public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<IcecastHTTPConfiguration>
 {
     private static final Logger mLog = LoggerFactory.getLogger(IcecastHTTPAudioBroadcaster.class);
     private static final long CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS = 5000; // 5 seconds

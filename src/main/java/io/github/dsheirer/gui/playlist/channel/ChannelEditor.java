@@ -94,7 +94,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
     private ToggleButton mPlayingToggleButton;
     private ChannelConfigurationEditor mChannelConfigurationEditor;
     private UnknownConfigurationEditor mUnknownConfigurationEditor;
-    private Map<DecoderType,ChannelConfigurationEditor> mChannelConfigurationEditorMap = new HashMap();
+    private Map<DecoderType,ChannelConfigurationEditor> mChannelConfigurationEditorMap = new HashMap<>();
     private FilteredList<Channel> mChannelFilteredList;
     private ChannelListFilter mChannelListFilter = new ChannelListFilter();
 
@@ -409,7 +409,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mChannelTableView = new TableView<>();
 
-            TableColumn<Channel,Boolean> playingColumn = new TableColumn("Playing");
+            TableColumn<Channel,Boolean> playingColumn = new TableColumn<>("Playing");
             playingColumn.setPrefWidth(75);
             playingColumn.setCellValueFactory(new PropertyValueFactory<>("processing"));
             playingColumn.setCellFactory(param -> new TableCell<>()
@@ -457,28 +457,33 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
                 }
             });
 
-            TableColumn systemColumn = new TableColumn("System");
+            TableColumn<Channel, String> systemColumn = new TableColumn<>("System");
             systemColumn.setCellValueFactory(new PropertyValueFactory<>("system"));
             systemColumn.setPrefWidth(175);
 
-            TableColumn siteColumn = new TableColumn("Site");
+            TableColumn<Channel, String> siteColumn = new TableColumn<>("Site");
             siteColumn.setCellValueFactory(new PropertyValueFactory<>("site"));
             siteColumn.setPrefWidth(175);
 
-            TableColumn nameColumn = new TableColumn("Name");
+            TableColumn<Channel, String> nameColumn = new TableColumn<>("Name");
             nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
             nameColumn.setPrefWidth(200);
 
-            TableColumn frequencyColumn = new TableColumn("Frequency");
+            TableColumn<Channel, String> frequencyColumn = new TableColumn<>("Frequency");
             frequencyColumn.setCellValueFactory(new FrequencyCellValueFactory());
             frequencyColumn.setPrefWidth(100);
 
-            TableColumn protocolColumn = new TableColumn("Protocol");
+            TableColumn<Channel, String> protocolColumn = new TableColumn<>("Protocol");
             protocolColumn.setCellValueFactory(new ProtocolCellValueFactory());
             protocolColumn.setPrefWidth(100);
 
-            mChannelTableView.getColumns().addAll(systemColumn, siteColumn, nameColumn, frequencyColumn, protocolColumn,
-                playingColumn, autoStartColumn);
+            mChannelTableView.getColumns().add(systemColumn);
+            mChannelTableView.getColumns().add(siteColumn);
+            mChannelTableView.getColumns().add(nameColumn);
+            mChannelTableView.getColumns().add(frequencyColumn);
+            mChannelTableView.getColumns().add(protocolColumn);
+            mChannelTableView.getColumns().add(playingColumn);
+            mChannelTableView.getColumns().add(autoStartColumn);
             mChannelTableView.setPlaceholder(getPlaceholderLabel());
 
             //Sorting and filtering for the table

@@ -44,7 +44,7 @@ public class BroadcastifyStreamEditor extends AbstractStreamEditor<BroadcastifyF
 
     public BroadcastifyStreamEditor(PlaylistManager playlistManager)
     {
-        super(playlistManager);
+        super(playlistManager, BroadcastifyFeedConfiguration.class);
     }
 
     @Override

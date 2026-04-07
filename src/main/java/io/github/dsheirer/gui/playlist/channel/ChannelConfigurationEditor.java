@@ -470,7 +470,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     {
         if(mAutoStartOrderSpinner == null)
         {
-            mAutoStartOrderSpinner = new Spinner();
+            mAutoStartOrderSpinner = new Spinner<>();
             mAutoStartOrderSpinner.setPrefWidth(100);
             mAutoStartOrderSpinner.setDisable(true);
             getAutoStartSwitch().selectedProperty().addListener(new ChangeListener<Boolean>()
@@ -481,7 +481,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
                     getAutoStartOrderSpinner().setDisable(!getAutoStartSwitch().selectedProperty().getValue());
                 }
             });
-            SpinnerValueFactory svf = new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 99);
+            SpinnerValueFactory<Integer> svf = new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 99);
             mAutoStartOrderSpinner.setValueFactory(svf);
             mAutoStartOrderSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
             mAutoStartOrderSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));

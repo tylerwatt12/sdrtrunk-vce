@@ -57,6 +57,8 @@ public class P25FullyQualifiedRadioIdEditor extends IdentifierEditor<P25FullyQua
      */
     public P25FullyQualifiedRadioIdEditor(UserPreferences userPreferences)
     {
+        super(P25FullyQualifiedRadio.class);
+
         mUserPreferences = userPreferences;
 
         GridPane gridPane = new GridPane();

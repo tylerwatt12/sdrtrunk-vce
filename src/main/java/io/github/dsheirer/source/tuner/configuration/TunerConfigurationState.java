@@ -30,7 +30,7 @@ import java.util.List;
 @JsonSerialize
 public class TunerConfigurationState
 {
-    private List<DisabledTuner> mDisabledTuners = new ArrayList();
+    private List<DisabledTuner> mDisabledTuners = new ArrayList<>();
     private List<TunerConfiguration> mTunerConfigurations = new ArrayList<>();
 
     /**

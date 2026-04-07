@@ -38,7 +38,7 @@ public class DCSMessageFilter extends Filter<IMessage,String>
     public DCSMessageFilter()
     {
         super("DCS Messages");
-        add(new FilterElement(DCS_KEY));
+        add(new FilterElement<>(DCS_KEY));
     }
 
     /**

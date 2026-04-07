@@ -210,22 +210,24 @@ public class AgencyFrequencyEditor extends GridPane
             mFrequencyTableView.setMaxHeight(Double.MAX_VALUE);
             mFrequencyTableView.setPlaceholder(getPlaceholderLabel());
 
-            TableColumn descriptionColumn = new TableColumn();
+            TableColumn<Frequency, String> descriptionColumn = new TableColumn<>();
             descriptionColumn.setText("Description");
             descriptionColumn.setCellValueFactory(new PropertyValueFactory<>("description"));
             descriptionColumn.setPrefWidth(300);
 
-            TableColumn frequencyColumn = new TableColumn();
+            TableColumn<Frequency, String> frequencyColumn = new TableColumn<>();
             frequencyColumn.setText("Frequency");
             frequencyColumn.setCellValueFactory(new FrequencyCellValueFactory());
             frequencyColumn.setPrefWidth(100);
 
-            TableColumn modeColumn = new TableColumn();
+            TableColumn<Frequency, String> modeColumn = new TableColumn<>();
             modeColumn.setText("Mode");
             modeColumn.setCellValueFactory(new ModeCellValueFactory());
             modeColumn.setPrefWidth(100);
 
-            mFrequencyTableView.getColumns().addAll(descriptionColumn, frequencyColumn, modeColumn);
+            mFrequencyTableView.getColumns().add(descriptionColumn);
+            mFrequencyTableView.getColumns().add(frequencyColumn);
+            mFrequencyTableView.getColumns().add(modeColumn);
             mFrequencyTableView.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, selected) -> {
                     if(selected != null)

@@ -74,7 +74,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
 
-    private SourceConfigurationEditor mSourceConfigurationEditor;
+    private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
     private AuxDecoderConfigurationEditor mAuxDecoderConfigurationEditor;
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private final TalkgroupValueChangeListener mTalkgroupValueChangeListener = new TalkgroupValueChangeListener();
@@ -211,7 +211,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mRecordPane;
     }
 
-    private SourceConfigurationEditor getSourceConfigurationEditor()
+    private SourceConfigurationEditor<SourceConfiguration> getSourceConfigurationEditor()
     {
         if(mSourceConfigurationEditor == null)
         {

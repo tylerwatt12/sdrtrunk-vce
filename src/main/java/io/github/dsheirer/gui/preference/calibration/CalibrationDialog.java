@@ -32,7 +32,7 @@ import javafx.scene.layout.VBox;
 /**
  * Dialog to prompt the user to run the calibrations.
  */
-public class CalibrationDialog extends Dialog
+public class CalibrationDialog extends Dialog<ButtonType>
 {
     private UserPreferences mUserPreferences;
 

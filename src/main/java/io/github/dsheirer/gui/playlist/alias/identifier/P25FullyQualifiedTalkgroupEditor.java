@@ -57,6 +57,8 @@ public class P25FullyQualifiedTalkgroupEditor extends IdentifierEditor<P25FullyQ
      */
     public P25FullyQualifiedTalkgroupEditor(UserPreferences userPreferences)
     {
+        super(P25FullyQualifiedTalkgroup.class);
+
         mUserPreferences = userPreferences;
 
         GridPane gridPane = new GridPane();

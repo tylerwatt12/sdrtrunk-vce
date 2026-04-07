@@ -161,7 +161,7 @@ public class IconManager extends Editor<Icon>
         {
             mIconTableView = new TableView<>(getIconSortedList());
 
-            TableColumn<Icon,String> iconColumn = new TableColumn("Icon");
+            TableColumn<Icon,String> iconColumn = new TableColumn<>("Icon");
             iconColumn.setCellValueFactory(new PropertyValueFactory<>("path"));
             iconColumn.setCellFactory(new IconTableCellFactory());
 
@@ -200,7 +200,9 @@ public class IconManager extends Editor<Icon>
                     }
                 });
 
-            mIconTableView.getColumns().addAll(typeColumn, iconColumn, nameColumn);
+            mIconTableView.getColumns().add(typeColumn);
+            mIconTableView.getColumns().add(iconColumn);
+            mIconTableView.getColumns().add(nameColumn);
             mIconTableView.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
                 getDeleteButton().setDisable(newValue == null || newValue.getDefaultIcon() || newValue.getStandardIcon());
                 getEditButton().setDisable(newValue == null || newValue.getDefaultIcon() || newValue.getStandardIcon());

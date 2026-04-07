@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  * Processes both complex samples or float samples and dispatches a float array of DFT results, using configurable fft
  * size and output dispatch timelines.
  */
-public class ComplexDftProcessor<T extends INativeBuffer> implements Listener<T>, IDFTWidthChangeProcessor
+public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthChangeProcessor
 {
     private static final Logger mLog = LoggerFactory.getLogger(ComplexDftProcessor.class);
     private static final String FRAME_RATE_PROPERTY = "spectral.display.frame.rate";
@@ -56,7 +56,7 @@ public class ComplexDftProcessor<T extends INativeBuffer> implements Listener<T>
     private ScheduledFuture<?> mProcessorTaskHandle;
     private ScheduledExecutorService mExecutorService = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk dft processor"));
     private CopyOnWriteArrayList<DFTResultsConverter> mListeners = new CopyOnWriteArrayList<>();
-    private NativeBufferManager mDftBufferManager = new NativeBufferManager(mDFTSize.getSize() * 2);
+    private NativeBufferManager<INativeBuffer> mDftBufferManager = new NativeBufferManager<>(mDFTSize.getSize() * 2);
     private float[] mPreviousSamples = new float[mDFTSize.getSize() * 2];
 
     public ComplexDftProcessor()
@@ -160,7 +160,7 @@ public class ComplexDftProcessor<T extends INativeBuffer> implements Listener<T>
      * Places the sample into a transfer queue for future processing.
      */
     @Override
-    public void receive(T buffer)
+    public void receive(INativeBuffer buffer)
     {
         mDftBufferManager.add(buffer);
     }

@@ -132,7 +132,8 @@ public class AliasViewByIdentifierEditor extends VBox
             }
         }
 
-        getAliasAndIdentifierTableView().getSortOrder().setAll(mIdentifierColumn);
+        getAliasAndIdentifierTableView().getSortOrder().clear();
+        getAliasAndIdentifierTableView().getSortOrder().add(mIdentifierColumn);
         
         aliasListInvalidated = false;
     }
@@ -210,7 +211,9 @@ public class AliasViewByIdentifierEditor extends VBox
             groupColumn.setCellValueFactory(new PropertyValueFactory<>("group"));
             groupColumn.setPrefWidth(200);
             
-            mAliasAndIdentifierTableView.getColumns().addAll(mIdentifierColumn, aliasColumn, groupColumn);
+            mAliasAndIdentifierTableView.getColumns().add(mIdentifierColumn);
+            mAliasAndIdentifierTableView.getColumns().add(aliasColumn);
+            mAliasAndIdentifierTableView.getColumns().add(groupColumn);
             mAliasAndIdentifierTableView.setMaxHeight(Double.MAX_VALUE);
 
             mAliasAndIdentifierTableView.getSelectionModel().selectedItemProperty()

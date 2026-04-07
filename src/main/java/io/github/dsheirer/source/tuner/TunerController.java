@@ -19,6 +19,7 @@
 package io.github.dsheirer.source.tuner;
 
 import io.github.dsheirer.buffer.INativeBuffer;
+import io.github.dsheirer.buffer.INativeBufferListener;
 import io.github.dsheirer.buffer.INativeBufferProvider;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.RecorderFactory;
@@ -53,7 +54,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     //Protects access to the native buffer broadcaster for adding, removing or checking for listener count.
     private ReentrantLock mBufferListenerLock = new ReentrantLock();
     private ReentrantLock mLock = new ReentrantLock();
-    protected Broadcaster<INativeBuffer> mNativeBufferBroadcaster = new Broadcaster();
+    protected Broadcaster<INativeBuffer> mNativeBufferBroadcaster = new Broadcaster<>();
     protected FrequencyController mFrequencyController;
     private int mMiddleUnusableHalfBandwidth;
     private int mMeasuredFrequencyError;
@@ -239,15 +240,15 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
                 setFrequency( sourceEvent.getValue().longValue() );
                 break;
             case REQUEST_START_SAMPLE_STREAM:
-                if(sourceEvent.getSource() instanceof Listener)
+                if(sourceEvent.getSource() instanceof INativeBufferListener listener)
                 {
-                    addBufferListener((Listener<INativeBuffer>)sourceEvent.getSource());
+                    addBufferListener(listener);
                 }
                 break;
             case REQUEST_STOP_SAMPLE_STREAM:
-                if(sourceEvent.getSource() instanceof Listener)
+                if(sourceEvent.getSource() instanceof INativeBufferListener listener)
                 {
-                    removeBufferListener((Listener<INativeBuffer>)sourceEvent.getSource());
+                    removeBufferListener(listener);
                 }
                 break;
             default:

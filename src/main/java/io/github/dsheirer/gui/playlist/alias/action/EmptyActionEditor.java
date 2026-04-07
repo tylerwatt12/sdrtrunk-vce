@@ -19,15 +19,18 @@
 
 package io.github.dsheirer.gui.playlist.alias.action;
 
+import io.github.dsheirer.alias.action.AliasAction;
 import javafx.scene.control.Label;
 
 /**
  * Empty alias actopm editor
  */
-public class EmptyActionEditor extends ActionEditor
+public class EmptyActionEditor extends ActionEditor<AliasAction>
 {
     public EmptyActionEditor()
     {
+        super(AliasAction.class);
+
         getChildren().add(new Label("Please select an action to view or edit"));
     }
 

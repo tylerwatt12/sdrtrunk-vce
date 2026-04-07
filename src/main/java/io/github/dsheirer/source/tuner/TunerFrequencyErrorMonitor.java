@@ -36,7 +36,7 @@ public class TunerFrequencyErrorMonitor implements Listener<SourceEvent>
 {
     private static final int PROCESSING_INTERVAL_SECONDS = 5;
     private LinkedTransferQueue<Integer> mMeasurementsQueue = new LinkedTransferQueue<>();
-    private List<Integer> mProcessingMeasurements = new ArrayList();
+    private List<Integer> mProcessingMeasurements = new ArrayList<>();
     private ScheduledFuture<?> mTimerHandle;
     private Tuner mTuner;
 

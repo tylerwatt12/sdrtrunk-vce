@@ -29,7 +29,7 @@ import javax.sound.sampled.TargetDataLine;
 public class RealMixerSource extends RealSource
 {
     private long mFrequency;
-    private MixerReader mMixerReader;
+    private MixerReader<float[]> mMixerReader;
 
     /**
      * Real Mixer Source - constructs a reader on the mixer/sound card target
@@ -42,9 +42,9 @@ public class RealMixerSource extends RealSource
      * @param sampleAdapter - adapter to convert byte array data read from the
      * mixer into float array data.
      */
-    public RealMixerSource(TargetDataLine targetDataLine, AudioFormat format, ISampleAdapter sampleAdapter)
+    public RealMixerSource(TargetDataLine targetDataLine, AudioFormat format, ISampleAdapter<float[]> sampleAdapter)
     {
-        mMixerReader = new MixerReader(format, targetDataLine, sampleAdapter, getHeartbeatManager());
+        mMixerReader = new MixerReader<>(format, targetDataLine, sampleAdapter, getHeartbeatManager());
     }
 
     /**

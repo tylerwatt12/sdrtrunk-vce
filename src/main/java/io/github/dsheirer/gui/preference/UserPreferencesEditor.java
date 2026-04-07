@@ -53,7 +53,7 @@ public class UserPreferencesEditor extends BorderPane
     private Map<PreferenceEditorType,Node> mEditors = new EnumMap<>(PreferenceEditorType.class);
     private UserPreferences mUserPreferences;
     private MenuBar mMenuBar;
-    private TreeView mEditorSelectionTreeView;
+    private TreeView<Object> mEditorSelectionTreeView;
     private VBox mEditorAndButtonsBox;
     private Node mEditor;
     private HBox mButtonsBox;
@@ -82,7 +82,7 @@ public class UserPreferencesEditor extends BorderPane
     {
         if(request.getPreferenceType() != null)
         {
-            TreeItem toSelect = recursivelyFindEditorType(getEditorSelectionTreeView().getRoot(), request.getPreferenceType());
+            TreeItem<Object> toSelect = recursivelyFindEditorType(getEditorSelectionTreeView().getRoot(), request.getPreferenceType());
 
             if(toSelect != null)
             {
@@ -94,14 +94,14 @@ public class UserPreferencesEditor extends BorderPane
     /**
      * Recursively finds the tree branch that matches the editor type
      */
-    private TreeItem recursivelyFindEditorType(TreeItem parent, PreferenceEditorType type)
+    private TreeItem<Object> recursivelyFindEditorType(TreeItem<Object> parent, PreferenceEditorType type)
     {
-
-        for (TreeItem treeItem : (Iterable<TreeItem>) parent.getChildren()) {
+        for(TreeItem<Object> treeItem: parent.getChildren())
+        {
             if (treeItem.getValue() instanceof PreferenceEditorType && (treeItem.getValue()).equals(type)) {
                 return treeItem;
             } else {
-                TreeItem item = recursivelyFindEditorType(treeItem, type);
+                TreeItem<Object> item = recursivelyFindEditorType(treeItem, type);
 
                 if (item != null) {
                     return item;
@@ -146,52 +146,52 @@ public class UserPreferencesEditor extends BorderPane
     /**
      * Preference type selection list
      */
-    private TreeView getEditorSelectionTreeView()
+    private TreeView<Object> getEditorSelectionTreeView()
     {
         if(mEditorSelectionTreeView == null)
         {
-            TreeItem<String> treeRoot = new TreeItem<>("Root node");
+            TreeItem<Object> treeRoot = new TreeItem<>("Root node");
 
-            TreeItem<String> applicationItem = new TreeItem<>("Application");
-            applicationItem.getChildren().add(new TreeItem(PreferenceEditorType.APPLICATION));
+            TreeItem<Object> applicationItem = new TreeItem<>("Application");
+            applicationItem.getChildren().add(new TreeItem<>(PreferenceEditorType.APPLICATION));
             treeRoot.getChildren().add(applicationItem);
             applicationItem.setExpanded(true);
 
-            TreeItem<String> audioItem = new TreeItem<>("Audio");
-            audioItem.getChildren().add(new TreeItem(PreferenceEditorType.AUDIO_CALL_MANAGEMENT));
-            audioItem.getChildren().add(new TreeItem(PreferenceEditorType.AUDIO_MP3));
-            audioItem.getChildren().add(new TreeItem(PreferenceEditorType.AUDIO_OUTPUT));
-            audioItem.getChildren().add(new TreeItem(PreferenceEditorType.AUDIO_RECORD));
+            TreeItem<Object> audioItem = new TreeItem<>("Audio");
+            audioItem.getChildren().add(new TreeItem<>(PreferenceEditorType.AUDIO_CALL_MANAGEMENT));
+            audioItem.getChildren().add(new TreeItem<>(PreferenceEditorType.AUDIO_MP3));
+            audioItem.getChildren().add(new TreeItem<>(PreferenceEditorType.AUDIO_OUTPUT));
+            audioItem.getChildren().add(new TreeItem<>(PreferenceEditorType.AUDIO_RECORD));
             treeRoot.getChildren().add(audioItem);
             audioItem.setExpanded(true);
 
-            TreeItem<String> cpuItem = new TreeItem<>("CPU");
-            cpuItem.getChildren().add(new TreeItem(PreferenceEditorType.VECTOR_CALIBRATION));
+            TreeItem<Object> cpuItem = new TreeItem<>("CPU");
+            cpuItem.getChildren().add(new TreeItem<>(PreferenceEditorType.VECTOR_CALIBRATION));
             treeRoot.getChildren().add(cpuItem);
             cpuItem.setExpanded(true);
 
-            TreeItem<String> decoderItem = new TreeItem<>("Decoder");
-            decoderItem.getChildren().add(new TreeItem(PreferenceEditorType.JMBE_LIBRARY));
+            TreeItem<Object> decoderItem = new TreeItem<>("Decoder");
+            decoderItem.getChildren().add(new TreeItem<>(PreferenceEditorType.JMBE_LIBRARY));
             treeRoot.getChildren().add(decoderItem);
             decoderItem.setExpanded(true);
 
-            TreeItem<String> displayItem = new TreeItem<>("Display");
-            displayItem.getChildren().add(new TreeItem(PreferenceEditorType.CHANNEL_EVENT));
-            displayItem.getChildren().add(new TreeItem(PreferenceEditorType.TALKGROUP_FORMAT));
+            TreeItem<Object> displayItem = new TreeItem<>("Display");
+            displayItem.getChildren().add(new TreeItem<>(PreferenceEditorType.CHANNEL_EVENT));
+            displayItem.getChildren().add(new TreeItem<>(PreferenceEditorType.TALKGROUP_FORMAT));
             treeRoot.getChildren().add(displayItem);
             displayItem.setExpanded(true);
 
-            TreeItem<String> storageItem = new TreeItem<>("File Storage");
-            storageItem.getChildren().add(new TreeItem(PreferenceEditorType.DIRECTORY));
+            TreeItem<Object> storageItem = new TreeItem<>("File Storage");
+            storageItem.getChildren().add(new TreeItem<>(PreferenceEditorType.DIRECTORY));
             treeRoot.getChildren().add(storageItem);
             storageItem.setExpanded(true);
 
-            TreeItem<String> sourceItem = new TreeItem<>("Source");
-            sourceItem.getChildren().add(new TreeItem(PreferenceEditorType.SOURCE_TUNERS));
+            TreeItem<Object> sourceItem = new TreeItem<>("Source");
+            sourceItem.getChildren().add(new TreeItem<>(PreferenceEditorType.SOURCE_TUNERS));
             treeRoot.getChildren().add(sourceItem);
             sourceItem.setExpanded(true);
 
-            mEditorSelectionTreeView = new TreeView();
+            mEditorSelectionTreeView = new TreeView<>();
             mEditorSelectionTreeView.setShowRoot(false);
             mEditorSelectionTreeView.setRoot(treeRoot);
             treeRoot.setExpanded(true);
@@ -256,14 +256,14 @@ public class UserPreferencesEditor extends BorderPane
      *
      * Constructed editors are cached for reuse.
      */
-    public class EditorTreeSelectionListener implements ChangeListener
+    public class EditorTreeSelectionListener implements ChangeListener<TreeItem<Object>>
     {
         @Override
-        public void changed(ObservableValue observable, Object oldValue, Object newValue)
+        public void changed(ObservableValue<? extends TreeItem<Object>> observable, TreeItem<Object> oldValue, TreeItem<Object> newValue)
         {
-            if(newValue instanceof TreeItem)
+            if(newValue != null)
             {
-                Object value = ((TreeItem)newValue).getValue();
+                Object value = newValue.getValue();
 
                 if(value instanceof PreferenceEditorType)
                 {

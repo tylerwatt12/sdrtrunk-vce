@@ -29,6 +29,8 @@ public class UnrecognizedIdentifierEditor extends IdentifierEditor<AliasID>
 {
     public UnrecognizedIdentifierEditor()
     {
+        super(AliasID.class);
+
         Label label = new Label("Unrecognized identifier type.  For unsupported legacy types, please delete and " +
             "recreate with a supported identifier type.");
         label.setWrapText(true);

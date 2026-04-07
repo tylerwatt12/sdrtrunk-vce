@@ -63,6 +63,8 @@ public class ClipEditor extends ActionEditor<ClipAction>
 
     public ClipEditor()
     {
+        super(ClipAction.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setMaxWidth(Double.MAX_VALUE);
         gridPane.setHgap(10);

@@ -63,7 +63,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     private TitledPane mEventLogPane;
     private TitledPane mRecordPane;
     private TitledPane mSourcePane;
-    private SourceConfigurationEditor mSourceConfigurationEditor;
+    private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private RecordConfigurationEditor mRecordConfigurationEditor;
     private ToggleSwitch mIgnoreDataCallsButton;
@@ -183,7 +183,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         return mRecordPane;
     }
 
-    private SourceConfigurationEditor getSourceConfigurationEditor()
+    private SourceConfigurationEditor<SourceConfiguration> getSourceConfigurationEditor()
     {
         if(mSourceConfigurationEditor == null)
         {
@@ -284,7 +284,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mTrafficChannelPoolSizeSpinner == null)
         {
-            mTrafficChannelPoolSizeSpinner = new Spinner();
+            mTrafficChannelPoolSizeSpinner = new Spinner<>();
             mTrafficChannelPoolSizeSpinner.setDisable(true);
             mTrafficChannelPoolSizeSpinner.setTooltip(
                 new Tooltip("Maximum number of traffic channels that can be created by the decoder"));

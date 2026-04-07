@@ -608,18 +608,20 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         {
             mTalkgroupTableView = new TableView<>();
             mTalkgroupTableView.setMaxHeight(Double.MAX_VALUE);
-            TableColumn<AliasedTalkgroup,String> talkgroupColumn = new TableColumn("Talkgroup");
+            TableColumn<AliasedTalkgroup,String> talkgroupColumn = new TableColumn<>("Talkgroup");
             talkgroupColumn.setCellValueFactory(new PropertyValueFactory<>("talkgroup"));
 
-            TableColumn<AliasedTalkgroup,String> descriptionColumn = new TableColumn("Description");
+            TableColumn<AliasedTalkgroup,String> descriptionColumn = new TableColumn<>("Description");
             descriptionColumn.setPrefWidth(300);
             descriptionColumn.setCellValueFactory(new PropertyValueFactory<>("description"));
 
-            TableColumn<AliasedTalkgroup,String> aliasColumn = new TableColumn("Alias");
+            TableColumn<AliasedTalkgroup,String> aliasColumn = new TableColumn<>("Alias");
             aliasColumn.setPrefWidth(170);
             aliasColumn.setCellValueFactory(new PropertyValueFactory<>("alias"));
 
-            mTalkgroupTableView.getColumns().addAll(talkgroupColumn, descriptionColumn, aliasColumn);
+            mTalkgroupTableView.getColumns().add(talkgroupColumn);
+            mTalkgroupTableView.getColumns().add(descriptionColumn);
+            mTalkgroupTableView.getColumns().add(aliasColumn);
             mTalkgroupTableView.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, selected) -> {
 

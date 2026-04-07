@@ -50,6 +50,8 @@ public class UnitStatusEditor extends IdentifierEditor<UnitStatusID>
      */
     public UnitStatusEditor()
     {
+        super(UnitStatusID.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setHgap(5);
         gridPane.setVgap(3);

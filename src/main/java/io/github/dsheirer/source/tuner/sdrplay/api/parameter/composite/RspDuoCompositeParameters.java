@@ -47,7 +47,7 @@ public class RspDuoCompositeParameters extends CompositeParameters<RspDuoDeviceP
      */
     public RspDuoCompositeParameters(Version version, MemorySegment deviceParams, Arena arena)
     {
-        super(version, DeviceType.RSPduo, deviceParams, arena);
+        super(version, DeviceType.RSPduo, deviceParams, arena, RspDuoDeviceParameters.class, RspDuoTunerParameters.class);
 
         MemorySegment addressRxChannelB = sdrplay_api_DeviceParamsT.rxChannelB(deviceParams);
         MemorySegment rxChannelB = addressRxChannelB.reinterpret(sdrplay_api_RxChannelParamsT.sizeof(), arena, null);

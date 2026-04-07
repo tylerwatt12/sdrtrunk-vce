@@ -29,6 +29,8 @@ public class EmptyIdentifierEditor extends IdentifierEditor<AliasID>
 {
     public EmptyIdentifierEditor()
     {
+        super(AliasID.class);
+
         getChildren().add(new Label("Please select an identifier to view or edit"));
     }
 

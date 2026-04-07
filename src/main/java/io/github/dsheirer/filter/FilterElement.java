@@ -138,9 +138,9 @@ public class FilterElement<T> implements Comparable<FilterElement<T>>
     @Override
     public boolean equals(Object o)
     {
-        if(o instanceof FilterElement fe)
+        if(o instanceof FilterElement<?> fe)
         {
-            return compareTo(fe) == 0;
+            return getName().equals(fe.getName());
         }
 
         return false;

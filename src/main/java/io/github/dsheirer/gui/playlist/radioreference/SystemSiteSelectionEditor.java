@@ -213,33 +213,36 @@ public class SystemSiteSelectionEditor extends GridPane
             mSiteTableView = new TableView<>();
             mSiteTableView.setPlaceholder(getPlaceholderLabel());
 
-            TableColumn systemColumn = new TableColumn();
+            TableColumn<EnrichedSite, String> systemColumn = new TableColumn<>();
             systemColumn.setText("System");
             systemColumn.setCellValueFactory(new PropertyValueFactory<>("systemFormatted"));
             systemColumn.setPrefWidth(60);
 
-            TableColumn rfssColumn = new TableColumn();
+            TableColumn<EnrichedSite, String> rfssColumn = new TableColumn<>();
             rfssColumn.setText("RFSS");
             rfssColumn.setCellValueFactory(new PropertyValueFactory<>("rfssFormatted"));
             rfssColumn.setPrefWidth(60);
 
-            TableColumn siteColumn = new TableColumn();
+            TableColumn<EnrichedSite, String> siteColumn = new TableColumn<>();
             siteColumn.setText("Site");
             siteColumn.setCellValueFactory(new PropertyValueFactory<>("siteFormatted"));
             siteColumn.setPrefWidth(75);
 
-            TableColumn countyNameColumn = new TableColumn();
+            TableColumn<EnrichedSite, String> countyNameColumn = new TableColumn<>();
             countyNameColumn.setText("County");
             countyNameColumn.setCellValueFactory(new PropertyValueFactory<>("countyName"));
             countyNameColumn.setPrefWidth(125);
 
-            TableColumn descriptionColumn = new TableColumn();
+            TableColumn<EnrichedSite, String> descriptionColumn = new TableColumn<>();
             descriptionColumn.setText("Name");
             descriptionColumn.setCellValueFactory(new PropertyValueFactory<>("description"));
             descriptionColumn.setPrefWidth(400);
 
-            mSiteTableView.getColumns().addAll(systemColumn, rfssColumn, siteColumn, countyNameColumn,
-                    descriptionColumn);
+            mSiteTableView.getColumns().add(systemColumn);
+            mSiteTableView.getColumns().add(rfssColumn);
+            mSiteTableView.getColumns().add(siteColumn);
+            mSiteTableView.getColumns().add(countyNameColumn);
+            mSiteTableView.getColumns().add(descriptionColumn);
             mSiteTableView.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
             mSiteTableView.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, selected) -> getSiteEditor().setSite(

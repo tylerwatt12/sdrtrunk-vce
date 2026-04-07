@@ -21,6 +21,7 @@ package io.github.dsheirer.source.tuner.sdrplay.api.device;
 
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
+import io.github.dsheirer.source.tuner.sdrplay.api.parameter.composite.CompositeParameters;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.composite.Rsp2CompositeParameters;
 
 /**
@@ -39,6 +40,12 @@ public class Rsp2Device extends Device<Rsp2CompositeParameters, Rsp2Tuner>
     Rsp2Device(SDRplay sdrPlay, IDeviceStruct deviceStruct)
     {
         super(sdrPlay, deviceStruct);
+    }
+
+    @Override
+    protected Rsp2CompositeParameters castCompositeParameters(CompositeParameters<?,?> compositeParameters)
+    {
+        return Rsp2CompositeParameters.class.cast(compositeParameters);
     }
 
     @Override

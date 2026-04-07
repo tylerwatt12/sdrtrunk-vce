@@ -28,4 +28,15 @@ import io.github.dsheirer.gui.playlist.Editor;
  */
 public abstract class ActionEditor<T extends AliasAction> extends Editor<T>
 {
+    private Class<T> mItemClass;
+
+    protected ActionEditor(Class<T> itemClass)
+    {
+        mItemClass = itemClass;
+    }
+
+    public void setAliasAction(AliasAction aliasAction)
+    {
+        setItem(aliasAction != null ? mItemClass.cast(aliasAction) : null);
+    }
 }

@@ -38,7 +38,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private TunerStatus mTunerStatus = TunerStatus.ENABLED;
     private boolean mEnabled = true;
     private String mErrorMessage;
-    private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList();
+    private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
     protected Tuner mTuner;
     protected TunerConfiguration mTunerConfiguration;
 

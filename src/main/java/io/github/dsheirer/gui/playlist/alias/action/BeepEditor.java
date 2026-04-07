@@ -58,6 +58,8 @@ public class BeepEditor extends ActionEditor<BeepAction>
 
     public BeepEditor()
     {
+        super(BeepAction.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setMaxWidth(Double.MAX_VALUE);
         gridPane.setHgap(10);

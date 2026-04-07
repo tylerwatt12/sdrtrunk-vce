@@ -40,6 +40,8 @@ public class LojackEditor extends IdentifierEditor<LoJackFunctionAndID>
      */
     public LojackEditor()
     {
+        super(LoJackFunctionAndID.class);
+
         GridPane gridPane = new GridPane();
         gridPane.setHgap(5);
 

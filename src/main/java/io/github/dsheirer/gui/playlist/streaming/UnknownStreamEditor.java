@@ -40,7 +40,7 @@ public class UnknownStreamEditor extends AbstractStreamEditor<BroadcastConfigura
 
     public UnknownStreamEditor(PlaylistManager playlistManager)
     {
-        super(playlistManager);
+        super(playlistManager, BroadcastConfiguration.class);
     }
 
     public BroadcastServerType getBroadcastServerType()
