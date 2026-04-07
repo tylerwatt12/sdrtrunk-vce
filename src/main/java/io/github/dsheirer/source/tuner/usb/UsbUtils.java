@@ -53,15 +53,15 @@ public class UsbUtils
     public static List<UsbDevice> getHubDevices(UsbHub hub) throws UnsupportedEncodingException, UsbException
     {
         List<UsbDevice> devices = new ArrayList<>();
-        List<UsbDevice> children = hub.getAttachedUsbDevices();
+        List<?> children = hub.getAttachedUsbDevices();
 
-        for(UsbDevice child : children)
+        for(Object childObject : children)
         {
-            if(child.isUsbHub())
+            if(childObject instanceof UsbDevice child && child.isUsbHub())
             {
                 devices.addAll(getHubDevices((UsbHub) child));
             }
-            else
+            else if(childObject instanceof UsbDevice child)
             {
                 devices.add(child);
             }
