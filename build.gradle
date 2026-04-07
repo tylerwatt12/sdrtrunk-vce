@@ -225,7 +225,7 @@ def jvmArgsMac = jvmArgsLinux +
         ['-Xdock:name=sdrtrunk']
 
 def jpmsJvmArgsMac =
-        ['--add-exports=javafx.base/com.sun.javafx.event=sdr.trunk', //Needed for controls-fx.jar
+        ['--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls', //Needed for controls-fx.jar
          '--sun-misc-unsafe-memory-access=allow', //JDK24 - suppress sun.misc.Unsafe::allocateMemory warning
          '-XX:+UseCompactObjectHeaders',   //JDK25 - use compact object headers
          '--enable-native-access=javafx.graphics,usb4java,sdr.trunk',
@@ -353,7 +353,7 @@ tasks.register('jpmsRun', Exec) {
         executable = "${java26Home.get()}/bin/java"
         args = [
                 '--module-path', jpmsModsDir.get().asFile.absolutePath,
-                '--add-exports=javafx.base/com.sun.javafx.event=sdr.trunk',
+                '--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls',
                 '--enable-native-access=javafx.graphics,usb4java,sdr.trunk',
                 '-m', jpmsMainModule
         ]

@@ -21,8 +21,6 @@ package io.github.dsheirer.gui.playlist.alias;
 
 import com.google.common.collect.Ordering;
 import com.google.common.eventbus.Subscribe;
-import impl.org.controlsfx.autocompletion.AutoCompletionTextFieldBinding;
-import impl.org.controlsfx.autocompletion.SuggestionProvider;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasList;
@@ -65,6 +63,7 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.IntegerFormat;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -112,6 +111,8 @@ import javafx.util.Callback;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 import org.controlsfx.control.ToggleSwitch;
+import org.controlsfx.control.textfield.AutoCompletionBinding;
+import org.controlsfx.control.textfield.TextFields;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -138,7 +139,6 @@ public class AliasItemEditor extends Editor<Alias>
     private ToggleSwitch mRecordAudioToggleSwitch;
     private ColorPicker mColorPicker;
     private ComboBox<Icon> mIconNodeComboBox;
-    private SuggestionProvider<String> mGroupSuggestionProvider;
     private VBox mTitledPanesBox;
     private TitledPane mIdentifierPane;
     private TitledPane mStreamPane;
@@ -226,8 +226,6 @@ public class AliasItemEditor extends Editor<Alias>
     public void setItem(Alias alias)
     {
         super.setItem(alias);
-
-        refreshAutoCompleteBindings();
 
         boolean disable = (alias == null);
         getGroupField().setDisable(disable);
@@ -1161,23 +1159,18 @@ public class AliasItemEditor extends Editor<Alias>
         return mIconNodeComboBox;
     }
 
-    /**
-     * Refreshes the system and site text field auto-completion lists.
-     */
-    private void refreshAutoCompleteBindings()
+    private Collection<String> getGroupSuggestions(AutoCompletionBinding.ISuggestionRequest request)
     {
-        getGroupSuggestionProvider().clearSuggestions();
-        getGroupSuggestionProvider().addPossibleSuggestions(mPlaylistManager.getAliasModel().getGroupNames());
-    }
-
-    private SuggestionProvider<String> getGroupSuggestionProvider()
-    {
-        if(mGroupSuggestionProvider == null)
+        if(request.isCancelled())
         {
-            mGroupSuggestionProvider = SuggestionProvider.create(mPlaylistManager.getAliasModel().getGroupNames());
+            return List.of();
         }
 
-        return mGroupSuggestionProvider;
+        String userText = request.getUserText().toLowerCase();
+
+        return mPlaylistManager.getAliasModel().getGroupNames().stream()
+                .filter(groupName -> groupName.toLowerCase().contains(userText))
+                .toList();
     }
 
     protected TextField getGroupField()
@@ -1188,7 +1181,7 @@ public class AliasItemEditor extends Editor<Alias>
             mGroupField.setDisable(true);
             mGroupField.setMaxWidth(Double.MAX_VALUE);
             mGroupField.textProperty().addListener(mEditorModificationListener);
-            new AutoCompletionTextFieldBinding<>(mGroupField, getGroupSuggestionProvider());
+            TextFields.bindAutoCompletion(mGroupField, this::getGroupSuggestions);
         }
 
         return mGroupField;
