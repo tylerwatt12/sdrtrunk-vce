@@ -258,6 +258,38 @@ def jdk_download_osx_x86_64 = jdk_download_base + "macos-amd64" + jdk_download_s
 def jdk_download_osx_aarch64 = jdk_download_base + "macos-aarch64" + jdk_download_suffix
 def jdk_download_windows_x86_64 = jdk_download_base + "windows-amd64-full.zip"
 def jdk_download_windows_aarch64 = jdk_download_base + "windows-aarch64-full.zip"
+def unixScriptTemplateFile = layout.projectDirectory.file('src/main/packaging/scripts/unixScriptTemplate.txt').asFile
+def java26Home = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(26)
+}.map {
+    it.metadata.installationPath.asFile.absolutePath
+}
+def runtimeModules = [
+        'java.base',
+        'java.datatransfer',
+        'java.desktop',
+        'java.logging',
+        'java.management',
+        'java.naming',
+        'java.net.http',
+        'java.prefs',
+        'java.security.jgss',
+        'java.security.sasl',
+        'java.sql',
+        'java.transaction.xa',
+        'java.xml',
+        'javafx.base',
+        'javafx.controls',
+        'javafx.graphics',
+        'javafx.media',
+        'javafx.swing',
+        'jdk.accessibility',
+        'jdk.crypto.ec',
+        'jdk.incubator.vector',
+        'jdk.jfr',
+        'jdk.unsupported',
+        'jdk.unsupported.desktop'
+]
 
 /**
  * Configures the runtime zip task with additional options/settings.
@@ -268,7 +300,7 @@ def jdk_download_windows_aarch64 = jdk_download_base + "windows-aarch64-full.zip
 def configureRuntime(def task, List<String> jvmArgs) {
     //Use the correct set of JVM arguments
     task.extension.launcherData.get().jvmArgs = jvmArgs
-    task.extension.launcherData.get().unixScriptTemplate = project.file('src/main/packaging/scripts/unixScriptTemplate.txt')
+    task.extension.launcherData.get().unixScriptTemplate = unixScriptTemplateFile
 
     //Additional modules to include with auto-detected modules.
     //jdk.crypto.ec - needed for HTTPS connections (broadcastify calls & map tile server)
@@ -281,14 +313,14 @@ def configureRuntime(def task, List<String> jvmArgs) {
     task.extension.additive.set(true)
 
     //Recommended options for reducing/shrinking runtime target image size
-    task.extension.addOptions('--strip-debug', '--compress', '2', '--no-header-files', '--no-man-pages')
+    task.extension.addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
 }
 
 def configure(org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs) {
     configureRuntime(rt, jvmArgs)
 
     //Runtime images have auto appended version in image zip name.  Override to include version in single target image.
-    rt.extension.imageZip.set(file("$buildDir/image/sdr-trunk.zip"))
+    rt.extension.imageZip.set(layout.buildDirectory.file('image/sdr-trunk.zip'))
 }
 
 def patchMacInfoPlist(File appBundle, String displayName) {
@@ -299,36 +331,43 @@ def patchMacInfoPlist(File appBundle, String displayName) {
         throw new GradleException("Unable to locate macOS app Info.plist: ${infoPlist}")
     }
 
-    ['CFBundleName', 'CFBundleDisplayName', 'CFBundleExecutable'].each { key ->
-        ant.exec(executable: '/usr/libexec/PlistBuddy', failonerror: false, resultproperty: "plistDelete${key}") {
-            arg(value: '-c')
-            arg(value: "Delete :${key}")
-            arg(value: infoPlist.absolutePath)
-        }
+    def runPlistBuddy = { String command, boolean failOnError ->
+        Process process = new ProcessBuilder('/usr/libexec/PlistBuddy', '-c', command, infoPlist.absolutePath)
+                .redirectErrorStream(true)
+                .start()
+        String output = process.inputStream.text
+        int exitCode = process.waitFor()
 
-        ant.exec(executable: '/usr/libexec/PlistBuddy', failonerror: true) {
-            arg(value: '-c')
-            arg(value: "Add :${key} string ${displayName}")
-            arg(value: infoPlist.absolutePath)
+        if(failOnError && exitCode != 0)
+        {
+            throw new GradleException("PlistBuddy failed (${exitCode}) for ${infoPlist}: ${output}")
         }
+    }
+
+    ['CFBundleName', 'CFBundleDisplayName', 'CFBundleExecutable'].each { key ->
+        runPlistBuddy("Delete :${key}", false)
+        runPlistBuddy("Add :${key} string ${displayName}", true)
     }
 }
 
 runtime {
+    distDir.set(layout.buildDirectory.dir('install/sdr-trunk'))
+    javaHome.set(java26Home)
+
     launcher {
         jvmArgs = os.isWindows() ? jvmArgsWindows : (os.isMacOsX() ? jvmArgsMac : jvmArgsLinux)
-        unixScriptTemplate = project.file('src/main/packaging/scripts/unixScriptTemplate.txt')
+        unixScriptTemplate = unixScriptTemplateFile
     }
 
     addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management')
     additive.set(true)
-    addOptions('--strip-debug', '--compress', '2', '--no-header-files', '--no-man-pages')
+    addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
 
     if(os.isMacOsX())
     {
         jpackage {
             imageName = 'sdrtrunk'
-            imageOutputDir = file("$buildDir/jpackage")
+            imageOutputDir = layout.buildDirectory.dir('jpackage').get().asFile
             installerName = 'sdrtrunk'
             appVersion = macAppVersion
             imageOptions = ['--icon', macAppIcon]
@@ -347,53 +386,101 @@ runtime {
  */
 if(os.isMacOsX())
 {
-    tasks.register('runtimeZipCurrent') {
-        dependsOn('jpackageImage')
+    def macJpackageOutputDir = layout.buildDirectory.dir('jpackage')
+    def macAppBundle = layout.buildDirectory.dir('jpackage/sdrtrunk.app')
+    def macRuntimeImageDir = layout.buildDirectory.dir('jre-current')
 
-        doLast {
-            File zipFile = file("$buildDir/image/sdr-trunk.zip")
-            if(zipFile.exists())
-            {
-                zipFile.delete()
+    tasks.register('jreCurrent', Exec) {
+        inputs.property('runtimeModules', runtimeModules)
+        outputs.dir(macRuntimeImageDir)
+
+        doFirst {
+            macRuntimeImageDir.get().asFile.deleteDir()
+
+            executable = "${java26Home.get()}/bin/jlink"
+            args = [
+                    '--module-path', "${java26Home.get()}/jmods",
+                    '--add-modules', runtimeModules.join(','),
+                    '--output', macRuntimeImageDir.get().asFile.absolutePath,
+                    '--strip-debug',
+                    '--compress', 'zip-6',
+                    '--no-header-files',
+                    '--no-man-pages'
+            ]
+        }
+    }
+
+    tasks.register('jpackageImageCurrent', Exec) {
+        dependsOn('jreCurrent', 'installDist')
+
+        inputs.dir(layout.buildDirectory.dir('install/sdr-trunk/lib'))
+        inputs.dir(macRuntimeImageDir)
+        inputs.file(layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns'))
+        outputs.dir(macAppBundle)
+
+        doFirst {
+            macAppBundle.get().asFile.deleteDir()
+
+            def jpackageArgs = [
+                    '--type', 'app-image',
+                    '--dest', macJpackageOutputDir.get().asFile.absolutePath,
+                    '--input', layout.buildDirectory.dir('install/sdr-trunk/lib').get().asFile.absolutePath,
+                    '--name', 'sdrtrunk',
+                    '--main-jar', tasks.named('jar').get().archiveFileName.get(),
+                    '--main-class', application.mainClass.get(),
+                    '--runtime-image', macRuntimeImageDir.get().asFile.absolutePath,
+                    '--app-version', macAppVersion,
+                    '--icon', macAppIcon
+            ]
+
+            jvmArgsMac.each { jvmArg ->
+                jpackageArgs.add('--java-options')
+                jpackageArgs.add(jvmArg)
             }
 
-            ant.zip(destfile: zipFile, basedir: file("$buildDir/jpackage"), includes: 'sdrtrunk.app/**')
+            executable = "${java26Home.get()}/bin/jpackage"
+            args = jpackageArgs
+        }
+
+        doLast {
+            patchMacInfoPlist(macAppBundle.get().asFile, 'sdrtrunk')
+        }
+    }
+
+    tasks.register('runtimeZipCurrent', Zip) {
+        dependsOn('jpackageImageCurrent')
+
+        archiveFileName = 'sdr-trunk.zip'
+        destinationDirectory = layout.buildDirectory.dir('image')
+        from(layout.buildDirectory.dir('jpackage')) {
+            include 'sdrtrunk.app/**'
         }
     }
 }
 else
 {
-tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
-    def arch = System.properties.getProperty("os.arch")
-    def javaHome = org.gradle.internal.jvm.Jvm.current().getJavaHome().toString()
+    tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
+        def arch = System.properties.getProperty("os.arch")
+        def javaHome = org.gradle.internal.jvm.Jvm.current().getJavaHome().toString()
 
-    if(os.isWindows()) {
-        if(arch.equals("amd64")) {
-            rt.extension.targetPlatform(targetWindowsX86_64, javaHome)
+        if(os.isWindows()) {
+            if(arch.equals("amd64")) {
+                rt.extension.targetPlatform(targetWindowsX86_64, javaHome)
+            }
+            else if(arch.equals("aarch64")) {
+                rt.extension.targetPlatform(targetWindowsAarch64, javaHome)
+            }
+            configure(rt, jvmArgsWindows)
         }
-        else if(arch.equals("aarch64")) {
-            rt.extension.targetPlatform(targetWindowsAarch64, javaHome)
-        }
-        configure(rt, jvmArgsWindows)
-    }
-    else if(os.isLinux())
-    {
-        if(arch.equals("amd64")) {
-            rt.extension.targetPlatform(targetLinuxX86_64, javaHome)
-        }
-        else if(arch.equals("aarch64")) {
-            rt.extension.targetPlatform(targetLinuxAarch64, javaHome)
-        }
-        configure(rt, jvmArgsLinux)
-    }
-        }
-        }
-
-if(os.isMacOsX())
-{
-    tasks.named('jpackageImage') {
-        doLast {
-            patchMacInfoPlist(file("$buildDir/jpackage/sdrtrunk.app"), 'sdrtrunk')
+        else if(os.isLinux())
+        {
+            if(arch.equals("amd64")) {
+                rt.extension.targetPlatform(targetLinuxX86_64, javaHome)
+            }
+            else if(arch.equals("aarch64")) {
+                rt.extension.targetPlatform(targetLinuxAarch64, javaHome)
+            }
+            configure(rt, jvmArgsLinux)
         }
     }
 }
