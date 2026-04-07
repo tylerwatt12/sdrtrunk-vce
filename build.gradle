@@ -133,7 +133,59 @@ dependencies {
     implementation 'pl.edu.icm:JLargeArrays:1.6'
 }
 
+def usb4javaRuntimeJar = configurations.detachedConfiguration(dependencies.create('io.github.dsheirer:usb4java:1.3.5'))
+usb4javaRuntimeJar.transitive = false
+
+def usb4javaNativeLibrariesJar = configurations.detachedConfiguration(
+        dependencies.create('io.github.dsheirer:usb4java-native-libraries:1.3.3'))
+usb4javaNativeLibrariesJar.transitive = false
+
+def javaLameRuntimeJar = configurations.detachedConfiguration(dependencies.create('com.github.nwaldispuehl:java-lame:v3.98.4'))
+javaLameRuntimeJar.transitive = false
+
+// JPMS bridge: the forked usb4java jar must see the native resources through its own module class loader.
+tasks.register('mergeUsb4javaNatives', Jar) {
+    archiveFileName = 'usb4java-1.3.5-merged.jar'
+    destinationDirectory = layout.buildDirectory.dir('jpms-libs')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    from({ zipTree(usb4javaRuntimeJar.singleFile) })
+    from({ zipTree(usb4javaNativeLibrariesJar.singleFile) }) {
+        include 'org/usb4java/darwin-aarch64/**'
+        include 'org/usb4java/darwin-legacy-aarch64/**'
+        include 'org/usb4java/win32-aarch64/**'
+    }
+}
+
+// JPMS bridge: the upstream java-lame jar name derives to the invalid automatic module name "java.lame.v3.98.4".
+tasks.register('jpmsJavaLame', Jar) {
+    archiveFileName = 'lame.jar'
+    destinationDirectory = layout.buildDirectory.dir('jpms-libs')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    from({ zipTree(javaLameRuntimeJar.singleFile) })
+}
+
 def os = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem
+def jpmsLibDir = layout.buildDirectory.dir('install/sdr-trunk/lib')
+def jpmsGeneratedLibDir = layout.buildDirectory.dir('jpms-libs')
+def jpmsModuleInfoSource = layout.projectDirectory.file('src/jpms/java/module-info.java')
+def jpmsModuleInfoOutputDir = layout.buildDirectory.dir('jpms-module-info')
+def jpmsModuleDir = layout.buildDirectory.dir('jpms-module')
+def jpmsModsDir = layout.buildDirectory.dir('jpms-mods')
+def jpmsClassesDir = layout.buildDirectory.dir('classes/java/main')
+def jpmsAppJar = layout.buildDirectory.file('jpms-module/sdr-trunk-jpms.jar')
+def jpmsMainModule = 'sdr.trunk/io.github.dsheirer.gui.SDRTrunk'
+def jpmsExcludedJarPattern = ~/(sdr-trunk-.*|javafx-.*|java-lame-.*|usb4java-native-libraries-.*|usb4java-1\.3\.[05]\.jar|libusb4java-1\.3\.0-.*)/
+def jpmsRuntimeJars = fileTree(jpmsLibDir) {
+    include '*.jar'
+    exclude { details ->
+        details.file.name ==~ jpmsExcludedJarPattern
+    }
+}
+def jpmsGeneratedJars = fileTree(jpmsGeneratedLibDir) {
+    include '*.jar'
+}
 
 /**
  * The Vector API is still incubating and must be enabled explicitly.
@@ -171,6 +223,13 @@ def jvmArgsLinux =
  */
 def jvmArgsMac = jvmArgsLinux +
         ['-Xdock:name=sdrtrunk']
+
+def jpmsJvmArgsMac =
+        ['--add-exports=javafx.base/com.sun.javafx.event=sdr.trunk', //Needed for controls-fx.jar
+         '--sun-misc-unsafe-memory-access=allow', //JDK24 - suppress sun.misc.Unsafe::allocateMemory warning
+         '-XX:+UseCompactObjectHeaders',   //JDK25 - use compact object headers
+         '--enable-native-access=javafx.graphics,usb4java,sdr.trunk',
+         '-Xdock:name=sdrtrunk']
 
 application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
@@ -291,6 +350,69 @@ def runtimeModules = [
         'jdk.unsupported.desktop'
 ]
 
+tasks.register('jpmsRun', Exec) {
+    dependsOn('syncJpmsMods')
+
+    inputs.dir(jpmsModsDir)
+
+    doFirst {
+        executable = "${java26Home.get()}/bin/java"
+        args = [
+                '--module-path', jpmsModsDir.get().asFile.absolutePath,
+                '--add-exports=javafx.base/com.sun.javafx.event=sdr.trunk',
+                '--enable-native-access=javafx.graphics,usb4java,sdr.trunk',
+                '-m', jpmsMainModule
+        ]
+    }
+}
+
+tasks.register('syncJpmsMods', Sync) {
+    dependsOn('jpmsJar')
+
+    into(jpmsModsDir)
+    from(jpmsRuntimeJars)
+    from(jpmsGeneratedJars)
+    from(jpmsAppJar)
+}
+
+tasks.register('compileJpmsModuleInfo', Exec) {
+    dependsOn('installDist', 'mergeUsb4javaNatives', 'jpmsJavaLame')
+
+    inputs.file(jpmsModuleInfoSource)
+    inputs.dir(jpmsClassesDir)
+    inputs.files(jpmsRuntimeJars)
+    inputs.files(jpmsGeneratedJars)
+    outputs.dir(jpmsModuleInfoOutputDir)
+
+    doFirst {
+        jpmsModuleInfoOutputDir.get().asFile.deleteDir()
+        jpmsModuleInfoOutputDir.get().asFile.mkdirs()
+
+        List<File> modulePathFiles = jpmsRuntimeJars.files.sort { it.name }
+        modulePathFiles.addAll(jpmsGeneratedJars.files.sort { it.name })
+
+        executable = "${java26Home.get()}/bin/javac"
+        args = [
+                '--module-path', modulePathFiles.collect { it.absolutePath }.join(File.pathSeparator),
+                '--patch-module', "sdr.trunk=${jpmsClassesDir.get().asFile.absolutePath}",
+                '-d', jpmsModuleInfoOutputDir.get().asFile.absolutePath,
+                jpmsModuleInfoSource.asFile.absolutePath
+        ]
+    }
+}
+
+tasks.register('jpmsJar', Jar) {
+    dependsOn('compileJpmsModuleInfo')
+
+    archiveFileName = jpmsAppJar.get().asFile.name
+    destinationDirectory = jpmsModuleDir
+    from(jpmsClassesDir)
+    from(layout.buildDirectory.dir('resources/main'))
+    from(jpmsModuleInfoOutputDir) {
+        include 'module-info.class'
+    }
+}
+
 /**
  * Configures the runtime zip task with additional options/settings.
  * @param rt task to configure
@@ -361,6 +483,8 @@ if(os.isMacOsX())
 {
     def macJpackageOutputDir = layout.buildDirectory.dir('jpackage')
     def macAppBundle = layout.buildDirectory.dir('jpackage/sdrtrunk.app')
+    def macJpmsJpackageOutputDir = layout.buildDirectory.dir('jpackage-jpms')
+    def macJpmsAppBundle = layout.buildDirectory.dir('jpackage-jpms/sdrtrunk-jpms.app')
     def macRuntimeImageDir = layout.buildDirectory.dir('jre-current')
     def macInstallLibDir = layout.buildDirectory.dir('install/sdr-trunk/lib')
     def macIconFile = layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns')
@@ -444,6 +568,38 @@ if(os.isMacOsX())
                 runPlistBuddy("Delete :${key}", false)
                 runPlistBuddy("Add :${key} string sdrtrunk", true)
             }
+        }
+    }
+
+    tasks.register('jpackageImageJpms', Exec) {
+        dependsOn('jreCurrent', 'syncJpmsMods')
+
+        inputs.dir(jpmsModsDir)
+        inputs.file(macIconFile)
+        inputs.dir(macRuntimeImageDir)
+        outputs.dir(macJpmsAppBundle)
+
+        doFirst {
+            macJpmsAppBundle.get().asFile.deleteDir()
+
+            def jpackageArgs = [
+                    '--type', 'app-image',
+                    '--dest', macJpmsJpackageOutputDir.get().asFile.absolutePath,
+                    '--name', 'sdrtrunk-jpms',
+                    '--module-path', jpmsModsDir.get().asFile.absolutePath,
+                    '--module', jpmsMainModule,
+                    '--runtime-image', macRuntimeImageDir.get().asFile.absolutePath,
+                    '--app-version', macAppVersion,
+                    '--icon', macAppIcon
+            ]
+
+            jpmsJvmArgsMac.each { jvmArg ->
+                jpackageArgs.add('--java-options')
+                jpackageArgs.add(jvmArg)
+            }
+
+            executable = "${java26Home.get()}/bin/jpackage"
+            args = jpackageArgs
         }
     }
 
