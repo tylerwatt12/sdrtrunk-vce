@@ -65,6 +65,8 @@ public class ResourceMonitor
     private LongProperty mMemoryUsed = new SimpleLongProperty();
     private DoubleProperty mJavaMemoryUsedPercentage = new SimpleDoubleProperty();
     private DoubleProperty mSystemMemoryUsedPercentage = new SimpleDoubleProperty();
+    private StringProperty mMemoryAllocatedLabel = new SimpleStringProperty();
+    private StringProperty mMemoryUsedLabel = new SimpleStringProperty();
     private DoubleProperty mCpuPercentage = new SimpleDoubleProperty();
     private BooleanProperty mCpuAvailable = new SimpleBooleanProperty();
     private DoubleProperty mDirectoryUsePercentEventLogs = new SimpleDoubleProperty();
@@ -142,10 +144,17 @@ public class ResourceMonitor
         final double loadFinal = cpuLoadScaled;
 
         Platform.runLater(() -> {
-            mMemoryAllocated.set(Runtime.getRuntime().totalMemory());
-            mMemoryUsed.set(mMemoryAllocated.getValue() - Runtime.getRuntime().freeMemory());
+            long memoryAllocated = Runtime.getRuntime().totalMemory();
+            long memoryUsed = memoryAllocated - Runtime.getRuntime().freeMemory();
+
+            mMemoryAllocated.set(memoryAllocated);
+            mMemoryUsed.set(memoryUsed);
             mJavaMemoryUsedPercentage.set((double)mMemoryUsed.get() / (double)mMemoryAllocated.get());
             mSystemMemoryUsedPercentage.set((double)mMemoryAllocated.get() / (double)mMemoryTotal.get());
+            mMemoryAllocatedLabel.set(FileUtils.byteCountToDisplaySize(memoryAllocated) + " / " +
+                    FileUtils.byteCountToDisplaySize(mMemoryTotal.get()));
+            mMemoryUsedLabel.set(FileUtils.byteCountToDisplaySize(memoryUsed) + " / " +
+                    FileUtils.byteCountToDisplaySize(memoryAllocated));
             mCpuPercentage.set(loadFinal > 0 ? loadFinal : 0);
             mCpuAvailable.set(loadFinal >= 0);
         });
@@ -281,5 +290,21 @@ public class ResourceMonitor
     public DoubleProperty systemMemoryUsedPercentageProperty()
     {
         return mSystemMemoryUsedPercentage;
+    }
+
+    /**
+     * Formatted JVM allocated heap vs max heap label.
+     */
+    public StringProperty memoryAllocatedLabelProperty()
+    {
+        return mMemoryAllocatedLabel;
+    }
+
+    /**
+     * Formatted JVM used heap vs allocated heap label.
+     */
+    public StringProperty memoryUsedLabelProperty()
+    {
+        return mMemoryUsedLabel;
     }
 }

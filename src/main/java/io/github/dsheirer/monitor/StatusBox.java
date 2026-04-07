@@ -53,22 +53,28 @@ public class StatusBox extends HBox
         cpuIndicator.setTooltip(new Tooltip("Java process CPU usage. Disabled if the CPU loading is not available from the OS"));
         getChildren().add(cpuIndicator);
 
-        Label memoryLabel = new Label("Allocated Memory:");
+        Label memoryLabel = new Label("Allocated Heap:");
         memoryLabel.setAlignment(Pos.CENTER_RIGHT);
         getChildren().add(memoryLabel);
 
         ProgressBar memoryBar = new ProgressBar();
         memoryBar.progressProperty().bind(mResourceMonitor.systemMemoryUsedPercentageProperty());
-        memoryBar.setTooltip(new Tooltip("Percentage of total system memory that Java has reserved from the Operating System."));
+        Tooltip memoryTooltip = new Tooltip();
+        memoryTooltip.textProperty().bind(mResourceMonitor.memoryAllocatedLabelProperty()
+                .concat(" JVM heap committed out of max heap"));
+        memoryBar.setTooltip(memoryTooltip);
         getChildren().add(memoryBar);
 
-        Label javaMemoryLabel = new Label("Used Memory:");
+        Label javaMemoryLabel = new Label("Used Heap:");
         javaMemoryLabel.setAlignment(Pos.CENTER_RIGHT);
         getChildren().add(javaMemoryLabel);
 
         ProgressBar javaMemoryBar = new ProgressBar();
         javaMemoryBar.progressProperty().bind(mResourceMonitor.javaMemoryUsedPercentageProperty());
-        javaMemoryBar.setTooltip(new Tooltip("Percentage of allocated memory that Java/sdrtrunk is currently using. This value fluctuates as Java manages memory and garbage collection"));
+        Tooltip javaMemoryTooltip = new Tooltip();
+        javaMemoryTooltip.textProperty().bind(mResourceMonitor.memoryUsedLabelProperty()
+                .concat(" JVM heap used out of committed heap"));
+        javaMemoryBar.setTooltip(javaMemoryTooltip);
         getChildren().add(javaMemoryBar);
 
         Label eventLogsLabel = new Label("Event Logs:");
