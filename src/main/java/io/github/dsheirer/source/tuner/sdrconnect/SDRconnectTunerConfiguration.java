@@ -34,6 +34,8 @@ public class SDRconnectTunerConfiguration extends TunerConfiguration
     private String mDeviceName = SDRconnectTunerController.DEFAULT_DEVICE_NAME;
     private int mSampleRate = SDRconnectTunerController.DEFAULT_SAMPLE_RATE;
     private String mAntenna = "";
+    private boolean mAgcEnabled = true;
+    private int mLnaState;
 
     /**
      * Jackson constructor
@@ -162,6 +164,34 @@ public class SDRconnectTunerConfiguration extends TunerConfiguration
     public void setAntenna(String antenna)
     {
         mAntenna = antenna != null ? antenna : "";
+    }
+
+    /**
+     * Configured AGC enable state
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "agc_enable")
+    public boolean isAgcEnabled()
+    {
+        return mAgcEnabled;
+    }
+
+    public void setAgcEnabled(boolean agcEnabled)
+    {
+        mAgcEnabled = agcEnabled;
+    }
+
+    /**
+     * Configured manual LNA state to use when AGC is disabled.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "lna_state")
+    public int getLnaState()
+    {
+        return mLnaState;
+    }
+
+    public void setLnaState(int lnaState)
+    {
+        mLnaState = lnaState;
     }
 
     /**

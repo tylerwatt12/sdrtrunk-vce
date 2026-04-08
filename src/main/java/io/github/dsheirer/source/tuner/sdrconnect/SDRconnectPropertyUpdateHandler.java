@@ -51,8 +51,26 @@ class SDRconnectPropertyUpdateHandler
                 case SDRconnectProtocol.PROPERTY_DEVICE_SAMPLE_RATE:
                     handleSampleRateUpdate(value);
                     break;
+                case SDRconnectProtocol.PROPERTY_LNA_STATE:
+                    handleLnaStateUpdate(value);
+                    break;
+                case SDRconnectProtocol.PROPERTY_LNA_STATE_MIN:
+                    handleLnaStateMinimumUpdate(value);
+                    break;
+                case SDRconnectProtocol.PROPERTY_LNA_STATE_MAX:
+                    handleLnaStateMaximumUpdate(value);
+                    break;
                 case SDRconnectProtocol.PROPERTY_STARTED:
                     handleStartedStateUpdate(value);
+                    break;
+                case SDRconnectProtocol.PROPERTY_AGC_ENABLE:
+                    handleAgcEnabledUpdate(value);
+                    break;
+                case SDRconnectProtocol.PROPERTY_SIGNAL_POWER:
+                    mCallback.onSignalPowerChanged(Double.parseDouble(value));
+                    break;
+                case SDRconnectProtocol.PROPERTY_SIGNAL_SNR:
+                    mCallback.onSignalSnrChanged(Double.parseDouble(value));
                     break;
                 case SDRconnectProtocol.PROPERTY_VALID_ANTENNAS:
                     handleValidAntennasUpdate(value);
@@ -126,6 +144,38 @@ class SDRconnectPropertyUpdateHandler
         mLastStartedState = started;
     }
 
+    private void handleLnaStateUpdate(String value)
+    {
+        int lnaState = Integer.parseInt(value);
+
+        if(lnaState != mCallback.getLnaState())
+        {
+            mLog.info("{} LNA state changed: {}", mLogPrefix, lnaState);
+            mCallback.onLnaStateChanged(lnaState);
+        }
+    }
+
+    private void handleLnaStateMinimumUpdate(String value)
+    {
+        mCallback.onLnaStateMinimumChanged(Integer.parseInt(value));
+    }
+
+    private void handleLnaStateMaximumUpdate(String value)
+    {
+        mCallback.onLnaStateMaximumChanged(Integer.parseInt(value));
+    }
+
+    private void handleAgcEnabledUpdate(String value)
+    {
+        boolean agcEnabled = "true".equalsIgnoreCase(value);
+
+        if(agcEnabled != mCallback.isAgcEnabled())
+        {
+            mLog.info("{} AGC {}", mLogPrefix, agcEnabled ? "enabled" : "disabled");
+            mCallback.onAgcEnabledChanged(agcEnabled);
+        }
+    }
+
     private void handleValidAntennasUpdate(String value)
     {
         if(!value.equals(mCallback.getValidAntennas()))
@@ -150,6 +200,14 @@ class SDRconnectPropertyUpdateHandler
         void onCenterFrequencyChanged(long frequency);
         int getSampleRate();
         void onSampleRateChanged(int sampleRate);
+        int getLnaState();
+        void onLnaStateChanged(int lnaState);
+        void onLnaStateMinimumChanged(int lnaStateMinimum);
+        void onLnaStateMaximumChanged(int lnaStateMaximum);
+        boolean isAgcEnabled();
+        void onAgcEnabledChanged(boolean agcEnabled);
+        void onSignalPowerChanged(double signalPower);
+        void onSignalSnrChanged(double signalSnr);
         String getValidAntennas();
         String getActiveAntenna();
         void onValidDevicesChanged(String validDevices);

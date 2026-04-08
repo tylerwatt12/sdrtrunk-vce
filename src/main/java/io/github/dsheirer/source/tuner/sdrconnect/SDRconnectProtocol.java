@@ -41,8 +41,12 @@ class SDRconnectProtocol
     static final String PROPERTY_ACTIVE_DEVICE = "active_device";
     static final String PROPERTY_DEVICE_SAMPLE_RATE = "device_sample_rate";
     static final String PROPERTY_DEVICE_CENTER_FREQUENCY = "device_center_frequency";
+    static final String PROPERTY_LNA_STATE = "lna_state";
+    static final String PROPERTY_LNA_STATE_MIN = "lna_state_min";
+    static final String PROPERTY_LNA_STATE_MAX = "lna_state_max";
     static final String PROPERTY_VALID_ANTENNAS = "valid_antennas";
     static final String PROPERTY_ACTIVE_ANTENNA = "active_antenna";
+    static final String PROPERTY_AGC_ENABLE = "agc_enable";
     static final String PROPERTY_STARTED = "started";
     static final String PROPERTY_SIGNAL_POWER = "signal_power";
     static final String PROPERTY_SIGNAL_SNR = "signal_snr";
