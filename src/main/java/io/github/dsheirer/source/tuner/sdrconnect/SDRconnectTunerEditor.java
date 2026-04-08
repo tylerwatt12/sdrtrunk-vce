@@ -30,14 +30,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.awt.Component;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
-import java.awt.GridLayout;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.util.Locale;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -48,6 +51,9 @@ import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.border.LineBorder;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 
 /**
  * SDRconnect tuner configuration editor
@@ -72,7 +78,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JComboBox<String> mAntennaCombo;
     private JSlider mLnaStateSlider;
     private JPanel mLnaStateControlPanel;
-    private JLabel[] mLnaStateScaleLabels;
+    private JLabel mLnaStateValueLabel;
     private JLabel mSignalPowerLabel;
     private JLabel mSignalSnrLabel;
     private JPanel mMeasuredErrorPanel;
@@ -365,7 +371,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         if(mLnaStateControlPanel == null)
         {
-            mLnaStateControlPanel = new JPanel(new MigLayout("insets 0,wrap 1,gapy 0", "[grow,fill]", "[][]"));
+            mLnaStateControlPanel = new JPanel(new MigLayout("insets 0,wrap 1,gapy 2", "[grow,fill]", "[][][]"));
+            mLnaStateControlPanel.add(getLnaStateValueLabel(), "align center");
             mLnaStateControlPanel.add(getLnaStateScalePanel(), "growx");
             mLnaStateControlPanel.add(getLnaStateSlider(), "growx");
         }
@@ -373,34 +380,46 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         return mLnaStateControlPanel;
     }
 
-    private JPanel getLnaStateScalePanel()
+    private JLabel getLnaStateValueLabel()
     {
-        JPanel panel = new JPanel(new GridLayout(1, 5));
-
-        for(JLabel label : getLnaStateScaleLabels())
+        if(mLnaStateValueLabel == null)
         {
-            panel.add(label);
+            mLnaStateValueLabel = new JLabel("");
+            mLnaStateValueLabel.setVisible(false);
         }
 
-        return panel;
+        return mLnaStateValueLabel;
     }
 
-    private JLabel[] getLnaStateScaleLabels()
+    private JComponent getLnaStateScalePanel()
     {
-        if(mLnaStateScaleLabels == null)
+        JComponent scalePanel = new JComponent()
         {
-            mLnaStateScaleLabels = new JLabel[5];
-
-            for(int x = 0; x < mLnaStateScaleLabels.length; x++)
+            @Override
+            protected void paintComponent(Graphics graphics)
             {
-                JLabel label = new JLabel("0");
-                label.setHorizontalAlignment(x == 0 ? SwingConstants.LEFT :
-                    x == mLnaStateScaleLabels.length - 1 ? SwingConstants.RIGHT : SwingConstants.CENTER);
-                mLnaStateScaleLabels[x] = label;
-            }
-        }
+                super.paintComponent(graphics);
 
-        return mLnaStateScaleLabels;
+                Graphics2D graphics2D = (Graphics2D)graphics.create();
+                int width = getWidth();
+                int height = getHeight();
+                int transitionWidth = Math.max(1, width / 2);
+
+                graphics2D.setPaint(new java.awt.GradientPaint(0, 0, new Color(0x4CAF50),
+                    transitionWidth, 0, new Color(0xFDD835)));
+                graphics2D.fillRect(0, 0, transitionWidth, height);
+
+                graphics2D.setPaint(new java.awt.GradientPaint(transitionWidth, 0, new Color(0xFDD835),
+                    width, 0, new Color(0xD32F2F)));
+                graphics2D.fillRect(transitionWidth, 0, width - transitionWidth, height);
+                graphics2D.dispose();
+            }
+        };
+        scalePanel.setPreferredSize(new Dimension(0, 8));
+        scalePanel.setBorder(new LineBorder(Color.GRAY));
+        scalePanel.setToolTipText("Lower RF gain to the left, higher RF gain to the right.");
+
+        return scalePanel;
     }
 
     private JSlider getLnaStateSlider()
@@ -412,6 +431,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             mLnaStateSlider.setMajorTickSpacing(1);
             mLnaStateSlider.setPaintTicks(true);
             mLnaStateSlider.addChangeListener(e -> {
+                updateLnaStateValueDisplay(mLnaStateSlider.getValue(), mLnaStateSlider.getValueIsAdjusting());
+
                 if(!isLoading())
                 {
                     int lnaState = getLnaStateSlider().getValue();
@@ -422,6 +443,20 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                     }
 
                     save();
+                }
+            });
+            mLnaStateSlider.addMouseListener(new MouseAdapter()
+            {
+                @Override
+                public void mousePressed(MouseEvent event)
+                {
+                    updateLnaStateValueDisplay(mLnaStateSlider.getValue(), true);
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent event)
+                {
+                    updateLnaStateValueDisplay(mLnaStateSlider.getValue(), false);
                 }
             });
         }
@@ -473,30 +508,13 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         mLnaStateSlider.setMinimum(minimum);
         mLnaStateSlider.setMaximum(boundedMaximum);
         mLnaStateSlider.setValue(boundedCurrent);
-        updateLnaStateScaleLabels(minimum, boundedMaximum);
+        updateLnaStateValueDisplay(boundedCurrent, false);
     }
 
-    private void updateLnaStateScaleLabels(int minimum, int maximum)
+    private void updateLnaStateValueDisplay(int value, boolean visible)
     {
-        JLabel[] labels = getLnaStateScaleLabels();
-
-        if(maximum <= minimum)
-        {
-            for(JLabel label : labels)
-            {
-                label.setText(Integer.toString(minimum));
-            }
-
-            return;
-        }
-
-        int range = maximum - minimum;
-
-        for(int x = 0; x < labels.length; x++)
-        {
-            int value = minimum + Math.round((range * x) / (float)(labels.length - 1));
-            labels[x].setText(Integer.toString(value));
-        }
+        getLnaStateValueLabel().setText("Gain " + value);
+        getLnaStateValueLabel().setVisible(visible);
     }
 
     private void updateAntennaOptions(String[] antennas)
