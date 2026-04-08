@@ -36,7 +36,6 @@ import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.util.Locale;
 import javax.swing.DefaultListCellRenderer;
-import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -68,13 +67,9 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JTextField mHostField;
     private JSpinner mPortSpinner;
     private JTextField mDeviceNameField;
-    private JLabel mSampleRateLabel;
     private JComboBox<String> mSampleRateCombo;
-    private JLabel mAntennaLabel;
     private JComboBox<String> mAntennaCombo;
-    private JCheckBox mAgcCheckBox;
     private JSlider mLnaStateSlider;
-    private JLabel mLnaStateLabel;
     private JLabel mSignalPowerLabel;
     private JLabel mSignalSnrLabel;
     private JPanel mMeasuredErrorPanel;
@@ -133,24 +128,17 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             getTunerIdLabel().setText(getTuner().getPreferredName());
 
             SDRconnectTunerController controller = getTuner().getController();
-            getSampleRateLabel().setText(formatSampleRate(controller.getCurrentSampleRate()));
             updateSelectedSampleRate((int)controller.getCurrentSampleRate());
             getSampleRateCombo().setEnabled(!controller.isLockedSampleRate());
             updateAntennaOptions(controller.getValidAntennas());
-            String antenna = controller.getCurrentAntenna();
-            getAntennaLabel().setText(formatAntenna(antenna));
-            updateSelectedAntenna(antenna);
+            updateSelectedAntenna(controller.getCurrentAntenna());
             getAntennaCombo().setEnabled(true);
-            getAgcCheckBox().setSelected(controller.isAgcEnabled());
-            getAgcCheckBox().setEnabled(true);
             updateLnaStateSlider(controller.getLnaStateMinimum(), controller.getLnaStateMaximum(), controller.getLnaState());
-            getLnaStateLabel().setText(String.valueOf(controller.getLnaState()));
-            getLnaStateSlider().setEnabled(!controller.isAgcEnabled());
+            getLnaStateSlider().setEnabled(true);
             updateSignalPower(controller.getSignalPower());
             updateSignalSnr(controller.getSignalSnr());
             controller.setAntennaChangeListener(this::onAntennaChanged);
             controller.setSampleRateChangeListener(this::onSampleRateChanged);
-            controller.setAgcEnableChangeListener(this::onAgcChanged);
             controller.setLnaStateChangeListener(this::onLnaStateChanged);
             controller.setSignalPowerChangeListener(this::onSignalPowerChanged);
             controller.setSignalSnrChangeListener(this::onSignalSnrChanged);
@@ -158,15 +146,10 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         else
         {
             getTunerIdLabel().setText("SDRconnect");
-            getSampleRateLabel().setText("N/A");
             updateSelectedSampleRate(SDRconnectTunerController.DEFAULT_SAMPLE_RATE);
             getSampleRateCombo().setEnabled(false);
-            getAntennaLabel().setText("N/A");
             getAntennaCombo().setEnabled(false);
-            getAgcCheckBox().setSelected(true);
-            getAgcCheckBox().setEnabled(false);
             updateLnaStateSlider(0, 0, 0);
-            getLnaStateLabel().setText("N/A");
             getLnaStateSlider().setEnabled(false);
             updateSignalPower(Double.NaN);
             updateSignalSnr(Double.NaN);
@@ -194,10 +177,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             {
                 updateSelectedSampleRate(config.getSampleRate());
                 updateSelectedAntenna(config.getAntenna());
-                getAgcCheckBox().setSelected(config.isAgcEnabled());
                 updateLnaStateSlider(0, 0, config.getLnaState());
-                getLnaStateLabel().setText(String.valueOf(config.getLnaState()));
-                getLnaStateSlider().setEnabled(!config.isAgcEnabled());
+                getLnaStateSlider().setEnabled(false);
                 updateSignalPower(Double.NaN);
                 updateSignalSnr(Double.NaN);
             }
@@ -227,26 +208,17 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         leftPanel.add(new JLabel("Status:"));
         leftPanel.add(getTunerStatusLabel(), "span 3,wrap");
         leftPanel.add(new JLabel("Host:"));
-        leftPanel.add(getHostField(), "span,grow,wrap");
+        leftPanel.add(getHostField(), "span 3,grow,wrap");
         leftPanel.add(new JLabel("Port:"));
         leftPanel.add(getPortSpinner(), "align right");
         leftPanel.add(new JLabel("Device:"));
         leftPanel.add(getDeviceNameField(), WRAP);
         leftPanel.add(new JLabel("Sample Rate:"));
         leftPanel.add(getSampleRateCombo());
-        leftPanel.add(new JLabel("In Use:"));
-        leftPanel.add(getSampleRateLabel(), WRAP);
         leftPanel.add(new JLabel("Antenna:"));
-        leftPanel.add(getAntennaCombo());
-        leftPanel.add(new JLabel("In Use:"));
-        leftPanel.add(getAntennaLabel(), WRAP);
-        leftPanel.add(getAgcCheckBox(), "span 2");
-        leftPanel.add(new JLabel("LNA State:"));
-        leftPanel.add(getLnaStateSlider(), "span 3,growx,wrap");
-        leftPanel.add(new JLabel(""));
-        leftPanel.add(new JLabel(""));
-        leftPanel.add(new JLabel("In Use:"));
-        leftPanel.add(getLnaStateLabel(), WRAP);
+        leftPanel.add(getAntennaCombo(), WRAP);
+        leftPanel.add(new JLabel("RF Gain:"));
+        leftPanel.add(getLnaStateSlider(), "span 3,growx");
         JPanel rightPanel = new JPanel(new MigLayout("fillx,gapy 0,wrap 1", "[grow,fill]", "[][]"));
         rightPanel.add(getButtonPanel(), "shrink,align left");
         rightPanel.add(getFrequencyPanel(), GROW_X);
@@ -307,18 +279,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             mDeviceNameField.setToolTipText("SDRconnect device name or serial number, or leave blank to use the first discovered device");
         }
         return mDeviceNameField;
-    }
-
-    /**
-     * Sample rate display label
-     */
-    private JLabel getSampleRateLabel()
-    {
-        if(mSampleRateLabel == null)
-        {
-            mSampleRateLabel = new JLabel("N/A");
-        }
-        return mSampleRateLabel;
     }
 
     /**
@@ -397,46 +357,12 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         return mAntennaCombo;
     }
 
-    private JLabel getAntennaLabel()
-    {
-        if(mAntennaLabel == null)
-        {
-            mAntennaLabel = new JLabel("N/A");
-        }
-        return mAntennaLabel;
-    }
-
-    private JCheckBox getAgcCheckBox()
-    {
-        if(mAgcCheckBox == null)
-        {
-            mAgcCheckBox = new JCheckBox("AGC Enabled");
-            mAgcCheckBox.setToolTipText("Enable SDRconnect AGC. Disable to use a fixed LNA state.");
-            mAgcCheckBox.addActionListener(e -> {
-                if(!isLoading())
-                {
-                    boolean enabled = getAgcCheckBox().isSelected();
-                    getLnaStateSlider().setEnabled(!enabled);
-
-                    if(hasTuner())
-                    {
-                        getTuner().getController().requestAgcEnabled(enabled);
-                    }
-
-                    save();
-                }
-            });
-        }
-
-        return mAgcCheckBox;
-    }
-
     private JSlider getLnaStateSlider()
     {
         if(mLnaStateSlider == null)
         {
             mLnaStateSlider = new JSlider(SwingConstants.HORIZONTAL, 0, 0, 0);
-            mLnaStateSlider.setToolTipText("Manual LNA state to use when AGC is disabled.");
+            mLnaStateSlider.setToolTipText("Set SDRconnect LNA gain state.");
             mLnaStateSlider.setMajorTickSpacing(1);
             mLnaStateSlider.setPaintTicks(true);
             mLnaStateSlider.addChangeListener(e -> {
@@ -444,7 +370,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                 {
                     int lnaState = getLnaStateSlider().getValue();
 
-                    if(hasTuner() && !getAgcCheckBox().isSelected())
+                    if(hasTuner())
                     {
                         getTuner().getController().requestLnaState(lnaState);
                     }
@@ -455,16 +381,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         }
 
         return mLnaStateSlider;
-    }
-
-    private JLabel getLnaStateLabel()
-    {
-        if(mLnaStateLabel == null)
-        {
-            mLnaStateLabel = new JLabel("N/A");
-        }
-
-        return mLnaStateLabel;
     }
 
     private JLabel getSignalPowerLabel()
@@ -753,7 +669,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         SwingUtilities.invokeLater(() -> {
             setLoading(true);
-            getAntennaLabel().setText(formatAntenna(antenna));
             updateSelectedAntenna(antenna);
             setLoading(false);
             save();
@@ -764,20 +679,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         SwingUtilities.invokeLater(() -> {
             setLoading(true);
-            getSampleRateLabel().setText(formatSampleRate(sampleRate));
             updateSelectedSampleRate(sampleRate);
             getSampleRateCombo().setEnabled(!getTuner().getController().isLockedSampleRate());
-            setLoading(false);
-            save();
-        });
-    }
-
-    private void onAgcChanged(boolean enabled)
-    {
-        SwingUtilities.invokeLater(() -> {
-            setLoading(true);
-            getAgcCheckBox().setSelected(enabled);
-            getLnaStateSlider().setEnabled(!enabled);
             setLoading(false);
             save();
         });
@@ -796,7 +699,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             {
                 updateLnaStateSlider(0, 0, lnaState);
             }
-            getLnaStateLabel().setText(String.valueOf(lnaState));
             setLoading(false);
             save();
         });
@@ -849,7 +751,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             {
                 config.setAntenna(antenna);
             }
-            config.setAgcEnabled(getAgcCheckBox().isSelected());
             config.setLnaState(getLnaStateSlider().getValue());
             // Force PPM to 0 - correction should be done in SDRconnect
             config.setFrequencyCorrection(0.0);

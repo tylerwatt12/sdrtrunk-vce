@@ -113,7 +113,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private String mDeviceName = DEFAULT_DEVICE_NAME;
     private String mValidAntennas = "";
     private String mCurrentAntenna = "";
-    private boolean mAgcEnabled = true;
     private int mLnaState;
     private int mLnaStateMinimum;
     private int mLnaStateMaximum;
@@ -121,11 +120,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private double mSignalSnr;
     private int mConfiguredSampleRate = DEFAULT_SAMPLE_RATE;
     private String mConfiguredAntenna = "";
-    private boolean mConfiguredAgcEnabled = true;
     private int mConfiguredLnaState;
     private Consumer<String> mAntennaChangeListener;
     private IntConsumer mSampleRateChangeListener;
-    private Consumer<Boolean> mAgcEnableChangeListener;
     private IntConsumer mLnaStateChangeListener;
     private Consumer<Double> mSignalPowerChangeListener;
     private Consumer<Double> mSignalSnrChangeListener;
@@ -238,7 +235,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             setDeviceName(config.getDeviceName());
             mConfiguredSampleRate = config.getSampleRate();
             mConfiguredAntenna = config.getAntenna();
-            mConfiguredAgcEnabled = config.isAgcEnabled();
             mConfiguredLnaState = config.getLnaState();
         }
     }
@@ -300,7 +296,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 queryProperty(SDRconnectProtocol.PROPERTY_ACTIVE_DEVICE);
                 queryProperty(SDRconnectProtocol.PROPERTY_DEVICE_SAMPLE_RATE);
                 queryProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY);
-                queryProperty(SDRconnectProtocol.PROPERTY_AGC_ENABLE);
                 queryProperty(SDRconnectProtocol.PROPERTY_LNA_STATE);
                 queryProperty(SDRconnectProtocol.PROPERTY_LNA_STATE_MIN);
                 queryProperty(SDRconnectProtocol.PROPERTY_LNA_STATE_MAX);
@@ -334,11 +329,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 {
                     requestAntenna(mConfiguredAntenna);
                 }
-                if(mConfiguredAgcEnabled != mAgcEnabled)
-                {
-                    requestAgcEnabled(mConfiguredAgcEnabled);
-                }
-                if(!mConfiguredAgcEnabled && mConfiguredLnaState != mLnaState)
+                if(mConfiguredLnaState != mLnaState)
                 {
                     requestLnaState(mConfiguredLnaState);
                 }
@@ -903,11 +894,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         setProperty(SDRconnectProtocol.PROPERTY_ACTIVE_ANTENNA, antenna);
     }
 
-    public boolean isAgcEnabled()
-    {
-        return mAgcEnabled;
-    }
-
     public int getLnaState()
     {
         return mLnaState;
@@ -921,12 +907,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public int getLnaStateMaximum()
     {
         return mLnaStateMaximum;
-    }
-
-    public void requestAgcEnabled(boolean enabled)
-    {
-        mLog.info("{} Requesting AGC {}", mLogPrefix, enabled ? "enable" : "disable");
-        setProperty(SDRconnectProtocol.PROPERTY_AGC_ENABLE, Boolean.toString(enabled));
     }
 
     public void requestLnaState(int lnaState)
@@ -959,11 +939,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public void setSampleRateChangeListener(IntConsumer listener)
     {
         mSampleRateChangeListener = listener;
-    }
-
-    public void setAgcEnableChangeListener(Consumer<Boolean> listener)
-    {
-        mAgcEnableChangeListener = listener;
     }
 
     public void setLnaStateChangeListener(IntConsumer listener)
@@ -1222,23 +1197,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             }
 
             @Override
-            public boolean isAgcEnabled()
-            {
-                return mAgcEnabled;
-            }
-
-            @Override
-            public void onAgcEnabledChanged(boolean agcEnabled)
-            {
-                mAgcEnabled = agcEnabled;
-
-                if(mAgcEnableChangeListener != null)
-                {
-                    mAgcEnableChangeListener.accept(agcEnabled);
-                }
-            }
-
-            @Override
             public void onSignalPowerChanged(double signalPower)
             {
                 mSignalPower = signalPower;
@@ -1351,7 +1309,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 mLog.info("{} Querying SDRconnect settings after recovery...", mLogPrefix);
                 queryProperty(SDRconnectProtocol.PROPERTY_DEVICE_SAMPLE_RATE);
                 queryProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY);
-                queryProperty(SDRconnectProtocol.PROPERTY_AGC_ENABLE);
                 queryProperty(SDRconnectProtocol.PROPERTY_LNA_STATE);
                 queryProperty(SDRconnectProtocol.PROPERTY_LNA_STATE_MIN);
                 queryProperty(SDRconnectProtocol.PROPERTY_LNA_STATE_MAX);
