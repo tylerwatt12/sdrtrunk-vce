@@ -122,6 +122,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private String mConfiguredAntenna = "";
     private int mConfiguredLnaState;
     private Consumer<String> mAntennaChangeListener;
+    private Consumer<String[]> mValidAntennasChangeListener;
     private IntConsumer mSampleRateChangeListener;
     private IntConsumer mLnaStateChangeListener;
     private Consumer<Double> mSignalPowerChangeListener;
@@ -325,14 +326,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                 {
                     requestSampleRate(mConfiguredSampleRate);
                 }
-                if(!mConfiguredAntenna.isEmpty() && !mConfiguredAntenna.equals(mCurrentAntenna))
-                {
-                    requestAntenna(mConfiguredAntenna);
-                }
-                if(mConfiguredLnaState != mLnaState)
-                {
-                    requestLnaState(mConfiguredLnaState);
-                }
+                applyConfiguredHardwareSettings();
 
                 // Reset reconnect state on successful connection
                 mReconnectAttempts.set(0);
@@ -890,6 +884,17 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
     public void requestAntenna(String antenna)
     {
+        if(antenna == null || antenna.isBlank())
+        {
+            return;
+        }
+
+        if(!isAntennaValid(antenna))
+        {
+            mLog.warn("{} Ignoring invalid antenna request: {} (valid: {})", mLogPrefix, antenna, mValidAntennas);
+            return;
+        }
+
         mLog.info("{} Requesting antenna: {}", mLogPrefix, antenna);
         setProperty(SDRconnectProtocol.PROPERTY_ACTIVE_ANTENNA, antenna);
     }
@@ -936,6 +941,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mAntennaChangeListener = listener;
     }
 
+    public void setValidAntennasChangeListener(Consumer<String[]> listener)
+    {
+        mValidAntennasChangeListener = listener;
+    }
+
     public void setSampleRateChangeListener(IntConsumer listener)
     {
         mSampleRateChangeListener = listener;
@@ -975,7 +985,78 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return Arrays.stream(mValidAntennas.split(","))
             .map(String::trim)
             .filter(s -> !s.isEmpty())
-            .toArray(String[]::new);
+                .toArray(String[]::new);
+    }
+
+    private boolean isAntennaValid(String antenna)
+    {
+        if(antenna == null || antenna.isBlank())
+        {
+            return false;
+        }
+
+        return Arrays.stream(getValidAntennas()).anyMatch(antenna::equals);
+    }
+
+    private String getDefaultValidAntenna()
+    {
+        String[] validAntennas = getValidAntennas();
+        return validAntennas.length > 0 ? validAntennas[0] : "";
+    }
+
+    private void applyConfiguredHardwareSettings()
+    {
+        if(!mConfiguredAntenna.isEmpty())
+        {
+            if(isAntennaValid(mConfiguredAntenna))
+            {
+                if(!mConfiguredAntenna.equals(mCurrentAntenna))
+                {
+                    requestAntenna(mConfiguredAntenna);
+                }
+            }
+            else
+            {
+                mLog.info("{} Saved antenna [{}] is not valid for the current tuner state; leaving active antenna [{}]",
+                    mLogPrefix, mConfiguredAntenna, mCurrentAntenna);
+            }
+        }
+
+        int clampedConfiguredLnaState = clampLnaState(mConfiguredLnaState);
+        if(clampedConfiguredLnaState != mConfiguredLnaState)
+        {
+            mLog.info("{} Saved RF gain [{}] is outside the current tuner range [{}-{}]; clamped to [{}]",
+                mLogPrefix, mConfiguredLnaState, mLnaStateMinimum, mLnaStateMaximum, clampedConfiguredLnaState);
+        }
+
+        if(clampedConfiguredLnaState != mLnaState)
+        {
+            requestLnaState(clampedConfiguredLnaState);
+        }
+    }
+
+    private void reconcileHardwareSettings()
+    {
+        if(!mCurrentAntenna.isBlank() && !isAntennaValid(mCurrentAntenna))
+        {
+            String fallbackAntenna = getDefaultValidAntenna();
+
+            if(!fallbackAntenna.isBlank())
+            {
+                mLog.info("{} Active antenna [{}] is no longer valid; switching to [{}]",
+                    mLogPrefix, mCurrentAntenna, fallbackAntenna);
+                requestAntenna(fallbackAntenna);
+            }
+        }
+
+        int clampedCurrentLnaState = clampLnaState(mLnaState);
+
+        if(clampedCurrentLnaState != mLnaState)
+        {
+            mLog.info("{} Active RF gain [{}] is outside the current tuner range [{}-{}]; clamping to [{}]",
+                mLogPrefix, mLnaState, mLnaStateMinimum, mLnaStateMaximum, clampedCurrentLnaState);
+            requestLnaState(clampedCurrentLnaState);
+        }
     }
 
     protected static final int[] SUPPORTED_SAMPLE_RATES = {
@@ -1188,12 +1269,24 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             public void onLnaStateMinimumChanged(int lnaStateMinimum)
             {
                 mLnaStateMinimum = lnaStateMinimum;
+                reconcileHardwareSettings();
+
+                if(mLnaStateChangeListener != null)
+                {
+                    mLnaStateChangeListener.accept(mLnaState);
+                }
             }
 
             @Override
             public void onLnaStateMaximumChanged(int lnaStateMaximum)
             {
                 mLnaStateMaximum = lnaStateMaximum;
+                reconcileHardwareSettings();
+
+                if(mLnaStateChangeListener != null)
+                {
+                    mLnaStateChangeListener.accept(mLnaState);
+                }
             }
 
             @Override
@@ -1247,6 +1340,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             public void onValidAntennasChanged(String validAntennas)
             {
                 mValidAntennas = validAntennas;
+                reconcileHardwareSettings();
+
+                if(mValidAntennasChangeListener != null)
+                {
+                    mValidAntennasChangeListener.accept(SDRconnectTunerController.this.getValidAntennas());
+                }
             }
 
             @Override

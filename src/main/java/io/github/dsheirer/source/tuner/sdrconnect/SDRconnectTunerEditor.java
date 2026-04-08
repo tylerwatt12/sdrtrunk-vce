@@ -141,6 +141,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             updateSignalPower(controller.getSignalPower());
             updateSignalSnr(controller.getSignalSnr());
             controller.setAntennaChangeListener(this::onAntennaChanged);
+            controller.setValidAntennasChangeListener(this::onValidAntennasChanged);
             controller.setSampleRateChangeListener(this::onSampleRateChanged);
             controller.setLnaStateChangeListener(this::onLnaStateChanged);
             controller.setSignalPowerChangeListener(this::onSignalPowerChanged);
@@ -737,6 +738,22 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         SwingUtilities.invokeLater(() -> {
             setLoading(true);
             updateSelectedAntenna(antenna);
+            setLoading(false);
+            save();
+        });
+    }
+
+    private void onValidAntennasChanged(String[] antennas)
+    {
+        SwingUtilities.invokeLater(() -> {
+            setLoading(true);
+            updateAntennaOptions(antennas);
+
+            if(hasTuner())
+            {
+                updateSelectedAntenna(getTuner().getController().getCurrentAntenna());
+            }
+
             setLoading(false);
             save();
         });
