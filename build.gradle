@@ -195,34 +195,36 @@ tasks.withType(JavaCompile) {
 }
 
 /**
- * JVM Arguments for running the application on Windows.
+ * Common JVM Arguments for classpath launches.
  */
-def jvmArgsWindows =
+def jvmArgsClasspath =
         ['--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED', //Needed for controls-fx.jar
-         '--add-exports=java.desktop/com.sun.java.swing.plaf.windows=ALL-UNNAMED', //windows users for JIDE
          '--add-modules=jdk.incubator.vector',   //Project Panama Vector API is still in incubator
          '--enable-native-access=ALL-UNNAMED', //Suppress unsafe warnings for FFM API Foreign Memory calls
          '--enable-native-access=javafx.graphics', //JDK24 - suppress restricted java.lang.System calls
          '-Xmx2g',
-         '-XX:+UseCompactObjectHeaders',   //JDK25 - use compact object headers
+         '-XX:+UseCompactObjectHeaders']   //JDK25 - use compact object headers
+
+/**
+ * JVM Arguments for running the application on Windows.
+ */
+def jvmArgsWindows = jvmArgsClasspath +
+        ['--add-exports=java.desktop/com.sun.java.swing.plaf.windows=ALL-UNNAMED', //windows users for JIDE
          '-Djava.library.path=c:\\Program Files\\SDRplay\\API\\x64'] //SDRPlay API library path
 
 /**
  * JVM Arguments for running the application on Linux.
  */
-def jvmArgsLinux =
-        ['--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED', //Needed for controls-fx.jar
-         '--add-modules=jdk.incubator.vector',   //Needed while Project Panama API is still in incubator
-         '-Xmx2g',
-         '-XX:+UseCompactObjectHeaders',   //JDK25 - use compact object headers
-         '--enable-native-access=javafx.graphics', //JDK24 - suppress restricted java.lang.System calls
-         '--enable-native-access=ALL-UNNAMED'] //SDRPlay API library path
+def jvmArgsLinux = jvmArgsClasspath
 
 /**
  * JVM Arguments for running the application on macOS.
  */
 def jvmArgsMac = jvmArgsLinux
 
+/**
+ * JVM Arguments for running the JPMS application on macOS.
+ */
 def jpmsJvmArgsMac =
         ['--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls', //Needed for controls-fx.jar
          '-Xmx2g',
@@ -350,12 +352,8 @@ tasks.register('jpmsRun', Exec) {
     doFirst {
         executable = "${java26Home.get()}/bin/java"
         args = [
-                '--module-path', jpmsModsDir.get().asFile.absolutePath,
-                '--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls',
-                '-Xmx2g',
-                '--enable-native-access=javafx.graphics,usb4java,sdr.trunk',
-                '-m', jpmsMainModule
-        ]
+                '--module-path', jpmsModsDir.get().asFile.absolutePath
+        ] + jpmsJvmArgsMac + ['-m', jpmsMainModule]
     }
 }
 
