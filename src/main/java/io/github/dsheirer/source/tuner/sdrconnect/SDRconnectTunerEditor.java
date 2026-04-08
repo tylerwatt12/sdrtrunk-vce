@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.GridLayout;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.util.Locale;
@@ -70,6 +71,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JComboBox<String> mSampleRateCombo;
     private JComboBox<String> mAntennaCombo;
     private JSlider mLnaStateSlider;
+    private JPanel mLnaStateControlPanel;
+    private JLabel[] mLnaStateScaleLabels;
     private JLabel mSignalPowerLabel;
     private JLabel mSignalSnrLabel;
     private JPanel mMeasuredErrorPanel;
@@ -218,7 +221,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         leftPanel.add(new JLabel("Antenna:"));
         leftPanel.add(getAntennaCombo(), WRAP);
         leftPanel.add(new JLabel("RF Gain:"));
-        leftPanel.add(getLnaStateSlider(), "span 3,growx");
+        leftPanel.add(getLnaStateControlPanel(), "span 3,growx");
         JPanel rightPanel = new JPanel(new MigLayout("fillx,gapy 0,wrap 1", "[grow,fill]", "[][]"));
         rightPanel.add(getButtonPanel(), "shrink,align left");
         rightPanel.add(getFrequencyPanel(), GROW_X);
@@ -357,6 +360,48 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         return mAntennaCombo;
     }
 
+    private JPanel getLnaStateControlPanel()
+    {
+        if(mLnaStateControlPanel == null)
+        {
+            mLnaStateControlPanel = new JPanel(new MigLayout("insets 0,wrap 1,gapy 0", "[grow,fill]", "[][]"));
+            mLnaStateControlPanel.add(getLnaStateScalePanel(), "growx");
+            mLnaStateControlPanel.add(getLnaStateSlider(), "growx");
+        }
+
+        return mLnaStateControlPanel;
+    }
+
+    private JPanel getLnaStateScalePanel()
+    {
+        JPanel panel = new JPanel(new GridLayout(1, 5));
+
+        for(JLabel label : getLnaStateScaleLabels())
+        {
+            panel.add(label);
+        }
+
+        return panel;
+    }
+
+    private JLabel[] getLnaStateScaleLabels()
+    {
+        if(mLnaStateScaleLabels == null)
+        {
+            mLnaStateScaleLabels = new JLabel[5];
+
+            for(int x = 0; x < mLnaStateScaleLabels.length; x++)
+            {
+                JLabel label = new JLabel("0");
+                label.setHorizontalAlignment(x == 0 ? SwingConstants.LEFT :
+                    x == mLnaStateScaleLabels.length - 1 ? SwingConstants.RIGHT : SwingConstants.CENTER);
+                mLnaStateScaleLabels[x] = label;
+            }
+        }
+
+        return mLnaStateScaleLabels;
+    }
+
     private JSlider getLnaStateSlider()
     {
         if(mLnaStateSlider == null)
@@ -427,8 +472,30 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         mLnaStateSlider.setMinimum(minimum);
         mLnaStateSlider.setMaximum(boundedMaximum);
         mLnaStateSlider.setValue(boundedCurrent);
-        mLnaStateSlider.setLabelTable(mLnaStateSlider.createStandardLabels(Math.max(1, (boundedMaximum - minimum) / 4)));
-        mLnaStateSlider.setPaintLabels(boundedMaximum > minimum);
+        updateLnaStateScaleLabels(minimum, boundedMaximum);
+    }
+
+    private void updateLnaStateScaleLabels(int minimum, int maximum)
+    {
+        JLabel[] labels = getLnaStateScaleLabels();
+
+        if(maximum <= minimum)
+        {
+            for(JLabel label : labels)
+            {
+                label.setText(Integer.toString(minimum));
+            }
+
+            return;
+        }
+
+        int range = maximum - minimum;
+
+        for(int x = 0; x < labels.length; x++)
+        {
+            int value = minimum + Math.round((range * x) / (float)(labels.length - 1));
+            labels[x].setText(Integer.toString(value));
+        }
     }
 
     private void updateAntennaOptions(String[] antennas)
