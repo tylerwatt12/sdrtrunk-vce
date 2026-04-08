@@ -35,12 +35,12 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GradientPaint;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.util.Locale;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JComboBox;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -51,9 +51,9 @@ import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.border.LineBorder;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import javax.swing.plaf.basic.BasicSliderUI;
 
 /**
  * SDRconnect tuner configuration editor
@@ -79,6 +79,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     private JSlider mLnaStateSlider;
     private JPanel mLnaStateControlPanel;
     private JLabel mLnaStateValueLabel;
+    private boolean mLnaStateAdjusting;
     private JLabel mSignalPowerLabel;
     private JLabel mSignalSnrLabel;
     private JPanel mMeasuredErrorPanel;
@@ -371,9 +372,8 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
     {
         if(mLnaStateControlPanel == null)
         {
-            mLnaStateControlPanel = new JPanel(new MigLayout("insets 0,wrap 1,gapy 2", "[grow,fill]", "[][][]"));
+            mLnaStateControlPanel = new JPanel(new MigLayout("insets 0,wrap 1,gapy 2", "[grow,fill]", "[][]"));
             mLnaStateControlPanel.add(getLnaStateValueLabel(), "align center");
-            mLnaStateControlPanel.add(getLnaStateScalePanel(), "growx");
             mLnaStateControlPanel.add(getLnaStateSlider(), "growx");
         }
 
@@ -391,37 +391,6 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         return mLnaStateValueLabel;
     }
 
-    private JComponent getLnaStateScalePanel()
-    {
-        JComponent scalePanel = new JComponent()
-        {
-            @Override
-            protected void paintComponent(Graphics graphics)
-            {
-                super.paintComponent(graphics);
-
-                Graphics2D graphics2D = (Graphics2D)graphics.create();
-                int width = getWidth();
-                int height = getHeight();
-                int transitionWidth = Math.max(1, width / 2);
-
-                graphics2D.setPaint(new java.awt.GradientPaint(0, 0, new Color(0x4CAF50),
-                    transitionWidth, 0, new Color(0xFDD835)));
-                graphics2D.fillRect(0, 0, transitionWidth, height);
-
-                graphics2D.setPaint(new java.awt.GradientPaint(transitionWidth, 0, new Color(0xFDD835),
-                    width, 0, new Color(0xD32F2F)));
-                graphics2D.fillRect(transitionWidth, 0, width - transitionWidth, height);
-                graphics2D.dispose();
-            }
-        };
-        scalePanel.setPreferredSize(new Dimension(0, 8));
-        scalePanel.setBorder(new LineBorder(Color.GRAY));
-        scalePanel.setToolTipText("Lower RF gain to the left, higher RF gain to the right.");
-
-        return scalePanel;
-    }
-
     private JSlider getLnaStateSlider()
     {
         if(mLnaStateSlider == null)
@@ -430,8 +399,34 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
             mLnaStateSlider.setToolTipText("Set SDRconnect LNA gain state.");
             mLnaStateSlider.setMajorTickSpacing(1);
             mLnaStateSlider.setPaintTicks(true);
+            mLnaStateSlider.setUI(new BasicSliderUI(mLnaStateSlider)
+            {
+                @Override
+                public void paintTrack(Graphics graphics)
+                {
+                    Graphics2D graphics2D = (Graphics2D)graphics.create();
+                    int trackHeight = Math.max(3, (trackRect.height - 2) / 2);
+                    int trackY = trackRect.y + (trackRect.height - trackHeight) / 2;
+                    int transitionWidth = Math.max(1, trackRect.width / 2);
+
+                    graphics2D.setPaint(new GradientPaint(trackRect.x, 0, new Color(0x4CAF50),
+                        trackRect.x + transitionWidth, 0, new Color(0xFDD835)));
+                    graphics2D.fillRoundRect(trackRect.x, trackY, transitionWidth, trackHeight, trackHeight, trackHeight);
+
+                    graphics2D.setPaint(new GradientPaint(trackRect.x + transitionWidth, 0, new Color(0xFDD835),
+                        trackRect.x + trackRect.width, 0, new Color(0xD32F2F)));
+                    graphics2D.fillRoundRect(trackRect.x + transitionWidth, trackY,
+                        trackRect.width - transitionWidth, trackHeight, trackHeight, trackHeight);
+
+                    graphics2D.setColor(Color.GRAY);
+                    graphics2D.drawRoundRect(trackRect.x, trackY, trackRect.width - 1, trackHeight - 1,
+                        trackHeight, trackHeight);
+                    graphics2D.dispose();
+                }
+            });
             mLnaStateSlider.addChangeListener(e -> {
-                updateLnaStateValueDisplay(mLnaStateSlider.getValue(), mLnaStateSlider.getValueIsAdjusting());
+                updateLnaStateValueDisplay(mLnaStateSlider.getValue(),
+                    mLnaStateAdjusting || mLnaStateSlider.getValueIsAdjusting());
 
                 if(!isLoading())
                 {
@@ -450,12 +445,14 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
                 @Override
                 public void mousePressed(MouseEvent event)
                 {
+                    mLnaStateAdjusting = true;
                     updateLnaStateValueDisplay(mLnaStateSlider.getValue(), true);
                 }
 
                 @Override
                 public void mouseReleased(MouseEvent event)
                 {
+                    mLnaStateAdjusting = false;
                     updateLnaStateValueDisplay(mLnaStateSlider.getValue(), false);
                 }
             });
@@ -508,12 +505,12 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         mLnaStateSlider.setMinimum(minimum);
         mLnaStateSlider.setMaximum(boundedMaximum);
         mLnaStateSlider.setValue(boundedCurrent);
-        updateLnaStateValueDisplay(boundedCurrent, false);
+        updateLnaStateValueDisplay(boundedCurrent, mLnaStateAdjusting);
     }
 
     private void updateLnaStateValueDisplay(int value, boolean visible)
     {
-        getLnaStateValueLabel().setText("Gain " + value);
+        getLnaStateValueLabel().setText(value + " dB");
         getLnaStateValueLabel().setVisible(visible);
     }
 
