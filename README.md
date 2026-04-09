@@ -50,6 +50,8 @@ to help, and will cause decode failures.
 - One thing to note with P25 is to ensure that the control frequency is well inside the bandpass, rather than hanging out
 at the band edge in the rolloff area. If you note that your control frequency has landed there when sdtrunk picks the center
 frequency, increase the sampling rate by 1MHz.
+- While the SDRconnect tuner type will display drift and PPM, the auto-correct feature is disabled, as the drift will in
+general be so low as to be uninteresting.
 - Gettting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
 to get along with JDK 26 a lot better than it got along with 25, at least on my system. I was encountering a lot of 'out of
 application memory' issues on a 64GB machine, so my thesis was that perhaps there was some application issue that was the
