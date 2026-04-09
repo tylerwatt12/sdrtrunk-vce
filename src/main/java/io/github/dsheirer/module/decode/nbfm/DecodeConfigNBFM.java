@@ -71,6 +71,8 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     private int mLowPassCutoff = 3400;
     private boolean mVoiceEnhanceEnabled;
     private float mVoiceEnhanceAmount = 30.0f;
+    private boolean mBassBoostEnabled;
+    private float mBassBoostDb;
 
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
@@ -307,5 +309,27 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     public void setVoiceEnhanceAmount(float amount)
     {
         mVoiceEnhanceAmount = Math.max(0.0f, Math.min(100.0f, amount));
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "bassBoostEnabled")
+    public boolean isBassBoostEnabled()
+    {
+        return mBassBoostEnabled;
+    }
+
+    public void setBassBoostEnabled(boolean enabled)
+    {
+        mBassBoostEnabled = enabled;
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "bassBoostDb")
+    public float getBassBoostDb()
+    {
+        return mBassBoostDb;
+    }
+
+    public void setBassBoostDb(float boostDb)
+    {
+        mBassBoostDb = Math.max(0.0f, Math.min(12.0f, boostDb));
     }
 }

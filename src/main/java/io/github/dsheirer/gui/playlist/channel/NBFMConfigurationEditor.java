@@ -82,6 +82,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private Spinner<Integer> mLowPassCutoffSpinner;
     private ToggleSwitch mVoiceEnhanceEnable;
     private Spinner<Integer> mVoiceEnhanceAmountSpinner;
+    private ToggleSwitch mBassBoostEnable;
+    private Spinner<Double> mBassBoostSpinner;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -206,6 +208,17 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
             GridPane.setConstraints(getVoiceEnhanceAmountSpinner(), 3, 5);
             gridPane.getChildren().add(getVoiceEnhanceAmountSpinner());
+
+            GridPane.setConstraints(getBassBoostEnable(), 0, 6);
+            gridPane.getChildren().add(getBassBoostEnable());
+
+            Label bassBoostLabel = new Label("Bass Boost (dB)");
+            GridPane.setHalignment(bassBoostLabel, HPos.RIGHT);
+            GridPane.setConstraints(bassBoostLabel, 2, 6);
+            gridPane.getChildren().add(bassBoostLabel);
+
+            GridPane.setConstraints(getBassBoostSpinner(), 3, 6);
+            gridPane.getChildren().add(getBassBoostSpinner());
 
             mDecoderPane.setContent(gridPane);
 
@@ -509,6 +522,36 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mVoiceEnhanceAmountSpinner;
     }
 
+    private ToggleSwitch getBassBoostEnable()
+    {
+        if(mBassBoostEnable == null)
+        {
+            mBassBoostEnable = new ToggleSwitch("Bass Boost");
+            mBassBoostEnable.setTooltip(new Tooltip("Low-shelf boost below the voice band"));
+            mBassBoostEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
+                getBassBoostSpinner().setDisable(!newValue);
+                modifiedProperty().set(true);
+            });
+        }
+
+        return mBassBoostEnable;
+    }
+
+    private Spinner<Double> getBassBoostSpinner()
+    {
+        if(mBassBoostSpinner == null)
+        {
+            mBassBoostSpinner = new Spinner<>();
+            mBassBoostSpinner.setPrefWidth(100);
+            mBassBoostSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mBassBoostSpinner.setTooltip(new Tooltip("Bass boost in dB"));
+            mBassBoostSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(0.0, 12.0, 0.0, 0.5));
+            mBassBoostSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mBassBoostSpinner;
+    }
+
     private TextField getTalkgroupField()
     {
         if(mTalkgroupField == null)
@@ -616,6 +659,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getVoiceEnhanceEnable().setSelected(decodeConfigNBFM.isVoiceEnhanceEnabled());
             getVoiceEnhanceAmountSpinner().getValueFactory().setValue((int)decodeConfigNBFM.getVoiceEnhanceAmount());
             getVoiceEnhanceAmountSpinner().setDisable(!decodeConfigNBFM.isVoiceEnhanceEnabled());
+            getBassBoostEnable().setDisable(false);
+            getBassBoostEnable().setSelected(decodeConfigNBFM.isBassBoostEnabled());
+            getBassBoostSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getBassBoostDb());
+            getBassBoostSpinner().setDisable(!decodeConfigNBFM.isBassBoostEnabled());
         }
         else
         {
@@ -646,6 +693,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getVoiceEnhanceEnable().setSelected(false);
             getVoiceEnhanceAmountSpinner().setDisable(true);
             getVoiceEnhanceAmountSpinner().getValueFactory().setValue(30);
+            getBassBoostEnable().setDisable(true);
+            getBassBoostEnable().setSelected(false);
+            getBassBoostSpinner().setDisable(true);
+            getBassBoostSpinner().getValueFactory().setValue(0.0);
         }
     }
 
@@ -689,6 +740,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         config.setLowPassCutoff(getLowPassCutoffSpinner().getValue());
         config.setVoiceEnhanceEnabled(getVoiceEnhanceEnable().isSelected());
         config.setVoiceEnhanceAmount(getVoiceEnhanceAmountSpinner().getValue());
+        config.setBassBoostEnabled(getBassBoostEnable().isSelected());
+        config.setBassBoostDb(getBassBoostSpinner().getValue().floatValue());
         getItem().setDecodeConfiguration(config);
     }
 

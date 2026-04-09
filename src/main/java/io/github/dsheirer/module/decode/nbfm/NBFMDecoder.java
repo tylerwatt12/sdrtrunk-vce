@@ -73,6 +73,8 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private final int mLowPassCutoff;
     private final boolean mVoiceEnhanceEnabled;
     private final float mVoiceEnhanceAmount;
+    private final boolean mBassBoostEnabled;
+    private final float mBassBoostDb;
     private float mDeemphasisAlpha;
     private float mPreviousDeemphasis;
     private final boolean mSquelchTailRemovalEnabled;
@@ -88,6 +90,15 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private float mVoiceEnhanceB2;
     private float mVoiceEnhanceA1;
     private float mVoiceEnhanceA2;
+    private float mBassBoostX1;
+    private float mBassBoostX2;
+    private float mBassBoostY1;
+    private float mBassBoostY2;
+    private float mBassBoostB0;
+    private float mBassBoostB1;
+    private float mBassBoostB2;
+    private float mBassBoostA1;
+    private float mBassBoostA2;
 
     /**
      * Constructs an instance
@@ -105,6 +116,8 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         mLowPassCutoff = config.getLowPassCutoff();
         mVoiceEnhanceEnabled = config.isVoiceEnhanceEnabled();
         mVoiceEnhanceAmount = config.getVoiceEnhanceAmount();
+        mBassBoostEnabled = config.isBassBoostEnabled();
+        mBassBoostDb = config.getBassBoostDb();
         mSquelchTailRemovalEnabled = config.isSquelchTailRemovalEnabled();
         mNoiseSquelch = new NoiseSquelch(config.getSquelchNoiseOpenThreshold(), config.getSquelchNoiseCloseThreshold(),
                 config.getSquelchHysteresisOpenThreshold(), config.getSquelchHysteresisCloseThreshold());
@@ -166,6 +179,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
                 mPreviousDeemphasis = 0.0f;
                 resetAudioLowPassFilter();
                 resetVoiceEnhanceFilter();
+                resetBassBoostFilter();
 
                 if(mSquelchTailRemovalEnabled)
                 {
@@ -290,6 +304,11 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         if(mVoiceEnhanceEnabled)
         {
             demodulatedSamples = applyVoiceEnhancement(demodulatedSamples);
+        }
+
+        if(mBassBoostEnabled)
+        {
+            demodulatedSamples = applyBassBoost(demodulatedSamples);
         }
 
         if(mResampledBufferListener != null)
@@ -488,6 +507,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
         configureAudioLowPassFilter();
         configureVoiceEnhanceFilter();
+        configureBassBoostFilter();
         updateDeemphasisAlpha();
     }
 
@@ -568,6 +588,68 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             mVoiceEnhanceX1 = samples[x];
             mVoiceEnhanceY2 = mVoiceEnhanceY1;
             mVoiceEnhanceY1 = output;
+            samples[x] = output;
+        }
+
+        return samples;
+    }
+
+    private void configureBassBoostFilter()
+    {
+        if(!mBassBoostEnabled || mBassBoostDb < 0.1f)
+        {
+            return;
+        }
+
+        double fc = 400.0;
+        double fs = DEMODULATED_AUDIO_SAMPLE_RATE;
+        double gainLinear = Math.pow(10.0, mBassBoostDb / 20.0);
+        double w0 = 2.0 * Math.PI * fc / fs;
+        double cosW0 = Math.cos(w0);
+        double sinW0 = Math.sin(w0);
+        double a = Math.sqrt(gainLinear);
+        double s = 1.0;
+        double alpha = sinW0 / 2.0 * Math.sqrt((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0);
+
+        double b0 = a * ((a + 1.0) - (a - 1.0) * cosW0 + 2.0 * Math.sqrt(a) * alpha);
+        double b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cosW0);
+        double b2 = a * ((a + 1.0) - (a - 1.0) * cosW0 - 2.0 * Math.sqrt(a) * alpha);
+        double a0 = (a + 1.0) + (a - 1.0) * cosW0 + 2.0 * Math.sqrt(a) * alpha;
+        double a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cosW0);
+        double a2 = (a + 1.0) + (a - 1.0) * cosW0 - 2.0 * Math.sqrt(a) * alpha;
+
+        mBassBoostB0 = (float)(b0 / a0);
+        mBassBoostB1 = (float)(b1 / a0);
+        mBassBoostB2 = (float)(b2 / a0);
+        mBassBoostA1 = (float)(a1 / a0);
+        mBassBoostA2 = (float)(a2 / a0);
+        resetBassBoostFilter();
+    }
+
+    private void resetBassBoostFilter()
+    {
+        mBassBoostX1 = 0.0f;
+        mBassBoostX2 = 0.0f;
+        mBassBoostY1 = 0.0f;
+        mBassBoostY2 = 0.0f;
+    }
+
+    private float[] applyBassBoost(float[] samples)
+    {
+        if(mBassBoostDb < 0.1f)
+        {
+            return samples;
+        }
+
+        for(int x = 0; x < samples.length; x++)
+        {
+            float output = mBassBoostB0 * samples[x] + mBassBoostB1 * mBassBoostX1 +
+                    mBassBoostB2 * mBassBoostX2 - mBassBoostA1 * mBassBoostY1 - mBassBoostA2 * mBassBoostY2;
+
+            mBassBoostX2 = mBassBoostX1;
+            mBassBoostX1 = samples[x];
+            mBassBoostY2 = mBassBoostY1;
+            mBassBoostY1 = output;
             samples[x] = output;
         }
 
