@@ -80,6 +80,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private Spinner<Integer> mHeadRemovalSpinner;
     private ToggleSwitch mLowPassEnable;
     private Spinner<Integer> mLowPassCutoffSpinner;
+    private ToggleSwitch mVoiceEnhanceEnable;
+    private Spinner<Integer> mVoiceEnhanceAmountSpinner;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -193,6 +195,17 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
             GridPane.setConstraints(getLowPassCutoffSpinner(), 3, 4);
             gridPane.getChildren().add(getLowPassCutoffSpinner());
+
+            GridPane.setConstraints(getVoiceEnhanceEnable(), 0, 5);
+            gridPane.getChildren().add(getVoiceEnhanceEnable());
+
+            Label voiceEnhanceAmountLabel = new Label("Voice Enhance (%)");
+            GridPane.setHalignment(voiceEnhanceAmountLabel, HPos.RIGHT);
+            GridPane.setConstraints(voiceEnhanceAmountLabel, 2, 5);
+            gridPane.getChildren().add(voiceEnhanceAmountLabel);
+
+            GridPane.setConstraints(getVoiceEnhanceAmountSpinner(), 3, 5);
+            gridPane.getChildren().add(getVoiceEnhanceAmountSpinner());
 
             mDecoderPane.setContent(gridPane);
 
@@ -464,6 +477,38 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mLowPassCutoffSpinner;
     }
 
+    private ToggleSwitch getVoiceEnhanceEnable()
+    {
+        if(mVoiceEnhanceEnable == null)
+        {
+            mVoiceEnhanceEnable = new ToggleSwitch("Voice Enhance");
+            mVoiceEnhanceEnable.setTooltip(new Tooltip("Presence boost around upper speech frequencies"));
+            mVoiceEnhanceEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
+                getVoiceEnhanceAmountSpinner().setDisable(!newValue);
+                modifiedProperty().set(true);
+            });
+        }
+
+        return mVoiceEnhanceEnable;
+    }
+
+    private Spinner<Integer> getVoiceEnhanceAmountSpinner()
+    {
+        if(mVoiceEnhanceAmountSpinner == null)
+        {
+            mVoiceEnhanceAmountSpinner = new Spinner<>();
+            mVoiceEnhanceAmountSpinner.setPrefWidth(100);
+            mVoiceEnhanceAmountSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mVoiceEnhanceAmountSpinner.setTooltip(new Tooltip("Presence boost amount as a percentage of maximum"));
+            mVoiceEnhanceAmountSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 100, 30,
+                    5));
+            mVoiceEnhanceAmountSpinner.valueProperty().addListener((observable, oldValue, newValue) ->
+                    modifiedProperty().set(true));
+        }
+
+        return mVoiceEnhanceAmountSpinner;
+    }
+
     private TextField getTalkgroupField()
     {
         if(mTalkgroupField == null)
@@ -567,6 +612,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getLowPassEnable().setSelected(decodeConfigNBFM.isLowPassEnabled());
             getLowPassCutoffSpinner().getValueFactory().setValue(decodeConfigNBFM.getLowPassCutoff());
             getLowPassCutoffSpinner().setDisable(!decodeConfigNBFM.isLowPassEnabled());
+            getVoiceEnhanceEnable().setDisable(false);
+            getVoiceEnhanceEnable().setSelected(decodeConfigNBFM.isVoiceEnhanceEnabled());
+            getVoiceEnhanceAmountSpinner().getValueFactory().setValue((int)decodeConfigNBFM.getVoiceEnhanceAmount());
+            getVoiceEnhanceAmountSpinner().setDisable(!decodeConfigNBFM.isVoiceEnhanceEnabled());
         }
         else
         {
@@ -593,6 +642,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getLowPassEnable().setSelected(false);
             getLowPassCutoffSpinner().setDisable(true);
             getLowPassCutoffSpinner().getValueFactory().setValue(3400);
+            getVoiceEnhanceEnable().setDisable(true);
+            getVoiceEnhanceEnable().setSelected(false);
+            getVoiceEnhanceAmountSpinner().setDisable(true);
+            getVoiceEnhanceAmountSpinner().getValueFactory().setValue(30);
         }
     }
 
@@ -634,6 +687,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         config.setSquelchHeadRemovalMs(getHeadRemovalSpinner().getValue());
         config.setLowPassEnabled(getLowPassEnable().isSelected());
         config.setLowPassCutoff(getLowPassCutoffSpinner().getValue());
+        config.setVoiceEnhanceEnabled(getVoiceEnhanceEnable().isSelected());
+        config.setVoiceEnhanceAmount(getVoiceEnhanceAmountSpinner().getValue());
         getItem().setDecodeConfiguration(config);
     }
 

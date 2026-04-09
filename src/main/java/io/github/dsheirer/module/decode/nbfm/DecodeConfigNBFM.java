@@ -69,6 +69,8 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     private int mSquelchHeadRemovalMs = SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS;
     private boolean mLowPassEnabled;
     private int mLowPassCutoff = 3400;
+    private boolean mVoiceEnhanceEnabled;
+    private float mVoiceEnhanceAmount = 30.0f;
 
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
@@ -283,5 +285,27 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     public void setLowPassCutoff(int cutoff)
     {
         mLowPassCutoff = Math.max(2000, Math.min(4000, cutoff));
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "voiceEnhanceEnabled")
+    public boolean isVoiceEnhanceEnabled()
+    {
+        return mVoiceEnhanceEnabled;
+    }
+
+    public void setVoiceEnhanceEnabled(boolean enabled)
+    {
+        mVoiceEnhanceEnabled = enabled;
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "voiceEnhanceAmount")
+    public float getVoiceEnhanceAmount()
+    {
+        return mVoiceEnhanceAmount;
+    }
+
+    public void setVoiceEnhanceAmount(float amount)
+    {
+        mVoiceEnhanceAmount = Math.max(0.0f, Math.min(100.0f, amount));
     }
 }

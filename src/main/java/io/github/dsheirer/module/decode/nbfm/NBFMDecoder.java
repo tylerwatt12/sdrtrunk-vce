@@ -71,12 +71,23 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private final DecodeConfigNBFM.DeemphasisMode mDeemphasisMode;
     private final boolean mLowPassEnabled;
     private final int mLowPassCutoff;
+    private final boolean mVoiceEnhanceEnabled;
+    private final float mVoiceEnhanceAmount;
     private float mDeemphasisAlpha;
     private float mPreviousDeemphasis;
     private final boolean mSquelchTailRemovalEnabled;
     private SquelchTailRemover mSquelchTailRemover;
     private IRealFilter mAudioLowPassFilter;
     private float[] mAudioLowPassCoefficients;
+    private float mVoiceEnhanceX1;
+    private float mVoiceEnhanceX2;
+    private float mVoiceEnhanceY1;
+    private float mVoiceEnhanceY2;
+    private float mVoiceEnhanceB0;
+    private float mVoiceEnhanceB1;
+    private float mVoiceEnhanceB2;
+    private float mVoiceEnhanceA1;
+    private float mVoiceEnhanceA2;
 
     /**
      * Constructs an instance
@@ -92,6 +103,8 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         mDeemphasisMode = config.getDeemphasis();
         mLowPassEnabled = config.isLowPassEnabled();
         mLowPassCutoff = config.getLowPassCutoff();
+        mVoiceEnhanceEnabled = config.isVoiceEnhanceEnabled();
+        mVoiceEnhanceAmount = config.getVoiceEnhanceAmount();
         mSquelchTailRemovalEnabled = config.isSquelchTailRemovalEnabled();
         mNoiseSquelch = new NoiseSquelch(config.getSquelchNoiseOpenThreshold(), config.getSquelchNoiseCloseThreshold(),
                 config.getSquelchHysteresisOpenThreshold(), config.getSquelchHysteresisCloseThreshold());
@@ -152,6 +165,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             {
                 mPreviousDeemphasis = 0.0f;
                 resetAudioLowPassFilter();
+                resetVoiceEnhanceFilter();
 
                 if(mSquelchTailRemovalEnabled)
                 {
@@ -271,6 +285,11 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         if(mLowPassEnabled && mAudioLowPassFilter != null)
         {
             demodulatedSamples = mAudioLowPassFilter.filter(demodulatedSamples);
+        }
+
+        if(mVoiceEnhanceEnabled)
+        {
+            demodulatedSamples = applyVoiceEnhancement(demodulatedSamples);
         }
 
         if(mResampledBufferListener != null)
@@ -468,6 +487,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         }
 
         configureAudioLowPassFilter();
+        configureVoiceEnhanceFilter();
         updateDeemphasisAlpha();
     }
 
@@ -491,6 +511,67 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         {
             mAudioLowPassFilter = FilterFactory.getRealFilter(mAudioLowPassCoefficients.clone());
         }
+    }
+
+    private void configureVoiceEnhanceFilter()
+    {
+        if(!mVoiceEnhanceEnabled || mVoiceEnhanceAmount < 0.01f)
+        {
+            return;
+        }
+
+        double centerFreq = 2800.0;
+        double q = 1.5;
+        double dbGain = 6.0 * (mVoiceEnhanceAmount / 100.0f);
+        double w0 = 2.0 * Math.PI * centerFreq / DEMODULATED_AUDIO_SAMPLE_RATE;
+        double a = Math.pow(10.0, dbGain / 40.0);
+        double alpha = Math.sin(w0) / (2.0 * q);
+        double cosW0 = Math.cos(w0);
+
+        double b0 = 1.0 + alpha * a;
+        double b1 = -2.0 * cosW0;
+        double b2 = 1.0 - alpha * a;
+        double a0 = 1.0 + alpha / a;
+        double a1 = -2.0 * cosW0;
+        double a2 = 1.0 - alpha / a;
+
+        mVoiceEnhanceB0 = (float)(b0 / a0);
+        mVoiceEnhanceB1 = (float)(b1 / a0);
+        mVoiceEnhanceB2 = (float)(b2 / a0);
+        mVoiceEnhanceA1 = (float)(a1 / a0);
+        mVoiceEnhanceA2 = (float)(a2 / a0);
+        resetVoiceEnhanceFilter();
+    }
+
+    private void resetVoiceEnhanceFilter()
+    {
+        mVoiceEnhanceX1 = 0.0f;
+        mVoiceEnhanceX2 = 0.0f;
+        mVoiceEnhanceY1 = 0.0f;
+        mVoiceEnhanceY2 = 0.0f;
+    }
+
+    private float[] applyVoiceEnhancement(float[] samples)
+    {
+        if(mVoiceEnhanceAmount < 0.01f)
+        {
+            return samples;
+        }
+
+        for(int x = 0; x < samples.length; x++)
+        {
+            float output = mVoiceEnhanceB0 * samples[x] + mVoiceEnhanceB1 * mVoiceEnhanceX1 +
+                    mVoiceEnhanceB2 * mVoiceEnhanceX2 - mVoiceEnhanceA1 * mVoiceEnhanceY1 -
+                    mVoiceEnhanceA2 * mVoiceEnhanceY2;
+
+            mVoiceEnhanceX2 = mVoiceEnhanceX1;
+            mVoiceEnhanceX1 = samples[x];
+            mVoiceEnhanceY2 = mVoiceEnhanceY1;
+            mVoiceEnhanceY1 = output;
+            samples[x] = output;
+        }
+
+        return samples;
     }
 
     private float[] applyDeemphasis(float[] samples)
