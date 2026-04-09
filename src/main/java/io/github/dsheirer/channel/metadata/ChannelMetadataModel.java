@@ -252,7 +252,7 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
     @Override
     public Object getValueAt(int rowIndex, int columnIndex)
     {
-        if(rowIndex <= mChannelMetadata.size())
+        if(rowIndex < mChannelMetadata.size())
         {
             ChannelMetadata channelMetadata = mChannelMetadata.get(rowIndex);
 
@@ -318,6 +318,11 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
         {
             //Execute on the swing thread to avoid threading issues
             EventQueue.invokeLater(() -> {
+                if(rowIndex >= mChannelMetadata.size())
+                {
+                    return;
+                }
+
                 switch(channelMetadataField)
                 {
                     case CONFIGURATION_CHANNEL:
