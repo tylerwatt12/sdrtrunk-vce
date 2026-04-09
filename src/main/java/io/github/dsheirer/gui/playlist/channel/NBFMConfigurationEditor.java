@@ -80,9 +80,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private Spinner<Integer> mHeadRemovalSpinner;
     private ToggleSwitch mLowPassEnable;
     private Spinner<Integer> mLowPassCutoffSpinner;
-    private ToggleSwitch mVoiceEnhanceEnable;
     private Spinner<Integer> mVoiceEnhanceAmountSpinner;
-    private ToggleSwitch mBassBoostEnable;
     private Spinner<Double> mBassBoostSpinner;
     private Spinner<Double> mOutputGainSpinner;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
@@ -158,9 +156,6 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(getTalkgroupField(), 1, 1);
             gridPane.getChildren().add(getTalkgroupField());
 
-            GridPane.setConstraints(getAudioFilterEnable(), 2, 1);
-            gridPane.getChildren().add(getAudioFilterEnable());
-
             Label deemphasisLabel = new Label("De-Emphasis");
             GridPane.setHalignment(deemphasisLabel, HPos.RIGHT);
             GridPane.setConstraints(deemphasisLabel, 0, 2);
@@ -169,65 +164,77 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(getDeemphasisModeComboBox(), 1, 2);
             gridPane.getChildren().add(getDeemphasisModeComboBox());
 
-            GridPane.setConstraints(getSquelchTailRemovalEnable(), 2, 2);
-            gridPane.getChildren().add(getSquelchTailRemovalEnable());
+            Label outputGainLabel = new Label("Output Gain");
+            GridPane.setHalignment(outputGainLabel, HPos.RIGHT);
+            GridPane.setConstraints(outputGainLabel, 0, 3);
+            gridPane.getChildren().add(outputGainLabel);
 
-            Label tailTrimLabel = new Label("Tail Trim (ms)");
-            GridPane.setHalignment(tailTrimLabel, HPos.RIGHT);
-            GridPane.setConstraints(tailTrimLabel, 0, 3);
-            gridPane.getChildren().add(tailTrimLabel);
+            GridPane.setConstraints(getOutputGainSpinner(), 1, 3);
+            gridPane.getChildren().add(getOutputGainSpinner());
 
-            GridPane.setConstraints(getTailRemovalSpinner(), 1, 3);
-            gridPane.getChildren().add(getTailRemovalSpinner());
+            Label audioFilterLabel = new Label("High-Pass Filter");
+            GridPane.setHalignment(audioFilterLabel, HPos.RIGHT);
+            GridPane.setConstraints(audioFilterLabel, 2, 0);
+            gridPane.getChildren().add(audioFilterLabel);
 
-            Label headTrimLabel = new Label("Head Trim (ms)");
-            GridPane.setHalignment(headTrimLabel, HPos.RIGHT);
-            GridPane.setConstraints(headTrimLabel, 2, 3);
-            gridPane.getChildren().add(headTrimLabel);
+            GridPane.setConstraints(getAudioFilterEnable(), 3, 0);
+            gridPane.getChildren().add(getAudioFilterEnable());
 
-            GridPane.setConstraints(getHeadRemovalSpinner(), 3, 3);
-            gridPane.getChildren().add(getHeadRemovalSpinner());
+            Label lowPassFilterLabel = new Label("Low-Pass Filter");
+            GridPane.setHalignment(lowPassFilterLabel, HPos.RIGHT);
+            GridPane.setConstraints(lowPassFilterLabel, 2, 1);
+            gridPane.getChildren().add(lowPassFilterLabel);
 
-            GridPane.setConstraints(getLowPassEnable(), 2, 0);
+            GridPane.setConstraints(getLowPassEnable(), 3, 1);
             gridPane.getChildren().add(getLowPassEnable());
 
             Label lowPassCutoffLabel = new Label("LP Cutoff (Hz)");
             GridPane.setHalignment(lowPassCutoffLabel, HPos.RIGHT);
-            GridPane.setConstraints(lowPassCutoffLabel, 2, 4);
+            GridPane.setConstraints(lowPassCutoffLabel, 2, 2);
             gridPane.getChildren().add(lowPassCutoffLabel);
 
-            GridPane.setConstraints(getLowPassCutoffSpinner(), 3, 4);
+            GridPane.setConstraints(getLowPassCutoffSpinner(), 3, 2);
             gridPane.getChildren().add(getLowPassCutoffSpinner());
-
-            GridPane.setConstraints(getVoiceEnhanceEnable(), 0, 5);
-            gridPane.getChildren().add(getVoiceEnhanceEnable());
 
             Label voiceEnhanceAmountLabel = new Label("Voice Enhance (%)");
             GridPane.setHalignment(voiceEnhanceAmountLabel, HPos.RIGHT);
-            GridPane.setConstraints(voiceEnhanceAmountLabel, 2, 5);
+            GridPane.setConstraints(voiceEnhanceAmountLabel, 2, 3);
             gridPane.getChildren().add(voiceEnhanceAmountLabel);
 
-            GridPane.setConstraints(getVoiceEnhanceAmountSpinner(), 3, 5);
+            GridPane.setConstraints(getVoiceEnhanceAmountSpinner(), 3, 3);
             gridPane.getChildren().add(getVoiceEnhanceAmountSpinner());
 
-            GridPane.setConstraints(getBassBoostEnable(), 0, 6);
-            gridPane.getChildren().add(getBassBoostEnable());
+            Label squelchTrimLabel = new Label("Squelch Trim");
+            GridPane.setHalignment(squelchTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(squelchTrimLabel, 4, 0);
+            gridPane.getChildren().add(squelchTrimLabel);
+
+            GridPane.setConstraints(getSquelchTailRemovalEnable(), 5, 0);
+            gridPane.getChildren().add(getSquelchTailRemovalEnable());
+
+            Label tailTrimLabel = new Label("Tail Trim (ms)");
+            GridPane.setHalignment(tailTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(tailTrimLabel, 4, 1);
+            gridPane.getChildren().add(tailTrimLabel);
+
+            GridPane.setConstraints(getTailRemovalSpinner(), 5, 1);
+            gridPane.getChildren().add(getTailRemovalSpinner());
+
+            Label headTrimLabel = new Label("Head Trim (ms)");
+            GridPane.setHalignment(headTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(headTrimLabel, 4, 2);
+            gridPane.getChildren().add(headTrimLabel);
+
+            GridPane.setConstraints(getHeadRemovalSpinner(), 5, 2);
+            gridPane.getChildren().add(getHeadRemovalSpinner());
 
             Label bassBoostLabel = new Label("Bass Boost (dB)");
             GridPane.setHalignment(bassBoostLabel, HPos.RIGHT);
-            GridPane.setConstraints(bassBoostLabel, 2, 6);
+            GridPane.setConstraints(bassBoostLabel, 4, 3);
             gridPane.getChildren().add(bassBoostLabel);
 
-            GridPane.setConstraints(getBassBoostSpinner(), 3, 6);
+            GridPane.setConstraints(getBassBoostSpinner(), 5, 3);
             gridPane.getChildren().add(getBassBoostSpinner());
-
-            Label outputGainLabel = new Label("Output Gain");
-            GridPane.setHalignment(outputGainLabel, HPos.RIGHT);
-            GridPane.setConstraints(outputGainLabel, 2, 7);
-            gridPane.getChildren().add(outputGainLabel);
-
-            GridPane.setConstraints(getOutputGainSpinner(), 3, 7);
-            gridPane.getChildren().add(getOutputGainSpinner());
 
             mDecoderPane.setContent(gridPane);
 
@@ -344,7 +351,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mAudioFilterEnable == null)
         {
-            mAudioFilterEnable = new ToggleSwitch("High-Pass Audio Filter");
+            mAudioFilterEnable = new ToggleSwitch();
             mAudioFilterEnable.setTooltip(new Tooltip("High-pass filter to remove DC offset and sub-audible signalling"));
             mAudioFilterEnable.selectedProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
         }
@@ -421,7 +428,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mSquelchTailRemovalEnable == null)
         {
-            mSquelchTailRemovalEnable = new ToggleSwitch("Squelch Trim");
+            mSquelchTailRemovalEnable = new ToggleSwitch();
             mSquelchTailRemovalEnable.setTooltip(new Tooltip("Trim start/end audio around squelch transitions"));
             mSquelchTailRemovalEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
                 getTailRemovalSpinner().setDisable(!newValue);
@@ -471,7 +478,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mLowPassEnable == null)
         {
-            mLowPassEnable = new ToggleSwitch("Low-Pass Filter");
+            mLowPassEnable = new ToggleSwitch();
             mLowPassEnable.setTooltip(new Tooltip("Reduce high-frequency hiss in NBFM audio"));
             mLowPassEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
                 getLowPassCutoffSpinner().setDisable(!newValue);
@@ -499,21 +506,6 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mLowPassCutoffSpinner;
     }
 
-    private ToggleSwitch getVoiceEnhanceEnable()
-    {
-        if(mVoiceEnhanceEnable == null)
-        {
-            mVoiceEnhanceEnable = new ToggleSwitch("Voice Enhance");
-            mVoiceEnhanceEnable.setTooltip(new Tooltip("Presence boost around upper speech frequencies"));
-            mVoiceEnhanceEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
-                getVoiceEnhanceAmountSpinner().setDisable(!newValue);
-                modifiedProperty().set(true);
-            });
-        }
-
-        return mVoiceEnhanceEnable;
-    }
-
     private Spinner<Integer> getVoiceEnhanceAmountSpinner()
     {
         if(mVoiceEnhanceAmountSpinner == null)
@@ -529,21 +521,6 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mVoiceEnhanceAmountSpinner;
-    }
-
-    private ToggleSwitch getBassBoostEnable()
-    {
-        if(mBassBoostEnable == null)
-        {
-            mBassBoostEnable = new ToggleSwitch("Bass Boost");
-            mBassBoostEnable.setTooltip(new Tooltip("Low-shelf boost below the voice band"));
-            mBassBoostEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
-                getBassBoostSpinner().setDisable(!newValue);
-                modifiedProperty().set(true);
-            });
-        }
-
-        return mBassBoostEnable;
     }
 
     private Spinner<Double> getBassBoostSpinner()
@@ -679,14 +656,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getLowPassEnable().setSelected(decodeConfigNBFM.isLowPassEnabled());
             getLowPassCutoffSpinner().getValueFactory().setValue(decodeConfigNBFM.getLowPassCutoff());
             getLowPassCutoffSpinner().setDisable(!decodeConfigNBFM.isLowPassEnabled());
-            getVoiceEnhanceEnable().setDisable(false);
-            getVoiceEnhanceEnable().setSelected(decodeConfigNBFM.isVoiceEnhanceEnabled());
+            getVoiceEnhanceAmountSpinner().setDisable(false);
             getVoiceEnhanceAmountSpinner().getValueFactory().setValue((int)decodeConfigNBFM.getVoiceEnhanceAmount());
-            getVoiceEnhanceAmountSpinner().setDisable(!decodeConfigNBFM.isVoiceEnhanceEnabled());
-            getBassBoostEnable().setDisable(false);
-            getBassBoostEnable().setSelected(decodeConfigNBFM.isBassBoostEnabled());
+            getBassBoostSpinner().setDisable(false);
             getBassBoostSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getBassBoostDb());
-            getBassBoostSpinner().setDisable(!decodeConfigNBFM.isBassBoostEnabled());
             getOutputGainSpinner().setDisable(false);
             getOutputGainSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getOutputGain());
         }
@@ -715,12 +688,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getLowPassEnable().setSelected(false);
             getLowPassCutoffSpinner().setDisable(true);
             getLowPassCutoffSpinner().getValueFactory().setValue(3400);
-            getVoiceEnhanceEnable().setDisable(true);
-            getVoiceEnhanceEnable().setSelected(false);
             getVoiceEnhanceAmountSpinner().setDisable(true);
             getVoiceEnhanceAmountSpinner().getValueFactory().setValue(30);
-            getBassBoostEnable().setDisable(true);
-            getBassBoostEnable().setSelected(false);
             getBassBoostSpinner().setDisable(true);
             getBassBoostSpinner().getValueFactory().setValue(0.0);
             getOutputGainSpinner().setDisable(true);
@@ -766,9 +735,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         config.setSquelchHeadRemovalMs(getHeadRemovalSpinner().getValue());
         config.setLowPassEnabled(getLowPassEnable().isSelected());
         config.setLowPassCutoff(getLowPassCutoffSpinner().getValue());
-        config.setVoiceEnhanceEnabled(getVoiceEnhanceEnable().isSelected());
         config.setVoiceEnhanceAmount(getVoiceEnhanceAmountSpinner().getValue());
-        config.setBassBoostEnabled(getBassBoostEnable().isSelected());
         config.setBassBoostDb(getBassBoostSpinner().getValue().floatValue());
         config.setOutputGain(getOutputGainSpinner().getValue().floatValue());
         getItem().setDecodeConfiguration(config);

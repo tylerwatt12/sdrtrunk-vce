@@ -71,9 +71,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private final DecodeConfigNBFM.DeemphasisMode mDeemphasisMode;
     private final boolean mLowPassEnabled;
     private final int mLowPassCutoff;
-    private final boolean mVoiceEnhanceEnabled;
     private final float mVoiceEnhanceAmount;
-    private final boolean mBassBoostEnabled;
     private final float mBassBoostDb;
     private final float mOutputGain;
     private float mDeemphasisAlpha;
@@ -115,9 +113,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         mDeemphasisMode = config.getDeemphasis();
         mLowPassEnabled = config.isLowPassEnabled();
         mLowPassCutoff = config.getLowPassCutoff();
-        mVoiceEnhanceEnabled = config.isVoiceEnhanceEnabled();
         mVoiceEnhanceAmount = config.getVoiceEnhanceAmount();
-        mBassBoostEnabled = config.isBassBoostEnabled();
         mBassBoostDb = config.getBassBoostDb();
         mOutputGain = config.getOutputGain();
         mSquelchTailRemovalEnabled = config.isSquelchTailRemovalEnabled();
@@ -303,12 +299,12 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             demodulatedSamples = mAudioLowPassFilter.filter(demodulatedSamples);
         }
 
-        if(mVoiceEnhanceEnabled)
+        if(mVoiceEnhanceAmount >= 0.01f)
         {
             demodulatedSamples = applyVoiceEnhancement(demodulatedSamples);
         }
 
-        if(mBassBoostEnabled)
+        if(mBassBoostDb >= 0.1f)
         {
             demodulatedSamples = applyBassBoost(demodulatedSamples);
         }
@@ -539,7 +535,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
     private void configureVoiceEnhanceFilter()
     {
-        if(!mVoiceEnhanceEnabled || mVoiceEnhanceAmount < 0.01f)
+        if(mVoiceEnhanceAmount < 0.01f)
         {
             return;
         }
@@ -600,7 +596,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
     private void configureBassBoostFilter()
     {
-        if(!mBassBoostEnabled || mBassBoostDb < 0.1f)
+        if(mBassBoostDb < 0.1f)
         {
             return;
         }

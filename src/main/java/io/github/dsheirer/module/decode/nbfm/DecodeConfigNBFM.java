@@ -69,9 +69,7 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     private int mSquelchHeadRemovalMs = SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS;
     private boolean mLowPassEnabled;
     private int mLowPassCutoff = 3400;
-    private boolean mVoiceEnhanceEnabled;
     private float mVoiceEnhanceAmount = 30.0f;
-    private boolean mBassBoostEnabled;
     private float mBassBoostDb;
     private float mOutputGain = 1.0f;
 
@@ -290,17 +288,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mLowPassCutoff = Math.max(2000, Math.min(4000, cutoff));
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "voiceEnhanceEnabled")
-    public boolean isVoiceEnhanceEnabled()
-    {
-        return mVoiceEnhanceEnabled;
-    }
-
-    public void setVoiceEnhanceEnabled(boolean enabled)
-    {
-        mVoiceEnhanceEnabled = enabled;
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "voiceEnhanceAmount")
     public float getVoiceEnhanceAmount()
     {
@@ -310,17 +297,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     public void setVoiceEnhanceAmount(float amount)
     {
         mVoiceEnhanceAmount = Math.max(0.0f, Math.min(100.0f, amount));
-    }
-
-    @JacksonXmlProperty(isAttribute = true, localName = "bassBoostEnabled")
-    public boolean isBassBoostEnabled()
-    {
-        return mBassBoostEnabled;
-    }
-
-    public void setBassBoostEnabled(boolean enabled)
-    {
-        mBassBoostEnabled = enabled;
     }
 
     @JacksonXmlProperty(isAttribute = true, localName = "bassBoostDb")
