@@ -46,6 +46,7 @@ import javafx.beans.value.ObservableValue;
 import javafx.collections.ListChangeListener;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
@@ -70,6 +71,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private TitledPane mSourcePane;
     private TextField mTalkgroupField;
     private ToggleSwitch mAudioFilterEnable;
+    private ComboBox<DecodeConfigNBFM.DeemphasisMode> mDeemphasisModeComboBox;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -145,6 +147,14 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
             GridPane.setConstraints(getAudioFilterEnable(), 2, 1);
             gridPane.getChildren().add(getAudioFilterEnable());
+
+            Label deemphasisLabel = new Label("De-Emphasis");
+            GridPane.setHalignment(deemphasisLabel, HPos.RIGHT);
+            GridPane.setConstraints(deemphasisLabel, 0, 2);
+            gridPane.getChildren().add(deemphasisLabel);
+
+            GridPane.setConstraints(getDeemphasisModeComboBox(), 1, 2);
+            gridPane.getChildren().add(getDeemphasisModeComboBox());
 
             mDecoderPane.setContent(gridPane);
 
@@ -320,6 +330,20 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mBandwidthButton;
     }
 
+    private ComboBox<DecodeConfigNBFM.DeemphasisMode> getDeemphasisModeComboBox()
+    {
+        if(mDeemphasisModeComboBox == null)
+        {
+            mDeemphasisModeComboBox = new ComboBox<>();
+            mDeemphasisModeComboBox.getItems().addAll(DecodeConfigNBFM.DeemphasisMode.values());
+            mDeemphasisModeComboBox.getSelectionModel().select(DecodeConfigNBFM.DeemphasisMode.NONE);
+            mDeemphasisModeComboBox.valueProperty()
+                    .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mDeemphasisModeComboBox;
+    }
+
     private TextField getTalkgroupField()
     {
         if(mTalkgroupField == null)
@@ -411,6 +435,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             updateTextFormatter(decodeConfigNBFM.getTalkgroup());
             getAudioFilterEnable().setDisable(false);
             getAudioFilterEnable().setSelected(decodeConfigNBFM.isAudioFilter());
+            getDeemphasisModeComboBox().setDisable(false);
+            getDeemphasisModeComboBox().getSelectionModel().select(decodeConfigNBFM.getDeemphasis());
         }
         else
         {
@@ -425,6 +451,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getTalkgroupField().setDisable(true);
             getAudioFilterEnable().setDisable(true);
             getAudioFilterEnable().setSelected(false);
+            getDeemphasisModeComboBox().setDisable(true);
+            getDeemphasisModeComboBox().getSelectionModel().select(DecodeConfigNBFM.DeemphasisMode.NONE);
         }
     }
 
@@ -460,6 +488,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
         config.setTalkgroup(talkgroup);
         config.setAudioFilter(getAudioFilterEnable().isSelected());
+        config.setDeemphasis(getDeemphasisModeComboBox().getSelectionModel().getSelectedItem());
         getItem().setDecodeConfiguration(config);
     }
 

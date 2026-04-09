@@ -30,11 +30,39 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
  */
 public class DecodeConfigNBFM extends DecodeConfigAnalog
 {
+    public enum DeemphasisMode
+    {
+        NONE("None", 0),
+        US_750US("750 µs (North America)", 750),
+        CEPT_530US("530 µs (Europe/CEPT)", 530);
+
+        private final String mLabel;
+        private final int mMicroseconds;
+
+        DeemphasisMode(String label, int microseconds)
+        {
+            mLabel = label;
+            mMicroseconds = microseconds;
+        }
+
+        public int getMicroseconds()
+        {
+            return mMicroseconds;
+        }
+
+        @Override
+        public String toString()
+        {
+            return mLabel;
+        }
+    }
+
     private boolean mAudioFilter = true;
     private float mSquelchNoiseOpenThreshold = NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD;
     private float mSquelchNoiseCloseThreshold = NoiseSquelch.DEFAULT_NOISE_CLOSE_THRESHOLD;
     private int mSquelchHysteresisOpenThreshold = NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD;
     private int mSquelchHysteresisCloseThreshold = NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD;
+    private DeemphasisMode mDeemphasis = DeemphasisMode.NONE;
 
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
@@ -181,5 +209,16 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         }
 
         mSquelchHysteresisCloseThreshold = close;
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "deemphasis")
+    public DeemphasisMode getDeemphasis()
+    {
+        return mDeemphasis;
+    }
+
+    public void setDeemphasis(DeemphasisMode deemphasis)
+    {
+        mDeemphasis = deemphasis != null ? deemphasis : DeemphasisMode.NONE;
     }
 }

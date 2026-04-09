@@ -67,6 +67,9 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private Listener<DecoderStateEvent> mDecoderStateEventListener;
     private RealResampler mResampler;
     private final double mChannelBandwidth;
+    private final DecodeConfigNBFM.DeemphasisMode mDeemphasisMode;
+    private float mDeemphasisAlpha;
+    private float mPreviousDeemphasis;
 
     /**
      * Constructs an instance
@@ -79,6 +82,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
         //Save channel bandwidth to setup channel baseband filter.
         mChannelBandwidth = config.getBandwidth().getValue();
+        mDeemphasisMode = config.getDeemphasis();
         mNoiseSquelch = new NoiseSquelch(config.getSquelchNoiseOpenThreshold(), config.getSquelchNoiseCloseThreshold(),
                 config.getSquelchHysteresisOpenThreshold(), config.getSquelchHysteresisCloseThreshold());
 
@@ -93,7 +97,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             }
             else
             {
-                mResampler.resample(audio);     // this method will set lastBatch to false
+                mResampler.resample(applyDeemphasis(audio));     // this method will set lastBatch to false
                 notifyCallContinuation();
             }
         });
@@ -106,6 +110,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             }
             else
             {
+                mPreviousDeemphasis = 0.0f;
                 notifyCallStart();
             }
         });
@@ -404,6 +409,36 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
         mResampler = new RealResampler(decimatedSampleRate, DEMODULATED_AUDIO_SAMPLE_RATE, 4192, 512);
         mResampler.setListener(NBFMDecoder.this::broadcast);
+        updateDeemphasisAlpha();
+    }
+
+    private float[] applyDeemphasis(float[] samples)
+    {
+        if(mDeemphasisMode == DecodeConfigNBFM.DeemphasisMode.NONE)
+        {
+            return samples;
+        }
+
+        for(int x = 0; x < samples.length; x++)
+        {
+            mPreviousDeemphasis += mDeemphasisAlpha * (samples[x] - mPreviousDeemphasis);
+            samples[x] = mPreviousDeemphasis;
+        }
+
+        return samples;
+    }
+
+    private void updateDeemphasisAlpha()
+    {
+        if(mDeemphasisMode == DecodeConfigNBFM.DeemphasisMode.NONE)
+        {
+            mDeemphasisAlpha = 1.0f;
+            return;
+        }
+
+        double tau = mDeemphasisMode.getMicroseconds() / 1_000_000.0;
+        double dt = 1.0 / DEMODULATED_AUDIO_SAMPLE_RATE;
+        mDeemphasisAlpha = (float)(dt / (tau + dt));
     }
 
     /**
