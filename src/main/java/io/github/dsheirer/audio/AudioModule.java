@@ -22,15 +22,9 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
-import io.github.dsheirer.dsp.filter.FilterFactory;
-import io.github.dsheirer.dsp.filter.design.FilterDesignException;
-import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
-import io.github.dsheirer.dsp.filter.fir.remez.RemezFIRFilterDesigner;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.real.IRealBufferListener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Provides packaging of demodulated audio sample buffers into audio segments for broadcast to registered listeners.
@@ -41,37 +35,8 @@ import org.slf4j.LoggerFactory;
 public class AudioModule extends AbstractAudioModule implements ISquelchStateListener, IRealBufferListener,
     Listener<float[]>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(AudioModule.class);
-    private static float[] sHighPassFilterCoefficients;
     private final boolean mAudioFilterEnable;
-
-    static
-    {
-        FIRFilterSpecification specification = FIRFilterSpecification.highPassBuilder()
-            .sampleRate(8000)
-            .stopBandCutoff(200)
-            .stopBandAmplitude(0.0)
-            .stopBandRipple(0.025)
-            .passBandStart(300)
-            .passBandAmplitude(1.0)
-            .passBandRipple(0.01)
-            .build();
-        try
-        {
-            RemezFIRFilterDesigner designer = new RemezFIRFilterDesigner(specification);
-
-            if(designer.isValid())
-            {
-                sHighPassFilterCoefficients = designer.getImpulseResponse();
-            }
-        }
-        catch(FilterDesignException fde)
-        {
-            mLog.error("Filter design error", fde);
-        }
-    }
-
-    private final IRealFilter mHighPassFilter = FilterFactory.getRealFilter(sHighPassFilterCoefficients);
+    private final IRealFilter mHighPassFilter = AudioFilterFactory.getAudioHighPassFilter();
     private final SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private SquelchState mSquelchState = SquelchState.SQUELCH;
 

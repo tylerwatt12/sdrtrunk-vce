@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.module.decode.nbfm;
 
+import io.github.dsheirer.audio.AudioFilterFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.IDecoderStateEventProvider;
@@ -28,7 +29,6 @@ import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
-import io.github.dsheirer.dsp.filter.fir.remez.RemezFIRFilterDesigner;
 import io.github.dsheirer.dsp.filter.resample.RealResampler;
 import io.github.dsheirer.dsp.fm.FmDemodulatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
@@ -58,7 +58,6 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 {
     private static final Logger mLog = LoggerFactory.getLogger(NBFMDecoder.class);
     private static final double DEMODULATED_AUDIO_SAMPLE_RATE = 8000.0;
-    private static float[] sAudioHighPassFilterCoefficients;
     private final IDemodulator mDemodulator = FmDemodulatorFactory.getFmDemodulator();
     private final SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
     private final NoiseSquelch mNoiseSquelch;
@@ -102,33 +101,6 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private float mBassBoostB2;
     private float mBassBoostA1;
     private float mBassBoostA2;
-
-    static
-    {
-        FIRFilterSpecification specification = FIRFilterSpecification.highPassBuilder()
-            .sampleRate(8000)
-            .stopBandCutoff(200)
-            .stopBandAmplitude(0.0)
-            .stopBandRipple(0.025)
-            .passBandStart(300)
-            .passBandAmplitude(1.0)
-            .passBandRipple(0.01)
-            .build();
-
-        try
-        {
-            RemezFIRFilterDesigner designer = new RemezFIRFilterDesigner(specification);
-
-            if(designer.isValid())
-            {
-                sAudioHighPassFilterCoefficients = designer.getImpulseResponse();
-            }
-        }
-        catch(FilterDesignException fde)
-        {
-            mLog.error("Filter design error", fde);
-        }
-    }
 
     /**
      * Constructs an instance
@@ -327,27 +299,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
      */
     protected void broadcast(float[] demodulatedSamples)
     {
-        if(mAudioFilterEnabled && mAudioHighPassFilter != null)
-        {
-            demodulatedSamples = mAudioHighPassFilter.filter(demodulatedSamples);
-        }
-
-        if(mLowPassEnabled && mAudioLowPassFilter != null)
-        {
-            demodulatedSamples = mAudioLowPassFilter.filter(demodulatedSamples);
-        }
-
-        if(mVoiceEnhanceAmount >= 0.01f)
-        {
-            demodulatedSamples = applyVoiceEnhancement(demodulatedSamples);
-        }
-
-        if(mBassBoostDb >= 0.1f)
-        {
-            demodulatedSamples = applyBassBoost(demodulatedSamples);
-        }
-
-        applyOutputGain(demodulatedSamples);
+        demodulatedSamples = applyAudioPostProcessing(demodulatedSamples);
 
         if(mResampledBufferListener != null)
         {
@@ -552,14 +504,41 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
     private void resetAudioHighPassFilter()
     {
-        if(mAudioFilterEnabled && sAudioHighPassFilterCoefficients != null)
+        if(mAudioFilterEnabled)
         {
-            mAudioHighPassFilter = FilterFactory.getRealFilter(sAudioHighPassFilterCoefficients.clone());
+            mAudioHighPassFilter = AudioFilterFactory.getAudioHighPassFilter();
         }
         else
         {
             mAudioHighPassFilter = null;
         }
+    }
+
+    private float[] applyAudioPostProcessing(float[] samples)
+    {
+        // Post-demod audio order: high-pass -> low-pass -> voice enhance -> bass boost -> output gain.
+        if(mAudioFilterEnabled && mAudioHighPassFilter != null)
+        {
+            samples = mAudioHighPassFilter.filter(samples);
+        }
+
+        if(mLowPassEnabled && mAudioLowPassFilter != null)
+        {
+            samples = mAudioLowPassFilter.filter(samples);
+        }
+
+        if(mVoiceEnhanceAmount >= 0.01f)
+        {
+            samples = applyVoiceEnhancement(samples);
+        }
+
+        if(mBassBoostDb >= 0.1f)
+        {
+            samples = applyBassBoost(samples);
+        }
+
+        applyOutputGain(samples);
+        return samples;
     }
 
     private void configureAudioLowPassFilter()

@@ -765,10 +765,19 @@ public class DecoderFactory
                     DecodeConfigNBFM copyNBFM = new DecodeConfigNBFM();
                     copyNBFM.setAudioFilter(origNBFM.isAudioFilter());
                     copyNBFM.setBandwidth(origNBFM.getBandwidth());
+                    copyNBFM.setDeemphasis(origNBFM.getDeemphasis());
                     copyNBFM.setSquelchHysteresisCloseThreshold(origNBFM.getSquelchHysteresisCloseThreshold());
                     copyNBFM.setSquelchHysteresisOpenThreshold(origNBFM.getSquelchHysteresisOpenThreshold());
                     copyNBFM.setSquelchNoiseOpenThreshold(origNBFM.getSquelchNoiseOpenThreshold());
                     copyNBFM.setSquelchNoiseCloseThreshold(origNBFM.getSquelchNoiseCloseThreshold());
+                    copyNBFM.setSquelchTailRemovalEnabled(origNBFM.isSquelchTailRemovalEnabled());
+                    copyNBFM.setSquelchTailRemovalMs(origNBFM.getSquelchTailRemovalMs());
+                    copyNBFM.setSquelchHeadRemovalMs(origNBFM.getSquelchHeadRemovalMs());
+                    copyNBFM.setLowPassEnabled(origNBFM.isLowPassEnabled());
+                    copyNBFM.setLowPassCutoff(origNBFM.getLowPassCutoff());
+                    copyNBFM.setVoiceEnhanceAmount(origNBFM.getVoiceEnhanceAmount());
+                    copyNBFM.setBassBoostDb(origNBFM.getBassBoostDb());
+                    copyNBFM.setOutputGain(origNBFM.getOutputGain());
                     copyNBFM.setTalkgroup(origNBFM.getTalkgroup());
                     return copyNBFM;
                 case P25_PHASE1:
