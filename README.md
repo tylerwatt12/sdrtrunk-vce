@@ -41,8 +41,15 @@ every tuner type; it exists because SDRconnect has requirements the other tuner 
 - My present focus is on reliability; introducing dependency on a separate process creates some complications in terms of ensuring that the processes auto-recover from transient errors, crashes, etc., which isn't the case when talking directly to a dongle. The interface to the radios is fairly thin at the moment; I've only worked in rate, antenna selection, and LNA gain so far. However, they are outstanding radios, and I haven't needed to do any tweaking yet, so it hasn't been a priority, and I'm not sure it will be -- heck, the things go down to 1KHz; if you can literally discern audio, how much tweaking do you need, really.
 - The NBFM path in this fork now has a post-demod audio shaping chain. Available stages include de-emphasis, high-pass filtering, low-pass filtering, voice enhancement, bass boost, and output gain.
 - The NBFM high-pass stage now runs inside the decoder's own post-processing chain rather than downstream in the generic audio module. The current order is: de-emphasis, resample, high-pass, low-pass, voice enhance, bass boost, then output gain.
-- With NBFM, you might not need any RF gain at all; start with zero and see how it plays.
-- With P25, increasing the RF gain will probably be warranted; in my case, I go up about 10 to 12 dB, or until the passband looks reasonable, without extreme dishing at the low end. Excessive gain will not be beneficial.
+- With NBFM, you might not need any RF gain at all; start with zero and see how it plays; repeaters are typically on the
+top of mountains, and they're usually not hard to hear. Rather than more RF gain, the NBFM audio tuning settings probably
+going to be more effective.
+- With P25, likewise, with nRSP-ST radios you may not need any RF gain. Follow the instructions in the Wiki and bring it
+up if it's increasing signal, but stop when it doing so starts increasing noise. Excessive RF gain is definitely not going
+to help, and will cause decode failures.
+- One thing to note with P25 is to ensure that the control frequency is well inside the bandpass, rather than hanging out
+at the band edge in the rolloff area. If you note that your control frequency has landed there when sdtrunk picks the center
+frequency, increase the sampling rate by 1MHz.
 - Gettting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
 to get along with JDK 26 a lot better than it got along with 25, at least on my system. I was encountering a lot of 'out of
 application memory' issues on a 64GB machine, so my thesis was that perhaps there was some application issue that was the
