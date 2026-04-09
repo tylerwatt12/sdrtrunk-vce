@@ -42,7 +42,7 @@ every tuner type; it exists because SDRconnect has requirements the other tuner 
 - The NBFM path in this fork now has a post-demod audio shaping chain. Available stages include de-emphasis, high-pass filtering, low-pass filtering, voice enhancement, bass boost, and output gain.
 - The NBFM high-pass stage now runs inside the decoder's own post-processing chain rather than downstream in the generic audio module. The current order is: de-emphasis, resample, high-pass, low-pass, voice enhance, bass boost, then output gain.
 - With NBFM, you might not need any RF gain at all; start with zero and see how it plays; repeaters are typically on the
-top of mountains, and they're usually not hard to hear. Rather than more RF gain, the NBFM audio tuning settings probably
+top of mountains, and they're usually not hard to hear. Rather than more RF gain, the NBFM audio tuning settings are probably
 going to be more effective.
 - With P25, likewise, with nRSP-ST radios you may not need any RF gain. Follow the instructions in the Wiki and bring it
 up if it's increasing signal, but stop when it doing so starts increasing noise. Excessive RF gain is definitely not going
