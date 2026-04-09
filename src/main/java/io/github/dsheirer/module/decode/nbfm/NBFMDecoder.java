@@ -69,10 +69,14 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private RealResampler mResampler;
     private final double mChannelBandwidth;
     private final DecodeConfigNBFM.DeemphasisMode mDeemphasisMode;
+    private final boolean mLowPassEnabled;
+    private final int mLowPassCutoff;
     private float mDeemphasisAlpha;
     private float mPreviousDeemphasis;
     private final boolean mSquelchTailRemovalEnabled;
     private SquelchTailRemover mSquelchTailRemover;
+    private IRealFilter mAudioLowPassFilter;
+    private float[] mAudioLowPassCoefficients;
 
     /**
      * Constructs an instance
@@ -86,6 +90,8 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         //Save channel bandwidth to setup channel baseband filter.
         mChannelBandwidth = config.getBandwidth().getValue();
         mDeemphasisMode = config.getDeemphasis();
+        mLowPassEnabled = config.isLowPassEnabled();
+        mLowPassCutoff = config.getLowPassCutoff();
         mSquelchTailRemovalEnabled = config.isSquelchTailRemovalEnabled();
         mNoiseSquelch = new NoiseSquelch(config.getSquelchNoiseOpenThreshold(), config.getSquelchNoiseCloseThreshold(),
                 config.getSquelchHysteresisOpenThreshold(), config.getSquelchHysteresisCloseThreshold());
@@ -145,6 +151,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             else
             {
                 mPreviousDeemphasis = 0.0f;
+                resetAudioLowPassFilter();
 
                 if(mSquelchTailRemovalEnabled)
                 {
@@ -261,6 +268,11 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
      */
     protected void broadcast(float[] demodulatedSamples)
     {
+        if(mLowPassEnabled && mAudioLowPassFilter != null)
+        {
+            demodulatedSamples = mAudioLowPassFilter.filter(demodulatedSamples);
+        }
+
         if(mResampledBufferListener != null)
         {
             mResampledBufferListener.receive(demodulatedSamples);
@@ -455,7 +467,30 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             mSquelchTailRemover.setOutputListener(mResampler::resample);
         }
 
+        configureAudioLowPassFilter();
         updateDeemphasisAlpha();
+    }
+
+    private void configureAudioLowPassFilter()
+    {
+        if(!mLowPassEnabled)
+        {
+            mAudioLowPassCoefficients = null;
+            mAudioLowPassFilter = null;
+            return;
+        }
+
+        mAudioLowPassCoefficients = FilterFactory.getLowPass(DEMODULATED_AUDIO_SAMPLE_RATE, mLowPassCutoff, 41,
+                WindowType.HAMMING);
+        resetAudioLowPassFilter();
+    }
+
+    private void resetAudioLowPassFilter()
+    {
+        if(mLowPassEnabled && mAudioLowPassCoefficients != null)
+        {
+            mAudioLowPassFilter = FilterFactory.getRealFilter(mAudioLowPassCoefficients.clone());
+        }
     }
 
     private float[] applyDeemphasis(float[] samples)

@@ -78,6 +78,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private ToggleSwitch mSquelchTailRemovalEnable;
     private Spinner<Integer> mTailRemovalSpinner;
     private Spinner<Integer> mHeadRemovalSpinner;
+    private ToggleSwitch mLowPassEnable;
+    private Spinner<Integer> mLowPassCutoffSpinner;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -180,6 +182,17 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
             GridPane.setConstraints(getHeadRemovalSpinner(), 3, 3);
             gridPane.getChildren().add(getHeadRemovalSpinner());
+
+            GridPane.setConstraints(getLowPassEnable(), 2, 0);
+            gridPane.getChildren().add(getLowPassEnable());
+
+            Label lowPassCutoffLabel = new Label("LP Cutoff (Hz)");
+            GridPane.setHalignment(lowPassCutoffLabel, HPos.RIGHT);
+            GridPane.setConstraints(lowPassCutoffLabel, 2, 4);
+            gridPane.getChildren().add(lowPassCutoffLabel);
+
+            GridPane.setConstraints(getLowPassCutoffSpinner(), 3, 4);
+            gridPane.getChildren().add(getLowPassCutoffSpinner());
 
             mDecoderPane.setContent(gridPane);
 
@@ -419,6 +432,38 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mHeadRemovalSpinner;
     }
 
+    private ToggleSwitch getLowPassEnable()
+    {
+        if(mLowPassEnable == null)
+        {
+            mLowPassEnable = new ToggleSwitch("Low-Pass Filter");
+            mLowPassEnable.setTooltip(new Tooltip("Reduce high-frequency hiss in NBFM audio"));
+            mLowPassEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
+                getLowPassCutoffSpinner().setDisable(!newValue);
+                modifiedProperty().set(true);
+            });
+        }
+
+        return mLowPassEnable;
+    }
+
+    private Spinner<Integer> getLowPassCutoffSpinner()
+    {
+        if(mLowPassCutoffSpinner == null)
+        {
+            mLowPassCutoffSpinner = new Spinner<>();
+            mLowPassCutoffSpinner.setPrefWidth(100);
+            mLowPassCutoffSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mLowPassCutoffSpinner.setTooltip(new Tooltip("Low-pass cutoff frequency in Hz"));
+            mLowPassCutoffSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(2000, 4000, 3400,
+                    100));
+            mLowPassCutoffSpinner.valueProperty().addListener((observable, oldValue, newValue) ->
+                    modifiedProperty().set(true));
+        }
+
+        return mLowPassCutoffSpinner;
+    }
+
     private TextField getTalkgroupField()
     {
         if(mTalkgroupField == null)
@@ -518,6 +563,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getHeadRemovalSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchHeadRemovalMs());
             getTailRemovalSpinner().setDisable(!decodeConfigNBFM.isSquelchTailRemovalEnabled());
             getHeadRemovalSpinner().setDisable(!decodeConfigNBFM.isSquelchTailRemovalEnabled());
+            getLowPassEnable().setDisable(false);
+            getLowPassEnable().setSelected(decodeConfigNBFM.isLowPassEnabled());
+            getLowPassCutoffSpinner().getValueFactory().setValue(decodeConfigNBFM.getLowPassCutoff());
+            getLowPassCutoffSpinner().setDisable(!decodeConfigNBFM.isLowPassEnabled());
         }
         else
         {
@@ -540,6 +589,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getHeadRemovalSpinner().setDisable(true);
             getTailRemovalSpinner().getValueFactory().setValue(SquelchTailRemover.DEFAULT_TAIL_REMOVAL_MS);
             getHeadRemovalSpinner().getValueFactory().setValue(SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS);
+            getLowPassEnable().setDisable(true);
+            getLowPassEnable().setSelected(false);
+            getLowPassCutoffSpinner().setDisable(true);
+            getLowPassCutoffSpinner().getValueFactory().setValue(3400);
         }
     }
 
@@ -579,6 +632,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         config.setSquelchTailRemovalEnabled(getSquelchTailRemovalEnable().isSelected());
         config.setSquelchTailRemovalMs(getTailRemovalSpinner().getValue());
         config.setSquelchHeadRemovalMs(getHeadRemovalSpinner().getValue());
+        config.setLowPassEnabled(getLowPassEnable().isSelected());
+        config.setLowPassCutoff(getLowPassCutoffSpinner().getValue());
         getItem().setDecodeConfiguration(config);
     }
 
