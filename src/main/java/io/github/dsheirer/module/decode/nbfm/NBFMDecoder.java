@@ -28,6 +28,7 @@ import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.dsp.filter.fir.FIRFilterSpecification;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
+import io.github.dsheirer.dsp.filter.fir.remez.RemezFIRFilterDesigner;
 import io.github.dsheirer.dsp.filter.resample.RealResampler;
 import io.github.dsheirer.dsp.fm.FmDemodulatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
@@ -57,6 +58,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 {
     private static final Logger mLog = LoggerFactory.getLogger(NBFMDecoder.class);
     private static final double DEMODULATED_AUDIO_SAMPLE_RATE = 8000.0;
+    private static float[] sAudioHighPassFilterCoefficients;
     private final IDemodulator mDemodulator = FmDemodulatorFactory.getFmDemodulator();
     private final SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
     private final NoiseSquelch mNoiseSquelch;
@@ -69,6 +71,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private RealResampler mResampler;
     private final double mChannelBandwidth;
     private final DecodeConfigNBFM.DeemphasisMode mDeemphasisMode;
+    private final boolean mAudioFilterEnabled;
     private final boolean mLowPassEnabled;
     private final int mLowPassCutoff;
     private final float mVoiceEnhanceAmount;
@@ -78,6 +81,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private float mPreviousDeemphasis;
     private final boolean mSquelchTailRemovalEnabled;
     private SquelchTailRemover mSquelchTailRemover;
+    private IRealFilter mAudioHighPassFilter;
     private IRealFilter mAudioLowPassFilter;
     private float[] mAudioLowPassCoefficients;
     private float mVoiceEnhanceX1;
@@ -99,6 +103,33 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private float mBassBoostA1;
     private float mBassBoostA2;
 
+    static
+    {
+        FIRFilterSpecification specification = FIRFilterSpecification.highPassBuilder()
+            .sampleRate(8000)
+            .stopBandCutoff(200)
+            .stopBandAmplitude(0.0)
+            .stopBandRipple(0.025)
+            .passBandStart(300)
+            .passBandAmplitude(1.0)
+            .passBandRipple(0.01)
+            .build();
+
+        try
+        {
+            RemezFIRFilterDesigner designer = new RemezFIRFilterDesigner(specification);
+
+            if(designer.isValid())
+            {
+                sAudioHighPassFilterCoefficients = designer.getImpulseResponse();
+            }
+        }
+        catch(FilterDesignException fde)
+        {
+            mLog.error("Filter design error", fde);
+        }
+    }
+
     /**
      * Constructs an instance
      *
@@ -111,6 +142,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         //Save channel bandwidth to setup channel baseband filter.
         mChannelBandwidth = config.getBandwidth().getValue();
         mDeemphasisMode = config.getDeemphasis();
+        mAudioFilterEnabled = config.isAudioFilter();
         mLowPassEnabled = config.isLowPassEnabled();
         mLowPassCutoff = config.getLowPassCutoff();
         mVoiceEnhanceAmount = config.getVoiceEnhanceAmount();
@@ -175,6 +207,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             else
             {
                 mPreviousDeemphasis = 0.0f;
+                resetAudioHighPassFilter();
                 resetAudioLowPassFilter();
                 resetVoiceEnhanceFilter();
                 resetBassBoostFilter();
@@ -294,6 +327,11 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
      */
     protected void broadcast(float[] demodulatedSamples)
     {
+        if(mAudioFilterEnabled && mAudioHighPassFilter != null)
+        {
+            demodulatedSamples = mAudioHighPassFilter.filter(demodulatedSamples);
+        }
+
         if(mLowPassEnabled && mAudioLowPassFilter != null)
         {
             demodulatedSamples = mAudioLowPassFilter.filter(demodulatedSamples);
@@ -505,10 +543,23 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             mSquelchTailRemover.setOutputListener(mResampler::resample);
         }
 
+        resetAudioHighPassFilter();
         configureAudioLowPassFilter();
         configureVoiceEnhanceFilter();
         configureBassBoostFilter();
         updateDeemphasisAlpha();
+    }
+
+    private void resetAudioHighPassFilter()
+    {
+        if(mAudioFilterEnabled && sAudioHighPassFilterCoefficients != null)
+        {
+            mAudioHighPassFilter = FilterFactory.getRealFilter(sAudioHighPassFilterCoefficients.clone());
+        }
+        else
+        {
+            mAudioHighPassFilter = null;
+        }
     }
 
     private void configureAudioLowPassFilter()
