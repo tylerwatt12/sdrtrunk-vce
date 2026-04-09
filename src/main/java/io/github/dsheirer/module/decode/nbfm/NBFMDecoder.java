@@ -75,6 +75,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private final float mVoiceEnhanceAmount;
     private final boolean mBassBoostEnabled;
     private final float mBassBoostDb;
+    private final float mOutputGain;
     private float mDeemphasisAlpha;
     private float mPreviousDeemphasis;
     private final boolean mSquelchTailRemovalEnabled;
@@ -118,6 +119,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         mVoiceEnhanceAmount = config.getVoiceEnhanceAmount();
         mBassBoostEnabled = config.isBassBoostEnabled();
         mBassBoostDb = config.getBassBoostDb();
+        mOutputGain = config.getOutputGain();
         mSquelchTailRemovalEnabled = config.isSquelchTailRemovalEnabled();
         mNoiseSquelch = new NoiseSquelch(config.getSquelchNoiseOpenThreshold(), config.getSquelchNoiseCloseThreshold(),
                 config.getSquelchHysteresisOpenThreshold(), config.getSquelchHysteresisCloseThreshold());
@@ -310,6 +312,8 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         {
             demodulatedSamples = applyBassBoost(demodulatedSamples);
         }
+
+        applyOutputGain(demodulatedSamples);
 
         if(mResampledBufferListener != null)
         {
@@ -654,6 +658,19 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         }
 
         return samples;
+    }
+
+    private void applyOutputGain(float[] samples)
+    {
+        if(Math.abs(mOutputGain - 1.0f) < 0.001f)
+        {
+            return;
+        }
+
+        for(int x = 0; x < samples.length; x++)
+        {
+            samples[x] *= mOutputGain;
+        }
     }
 
     private float[] applyDeemphasis(float[] samples)

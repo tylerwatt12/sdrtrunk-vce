@@ -84,6 +84,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private Spinner<Integer> mVoiceEnhanceAmountSpinner;
     private ToggleSwitch mBassBoostEnable;
     private Spinner<Double> mBassBoostSpinner;
+    private Spinner<Double> mOutputGainSpinner;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -219,6 +220,14 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
             GridPane.setConstraints(getBassBoostSpinner(), 3, 6);
             gridPane.getChildren().add(getBassBoostSpinner());
+
+            Label outputGainLabel = new Label("Output Gain");
+            GridPane.setHalignment(outputGainLabel, HPos.RIGHT);
+            GridPane.setConstraints(outputGainLabel, 2, 7);
+            gridPane.getChildren().add(outputGainLabel);
+
+            GridPane.setConstraints(getOutputGainSpinner(), 3, 7);
+            gridPane.getChildren().add(getOutputGainSpinner());
 
             mDecoderPane.setContent(gridPane);
 
@@ -552,6 +561,21 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mBassBoostSpinner;
     }
 
+    private Spinner<Double> getOutputGainSpinner()
+    {
+        if(mOutputGainSpinner == null)
+        {
+            mOutputGainSpinner = new Spinner<>();
+            mOutputGainSpinner.setPrefWidth(100);
+            mOutputGainSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mOutputGainSpinner.setTooltip(new Tooltip("Final audio gain multiplier"));
+            mOutputGainSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(0.25, 4.0, 1.0, 0.05));
+            mOutputGainSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mOutputGainSpinner;
+    }
+
     private TextField getTalkgroupField()
     {
         if(mTalkgroupField == null)
@@ -663,6 +687,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getBassBoostEnable().setSelected(decodeConfigNBFM.isBassBoostEnabled());
             getBassBoostSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getBassBoostDb());
             getBassBoostSpinner().setDisable(!decodeConfigNBFM.isBassBoostEnabled());
+            getOutputGainSpinner().setDisable(false);
+            getOutputGainSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getOutputGain());
         }
         else
         {
@@ -697,6 +723,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getBassBoostEnable().setSelected(false);
             getBassBoostSpinner().setDisable(true);
             getBassBoostSpinner().getValueFactory().setValue(0.0);
+            getOutputGainSpinner().setDisable(true);
+            getOutputGainSpinner().getValueFactory().setValue(1.0);
         }
     }
 
@@ -742,6 +770,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         config.setVoiceEnhanceAmount(getVoiceEnhanceAmountSpinner().getValue());
         config.setBassBoostEnabled(getBassBoostEnable().isSelected());
         config.setBassBoostDb(getBassBoostSpinner().getValue().floatValue());
+        config.setOutputGain(getOutputGainSpinner().getValue().floatValue());
         getItem().setDecodeConfiguration(config);
     }
 
