@@ -112,6 +112,14 @@ public class RealResampler
     }
 
     /**
+     * Flushes any buffered resampler output for the current stream.
+     */
+    public void flush()
+    {
+        resample(new float[0], true);
+    }
+
+    /**
      * Registers the listener to receive the resampled output buffers
      * @param listener to receive buffers
      */

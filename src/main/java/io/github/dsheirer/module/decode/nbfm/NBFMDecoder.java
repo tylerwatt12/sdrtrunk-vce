@@ -34,6 +34,7 @@ import io.github.dsheirer.dsp.fm.IDemodulator;
 import io.github.dsheirer.dsp.squelch.INoiseSquelchController;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
+import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.SquelchControlDecoder;
@@ -70,6 +71,8 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private final DecodeConfigNBFM.DeemphasisMode mDeemphasisMode;
     private float mDeemphasisAlpha;
     private float mPreviousDeemphasis;
+    private final boolean mSquelchTailRemovalEnabled;
+    private SquelchTailRemover mSquelchTailRemover;
 
     /**
      * Constructs an instance
@@ -83,8 +86,14 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         //Save channel bandwidth to setup channel baseband filter.
         mChannelBandwidth = config.getBandwidth().getValue();
         mDeemphasisMode = config.getDeemphasis();
+        mSquelchTailRemovalEnabled = config.isSquelchTailRemovalEnabled();
         mNoiseSquelch = new NoiseSquelch(config.getSquelchNoiseOpenThreshold(), config.getSquelchNoiseCloseThreshold(),
                 config.getSquelchHysteresisOpenThreshold(), config.getSquelchHysteresisCloseThreshold());
+
+        if(mSquelchTailRemovalEnabled)
+        {
+            mSquelchTailRemover = new SquelchTailRemover(config.getSquelchTailRemovalMs(), config.getSquelchHeadRemovalMs());
+        }
 
         //Send squelch controlled audio to the resampler and notify the decoder state that the call continues.
         mNoiseSquelch.setAudioListener(audio -> {
@@ -93,11 +102,30 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             //  the output buffer gets emptied.
             if(mNoiseSquelch.isSquelched())
             {
-                mResampler.resample(audio, true);
+                float[] processedAudio = applyDeemphasis(audio);
+
+                if(mSquelchTailRemovalEnabled)
+                {
+                    mSquelchTailRemover.process(processedAudio);
+                }
+                else
+                {
+                    mResampler.resample(processedAudio, true);
+                }
             }
             else
             {
-                mResampler.resample(applyDeemphasis(audio));     // this method will set lastBatch to false
+                float[] processedAudio = applyDeemphasis(audio);
+
+                if(mSquelchTailRemovalEnabled)
+                {
+                    mSquelchTailRemover.process(processedAudio);
+                }
+                else
+                {
+                    mResampler.resample(processedAudio);     // this method will set lastBatch to false
+                }
+
                 notifyCallContinuation();
             }
         });
@@ -106,11 +134,23 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         mNoiseSquelch.setSquelchStateListener(squelchState -> {
             if(squelchState == SquelchState.SQUELCH)
             {
+                if(mSquelchTailRemovalEnabled)
+                {
+                    mSquelchTailRemover.squelchClose();
+                    mResampler.flush();
+                }
+
                 notifyCallEnd();
             }
             else
             {
                 mPreviousDeemphasis = 0.0f;
+
+                if(mSquelchTailRemovalEnabled)
+                {
+                    mSquelchTailRemover.squelchOpen();
+                }
+
                 notifyCallStart();
             }
         });
@@ -409,6 +449,12 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
         mResampler = new RealResampler(decimatedSampleRate, DEMODULATED_AUDIO_SAMPLE_RATE, 4192, 512);
         mResampler.setListener(NBFMDecoder.this::broadcast);
+
+        if(mSquelchTailRemovalEnabled)
+        {
+            mSquelchTailRemover.setOutputListener(mResampler::resample);
+        }
+
         updateDeemphasisAlpha();
     }
 

@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.nbfm;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
+import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
@@ -63,6 +64,9 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     private int mSquelchHysteresisOpenThreshold = NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD;
     private int mSquelchHysteresisCloseThreshold = NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD;
     private DeemphasisMode mDeemphasis = DeemphasisMode.NONE;
+    private boolean mSquelchTailRemovalEnabled;
+    private int mSquelchTailRemovalMs = SquelchTailRemover.DEFAULT_TAIL_REMOVAL_MS;
+    private int mSquelchHeadRemovalMs = SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS;
 
     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
@@ -220,5 +224,40 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     public void setDeemphasis(DeemphasisMode deemphasis)
     {
         mDeemphasis = deemphasis != null ? deemphasis : DeemphasisMode.NONE;
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "squelchTailRemovalEnabled")
+    public boolean isSquelchTailRemovalEnabled()
+    {
+        return mSquelchTailRemovalEnabled;
+    }
+
+    public void setSquelchTailRemovalEnabled(boolean enabled)
+    {
+        mSquelchTailRemovalEnabled = enabled;
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "squelchTailRemovalMs")
+    public int getSquelchTailRemovalMs()
+    {
+        return mSquelchTailRemovalMs;
+    }
+
+    public void setSquelchTailRemovalMs(int ms)
+    {
+        mSquelchTailRemovalMs = Math.max(SquelchTailRemover.MINIMUM_REMOVAL_MS,
+                Math.min(SquelchTailRemover.MAXIMUM_TAIL_REMOVAL_MS, ms));
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "squelchHeadRemovalMs")
+    public int getSquelchHeadRemovalMs()
+    {
+        return mSquelchHeadRemovalMs;
+    }
+
+    public void setSquelchHeadRemovalMs(int ms)
+    {
+        mSquelchHeadRemovalMs = Math.max(SquelchTailRemover.MINIMUM_REMOVAL_MS,
+                Math.min(SquelchTailRemover.MAXIMUM_HEAD_REMOVAL_MS, ms));
     }
 }

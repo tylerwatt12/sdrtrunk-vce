@@ -25,6 +25,7 @@ import io.github.dsheirer.gui.playlist.decoder.AuxDecoderConfigurationEditor;
 import io.github.dsheirer.gui.playlist.eventlog.EventLogConfigurationEditor;
 import io.github.dsheirer.gui.playlist.source.FrequencyEditor;
 import io.github.dsheirer.gui.playlist.source.SourceConfigurationEditor;
+import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -48,6 +49,8 @@ import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.TitledPane;
@@ -72,6 +75,9 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private TextField mTalkgroupField;
     private ToggleSwitch mAudioFilterEnable;
     private ComboBox<DecodeConfigNBFM.DeemphasisMode> mDeemphasisModeComboBox;
+    private ToggleSwitch mSquelchTailRemovalEnable;
+    private Spinner<Integer> mTailRemovalSpinner;
+    private Spinner<Integer> mHeadRemovalSpinner;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -155,6 +161,25 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
             GridPane.setConstraints(getDeemphasisModeComboBox(), 1, 2);
             gridPane.getChildren().add(getDeemphasisModeComboBox());
+
+            GridPane.setConstraints(getSquelchTailRemovalEnable(), 2, 2);
+            gridPane.getChildren().add(getSquelchTailRemovalEnable());
+
+            Label tailTrimLabel = new Label("Tail Trim (ms)");
+            GridPane.setHalignment(tailTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(tailTrimLabel, 0, 3);
+            gridPane.getChildren().add(tailTrimLabel);
+
+            GridPane.setConstraints(getTailRemovalSpinner(), 1, 3);
+            gridPane.getChildren().add(getTailRemovalSpinner());
+
+            Label headTrimLabel = new Label("Head Trim (ms)");
+            GridPane.setHalignment(headTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(headTrimLabel, 2, 3);
+            gridPane.getChildren().add(headTrimLabel);
+
+            GridPane.setConstraints(getHeadRemovalSpinner(), 3, 3);
+            gridPane.getChildren().add(getHeadRemovalSpinner());
 
             mDecoderPane.setContent(gridPane);
 
@@ -344,6 +369,56 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mDeemphasisModeComboBox;
     }
 
+    private ToggleSwitch getSquelchTailRemovalEnable()
+    {
+        if(mSquelchTailRemovalEnable == null)
+        {
+            mSquelchTailRemovalEnable = new ToggleSwitch("Squelch Trim");
+            mSquelchTailRemovalEnable.setTooltip(new Tooltip("Trim start/end audio around squelch transitions"));
+            mSquelchTailRemovalEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
+                getTailRemovalSpinner().setDisable(!newValue);
+                getHeadRemovalSpinner().setDisable(!newValue);
+                modifiedProperty().set(true);
+            });
+        }
+
+        return mSquelchTailRemovalEnable;
+    }
+
+    private Spinner<Integer> getTailRemovalSpinner()
+    {
+        if(mTailRemovalSpinner == null)
+        {
+            mTailRemovalSpinner = new Spinner<>();
+            mTailRemovalSpinner.setPrefWidth(100);
+            mTailRemovalSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mTailRemovalSpinner.setTooltip(new Tooltip("Milliseconds to trim from end of transmission"));
+            mTailRemovalSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                    SquelchTailRemover.MINIMUM_REMOVAL_MS, SquelchTailRemover.MAXIMUM_TAIL_REMOVAL_MS,
+                    SquelchTailRemover.DEFAULT_TAIL_REMOVAL_MS, 10));
+            mTailRemovalSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mTailRemovalSpinner;
+    }
+
+    private Spinner<Integer> getHeadRemovalSpinner()
+    {
+        if(mHeadRemovalSpinner == null)
+        {
+            mHeadRemovalSpinner = new Spinner<>();
+            mHeadRemovalSpinner.setPrefWidth(100);
+            mHeadRemovalSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mHeadRemovalSpinner.setTooltip(new Tooltip("Milliseconds to trim from start of transmission"));
+            mHeadRemovalSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                    SquelchTailRemover.MINIMUM_REMOVAL_MS, SquelchTailRemover.MAXIMUM_HEAD_REMOVAL_MS,
+                    SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS, 10));
+            mHeadRemovalSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mHeadRemovalSpinner;
+    }
+
     private TextField getTalkgroupField()
     {
         if(mTalkgroupField == null)
@@ -437,6 +512,12 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getAudioFilterEnable().setSelected(decodeConfigNBFM.isAudioFilter());
             getDeemphasisModeComboBox().setDisable(false);
             getDeemphasisModeComboBox().getSelectionModel().select(decodeConfigNBFM.getDeemphasis());
+            getSquelchTailRemovalEnable().setDisable(false);
+            getSquelchTailRemovalEnable().setSelected(decodeConfigNBFM.isSquelchTailRemovalEnabled());
+            getTailRemovalSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchTailRemovalMs());
+            getHeadRemovalSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchHeadRemovalMs());
+            getTailRemovalSpinner().setDisable(!decodeConfigNBFM.isSquelchTailRemovalEnabled());
+            getHeadRemovalSpinner().setDisable(!decodeConfigNBFM.isSquelchTailRemovalEnabled());
         }
         else
         {
@@ -453,6 +534,12 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getAudioFilterEnable().setSelected(false);
             getDeemphasisModeComboBox().setDisable(true);
             getDeemphasisModeComboBox().getSelectionModel().select(DecodeConfigNBFM.DeemphasisMode.NONE);
+            getSquelchTailRemovalEnable().setDisable(true);
+            getSquelchTailRemovalEnable().setSelected(false);
+            getTailRemovalSpinner().setDisable(true);
+            getHeadRemovalSpinner().setDisable(true);
+            getTailRemovalSpinner().getValueFactory().setValue(SquelchTailRemover.DEFAULT_TAIL_REMOVAL_MS);
+            getHeadRemovalSpinner().getValueFactory().setValue(SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS);
         }
     }
 
@@ -489,6 +576,9 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         config.setTalkgroup(talkgroup);
         config.setAudioFilter(getAudioFilterEnable().isSelected());
         config.setDeemphasis(getDeemphasisModeComboBox().getSelectionModel().getSelectedItem());
+        config.setSquelchTailRemovalEnabled(getSquelchTailRemovalEnable().isSelected());
+        config.setSquelchTailRemovalMs(getTailRemovalSpinner().getValue());
+        config.setSquelchHeadRemovalMs(getHeadRemovalSpinner().getValue());
         getItem().setDecodeConfiguration(config);
     }
 
