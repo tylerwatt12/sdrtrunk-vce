@@ -47,9 +47,17 @@ going to be more effective.
 - With P25, likewise, with nRSP-ST radios you may not need any RF gain. Follow the instructions in the Wiki and bring it
 up if it's increasing signal, but stop when it doing so starts increasing noise. Excessive RF gain is definitely not going
 to help, and will cause decode failures.
-- One thing to note with P25 is to ensure that the control frequency is well inside the bandpass, rather than hanging out
-at the band edge in the rolloff area. If you note that your control frequency has landed there when sdtrunk picks the center
-frequency, increase the sampling rate by 1MHz.
+- For multi-frequency tuner sources, this fork now supports an optional frequency envelope using `min_frequency` and
+`max_frequency`. This was added for trunked channels, where we'd like to make more optimal channel center choices. The
+problem this addresses is that center frequency selection not good, resulting in, in my case, the control channels being
+in marginal upper portion of the passband, and about 1MHz of the unusuable lower portion of the passband being in play.
+In practice, that meant a 5MHz sample rate could look insufficient when the real issue was poor center-frequency selection.
+- When a frequency envelope is present, sdrtrunk uses that full span to pre-position idle polyphase tuners and to guide
+subsequent control-channel reacquisition, so the tuner stays centered in the passband for the whole site.
+- The Frequency Editor exposes these values as `Minimum (MHz)` and `Maximum (MHz)`, and the RadioReference site import
+path populates them automatically from the full imported site frequency list.
+- This does not change the actual rotating control-channel list. The `Control (MHz)` entries are still the frequencies
+used for control-channel acquisition and rotation; the envelope is only a tuner-centering hint.
 - While the SDRconnect tuner type will display drift and PPM, the auto-correct feature is disabled, as the drift will in
 general be so low as to be uninteresting.
 - Gettting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
