@@ -20,22 +20,23 @@
 package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * Implements the 5-bit Checksum error detection algorithm specified in TS 102 361-1 paragraph B.3.11
  */
 public class Checksum_5_DMR
 {
-    private static final int[] LC_0 = {0, 1, 2, 3, 4, 5, 6, 7};
-    private static final int[] LC_1 = {8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] LC_2 = {16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] LC_3 = {24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] LC_4 = {32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] LC_5 = {40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] LC_6 = {48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] LC_7 = {56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] LC_8 = {64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] CHECKSUM = {72, 73, 74, 75, 76};
+    private static final IntField LC_0 = IntField.length8(0);
+    private static final IntField LC_1 = IntField.length8(8);
+    private static final IntField LC_2 = IntField.length8(16);
+    private static final IntField LC_3 = IntField.length8(24);
+    private static final IntField LC_4 = IntField.length8(32);
+    private static final IntField LC_5 = IntField.length8(40);
+    private static final IntField LC_6 = IntField.length8(48);
+    private static final IntField LC_7 = IntField.length8(56);
+    private static final IntField LC_8 = IntField.length8(64);
+    private static final IntField CHECKSUM = IntField.range(72, 76);
 
     private Checksum_5_DMR()
     {

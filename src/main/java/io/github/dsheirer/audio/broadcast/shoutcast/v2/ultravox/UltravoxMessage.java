@@ -19,6 +19,7 @@
 package io.github.dsheirer.audio.broadcast.shoutcast.v2.ultravox;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import org.apache.commons.lang3.Validate;
 
 import java.util.Arrays;
@@ -30,12 +31,12 @@ public abstract class UltravoxMessage
     public static final String VALID_RESPONSE_PAYLOAD_PREFIX = "ACK:";
     public static final String ERROR_RESPONSE_PREFIX = "NAK:";
 
-    private static final int[] SYNC = {0,1,2,3,4,5,6,7};
+    private static final IntField SYNC = IntField.length8(0);
     public static final int REQUIRED_DELIVERY = 12;
-    private static final int[] SEND_QUEUE_PRIORITY = {13,14,15};
-    private static final int[] MESSAGE_CLASS = {16,17,18,19};
-    private static final int[] MESSAGE_CLASS_AND_TYPE = {16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
-    private static final int[] PAYLOAD_LENGTH = {32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47};
+    private static final IntField SEND_QUEUE_PRIORITY = IntField.range(13, 15);
+    private static final IntField MESSAGE_CLASS = IntField.length4(16);
+    private static final IntField MESSAGE_CLASS_AND_TYPE = IntField.length16(16);
+    private static final IntField PAYLOAD_LENGTH = IntField.length16(32);
 
     private BinaryMessage mMessage;
 
