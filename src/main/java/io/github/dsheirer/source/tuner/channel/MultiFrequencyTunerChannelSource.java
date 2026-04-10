@@ -31,6 +31,8 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -48,6 +50,8 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     private List<Long> mLockedFrequencies = new ArrayList<>();
     private int mFrequencyListPointer = 0;
     private ChannelSpecification mChannelSpecification;
+    private Long mMinimumFrequency;
+    private Long mMaximumFrequency;
     private Listener<ComplexSamples> mComplexSamplesListener;
     private Listener<Heartbeat> mHeartbeatListener;
     private String mPreferredTuner;
@@ -57,7 +61,8 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
 
     public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
                                             List<Long> frequencies, ChannelSpecification channelSpecification,
-                                            String preferredTuner, String threadName)
+                                            String preferredTuner, String threadName, Long minimumFrequency,
+                                            Long maximumFrequency)
     {
         super(null, tunerChannelSource.getTunerChannel(), threadName);
         mTunerManager = tunerManager;
@@ -66,6 +71,8 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         mFrequencies = frequencies;
         mChannelSpecification = channelSpecification;
         mPreferredTuner = preferredTuner;
+        mMinimumFrequency = minimumFrequency;
+        mMaximumFrequency = maximumFrequency;
     }
 
     /**
@@ -111,7 +118,8 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     {
         if(mStarted)
         {
-            Source source = mTunerManager.getSource(nextChannel, mChannelSpecification, mPreferredTuner, mThreadName);
+            Source source = mTunerManager.getSource(nextChannel, mChannelSpecification, mPreferredTuner, mThreadName,
+                getAllFrequencyChannels());
 
             if(source instanceof TunerChannelSource)
             {
@@ -221,6 +229,41 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     private TunerChannel getTunerChannel(long frequency)
     {
         return new TunerChannel(frequency, mChannelSpecification.getBandwidth());
+    }
+
+    /**
+     * Returns all configured frequencies as a sorted set of tuner channels, for use in polyphase
+     * center-frequency selection so the tuner can be positioned for the full frequency envelope.
+     */
+    private SortedSet<TunerChannel> getAllFrequencyChannels()
+    {
+        SortedSet<TunerChannel> channels = new TreeSet<>();
+
+        if(hasFrequencyEnvelope())
+        {
+            long minimumFrequency = mMinimumFrequency;
+            long maximumFrequency = mMaximumFrequency;
+            long centerFrequency = minimumFrequency + ((maximumFrequency - minimumFrequency) / 2);
+            int bandwidth = (int)((maximumFrequency - minimumFrequency) + mChannelSpecification.getBandwidth());
+            channels.add(new TunerChannel(centerFrequency, bandwidth));
+            return channels;
+        }
+
+        for(long frequency: mFrequencies)
+        {
+            channels.add(new TunerChannel(frequency, mChannelSpecification.getBandwidth()));
+        }
+
+        return channels;
+    }
+
+    /**
+     * Indicates if this source has a usable frequency envelope for tuner centering.
+     */
+    private boolean hasFrequencyEnvelope()
+    {
+        return mMinimumFrequency != null && mMaximumFrequency != null &&
+            mMinimumFrequency > 0 && mMaximumFrequency >= mMinimumFrequency;
     }
 
     /**

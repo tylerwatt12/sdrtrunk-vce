@@ -171,6 +171,30 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
     }
 
     /**
+     * Updates the tuner configuration with the current tuner center frequency so that live retunes triggered by
+     * channel allocation are persisted across application restarts.
+     * @param discoveredTuner that has an updated center frequency
+     */
+    public void updateTunerFrequency(DiscoveredTuner discoveredTuner)
+    {
+        if(discoveredTuner != null && discoveredTuner.hasTuner())
+        {
+            TunerType tunerType = discoveredTuner.getTuner().getTunerType();
+
+            if(tunerType != TunerType.RECORDING)
+            {
+                TunerConfiguration tunerConfiguration = getTunerConfiguration(tunerType, discoveredTuner.getId());
+
+                if(tunerConfiguration != null)
+                {
+                    tunerConfiguration.setFrequency(discoveredTuner.getTuner().getTunerController().getFrequency());
+                    saveConfigurations();
+                }
+            }
+        }
+    }
+
+    /**
      * Adds the discovered tuner to the list of disabled tuners
      */
     private void addDisabledTuner(DiscoveredTuner discoveredTuner)

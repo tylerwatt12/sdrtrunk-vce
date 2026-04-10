@@ -54,6 +54,8 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -594,14 +596,17 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     SourceConfigTunerMultipleFrequency sourceConfigTuner = (SourceConfigTunerMultipleFrequency)config;
                     TunerChannel tunerChannel = sourceConfigTuner.getTunerChannel(channelSpecification.getBandwidth());
                     String preferredTuner = sourceConfigTuner.getPreferredTuner();
+                    SortedSet<TunerChannel> tunerChannels = getTunerChannels(sourceConfigTuner, channelSpecification);
 
-                    Source source = getSource(tunerChannel, channelSpecification, preferredTuner, threadName);
+                    Source source = getSource(tunerChannel, channelSpecification, preferredTuner, threadName,
+                        tunerChannels);
 
                     if(source instanceof TunerChannelSource)
                     {
                         retVal = new MultiFrequencyTunerChannelSource(this, (TunerChannelSource)source,
                                 sourceConfigTuner.getFrequencies(), channelSpecification,
-                                sourceConfigTuner.getPreferredTuner(), threadName + " MULTI FREQ");
+                                sourceConfigTuner.getPreferredTuner(), threadName + " MULTI FREQ",
+                                sourceConfigTuner.getMinimumFrequency(), sourceConfigTuner.getMaximumFrequency());
                     }
                 }
                 break;
@@ -624,6 +629,16 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public Source getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification, String preferredTuner,
                             String threadName)
     {
+        return getSource(tunerChannel, channelSpecification, preferredTuner, threadName, null);
+    }
+
+    /**
+     * Iterates current available tuners to get a tuner channel source for the specified frequency and bandwidth,
+     * optionally using a broader channel set to pre-position an idle polyphase tuner.
+     */
+    public Source getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification, String preferredTuner,
+                            String threadName, SortedSet<TunerChannel> tunerChannels)
+    {
         TunerChannelSource source = null;
 
         if(tunerChannel != null && channelSpecification != null)
@@ -638,8 +653,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 {
                     try
                     {
-                        source = discoveredTuner.getTuner().getChannelSourceManager().getSource(tunerChannel,
-                                channelSpecification, threadName);
+                        preTunePolyphaseCenter(discoveredTuner, tunerChannels);
+                        source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
+                            tunerChannels);
 
                         if(source != null)
                         {
@@ -666,8 +682,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 {
                     try
                     {
-                        source = discoveredTuner.getTuner().getChannelSourceManager().getSource(tunerChannel,
-                                channelSpecification, threadName);
+                        preTunePolyphaseCenter(discoveredTuner, tunerChannels);
+                        source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
+                            tunerChannels);
                     }
                     catch(Exception e)
                     {
@@ -678,6 +695,85 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
 
         return source;
+    }
+
+    /**
+     * Obtains a source from the discovered tuner, using the broader center-frequency context only for polyphase
+     * tuners that can make use of it.
+     */
+    private TunerChannelSource getSource(DiscoveredTuner discoveredTuner, TunerChannel tunerChannel,
+                                         ChannelSpecification channelSpecification, String threadName,
+                                         SortedSet<TunerChannel> tunerChannels)
+    {
+        ChannelSourceManager channelSourceManager = discoveredTuner.getTuner().getChannelSourceManager();
+
+        if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
+            tunerChannels != null && !tunerChannels.isEmpty())
+        {
+            TunerChannelSource source = polyphaseChannelSourceManager.getSource(tunerChannel, channelSpecification, threadName,
+                tunerChannels);
+
+            if(source != null)
+            {
+                mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
+            }
+
+            return source;
+        }
+
+        return channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
+    }
+
+    /**
+     * Pre-positions an idle polyphase tuner using the full requested channel set so that the first allocated channel
+     * can reuse a center frequency chosen for the overall site spread rather than a single active channel.
+     */
+    private void preTunePolyphaseCenter(DiscoveredTuner discoveredTuner, SortedSet<TunerChannel> tunerChannels)
+        throws SourceException
+    {
+        if(tunerChannels == null || tunerChannels.isEmpty() || !discoveredTuner.hasTuner())
+        {
+            return;
+        }
+
+        ChannelSourceManager channelSourceManager = discoveredTuner.getTuner().getChannelSourceManager();
+
+        if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
+            polyphaseChannelSourceManager.getTunerChannelCount() == 0)
+        {
+            long centerFrequency = polyphaseChannelSourceManager.getCenterFrequency(tunerChannels);
+
+            if(centerFrequency != discoveredTuner.getTuner().getTunerController().getFrequency())
+            {
+                discoveredTuner.getTuner().getTunerController().setFrequency(centerFrequency);
+            }
+        }
+    }
+
+    /**
+     * Creates tuner channels for the configured frequency list using the supplied channel bandwidth.
+     */
+    private SortedSet<TunerChannel> getTunerChannels(SourceConfigTunerMultipleFrequency sourceConfigTuner,
+                                                     ChannelSpecification channelSpecification)
+    {
+        SortedSet<TunerChannel> tunerChannels = new TreeSet<>();
+
+        if(sourceConfigTuner.hasFrequencyEnvelope())
+        {
+            long minimumFrequency = sourceConfigTuner.getMinimumFrequency();
+            long maximumFrequency = sourceConfigTuner.getMaximumFrequency();
+            long centerFrequency = minimumFrequency + ((maximumFrequency - minimumFrequency) / 2);
+            int bandwidth = (int)((maximumFrequency - minimumFrequency) + channelSpecification.getBandwidth());
+            tunerChannels.add(new TunerChannel(centerFrequency, bandwidth));
+            return tunerChannels;
+        }
+
+        for(long frequency: sourceConfigTuner.getFrequencies())
+        {
+            tunerChannels.add(new TunerChannel(frequency, channelSpecification.getBandwidth()));
+        }
+
+        return tunerChannels;
     }
 
     /**

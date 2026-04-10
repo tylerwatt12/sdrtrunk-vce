@@ -195,8 +195,10 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
             throw new IllegalArgumentException("Channel set bandwidth is greater than tuner's available bandwidth");
         }
 
-        //Strategy 1: reuse the current frequency if the channels fit
-        if(isValidCenterFrequency(channels, currentCenterFrequency))
+        //Strategy 1: reuse the current frequency if the channels fit. For a single-channel request, only reuse the
+        // existing center frequency when the channel already lands on an integral polyphase channel center.
+        if(isValidCenterFrequency(channels, currentCenterFrequency) &&
+            (channels.size() > 1 || isAlignedToChannelGrid(channels.first(), currentCenterFrequency)))
         {
             return currentCenterFrequency;
         }
@@ -280,6 +282,15 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         throw new IllegalArgumentException("Can't calculate valid center frequency for the channel set");
     }
 
+    /**
+     * Calculates a center frequency for the supplied channel set using the tuner's current center frequency as the
+     * starting point.
+     */
+    public long getCenterFrequency(SortedSet<TunerChannel> channels) throws IllegalArgumentException
+    {
+        return getCenterFrequency(channels, mTunerController.getFrequency());
+    }
+
     @Override
     public void setErrorMessage(String errorMessage)
     {
@@ -337,6 +348,16 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         }
 
         return fits;
+    }
+
+    /**
+     * Indicates if the specified center frequency places the tuner channel on an integral polyphase channel center.
+     */
+    private boolean isAlignedToChannelGrid(TunerChannel tunerChannel, long centerFrequency)
+    {
+        long channelBandwidth = (long)mPolyphaseChannelManager.getChannelBandwidth();
+        long offset = FastMath.abs(tunerChannel.getFrequency() - centerFrequency);
+        return offset % channelBandwidth == 0;
     }
 
     /**
@@ -418,6 +439,22 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     public TunerChannelSource getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification,
                                         String threadName)
     {
+        return getSource(tunerChannel, channelSpecification, threadName, null);
+    }
+
+    /**
+     * Allocates a tuner channel source for the tuner channel, optionally using a broader channel set to choose a
+     * center frequency that is better suited to the overall site/channel envelope than the single requested channel.
+     *
+     * @param tunerChannel for requested source
+     * @param channelSpecification for the requested channel
+     * @param threadName for the dispatcher
+     * @param centerFrequencyChannels optional broader set used only for center-frequency selection
+     * @return allocated DDC tuner channel source, or null if the channel cannot be provided by this source manager
+     */
+    public TunerChannelSource getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification,
+                                        String threadName, SortedSet<TunerChannel> centerFrequencyChannels)
+    {
         TunerChannelSource tunerChannelSource = null;
 
         try
@@ -435,11 +472,28 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
                 {
                     long currentCenterFrequency = mTunerController.getFrequency();
                     long updatedCenterFrequency = 0;
+                    SortedSet<TunerChannel> centerChannels = new java.util.TreeSet<>(tunerChannels);
+                    boolean hasBroaderContext = centerFrequencyChannels != null && !centerFrequencyChannels.isEmpty();
+
+                    if(hasBroaderContext)
+                    {
+                        centerChannels.addAll(centerFrequencyChannels);
+                    }
 
                     //Attempt to adjust the center frequency before we allocate the channel
                     try
                     {
-                        updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
+                        try
+                        {
+                            //When broader centering context is provided, bypass Strategy 1 (reuse current center)
+                            //by passing 0 so the algorithm always computes a fresh optimized center.
+                            long centerFrequencyHint = hasBroaderContext ? 0 : currentCenterFrequency;
+                            updatedCenterFrequency = getCenterFrequency(centerChannels, centerFrequencyHint);
+                        }
+                        catch(IllegalArgumentException iae)
+                        {
+                            updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
+                        }
 
                         if(updatedCenterFrequency != currentCenterFrequency && updatedCenterFrequency != 0)
                         {

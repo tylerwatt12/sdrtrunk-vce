@@ -39,6 +39,8 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     private List<Long> mFrequencies = new ArrayList<>();
     private String mPreferredTuner;
     private Long mPreferredFrequency;
+    private Long mMinimumFrequency;
+    private Long mMaximumFrequency;
     private int mFrequencyRotationDelay = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM;
 
     public SourceConfigTunerMultipleFrequency()
@@ -109,6 +111,44 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     public void addFrequency(long frequency)
     {
         mFrequencies.add(frequency);
+    }
+
+    /**
+     * Optional minimum frequency used to position the tuner for the full working-channel envelope.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "min_frequency")
+    public Long getMinimumFrequency()
+    {
+        return mMinimumFrequency;
+    }
+
+    public void setMinimumFrequency(Long minimumFrequency)
+    {
+        mMinimumFrequency = minimumFrequency;
+    }
+
+    /**
+     * Optional maximum frequency used to position the tuner for the full working-channel envelope.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "max_frequency")
+    public Long getMaximumFrequency()
+    {
+        return mMaximumFrequency;
+    }
+
+    public void setMaximumFrequency(Long maximumFrequency)
+    {
+        mMaximumFrequency = maximumFrequency;
+    }
+
+    /**
+     * Indicates if this configuration has a usable frequency envelope.
+     */
+    @JsonIgnore
+    public boolean hasFrequencyEnvelope()
+    {
+        return mMinimumFrequency != null && mMaximumFrequency != null &&
+            mMinimumFrequency > 0 && mMaximumFrequency >= mMinimumFrequency;
     }
 
     /**

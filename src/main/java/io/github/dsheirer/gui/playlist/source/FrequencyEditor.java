@@ -40,6 +40,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 
@@ -59,6 +60,8 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
     private ComboBox<String> mPreferredTunerComboBox;
     private VBox mFrequencyBoxContainer;
     private Spinner<Integer> mChannelRotationDelaySpinner;
+    private FrequencyField mMinimumFrequencyField;
+    private FrequencyField mMaximumFrequencyField;
     private boolean mAllowMultipleFrequencies = false;
     private int mFrequencyRotationDefault = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT;
     private int mFrequencyRotationMinimum = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM;
@@ -98,11 +101,33 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         HBox hBox = new HBox();
         hBox.setPadding(new Insets(10,10,10,10));
         hBox.setSpacing(10);
-        hBox.setAlignment(Pos.CENTER_LEFT);
+        hBox.setAlignment(Pos.TOP_LEFT);
 
-        Label label = new Label(mAllowMultipleFrequencies ? "Frequencies (MHz)" : "Frequency (MHz)");
-        label.setAlignment(Pos.BASELINE_RIGHT);
-        hBox.getChildren().addAll(label, getFrequencyBoxContainer());
+        GridPane frequencyColumn = new GridPane();
+        frequencyColumn.setHgap(10);
+        frequencyColumn.setVgap(10);
+        frequencyColumn.setAlignment(Pos.TOP_LEFT);
+
+        if(mAllowMultipleFrequencies)
+        {
+            Label minimumLabel = new Label("Minimum (MHz)");
+            minimumLabel.setMinWidth(Label.USE_PREF_SIZE);
+            frequencyColumn.add(minimumLabel, 0, 0);
+            frequencyColumn.add(getMinimumFrequencyField(), 1, 0);
+
+            Label maximumLabel = new Label("Maximum (MHz)");
+            maximumLabel.setMinWidth(Label.USE_PREF_SIZE);
+            frequencyColumn.add(maximumLabel, 0, 1);
+            frequencyColumn.add(getMaximumFrequencyField(), 1, 1);
+        }
+
+        Label label = new Label(mAllowMultipleFrequencies ? "Control (MHz)" : "Frequency (MHz)");
+        label.setMinWidth(Label.USE_PREF_SIZE);
+        int controlRow = mAllowMultipleFrequencies ? 2 : 0;
+        frequencyColumn.add(label, 0, controlRow);
+        frequencyColumn.add(getFrequencyBoxContainer(), 1, controlRow);
+
+        hBox.getChildren().add(frequencyColumn);
 
         Label preferredTunerLabel = new Label("Preferred Tuner");
         HBox tunerBox = new HBox();
@@ -117,13 +142,12 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         if(mAllowMultipleFrequencies)
         {
             Label frequencyRotationLabel = new Label("Frequency Rotation Delay (ms)");
-            HBox frequencyBox = new HBox();
-            frequencyBox.setAlignment(Pos.CENTER_LEFT);
-            frequencyBox.setSpacing(10);
-            frequencyBox.getChildren().addAll(frequencyRotationLabel, getFrequencyRotationDelaySpinner());
+            HBox frequencyRotationBox = new HBox();
+            frequencyRotationBox.setAlignment(Pos.CENTER_LEFT);
+            frequencyRotationBox.setSpacing(10);
+            frequencyRotationBox.getChildren().addAll(frequencyRotationLabel, getFrequencyRotationDelaySpinner());
             getFrequencyRotationDelaySpinner().disableProperty().bind(Bindings.greaterThan(2, Bindings.size(mFrequencyBoxes)));
-
-            vbox.getChildren().addAll(tunerBox, frequencyBox);
+            vbox.getChildren().addAll(tunerBox, frequencyRotationBox);
         }
         else
         {
@@ -149,6 +173,8 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         }
 
         getPreferredTunerComboBox().setDisable(disable);
+        getMinimumFrequencyField().setDisable(disable || !mAllowMultipleFrequencies);
+        getMaximumFrequencyField().setDisable(disable || !mAllowMultipleFrequencies);
     }
 
     /**
@@ -213,6 +239,10 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
             sourceConfigMulti.setFrequencies(frequencies);
             sourceConfigMulti.setPreferredTuner(preferredTuner);
             sourceConfigMulti.setFrequencyRotationDelay(getFrequencyRotationDelaySpinner().getValue());
+            long minimumFrequency = getMinimumFrequencyField().get();
+            long maximumFrequency = getMaximumFrequencyField().get();
+            sourceConfigMulti.setMinimumFrequency(minimumFrequency > 0 ? minimumFrequency : null);
+            sourceConfigMulti.setMaximumFrequency(maximumFrequency > 0 ? maximumFrequency : null);
             setSourceConfiguration(sourceConfigMulti);
         }
     }
@@ -232,6 +262,8 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
 
         getFrequencyRotationDelaySpinner().getValueFactory()
             .setValue(ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM);
+        getMinimumFrequencyField().set(0);
+        getMaximumFrequencyField().set(0);
 
         if(sourceConfiguration == null)
         {
@@ -269,6 +301,14 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
             }
 
             getFrequencyRotationDelaySpinner().getValueFactory().setValue(rotationDelay);
+            if(sourceMulti.getMinimumFrequency() != null)
+            {
+                getMinimumFrequencyField().set(sourceMulti.getMinimumFrequency());
+            }
+            if(sourceMulti.getMaximumFrequency() != null)
+            {
+                getMaximumFrequencyField().set(sourceMulti.getMaximumFrequency());
+            }
         }
         else
         {
@@ -317,6 +357,32 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         }
 
         return mChannelRotationDelaySpinner;
+    }
+
+    private FrequencyField getMinimumFrequencyField()
+    {
+        if(mMinimumFrequencyField == null)
+        {
+            mMinimumFrequencyField = new FrequencyField();
+            mMinimumFrequencyField.setDisable(true);
+            mMinimumFrequencyField.textProperty().addListener((observable, oldValue, newValue) ->
+                modifiedProperty().set(true));
+        }
+
+        return mMinimumFrequencyField;
+    }
+
+    private FrequencyField getMaximumFrequencyField()
+    {
+        if(mMaximumFrequencyField == null)
+        {
+            mMaximumFrequencyField = new FrequencyField();
+            mMaximumFrequencyField.setDisable(true);
+            mMaximumFrequencyField.textProperty().addListener((observable, oldValue, newValue) ->
+                modifiedProperty().set(true));
+        }
+
+        return mMaximumFrequencyField;
     }
 
     /**

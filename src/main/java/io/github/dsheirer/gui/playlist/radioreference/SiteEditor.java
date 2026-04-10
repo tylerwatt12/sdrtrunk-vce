@@ -576,6 +576,8 @@ public class SiteEditor extends GridPane
                     sourceConfig.addFrequency((long)(control.getFrequency() * 1E6));
                 }
 
+                populateSiteFrequencyEnvelope(sourceConfig);
+
                 channel.setSourceConfiguration(sourceConfig);
             }
 
@@ -646,6 +648,7 @@ public class SiteEditor extends GridPane
                         frequencies.add(getFrequency(siteFrequency));
                     }
                     sourceConfig.setFrequencies(frequencies);
+                    populateSiteFrequencyEnvelope(sourceConfig);
                     channel.setSourceConfiguration(sourceConfig);
                 }
 
@@ -741,6 +744,7 @@ public class SiteEditor extends GridPane
                         frequencies.add(getFrequency(siteFrequency));
                     }
                     sourceConfig.setFrequencies(frequencies);
+                    populateSiteFrequencyEnvelope(sourceConfig);
                     channel.setSourceConfiguration(sourceConfig);
                 }
 
@@ -786,6 +790,31 @@ public class SiteEditor extends GridPane
     private static long getFrequency(SiteFrequency siteFrequency)
     {
         return (long)(siteFrequency.getFrequency() * 1E6);
+    }
+
+    /**
+     * Populates the site-wide minimum and maximum frequencies from the current RadioReference site frequency list.
+     */
+    private void populateSiteFrequencyEnvelope(SourceConfigTunerMultipleFrequency sourceConfig)
+    {
+        long minimumFrequency = Long.MAX_VALUE;
+        long maximumFrequency = 0;
+
+        for(SiteFrequency siteFrequency: getSiteFrequencyTableView().getItems())
+        {
+            if(siteFrequency.getFrequency() > 0.01)
+            {
+                long frequency = getFrequency(siteFrequency);
+                minimumFrequency = Math.min(minimumFrequency, frequency);
+                maximumFrequency = Math.max(maximumFrequency, frequency);
+            }
+        }
+
+        if(minimumFrequency != Long.MAX_VALUE && maximumFrequency >= minimumFrequency)
+        {
+            sourceConfig.setMinimumFrequency(minimumFrequency);
+            sourceConfig.setMaximumFrequency(maximumFrequency);
+        }
     }
 
     /**
