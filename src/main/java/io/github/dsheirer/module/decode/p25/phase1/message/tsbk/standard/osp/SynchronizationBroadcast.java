@@ -48,7 +48,7 @@ public class SynchronizationBroadcast extends OSPMessage
     private static final int[] MONTH = {47, 48, 49, 50};
     private static final int[] DAY = {51, 52, 53, 54, 55};
     private static final int[] HOURS = {56, 57, 58, 59, 60};
-    private static final int[] MINUTES = {61, 62, 63, 65, 65, 66};
+    private static final int[] MINUTES = {61, 62, 63, 64, 65, 66};
     private static final int[] MICRO_SLOTS = {67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
 
     private static final TimeZone NO_TIME_ZONE = new SimpleTimeZone(0, "NONE");
