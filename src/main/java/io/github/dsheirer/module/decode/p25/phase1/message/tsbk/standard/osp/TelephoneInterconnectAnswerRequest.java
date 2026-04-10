@@ -23,6 +23,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber;
@@ -38,18 +39,17 @@ import java.util.List;
  */
 public class TelephoneInterconnectAnswerRequest extends OSPMessage
 {
-    private static final int[] DIGIT_1 = {16, 17, 18, 19};
-    private static final int[] DIGIT_2 = {20, 21, 22, 23};
-    private static final int[] DIGIT_3 = {24, 25, 26, 27};
-    private static final int[] DIGIT_4 = {28, 29, 30, 31};
-    private static final int[] DIGIT_5 = {32, 33, 34, 35};
-    private static final int[] DIGIT_6 = {36, 37, 38, 39};
-    private static final int[] DIGIT_7 = {40, 41, 42, 43};
-    private static final int[] DIGIT_8 = {44, 45, 46, 47};
-    private static final int[] DIGIT_9 = {48, 49, 50, 51};
-    private static final int[] DIGIT_10 = {52, 53, 54, 55};
-    private static final int[] TARGET_ADDRESS = {56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
-            73, 74, 75, 76, 77, 78, 79};
+    private static final IntField DIGIT_1 = IntField.length4(16);
+    private static final IntField DIGIT_2 = IntField.length4(20);
+    private static final IntField DIGIT_3 = IntField.length4(24);
+    private static final IntField DIGIT_4 = IntField.length4(28);
+    private static final IntField DIGIT_5 = IntField.length4(32);
+    private static final IntField DIGIT_6 = IntField.length4(36);
+    private static final IntField DIGIT_7 = IntField.length4(40);
+    private static final IntField DIGIT_8 = IntField.length4(44);
+    private static final IntField DIGIT_9 = IntField.length4(48);
+    private static final IntField DIGIT_10 = IntField.length4(52);
+    private static final IntField TARGET_ADDRESS = IntField.length24(56);
 
     private Identifier mTelephoneNumber;
     private Identifier mTargetAddress;

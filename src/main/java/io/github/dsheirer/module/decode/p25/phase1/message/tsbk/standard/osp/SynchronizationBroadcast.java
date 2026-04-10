@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
@@ -39,17 +40,17 @@ public class SynchronizationBroadcast extends OSPMessage
 {
     public static final int SYSTEM_TIME_NOT_LOCKED_TO_EXTERNAL_REFERENCE_FLAG = 29;
     public static final int MICRO_SLOTS_TO_MINUTE_ROLLOVER_UNLOCKED_FLAG = 30;
-    private static final int[] LEAP_SECOND_CORRECTION = {31, 32};
+    private static final IntField LEAP_SECOND_CORRECTION = IntField.length2(31);
     public static final int LOCAL_TIME_OFFSET_VALID_FLAG = 33;
     public static final int LOCAL_TIME_OFFSET_SIGN = 34;
-    private static final int[] LOCAL_TIME_OFFSET_HOURS = {35, 36, 37, 38};
+    private static final IntField LOCAL_TIME_OFFSET_HOURS = IntField.length4(35);
     public static final int LOCAL_TIME_OFFSET_HALF_HOUR = 39;
-    private static final int[] YEAR = {40, 41, 42, 43, 44, 45, 46};
-    private static final int[] MONTH = {47, 48, 49, 50};
-    private static final int[] DAY = {51, 52, 53, 54, 55};
-    private static final int[] HOURS = {56, 57, 58, 59, 60};
-    private static final int[] MINUTES = {61, 62, 63, 64, 65, 66};
-    private static final int[] MICRO_SLOTS = {67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField YEAR = IntField.range(40, 46);
+    private static final IntField MONTH = IntField.length4(47);
+    private static final IntField DAY = IntField.range(51, 55);
+    private static final IntField HOURS = IntField.range(56, 60);
+    private static final IntField MINUTES = IntField.length6(61);
+    private static final IntField MICRO_SLOTS = IntField.range(67, 79);
 
     private static final TimeZone NO_TIME_ZONE = new SimpleTimeZone(0, "NONE");
     private final DateFormat mTimeFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z");
