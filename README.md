@@ -65,6 +65,11 @@ used for control-channel acquisition and rotation; the envelope is only a tuner-
 - More generally, the polyphase center-frequency allocator now prefers midpoint-aligned valid centers instead of the
 first low-edge fit. That produces more sensible passband placement for ordinary multi-channel uses too, such asclustered
 NBFM channels on a 500kHz tuner span.
+- I also did a broad parser cleanup pass replacing large numbers of hand-written contiguous `int[]` bit-position maps
+with `IntField`, and reversed/irregular descriptor maps with `FragmentedIntField` where appropriate. The main value is
+not raw speed; it is eliminating an error-prone representation that made it far too easy to duplicate or skip bit
+positions in protocol parsers. That pass also smoked out a handful of real field-definition bugs that had been hiding
+in plain sight.
 - While the SDRconnect tuner type will display drift and PPM, the auto-correct feature is disabled, as the drift will in
 general be so low as to be uninteresting.
 - Gettting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
