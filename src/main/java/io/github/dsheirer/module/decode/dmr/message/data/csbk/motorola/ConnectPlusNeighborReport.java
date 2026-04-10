@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import com.google.common.base.Joiner;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.site.SiteIdentifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRSite;
@@ -37,8 +38,7 @@ import java.util.List;
 public class ConnectPlusNeighborReport extends CSBKMessage
 {
     private static final int SITE_ARRAY_START = 16;
-    private static final int[] UNKNOWN = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
-        73, 74, 75, 76, 77, 78, 79};
+    private static final IntField UNKNOWN = IntField.length24(56);
 
     private List<SiteIdentifier> mNeighbors;
     private List<Identifier> mIdentifiers;
@@ -92,7 +92,7 @@ public class ConnectPlusNeighborReport extends CSBKMessage
 
     public String getUnknownField()
     {
-        return getMessage().getHex(UNKNOWN, 6);
+        return getMessage().getHex(UNKNOWN);
     }
 
     /**

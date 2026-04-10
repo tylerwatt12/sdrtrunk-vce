@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.channel.DmrRestLsn;
 import io.github.dsheirer.module.decode.dmr.channel.ITimeslotFrequencyReceiver;
@@ -40,23 +41,23 @@ public class CapacityPlusNeighbors extends CSBKMessage implements ITimeslotFrequ
 {
     private static final String SITE_LABEL = " SITE:";
     private static final String REST_LABEL = "-REST:";
-    private static final int[] LC_START_STOP = new int[]{16, 17};
-    private static final int[] REST_LSN = new int[]{19, 20, 21, 22, 23};
+    private static final IntField LC_START_STOP = IntField.length2(16);
+    private static final IntField REST_LSN = IntField.range(19, 23);
     private static final int ASYNC = 24;
-    private static final int[] SITE = new int[]{25, 26, 27, 28};
-    private static final int[] NEIGHBOR_COUNT = new int[]{29, 30, 31};
-    private static final int[] NEIGHBOR_1_SITE = new int[]{32, 33, 34, 35};
-    private static final int[] NEIGHBOR_1_REST = new int[]{36, 37, 38, 39};
-    private static final int[] NEIGHBOR_2_SITE = new int[]{40, 41, 42, 43};
-    private static final int[] NEIGHBOR_2_REST = new int[]{44, 45, 46, 47};
-    private static final int[] NEIGHBOR_3_SITE = new int[]{48, 49, 50, 51};
-    private static final int[] NEIGHBOR_3_REST = new int[]{52, 53, 54, 55};
-    private static final int[] NEIGHBOR_4_SITE = new int[]{56, 57, 58, 59};
-    private static final int[] NEIGHBOR_4_REST = new int[]{60, 61, 62, 63};
-    private static final int[] NEIGHBOR_5_SITE = new int[]{64, 65, 66, 67};
-    private static final int[] NEIGHBOR_5_REST = new int[]{68, 69, 70, 71};
-    private static final int[] NEIGHBOR_6_SITE = new int[]{72, 73, 74, 75};
-    private static final int[] NEIGHBOR_6_REST = new int[]{76, 77, 78, 79};
+    private static final IntField SITE = IntField.length4(25);
+    private static final IntField NEIGHBOR_COUNT = IntField.range(29, 31);
+    private static final IntField NEIGHBOR_1_SITE = IntField.length4(32);
+    private static final IntField NEIGHBOR_1_REST = IntField.length4(36);
+    private static final IntField NEIGHBOR_2_SITE = IntField.length4(40);
+    private static final IntField NEIGHBOR_2_REST = IntField.length4(44);
+    private static final IntField NEIGHBOR_3_SITE = IntField.length4(48);
+    private static final IntField NEIGHBOR_3_REST = IntField.length4(52);
+    private static final IntField NEIGHBOR_4_SITE = IntField.length4(56);
+    private static final IntField NEIGHBOR_4_REST = IntField.length4(60);
+    private static final IntField NEIGHBOR_5_SITE = IntField.length4(64);
+    private static final IntField NEIGHBOR_5_REST = IntField.length4(68);
+    private static final IntField NEIGHBOR_6_SITE = IntField.length4(72);
+    private static final IntField NEIGHBOR_6_REST = IntField.length4(76);
 
 
     private DmrRestLsn mRestChannel;
