@@ -50,7 +50,7 @@ to help, and will cause decode failures.
 - For multi-frequency tuner sources, this fork now supports an optional frequency envelope using `min_frequency` and
 `max_frequency`. This was added for trunked channels, where we'd like to make more optimal channel center choices. The
 problem this addresses is that center frequency selection was not good, resulting in, in my case, the control channels
-being in that marginal upper portion of the passband, and about 1MHz of the unusuable lower portion of the passband being
+being in the marginal upper portion of the passband, and about 1MHz of the unusuable lower portion of the passband being
 in play. In practice, that meant a 5MHz sample rate could look insufficient, and losing lock was not unusual, when the real
 issue was poor center-frequency selection.
 - When a frequency envelope is present, sdrtrunk uses that full span to pre-position idle polyphase tuners and to guide
