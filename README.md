@@ -54,11 +54,15 @@ being in the marginal upper portion of the passband, and about 1MHz of the unusu
 in play. In practice, that meant a 5MHz sample rate could look insufficient, and losing lock was not unusual, when the real
 issue was poor center-frequency selection.
 - When a frequency envelope is present, sdrtrunk uses that full span to pre-position idle polyphase tuners and to guide
-subsequent control-channel reacquisition, so the tuner stays centered in the passband for the whole site.
+subsequent control-channel reacquisition. The envelope defines the preferred center by itself; the active control
+channel is only used as a fit check, so control-channel rotation does not pull the tuner away from the site midpoint.
 - The Frequency Editor exposes these values as `Minimum (MHz)` and `Maximum (MHz)`, and the RadioReference site import
 path populates them automatically from the full imported site frequency list.
 - This does not change the actual rotating control-channel list. The `Control (MHz)` entries are still the frequencies
 used for control-channel acquisition and rotation; the envelope is only a tuner-centering hint.
+- More generally, the polyphase center-frequency allocator now prefers midpoint-aligned valid centers instead of the
+first low-edge fit. That produces more sensible passband placement for ordinary multi-channel uses too, such asclustered
+NBFM channels on a 500kHz tuner span.
 - While the SDRconnect tuner type will display drift and PPM, the auto-correct feature is disabled, as the drift will in
 general be so low as to be uninteresting.
 - Gettting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
