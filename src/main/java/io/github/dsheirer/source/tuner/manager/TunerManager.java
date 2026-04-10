@@ -721,7 +721,14 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             return source;
         }
 
-        return channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
+        TunerChannelSource source = channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
+
+        if(source != null && channelSourceManager instanceof PolyphaseChannelSourceManager)
+        {
+            mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
+        }
+
+        return source;
     }
 
     /**
@@ -746,6 +753,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             if(centerFrequency != discoveredTuner.getTuner().getTunerController().getFrequency())
             {
                 discoveredTuner.getTuner().getTunerController().setFrequency(centerFrequency);
+                mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
             }
         }
     }

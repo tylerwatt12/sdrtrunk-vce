@@ -203,68 +203,71 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
             return currentCenterFrequency;
         }
 
+        long gridStep = (long)mPolyphaseChannelManager.getChannelBandwidth();
+        long usableHalfBandwidth = mTunerController.getUsableHalfBandwidth();
         long bestIntegralFrequency = getIntegralFrequency(channels);
 
-        double usableHalfBandwidth = mTunerController.getUsableHalfBandwidth();
+        //Strategy 2: choose the grid-aligned center nearest the midpoint of the channel set.
+        //
+        // The valid center range is bounded by:
+        //   lowestValidCenter  = last channel's max frequency  - usableHalfBandwidth  (center must be high enough
+        //                        that the top channel still fits within the upper passband edge)
+        //   highestValidCenter = first channel's min frequency + usableHalfBandwidth  (center must be low enough
+        //                        that the bottom channel still fits within the lower passband edge)
+        //
+        // Within that range we enumerate grid-aligned candidates and pick the one closest to the channel-set midpoint.
+        long lowestValidCenter = channels.last().getMaxFrequency() - usableHalfBandwidth;
+        long highestValidCenter = channels.first().getMinFrequency() + usableHalfBandwidth;
 
-        //Strategy 2: start by placing the center frequency exactly one channel width below the first channel frequency
-        //and iteratively increase it one channel width at a time.  This optimally places the channels nearest to the
-        //center of the bandwidth
-        long start = channels.first().getFrequency() - (int)mPolyphaseChannelManager.getChannelBandwidth();
+        // Snap lowestValidCenter up to the next grid-aligned position relative to bestIntegralFrequency.
+        long offset = (lowestValidCenter - bestIntegralFrequency) % gridStep;
+        if(offset < 0) offset += gridStep;
+        long firstGridCenter = lowestValidCenter + (offset == 0 ? 0 : gridStep - offset);
 
-        if(isValidCenterFrequency(channels, start))
+        if(firstGridCenter <= highestValidCenter)
         {
-            return start;
-        }
+            long channelSetMidpoint = (channels.first().getMinFrequency() + channels.last().getMaxFrequency()) / 2;
 
-        while(start - channels.first().getMinFrequency() < usableHalfBandwidth)
-        {
-            start += (int)mPolyphaseChannelManager.getChannelBandwidth();
+            // Snap ideal center down to nearest grid position, then check it and its neighbour above.
+            long idealOffset = (channelSetMidpoint - bestIntegralFrequency) % gridStep;
+            if(idealOffset < 0) idealOffset += gridStep;
+            long idealGridCenter = channelSetMidpoint - idealOffset;
 
-            if(isValidCenterFrequency(channels, start))
+            // Clamp to [firstGridCenter, highestValidCenter] and pick whichever neighbour is closer to midpoint.
+            long candidate = FastMath.max(firstGridCenter, FastMath.min(idealGridCenter, highestValidCenter));
+            long candidateAbove = candidate + gridStep;
+
+            boolean candidateValid = isValidCenterFrequency(channels, candidate);
+            boolean candidateAboveValid = candidateAbove <= highestValidCenter && isValidCenterFrequency(channels, candidateAbove);
+
+            if(candidateValid || candidateAboveValid)
             {
-                return start;
+                if(candidateValid && candidateAboveValid)
+                {
+                    return FastMath.abs(candidate - channelSetMidpoint) <= FastMath.abs(candidateAbove - channelSetMidpoint)
+                        ? candidate : candidateAbove;
+                }
+                return candidateValid ? candidate : candidateAbove;
+            }
+
+            // Fallback: walk the full grid range from the center outward to find a valid position.
+            long lastGridCenter = highestValidCenter - ((highestValidCenter - bestIntegralFrequency) % gridStep + gridStep) % gridStep;
+            for(long step = gridStep; firstGridCenter + step <= lastGridCenter; step += gridStep)
+            {
+                long low = idealGridCenter - step;
+                long high = idealGridCenter + step;
+                if(low >= firstGridCenter && isValidCenterFrequency(channels, low)) return low;
+                if(high <= lastGridCenter && isValidCenterFrequency(channels, high)) return high;
             }
         }
 
-        //Strategy 3: start by placing the first channel at the minimum location within the tuner bandwidth
-        double startFrequency = channels.first().getMinFrequency() + usableHalfBandwidth;
-
-        //Align the test frequency to the next greater integral frequency placing the first channel at the
-        // minimum extreme of the available bandwidth as a starting location
-        double delta = FastMath.abs(startFrequency - bestIntegralFrequency);
-        double adjustment = delta % mPolyphaseChannelManager.getChannelBandwidth();
-
-        startFrequency += adjustment;
-
-        long availableTestBandwidth = mTunerController.getUsableBandwidth() - channelSetBandwidth;
-        int availableTestChannels = (int)(availableTestBandwidth / mPolyphaseChannelManager.getChannelBandwidth()) + 1;
-
-        if(isValidCenterFrequency(channels,(long)startFrequency))
-        {
-            return (long)startFrequency;
-        }
-
-        int currentChannel = 1;
-
-        while(currentChannel <= availableTestChannels)
-        {
-            long testFrequency = (long)(startFrequency - (currentChannel * mPolyphaseChannelManager.getChannelBandwidth()));
-
-            if(isValidCenterFrequency(channels, testFrequency))
-            {
-                return testFrequency;
-            }
-
-            currentChannel++;
-        }
-
-        //Strategy 4: brute force walk across the spectrum 1 hertz at a time looking for a center frequency that will
+        //Strategy 3: brute force walk across the spectrum 1 hertz at a time looking for a center frequency that will
         //fit all channels
-        long testFrequency = channels.first().getMinFrequency() + mTunerController.getUsableHalfBandwidth();
+        long availableTestBandwidth = mTunerController.getUsableBandwidth() - channelSetBandwidth;
+        long testFrequency = channels.first().getMinFrequency() + usableHalfBandwidth;
         long minimumFrequency = testFrequency - availableTestBandwidth;
 
-        if(isValidCenterFrequency(channels,testFrequency))
+        if(isValidCenterFrequency(channels, testFrequency))
         {
             return testFrequency;
         }
@@ -472,23 +475,32 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
                 {
                     long currentCenterFrequency = mTunerController.getFrequency();
                     long updatedCenterFrequency = 0;
-                    SortedSet<TunerChannel> centerChannels = new java.util.TreeSet<>(tunerChannels);
                     boolean hasBroaderContext = centerFrequencyChannels != null && !centerFrequencyChannels.isEmpty();
-
-                    if(hasBroaderContext)
-                    {
-                        centerChannels.addAll(centerFrequencyChannels);
-                    }
 
                     //Attempt to adjust the center frequency before we allocate the channel
                     try
                     {
                         try
                         {
-                            //When broader centering context is provided, bypass Strategy 1 (reuse current center)
-                            //by passing 0 so the algorithm always computes a fresh optimized center.
-                            long centerFrequencyHint = hasBroaderContext ? 0 : currentCenterFrequency;
-                            updatedCenterFrequency = getCenterFrequency(centerChannels, centerFrequencyHint);
+                            if(hasBroaderContext)
+                            {
+                                //When a site envelope is provided, center on it exclusively so the active channel
+                                //does not shift the midpoint.  Fall back to the real channel set if the envelope
+                                //center does not also accommodate the requested channel.
+                                long envelopeCenter = getCenterFrequency(centerFrequencyChannels, 0);
+                                if(isValidCenterFrequency(tunerChannels, envelopeCenter))
+                                {
+                                    updatedCenterFrequency = envelopeCenter;
+                                }
+                                else
+                                {
+                                    updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
+                                }
+                            }
+                            else
+                            {
+                                updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
+                            }
                         }
                         catch(IllegalArgumentException iae)
                         {
