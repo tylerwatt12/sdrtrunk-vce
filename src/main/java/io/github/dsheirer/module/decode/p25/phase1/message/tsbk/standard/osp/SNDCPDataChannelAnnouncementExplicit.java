@@ -21,6 +21,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25ExplicitChannel;
@@ -38,14 +39,14 @@ import java.util.List;
  */
 public class SNDCPDataChannelAnnouncementExplicit extends OSPMessage implements IFrequencyBandReceiver
 {
-    private static final int[] DATA_SERVICE_OPTIONS = {16, 17, 18, 19, 20, 21, 22, 23};
+    private static final IntField DATA_SERVICE_OPTIONS = IntField.length8(16);
     private static final int AUTONOMOUS_ACCESS_FLAG = 24;
     private static final int REQUESTED_ACCESS_FLAG = 25;
-    private static final int[] DOWNLINK_FREQUENCY_BAND = {32, 33, 34, 35};
-    private static final int[] DOWNLINK_CHANNEL_NUMBER = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] UPLINK_FREQUENCY_BAND = {48, 49, 50, 51};
-    private static final int[] UPLINK_CHANNEL_NUMBER = {52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] DATA_ACCESS_CONTROL = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField DOWNLINK_FREQUENCY_BAND = IntField.length4(32);
+    private static final IntField DOWNLINK_CHANNEL_NUMBER = IntField.length12(36);
+    private static final IntField UPLINK_FREQUENCY_BAND = IntField.length4(48);
+    private static final IntField UPLINK_CHANNEL_NUMBER = IntField.length12(52);
+    private static final IntField DATA_ACCESS_CONTROL = IntField.length16(64);
 
     private DataServiceOptions mServiceOptions;
     private IChannelDescriptor mChannel;
