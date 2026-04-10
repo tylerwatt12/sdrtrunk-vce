@@ -64,6 +64,7 @@ import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -1166,13 +1167,33 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         if(apco25Channel != null && apco25Channel.getDownlinkFrequency() > 0 && getInterModuleEventBus() != null)
         {
-            SourceConfigTuner sourceConfig = new SourceConfigTuner();
-            sourceConfig.setFrequency(apco25Channel.getDownlinkFrequency());
-            if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTuner parentConfigTuner)
+            if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency parentMulti &&
+                parentMulti.hasFrequencyEnvelope())
             {
-                sourceConfig.setPreferredTuner(parentConfigTuner.getPreferredTuner());
+                SourceConfigTunerMultipleFrequency sourceConfig = new SourceConfigTunerMultipleFrequency();
+                sourceConfig.addFrequency(apco25Channel.getDownlinkFrequency());
+                sourceConfig.setPreferredFrequency(apco25Channel.getDownlinkFrequency());
+                sourceConfig.setPreferredTuner(parentMulti.getPreferredTuner());
+                sourceConfig.setMinimumFrequency(parentMulti.getMinimumFrequency());
+                sourceConfig.setMaximumFrequency(parentMulti.getMaximumFrequency());
+                trafficChannel.setSourceConfiguration(sourceConfig);
             }
-            trafficChannel.setSourceConfiguration(sourceConfig);
+            else
+            {
+                SourceConfigTuner sourceConfig = new SourceConfigTuner();
+                sourceConfig.setFrequency(apco25Channel.getDownlinkFrequency());
+
+                if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTuner parentConfigTuner)
+                {
+                    sourceConfig.setPreferredTuner(parentConfigTuner.getPreferredTuner());
+                }
+                else if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency parentMulti)
+                {
+                    sourceConfig.setPreferredTuner(parentMulti.getPreferredTuner());
+                }
+
+                trafficChannel.setSourceConfiguration(sourceConfig);
+            }
 
             //If this is a phase2 request and we have scramble/randomizer parameters, set them
             if(mPhase2ScrambleParameters != null && trafficChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 p2)
