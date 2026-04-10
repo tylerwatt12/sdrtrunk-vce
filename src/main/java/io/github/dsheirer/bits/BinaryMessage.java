@@ -796,6 +796,22 @@ public class BinaryMessage extends BitSet
     }
 
     /**
+     * Returns the byte value represented by the field.
+     *
+     * @param field describing an 8-bit contiguous field
+     * @return byte value of the field
+     */
+    public byte getByte(IntField field)
+    {
+        if(field.width() != 8)
+        {
+            throw new IllegalArgumentException("Invalid - int field width must be 8 bits to form a proper byte");
+        }
+
+        return (byte)(getInt(field) & 0xFF);
+    }
+
+    /**
      * Returns the byte value represented by the bit array
      *
      * @param bits - an array of bit positions that will be treated as if they
@@ -825,6 +841,24 @@ public class BinaryMessage extends BitSet
         }
 
         return (byte)(value & 0xFF);
+    }
+
+    /**
+     * Returns the byte value represented by the field where the message start index is offset within this binary
+     * message.
+     *
+     * @param field describing an 8-bit contiguous field
+     * @param offset to apply to each of the bit positions
+     * @return byte value of the field
+     */
+    public byte getByte(IntField field, int offset)
+    {
+        if(field.width() != 8)
+        {
+            throw new IllegalArgumentException("Invalid - int field width must be 8 bits to form a proper byte");
+        }
+
+        return (byte)(getInt(field, offset) & 0xFF);
     }
 
     /**
@@ -1016,6 +1050,42 @@ public class BinaryMessage extends BitSet
     {
         int width = Math.ceilDiv(field.width(), 4);
         return leftPadHex(Integer.toHexString(getInt(field)).toUpperCase(Locale.US), width);
+    }
+
+    /**
+     * Returns the integer field formatted as a hex value using zero prefixes to pad the hex character count to the
+     * requested width.
+     * @param field to parse as hex
+     * @param digitDisplayCount desired output width
+     * @return hex value
+     */
+    public String getHex(IntField field, int digitDisplayCount)
+    {
+        return leftPadHex(Integer.toHexString(getInt(field)).toUpperCase(Locale.US), digitDisplayCount);
+    }
+
+    /**
+     * Returns the integer field formatted as a hex value using zero prefixes to pad the hex character count to fully
+     * represent the size (width) of the field.
+     * @param field to parse as hex
+     * @return hex value.
+     */
+    public String getHex(FragmentedIntField field)
+    {
+        int width = Math.ceilDiv(field.indices().length, 4);
+        return leftPadHex(Integer.toHexString(getInt(field)).toUpperCase(Locale.US), width);
+    }
+
+    /**
+     * Returns the fragmented integer field formatted as a hex value using zero prefixes to pad the hex character
+     * count to the requested width.
+     * @param field to parse as hex
+     * @param digitDisplayCount desired output width
+     * @return hex value
+     */
+    public String getHex(FragmentedIntField field, int digitDisplayCount)
+    {
+        return leftPadHex(Integer.toHexString(getInt(field)).toUpperCase(Locale.US), digitDisplayCount);
     }
 
     /**

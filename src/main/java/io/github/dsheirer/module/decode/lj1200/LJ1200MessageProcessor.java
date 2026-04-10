@@ -20,13 +20,14 @@
 package io.github.dsheirer.module.decode.lj1200;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.sample.Listener;
 
 public class LJ1200MessageProcessor implements Listener<CorrectedBinaryMessage>
 {
 
-    private static final int[] SYNC = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField SYNC = IntField.length16(0);
 
     private static final int SYNC_TOWER = 0x550F;
     private static final int SYNC_TRANSPONDER = 0x2AD5;

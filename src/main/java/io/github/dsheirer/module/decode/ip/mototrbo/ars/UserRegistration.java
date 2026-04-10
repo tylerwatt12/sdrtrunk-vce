@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.ars;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.ip.mototrbo.ars.identifier.ARSDevice;
 import io.github.dsheirer.module.decode.ip.mototrbo.ars.identifier.ARSPassword;
@@ -32,7 +33,7 @@ public class UserRegistration extends ARSHeader
     private static final int DEVICE_IDENTIFIER_START = 24;
     private static final int DEVICE_IDENTIFIER_START_EXTENDED_HEADER = 32;
 
-    private static final int[] BYTE_VALUE = {0, 1, 2, 3, 4, 5, 6, 7};
+    private static final IntField BYTE_VALUE = IntField.length8(0);
 
     private ARSDevice mDevice;
     private ARSUser mUser;

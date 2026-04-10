@@ -18,6 +18,7 @@
 package io.github.dsheirer.module.decode.lj1200;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.FragmentedIntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.edac.CRCLJ;
 import io.github.dsheirer.identifier.Identifier;
@@ -40,18 +41,19 @@ public class LJ1200Message extends Message
         "8", "9", "A", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "P", "Q", "R", "S",
         "T", "U", "V", "W", "X", "Y"};
 
-    private static final int[] VRC = {23, 22, 21, 20, 19, 18, 17, 16};
-    private static final int[] LRC = {31, 30, 29, 28, 27, 26, 25, 24};
-    private static final int[] FUNCTION = {35, 34, 33, 32};
-    private static final int[] ADDRESS = {63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43,
-        42, 41, 40, 39, 38, 37, 36};
-    private static final int[] REPLY_1 = {39, 38, 37, 36, 43};
-    private static final int[] REPLY_2 = {42, 41, 40, 47, 46};
-    private static final int[] REPLY_3 = {45, 44, 51, 50, 49};
-    private static final int[] REPLY_4 = {48, 55, 54, 53, 52};
-    private static final int[] REPLY_5 = {59, 58, 57, 56, 63};
+    private static final FragmentedIntField VRC = FragmentedIntField.of(23, 22, 21, 20, 19, 18, 17, 16);
+    private static final FragmentedIntField LRC = FragmentedIntField.of(31, 30, 29, 28, 27, 26, 25, 24);
+    private static final FragmentedIntField FUNCTION = FragmentedIntField.of(35, 34, 33, 32);
+    private static final FragmentedIntField ADDRESS = FragmentedIntField.of(63, 62, 61, 60, 59, 58, 57, 56, 55, 54,
+        53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36);
+    private static final FragmentedIntField REPLY_1 = FragmentedIntField.of(39, 38, 37, 36, 43);
+    private static final FragmentedIntField REPLY_2 = FragmentedIntField.of(42, 41, 40, 47, 46);
+    private static final FragmentedIntField REPLY_3 = FragmentedIntField.of(45, 44, 51, 50, 49);
+    private static final FragmentedIntField REPLY_4 = FragmentedIntField.of(48, 55, 54, 53, 52);
+    private static final FragmentedIntField REPLY_5 = FragmentedIntField.of(59, 58, 57, 56, 63);
 
-    private static final int[] MESSAGE_CRC = {79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64};
+    private static final FragmentedIntField MESSAGE_CRC = FragmentedIntField.of(79, 78, 77, 76, 75, 74, 73, 72, 71,
+        70, 69, 68, 67, 66, 65, 64);
 
     private BinaryMessage mMessage;
     private CRC mCRC;

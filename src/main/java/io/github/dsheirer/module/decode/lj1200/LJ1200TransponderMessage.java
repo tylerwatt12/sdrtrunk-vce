@@ -18,6 +18,7 @@
 package io.github.dsheirer.module.decode.lj1200;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.Message;
@@ -34,7 +35,7 @@ public class LJ1200TransponderMessage extends Message
 {
     private static final Logger mLog = LoggerFactory.getLogger(LJ1200TransponderMessage.class);
 
-    private static final int[] MESSAGE_CRC = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField MESSAGE_CRC = IntField.length16(64);
 
     private CorrectedBinaryMessage mMessage;
     private CRC mCRC;
