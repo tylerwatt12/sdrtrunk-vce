@@ -38,7 +38,7 @@ public class LocalTime extends Announcement
 {
     //Broadcast Parameters 1: 21-34
     private static final int[] DAY = new int[]{21, 22, 23, 24, 25};
-    private static final int[] MONTH = new int[]{26, 27, 28, 39};
+    private static final int[] MONTH = new int[]{26, 27, 28, 29};
     private static final int[] UTC = new int[]{30, 31, 32, 33, 34};
 
     //Broadcast Parameters 2: 56-79
