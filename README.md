@@ -53,9 +53,11 @@ problem this addresses is that center frequency selection was not good, resultin
 being in the marginal upper portion of the passband, and about 1MHz of the unusuable lower portion of the passband being
 in play. In practice, that meant a 5MHz sample rate could look insufficient, and losing lock was not unusual, when the real
 issue was poor center-frequency selection.
-- When a frequency envelope is present, sdrtrunk uses that full span to pre-position idle polyphase tuners and to guide
-subsequent control-channel reacquisition. The envelope defines the preferred center by itself; the active control
-channel is only used as a fit check, so control-channel rotation does not pull the tuner away from the site midpoint.
+- When a frequency envelope is present, sdrtrunk uses that full span to pre-position idle polyphase tuners, to guide
+subsequent control-channel reacquisition, and to keep later traffic-channel allocations on the same tuner from
+recentering around only the currently active voice channels. The envelope defines the preferred center by itself; the
+active control channel is only used as a fit check, so control-channel rotation does not pull the tuner away from the
+site midpoint.
 - The Frequency Editor exposes these values as `Minimum (MHz)` and `Maximum (MHz)`, and the RadioReference site import
 path populates them automatically from the full imported site frequency list.
 - This does not change the actual rotating control-channel list. The `Control (MHz)` entries are still the frequencies
