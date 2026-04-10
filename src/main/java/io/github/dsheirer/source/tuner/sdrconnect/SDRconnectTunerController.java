@@ -857,7 +857,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mNativeBufferFactory.setSamplesPerMillisecond(sampleRate / 1000.0f);
         try
         {
-            mFrequencyController.setSampleRate(sampleRate);
+            // Apply device-reported sample rate updates even while the controller is locked so the
+            // center-frequency calculator uses the actual active bandwidth.
+            mFrequencyController.setSampleRate(sampleRate, true);
         }
         catch(SourceException se)
         {
