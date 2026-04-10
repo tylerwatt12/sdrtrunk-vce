@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.channel.DMRLsn;
 import io.github.dsheirer.module.decode.dmr.channel.ITimeslotFrequencyReceiver;
@@ -41,9 +42,9 @@ import java.util.List;
  */
 public class ConnectPlusOTAAnnouncement extends CSBKMessage implements ITimeslotFrequencyReceiver
 {
-    private static final int[] MESSAGE_TYPE = new int[]{16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] VERSION = new int[]{24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-       private static final int[] LOGICAL_SLOT_NUMBER = new int[]{63, 64, 65, 66, 67};
+    private static final IntField MESSAGE_TYPE = IntField.length8(16);
+    private static final IntField VERSION = IntField.length16(24);
+    private static final IntField LOGICAL_SLOT_NUMBER = IntField.range(63, 67);
 
     private DMRLsn mDataChannel;
     private List<Identifier> mIdentifiers;

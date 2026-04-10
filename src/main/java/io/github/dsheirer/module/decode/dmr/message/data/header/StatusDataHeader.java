@@ -52,7 +52,7 @@ public class StatusDataHeader extends DataHeader
     private static final IntField SOURCE_RADIO = IntField.length24(40);
     private static final IntField SOURCE_PORT = IntField.range(64, 66);
     private static final IntField DESTINATION_PORT = IntField.range(67, 69);
-    private static final IntField STATUS = IntField.range(70, 79);
+    private static final IntField STATUS = IntField.length10(70);
 
     private DMRUnitStatus mUnitStatus;
     private IntegerIdentifier mDestinationLLID;

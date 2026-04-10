@@ -44,7 +44,7 @@ public class FrequencyBandUpdateTDMA extends OSPMessage implements IFrequencyBan
     private static final IntField CHANNEL_TYPE = IntField.length4(20);
     private static final int TRANSMIT_OFFSET_SIGN = 24;
     private static final LongField TRANSMIT_OFFSET = LongField.range(25, 37);
-    private static final IntField CHANNEL_SPACING = IntField.range(38, 47);
+    private static final IntField CHANNEL_SPACING = IntField.length10(38);
     private static final LongField BASE_FREQUENCY = LongField.length32(48);
 
     private ChannelType mChannelType;

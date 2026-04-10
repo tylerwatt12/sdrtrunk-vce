@@ -36,7 +36,7 @@ public class FrequencyBandUpdateVUHF extends MacStructure implements IFrequencyB
     private static final IntField BANDWIDTH = IntField.length4(OCTET_2_BIT_8 + 4);
     private static final int TRANSMIT_OFFSET_SIGN = OCTET_3_BIT_16;
     private static final IntField TRANSMIT_OFFSET = IntField.range(17, 29);
-    private static final IntField CHANNEL_SPACING = IntField.range(30, 39);
+    private static final IntField CHANNEL_SPACING = IntField.length10(30);
     private static final LongField BASE_FREQUENCY = LongField.length32(OCTET_6_BIT_40);
 
     /**

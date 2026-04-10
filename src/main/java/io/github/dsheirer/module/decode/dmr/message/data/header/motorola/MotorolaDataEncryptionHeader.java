@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.dmr.message.data.header.motorola;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.message.data.header.ProprietaryDataHeader;
@@ -33,13 +34,12 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
  */
 public class MotorolaDataEncryptionHeader extends ProprietaryDataHeader
 {
-    private static final int[] SERVICE_ACCESS_POINT = new int[]{0, 1, 2, 3};
-    private static final int[] VENDOR = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] ALGORITHM = new int[]{16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] KEY_ID = new int[]{24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] UNKNOWN = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] INITIALIZATION_VECTOR = new int[]{48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-            62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField SERVICE_ACCESS_POINT = IntField.length4(0);
+    private static final IntField VENDOR = IntField.length8(8);
+    private static final IntField ALGORITHM = IntField.length8(16);
+    private static final IntField KEY_ID = IntField.length8(24);
+    private static final IntField UNKNOWN = IntField.length16(32);
+    private static final IntField INITIALIZATION_VECTOR = IntField.length32(48);
 
     /**
      * Constructs an instance.
@@ -77,7 +77,7 @@ public class MotorolaDataEncryptionHeader extends ProprietaryDataHeader
      */
     public String getUnknown()
     {
-        return getMessage().getHex(UNKNOWN, 4);
+        return getMessage().getHex(UNKNOWN);
     }
 
     /**
@@ -105,7 +105,7 @@ public class MotorolaDataEncryptionHeader extends ProprietaryDataHeader
      */
     public String getInitializationVector()
     {
-        return getMessage().getHex(INITIALIZATION_VECTOR, 8);
+        return getMessage().getHex(INITIALIZATION_VECTOR);
     }
 
     /**

@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
@@ -35,16 +36,15 @@ import java.util.List;
  */
 public class ConnectPlusTerminateChannelGrant extends CSBKMessage
 {
-    private static final int[] TARGET_ADDRESS = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-        32, 33, 34, 35, 36, 37, 38, 39};
+    private static final IntField TARGET_ADDRESS = IntField.length24(16);
 
     //Analysis: this field correlates to UNKNOWN_FIELD(bits: 48-55) in ConnectPlusDataChannelGrant.
-    private static final int[] UNKNOWN_FIELD_1 = new int[]{40, 41, 42, 43, 44, 45, 46, 47};
+    private static final IntField UNKNOWN_FIELD_1 = IntField.length8(40);
 
-    private static final int[] UNKNOWN_FIELD_2 = new int[]{48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] UNKNOWN_FIELD_3 = new int[]{56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] UNKNOWN_FIELD_4 = new int[]{64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] UNKNOWN_FIELD_5 = new int[]{72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField UNKNOWN_FIELD_2 = IntField.length8(48);
+    private static final IntField UNKNOWN_FIELD_3 = IntField.length8(56);
+    private static final IntField UNKNOWN_FIELD_4 = IntField.length8(64);
+    private static final IntField UNKNOWN_FIELD_5 = IntField.length8(72);
 
     private RadioIdentifier mTargetRadio;
     private List<Identifier> mIdentifiers;

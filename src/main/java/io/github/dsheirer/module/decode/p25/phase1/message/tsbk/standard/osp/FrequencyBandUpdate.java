@@ -42,7 +42,7 @@ public class FrequencyBandUpdate extends OSPMessage implements IFrequencyBand
     private static final IntField BANDWIDTH = IntField.range(20, 28);
     private static final int TRANSMIT_OFFSET_SIGN = 29;
     private static final LongField TRANSMIT_OFFSET = LongField.length8(30);
-    private static final IntField CHANNEL_SPACING = IntField.range(38, 47);
+    private static final IntField CHANNEL_SPACING = IntField.length10(38);
     private static final LongField BASE_FREQUENCY = LongField.length32(48);
 
     /**

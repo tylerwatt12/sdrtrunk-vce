@@ -37,7 +37,7 @@ public class SystemIdentityCode extends AbstractStructure
     private static final IntField LARGE_NET = IntField.length4(2);
     private static final IntField LARGE_SITE = IntField.range(6, 13);
     private static final IntField HUGE_NET = IntField.length2(2);
-    private static final IntField HUGE_SITE = IntField.range(4, 13);
+    private static final IntField HUGE_SITE = IntField.length10(4);
     private static final IntField PAR_SUBFIELD = IntField.length2(14);
 
     private DMRNetwork mNetwork;
