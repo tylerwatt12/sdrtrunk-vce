@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
@@ -35,10 +36,9 @@ import java.util.List;
  */
 public class ConnectPlusDataRevertWindowAnnouncement extends CSBKMessage
 {
-    private static final int[] WINDOW = new int[]{16, 17, 18, 19, 20, 21, 22};
-    private static final int[] SUPERFRAME = new int[]{24, 25, 26, 27};
-    private static final int[] TARGET_RADIO = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-        48, 49, 50, 51, 52, 53, 54, 55};
+    private static final IntField WINDOW = IntField.range(16, 22);
+    private static final IntField SUPERFRAME = IntField.length4(24);
+    private static final IntField TARGET_RADIO = IntField.length24(32);
 
     private List<Identifier> mIdentifiers;
     private RadioIdentifier mTargetRadio;
