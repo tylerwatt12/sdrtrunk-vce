@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
@@ -37,14 +38,14 @@ import java.util.TimeZone;
 public class LocalTime extends Announcement
 {
     //Broadcast Parameters 1: 21-34
-    private static final int[] DAY = new int[]{21, 22, 23, 24, 25};
-    private static final int[] MONTH = new int[]{26, 27, 28, 29};
-    private static final int[] UTC = new int[]{30, 31, 32, 33, 34};
+    private static final IntField DAY = IntField.range(21, 25);
+    private static final IntField MONTH = IntField.length4(26);
+    private static final IntField UTC = IntField.range(30, 34);
 
     //Broadcast Parameters 2: 56-79
-    private static final int[] HOUR = new int[]{56, 57, 58, 59, 60};
-    private static final int[] MINUTE = new int[]{61, 62, 63, 64, 65, 66};
-    private static final int[] SECOND = new int[]{67, 68, 69, 70, 71, 72};
+    private static final IntField HOUR = IntField.range(56, 60);
+    private static final IntField MINUTE = IntField.length6(61);
+    private static final IntField SECOND = IntField.length6(67);
 
     private List<Identifier> mIdentifiers;
 

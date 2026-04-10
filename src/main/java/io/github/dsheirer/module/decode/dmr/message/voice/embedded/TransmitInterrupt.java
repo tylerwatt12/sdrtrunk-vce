@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.voice.embedded;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * Transmit Interrupt short burst
@@ -28,7 +29,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class TransmitInterrupt extends ShortBurst
 {
-    private static final int[] DELAY = new int[]{3, 4, 5, 6, 7};
+    private static final IntField DELAY = IntField.range(3, 7);
 
     /**
      * Constructor

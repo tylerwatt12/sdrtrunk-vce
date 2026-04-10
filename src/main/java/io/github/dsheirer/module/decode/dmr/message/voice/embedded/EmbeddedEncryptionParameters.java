@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.voice.embedded;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.type.EncryptionAlgorithm;
 
 /**
@@ -27,8 +28,8 @@ import io.github.dsheirer.module.decode.dmr.message.type.EncryptionAlgorithm;
  */
 public class EmbeddedEncryptionParameters extends ShortBurst
 {
-    private static final int[] KEY = new int[]{0, 1, 2, 3, 4, 5, 6, 7};
-    private static final int[] ALGORITHM = new int[]{8, 9, 10};
+    private static final IntField KEY = IntField.length8(0);
+    private static final IntField ALGORITHM = IntField.range(8, 10);
 
     /**
      * Constructor

@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.usb;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRCDMR;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -37,9 +38,8 @@ import java.util.List;
  */
 public class USBData extends DataMessage
 {
-    private static final int[] SERVICE_TYPE = new int[]{0, 1, 2, 3};
-    private static final int[] TARGET_RADIO = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
-        72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField SERVICE_TYPE = IntField.length4(0);
+    private static final IntField TARGET_RADIO = IntField.length24(56);
 
     private List<Identifier> mIdentifiers;
     private RadioIdentifier mTargetRadio;

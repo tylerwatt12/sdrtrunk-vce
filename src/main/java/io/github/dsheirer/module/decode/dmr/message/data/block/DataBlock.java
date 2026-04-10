@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.block;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.DataMessage;
@@ -33,7 +34,7 @@ import java.util.List;
  */
 public abstract class DataBlock extends DataMessage
 {
-    private static final int[] DATA_BLOCK_SERIAL_NUMBER = new int[]{0, 1, 2, 3, 4, 5, 6};
+    private static final IntField DATA_BLOCK_SERIAL_NUMBER = IntField.range(0, 6);
 
     /**
      * Constructs an instance.

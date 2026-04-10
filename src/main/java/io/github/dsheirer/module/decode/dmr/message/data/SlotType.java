@@ -20,6 +20,7 @@ package io.github.dsheirer.module.decode.dmr.message.data;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.Golay24;
 import io.github.dsheirer.module.decode.dmr.message.type.DataType;
 
@@ -29,8 +30,8 @@ public class SlotType
         182, 183, 184, 185, 186, 187, 188, 189};
 
     //Note: extracted message bit index values are offset by +4 from the ICD specified index values
-    private static final int[] COLOR_CODE = new int[]{4, 5, 6, 7};
-    private static final int[] DATA_TYPE = new int[]{8, 9, 10, 11};
+    private static final IntField COLOR_CODE = IntField.length4(4);
+    private static final IntField DATA_TYPE = IntField.length4(8);
 
     private CorrectedBinaryMessage mMessage;
     private boolean mValid;
