@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.type;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRNetwork;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRSite;
 
@@ -28,16 +29,16 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRSite;
  */
 public class SystemIdentityCode extends AbstractStructure
 {
-    private static final int[] MODEL = new int[]{0, 1};
-    private static final int[] TINY_NET = new int[]{2, 3, 4, 5, 6, 7, 8, 9, 10};
-    private static final int[] TINY_SITE = new int[]{11, 12, 13};
-    private static final int[] SMALL_NET = new int[]{2, 3, 4, 5, 6, 7, 8};
-    private static final int[] SMALL_SITE = new int[]{9, 10, 11, 12, 13};
-    private static final int[] LARGE_NET = new int[]{2, 3, 4, 5};
-    private static final int[] LARGE_SITE = new int[]{6, 7, 8, 9, 10, 11, 12, 13};
-    private static final int[] HUGE_NET = new int[]{2, 3};
-    private static final int[] HUGE_SITE = new int[]{4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
-    private static final int[] PAR_SUBFIELD = new int[]{14,15};
+    private static final IntField MODEL = IntField.length2(0);
+    private static final IntField TINY_NET = IntField.range(2, 10);
+    private static final IntField TINY_SITE = IntField.range(11, 13);
+    private static final IntField SMALL_NET = IntField.range(2, 8);
+    private static final IntField SMALL_SITE = IntField.range(9, 13);
+    private static final IntField LARGE_NET = IntField.length4(2);
+    private static final IntField LARGE_SITE = IntField.range(6, 13);
+    private static final IntField HUGE_NET = IntField.length2(2);
+    private static final IntField HUGE_SITE = IntField.range(4, 13);
+    private static final IntField PAR_SUBFIELD = IntField.length2(14);
 
     private DMRNetwork mNetwork;
     private DMRSite mSite;

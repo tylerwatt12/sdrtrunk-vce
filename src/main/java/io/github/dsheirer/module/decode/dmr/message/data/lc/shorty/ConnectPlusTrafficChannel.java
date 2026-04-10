@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.shorty;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRNetwork;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRSite;
@@ -32,8 +33,8 @@ import java.util.List;
  */
 public class ConnectPlusTrafficChannel extends ShortLCMessage
 {
-    private static final int[] NETWORK = new int[]{4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] SITE = new int[]{16, 17, 18, 19, 20, 21, 22, 23};
+    private static final IntField NETWORK = IntField.length12(4);
+    private static final IntField SITE = IntField.length8(16);
 
     private DMRNetwork mNetwork;
     private DMRSite mSite;

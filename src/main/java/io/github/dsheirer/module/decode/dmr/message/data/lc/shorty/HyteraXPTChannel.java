@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.shorty;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 
 import java.util.Collections;
@@ -30,9 +31,9 @@ import java.util.List;
  */
 public class HyteraXPTChannel extends ShortLCMessage
 {
-    private static final int[] FREE_REPEATER = new int[]{12, 13, 14, 15};
-    private static final int[] PRIORITY_CALL_REPEATER = new int[]{16, 17, 18, 19};
-    private static final int[] PRIORITY_CALL_HASHED_ADDRESS = new int[]{20, 21, 22, 23, 24, 25, 26, 27};
+    private static final IntField FREE_REPEATER = IntField.length4(12);
+    private static final IntField PRIORITY_CALL_REPEATER = IntField.length4(16);
+    private static final IntField PRIORITY_CALL_HASHED_ADDRESS = IntField.length8(20);
 
     /**
      * Constructs an instance

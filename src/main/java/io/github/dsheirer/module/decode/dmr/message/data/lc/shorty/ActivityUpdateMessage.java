@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.shorty;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.type.Activity;
 import java.util.Collections;
@@ -30,10 +31,10 @@ import java.util.List;
  */
 public class ActivityUpdateMessage extends ShortLCMessage
 {
-    private static final int[] TIMESLOT_1_ACTIVITY = new int[]{4, 5, 6, 7};
-    private static final int[] TIMESLOT_2_ACTIVITY = new int[]{8, 9, 10, 11};
-    private static final int[] TIMESLOT_1_HASH_ADDRESS = new int[]{12, 13, 14, 15, 16, 17, 18, 19};
-    private static final int[] TIMESLOT_2_HASH_ADDRESS = new int[]{20, 21, 22, 23, 24, 25, 26, 27};
+    private static final IntField TIMESLOT_1_ACTIVITY = IntField.length4(4);
+    private static final IntField TIMESLOT_2_ACTIVITY = IntField.length4(8);
+    private static final IntField TIMESLOT_1_HASH_ADDRESS = IntField.length8(12);
+    private static final IntField TIMESLOT_2_HASH_ADDRESS = IntField.length8(20);
 
     /**
      * Constructs an instance
@@ -91,7 +92,7 @@ public class ActivityUpdateMessage extends ShortLCMessage
      */
     public String getHashAddressTS1()
     {
-        return getMessage().getHex(TIMESLOT_1_HASH_ADDRESS, 2).toUpperCase();
+        return String.format("%02X", getMessage().getInt(TIMESLOT_1_HASH_ADDRESS));
     }
 
     /**
@@ -99,7 +100,7 @@ public class ActivityUpdateMessage extends ShortLCMessage
      */
     public String getHashAddressTS2()
     {
-        return getMessage().getHex(TIMESLOT_2_HASH_ADDRESS, 2).toUpperCase();
+        return String.format("%02X", getMessage().getInt(TIMESLOT_2_HASH_ADDRESS));
     }
 
     @Override

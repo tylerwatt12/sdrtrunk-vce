@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.shorty;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.channel.DmrRestLsn;
 import io.github.dsheirer.module.decode.dmr.channel.ITimeslotFrequencyReceiver;
@@ -33,8 +34,8 @@ import java.util.List;
  */
 public class CapacityPlusRestChannel extends ShortLCMessage implements ITimeslotFrequencyReceiver
 {
-    private static final int[] REST_LSN = new int[]{15, 16, 17, 18, 19};
-    private static final int[] SITE = new int[]{20, 21, 22, 23, 24};
+    private static final IntField REST_LSN = IntField.range(15, 19);
+    private static final IntField SITE = IntField.range(20, 24);
 
     private DmrRestLsn mRestChannel;
     private DMRSite mSite;
