@@ -115,7 +115,7 @@ public class FrequencyBandUpdateVUHF extends OSPMessage implements IFrequencyBan
      */
     public boolean hasTransmitOffset()
     {
-        return getMessage().getInt(TRANSMIT_OFFSET) != 0x80;
+        return getMessage().getLong(TRANSMIT_OFFSET) != 0x80;
     }
 
     @Override
