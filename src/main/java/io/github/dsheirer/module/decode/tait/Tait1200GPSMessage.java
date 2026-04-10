@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.tait;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.Message;
@@ -37,60 +38,60 @@ import java.util.TimeZone;
 
 public class Tait1200GPSMessage extends Message
 {
-    private static final int[] SIZE = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35};
-    private static final int[] FROM_DIGIT_1 = {36, 37, 38, 39, 40, 41, 42, 43};
-    private static final int[] FROM_DIGIT_2 = {44, 45, 46, 47, 48, 49, 50, 51};
-    private static final int[] FROM_DIGIT_3 = {52, 53, 54, 55, 56, 57, 58, 59};
-    private static final int[] FROM_DIGIT_4 = {60, 61, 62, 63, 64, 65, 66, 67};
-    private static final int[] FROM_DIGIT_5 = {68, 69, 70, 71, 72, 73, 74, 75};
-    private static final int[] FROM_DIGIT_6 = {76, 77, 78, 79, 80, 81, 82, 83};
-    private static final int[] FROM_DIGIT_7 = {84, 85, 86, 87, 88, 89, 90, 91};
-    private static final int[] FROM_DIGIT_8 = {92, 93, 94, 95, 96, 97, 98, 99};
+    private static final IntField SIZE = IntField.length16(20);
+    private static final IntField FROM_DIGIT_1 = IntField.length8(36);
+    private static final IntField FROM_DIGIT_2 = IntField.length8(44);
+    private static final IntField FROM_DIGIT_3 = IntField.length8(52);
+    private static final IntField FROM_DIGIT_4 = IntField.length8(60);
+    private static final IntField FROM_DIGIT_5 = IntField.length8(68);
+    private static final IntField FROM_DIGIT_6 = IntField.length8(76);
+    private static final IntField FROM_DIGIT_7 = IntField.length8(84);
+    private static final IntField FROM_DIGIT_8 = IntField.length8(92);
 
-    private static final int[] SIZE_2 = {188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198,
-        199, 200, 201, 202, 203};
-    private static final int[] TO_DIGIT_1 = {204, 205, 206, 207, 208, 209, 210, 211};
-    private static final int[] TO_DIGIT_2 = {212, 213, 214, 215, 216, 217, 218, 219};
-    private static final int[] TO_DIGIT_3 = {220, 221, 222, 223, 224, 225, 226, 227};
-    private static final int[] TO_DIGIT_4 = {228, 229, 230, 231, 232, 233, 234, 235};
-    private static final int[] TO_DIGIT_5 = {236, 237, 238, 239, 240, 241, 242, 243};
-    private static final int[] TO_DIGIT_6 = {244, 245, 246, 247, 248, 249, 250, 251};
-    private static final int[] TO_DIGIT_7 = {252, 253, 254, 255, 256, 257, 258, 259};
-    private static final int[] TO_DIGIT_8 = {260, 261, 262, 263, 264, 265, 266, 267};
+    private static final IntField SIZE_2 = IntField.length16(188);
+    private static final IntField TO_DIGIT_1 = IntField.length8(204);
+    private static final IntField TO_DIGIT_2 = IntField.length8(212);
+    private static final IntField TO_DIGIT_3 = IntField.length8(220);
+    private static final IntField TO_DIGIT_4 = IntField.length8(228);
+    private static final IntField TO_DIGIT_5 = IntField.length8(236);
+    private static final IntField TO_DIGIT_6 = IntField.length8(244);
+    private static final IntField TO_DIGIT_7 = IntField.length8(252);
+    private static final IntField TO_DIGIT_8 = IntField.length8(260);
 
-    private static final int[] HOUR_TENS = {293, 294, 295};
-    private static final int[] HOUR_ONES = {296, 297, 298, 299};
-    private static final int[] MINUTES_TENS = {301, 302, 303};
-    private static final int[] MINUTES_ONES = {304, 305, 306, 307};
-     private static final int[] SECONDS_TENS = {309, 310, 311};
-    private static final int[] SECONDS_ONES = {312, 313, 314, 315};
-     private static final int[] LATITUDE_SIGN = {317, 318};
-     private static final int[] LATITUDE_DEGREES_TENS = {320, 321, 322, 323};
-    private static final int[] LATITUDE_DEGREES_ONES = {324, 325, 326, 327};
-     private static final int[] LATITUDE_MINUTES_TENS = {329, 330, 331};
-    private static final int[] LATITUDE_MINUTES_ONES = {332, 333, 334, 335};
-    private static final int[] LATITUDE_SECONDS_HUND = {336, 337, 338, 339};
-    private static final int[] LATITUDE_SECONDS_TENS = {340, 341, 342, 344};
-    private static final int[] LATITUDE_SECONDS_ONES = {344, 345, 346, 347};
-     private static final int[] LONGITUDE_SIGN = {349, 350};
+    private static final IntField HOUR_TENS = IntField.range(293, 295);
+    private static final IntField HOUR_ONES = IntField.length4(296);
+    private static final IntField MINUTES_TENS = IntField.range(301, 303);
+    private static final IntField MINUTES_ONES = IntField.length4(304);
+    private static final IntField SECONDS_TENS = IntField.range(309, 311);
+    private static final IntField SECONDS_ONES = IntField.length4(312);
+    private static final IntField LATITUDE_SIGN = IntField.length2(317);
+    private static final IntField LATITUDE_DEGREES_TENS = IntField.length4(320);
+    private static final IntField LATITUDE_DEGREES_ONES = IntField.length4(324);
+    private static final IntField LATITUDE_MINUTES_TENS = IntField.range(329, 331);
+    private static final IntField LATITUDE_MINUTES_ONES = IntField.length4(332);
+    private static final IntField LATITUDE_SECONDS_HUND = IntField.length4(336);
+    private static final IntField LATITUDE_SECONDS_TENS = IntField.range(340, 342);
+    private static final IntField LATITUDE_SECONDS_ONES = IntField.length4(344);
+    private static final IntField LONGITUDE_SIGN = IntField.length2(349);
     private static final int LONGITUDE_DEGREES_HUNDREDS = 351;
-    private static final int[] LONGITUDE_DEGREES_TENS = {352, 353, 354, 355};
-    private static final int[] LONGITUDE_DEGREES_ONES = {356, 357, 358, 359};
-     private static final int[] LONGITUDE_MINUTES_TENS = {361, 362, 363};
-    private static final int[] LONGITUDE_MINUTES_ONES = {364, 365, 366, 367};
-    private static final int[] LONGITUDE_SECONDS_HUND = {368, 369, 370, 371};
-    private static final int[] LONGITUDE_SECONDS_TENS = {372, 373, 374, 375};
-    private static final int[] LONGITUDE_SECONDS_ONES = {376, 377, 378, 379};
-     private static final int[] DATE_DAY_TENS = {381, 382, 383};
-    private static final int[] DATE_DAY_ONES = {384, 385, 386, 387};
+    private static final IntField LONGITUDE_DEGREES_TENS = IntField.length4(352);
+    private static final IntField LONGITUDE_DEGREES_ONES = IntField.length4(356);
+    private static final IntField LONGITUDE_MINUTES_TENS = IntField.range(361, 363);
+    private static final IntField LONGITUDE_MINUTES_ONES = IntField.length4(364);
+    private static final IntField LONGITUDE_SECONDS_HUND = IntField.length4(368);
+    private static final IntField LONGITUDE_SECONDS_TENS = IntField.length4(372);
+    private static final IntField LONGITUDE_SECONDS_ONES = IntField.length4(376);
+    private static final IntField DATE_DAY_TENS = IntField.range(381, 383);
+    private static final IntField DATE_DAY_ONES = IntField.length4(384);
 
-    //TODO: not sure if this field is the month field or the speed field
+    //TODO: verify against the Tait GPS payload layout; this field is currently used as both DATE_MONTH and
+    // SPEED_HUNDREDS, so the semantics are unclear and should not be "cleaned up" blindly.
     private static final int[] DATE_MONTH = {388, 389, 390, 391};
     private static final int[] SPEED_HUNDREDS = {388, 389, 390, 391};
 
-    private static final int[] SPEED_TENS = {392, 393, 394, 395};
-    private static final int[] SPEED_ONES = {396, 397, 398, 399};
-    private static final int[] SPEED_TENTHS = {400, 401, 402, 403};
+    private static final IntField SPEED_TENS = IntField.length4(392);
+    private static final IntField SPEED_ONES = IntField.length4(396);
+    private static final IntField SPEED_TENTHS = IntField.length4(400);
 
     private BinaryMessage mMessage;
     private TaitIdentifier mFromIdentifier;
@@ -281,13 +282,19 @@ public class Tait1200GPSMessage extends Message
         return 0;
     }
 
+    private String getDigit(IntField field)
+    {
+        int value = mMessage.getInt(field);
+        return (0 <= value && value <= 9) ? String.valueOf(value) : "?";
+    }
+
     private String getDigit(int[] field)
     {
         int value = mMessage.getInt(field);
         return (0 <= value && value <= 9) ? String.valueOf(value) : "?";
     }
 
-    public char getCharacter(int[] bits)
+    public char getCharacter(IntField bits)
     {
         int value = mMessage.getInt(bits);
         return (char)value;
