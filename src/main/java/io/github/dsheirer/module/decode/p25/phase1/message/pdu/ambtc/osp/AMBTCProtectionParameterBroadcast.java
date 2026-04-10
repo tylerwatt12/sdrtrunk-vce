@@ -89,6 +89,8 @@ public class AMBTCProtectionParameterBroadcast extends AMBTCMessage
     {
         if(mTargetAddress == null && hasDataBlock(0))
         {
+            //TODO: investigate whether HEADER_ADDRESS should be read from the header message here; using the block message
+            // with a header-relative field map is suspicious and may be a parser bug.
             mTargetAddress = APCO25RadioIdentifier.createTo(getDataBlock(0).getMessage().getInt(HEADER_ADDRESS));
         }
 

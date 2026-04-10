@@ -158,6 +158,8 @@ public class AMBTCRoamingAddressResponse extends AMBTCMessage
     {
         if(mRoamingAddressB == null && hasDataBlock(0))
         {
+            //TODO: investigate header-vs-block source for roaming address B and later; these reads use block-relative
+            // field maps against the header message, which may be a longstanding parser bug.
             int wacn = getHeader().getMessage().getInt(BLOCK_0_WACN_B);
             int system = getDataBlock(0).getMessage().getInt(BLOCK_0_SYSTEM_B);
             int id = getAddress();
