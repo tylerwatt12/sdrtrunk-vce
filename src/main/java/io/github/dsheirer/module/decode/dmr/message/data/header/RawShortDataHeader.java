@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.header;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
@@ -31,7 +32,7 @@ public class RawShortDataHeader extends ShortDataHeader
 {
     private static final int RESYNCHRONIZE_FLAG = 70;
     private static final int FULL_MESSAGE_FLAG = 71;
-    private static final int[] BIT_PADDING = new int[]{72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField BIT_PADDING = IntField.length8(72);
 
     /**
      * Constructs an instance.

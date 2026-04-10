@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -39,11 +40,9 @@ public class Preamble extends CSBKMessage
 {
     private static final int DATA_CSBK_FLAG = 16;
     private static final int RADIO_TALKGROUP_FLAG = 17;
-    private static final int[] BLOCKS_TO_FOLLOW = new int[]{24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] TARGET_ADDRESS = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
-        47, 48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] SOURCE_ADDRESS = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
-        71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField BLOCKS_TO_FOLLOW = IntField.length8(24);
+    private static final IntField TARGET_ADDRESS = IntField.length24(32);
+    private static final IntField SOURCE_ADDRESS = IntField.length24(56);
 
     private IntegerIdentifier mTargetAddress;
     private RadioIdentifier mSourceAddress;

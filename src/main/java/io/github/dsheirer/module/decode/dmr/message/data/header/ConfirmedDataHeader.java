@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.header;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
@@ -33,7 +34,7 @@ import java.util.List;
 public class ConfirmedDataHeader extends OctetDataHeader
 {
     private static final int RE_SYNCHRONIZE_FLAG = 72;
-    private static final int[] SEND_SEQUENCE_NUMBER = new int[]{73, 74, 75};
+    private static final IntField SEND_SEQUENCE_NUMBER = IntField.range(73, 75);
 
     private List<Identifier> mIdentifiers;
 

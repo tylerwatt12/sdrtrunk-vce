@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
@@ -37,12 +38,12 @@ public class CallTimerParameters extends Announcement
     private static final String INFINITY = "INFINITY";
     private static final String SECS = " SECS";
     private static final String MINS = " MINS";
-    private static final int[] EMERGENCY_TIMER = new int[]{21, 22, 23, 24, 25, 26, 27, 28, 29};
-    private static final int[] PACKET_TIMER = new int[]{30, 31, 32, 33, 34};
+    private static final IntField EMERGENCY_TIMER = IntField.range(21, 29);
+    private static final IntField PACKET_TIMER = IntField.range(30, 34);
 
     //Broadcast Parameters 2: 56-79
-    private static final int[] MOBILE_TO_MOBILE_TIMER = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67};
-    private static final int[] MOBILE_TO_LINE_TIMER = new int[]{68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField MOBILE_TO_MOBILE_TIMER = IntField.length12(56);
+    private static final IntField MOBILE_TO_LINE_TIMER = IntField.length12(68);
 
     private List<Identifier> mIdentifiers;
 

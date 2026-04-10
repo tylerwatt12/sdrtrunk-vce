@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
@@ -35,9 +36,9 @@ import java.util.List;
  */
 public class Announcement extends CSBKMessage
 {
-    private static final int[] ANNOUNCEMENT_TYPE = new int[]{16, 17, 18, 19, 20};
+    private static final IntField ANNOUNCEMENT_TYPE = IntField.range(16, 20);
     private static final int REGISTRATION_REQUIRED_FLAG = 35;
-    private static final int[] BACKOFF = new int[]{36, 37, 38, 39};
+    private static final IntField BACKOFF = IntField.length4(36);
     private static final int SYSTEM_IDENTITY_CODE_OFFSET = 40;
 
     private List<Identifier> mIdentifiers;

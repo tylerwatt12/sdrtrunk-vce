@@ -1,6 +1,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.full.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 
@@ -14,7 +15,7 @@ import java.util.List;
  */
 public class CapacityMaxTalkerAlias extends CapacityPlusVoiceChannelUser
 {
-    private static final int[] LENGTH = new int[]{19, 20, 21, 22};
+    private static final IntField LENGTH = IntField.length4(19);
     private static final int ALIAS_START = 24;
     private static final int ALIAS_END = ALIAS_START + (6 * 8); //6 characters?
     private DmrTalkerAliasIdentifier mTalkerAliasIdentifier;

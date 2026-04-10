@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DmrTier3Radio;
@@ -38,13 +39,12 @@ import java.util.List;
  */
 public class Aloha extends CSBKMessage
 {
-    private static final int[] VERSION = new int[]{19, 20, 21};
+    private static final IntField VERSION = IntField.range(19, 21);
     private static final int ACTIVE_NETWORK_CONNECTION_FLAG = 23;
-    private static final int[] MASK = new int[]{24, 25, 26, 27, 28};
-    private static final int[] SERVICE_FUNCTION = new int[]{29, 30};
+    private static final IntField MASK = IntField.range(24, 28);
+    private static final IntField SERVICE_FUNCTION = IntField.length2(29);
     private static final int SYSTEM_IDENTITY_CODE_OFFSET = 40;
-    private static final int[] RADIO = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
-        73, 74, 75, 76, 77, 78, 79};
+    private static final IntField RADIO = IntField.length24(56);
 
     private SystemIdentityCode mSystemIdentityCode;
     private RadioIdentifier mRadioIdentifier;

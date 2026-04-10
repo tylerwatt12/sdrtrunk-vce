@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.full.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -39,10 +40,10 @@ import java.util.List;
 public class CapacityPlusWideAreaVoiceChannelUser extends CapacityPlusVoiceChannelUser implements ITimeslotFrequencyReceiver
 {
     //Bits 16-23: Service Options
-    private static final int[] UNKNOWN_1 = new int[]{24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] GROUP_ID = new int[]{40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] REST_LSN = new int[]{51, 52, 53, 54, 55};
-    private static final int[] RADIO_ID = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71};
+    private static final IntField UNKNOWN_1 = IntField.length16(24);
+    private static final IntField GROUP_ID = IntField.length8(40);
+    private static final IntField REST_LSN = IntField.range(51, 55);
+    private static final IntField RADIO_ID = IntField.length16(56);
     //Reed Solomon FEC: 72-95
 
     private RadioIdentifier mRadio;
@@ -98,7 +99,7 @@ public class CapacityPlusWideAreaVoiceChannelUser extends CapacityPlusVoiceChann
      */
     public String getUnknown1()
     {
-        return getMessage().getHex(UNKNOWN_1, 4);
+        return getMessage().getHex(UNKNOWN_1);
     }
 
     /**

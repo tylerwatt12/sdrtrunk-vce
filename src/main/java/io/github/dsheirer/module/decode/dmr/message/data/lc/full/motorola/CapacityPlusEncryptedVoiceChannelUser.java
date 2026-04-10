@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.full.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -33,10 +34,10 @@ import java.util.List;
  */
 public class CapacityPlusEncryptedVoiceChannelUser extends CapacityPlusVoiceChannelUser
 {
-    private static final int[] UNKNOWN_1 = new int[]{24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] TARGET_ADDRESS = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] UNKNOWN_2 = new int[]{48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] SOURCE_ADDRESS = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71};
+    private static final IntField UNKNOWN_1 = IntField.length8(24);
+    private static final IntField TARGET_ADDRESS = IntField.length16(32);
+    private static final IntField UNKNOWN_2 = IntField.length8(48);
+    private static final IntField SOURCE_ADDRESS = IntField.length16(56);
     //Reed Solomon FEC: 72-95
 
     private RadioIdentifier mRadio;
@@ -88,11 +89,11 @@ public class CapacityPlusEncryptedVoiceChannelUser extends CapacityPlusVoiceChan
      */
     public String getUnknown1()
     {
-        return getMessage().getHex(UNKNOWN_1, 2);
+        return getMessage().getHex(UNKNOWN_1);
     }
     public String getUnknown2()
     {
-        return getMessage().getHex(UNKNOWN_2, 2);
+        return getMessage().getHex(UNKNOWN_2);
     }
 
     /**

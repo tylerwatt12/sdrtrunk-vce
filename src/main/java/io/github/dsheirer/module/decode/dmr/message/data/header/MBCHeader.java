@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.header;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
@@ -36,7 +37,7 @@ import java.util.List;
  */
 public class MBCHeader extends CSBKMessage
 {
-    private static final int[] ANNOUNCEMENT_TYPE = new int[]{16, 17, 18, 19, 20};
+    private static final IntField ANNOUNCEMENT_TYPE = IntField.range(16, 20);
 
     /**
      * Constructs an instance

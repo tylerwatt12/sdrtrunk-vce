@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.header;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.message.type.DataPacketFormat;
@@ -30,7 +31,7 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
  */
 public class DataHeader extends HeaderMessage
 {
-    private static final int[] DATA_PACKET_FORMAT = new int[]{4, 5, 6, 7};
+    private static final IntField DATA_PACKET_FORMAT = IntField.length4(4);
 
 
     /**

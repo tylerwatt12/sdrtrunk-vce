@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.full;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.message.type.TalkerAliasDataFormat;
 import java.util.Collections;
@@ -30,8 +31,8 @@ import java.util.List;
  */
 public class TalkerAliasHeader extends FullLCMessage
 {
-    private static final int[] FORMAT = new int[]{16, 17};
-    private static final int[] LENGTH = new int[]{18, 19, 20, 21, 22};
+    private static final IntField FORMAT = IntField.length2(16);
+    private static final IntField LENGTH = IntField.range(18, 22);
     private static final int PAYLOAD_START = 23;
     private static final int PAYLOAD_END = 72;
 

@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.header;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
@@ -31,10 +32,12 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
  */
 public abstract class OctetDataHeader extends PacketSequenceHeader
 {
+    //TODO: investigate this field layout against the DMR spec; PAD_OCTET_COUNT is non-contiguous (bit 3 plus bits 12-15)
+    // and should not be blindly converted to a contiguous IntField.
     private static final int[] PAD_OCTET_COUNT = new int[]{3, 12, 13, 14, 15};
     private static final int FINAL_FRAGMENT_FLAG = 64;
-    private static final int[] BLOCKS_TO_FOLLOW = new int[]{65, 66, 67, 68, 69, 70, 71};
-    private static final int[] FRAGMENT_SEQUENCE_NUMBER = new int[]{76, 77, 78, 79};
+    private static final IntField BLOCKS_TO_FOLLOW = IntField.range(65, 71);
+    private static final IntField FRAGMENT_SEQUENCE_NUMBER = IntField.length4(76);
 
     /**
      * Constructs an instance.
