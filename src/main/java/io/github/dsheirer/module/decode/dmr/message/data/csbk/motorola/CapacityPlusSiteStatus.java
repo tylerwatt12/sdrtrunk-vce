@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -48,9 +49,9 @@ public class CapacityPlusSiteStatus extends CSBKMessage implements ITimeslotFreq
 {
     private static final int[] BYTE = new int[]{0, 1, 2, 3, 4, 5, 6, 7};
     private static final int[] TWO_BYTES = new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] SEGMENT_INDICATOR = new int[]{16, 17};
-    private static final int[] REST_LSN = new int[]{19, 20, 21, 22, 23};
-    private static final int[] LSN_VOICE_BITMAP = new int[]{24, 25, 26, 27, 28, 29, 30, 31};
+    private static final IntField SEGMENT_INDICATOR = IntField.length2(16);
+    private static final IntField REST_LSN = IntField.range(19, 23);
+    private static final IntField LSN_VOICE_BITMAP = IntField.length8(24);
     private static final int LSN_1_8_BITMAP_START = 24;
 
     private Map<Integer,IntegerIdentifier> mActiveIdentifierMap;
