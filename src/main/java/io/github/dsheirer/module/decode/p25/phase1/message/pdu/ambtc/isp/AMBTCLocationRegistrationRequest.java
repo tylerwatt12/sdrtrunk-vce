@@ -22,6 +22,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Lra;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
@@ -36,14 +37,12 @@ import java.util.List;
 
 public class AMBTCLocationRegistrationRequest extends AMBTCMessage
 {
-    private static final int[] HEADER_WACN = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] BLOCK_0_WACN = {0, 1, 2, 3};
-    private static final int[] BLOCK_0_SYSTEM = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] BLOCK_0_SOURCE_ID = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-        33, 34, 35, 36, 37, 38, 39};
-    private static final int[] BLOCK_0_PREVIOUS_LRA = {40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCK_0_GROUP_ADDRESS = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-        59, 60, 61, 62, 63};
+    private static final IntField HEADER_WACN = IntField.length16(64);
+    private static final IntField BLOCK_0_WACN = IntField.length4(0);
+    private static final IntField BLOCK_0_SYSTEM = IntField.length12(4);
+    private static final IntField BLOCK_0_SOURCE_ID = IntField.length24(16);
+    private static final IntField BLOCK_0_PREVIOUS_LRA = IntField.length8(40);
+    private static final IntField BLOCK_0_GROUP_ADDRESS = IntField.length16(48);
 
     private Identifier mWacn;
     private Identifier mSystem;
@@ -111,6 +110,8 @@ public class AMBTCLocationRegistrationRequest extends AMBTCMessage
     {
         if(mSourceId == null)
         {
+            // TODO: Investigate whether BLOCK_0_SOURCE_ID is correctly read from the AMBTC header here,
+            // or whether this should come from data block 0 and the field name is the accurate one.
             mSourceId = APCO25RadioIdentifier.createFrom(getHeader().getMessage().getInt(BLOCK_0_SOURCE_ID));
         }
 

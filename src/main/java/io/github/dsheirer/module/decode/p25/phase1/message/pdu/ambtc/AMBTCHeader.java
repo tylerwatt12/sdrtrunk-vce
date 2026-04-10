@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.p25.P25Utils;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
@@ -31,9 +32,9 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
  */
 public class AMBTCHeader extends PDUHeader
 {
-    private static final int[] SAP_ID = {10, 11, 12, 13, 14, 15};
-    private static final int[] OPCODE = {58, 59, 60, 61, 62, 63};
-    private static final int[] DATA = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField SAP_ID = IntField.length6(10);
+    private static final IntField OPCODE = IntField.length6(58);
+    private static final IntField DATA = IntField.length16(64);
 
     public AMBTCHeader(CorrectedBinaryMessage message, boolean passesCRC)
     {
