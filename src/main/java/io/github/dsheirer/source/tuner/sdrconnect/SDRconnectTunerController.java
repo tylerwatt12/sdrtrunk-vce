@@ -73,11 +73,6 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     public static final long MINIMUM_FREQUENCY = 1000L; // 1 kHz
     public static final long MAXIMUM_FREQUENCY = 2000000000L; // 2 GHz
     public static final double USABLE_BANDWIDTH_PERCENT = 0.95;
-    // Retune tolerance: 1/50th of sample rate, floored at 1 kHz. At the narrowest supported rate (62.5 kHz)
-    // the divisor yields 1,250 Hz, so the floor is inert for all real sample rates.
-    private static final long MINIMUM_RETUNE_TOLERANCE_HZ = 1_000L;
-    private static final int RETUNE_TOLERANCE_DIVISOR = 50;
-
     // Auto-reconnection settings
     private static final int RECONNECT_INITIAL_DELAY_SECONDS = 5;
     private static final int RECONNECT_MAX_DELAY_SECONDS = 60;
@@ -824,25 +819,12 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             throw new SourceException("Frequency " + frequency + " is outside valid range");
         }
 
-        long retuneTolerance = getRetuneToleranceHz();
-        long frequencyDelta = Math.abs(frequency - mCenterFrequency);
-
-        if(frequencyDelta > retuneTolerance)
+        if(frequency != mCenterFrequency)
         {
             setProperty(SDRconnectProtocol.PROPERTY_DEVICE_CENTER_FREQUENCY, String.valueOf(frequency));
             mLog.info("{} Requested frequency: {} Hz (current: {} Hz)", mLogPrefix, frequency,
                 mCenterFrequency);
         }
-        else if(frequencyDelta > 0)
-        {
-            mLog.debug("{} Frequency {} Hz close enough to current {} Hz within {} Hz, not re-tuning",
-                mLogPrefix, frequency, mCenterFrequency, retuneTolerance);
-        }
-    }
-
-    private long getRetuneToleranceHz()
-    {
-        return Math.max(MINIMUM_RETUNE_TOLERANCE_HZ, mSampleRate / RETUNE_TOLERANCE_DIVISOR);
     }
 
     @Override
@@ -857,9 +839,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mNativeBufferFactory.setSamplesPerMillisecond(sampleRate / 1000.0f);
         try
         {
-            // Apply device-reported sample rate updates even while the controller is locked so the
-            // center-frequency calculator uses the actual active bandwidth.
-            mFrequencyController.setSampleRate(sampleRate, true);
+            mFrequencyController.setSampleRate(sampleRate);
         }
         catch(SourceException se)
         {

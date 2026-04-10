@@ -107,20 +107,9 @@ public class FrequencyController
      */
     public void setSampleRate(int sampleRate) throws SourceException
     {
-        setSampleRate(sampleRate, false);
-    }
-
-    /**
-     * Sets sample rate in hertz with optional lock bypass for device-originated updates.
-     *
-     * @param sampleRate in hertz
-     * @param force true to update even while the sample rate is locked
-     */
-    public void setSampleRate(int sampleRate, boolean force) throws SourceException
-    {
         if(sampleRate != mSampleRate)
         {
-            if(force || !mSampleRateLocked)
+            if(!mSampleRateLocked)
             {
                 mSampleRate = sampleRate;
 
