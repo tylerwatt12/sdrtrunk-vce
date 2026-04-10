@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.hdu;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -39,10 +40,10 @@ public class HeaderData
         19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35};
     private static final int[] MESSAGE_INDICATOR_B = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
         52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] VENDOR_ID = {72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] ALGORITHM_ID = {80, 81, 82, 83, 84, 85, 86, 87};
-    private static final int[] KEY_ID = {88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103};
-    private static final int[] TALKGROUP_ID = {104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119};
+    private static final IntField VENDOR_ID = IntField.length8(72);
+    private static final IntField ALGORITHM_ID = IntField.length8(80);
+    private static final IntField KEY_ID = IntField.length16(88);
+    private static final IntField TALKGROUP_ID = IntField.length16(104);
 
     private boolean mValid = true;
     private BinaryMessage mMessage;

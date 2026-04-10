@@ -22,14 +22,14 @@ package io.github.dsheirer.module.decode.p25.phase1.message.pdu.block;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.edac.CRCP25;
 import io.github.dsheirer.edac.trellis.ViterbiDecoder_3_4_P25;
 
 public class ConfirmedDataBlock extends DataBlock
 {
-
-    private static final int[] SEQUENCE_NUMBER = {0, 1, 2, 3, 4, 5, 6};
+    private static final IntField SEQUENCE_NUMBER = IntField.range(0, 6);
     public static final int PAYLOAD_START = 16;
     public static final int PAYLOAD_END = 144;
 

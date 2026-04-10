@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import java.util.Collections;
 import java.util.List;
@@ -29,7 +30,7 @@ import java.util.List;
  */
 public class MultiFragmentContinuationMessage extends MacStructure
 {
-    private static final int[] LENGTH = {10, 11, 12, 13, 14, 15}; //Of this packet
+    private static final IntField LENGTH = IntField.length6(10); //Of this packet
 
     /**
      * Constructs the message
@@ -57,9 +58,9 @@ public class MultiFragmentContinuationMessage extends MacStructure
      * @param indexes for the field.
      * @return integer value.
      */
-    public int getInt(int[] indexes)
+    public int getInt(IntField field)
     {
-        return getMessage().getInt(indexes, getOffset());
+        return getMessage().getInt(field, getOffset());
     }
 
     /**

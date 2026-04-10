@@ -23,6 +23,8 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
+import io.github.dsheirer.bits.LongField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
@@ -36,13 +38,12 @@ import java.util.List;
  */
 public class FrequencyBandUpdate extends OSPMessage implements IFrequencyBand
 {
-    private static final int[] FREQUENCY_BAND_IDENTIFIER = {16, 17, 18, 19};
-    private static final int[] BANDWIDTH = {20, 21, 22, 23, 24, 25, 26, 27, 28};
+    private static final IntField FREQUENCY_BAND_IDENTIFIER = IntField.length4(16);
+    private static final IntField BANDWIDTH = IntField.range(20, 28);
     private static final int TRANSMIT_OFFSET_SIGN = 29;
-    private static final int[] TRANSMIT_OFFSET = {30, 31, 32, 33, 34, 35, 36, 37};
-    private static final int[] CHANNEL_SPACING = {38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BASE_FREQUENCY = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
-        65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final LongField TRANSMIT_OFFSET = LongField.length8(30);
+    private static final IntField CHANNEL_SPACING = IntField.range(38, 47);
+    private static final LongField BASE_FREQUENCY = LongField.length32(48);
 
     /**
      * Constructs a TSBK from the binary message sequence.
@@ -106,7 +107,7 @@ public class FrequencyBandUpdate extends OSPMessage implements IFrequencyBand
      */
     public boolean hasTransmitOffset()
     {
-        return getMessage().getInt(TRANSMIT_OFFSET) != 0x80;
+        return getMessage().getLong(TRANSMIT_OFFSET) != 0x80;
     }
 
     @Override

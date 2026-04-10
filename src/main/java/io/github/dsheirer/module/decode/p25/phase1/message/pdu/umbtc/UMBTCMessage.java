@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.umbtc;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.IBitErrorProvider;
 import io.github.dsheirer.module.decode.p25.P25Utils;
@@ -32,9 +33,8 @@ import java.util.List;
 
 public abstract class UMBTCMessage extends P25P1Message implements IBitErrorProvider
 {
-    protected static final int[] HEADER_ADDRESS = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-        40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCK_0_OPCODE = {2, 3, 4, 5, 6, 7};
+    protected static final IntField HEADER_ADDRESS = IntField.length24(24);
+    private static final IntField BLOCK_0_OPCODE = IntField.length6(2);
 
     private PDUSequence mPDUSequence;
 

@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.packet.sndcp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.ipv4.APCO25IpAddress;
 import io.github.dsheirer.module.decode.p25.reference.DataSubscriberUnitType;
@@ -34,18 +35,17 @@ import java.util.List;
  */
 public class ActivateTdsContextRequest extends SNDCPMessage
 {
-    private static final int[] VERSION = {4, 5, 6, 7};
-    private static final int[] NSAPI = {8, 9, 10, 11};
-    private static final int[] NAT = {12, 13, 14, 15};
-    private static final int[] IPV4_ADDRESS = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
-        34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] DSUT = {48, 49, 50, 51};
-    private static final int[] UDP_IP_HEADER_COMPRESSION_BITMAP = {52, 53, 54, 55};
-    private static final int[] IP_HEADER_COMPRESSION_BITMAP = {56, 57, 58, 59, 60, 61, 62, 63};
+    private static final IntField VERSION = IntField.length4(4);
+    private static final IntField NSAPI = IntField.length4(8);
+    private static final IntField NAT = IntField.length4(12);
+    private static final IntField IPV4_ADDRESS = IntField.length32(16);
+    private static final IntField DSUT = IntField.length4(48);
+    private static final IntField UDP_IP_HEADER_COMPRESSION_BITMAP = IntField.length4(52);
+    private static final IntField IP_HEADER_COMPRESSION_BITMAP = IntField.length8(56);
     private static final int TCP_IP_HEADER_COMPRESSION = 56;
-    private static final int[] TCPSS = {64, 65, 66, 67};
-    private static final int[] UDPSS = {68, 69, 70, 71};
-    private static final int[] MDPCO = {72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField TCPSS = IntField.length4(64);
+    private static final IntField UDPSS = IntField.length4(68);
+    private static final IntField MDPCO = IntField.length8(72);
 
     private Identifier mIPAddress;
     private List<Identifier> mIdentifiers;

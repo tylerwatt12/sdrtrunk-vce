@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.packet.sndcp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.p25.reference.PDUType;
 
 /**
@@ -27,7 +28,7 @@ import io.github.dsheirer.module.decode.p25.reference.PDUType;
  */
 public class SNDCPMessage
 {
-    private static final int[] PDU_TYPE = {0, 1, 2, 3};
+    private static final IntField PDU_TYPE = IntField.length4(0);
 
     private BinaryMessage mMessage;
     private boolean mOutbound;

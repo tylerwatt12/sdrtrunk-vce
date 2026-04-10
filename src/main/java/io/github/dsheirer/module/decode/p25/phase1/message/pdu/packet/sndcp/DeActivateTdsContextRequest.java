@@ -21,8 +21,8 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.packet.sndcp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,8 +32,8 @@ import java.util.List;
  */
 public class DeActivateTdsContextRequest extends SNDCPMessage
 {
-    private static final int[] NSAPI = {4, 5, 6, 7};
-    private static final int[] DEACTIVATION_TYPE = {8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField NSAPI = IntField.length4(4);
+    private static final IntField DEACTIVATION_TYPE = IntField.length8(8);
 
     /**
      * Constructs an SNDCP message parser instance.

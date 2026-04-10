@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1.message.ldu;
 
 import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
@@ -43,8 +44,8 @@ public class EncryptionSyncParameters implements IEncryptionSyncParameters
     private static final int[] MESSAGE_INDICATOR_7 = {48, 49, 50, 51, 52, 53, 54, 55};
     private static final int[] MESSAGE_INDICATOR_8 = {56, 57, 58, 59, 60, 61, 62, 63};
     private static final int[] MESSAGE_INDICATOR_9 = {64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] ALGORITHM_ID = {72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] KEY_ID = {80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95};
+    private static final IntField ALGORITHM_ID = IntField.length8(72);
+    private static final IntField KEY_ID = IntField.length16(80);
 
     private BinaryMessage mMessage;
     private boolean mValid = true;

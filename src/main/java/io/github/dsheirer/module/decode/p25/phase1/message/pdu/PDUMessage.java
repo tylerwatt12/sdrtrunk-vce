@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
@@ -35,15 +36,14 @@ public class PDUMessage extends P25P1Message
 {
     public static final int CONFIRMATION_REQUIRED_INDICATOR = 65;
     public static final int PACKET_DIRECTION_INDICATOR = 66;
-    private static final int[] FORMAT = {67, 68, 69, 70, 71};
-    private static final int[] SAP_ID = {74, 75, 76, 77, 78, 79};
-    private static final int[] VENDOR_ID = {80, 81, 82, 83, 84, 85, 86, 87};
-    private static final int[] LOGICAL_LINK_ID = {88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
-            98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111};
-    private static final int[] BLOCKS_TO_FOLLOW = {113, 114, 115, 116, 117, 118, 119};
-    private static final int[] PAD_OCTET_COUNT = {123, 124, 125, 126, 127};
-    private static final int[] OPCODE = {122, 123, 124, 125, 126, 127};
-    private static final int[] DATA_HEADER_OFFSET = {138, 139, 140, 141, 142, 143};
+    private static final IntField FORMAT = IntField.range(67, 71);
+    private static final IntField SAP_ID = IntField.length6(74);
+    private static final IntField VENDOR_ID = IntField.length8(80);
+    private static final IntField LOGICAL_LINK_ID = IntField.length24(88);
+    private static final IntField BLOCKS_TO_FOLLOW = IntField.range(113, 119);
+    private static final IntField PAD_OCTET_COUNT = IntField.range(123, 127);
+    private static final IntField OPCODE = IntField.length6(122);
+    private static final IntField DATA_HEADER_OFFSET = IntField.length6(138);
 
     private Identifier mLLID;
 

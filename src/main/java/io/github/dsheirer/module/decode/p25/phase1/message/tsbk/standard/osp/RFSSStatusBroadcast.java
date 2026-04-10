@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Lra;
@@ -39,14 +40,14 @@ import java.util.List;
  */
 public class RFSSStatusBroadcast extends OSPMessage implements IFrequencyBandReceiver
 {
-    private static final int[] LOCATION_REGISTRATION_AREA = {16, 17, 18, 19, 20, 21, 22, 23};
+    private static final IntField LOCATION_REGISTRATION_AREA = IntField.length8(16);
     private static final int ACTIVE_NETWORK_CONNECTION_TO_RFSS_CONTROLLER_FLAG = 27;
-    private static final int[] SYSTEM = {28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] RFSS = {40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] SITE = {48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] FREQUENCY_BAND = {56, 57, 58, 59};
-    private static final int[] CHANNEL_NUMBER = {60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] SYSTEM_SERVICE_CLASS = {72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField SYSTEM = IntField.length12(28);
+    private static final IntField RFSS = IntField.length8(40);
+    private static final IntField SITE = IntField.length8(48);
+    private static final IntField FREQUENCY_BAND = IntField.length4(56);
+    private static final IntField CHANNEL_NUMBER = IntField.length12(60);
+    private static final IntField SYSTEM_SERVICE_CLASS = IntField.length8(72);
 
     private Identifier mLocationRegistrationArea;
     private Identifier mSystem;

@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1.message.tsbk;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.P25Utils;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
@@ -36,8 +37,8 @@ public abstract class TSBKMessage extends P25P1Message
 {
     private static final int LAST_BLOCK_FLAG = 0;
     private static final int ENCRYPTION_FLAG = 1;
-    private static final int[] OPCODE = {2, 3, 4, 5, 6, 7};
-    private static final int[] VENDOR = {8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField OPCODE = IntField.length6(2);
+    private static final IntField VENDOR = IntField.length8(8);
     //16-bit CRC starts at OCTET 10, Bits 80-95
 
     private P25P1DataUnitID mDataUnitID;

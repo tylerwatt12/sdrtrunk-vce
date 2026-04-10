@@ -23,6 +23,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
@@ -41,13 +42,13 @@ import java.util.List;
  */
 public class SecondaryControlChannelBroadcastExplicit extends OSPMessage implements IFrequencyBandReceiver
 {
-    private static final int[] RFSS = {16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] SITE = {24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] TRANSMIT_FREQUENCY_BAND = {32, 33, 34, 35};
-    private static final int[] TRANSMIT_CHANNEL_NUMBER = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] RECEIVE_FREQUENCY_BAND = {56, 57, 58, 59};
-    private static final int[] RECEIVE_CHANNEL_NUMBER = {60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] SYSTEM_SERVICE_CLASS = {72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField RFSS = IntField.length8(16);
+    private static final IntField SITE = IntField.length8(24);
+    private static final IntField TRANSMIT_FREQUENCY_BAND = IntField.length4(32);
+    private static final IntField TRANSMIT_CHANNEL_NUMBER = IntField.length12(36);
+    private static final IntField RECEIVE_FREQUENCY_BAND = IntField.length4(56);
+    private static final IntField RECEIVE_CHANNEL_NUMBER = IntField.length12(60);
+    private static final IntField SYSTEM_SERVICE_CLASS = IntField.length8(72);
 
     private Identifier mRfss;
     private Identifier mSite;

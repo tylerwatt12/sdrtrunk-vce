@@ -21,6 +21,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
@@ -34,10 +35,8 @@ import java.util.List;
  */
 public class SystemServiceBroadcast extends OSPMessage
 {
-    private static final int[] AVAILABLE_SERVICES = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-        41, 42, 43, 44, 45, 46, 47};
-    private static final int[] SUPPORTED_SERVICES = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
-        65, 66, 67, 68, 69, 70, 71};
+    private static final IntField AVAILABLE_SERVICES = IntField.length24(24);
+    private static final IntField SUPPORTED_SERVICES = IntField.length24(48);
 
     private List<Service> mAvailableServices;
     private List<Service> mSupportedServices;

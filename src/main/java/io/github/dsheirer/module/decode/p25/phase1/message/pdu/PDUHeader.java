@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1.message.pdu;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.IBitErrorProvider;
 import io.github.dsheirer.message.IMessage;
@@ -40,10 +41,10 @@ public class PDUHeader implements IBitErrorProvider, IMessage
 
     public static final int CONFIRMATION_REQUIRED_INDICATOR = 1;
     public static final int PACKET_DIRECTION_INDICATOR = 2;
-    private static final int[] PDU_FORMAT = {3, 4, 5, 6, 7};
-    private static final int[] VENDOR_ID = {16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] LOGICAL_LINK_ID = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCKS_TO_FOLLOW = {49, 50, 51, 52, 53, 54, 55};
+    private static final IntField PDU_FORMAT = IntField.range(3, 7);
+    private static final IntField VENDOR_ID = IntField.length8(16);
+    private static final IntField LOGICAL_LINK_ID = IntField.length24(24);
+    private static final IntField BLOCKS_TO_FOLLOW = IntField.range(49, 55);
   
     protected boolean mValid;
     private CorrectedBinaryMessage mMessage;

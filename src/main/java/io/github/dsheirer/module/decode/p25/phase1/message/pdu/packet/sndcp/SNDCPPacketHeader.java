@@ -21,6 +21,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.packet.sndcp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.ip.Header;
 import io.github.dsheirer.module.decode.p25.reference.IPHeaderCompression;
 import io.github.dsheirer.module.decode.p25.reference.PDUType;
@@ -34,10 +35,10 @@ import io.github.dsheirer.module.decode.p25.reference.UDPHeaderCompression;
  */
 public class SNDCPPacketHeader extends Header
 {
-    private static final int[] PDU_TYPE = {0, 1, 2, 3};
-    private static final int[] NSAPI = {4, 5, 6, 7};
-    private static final int[] PACKET_HEADER_COMPRESSION = {8, 9, 10, 11};
-    private static final int[] DATAGRAM_HEADER_COMPRESSION = {12, 13, 14, 15};
+    private static final IntField PDU_TYPE = IntField.length4(0);
+    private static final IntField NSAPI = IntField.length4(4);
+    private static final IntField PACKET_HEADER_COMPRESSION = IntField.length4(8);
+    private static final IntField DATAGRAM_HEADER_COMPRESSION = IntField.length4(12);
 
     private boolean mOutboundMessage;
 

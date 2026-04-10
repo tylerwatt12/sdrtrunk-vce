@@ -60,6 +60,16 @@ public record IntField(int start, int end)
     }
 
     /**
+     * Utility constructor method for a field with two bits of length.
+     * @param start index (inclusive)
+     * @return constructed bit field.
+     */
+    public static IntField length2(int start)
+    {
+        return new IntField(start, (start + 1));
+    }
+
+    /**
      * Utility constructor method for a field with one four bits of length.
      * @param start index (inclusive)
      * @return constructed bit field.

@@ -22,6 +22,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.motorola.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
@@ -35,16 +36,16 @@ import java.util.List;
 
 public class MotorolaBaseStationId extends OSPMessage implements IFrequencyBandReceiver
 {
-    private static final int[] CHARACTER_1 = {16, 17, 18, 19, 20, 21};
-    private static final int[] CHARACTER_2 = {22, 23, 24, 25, 26, 27};
-    private static final int[] CHARACTER_3 = {28, 29, 30, 31, 32, 33};
-    private static final int[] CHARACTER_4 = {34, 35, 36, 37, 38, 39};
-    private static final int[] CHARACTER_5 = {40, 41, 42, 43, 44, 45};
-    private static final int[] CHARACTER_6 = {46, 47, 48, 49, 50, 51};
-    private static final int[] CHARACTER_7 = {52, 53, 54, 55, 56, 57};
-    private static final int[] CHARACTER_8 = {58, 59, 60, 61, 62, 63};
-    private static final int[] FREQUENCY_BAND = {64, 65, 66, 67};
-    private static final int[] CHANNEL_NUMBER = {68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField CHARACTER_1 = IntField.length6(16);
+    private static final IntField CHARACTER_2 = IntField.length6(22);
+    private static final IntField CHARACTER_3 = IntField.length6(28);
+    private static final IntField CHARACTER_4 = IntField.length6(34);
+    private static final IntField CHARACTER_5 = IntField.length6(40);
+    private static final IntField CHARACTER_6 = IntField.length6(46);
+    private static final IntField CHARACTER_7 = IntField.length6(52);
+    private static final IntField CHARACTER_8 = IntField.length6(58);
+    private static final IntField FREQUENCY_BAND = IntField.length4(64);
+    private static final IntField CHANNEL_NUMBER = IntField.length12(68);
 
     private String mCWID;
     private IChannelDescriptor mChannel;
@@ -100,7 +101,7 @@ public class MotorolaBaseStationId extends OSPMessage implements IFrequencyBandR
         return mCWID;
     }
 
-    private String getCharacter(int[] field)
+    private String getCharacter(IntField field)
     {
         int value = getMessage().getInt(field);
 
