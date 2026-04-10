@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.ldu;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.FragmentedIntField;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,8 +39,8 @@ public abstract class LDUMessage extends P25P1Message
     public static final int IMBE_FRAME_7 = 1064;
     public static final int IMBE_FRAME_8 = 1248;
     public static final int IMBE_FRAME_9 = 1424;
-    private static final int[] LOW_SPEED_DATA = {1392, 1393, 1394, 1395, 1396, 1397, 1398, 1399, 1408, 1409, 1410, 1411,
-            1412, 1413, 1414, 1415};
+    private static final FragmentedIntField LOW_SPEED_DATA = FragmentedIntField.of(1392, 1393, 1394, 1395, 1396, 1397,
+        1398, 1399, 1408, 1409, 1410, 1411, 1412, 1413, 1414, 1415);
     private List<byte[]> mIMBIFrames;
 
     /**

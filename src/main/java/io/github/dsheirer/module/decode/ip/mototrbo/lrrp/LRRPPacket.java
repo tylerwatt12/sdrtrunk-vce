@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.ip.IPacket;
 import io.github.dsheirer.module.decode.ip.Packet;
@@ -37,7 +38,7 @@ import java.util.List;
 public class LRRPPacket extends Packet
 {
     //Constant for parsing a hexadecimal byte token identifier
-    private static final int[] BYTE_VALUE = {0, 1, 2, 3, 4, 5, 6, 7};
+    private static final IntField BYTE_VALUE = IntField.length8(0);
     public static final int TOKEN_START = 16;
 
     private LRRPHeader mHeader;

@@ -35,15 +35,15 @@ import java.util.List;
 public class EncryptionSyncParameters implements IEncryptionSyncParameters
 {
     private static final String EMPTY_MESSAGE_INDICATOR = "000000000000000000";
-    private static final int[] MESSAGE_INDICATOR_1 = {0, 1, 2, 3, 4, 5, 6, 7};
-    private static final int[] MESSAGE_INDICATOR_2 = {8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] MESSAGE_INDICATOR_3 = {16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] MESSAGE_INDICATOR_4 = {24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] MESSAGE_INDICATOR_5 = {32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] MESSAGE_INDICATOR_6 = {40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] MESSAGE_INDICATOR_7 = {48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] MESSAGE_INDICATOR_8 = {56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] MESSAGE_INDICATOR_9 = {64, 65, 66, 67, 68, 69, 70, 71};
+    private static final IntField MESSAGE_INDICATOR_1 = IntField.length8(0);
+    private static final IntField MESSAGE_INDICATOR_2 = IntField.length8(8);
+    private static final IntField MESSAGE_INDICATOR_3 = IntField.length8(16);
+    private static final IntField MESSAGE_INDICATOR_4 = IntField.length8(24);
+    private static final IntField MESSAGE_INDICATOR_5 = IntField.length8(32);
+    private static final IntField MESSAGE_INDICATOR_6 = IntField.length8(40);
+    private static final IntField MESSAGE_INDICATOR_7 = IntField.length8(48);
+    private static final IntField MESSAGE_INDICATOR_8 = IntField.length8(56);
+    private static final IntField MESSAGE_INDICATOR_9 = IntField.length8(64);
     private static final IntField ALGORITHM_ID = IntField.length8(72);
     private static final IntField KEY_ID = IntField.length16(80);
 

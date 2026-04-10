@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.hytera.sds;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * Text Message Service (TMS) Message Header
@@ -31,11 +32,11 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class TmsMessageHeader extends HyteraToken
 {
-    private static int[] MESSAGE_LENGTH_BCD_THOUSANDS = new int[]{16, 17, 18, 19};
-    private static int[] MESSAGE_LENGTH_BCD_HUNDREDS = new int[]{20, 21, 22, 23};
-    private static int[] MESSAGE_LENGTH_BCD_TENS = new int[]{24, 25, 26, 27};
-    private static int[] MESSAGE_LENGTH_BCD_ONES = new int[]{28, 29, 30, 31};
-    private static int[] MESSAGE_FLAGS = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
+    private static final IntField MESSAGE_LENGTH_BCD_THOUSANDS = IntField.length4(16);
+    private static final IntField MESSAGE_LENGTH_BCD_HUNDREDS = IntField.length4(20);
+    private static final IntField MESSAGE_LENGTH_BCD_TENS = IntField.length4(24);
+    private static final IntField MESSAGE_LENGTH_BCD_ONES = IntField.length4(28);
+    private static final IntField MESSAGE_FLAGS = IntField.length16(32);
 
     /**
      * Constructs an instance
