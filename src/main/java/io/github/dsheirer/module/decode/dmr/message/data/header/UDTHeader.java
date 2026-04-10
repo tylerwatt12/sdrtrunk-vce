@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.header;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -41,16 +42,16 @@ import java.util.List;
 public class UDTHeader extends DataHeader
 {
     private static final int RADIO_TALKGROUP_FLAG = 0;
-    private static final int[] SERVICE_ACCESS_POINT = new int[]{8, 9, 10, 11};
+    private static final IntField SERVICE_ACCESS_POINT = IntField.length4(8);
+    //TODO: UDT_FORMAT is intentionally non-contiguous (bit 3 plus bits 12-15). Verify against the spec before
+    // converting it to an IntField or otherwise "simplifying" it.
     private static final int[] UDT_FORMAT = new int[]{3, 12, 13, 14, 15};
 
-    private static final int[] DESTINATION_IDENTIFIER = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-        29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] SOURCE_RADIO = new int[]{40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
-        55, 56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] PAD_NIBBLE = new int[]{64, 65, 66, 67, 68};
+    private static final IntField DESTINATION_IDENTIFIER = IntField.length24(16);
+    private static final IntField SOURCE_RADIO = IntField.length24(40);
+    private static final IntField PAD_NIBBLE = IntField.range(64, 68);
     private static final int SUPPLEMENTARY_DATA_FLAG = 72;
-    private static final int[] OPCODE = new int[]{74, 75, 76, 77, 78, 79};
+    private static final IntField OPCODE = IntField.length6(74);
 
     private IntegerIdentifier mDestinationLLID;
     private RadioIdentifier mSourceLLID;

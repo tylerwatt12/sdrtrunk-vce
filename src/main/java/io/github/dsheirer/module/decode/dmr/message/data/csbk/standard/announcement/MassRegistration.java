@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DmrTier3Radio;
@@ -35,8 +36,7 @@ import java.util.List;
 public class MassRegistration extends Announcement
 {
     //Broadcast Parameters 2: 56-79
-    private static final int[] DESTINATION_RADIO = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
-        71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField DESTINATION_RADIO = IntField.length24(56);
 
     private List<Identifier> mIdentifiers;
     private RadioIdentifier mDestinationRadio;

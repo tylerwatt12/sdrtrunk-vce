@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
@@ -41,9 +42,9 @@ public class AdjacentSiteInformation extends Announcement
     private static final int NEIGHBOR_SYSTEM_IDENTITY_CODE_OFFSET = 21;
     private static final int NETWORK_CONNECTION_STATUS_AVAILABLE_FLAG = 56;
     private static final int ACTIVE_NETWORK_CONNECTION_FLAG = 57;
-    private static final int[] CONFIRMED_CHANNEL_PRIORITY = new int[]{58, 59, 60};
-    private static final int[] ADJACENT_CHANNEL_PRIORITY = new int[]{61, 62, 63};
-    private static final int[] NEIGHBOR_CHANNEL_NUMBER = new int[]{68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField CONFIRMED_CHANNEL_PRIORITY = IntField.range(58, 60);
+    private static final IntField ADJACENT_CHANNEL_PRIORITY = IntField.range(61, 63);
+    private static final IntField NEIGHBOR_CHANNEL_NUMBER = IntField.length12(68);
 
     private SystemIdentityCode mNeighborSystemIdentityCode;
     private List<Identifier> mIdentifiers;

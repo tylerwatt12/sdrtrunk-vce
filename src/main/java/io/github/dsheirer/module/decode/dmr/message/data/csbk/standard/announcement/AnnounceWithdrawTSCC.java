@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
@@ -38,14 +39,14 @@ import java.util.List;
 public class AnnounceWithdrawTSCC extends Announcement
 {
     //Broadcast Parameters 1: 21-34
-    private static final int[] COLOR_CODE_CHAN_1 = new int[]{25, 26, 27, 28};
-    private static final int[] COLOR_CODE_CHAN_2 = new int[]{29, 30, 31, 32};
+    private static final IntField COLOR_CODE_CHAN_1 = IntField.length4(25);
+    private static final IntField COLOR_CODE_CHAN_2 = IntField.length4(29);
     private static final int ADD_WITHDRAW_CHAN_1_FLAG = 33;
     private static final int ADD_WITHDRAW_CHAN_2_FLAG = 34;
 
     //Broadcast Parameters 2: 56-79
-    private static final int[] CHANNEL_NUMBER_1 = new int[]{56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67};
-    private static final int[] CHANNEL_NUMBER_2 = new int[]{68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField CHANNEL_NUMBER_1 = IntField.length12(56);
+    private static final IntField CHANNEL_NUMBER_2 = IntField.length12(68);
 
     private DMRChannel mChannel1;
     private DMRChannel mChannel2;

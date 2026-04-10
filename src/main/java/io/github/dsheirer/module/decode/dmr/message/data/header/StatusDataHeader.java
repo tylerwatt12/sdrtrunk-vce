@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.header;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -43,15 +44,15 @@ import java.util.List;
 public class StatusDataHeader extends DataHeader
 {
     private static final int RADIO_TALKGROUP_FLAG = 0;
-    private static final int[] SERVICE_ACCESS_POINT = new int[]{8, 9, 10, 11};
+    private static final IntField SERVICE_ACCESS_POINT = IntField.length4(8);
+    //TODO: APPENDED_BLOCKS is intentionally non-contiguous (bits 2-3 plus 12-15). Verify against the spec before
+    // converting it to an IntField or otherwise "simplifying" it.
     private static final int[] APPENDED_BLOCKS = new int[]{2, 3, 12, 13, 14, 15};
-    private static final int[] DESTINATION_IDENTIFIER = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-        29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] SOURCE_RADIO = new int[]{40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
-        55, 56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] SOURCE_PORT = new int[]{64, 65, 66};
-    private static final int[] DESTINATION_PORT = new int[]{67, 68, 69};
-    private static final int[] STATUS = new int[]{70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField DESTINATION_IDENTIFIER = IntField.length24(16);
+    private static final IntField SOURCE_RADIO = IntField.length24(40);
+    private static final IntField SOURCE_PORT = IntField.range(64, 66);
+    private static final IntField DESTINATION_PORT = IntField.range(67, 69);
+    private static final IntField STATUS = IntField.range(70, 79);
 
     private DMRUnitStatus mUnitStatus;
     private IntegerIdentifier mDestinationLLID;

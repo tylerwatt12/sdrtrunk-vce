@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -38,12 +39,12 @@ import java.util.List;
 public class CapacityPlusPreamble extends Preamble
 {
     private static final int RADIO_TALKGROUP_FLAG = 17;
-    private static final int[] BLOCKS_TO_FOLLOW = new int[]{18, 19, 20, 21, 22};
-    private static final int[] UNKNOWN_1 = new int[]{24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] UNKNOWN_2 = new int[]{32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] TARGET_ADDRESS = new int[]{40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] UNKNOWN_3 = new int[]{56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] SOURCE_ADDRESS = new int[]{64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField BLOCKS_TO_FOLLOW = IntField.range(18, 22);
+    private static final IntField UNKNOWN_1 = IntField.length8(24);
+    private static final IntField UNKNOWN_2 = IntField.length8(32);
+    private static final IntField TARGET_ADDRESS = IntField.length16(40);
+    private static final IntField UNKNOWN_3 = IntField.length8(56);
+    private static final IntField SOURCE_ADDRESS = IntField.length16(64);
 
     private IntegerIdentifier mTargetAddress;
     private RadioIdentifier mSourceAddress;
@@ -88,17 +89,17 @@ public class CapacityPlusPreamble extends Preamble
 
     public String getUnknown1()
     {
-        return getMessage().getHex(UNKNOWN_1, 2);
+        return getMessage().getHex(UNKNOWN_1);
     }
 
     public String getUnknown2()
     {
-        return getMessage().getHex(UNKNOWN_2, 2);
+        return getMessage().getHex(UNKNOWN_2);
     }
 
     public String getUnknown3()
     {
-        return getMessage().getHex(UNKNOWN_3, 2);
+        return getMessage().getHex(UNKNOWN_3);
     }
 
     /**

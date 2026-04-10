@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -40,12 +41,10 @@ import java.util.List;
  */
 public class ConnectPlusVoiceChannelUser extends CSBKMessage implements ITimeslotFrequencyReceiver
 {
-    private static final int[] SOURCE_ADDRESS = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-        32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] GROUP_ADDRESS = new int[]{40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
-        56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] LOGICAL_SLOT_NUMBER = new int[]{64, 65, 66, 67, 68};
-    private static final int[] UNKNOWN_FIELD = new int[]{72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField SOURCE_ADDRESS = IntField.length24(16);
+    private static final IntField GROUP_ADDRESS = IntField.length24(40);
+    private static final IntField LOGICAL_SLOT_NUMBER = IntField.range(64, 68);
+    private static final IntField UNKNOWN_FIELD = IntField.length8(72);
 
     private RadioIdentifier mRadio;
     private TalkgroupIdentifier mTalkgroup;

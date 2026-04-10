@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.dmr.message.data.header.motorola;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.CACH;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.message.data.header.ProprietaryDataHeader;
@@ -36,10 +37,10 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
  */
 public class MNISProprietaryDataHeader extends ProprietaryDataHeader
 {
-    private static final int[] SERVICE_ACCESS_POINT = new int[]{0, 1, 2, 3};
-    private static final int[] VENDOR = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] APPLICATION_TYPE = new int[]{32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] PACKET_NUMBER = new int[]{40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55};
+    private static final IntField SERVICE_ACCESS_POINT = IntField.length4(0);
+    private static final IntField VENDOR = IntField.length8(8);
+    private static final IntField APPLICATION_TYPE = IntField.length8(32);
+    private static final IntField PACKET_NUMBER = IntField.length16(40);
     private static final int PACKET_PREFIX_START = 56;
     private static final int PACKET_PREFIX_END = PACKET_PREFIX_START + 24;
 

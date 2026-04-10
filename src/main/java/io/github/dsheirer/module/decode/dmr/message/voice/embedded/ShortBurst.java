@@ -21,14 +21,15 @@ package io.github.dsheirer.module.decode.dmr.message.voice.embedded;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * Base class for DMR Voice Frame F Short Burst from the EMB payload.
  */
 public abstract class ShortBurst
 {
-    private static final int[] OPCODE = new int[]{8, 9, 10};
-    private static final int[] FULL_MESSAGE = new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    private static final IntField OPCODE = IntField.range(8, 10);
+    private static final IntField FULL_MESSAGE = IntField.range(0, 10);
 
     private CorrectedBinaryMessage mMessage;
     private boolean mValid = true;

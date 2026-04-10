@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
@@ -35,11 +36,9 @@ import java.util.List;
  */
 public class ConnectPlusCSBKO_16 extends CSBKMessage
 {
-    private static final int[] SOURCE_ADDRESS = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-        31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] TARGET_ADDRESS = new int[]{40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
-        55, 56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] UNKNOWN = new int[]{64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
+    private static final IntField SOURCE_ADDRESS = IntField.length24(16);
+    private static final IntField TARGET_ADDRESS = IntField.length24(40);
+    private static final IntField UNKNOWN = IntField.length16(64);
 
     private List<Identifier> mIdentifiers;
     private RadioIdentifier mSourceRadio;
@@ -88,7 +87,7 @@ public class ConnectPlusCSBKO_16 extends CSBKMessage
      */
     public String getUnknown()
     {
-        return String.format("%04X", getMessage().getInt(UNKNOWN));
+        return getMessage().getHex(UNKNOWN);
     }
 
     /**
