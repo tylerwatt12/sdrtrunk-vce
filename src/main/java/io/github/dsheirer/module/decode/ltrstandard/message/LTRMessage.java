@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.ltrstandard.message;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.identifier.talkgroup.LTRTalkgroup;
 import io.github.dsheirer.message.Message;
@@ -30,11 +31,11 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public abstract class LTRMessage extends Message
 {
-    private static final int[] AREA = {9};
-    private static final int[] CHANNEL = {10, 11, 12, 13, 14};
-    private static final int[] HOME_REPEATER = {15, 16, 17, 18, 19};
-    private static final int[] GROUP = {20, 21, 22, 23, 24, 25, 26, 27};
-    private static final int[] FREE = {28, 29, 30, 31, 32};
+    private static final IntField AREA = IntField.range(9, 9);
+    private static final IntField CHANNEL = IntField.range(10, 14);
+    private static final IntField HOME_REPEATER = IntField.range(15, 19);
+    private static final IntField GROUP = IntField.length8(20);
+    private static final IntField FREE = IntField.range(28, 32);
 
     private CorrectedBinaryMessage mMessage;
     private CRC mCRC;

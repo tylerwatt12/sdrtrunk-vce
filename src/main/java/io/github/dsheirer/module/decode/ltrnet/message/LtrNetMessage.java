@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.ltrnet.message;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.edac.CRCLTR;
 import io.github.dsheirer.identifier.talkgroup.LTRTalkgroup;
@@ -29,14 +30,14 @@ import io.github.dsheirer.protocol.Protocol;
 
 public abstract class LtrNetMessage extends Message
 {
-    protected static final int[] SYNC = {0, 1, 2, 3, 4, 5, 6, 7, 8};
-    protected static final int[] AREA = {9};
-    protected static final int[] CHANNEL = {10, 11, 12, 13, 14};
-    protected static final int[] HOME_REPEATER = {15, 16, 17, 18, 19};
-    protected static final int[] GROUP = {20, 21, 22, 23, 24, 25, 26, 27};
-    protected static final int[] FREE = {28, 29, 30, 31, 32};
-    protected static final int[] CRC_FIELD = {33, 34, 35, 36, 37, 38, 39};
-    protected static final int[] SIXTEEN_BITS = {17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+    protected static final IntField SYNC = IntField.range(0, 8);
+    protected static final IntField AREA = IntField.range(9, 9);
+    protected static final IntField CHANNEL = IntField.range(10, 14);
+    protected static final IntField HOME_REPEATER = IntField.range(15, 19);
+    protected static final IntField GROUP = IntField.length8(20);
+    protected static final IntField FREE = IntField.range(28, 32);
+    protected static final IntField CRC_FIELD = IntField.range(33, 39);
+    protected static final IntField SIXTEEN_BITS = IntField.length16(17);
 
     protected CorrectedBinaryMessage mMessage;
     protected CRC mCRC;

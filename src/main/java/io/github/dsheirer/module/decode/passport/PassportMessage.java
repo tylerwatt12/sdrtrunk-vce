@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.passport;
 
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.edac.CRCPassport;
 import io.github.dsheirer.identifier.Identifier;
@@ -41,15 +42,15 @@ public class PassportMessage extends Message
     private static final String SITE_LABEL = " SITE:";
     private static final String TALKGROUP_LABEL = " TG:";
 
-    private static final int[] DIGITAL_COLOR_CODE = {9, 10};
-    private static final int[] CHANNEL_NUMBER = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21};
-    private static final int[] SITE = {22, 23, 24, 25, 26, 27, 28};
-    private static final int[] GROUP = {29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44};
-    private static final int[] RADIO_ID = {22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44};
-    private static final int[] NEIGHBOR_BAND = {33, 34, 35, 36};
-    private static final int[] SITE_BAND = {41, 42, 43, 44};
-    private static final int[] TYPE = {45, 46, 47, 48};
-    private static final int[] FREE = {49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59};
+    private static final IntField DIGITAL_COLOR_CODE = IntField.length2(9);
+    private static final IntField CHANNEL_NUMBER = IntField.range(11, 21);
+    private static final IntField SITE = IntField.range(22, 28);
+    private static final IntField GROUP = IntField.length16(29);
+    private static final IntField RADIO_ID = IntField.range(22, 44);
+    private static final IntField NEIGHBOR_BAND = IntField.length4(33);
+    private static final IntField SITE_BAND = IntField.length4(41);
+    private static final IntField TYPE = IntField.length4(45);
+    private static final IntField FREE = IntField.range(49, 59);
 
     private CorrectedBinaryMessage mMessage;
     private CRC mCRC;
