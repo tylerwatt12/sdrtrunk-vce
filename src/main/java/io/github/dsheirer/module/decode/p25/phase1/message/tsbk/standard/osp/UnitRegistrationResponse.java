@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -34,12 +35,10 @@ import java.util.List;
  */
 public class UnitRegistrationResponse extends OSPMessage
 {
-    private static final int[] RESPONSE = {18, 19};
-    private static final int[] SYSTEM_ID = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] SOURCE_ID = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-        49, 50, 51, 52, 53, 54, 55};
-    private static final int[] SOURCE_ADDRESS = {56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-        74, 75, 76, 77, 78, 79};
+    private static final IntField RESPONSE = IntField.length2(18);
+    private static final IntField SYSTEM_ID = IntField.length12(20);
+    private static final IntField SOURCE_ID = IntField.length24(32);
+    private static final IntField SOURCE_ADDRESS = IntField.length24(56);
 
     private Response mResponse;
     private Identifier mRegisteredRadio;

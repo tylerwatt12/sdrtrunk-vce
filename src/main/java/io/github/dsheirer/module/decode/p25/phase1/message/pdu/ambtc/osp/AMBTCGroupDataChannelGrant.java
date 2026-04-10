@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
@@ -36,12 +37,12 @@ import java.util.List;
 
 public class AMBTCGroupDataChannelGrant extends AMBTCMessage implements IFrequencyBandReceiver, IServiceOptionsProvider
 {
-    private static final int[] HEADER_SERVICE_OPTIONS = {64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] BLOCK_0_DOWNLINK_FREQUENCY_BAND = {16, 17, 18, 19};
-    private static final int[] BLOCK_0_DOWNLINK_CHANNEL_NUMBER = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] BLOCK_0_UPLINK_FREQUENCY_BAND = {32, 33, 34, 35};
-    private static final int[] BLOCK_0_UPLINK_CHANNEL_NUMBER = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCK_0_GROUP_ADDRESS = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
+    private static final IntField HEADER_SERVICE_OPTIONS = IntField.length8(64);
+    private static final IntField BLOCK_0_DOWNLINK_FREQUENCY_BAND = IntField.length4(16);
+    private static final IntField BLOCK_0_DOWNLINK_CHANNEL_NUMBER = IntField.length12(20);
+    private static final IntField BLOCK_0_UPLINK_FREQUENCY_BAND = IntField.length4(32);
+    private static final IntField BLOCK_0_UPLINK_CHANNEL_NUMBER = IntField.length12(36);
+    private static final IntField BLOCK_0_GROUP_ADDRESS = IntField.length16(48);
 
     private DataServiceOptions mDataServiceOptions;
     private APCO25Channel mChannel;

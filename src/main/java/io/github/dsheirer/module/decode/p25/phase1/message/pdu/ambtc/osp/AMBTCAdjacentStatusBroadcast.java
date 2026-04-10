@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Lra;
@@ -37,14 +38,14 @@ import java.util.List;
 public class AMBTCAdjacentStatusBroadcast extends AMBTCMessage implements IFrequencyBandReceiver
 {
 
-    private static final int[] HEADER_LRA = {24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] HEADER_SYSTEM = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] HEADER_RFSS = {64, 65, 66, 67, 68, 69, 70, 71};
-    private static final int[] HEADER_SITE = {72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] BLOCK_0_DOWNLINK_FREQUENCY_BAND = {0, 1, 2, 3};
-    private static final int[] BLOCK_0_DOWNLINK_CHANNEL_NUMBER = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] BLOCK_0_UPLINK_FREQUENCY_BAND = {16, 17, 18, 19};
-    private static final int[] BLOCK_0_UPLINK_CHANNEL_NUMBER = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    private static final IntField HEADER_LRA = IntField.length8(24);
+    private static final IntField HEADER_SYSTEM = IntField.length12(36);
+    private static final IntField HEADER_RFSS = IntField.length8(64);
+    private static final IntField HEADER_SITE = IntField.length8(72);
+    private static final IntField BLOCK_0_DOWNLINK_FREQUENCY_BAND = IntField.length4(0);
+    private static final IntField BLOCK_0_DOWNLINK_CHANNEL_NUMBER = IntField.length12(4);
+    private static final IntField BLOCK_0_UPLINK_FREQUENCY_BAND = IntField.length4(16);
+    private static final IntField BLOCK_0_UPLINK_CHANNEL_NUMBER = IntField.length12(20);
 
     private Identifier mSystem;
     private Identifier mLocationRegistrationArea;

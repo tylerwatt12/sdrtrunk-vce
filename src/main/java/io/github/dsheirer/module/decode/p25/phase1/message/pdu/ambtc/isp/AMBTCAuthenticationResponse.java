@@ -22,6 +22,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
@@ -34,13 +35,12 @@ import java.util.List;
 
 public class AMBTCAuthenticationResponse extends AMBTCMessage
 {
-    private static final int[] HEADER_WACN = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] BLOCK_0_WACN = {0, 1, 2, 3};
-    private static final int[] BLOCK_0_SYSTEM = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] BLOCK_0_SOURCE_ID = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-        33, 34, 35, 36, 37, 38, 39};
-    private static final int[] BLOCK_0_AUTHENTICATION_VALUE = {40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] BLOCK_1_AUTHENTICATION_VALUE = {0, 1, 2, 3};
+    private static final IntField HEADER_WACN = IntField.length16(64);
+    private static final IntField BLOCK_0_WACN = IntField.length4(0);
+    private static final IntField BLOCK_0_SYSTEM = IntField.length12(4);
+    private static final IntField BLOCK_0_SOURCE_ID = IntField.length24(16);
+    private static final IntField BLOCK_0_AUTHENTICATION_VALUE = IntField.length24(40);
+    private static final IntField BLOCK_1_AUTHENTICATION_VALUE = IntField.length4(0);
 
     private String mAuthenticationValue;
     private Identifier mWacn;
@@ -126,8 +126,9 @@ public class AMBTCAuthenticationResponse extends AMBTCMessage
     {
         if(mAuthenticationValue == null && hasDataBlock(0) && hasDataBlock(1))
         {
-            mAuthenticationValue = getDataBlock(0).getMessage().getHex(BLOCK_0_AUTHENTICATION_VALUE, 14) +
-            getDataBlock(1).getMessage().getHex(BLOCK_1_AUTHENTICATION_VALUE, 2);
+            //TODO: verify the intended authentication value width per spec; preserve the legacy 14+2 hex-digit formatting for now.
+            mAuthenticationValue = String.format("%014X", getDataBlock(0).getMessage().getInt(BLOCK_0_AUTHENTICATION_VALUE)) +
+                String.format("%02X", getDataBlock(1).getMessage().getInt(BLOCK_1_AUTHENTICATION_VALUE));
         }
 
         return mAuthenticationValue;

@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.status.APCO25UnitStatus;
@@ -33,20 +34,17 @@ import java.util.List;
  */
 public class AMBTCStatusUpdate extends AMBTCMessage
 {
-    private static final int[] HEADER_SOURCE_WACN = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] BLOCK_0_SOURCE_WACN = {0, 1, 2, 3};
-    private static final int[] BLOCK_0_SOURCE_SYSTEM = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] BLOCK_0_SOURCE_ID = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
-        34, 35, 36, 37, 38, 39};
-    private static final int[] BLOCK_0_UNIT_STATUS = {40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCK_0_USER_STATUS = {48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] BLOCK_0_SOURCE_ADDRESS = {80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95};
-    private static final int[] BLOCK_1_SOURCE_ADDRESS = {0, 1, 2, 3, 4, 5, 6, 7};
-    private static final int[] BLOCK_1_TARGET_WACN = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27};
-    private static final int[] BLOCK_1_TARGET_SYSTEM = {28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] BLOCK_1_TARGET_ID = {40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-            57, 58, 59, 60, 61, 62, 63};
+    private static final IntField HEADER_SOURCE_WACN = IntField.length16(64);
+    private static final IntField BLOCK_0_SOURCE_WACN = IntField.length4(0);
+    private static final IntField BLOCK_0_SOURCE_SYSTEM = IntField.length12(4);
+    private static final IntField BLOCK_0_SOURCE_ID = IntField.length24(16);
+    private static final IntField BLOCK_0_UNIT_STATUS = IntField.length8(40);
+    private static final IntField BLOCK_0_USER_STATUS = IntField.length8(48);
+    private static final IntField BLOCK_0_SOURCE_ADDRESS = IntField.length16(80);
+    private static final IntField BLOCK_1_SOURCE_ADDRESS = IntField.length8(0);
+    private static final IntField BLOCK_1_TARGET_WACN = IntField.length20(8);
+    private static final IntField BLOCK_1_TARGET_SYSTEM = IntField.length12(28);
+    private static final IntField BLOCK_1_TARGET_ID = IntField.length24(40);
 
     private APCO25FullyQualifiedRadioIdentifier mSourceAddress;
     private APCO25FullyQualifiedRadioIdentifier mTargetAddress;

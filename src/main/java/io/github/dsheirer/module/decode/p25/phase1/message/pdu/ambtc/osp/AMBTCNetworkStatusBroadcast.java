@@ -22,6 +22,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
@@ -46,13 +47,13 @@ import java.util.Objects;
  */
 public class AMBTCNetworkStatusBroadcast extends AMBTCMessage implements IFrequencyBandReceiver
 {
-    private static final int[] HEADER_SYSTEM = {36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCK_0_WACN = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
-    private static final int[] BLOCK_0_DOWNLINK_FREQUENCY_BAND = {24, 25, 26, 27};
-    private static final int[] BLOCK_0_DOWNLINK_CHANNEL_NUMBER = {28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] BLOCK_0_UPLINK_FREQUENCY_BAND = {40, 41, 42, 43};
-    private static final int[] BLOCK_0_UPLINK_CHANNEL_NUMBER = {44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55};
-    private static final int[] BLOCK_0_SYSTEM_SERVICE_CLASS = {56, 57, 58, 59, 60, 61, 62, 63};
+    private static final IntField HEADER_SYSTEM = IntField.length12(36);
+    private static final IntField BLOCK_0_WACN = IntField.length20(0);
+    private static final IntField BLOCK_0_DOWNLINK_FREQUENCY_BAND = IntField.length4(24);
+    private static final IntField BLOCK_0_DOWNLINK_CHANNEL_NUMBER = IntField.length12(28);
+    private static final IntField BLOCK_0_UPLINK_FREQUENCY_BAND = IntField.length4(40);
+    private static final IntField BLOCK_0_UPLINK_CHANNEL_NUMBER = IntField.length12(44);
+    private static final IntField BLOCK_0_SYSTEM_SERVICE_CLASS = IntField.length8(56);
 
     private ScrambleParameters mScrambleParameters;
     private Identifier mWacn;

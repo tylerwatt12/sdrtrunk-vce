@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -36,13 +37,12 @@ import java.util.List;
  */
 public class AMBTCGroupAffiliationResponse extends AMBTCMessage
 {
-    private static final int[] BLOCK_0_GROUP_WACN = {0, 1, 2, 3};
-    private static final int[] BLOCK_0_GROUP_SYSTEM = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] BLOCK_0_GROUP_ID = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-        33, 34, 35, 36, 37, 38, 39};
-    private static final int[] BLOCK_0_ANNOUNCEMENT_GROUP_ADDRESS = {32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] BLOCK_0_GROUP_ADDRESS = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
-    private static final int[] BLOCK_0_GAV = {70, 71};
+    private static final IntField BLOCK_0_GROUP_WACN = IntField.length4(0);
+    private static final IntField BLOCK_0_GROUP_SYSTEM = IntField.length12(4);
+    private static final IntField BLOCK_0_GROUP_ID = IntField.length24(16);
+    private static final IntField BLOCK_0_ANNOUNCEMENT_GROUP_ADDRESS = IntField.length16(32);
+    private static final IntField BLOCK_0_GROUP_ADDRESS = IntField.length16(48);
+    private static final IntField BLOCK_0_GAV = IntField.length2(70);
 
     private RadioIdentifier mTargetAddress;
     private APCO25FullyQualifiedTalkgroupIdentifier mGroupAddress;
