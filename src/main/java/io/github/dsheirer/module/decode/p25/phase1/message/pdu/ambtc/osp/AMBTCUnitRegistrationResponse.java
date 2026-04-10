@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
@@ -32,12 +33,11 @@ import java.util.List;
  */
 public class AMBTCUnitRegistrationResponse extends AMBTCMessage
 {
-    private static final int[] HEADER_WACN = {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79};
-    private static final int[] BLOCK_0_WACN = {0, 1, 2, 3};
-    private static final int[] BLOCK_0_SYSTEM = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] BLOCK_0_RADIO_ID = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
-        34, 35, 36, 37, 38, 39};
-    private static final int[] BLOCK_0_RESPONSE = {46, 47};
+    private static final IntField HEADER_WACN = IntField.length16(64);
+    private static final IntField BLOCK_0_WACN = IntField.length4(0);
+    private static final IntField BLOCK_0_SYSTEM = IntField.length12(4);
+    private static final IntField BLOCK_0_RADIO_ID = IntField.length24(16);
+    private static final IntField BLOCK_0_RESPONSE = IntField.length2(46);
 
     private Response mResponse;
     private APCO25FullyQualifiedRadioIdentifier mRegistrationAddress;

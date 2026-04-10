@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.lc.standard;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
@@ -33,10 +34,9 @@ import java.util.List;
  */
 public class LCUnitAuthenticationCommand extends LinkControlWord
 {
-    private static final int[] WACN = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27};
-    private static final int[] SYSTEM_ID = {28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39};
-    private static final int[] TARGET_ADDRESS = {40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-            57, 58, 59, 60, 61, 62, 63};
+    private static final IntField WACN = IntField.length20(8);
+    private static final IntField SYSTEM_ID = IntField.length12(28);
+    private static final IntField TARGET_ADDRESS = IntField.length24(40);
 
     private Identifier mWACN;
     private Identifier mSystem;

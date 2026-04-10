@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.response;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUHeader;
@@ -27,9 +28,9 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
 
 public class ResponseHeader extends PDUHeader
 {
-    private static final int[] RESPONSE = {8,9,10,11,12,13,14,15};
+    private static final IntField RESPONSE = IntField.length8(8);
     public static final int SOURCE_LLID_FLAG = 48;
-    private static final int[] SOURCE_LOGICAL_LINK_ID = {56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79};
+    private static final IntField SOURCE_LOGICAL_LINK_ID = IntField.length24(56);
     private Identifier mSourceLLID;
 
     public ResponseHeader(CorrectedBinaryMessage message, boolean passesCRC)

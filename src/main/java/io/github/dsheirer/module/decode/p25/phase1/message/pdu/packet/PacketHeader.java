@@ -19,18 +19,19 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.packet;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUHeader;
 import io.github.dsheirer.module.decode.p25.reference.ServiceAccessPoint;
 
 public class PacketHeader extends PDUHeader
 {
-    private static final int[] SAP_ID = {10, 11, 12, 13, 14, 15};
+    private static final IntField SAP_ID = IntField.length6(10);
     public static final int FULL_MESSAGE_FLAG = 48;
-    private static final int[] PAD_OCTET_COUNT = {59, 60, 61, 62, 63};
+    private static final IntField PAD_OCTET_COUNT = IntField.range(59, 63);
     public static final int SYNCHRONIZE_FLAG = 64;
-    private static final int[] PACKET_SEQUENCE_NUMBER = {65,66};
-    private static final int[] MESSAGE_FRAGMENT_SEQUENCE_NUMBER = {67,68,69};
-    private static final int[] DATA_HEADER_OFFSET = {74, 75, 76, 77, 78, 79};
+    private static final IntField PACKET_SEQUENCE_NUMBER = IntField.length2(65);
+    private static final IntField MESSAGE_FRAGMENT_SEQUENCE_NUMBER = IntField.range(67, 69);
+    private static final IntField DATA_HEADER_OFFSET = IntField.length6(74);
 
     public PacketHeader(CorrectedBinaryMessage message, boolean passesCRC)
     {

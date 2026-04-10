@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1Interleave;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCHeader;
@@ -72,7 +73,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessageFacto
 
 public class PDUMessageFactory
 {
-    private static final int[] BLOCK_0_UMBTC_OPCODE = {2, 3, 4, 5, 6, 7};
+    private static final IntField BLOCK_0_UMBTC_OPCODE = IntField.length6(2);
 
     private PDUMessageFactory()
     {

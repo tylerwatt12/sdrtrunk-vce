@@ -22,6 +22,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.umbtc.isp;
 
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.IBitErrorProvider;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
@@ -37,8 +38,8 @@ import java.util.List;
 
 public class UMBTCTelephoneInterconnectRequestExplicitDialing extends UMBTCMessage implements IBitErrorProvider, IServiceOptionsProvider
 {
-    private static final int[] BLOCK_0_DIGIT_COUNT = {8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] BLOCK_0_SERVICE_OPTIONS = {16, 17, 18, 19, 20, 21, 22, 23};
+    private static final IntField BLOCK_0_DIGIT_COUNT = IntField.length8(8);
+    private static final IntField BLOCK_0_SERVICE_OPTIONS = IntField.length8(16);
 
     private VoiceServiceOptions mVoiceServiceOptions;
     private Identifier mSourceAddress;
