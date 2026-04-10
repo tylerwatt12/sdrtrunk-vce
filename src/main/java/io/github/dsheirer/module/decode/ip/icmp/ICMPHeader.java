@@ -21,6 +21,7 @@
 package io.github.dsheirer.module.decode.ip.icmp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.ip.Header;
 
 /**
@@ -28,9 +29,9 @@ import io.github.dsheirer.module.decode.ip.Header;
  */
 public class ICMPHeader extends Header
 {
-    private static final int[] TYPE = {0, 1, 2, 3, 4, 5, 6, 7};
-    private static final int[] CODE = {8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] TYPE_CODE = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField TYPE = IntField.length8(0);
+    private static final IntField CODE = IntField.length8(8);
+    private static final IntField TYPE_CODE = IntField.length16(0);
 
     /**
      * Constructs a parser for a header contained within a binary message starting at the offset.

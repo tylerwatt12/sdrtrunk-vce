@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.ip.mototrbo.xcmp;
 
 import com.google.common.base.Joiner;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRNetwork;
 import io.github.dsheirer.module.decode.ip.IHeader;
@@ -35,12 +36,11 @@ import java.util.List;
  */
 public class NetworkFrequencyFile extends Packet
 {
-    private static final int[] VERSION = new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] SEGMENT_NUMBER = new int[]{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    private static final int[] SEGMENT_COUNT = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
-    private static final int[] NETWORK = new int[]{48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59};
-    private static final int[] UNKNOWN = new int[]{60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
-        77, 78, 79};
+    private static final IntField VERSION = IntField.length16(0);
+    private static final IntField SEGMENT_NUMBER = IntField.length16(16);
+    private static final IntField SEGMENT_COUNT = IntField.length16(32);
+    private static final IntField NETWORK = IntField.length12(48);
+    private static final IntField UNKNOWN = IntField.length20(60);
     private static final int REPEATER_STRUCTURE_START = 80;
     private static final int REPEATER_STRUCTURE_LENGTH = 72;
     private List<Repeater> mRepeaters;

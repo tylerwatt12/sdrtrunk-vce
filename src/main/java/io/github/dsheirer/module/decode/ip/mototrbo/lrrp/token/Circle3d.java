@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import java.text.DecimalFormat;
 
 /**
@@ -28,8 +29,8 @@ import java.text.DecimalFormat;
 public class Circle3d extends Circle2d
 {
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.00");
-    private static final int[] ALTITUDE = new int[]{88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103};
-    private static final int[] ALTITUDE_ACCURACY = new int[]{104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119};
+    private static final IntField ALTITUDE = IntField.length16(88);
+    private static final IntField ALTITUDE_ACCURACY = IntField.length16(104);
 
     /**
      * Constructs an instance of a 3D position token.

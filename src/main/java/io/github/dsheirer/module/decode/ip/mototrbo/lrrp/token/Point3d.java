@@ -20,14 +20,14 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * LRRP 3D Position with latitude, longitude and altitude
  */
 public class Point3d extends Point2d
 {
-    private static final int[] ALTITUDE = new int[]{72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
-            89, 90, 91, 92, 93, 94, 95};
+    private static final IntField ALTITUDE = IntField.length24(72);
 
     /**
      * Constructs an instance of an approximate position token.

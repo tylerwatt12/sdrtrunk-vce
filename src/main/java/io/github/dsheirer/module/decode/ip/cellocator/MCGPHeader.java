@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.cellocator;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.ip.Header;
 
 /**
@@ -27,16 +28,16 @@ import io.github.dsheirer.module.decode.ip.Header;
  */
 public class MCGPHeader extends Header
 {
-    private static final int[] M_CHARACTER = {0, 1, 2, 3, 4, 5, 6, 7};
-    private static final int[] C_CHARACTER = {8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] G_CHARACTER = {16, 17, 18, 19, 20, 21, 22, 23};
-    private static final int[] P_CHARACTER = {24, 25, 26, 27, 28, 29, 30, 31};
+    private static final IntField M_CHARACTER = IntField.length8(0);
+    private static final IntField C_CHARACTER = IntField.length8(8);
+    private static final IntField G_CHARACTER = IntField.length8(16);
+    private static final IntField P_CHARACTER = IntField.length8(24);
     private static final int M_VALUE = 0x4D;
     private static final int C_VALUE = 0x43;
     private static final int G_VALUE = 0x47;
     private static final int P_VALUE = 0x50;
 
-    private static final int[] MESSAGE_TYPE = {32, 33, 34, 35, 36, 37, 38, 39};
+    private static final IntField MESSAGE_TYPE = IntField.length8(32);
     public static final int HEADER_LENGTH = 40;
 
     private MCGPMessageType mMessageType;

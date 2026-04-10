@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import java.text.DecimalFormat;
 
 /**
@@ -28,7 +29,7 @@ import java.text.DecimalFormat;
 public class Circle2d extends Point2d
 {
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.00");
-    private static final int[] RADIUS = new int[]{72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87};
+    private static final IntField RADIUS = IntField.length16(72);
 
     /**
      * Constructs an instance of an approximate position token.

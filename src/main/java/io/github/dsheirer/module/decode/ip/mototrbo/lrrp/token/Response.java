@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * LRRP Response Code Token
@@ -30,8 +31,8 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 public class Response extends Token
 {
     private static final int CODE_LENGTH_FLAG = 8;
-    private static final int[] ONE_BYTE_CODE = new int[]{9, 10, 11, 12, 13, 14, 15};
-    private static final int[] TWO_BYTE_CODE = new int[]{9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+    private static final IntField ONE_BYTE_CODE = IntField.range(9, 15);
+    private static final IntField TWO_BYTE_CODE = IntField.range(9, 23);
 
     /**
      * Constructs an instance of a response code token.

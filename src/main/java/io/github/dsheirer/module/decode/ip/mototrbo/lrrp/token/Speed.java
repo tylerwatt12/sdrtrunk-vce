@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import java.text.DecimalFormat;
 
 /**
@@ -30,7 +31,7 @@ import java.text.DecimalFormat;
  */
 public class Speed extends Token
 {
-    private static final int[] SPEED_FIELD = new int[]{8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+    private static final IntField SPEED_FIELD = IntField.length16(8);
     private static final double SPEED_MULTIPLIER = 0.01; //Units of 1/100 mph
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.00");
 

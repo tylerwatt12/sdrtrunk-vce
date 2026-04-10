@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * LRRP Token.
@@ -31,7 +32,7 @@ public abstract class Token
     /**
      * Length field for a variable length token
      */
-    private static final int[] VARIABLE_LENGTH_BYTE_COUNT = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField VARIABLE_LENGTH_BYTE_COUNT = IntField.length8(8);
 
     private CorrectedBinaryMessage mMessage;
     private int mOffset;

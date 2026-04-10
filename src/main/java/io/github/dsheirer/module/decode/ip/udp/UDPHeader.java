@@ -21,12 +21,13 @@
 package io.github.dsheirer.module.decode.ip.udp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.ip.Header;
 
 public class UDPHeader extends Header
 {
-    private static final int[] SOURCE_PORT = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    private static final int[] DESTINATION_PORT = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    private static final IntField SOURCE_PORT = IntField.length16(0);
+    private static final IntField DESTINATION_PORT = IntField.length16(16);
 
     private UDPPort mSourcePort;
     private UDPPort mDestinationPort;

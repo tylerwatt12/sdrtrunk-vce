@@ -21,6 +21,7 @@
 package io.github.dsheirer.module.decode.fleetsync2.message;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.fleetsync2.identifier.FleetsyncStatus;
 
@@ -32,7 +33,7 @@ import java.util.List;
  */
 public class Status extends Fleetsync2Message
 {
-    private static final int[] STATUS_FIELD = {21, 22, 23, 24, 25, 26, 27};
+    private static final IntField STATUS_FIELD = IntField.range(21, 27);
 
     private FleetsyncStatus mStatusIdentifier;
     private List<Identifier> mIdentifers;

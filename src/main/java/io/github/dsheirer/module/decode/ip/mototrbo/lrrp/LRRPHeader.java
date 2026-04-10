@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.ip.Header;
 import java.util.Collections;
@@ -30,8 +31,8 @@ import java.util.List;
  */
 public class LRRPHeader extends Header
 {
-    private static final int[] TYPE = {0, 1, 2, 3, 4, 5, 6, 7};
-    private static final int[] LENGTH = {8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField TYPE = IntField.length8(0);
+    private static final IntField LENGTH = IntField.length8(8);
 
     /**
      * Constructs a parser for a header contained within a binary message starting at the offset.

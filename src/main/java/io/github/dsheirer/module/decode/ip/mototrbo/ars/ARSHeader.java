@@ -20,18 +20,19 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.ars;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.ip.Header;
 import java.util.List;
 
 public abstract class ARSHeader extends Header
 {
-    private static final int[] LENGTH = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField LENGTH = IntField.length16(0);
     private static final int HEADER_EXTENSION_FLAG = 16;
     private static final int ACKNOWLEDGEMENT_FLAG = 17;
     private static final int PRIORITY_FLAG = 18;
     private static final int CONTROL_USER_FLAG = 19;
-    private static final int[] PDU_TYPE = {20, 21, 22, 23};
+    private static final IntField PDU_TYPE = IntField.length4(20);
 
     /**
      * Constructs a parser for a header contained within a binary message starting at the offset.

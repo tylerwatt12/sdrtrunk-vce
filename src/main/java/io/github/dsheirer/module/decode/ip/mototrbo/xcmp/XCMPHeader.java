@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.xcmp;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.ip.Header;
 import java.util.Collections;
@@ -30,7 +31,7 @@ import java.util.List;
  */
 public class XCMPHeader extends Header
 {
-    private static final int[] MESSAGE_TYPE = {0, 1, 2, 3, 4, 5, 6, 7};
+    private static final IntField MESSAGE_TYPE = IntField.length8(0);
 
     /**
      * Constructs a parser for a header contained within a binary message starting at the offset.

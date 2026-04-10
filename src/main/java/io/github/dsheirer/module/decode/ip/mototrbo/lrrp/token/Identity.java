@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * LRRP Identity Token
@@ -30,7 +31,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Identity extends Token
 {
-    private static final int[] BYTE_VALUE = new int[]{0, 1, 2, 3, 4, 5, 6, 7};
+    private static final IntField BYTE_VALUE = IntField.length8(0);
 
     /**
      * Constructs an instance of a heading token.

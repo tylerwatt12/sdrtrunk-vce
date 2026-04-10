@@ -20,13 +20,14 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.ars;
 
 import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import java.util.Collections;
 import java.util.List;
 
 public class UserRegistrationAcknowledge extends ARSHeader
 {
-    private static final int[] SESSION_TIME_OR_REASON = {25, 26, 27, 28, 29, 30, 31};
+    private static final IntField SESSION_TIME_OR_REASON = IntField.range(25, 31);
 
     /**
      * Constructs a parser for a header contained within a binary message starting at the offset.

@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
@@ -33,12 +34,12 @@ import java.util.TimeZone;
  */
 public class Timestamp extends Token
 {
-    private static final int[] YEAR = new int[]{8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21};
-    private static final int[] MONTH = new int[]{22, 23, 24, 25};
-    private static final int[] DAY = new int[]{26, 27, 28, 29, 30};
-    private static final int[] HOUR = new int[]{31, 32, 33, 34, 35};
-    private static final int[] MINUTE = new int[]{36, 37, 38, 39, 40, 41};
-    private static final int[] SECOND = new int[]{42, 43, 44, 45, 46, 47};
+    private static final IntField YEAR = IntField.range(8, 21);
+    private static final IntField MONTH = IntField.length4(22);
+    private static final IntField DAY = IntField.range(26, 30);
+    private static final IntField HOUR = IntField.range(31, 35);
+    private static final IntField MINUTE = IntField.length6(36);
+    private static final IntField SECOND = IntField.length6(42);
 
     /**
      * Constructs an instance of a timestamp token.

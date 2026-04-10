@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import java.text.DecimalFormat;
 
 /**
@@ -31,7 +32,7 @@ import java.text.DecimalFormat;
 public class Heading extends Token
 {
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("000.0");
-    private static final int[] HEADING_FIELD = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField HEADING_FIELD = IntField.length8(8);
     private static final float HEADING_MULTIPLIER = 2.0f;
 
     /**

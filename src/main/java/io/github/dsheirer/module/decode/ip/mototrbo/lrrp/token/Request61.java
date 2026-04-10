@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 
 /**
  * LRRP Unknown Request Type 61
@@ -28,7 +29,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
  */
 public class Request61 extends Token
 {
-    private static final int[] VALUE = new int[]{8, 9, 10, 11, 12, 13, 14, 15};
+    private static final IntField VALUE = IntField.length8(8);
 
     /**
      * Constructs an instance of a heading token.
