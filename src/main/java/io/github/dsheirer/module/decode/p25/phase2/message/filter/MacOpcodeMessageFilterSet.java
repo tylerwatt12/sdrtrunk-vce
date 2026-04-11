@@ -46,7 +46,7 @@ public class MacOpcodeMessageFilterSet extends FilterSet<IMessage>
         addFilter(new MacOpcodeMessageFilter("Voice Channel Grants", MacOpcode.VOICE_GRANTS));
 
         List<MacOpcode> ungrouped = new ArrayList<>();
-        for(MacOpcode opcode: ungrouped)
+        for(MacOpcode opcode: MacOpcode.values())
         {
             if(!opcode.isGrouped())
             {
