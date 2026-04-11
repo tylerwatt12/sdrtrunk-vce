@@ -36,6 +36,7 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -80,6 +81,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private static final long IQ_LIVENESS_CHECK_INTERVAL_MS = 5_000;
     private static final long IQ_PACKET_STALL_WARNING_MS = 5_000;
     private static final long IQ_PACKET_STALL_RECOVERY_MS = 15_000;
+    private static final long HEARTBEAT_INTERVAL_MS = 10_000;
+    private static final long HEARTBEAT_PONG_TIMEOUT_MS = 30_000;
     private static final AtomicBoolean APPLICATION_SHUTTING_DOWN = new AtomicBoolean(false);
 
     static
@@ -126,9 +129,11 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private final AtomicLong mLastBinaryPacketTimestamp = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong mLastTextFrameTimestamp = new AtomicLong(0);    // any text frame received
     private final AtomicLong mLastTextMessageTimestamp = new AtomicLong(0);  // last meaningful (parsed) text message
+    private final AtomicLong mLastPongTimestamp = new AtomicLong(0);
     private final AtomicReference<String> mLastTextSummary = new AtomicReference<>("");
     private final AtomicLong mBinaryPacketCount = new AtomicLong();
     private ScheduledFuture<?> mIqLivenessMonitorFuture;
+    private ScheduledFuture<?> mHeartbeatMonitorFuture;
 
     // Buffer for accumulating partial WebSocket messages
     private final BinaryMessageAccumulator mBinaryMessageAccumulator = new BinaryMessageAccumulator();
@@ -275,7 +280,9 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                         .buildAsync(uri, this);
 
                 mWebSocket = future.get(5, TimeUnit.SECONDS);
+                mLastPongTimestamp.set(System.currentTimeMillis());
                 mLog.info("{} Connected to WebSocket", mLogPrefix);
+                startHeartbeatMonitor();
 
                 // Discover and select the expected device before enabling streaming.
                 prepareDeviceDiscoveryLatch();
@@ -440,6 +447,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             mLog.info("{} Disconnecting from SDRconnect", mLogPrefix);
             stopIqLivenessMonitor();
+            stopHeartbeatMonitor();
 
             try
             {
@@ -486,6 +494,23 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             IQ_LIVENESS_CHECK_INTERVAL_MS, IQ_LIVENESS_CHECK_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
+    private void startHeartbeatMonitor()
+    {
+        stopHeartbeatMonitor();
+        mLastPongTimestamp.set(System.currentTimeMillis());
+        mHeartbeatMonitorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(this::checkHeartbeat,
+            HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void stopHeartbeatMonitor()
+    {
+        if(mHeartbeatMonitorFuture != null)
+        {
+            mHeartbeatMonitorFuture.cancel(false);
+            mHeartbeatMonitorFuture = null;
+        }
+    }
+
     private void checkIqLiveness()
     {
         if(!mRunning.get() || !mIqStreamEnabled.get())
@@ -511,6 +536,42 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         if(binaryAgeMs >= IQ_PACKET_STALL_RECOVERY_MS)
         {
             triggerIqStallRecovery(binaryAgeMs);
+        }
+    }
+
+    private void checkHeartbeat()
+    {
+        if(!mRunning.get())
+        {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        long pongAgeMs = now - mLastPongTimestamp.get();
+
+        if(pongAgeMs >= HEARTBEAT_PONG_TIMEOUT_MS)
+        {
+            if(mLog.isWarnEnabled())
+            {
+                mLog.warn("{} No WebSocket pong received for {} ms - forcing reconnect", mLogPrefix, pongAgeMs);
+            }
+
+            triggerIqStallRecovery(pongAgeMs);
+            return;
+        }
+
+        WebSocket webSocket = mWebSocket;
+
+        if(webSocket != null)
+        {
+            try
+            {
+                webSocket.sendPing(ByteBuffer.wrap("sdrtrunk-heartbeat".getBytes(StandardCharsets.UTF_8)));
+            }
+            catch(Exception e)
+            {
+                mLog.warn("{} Error sending WebSocket ping: {}", mLogPrefix, e.getMessage());
+            }
         }
     }
 
@@ -1079,6 +1140,14 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return null;
     }
 
+    @Override
+    public CompletionStage<?> onPong(WebSocket webSocket, ByteBuffer message)
+    {
+        mLastPongTimestamp.set(System.currentTimeMillis());
+        webSocket.request(1);
+        return null;
+    }
+
     private void handleCompletedTextMessage(String json)
     {
         mLastTextFrameTimestamp.set(System.currentTimeMillis());
@@ -1163,6 +1232,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         stopIqLivenessMonitor();
+        stopHeartbeatMonitor();
         mWebSocket = null;
         mIqStallRecoveryInProgress.set(false);
 
@@ -1186,6 +1256,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mLog.error("{} SDRconnect WebSocket error: {}", mLogPrefix, error.getMessage());
         mRunning.set(false);
         mIqStreamEnabled.set(false);
+        stopHeartbeatMonitor();
         mWebSocket = null;
         mIqStallRecoveryInProgress.set(false);
 
