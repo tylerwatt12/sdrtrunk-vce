@@ -232,7 +232,8 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                                 }
                                 else
                                 {
-                                    mLog.warn("P25 P2 frequency band id:{} rejected - base frequency {} Hz is outside plausible RF range",
+                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{} Hz - outside plausible RF range",
+                                        macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
                                         bandIdentifier.getIdentifier(), base);
                                 }
                             }

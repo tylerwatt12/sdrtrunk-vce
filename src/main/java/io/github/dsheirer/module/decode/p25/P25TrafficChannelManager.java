@@ -175,8 +175,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         long base = frequencyBand.getBaseFrequency();
         if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
         {
-            mLog.warn("P25 frequency band id:{} rejected - base frequency {} Hz is outside plausible RF range",
-                frequencyBand.getIdentifier(), base);
+            mLog.warn("P25 frequency band rejected class:{} id:{} base:{} Hz - outside plausible RF range",
+                frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base);
             return;
         }
         mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
