@@ -22,6 +22,7 @@ package io.github.dsheirer.source.tuner.sdrconnect;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.TunerController;
@@ -41,6 +42,7 @@ import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -104,6 +106,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
     private final AtomicBoolean mReconnectScheduledFromError = new AtomicBoolean(false);
     private final AtomicBoolean mIqStallRecoveryInProgress = new AtomicBoolean(false);
     private final AtomicInteger mReconnectAttempts = new AtomicInteger(0);
+    private ExecutorService mTextMessageExecutor;
+    private ExecutorService mBinaryMessageExecutor;
     private ScheduledExecutorService mReconnectExecutor;
     private int mSampleRate = DEFAULT_SAMPLE_RATE;
     private long mCenterFrequency = DEFAULT_FREQUENCY;
@@ -280,6 +284,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
                         .buildAsync(uri, this);
 
                 mWebSocket = future.get(5, TimeUnit.SECONDS);
+                startMessageExecutors();
                 mLastPongTimestamp.set(System.currentTimeMillis());
                 mLog.info("{} Connected to WebSocket", mLogPrefix);
                 startHeartbeatMonitor();
@@ -448,6 +453,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             mLog.info("{} Disconnecting from SDRconnect", mLogPrefix);
             stopIqLivenessMonitor();
             stopHeartbeatMonitor();
+            stopMessageExecutors();
 
             try
             {
@@ -482,6 +488,28 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         {
             mReconnectExecutor.shutdownNow();
             mReconnectExecutor = null;
+        }
+    }
+
+    private void startMessageExecutors()
+    {
+        stopMessageExecutors();
+        mTextMessageExecutor = Executors.newSingleThreadExecutor(new NamingThreadFactory("sdrtrunk sdrconnect text"));
+        mBinaryMessageExecutor = Executors.newSingleThreadExecutor(new NamingThreadFactory("sdrtrunk sdrconnect iq"));
+    }
+
+    private void stopMessageExecutors()
+    {
+        if(mTextMessageExecutor != null)
+        {
+            mTextMessageExecutor.shutdownNow();
+            mTextMessageExecutor = null;
+        }
+
+        if(mBinaryMessageExecutor != null)
+        {
+            mBinaryMessageExecutor.shutdownNow();
+            mBinaryMessageExecutor = null;
         }
     }
 
@@ -1132,12 +1160,23 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         if(last)
         {
-            handleCompletedTextMessage(mPartialTextBuffer.toString());
+            String json = mPartialTextBuffer.toString();
             mPartialTextBuffer.setLength(0);
+            submitTextMessage(json);
         }
 
         webSocket.request(1);
         return null;
+    }
+
+    private void submitTextMessage(String json)
+    {
+        ExecutorService executor = mTextMessageExecutor;
+
+        if(executor != null)
+        {
+            executor.execute(() -> handleCompletedTextMessage(json));
+        }
     }
 
     @Override
@@ -1202,18 +1241,8 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             }
             else
             {
-                mBinaryMessageAccumulator.complete(data, buffer -> {
-                    if(buffer.remaining() >= 2)
-                    {
-                        buffer.order(ByteOrder.LITTLE_ENDIAN);
-                        int header = buffer.getShort() & 0xFFFF;
-
-                        if(header == HEADER_IQ && buffer.remaining() > 0)
-                        {
-                            broadcast(mNativeBufferFactory.getBuffer(buffer, System.currentTimeMillis()));
-                        }
-                    }
-                });
+                ByteBuffer completeMessage = mBinaryMessageAccumulator.complete(data);
+                submitBinaryMessage(completeMessage);
             }
         }
         catch(Exception e)
@@ -1225,6 +1254,30 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         return null;
     }
 
+    private void submitBinaryMessage(ByteBuffer message)
+    {
+        ExecutorService executor = mBinaryMessageExecutor;
+
+        if(executor != null && message != null)
+        {
+            executor.execute(() -> processBinaryMessage(message));
+        }
+    }
+
+    private void processBinaryMessage(ByteBuffer buffer)
+    {
+        if(buffer.remaining() >= 2)
+        {
+            buffer.order(ByteOrder.LITTLE_ENDIAN);
+            int header = buffer.getShort() & 0xFFFF;
+
+            if(header == HEADER_IQ && buffer.remaining() > 0)
+            {
+                broadcast(mNativeBufferFactory.getBuffer(buffer, System.currentTimeMillis()));
+            }
+        }
+    }
+
     @Override
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason)
     {
@@ -1233,6 +1286,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mIqStreamEnabled.set(false);
         stopIqLivenessMonitor();
         stopHeartbeatMonitor();
+        stopMessageExecutors();
         mWebSocket = null;
         mIqStallRecoveryInProgress.set(false);
 
@@ -1257,6 +1311,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         mRunning.set(false);
         mIqStreamEnabled.set(false);
         stopHeartbeatMonitor();
+        stopMessageExecutors();
         mWebSocket = null;
         mIqStallRecoveryInProgress.set(false);
 
@@ -1506,13 +1561,16 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
             mBuffer = expanded;
         }
 
-        private void complete(ByteBuffer finalFragment, Consumer<ByteBuffer> handler)
+        private ByteBuffer complete(ByteBuffer finalFragment)
         {
             append(finalFragment);
             mBuffer.flip();
             try
             {
-                handler.accept(mBuffer);
+                ByteBuffer snapshot = ByteBuffer.allocate(mBuffer.remaining());
+                snapshot.put(mBuffer);
+                snapshot.flip();
+                return snapshot;
             }
             finally
             {
