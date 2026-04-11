@@ -160,12 +160,25 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         return mTalkerAliasManager;
     }
 
+    // Sanity bounds for P25 base frequencies: 100 MHz – 1 GHz covers all known P25 band plans with margin.
+    private static final long FREQUENCY_BAND_MIN_HZ = 100_000_000L;
+    private static final long FREQUENCY_BAND_MAX_HZ = 1_000_000_000L;
+
     /**
      * Stores the frequency band (aka Identifier Update) to use for preload data in starting a new traffic channel.
+     * Rejects entries whose base frequency falls outside the plausible P25 RF range to guard against corrupt or
+     * misframed messages poisoning channel resolution.
      * @param frequencyBand to store
      */
     public void processFrequencyBand(IFrequencyBand frequencyBand)
     {
+        long base = frequencyBand.getBaseFrequency();
+        if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
+        {
+            mLog.warn("P25 frequency band id:{} rejected - base frequency {} Hz is outside plausible RF range",
+                frequencyBand.getIdentifier(), base);
+            return;
+        }
         mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
     }
 
@@ -1170,9 +1183,17 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency parentMulti &&
                 parentMulti.hasFrequencyEnvelope())
             {
+                long downlink = apco25Channel.getDownlinkFrequency();
+                if(downlink < parentMulti.getMinimumFrequency() || downlink > parentMulti.getMaximumFrequency())
+                {
+                    mLog.warn("P25 traffic channel rejected - downlink {} Hz is outside site envelope [{} - {}] Hz channel:{}",
+                        downlink, parentMulti.getMinimumFrequency(), parentMulti.getMaximumFrequency(), apco25Channel);
+                    return;
+                }
+
                 SourceConfigTunerMultipleFrequency sourceConfig = new SourceConfigTunerMultipleFrequency();
-                sourceConfig.addFrequency(apco25Channel.getDownlinkFrequency());
-                sourceConfig.setPreferredFrequency(apco25Channel.getDownlinkFrequency());
+                sourceConfig.addFrequency(downlink);
+                sourceConfig.setPreferredFrequency(downlink);
                 sourceConfig.setPreferredTuner(parentMulti.getPreferredTuner());
                 sourceConfig.setMinimumFrequency(parentMulti.getMinimumFrequency());
                 sourceConfig.setMaximumFrequency(parentMulti.getMaximumFrequency());

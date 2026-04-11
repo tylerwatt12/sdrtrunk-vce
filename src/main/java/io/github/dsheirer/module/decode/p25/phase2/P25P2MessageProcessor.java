@@ -43,9 +43,15 @@ import io.github.dsheirer.sample.Listener;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class P25P2MessageProcessor implements Listener<IMessage>
 {
+    private static final Logger mLog = LoggerFactory.getLogger(P25P2MessageProcessor.class);
+    // Sanity bounds shared with P25TrafficChannelManager: 100 MHz – 1 GHz covers all known P25 band plans.
+    private static final long FREQUENCY_BAND_MIN_HZ = 100_000_000L;
+    private static final long FREQUENCY_BAND_MAX_HZ = 1_000_000_000L;
 
     private EncryptionSynchronizationSequenceProcessor mESSProcessor1 = new EncryptionSynchronizationSequenceProcessor(P25P2Message.TIMESLOT_1);
     private EncryptionSynchronizationSequenceProcessor mESSProcessor2 = new EncryptionSynchronizationSequenceProcessor(P25P2Message.TIMESLOT_2);
@@ -219,7 +225,16 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                             //Store band identifiers so that they can be injected into channel type messages
                             if(macMessage.getMacStructure() instanceof IFrequencyBand bandIdentifier)
                             {
-                                mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
+                                long base = bandIdentifier.getBaseFrequency();
+                                if(base >= FREQUENCY_BAND_MIN_HZ && base <= FREQUENCY_BAND_MAX_HZ)
+                                {
+                                    mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
+                                }
+                                else
+                                {
+                                    mLog.warn("P25 P2 frequency band id:{} rejected - base frequency {} Hz is outside plausible RF range",
+                                        bandIdentifier.getIdentifier(), base);
+                                }
                             }
 
                             //Send the message to the listener
