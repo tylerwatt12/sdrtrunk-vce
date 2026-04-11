@@ -173,6 +173,8 @@ import io.github.dsheirer.util.PacketUtil;
 import java.util.Collections;
 import java.util.List;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Decoder state for an APCO25 channel.  Maintains the call/data/idle state of the channel and produces events by
@@ -180,6 +182,7 @@ import org.jdesktop.swingx.mapviewer.GeoPosition;
  */
 public class P25P1DecoderState extends DecoderState implements IChannelEventListener
 {
+    private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderState.class);
     private static final String CALL_ALERT_LABEL = "CALL ALERT";
     private static final String GROUP_AFFILIATION_LABEL = "GROUP AFFILIATION";
     private static final String STATUS_QUERY_LABEL = "STATUS QUERY";
@@ -994,7 +997,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 {
                     IPacket udpPayload = udpPacket.getPayload();
 
-                    switch(udpPayload)
+                    if(udpPayload == null)
+                    {
+                        LOGGER.info("P25 Phase 1 UDP packet freq:{} channel:{} payload:null ipv4:{}",
+                            getCurrentFrequency(), getCurrentChannel(), ipv4);
+                    }
+                    else switch(udpPayload)
                     {
                         case ARSPacket arsPacket:
                         {
