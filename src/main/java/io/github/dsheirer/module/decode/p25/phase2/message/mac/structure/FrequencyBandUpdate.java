@@ -58,7 +58,10 @@ public class FrequencyBandUpdate extends MacStructure implements IFrequencyBand
         StringBuilder sb = new StringBuilder();
         sb.append(getOpcode());
         sb.append(" ID:").append(getIdentifier());
-        sb.append(" OFFSET:").append(getTransmitOffset());
+        if(hasTransmitOffset())
+        {
+            sb.append(" OFFSET:").append(getTransmitOffset());
+        }
         sb.append(" SPACING:").append(getChannelSpacing());
         sb.append(" BASE:").append(getBaseFrequency());
         sb.append(" FDMA BW:").append(getBandwidth());

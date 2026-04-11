@@ -30,10 +30,9 @@ import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
 import io.github.dsheirer.module.decode.p25.reference.ChannelType;
-import org.apache.commons.math3.util.FastMath;
-
 import java.util.Collections;
 import java.util.List;
+import org.apache.commons.math3.util.FastMath;
 
 /**
  * Identifier Update - Frequency Band details - TDMA bands
@@ -62,7 +61,10 @@ public class FrequencyBandUpdateTDMA extends OSPMessage implements IFrequencyBan
         StringBuilder sb = new StringBuilder();
         sb.append(getMessageStub());
         sb.append(" ID:").append(getIdentifier());
-        sb.append(" OFFSET:").append(getTransmitOffset());
+        if(hasTransmitOffset())
+        {
+            sb.append(" OFFSET:").append(getTransmitOffset());
+        }
         sb.append(" SPACING:").append(getChannelSpacing());
         sb.append(" BASE:").append(getBaseFrequency());
         sb.append(" ").append(getChannelType());
