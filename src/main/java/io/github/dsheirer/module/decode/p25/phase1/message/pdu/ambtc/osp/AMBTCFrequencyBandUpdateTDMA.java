@@ -141,19 +141,19 @@ public class AMBTCFrequencyBandUpdateTDMA extends AMBTCMessage // implements IFr
 
     public long getTransmitOffset()
     {
-        if(hasDataBlock(0))
+        if(!hasTransmitOffset())
         {
-            long offset = getDataBlock(0).getMessage().getInt(BLOCK_0_TRANSMIT_OFFSET) * getChannelSpacing();
-
-            if(!getDataBlock(0).getMessage().get(BLOCK_0_TRANSMIT_OFFSET_SIGN))
-            {
-                offset *= -1;
-            }
-
-            return offset;
+            return 0L;
         }
 
-        return 0L;
+        long offset = getDataBlock(0).getMessage().getInt(BLOCK_0_TRANSMIT_OFFSET) * getChannelSpacing();
+
+        if(!getDataBlock(0).getMessage().get(BLOCK_0_TRANSMIT_OFFSET_SIGN))
+        {
+            offset *= -1;
+        }
+
+        return offset;
     }
 
     /**

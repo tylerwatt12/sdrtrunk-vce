@@ -56,10 +56,7 @@ public class FrequencyBandUpdateVUHF extends OSPMessage implements IFrequencyBan
         StringBuilder sb = new StringBuilder();
         sb.append(getMessageStub());
         sb.append(" ID:").append(getIdentifier());
-        if(hasTransmitOffset())
-        {
-            sb.append(" OFFSET:").append(getTransmitOffset());
-        }
+        sb.append(" OFFSET:").append(getTransmitOffset());
         sb.append(" SPACING:").append(getChannelSpacing());
         sb.append(" BASE:").append(getBaseFrequency());
         sb.append(" FDMA BW:").append(getBandwidth());
@@ -104,6 +101,11 @@ public class FrequencyBandUpdateVUHF extends OSPMessage implements IFrequencyBan
     @Override
     public long getTransmitOffset()
     {
+        if(!hasTransmitOffset())
+        {
+            return 0;
+        }
+
         long offset = getMessage().getLong(TRANSMIT_OFFSET) * getChannelSpacing();
 
         if(!getMessage().get(TRANSMIT_OFFSET_SIGN))

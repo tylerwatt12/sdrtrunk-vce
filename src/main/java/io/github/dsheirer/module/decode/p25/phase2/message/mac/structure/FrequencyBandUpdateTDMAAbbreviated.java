@@ -61,10 +61,7 @@ public class FrequencyBandUpdateTDMAAbbreviated extends MacStructure implements 
         StringBuilder sb = new StringBuilder();
         sb.append(getOpcode());
         sb.append(" ID:").append(getIdentifier());
-        if(hasTransmitOffset())
-        {
-            sb.append(" OFFSET:").append(getTransmitOffset());
-        }
+        sb.append(" OFFSET:").append(getTransmitOffset());
         sb.append(" SPACING:").append(getChannelSpacing());
         sb.append(" BASE:").append(getBaseFrequency());
         sb.append(" ").append(getChannelType());
@@ -108,6 +105,11 @@ public class FrequencyBandUpdateTDMAAbbreviated extends MacStructure implements 
     @Override
     public long getTransmitOffset()
     {
+        if(!hasTransmitOffset())
+        {
+            return 0;
+        }
+
         long offset = (long)getInt(TRANSMIT_OFFSET) * getChannelType().getBandwidth();
 
         if(!getMessage().get(TRANSMIT_OFFSET_SIGN + getOffset()))

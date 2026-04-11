@@ -90,6 +90,11 @@ public class LCChannelIdentifierUpdate extends LinkControlWord implements IFrequ
     @Override
     public long getTransmitOffset()
     {
+        if(!hasTransmitOffset())
+        {
+            return 0;
+        }
+
         long offset = getInt(TRANSMIT_OFFSET) * getChannelSpacing();
 
         if(!getMessage().get(TRANSMIT_OFFSET_SIGN))
