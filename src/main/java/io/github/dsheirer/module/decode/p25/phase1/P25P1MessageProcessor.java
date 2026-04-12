@@ -112,11 +112,6 @@ public class P25P1MessageProcessor implements Listener<IMessage>
     {
         if(message.isValid())
         {
-            if(message instanceof IFrequencyBand frequencyBand)
-            {
-                processFrequencyBand(frequencyBand, message.getClass().getSimpleName());
-            }
-
             //Reassemble extended source link control messages.
             if(message instanceof LDU1Message ldu1)
             {
