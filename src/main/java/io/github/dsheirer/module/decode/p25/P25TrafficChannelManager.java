@@ -26,6 +26,7 @@ import io.github.dsheirer.controller.channel.ChannelEvent.Event;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -58,6 +59,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCNe
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.NetworkStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import io.github.dsheirer.module.decode.p25.phase2.P25P2ScrambleParametersPreloadData;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
@@ -76,6 +78,7 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1839,16 +1842,61 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     if(message instanceof NetworkStatusBroadcast nsb)
                     {
                         mPhase2ScrambleParameters = nsb.getScrambleParameters();
+                        applyPhase2ScrambleParameters();
                     }
                     else if(message instanceof AMBTCNetworkStatusBroadcast nsb)
                     {
                         mPhase2ScrambleParameters = nsb.getScrambleParameters();
+                        applyPhase2ScrambleParameters();
                     }
                 }
             };
         }
 
         return mMessageListener;
+    }
+
+    private void applyPhase2ScrambleParameters()
+    {
+        ScrambleParameters scrambleParameters = mPhase2ScrambleParameters;
+
+        if(scrambleParameters == null)
+        {
+            return;
+        }
+
+        List<Channel> activePhase2Channels;
+
+        mLock.lock();
+
+        try
+        {
+            if(mManagedPhase2TrafficChannels != null)
+            {
+                for(Channel trafficChannel: mManagedPhase2TrafficChannels)
+                {
+                    if(trafficChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 p2)
+                    {
+                        p2.setScrambleParameters(scrambleParameters.copy());
+                    }
+                }
+            }
+
+            activePhase2Channels = mAllocatedTrafficChannelMap.values().stream()
+                .filter(channel -> channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2)
+                .distinct()
+                .collect(Collectors.toList());
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        if(getInterModuleEventBus() != null && !activePhase2Channels.isEmpty())
+        {
+            getInterModuleEventBus().post(new PostChannelModuleEventRequest(activePhase2Channels,
+                new P25P2ScrambleParametersPreloadData(scrambleParameters.copy())));
+        }
     }
 
     /**

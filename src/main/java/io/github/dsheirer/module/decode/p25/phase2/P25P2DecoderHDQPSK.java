@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.module.decode.p25.phase2;
 
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.state.MultiChannelState;
@@ -135,7 +136,14 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         mMessageFramer.setSampleRate(sampleRate);
 
         mQPSKDemodulator.setSymbolListener(getDibitBroadcaster());
-        getDibitBroadcaster().addListener(mMessageFramer);
+        mQPSKDemodulator.setSoftSymbolListener(new Listener<>()
+        {
+            @Override
+            public void receive(P25P2SoftDibit softDibit)
+            {
+                mMessageFramer.receive(softDibit);
+            }
+        });
     }
 
     /**
@@ -236,5 +244,19 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
                 }
             }
         };
+    }
+
+    /**
+     * Accepts late Phase 2 scramble-parameter updates for already-running traffic channels. The control channel may
+     * learn WACN/system/NAC after this decoder has started, so we update the framer in-place rather than waiting for
+     * this traffic channel to rediscover the parameters from its own Phase 2 signaling.
+     */
+    @Subscribe
+    public void process(P25P2ScrambleParametersPreloadData preloadData)
+    {
+        if(preloadData != null && preloadData.hasData() && mMessageFramer != null)
+        {
+            mMessageFramer.setScrambleParameters(preloadData.getData());
+        }
     }
 }

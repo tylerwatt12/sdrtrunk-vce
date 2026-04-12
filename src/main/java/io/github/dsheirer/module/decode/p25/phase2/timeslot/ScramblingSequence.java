@@ -48,7 +48,7 @@ public class ScramblingSequence
     /**
      * Updates this scrambling sequence with the specified seed parameters
      */
-    public boolean update(ScrambleParameters parameters)
+    public synchronized boolean update(ScrambleParameters parameters)
     {
         if(parameters != null)
         {
@@ -62,7 +62,7 @@ public class ScramblingSequence
      * Updates this scrambling sequence with the specified parameters from the Network Broadcast Status message and
      * generates 12 x 320-bit scrambling sequences for each of the superframe's 12 timeslots.
      */
-    public boolean update(int wacn, int system, int nac)
+    public synchronized boolean update(int wacn, int system, int nac)
     {
         if(!mShiftRegister.isCurrent(wacn, system, nac))
         {
@@ -89,7 +89,7 @@ public class ScramblingSequence
      * @param timeslot 0 - 11
      * @return scrambling sequence (320-bits) for the specified timeslot
      */
-    public BinaryMessage getTimeslotSequence(int timeslot)
+    public synchronized BinaryMessage getTimeslotSequence(int timeslot)
     {
         if(0 <= timeslot && timeslot <= 11)
         {

@@ -27,6 +27,7 @@ import io.github.dsheirer.channel.metadata.ChannelMetadataModel;
 import io.github.dsheirer.channel.state.AbstractChannelState;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
+import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.controller.channel.event.PreloadDataContent;
 import io.github.dsheirer.controller.channel.map.ChannelMapModel;
 import io.github.dsheirer.identifier.Form;
@@ -759,6 +760,25 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         else
         {
             mLog.warn("Request to convert to traffic channel ignored - no processing chain was found");
+        }
+    }
+
+    @Subscribe
+    public void process(PostChannelModuleEventRequest request)
+    {
+        if(request == null || !request.hasChannels() || !request.hasEvent())
+        {
+            return;
+        }
+
+        for(Channel channel: request.getChannels())
+        {
+            ProcessingChain processingChain = getProcessingChain(channel);
+
+            if(processingChain != null)
+            {
+                processingChain.getEventBus().post(request.getEvent());
+            }
         }
     }
 
