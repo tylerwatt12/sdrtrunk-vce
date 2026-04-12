@@ -115,7 +115,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * stuffed or deleted dibits in the sequence.
      */
     private DibitDelayBuffer mFragmentBuffer = new DibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
-    private SoftDibitDelayBuffer mSoftFragmentBuffer = new SoftDibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
     private int mDibitsProcessed = 0;
     private boolean mSynchronized = false;
     private boolean mLastAcquisitionWasForcedRealign = false;
@@ -222,12 +221,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
     }
 
-    public void receive(P25P2SoftDibit softDibit)
-    {
-        mSoftFragmentBuffer.put(softDibit);
-        receive(softDibit.getDibit());
-    }
-
     /**
      * Creates a super-frame fragment from the current contents of the fragment dibit buffer and broadcasts it to
      * a registered listener.
@@ -295,10 +288,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         //Xor the two messages to produce a unified super frame fragment
         message1.xor(message2);
         message1.setCorrectedBitCount(bitErrors); //Not even sure what the correct bit error count is here?
-        P25P2SoftDibitSequence softSequence = mSoftFragmentBuffer.getSequence(FRAGMENT_BUFFER_OVERSIZE + sync1Offset,
-            540, FRAGMENT_BUFFER_OVERSIZE + sync2Offset + 540, 180);
-        SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence,
-            softSequence);
+        SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence);
         updateScramblingCode(frameFragment);
         broadcast(frameFragment);
     }
@@ -307,8 +297,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     {
         CorrectedBinaryMessage message = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + dibitOffset, 720);
         message.setCorrectedBitCount(bitErrors);
-        P25P2SoftDibitSequence softSequence = mSoftFragmentBuffer.getSequence(FRAGMENT_BUFFER_OVERSIZE + dibitOffset, 720);
-        return new SuperFrameFragment(message, getCurrentTimestamp(), mScramblingSequence, softSequence);
+        return new SuperFrameFragment(message, getCurrentTimestamp(), mScramblingSequence);
     }
 
     /**
