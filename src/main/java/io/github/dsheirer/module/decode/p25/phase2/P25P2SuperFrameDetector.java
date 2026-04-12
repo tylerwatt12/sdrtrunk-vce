@@ -30,15 +30,12 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NetworkStatusBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NetworkStatusBroadcastImplicit;
-import io.github.dsheirer.module.decode.p25.phase2.message.isch.IISCH;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractSignalingTimeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.ScramblingSequence;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Timeslot;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * APCO25 Phase 2 super-frame fragment detector uses a pair of sync pattern detectors and a circular dibit buffer to
@@ -50,8 +47,6 @@ import org.slf4j.LoggerFactory;
  */
 public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectListener
 {
-    private static final Logger mLog = LoggerFactory.getLogger(P25P2SuperFrameDetector.class);
-
     /**
      * Number of dibits that we use to oversize the fragment delay buffer where the total oversize is 2x this quantity
      * for padding the left and padding the right by this quantity.
@@ -99,6 +94,12 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      */
     private static final int UN_SYNCHRONIZED_SYNC_MATCH_THRESHOLD = 4;
 
+    /**
+     * Only attempt forced realignment when sync 1 is at least plausibly near the expected boundary.  Larger error
+     * counts indicate that sync 2 may be a valid local match while the current fragment window is still badly wrong.
+     */
+    private static final int FORCED_REALIGN_MAX_SYNC1_ERRORS = 20;
+
     private ScramblingSequence mScramblingSequence = new ScramblingSequence();
     private Listener<IMessage> mMessageListener;
     private P25P2SyncDetector mSyncDetector;
@@ -114,9 +115,11 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * stuffed or deleted dibits in the sequence.
      */
     private DibitDelayBuffer mFragmentBuffer = new DibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
+    private SoftDibitDelayBuffer mSoftFragmentBuffer = new SoftDibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
     private int mDibitsProcessed = 0;
     private boolean mSynchronized = false;
     private boolean mLastAcquisitionWasForcedRealign = false;
+    private boolean mLastAcquisitionWasUnsynchronizedDirect = false;
     private ISyncDetectListener mSyncDetectListener;
 
     public P25P2SuperFrameDetector(IPhaseLockedLoop phaseLockedLoop)
@@ -219,6 +222,12 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
     }
 
+    public void receive(P25P2SoftDibit softDibit)
+    {
+        mSoftFragmentBuffer.put(softDibit);
+        receive(softDibit.getDibit());
+    }
+
     /**
      * Creates a super-frame fragment from the current contents of the fragment dibit buffer and broadcasts it to
      * a registered listener.
@@ -236,13 +245,15 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
         boolean afterForcedRealign = mLastAcquisitionWasForcedRealign;
         mLastAcquisitionWasForcedRealign = false;
+        boolean afterUnsynchronizedDirect = mLastAcquisitionWasUnsynchronizedDirect;
+        mLastAcquisitionWasUnsynchronizedDirect = false;
         mDibitsProcessed = 0 + dibitOffset;
-        CorrectedBinaryMessage message = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + dibitOffset, 720);
-        message.setCorrectedBitCount(bitErrors);
-        SuperFrameFragment frameFragment = new SuperFrameFragment(message, getCurrentTimestamp(), mScramblingSequence);
-        logInvalidIISCHAcquisition(frameFragment, acquisitionContext, afterForcedRealign);
+        SuperFrameFragment frameFragment = createFragment(bitErrors, dibitOffset);
 
-        if(afterForcedRealign && !frameFragment.getIISCH1().isValid() && !frameFragment.getIISCH2().isValid())
+        boolean invalidIISCHs = !frameFragment.getIISCH1().isValid() && !frameFragment.getIISCH2().isValid();
+        boolean acquisitionAttempt = afterForcedRealign || afterUnsynchronizedDirect;
+
+        if(invalidIISCHs && acquisitionAttempt)
         {
             mSynchronized = false;
             return;
@@ -284,24 +295,20 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         //Xor the two messages to produce a unified super frame fragment
         message1.xor(message2);
         message1.setCorrectedBitCount(bitErrors); //Not even sure what the correct bit error count is here?
-        SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence);
+        P25P2SoftDibitSequence softSequence = mSoftFragmentBuffer.getSequence(FRAGMENT_BUFFER_OVERSIZE + sync1Offset,
+            540, FRAGMENT_BUFFER_OVERSIZE + sync2Offset + 540, 180);
+        SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence,
+            softSequence);
         updateScramblingCode(frameFragment);
-        logInvalidIISCHAcquisition(frameFragment, acquisitionContext, afterForcedRealign);
         broadcast(frameFragment);
     }
 
-    private void logInvalidIISCHAcquisition(SuperFrameFragment frameFragment, String acquisitionContext,
-        boolean afterForcedRealign)
+    private SuperFrameFragment createFragment(int bitErrors, int dibitOffset)
     {
-        IISCH iisch1 = frameFragment.getIISCH1();
-        IISCH iisch2 = frameFragment.getIISCH2();
-
-        if(!iisch1.isValid() && !iisch2.isValid())
-        {
-            mLog.info("P25 P2 fragment acquisition produced invalid IISCHs afterForcedRealign:{} context:{} iisch1Errors:{} iisch2Errors:{} iisch1:{} iisch2:{}",
-                afterForcedRealign, acquisitionContext, iisch1.getMessage().getCorrectedBitCount(),
-                iisch2.getMessage().getCorrectedBitCount(), iisch1, iisch2);
-        }
+        CorrectedBinaryMessage message = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + dibitOffset, 720);
+        message.setCorrectedBitCount(bitErrors);
+        P25P2SoftDibitSequence softSequence = mSoftFragmentBuffer.getSequence(FRAGMENT_BUFFER_OVERSIZE + dibitOffset, 720);
+        return new SuperFrameFragment(message, getCurrentTimestamp(), mScramblingSequence, softSequence);
     }
 
     /**
@@ -458,13 +465,26 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
             if(sync1BitErrorCount <= UN_SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
             {
+                SuperFrameFragment candidate = createFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0);
+
+                if(!candidate.getIISCH1().isValid() && !candidate.getIISCH2().isValid())
+                {
+                    return;
+                }
+
                 mSynchronized = true;
+                mLastAcquisitionWasUnsynchronizedDirect = true;
                 broadcastFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0,
                     "mode=unsynchronized/direct sync1Errors=" + sync1BitErrorCount + " sync2DetectorErrors=" +
                         syncDetectorBitErrorCount);
             }
             else
             {
+                if(sync1BitErrorCount >= FORCED_REALIGN_MAX_SYNC1_ERRORS)
+                {
+                    return;
+                }
+
                 //We're probably mis-aligned on the fragment.  Setup as if we're synchronized and adjust the dibits
                 // processed counter so that we guarantee a fragment check after another 180 dibits have arrived which
                 // means that sync1 and sync2 should be aligned
@@ -475,8 +495,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                     broadcastSyncLoss(mDibitsProcessed - DIBIT_COUNT_MISALIGNED_SYNC);
                 }
 
-                mLog.info("P25 P2 fragment acquisition entering forced realign mode=unsynchronized/forced sync1Errors:{} sync2DetectorErrors:{} dibitsProcessed:{} nextCheckDibits:{}",
-                    sync1BitErrorCount, syncDetectorBitErrorCount, mDibitsProcessed, 180);
                 mDibitsProcessed = DIBIT_COUNT_MISALIGNED_SYNC;
                 mLastAcquisitionWasForcedRealign = true;
             }
