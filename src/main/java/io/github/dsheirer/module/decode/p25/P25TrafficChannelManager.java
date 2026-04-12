@@ -48,6 +48,7 @@ import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.channel.P25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -163,6 +164,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     // Sanity bounds for P25 base frequencies: 100 MHz – 1 GHz covers all known P25 band plans with margin.
     private static final long FREQUENCY_BAND_MIN_HZ = 100_000_000L;
     private static final long FREQUENCY_BAND_MAX_HZ = 1_000_000_000L;
+    private static final long[] VALID_CHANNEL_SPACINGS_HZ = new long[]{6250L, 12500L, 25000L};
 
     /**
      * Stores the frequency band (aka Identifier Update) to use for preload data in starting a new traffic channel.
@@ -175,11 +177,56 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         long base = frequencyBand.getBaseFrequency();
         if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
         {
-            mLog.warn("P25 frequency band rejected class:{} id:{} base:{} Hz - outside plausible RF range",
-                frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base);
+            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - outside plausible RF range",
+                frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base,
+                frequencyBand.getChannelSpacing(), frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount());
             return;
         }
+
+        long spacing = frequencyBand.getChannelSpacing();
+
+        if(!isValidChannelSpacing(spacing))
+        {
+            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - invalid spacing",
+                frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
+                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount());
+            return;
+        }
+
+        IFrequencyBand existing = mFrequencyBandMap.get(frequencyBand.getIdentifier());
+
+        if(existing != null && !matches(existing, frequencyBand))
+        {
+            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+                frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
+                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), existing.getClass().getSimpleName(),
+                existing.getBaseFrequency(), existing.getChannelSpacing(), existing.getBandwidth(),
+                existing.getTimeslotCount());
+            return;
+        }
+
         mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
+    }
+
+    private boolean isValidChannelSpacing(long spacing)
+    {
+        for(long validSpacing: VALID_CHANNEL_SPACINGS_HZ)
+        {
+            if(validSpacing == spacing)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private boolean matches(IFrequencyBand existing, IFrequencyBand candidate)
+    {
+        return existing.getBaseFrequency() == candidate.getBaseFrequency() &&
+            existing.getChannelSpacing() == candidate.getChannelSpacing() &&
+            existing.getBandwidth() == candidate.getBandwidth() &&
+            existing.getTimeslotCount() == candidate.getTimeslotCount();
     }
 
     /**
@@ -1186,8 +1233,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 long downlink = apco25Channel.getDownlinkFrequency();
                 if(downlink < parentMulti.getMinimumFrequency() || downlink > parentMulti.getMaximumFrequency())
                 {
-                    mLog.warn("P25 traffic channel rejected - downlink {} Hz is outside site envelope [{} - {}] Hz channel:{}",
-                        downlink, parentMulti.getMinimumFrequency(), parentMulti.getMaximumFrequency(), apco25Channel);
+                    mLog.warn("P25 traffic channel rejected - downlink {} Hz is outside site envelope [{} - {}] Hz channel:{} {}",
+                        downlink, parentMulti.getMinimumFrequency(), parentMulti.getMaximumFrequency(), apco25Channel,
+                        describeFrequencyResolution(apco25Channel));
                     return;
                 }
 
@@ -1242,6 +1290,41 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 mAvailablePhase2TrafficChannelQueue.add(trafficChannel);
             }
         }
+    }
+
+    private String describeFrequencyResolution(APCO25Channel apco25Channel)
+    {
+        P25Channel channel = apco25Channel.getValue();
+        StringBuilder sb = new StringBuilder();
+        sb.append("[downlinkBand=").append(channel.getDownlinkBandIdentifier());
+        sb.append(" downlinkChannel=").append(channel.getDownlinkChannelNumber());
+        appendBandDetails(sb, "downlink", channel.getFrequencyBand());
+
+        if(channel instanceof P25ExplicitChannel explicit)
+        {
+            sb.append(" uplinkBand=").append(explicit.getUplinkBandIdentifier());
+            sb.append(" uplinkChannel=").append(explicit.getUplinkChannelNumber());
+        }
+
+        sb.append("]");
+        return sb.toString();
+    }
+
+    private void appendBandDetails(StringBuilder sb, String label, IFrequencyBand band)
+    {
+        if(band == null)
+        {
+            sb.append(" ").append(label).append("BandClass=null");
+            return;
+        }
+
+        sb.append(" ").append(label).append("BandClass=").append(band.getClass().getSimpleName());
+        sb.append(" ").append(label).append("BandId=").append(band.getIdentifier());
+        sb.append(" ").append(label).append("Base=").append(band.getBaseFrequency());
+        sb.append(" ").append(label).append("Spacing=").append(band.getChannelSpacing());
+        sb.append(" ").append(label).append("Bandwidth=").append(band.getBandwidth());
+        sb.append(" ").append(label).append("Slots=").append(band.getTimeslotCount());
+        sb.append(" ").append(label).append("BandHash=").append(System.identityHashCode(band));
     }
 
     /**

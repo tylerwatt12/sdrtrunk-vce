@@ -52,6 +52,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     // Sanity bounds shared with P25TrafficChannelManager: 100 MHz – 1 GHz covers all known P25 band plans.
     private static final long FREQUENCY_BAND_MIN_HZ = 100_000_000L;
     private static final long FREQUENCY_BAND_MAX_HZ = 1_000_000_000L;
+    private static final long[] VALID_CHANNEL_SPACINGS_HZ = new long[]{6250L, 12500L, 25000L};
 
     private EncryptionSynchronizationSequenceProcessor mESSProcessor1 = new EncryptionSynchronizationSequenceProcessor(P25P2Message.TIMESLOT_1);
     private EncryptionSynchronizationSequenceProcessor mESSProcessor2 = new EncryptionSynchronizationSequenceProcessor(P25P2Message.TIMESLOT_2);
@@ -226,15 +227,39 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                             if(macMessage.getMacStructure() instanceof IFrequencyBand bandIdentifier)
                             {
                                 long base = bandIdentifier.getBaseFrequency();
-                                if(base >= FREQUENCY_BAND_MIN_HZ && base <= FREQUENCY_BAND_MAX_HZ)
+                                long spacing = bandIdentifier.getChannelSpacing();
+
+                                if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
                                 {
-                                    mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
+                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - outside plausible RF range",
+                                        macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
+                                        bandIdentifier.getIdentifier(), base, spacing, bandIdentifier.getBandwidth(),
+                                        bandIdentifier.getTimeslotCount());
+                                }
+                                else if(!isValidChannelSpacing(spacing))
+                                {
+                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - invalid spacing",
+                                        macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
+                                        bandIdentifier.getIdentifier(), base, spacing, bandIdentifier.getBandwidth(),
+                                        bandIdentifier.getTimeslotCount());
                                 }
                                 else
                                 {
-                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{} Hz - outside plausible RF range",
-                                        macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
-                                        bandIdentifier.getIdentifier(), base);
+                                    IFrequencyBand existing = mFrequencyBandMap.get(bandIdentifier.getIdentifier());
+
+                                    if(existing != null && !matches(existing, bandIdentifier))
+                                    {
+                                        mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+                                            macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
+                                            bandIdentifier.getIdentifier(), base, spacing, bandIdentifier.getBandwidth(),
+                                            bandIdentifier.getTimeslotCount(), existing.getClass().getSimpleName(),
+                                            existing.getBaseFrequency(), existing.getChannelSpacing(), existing.getBandwidth(),
+                                            existing.getTimeslotCount());
+                                    }
+                                    else
+                                    {
+                                        mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
+                                    }
                                 }
                             }
 
@@ -325,5 +350,26 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     public void removeMessageListener()
     {
         mMessageListener = null;
+    }
+
+    private boolean isValidChannelSpacing(long spacing)
+    {
+        for(long validSpacing: VALID_CHANNEL_SPACINGS_HZ)
+        {
+            if(validSpacing == spacing)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private boolean matches(IFrequencyBand existing, IFrequencyBand candidate)
+    {
+        return existing.getBaseFrequency() == candidate.getBaseFrequency() &&
+            existing.getChannelSpacing() == candidate.getChannelSpacing() &&
+            existing.getBandwidth() == candidate.getBandwidth() &&
+            existing.getTimeslotCount() == candidate.getTimeslotCount();
     }
 }
