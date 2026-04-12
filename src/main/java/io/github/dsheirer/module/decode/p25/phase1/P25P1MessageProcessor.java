@@ -268,7 +268,10 @@ public class P25P1MessageProcessor implements Listener<IMessage>
             return;
         }
 
-        processForFrequencyBands(message);
+        if(message.isValid())
+        {
+            processForFrequencyBands(message);
+        }
 
         //Also process the link control messages for frequency bands.
         if(message instanceof LDU1Message ldu1 && ldu1.getLinkControlWord() instanceof LinkControlWord lcw && lcw.isValid())
