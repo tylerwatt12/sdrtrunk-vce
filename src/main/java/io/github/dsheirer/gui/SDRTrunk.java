@@ -71,6 +71,7 @@ import java.awt.Frame;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
 import java.awt.Robot;
+import java.awt.desktop.QuitResponse;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
@@ -122,6 +123,10 @@ public class SDRTrunk implements Listener<TunerEvent>
     private static final String CONTROLLER_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".control.panel";
     private static final String SPECTRAL_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".spectral.panel";
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".frame";
+    private static final String MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".split.pane.divider";
+    private static final String SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".spectral.display.divider";
+    private static final String NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
+    private static final String CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
 
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
@@ -143,6 +148,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private ApplicationLog mApplicationLog;
     private ResourceMonitor mResourceMonitor;
     private JFXPanel mResourceStatusPanel;
+    private boolean mShutdownProcessed;
 
     private String mTitle;
 
@@ -245,7 +251,8 @@ public class SDRTrunk implements Listener<TunerEvent>
                     mSettingsManager, mTunerManager, mUserPreferences, mNowPlayingDetailsVisible);
         }
 
-        mSpectralPanel = new SpectralDisplayPanel(mPlaylistManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel());
+        mSpectralPanel = new SpectralDisplayPanel(mPlaylistManager, mSettingsManager,
+            mTunerManager.getDiscoveredTunerModel(), mUserPreferences, SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER);
 
         TunerSpectralDisplayManager tunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
             mPlaylistManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel());
@@ -365,6 +372,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         mMainGui.setTitle(mTitle);
 
         Point location = mUserPreferences.getSwingPreference().getLocation(WINDOW_FRAME_IDENTIFIER);
+        Dimension dimension = mUserPreferences.getSwingPreference().getDimension(WINDOW_FRAME_IDENTIFIER);
+
         if(location != null)
         {
             mMainGui.setLocation(location);
@@ -375,8 +384,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
         mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         mMainGui.addWindowListener(new ShutdownMonitor());
-
-        Dimension dimension = mUserPreferences.getSwingPreference().getDimension(WINDOW_FRAME_IDENTIFIER);
+        registerQuitHandler();
 
         mSpectralPanel.setPreferredSize(new Dimension(1280, 300));
         mControllerPanel.setPreferredSize(new Dimension(1280, 500));
@@ -412,7 +420,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         mSplitPane.setDividerSize(5);
         mSplitPane.add(mSpectralPanel);
         mSplitPane.add(mControllerPanel);
-
         mBroadcastStatusVisible = mPreferences.getBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, false);
 
         //Show broadcast status panel when user requests - disabled by default
@@ -420,6 +427,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mSplitPane.add(getBroadcastStatusPanel());
         }
+
+        EventQueue.invokeLater(() -> mSplitPane.setDividerLocation(0,
+            mUserPreferences.getSwingPreference().getInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER,
+                mSpectralPanel.getPreferredSize().height)));
 
         mMainGui.add(mSplitPane, "cell 0 0,span,grow");
 
@@ -603,6 +614,12 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private void processShutdown()
     {
+        if(mShutdownProcessed)
+        {
+            return;
+        }
+
+        mShutdownProcessed = true;
         mLog.info("Application shutdown started ...");
         mDiagnosticMonitor.stop();
         mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
@@ -611,6 +628,14 @@ public class SDRTrunk implements Listener<TunerEvent>
             (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
         mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
+        mUserPreferences.getSwingPreference().setInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER, mSplitPane.getDividerLocation(0));
+        mUserPreferences.getSwingPreference().setInt(SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER,
+            mSpectralPanel.getSplitPaneDividerLocation());
+        mUserPreferences.getSwingPreference().setInt(NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER,
+            mControllerPanel.getNowPlayingPanel().getSplitPaneDividerLocation());
+        mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
+            mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
+        mUserPreferences.getSwingPreference().flush();
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
         mPlaylistManager.getChannelProcessingManager().shutdown();
@@ -623,6 +648,34 @@ public class SDRTrunk implements Listener<TunerEvent>
         mTunerManager.stop();
         mLog.info("Shutdown complete.");
         mApplicationLog.stop();
+    }
+
+    private void registerQuitHandler()
+    {
+        if(!Desktop.isDesktopSupported())
+        {
+            return;
+        }
+
+        Desktop desktop = Desktop.getDesktop();
+
+        if(!desktop.isSupported(Desktop.Action.APP_QUIT_HANDLER))
+        {
+            return;
+        }
+
+        desktop.setQuitHandler((quitEvent, quitResponse) -> {
+            try
+            {
+                processShutdown();
+                quitResponse.performQuit();
+            }
+            catch(Exception e)
+            {
+                mLog.error("Error while processing application quit", e);
+                quitResponse.cancelQuit();
+            }
+        });
     }
 
     /**

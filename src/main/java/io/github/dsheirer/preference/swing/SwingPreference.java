@@ -24,12 +24,16 @@ package io.github.dsheirer.preference.swing;
 import java.awt.Dimension;
 import java.awt.Point;
 import java.util.prefs.Preferences;
+import java.util.prefs.BackingStoreException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * User preference settings for Swing windows and components.
  */
 public class SwingPreference
 {
+    private static final Logger mLog = LoggerFactory.getLogger(SwingPreference.class);
 
     private static final String LOCATION_X = ".x";
     private static final String LOCATION_Y = ".y";
@@ -131,6 +135,22 @@ public class SwingPreference
     {
         mPreferences.putInt(key + SIZE_HEIGHT, dimension.height);
         mPreferences.putInt(key + SIZE_WIDTH, dimension.width);
+    }
+
+    /**
+     * Flushes the swing preference node to durable storage.
+     */
+    public void flush()
+    {
+        try
+        {
+            mPreferences.flush();
+            mPreferences.sync();
+        }
+        catch(BackingStoreException bse)
+        {
+            mLog.error("Error flushing swing preferences", bse);
+        }
     }
 
 }

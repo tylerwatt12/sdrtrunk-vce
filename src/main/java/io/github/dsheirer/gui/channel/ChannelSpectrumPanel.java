@@ -30,6 +30,7 @@ import io.github.dsheirer.module.decode.PrimaryDecoder;
 import io.github.dsheirer.module.decode.am.AMDecoder;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamplesToNativeBufferModule;
 import io.github.dsheirer.settings.SettingsManager;
@@ -76,7 +77,9 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     private static final Logger LOGGER = LoggerFactory.getLogger(ChannelSpectrumPanel.class);
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
     private static final String GROW_FILL = "[grow,fill]";
+    private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private final PlaylistManager mPlaylistManager;
+    private final UserPreferences mUserPreferences;
     private ProcessingChain mProcessingChain;
     private final ComplexSamplesToNativeBufferModule mSampleStreamTapModule = new ComplexSamplesToNativeBufferModule();
     private final ComplexDftProcessor mComplexDftProcessor = new ComplexDftProcessor();
@@ -97,9 +100,11 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     /**
      * Constructs an instance.
      */
-    public ChannelSpectrumPanel(PlaylistManager playlistManager, SettingsManager settingsManager)
+    public ChannelSpectrumPanel(PlaylistManager playlistManager, SettingsManager settingsManager,
+                                UserPreferences userPreferences)
     {
         mPlaylistManager = playlistManager;
+        mUserPreferences = userPreferences;
         mNoiseSquelchView = new NoiseSquelchView(mPlaylistManager);
         mSignalPowerView = new SignalPowerView(mPlaylistManager);
         setLayout(new MigLayout("insets 0", GROW_FILL, GROW_FILL));
@@ -218,7 +223,11 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
         mSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         mSplitPane.add(fftPanel, JSplitPane.LEFT);
         mSplitPane.add(mNoiseSquelchPanel, JSplitPane.RIGHT);
+        mSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, event ->
+            mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_DIVIDER_IDENTIFIER, mSplitPane.getDividerLocation()));
         add(mSplitPane);
+        EventQueue.invokeLater(() -> mSplitPane.setDividerLocation(
+            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 700)));
 
         mSampleStreamTapModule.setListener(mComplexDftProcessor);
         DFTResultsConverter DFTResultsConverter = new ComplexDecibelConverter();
@@ -250,6 +259,12 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
         updateFFTProcessing();
         mNoiseSquelchView.setShowing(visible);
         mSymbolView.setShowing(visible);
+    }
+
+    public int getSplitPaneDividerLocation()
+    {
+        return mSplitPane != null ? mSplitPane.getDividerLocation() :
+            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 700);
     }
 
     /**

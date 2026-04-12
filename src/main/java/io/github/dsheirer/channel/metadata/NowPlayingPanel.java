@@ -29,6 +29,8 @@ import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
@@ -38,14 +40,17 @@ import javax.swing.JPanel;
  */
 public class NowPlayingPanel extends JPanel
 {
+    private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
     private final ChannelMetadataPanel mChannelMetadataPanel;
     private final ChannelDetailPanel mChannelDetailPanel;
     private final DecodeEventPanel mDecodeEventPanel;
     private final MessageActivityPanel mMessageActivityPanel;
     private final ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
+    private final UserPreferences mUserPreferences;
     private JideTabbedPane mTabbedPane;
     private JideSplitPane mSplitPane;
     private boolean mDetailTabsVisible;
+    private boolean mSplitPaneDividerRestored;
 
     /**
      * GUI panel that combines the currently decoding channels metadata table and viewers for channel details,
@@ -54,11 +59,12 @@ public class NowPlayingPanel extends JPanel
     public NowPlayingPanel(PlaylistManager playlistManager, IconModel iconModel, UserPreferences userPreferences,
                            SettingsManager settingsManager, boolean detailTabsVisible)
     {
+        mUserPreferences = userPreferences;
         mChannelDetailPanel = new ChannelDetailPanel(playlistManager.getChannelProcessingManager());
         mDecodeEventPanel = new DecodeEventPanel(iconModel, userPreferences, playlistManager.getAliasModel());
         mMessageActivityPanel = new MessageActivityPanel(userPreferences);
         mChannelMetadataPanel = new ChannelMetadataPanel(playlistManager, iconModel, userPreferences);
-        mChannelSpectrumSquelchPanel = new ChannelSpectrumPanel(playlistManager, settingsManager);
+        mChannelSpectrumSquelchPanel = new ChannelSpectrumPanel(playlistManager, settingsManager, userPreferences);
         mDetailTabsVisible = detailTabsVisible;
 
         init();
@@ -78,6 +84,7 @@ public class NowPlayingPanel extends JPanel
             if(mDetailTabsVisible)
             {
                 getSplitPane().add(getTabbedPane());
+                restoreSplitPaneDividerLocation();
             }
             else
             {
@@ -116,6 +123,14 @@ public class NowPlayingPanel extends JPanel
         {
             mSplitPane = new JideSplitPane(JideSplitPane.VERTICAL_SPLIT);
             mSplitPane.setShowGripper(true);
+            mSplitPane.addComponentListener(new ComponentAdapter()
+            {
+                @Override
+                public void componentResized(ComponentEvent e)
+                {
+                    restoreSplitPaneDividerLocation();
+                }
+            });
         }
 
         return mSplitPane;
@@ -136,5 +151,33 @@ public class NowPlayingPanel extends JPanel
         mChannelMetadataPanel.addProcessingChainSelectionListener(mDecodeEventPanel);
         mChannelMetadataPanel.addProcessingChainSelectionListener(mMessageActivityPanel);
         mChannelMetadataPanel.addProcessingChainSelectionListener(mChannelSpectrumSquelchPanel);
+    }
+
+    private void restoreSplitPaneDividerLocation()
+    {
+        if(mSplitPaneDividerRestored || mSplitPane == null || mSplitPane.getPaneCount() < 2)
+        {
+            return;
+        }
+
+        if(mSplitPane.getWidth() <= 0 || mSplitPane.getHeight() <= 0)
+        {
+            return;
+        }
+
+        mSplitPaneDividerRestored = true;
+        mSplitPane.setDividerLocation(0,
+            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250));
+    }
+
+    public int getSplitPaneDividerLocation()
+    {
+        return mSplitPane != null ? mSplitPane.getDividerLocation(0) :
+            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
+    }
+
+    public int getChannelSpectrumPanelDividerLocation()
+    {
+        return mChannelSpectrumSquelchPanel.getSplitPaneDividerLocation();
     }
 }
