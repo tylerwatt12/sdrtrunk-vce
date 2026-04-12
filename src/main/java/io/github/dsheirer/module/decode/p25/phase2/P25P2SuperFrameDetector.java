@@ -30,12 +30,15 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NetworkStatusBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NetworkStatusBroadcastImplicit;
+import io.github.dsheirer.module.decode.p25.phase2.message.isch.IISCH;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractSignalingTimeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.ScramblingSequence;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Timeslot;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * APCO25 Phase 2 super-frame fragment detector uses a pair of sync pattern detectors and a circular dibit buffer to
@@ -47,6 +50,7 @@ import java.util.List;
  */
 public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectListener
 {
+    private static final Logger mLog = LoggerFactory.getLogger(P25P2SuperFrameDetector.class);
 
     /**
      * Number of dibits that we use to oversize the fragment delay buffer where the total oversize is 2x this quantity
@@ -112,6 +116,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     private DibitDelayBuffer mFragmentBuffer = new DibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
     private int mDibitsProcessed = 0;
     private boolean mSynchronized = false;
+    private boolean mLastAcquisitionWasForcedRealign = false;
     private ISyncDetectListener mSyncDetectListener;
 
     public P25P2SuperFrameDetector(IPhaseLockedLoop phaseLockedLoop)
@@ -222,17 +227,27 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * @param dibitOffset to shift the extraction left (-) or right (+) by one or two dibits when dibit stuffing or
      * deletion are detected.
      */
-    private void broadcastFragment(int bitErrors, int dibitOffset)
+    private void broadcastFragment(int bitErrors, int dibitOffset, String acquisitionContext)
     {
         if((mDibitsProcessed + dibitOffset) > FRAGMENT_DIBIT_LENGTH)
         {
             broadcastSyncLoss(mDibitsProcessed + dibitOffset - FRAGMENT_DIBIT_LENGTH);
         }
 
+        boolean afterForcedRealign = mLastAcquisitionWasForcedRealign;
+        mLastAcquisitionWasForcedRealign = false;
         mDibitsProcessed = 0 + dibitOffset;
         CorrectedBinaryMessage message = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + dibitOffset, 720);
         message.setCorrectedBitCount(bitErrors);
         SuperFrameFragment frameFragment = new SuperFrameFragment(message, getCurrentTimestamp(), mScramblingSequence);
+        logInvalidIISCHAcquisition(frameFragment, acquisitionContext, afterForcedRealign);
+
+        if(afterForcedRealign && !frameFragment.getIISCH1().isValid() && !frameFragment.getIISCH2().isValid())
+        {
+            mSynchronized = false;
+            return;
+        }
+
         updateScramblingCode(frameFragment);
         broadcast(frameFragment);
     }
@@ -250,13 +265,15 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * @param sync1Offset to align the first part of the message with sync pattern 1.
      * @param sync2Offset to align the second part of the message with sync patter 2.
      */
-    private void broadcastSplitFragment(int bitErrors, int sync1Offset, int sync2Offset)
+    private void broadcastSplitFragment(int bitErrors, int sync1Offset, int sync2Offset, String acquisitionContext)
     {
         if((mDibitsProcessed) > FRAGMENT_DIBIT_LENGTH)
         {
             broadcastSyncLoss(mDibitsProcessed + FRAGMENT_DIBIT_LENGTH);
         }
 
+        boolean afterForcedRealign = mLastAcquisitionWasForcedRealign;
+        mLastAcquisitionWasForcedRealign = false;
         mDibitsProcessed = 0 + sync2Offset; //We're only concerned with adjusting for sync 2 offset from here on out.
         CorrectedBinaryMessage message1 = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + sync1Offset, 720);
         //Clear the bits from sync 2 start bit index 1080 (dibit 540) inclusive through bit index 1440 (exclusive).
@@ -269,7 +286,22 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         message1.setCorrectedBitCount(bitErrors); //Not even sure what the correct bit error count is here?
         SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence);
         updateScramblingCode(frameFragment);
+        logInvalidIISCHAcquisition(frameFragment, acquisitionContext, afterForcedRealign);
         broadcast(frameFragment);
+    }
+
+    private void logInvalidIISCHAcquisition(SuperFrameFragment frameFragment, String acquisitionContext,
+        boolean afterForcedRealign)
+    {
+        IISCH iisch1 = frameFragment.getIISCH1();
+        IISCH iisch2 = frameFragment.getIISCH2();
+
+        if(!iisch1.isValid() && !iisch2.isValid())
+        {
+            mLog.info("P25 P2 fragment acquisition produced invalid IISCHs afterForcedRealign:{} context:{} iisch1Errors:{} iisch2Errors:{} iisch1:{} iisch2:{}",
+                afterForcedRealign, acquisitionContext, iisch1.getMessage().getCorrectedBitCount(),
+                iisch2.getMessage().getCorrectedBitCount(), iisch1, iisch2);
+        }
     }
 
     /**
@@ -348,7 +380,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
                     if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
                     {
-                        broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, 0);
+                        broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, 0,
+                            "mode=synchronized/aligned sync1Errors=" + sync1BitErrorCount + " sync2Errors=" +
+                                sync2BitErrorCount);
                         return;
                     }
                     else
@@ -362,7 +396,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                         {
                             //Recalculate the sync 2 bit error count using the offset value.
                             sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync2Offset);
-                            broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, 0, sync2Offset);
+                            broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, 0, sync2Offset,
+                                "mode=synchronized/split sync1Offset=0 sync1Errors=" + sync1BitErrorCount +
+                                    " sync2Offset=" + sync2Offset + " sync2Errors=" + sync2BitErrorCount);
                         }
 
                         //Since we're getting misaligned, set unsynchronized to re-enter active sync inspection
@@ -385,7 +421,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                         if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
                         {
                             //Broadcast the fragment using just the sync 1 offset.
-                            broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset);
+                            broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset,
+                                "mode=synchronized/realigned sync1Offset=" + sync1Offset + " sync1Errors=" +
+                                    sync1BitErrorCount + " sync2Errors=" + sync2BitErrorCount);
                         }
                         else
                         {
@@ -399,7 +437,10 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                                 //Don't allow the total (sync 1 + sync2) offset to exceed the range (-2 to +2)
                                 if(isValidSyncOffset(totalOffset))
                                 {
-                                    broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset, sync2Offset);
+                                    broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset, sync2Offset,
+                                        "mode=synchronized/resplit sync1Offset=" + sync1Offset + " sync1Errors=" +
+                                            sync1BitErrorCount + " sync2Offset=" + sync2Offset + " sync2Errors=" +
+                                            sync2BitErrorCount);
                                 }
                             }
                         }
@@ -418,7 +459,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             if(sync1BitErrorCount <= UN_SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
             {
                 mSynchronized = true;
-                broadcastFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0);
+                broadcastFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0,
+                    "mode=unsynchronized/direct sync1Errors=" + sync1BitErrorCount + " sync2DetectorErrors=" +
+                        syncDetectorBitErrorCount);
             }
             else
             {
@@ -432,7 +475,10 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                     broadcastSyncLoss(mDibitsProcessed - DIBIT_COUNT_MISALIGNED_SYNC);
                 }
 
+                mLog.info("P25 P2 fragment acquisition entering forced realign mode=unsynchronized/forced sync1Errors:{} sync2DetectorErrors:{} dibitsProcessed:{} nextCheckDibits:{}",
+                    sync1BitErrorCount, syncDetectorBitErrorCount, mDibitsProcessed, 180);
                 mDibitsProcessed = DIBIT_COUNT_MISALIGNED_SYNC;
+                mLastAcquisitionWasForcedRealign = true;
             }
         }
     }
