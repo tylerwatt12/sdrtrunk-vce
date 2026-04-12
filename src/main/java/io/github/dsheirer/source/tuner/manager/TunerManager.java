@@ -192,6 +192,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     public void stop()
     {
+        if(mLibUsbInitialized)
+        {
+            mHotplugEventSupport.stop();
+        }
+
         //Stop all tuners
         mDiscoveredTunerModel.releaseDiscoveredTuners();
         mSDRconnectTunerManager.stop();
@@ -206,7 +211,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         //Shutdown LibUsb
         if(mLibUsbInitialized)
         {
-            mHotplugEventSupport.stop();
             LibUsb.exit(mLibUsbApplicationContext);
             mLibUsbInitialized = false;
         }
@@ -820,7 +824,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     {
         private static final int HOTPLUG_CONTINUE_EVENT_SUPPORT = 0;
         private HotplugCallbackHandle mHotplugCallbackHandle;
-        private ScheduledFuture<?> mEventProcessorFuture;
+        private Thread mEventProcessorThread;
+        private volatile boolean mProcessing;
 
         /**
          * LibUsb hotplug event notification
@@ -916,9 +921,25 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                 if(status == LibUsb.SUCCESS)
                 {
-                    Runnable eventHandler = () -> LibUsb.handleEvents(mLibUsbApplicationContext);
-                    mEventProcessorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(eventHandler,
-                            0, 1, TimeUnit.SECONDS);
+                    mProcessing = true;
+                    mEventProcessorThread = new Thread(() -> {
+                        while(mProcessing)
+                        {
+                            try
+                            {
+                                LibUsb.handleEventsTimeout(mLibUsbApplicationContext, 250);
+                            }
+                            catch(Throwable t)
+                            {
+                                if(mProcessing)
+                                {
+                                    mLog.error("Error while processing LibUsb hotplug timeout events", t);
+                                }
+                            }
+                        }
+                    }, "sdrtrunk libusb hotplug event processor");
+                    mEventProcessorThread.setDaemon(true);
+                    mEventProcessorThread.start();
                 }
                 else
                 {
@@ -937,16 +958,27 @@ public class TunerManager implements IDiscoveredTunerStatusListener
          */
         public void stop()
         {
+            mProcessing = false;
+
             if(mHotplugCallbackHandle != null)
             {
                 LibUsb.hotplugDeregisterCallback(mLibUsbApplicationContext, mHotplugCallbackHandle);
                 mHotplugCallbackHandle = null;
             }
 
-            if(mEventProcessorFuture != null)
+            if(mEventProcessorThread != null)
             {
-                mEventProcessorFuture.cancel(true);
-                mEventProcessorFuture = null;
+                try
+                {
+                    mEventProcessorThread.join(1000);
+                }
+                catch(InterruptedException ie)
+                {
+                    Thread.currentThread().interrupt();
+                    mLog.error("Interrupted while stopping LibUsb hotplug event processor thread", ie);
+                }
+
+                mEventProcessorThread = null;
             }
         }
     }
