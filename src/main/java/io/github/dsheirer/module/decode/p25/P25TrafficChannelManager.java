@@ -36,6 +36,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.scramble.ScrambleParameterIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
+import io.github.dsheirer.message.AbstractMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageListener;
 import io.github.dsheirer.message.TimeslotMessage;
@@ -177,9 +178,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         long base = frequencyBand.getBaseFrequency();
         if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
         {
-            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - outside plausible RF range",
+            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - outside plausible RF range",
                 frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base,
-                frequencyBand.getChannelSpacing(), frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount());
+                frequencyBand.getChannelSpacing(), frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(),
+                getCorrectedBitCount(frequencyBand));
             return;
         }
 
@@ -187,25 +189,57 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(!isValidChannelSpacing(spacing))
         {
-            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - invalid spacing",
+            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - invalid spacing",
                 frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
-                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount());
+                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), getCorrectedBitCount(frequencyBand));
             return;
         }
 
-        IFrequencyBand existing = mFrequencyBandMap.get(frequencyBand.getIdentifier());
+        final IFrequencyBand[] replaced = {null};
+        final IFrequencyBand[] rejected = {null};
 
-        if(existing != null && !matches(existing, frequencyBand))
+        mFrequencyBandMap.compute(frequencyBand.getIdentifier(), (id, existing) -> {
+            if(existing != null && !matches(existing, frequencyBand))
+            {
+                if(frequencyBand.isPreferredOver(existing))
+                {
+                    replaced[0] = existing;
+                    return frequencyBand;
+                }
+
+                rejected[0] = existing;
+                return existing;
+            }
+
+            return frequencyBand;
+        });
+
+        if(replaced[0] != null)
         {
-            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+            mLog.warn("P25 frequency band replacing existing class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} with class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+                replaced[0].getClass().getSimpleName(), replaced[0].getIdentifier(), replaced[0].getBaseFrequency(),
+                replaced[0].getChannelSpacing(), replaced[0].getBandwidth(), replaced[0].getTimeslotCount(),
+                frequencyBand.getClass().getSimpleName(), base, spacing, frequencyBand.getBandwidth(),
+                frequencyBand.getTimeslotCount());
+        }
+        else if(rejected[0] != null)
+        {
+            mLog.warn("P25 frequency band rejected class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
                 frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
-                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), existing.getClass().getSimpleName(),
-                existing.getBaseFrequency(), existing.getChannelSpacing(), existing.getBandwidth(),
-                existing.getTimeslotCount());
-            return;
+                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), getCorrectedBitCount(frequencyBand),
+                rejected[0].getClass().getSimpleName(), rejected[0].getBaseFrequency(),
+                rejected[0].getChannelSpacing(), rejected[0].getBandwidth(), rejected[0].getTimeslotCount());
+        }
+    }
+
+    private int getCorrectedBitCount(IFrequencyBand frequencyBand)
+    {
+        if(frequencyBand instanceof AbstractMessage message)
+        {
+            return message.getMessage().getCorrectedBitCount();
         }
 
-        mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
+        return Integer.MIN_VALUE;
     }
 
     private boolean isValidChannelSpacing(long spacing)

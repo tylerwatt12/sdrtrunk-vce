@@ -41,6 +41,8 @@ import io.github.dsheirer.sample.Listener;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * APCO25 Phase 1 Message Processor.
@@ -49,6 +51,10 @@ import java.util.TreeMap;
  */
 public class P25P1MessageProcessor implements Listener<IMessage>
 {
+    private static final Logger mLog = LoggerFactory.getLogger(P25P1MessageProcessor.class);
+    private static final long FREQUENCY_BAND_MIN_HZ = 100_000_000L;
+    private static final long FREQUENCY_BAND_MAX_HZ = 1_000_000_000L;
+    private static final long[] VALID_CHANNEL_SPACINGS_HZ = new long[]{6250L, 12500L, 25000L};
 
     /**
      * Downstream message listener
@@ -91,7 +97,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
         {
             for(IFrequencyBand frequencyBand: content.getData())
             {
-                mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
+                processFrequencyBand(frequencyBand, "preload");
             }
         }
     }
@@ -106,6 +112,11 @@ public class P25P1MessageProcessor implements Listener<IMessage>
     {
         if(message.isValid())
         {
+            if(message instanceof IFrequencyBand frequencyBand)
+            {
+                processFrequencyBand(frequencyBand, message.getClass().getSimpleName());
+            }
+
             //Reassemble extended source link control messages.
             if(message instanceof LDU1Message ldu1)
             {
@@ -315,8 +326,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
         //Store band identifiers so that they can be injected into channel type messages
         if(message instanceof IFrequencyBand bandIdentifier)
         {
-            //Replace any existing band plan for this identifier so frequency calculations track the current site/system.
-            mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
+            processFrequencyBand(bandIdentifier, message.getClass().getSimpleName());
         }
     }
 
@@ -345,4 +355,85 @@ public class P25P1MessageProcessor implements Listener<IMessage>
     {
         mMessageListener = null;
     }
+
+    private void processFrequencyBand(IFrequencyBand frequencyBand, String source)
+    {
+        long base = frequencyBand.getBaseFrequency();
+
+        if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
+        {
+            mLog.warn("P25 P1 frequency band rejected source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - outside plausible RF range",
+                source, frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base,
+                frequencyBand.getChannelSpacing(), frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(),
+                getCorrectedBitCount(frequencyBand));
+            return;
+        }
+
+        long spacing = frequencyBand.getChannelSpacing();
+
+        if(!isValidChannelSpacing(spacing))
+        {
+            mLog.warn("P25 P1 frequency band rejected source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - invalid spacing",
+                source, frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
+                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), getCorrectedBitCount(frequencyBand));
+            return;
+        }
+
+        IFrequencyBand existing = mFrequencyBandMap.get(frequencyBand.getIdentifier());
+
+        if(existing != null && !matches(existing, frequencyBand))
+        {
+            if(frequencyBand.isPreferredOver(existing))
+            {
+                mLog.warn("P25 P1 frequency band replacing existing source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} with source:{} class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+                    source, existing.getClass().getSimpleName(), existing.getIdentifier(), existing.getBaseFrequency(),
+                    existing.getChannelSpacing(), existing.getBandwidth(), existing.getTimeslotCount(), source,
+                    frequencyBand.getClass().getSimpleName(), base, spacing, frequencyBand.getBandwidth(),
+                    frequencyBand.getTimeslotCount());
+            }
+            else
+            {
+                mLog.warn("P25 P1 frequency band rejected source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+                    source, frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
+                    frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), getCorrectedBitCount(frequencyBand),
+                    existing.getClass().getSimpleName(), existing.getBaseFrequency(), existing.getChannelSpacing(), existing.getBandwidth(),
+                    existing.getTimeslotCount());
+                return;
+            }
+        }
+
+        mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
+    }
+
+    private boolean isValidChannelSpacing(long spacing)
+    {
+        for(long validSpacing: VALID_CHANNEL_SPACINGS_HZ)
+        {
+            if(validSpacing == spacing)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private int getCorrectedBitCount(IFrequencyBand frequencyBand)
+    {
+        if(frequencyBand instanceof AbstractMessage message)
+        {
+            return message.getMessage().getCorrectedBitCount();
+        }
+
+        return Integer.MIN_VALUE;
+    }
+
+    private boolean matches(IFrequencyBand existing, IFrequencyBand candidate)
+    {
+        return existing.getBaseFrequency() == candidate.getBaseFrequency() &&
+            existing.getChannelSpacing() == candidate.getChannelSpacing() &&
+            existing.getBandwidth() == candidate.getBandwidth() &&
+            existing.getTimeslotCount() == candidate.getTimeslotCount();
+    }
+
 }

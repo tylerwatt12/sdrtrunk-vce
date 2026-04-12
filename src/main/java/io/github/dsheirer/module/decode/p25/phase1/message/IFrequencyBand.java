@@ -66,4 +66,22 @@ public interface IFrequencyBand
      * Number of timeslots available on this channel
      */
     public int getTimeslotCount();
+
+    /**
+     * Alignment score for conflict resolution. A band whose base frequency is an exact multiple of its
+     * channel spacing is considered better-aligned (score 1) than one that is not (score 0).
+     */
+    default int alignmentScore()
+    {
+        long spacing = getChannelSpacing();
+        return spacing > 0 && getBaseFrequency() % spacing == 0 ? 1 : 0;
+    }
+
+    /**
+     * Returns true if this band is a better replacement for the existing band with the same identifier.
+     */
+    default boolean isPreferredOver(IFrequencyBand existing)
+    {
+        return alignmentScore() > existing.alignmentScore();
+    }
 }

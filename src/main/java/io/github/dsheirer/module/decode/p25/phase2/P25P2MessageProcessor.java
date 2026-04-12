@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase2;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.message.AbstractMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandPreloadDataContent;
@@ -231,17 +232,17 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
                                 if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
                                 {
-                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - outside plausible RF range",
+                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - outside plausible RF range",
                                         macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
                                         bandIdentifier.getIdentifier(), base, spacing, bandIdentifier.getBandwidth(),
-                                        bandIdentifier.getTimeslotCount());
+                                        bandIdentifier.getTimeslotCount(), getCorrectedBitCount(bandIdentifier));
                                 }
                                 else if(!isValidChannelSpacing(spacing))
                                 {
-                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - invalid spacing",
+                                    mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - invalid spacing",
                                         macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
                                         bandIdentifier.getIdentifier(), base, spacing, bandIdentifier.getBandwidth(),
-                                        bandIdentifier.getTimeslotCount());
+                                        bandIdentifier.getTimeslotCount(), getCorrectedBitCount(bandIdentifier));
                                 }
                                 else
                                 {
@@ -249,12 +250,26 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
                                     if(existing != null && !matches(existing, bandIdentifier))
                                     {
-                                        mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
-                                            macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
-                                            bandIdentifier.getIdentifier(), base, spacing, bandIdentifier.getBandwidth(),
-                                            bandIdentifier.getTimeslotCount(), existing.getClass().getSimpleName(),
-                                            existing.getBaseFrequency(), existing.getChannelSpacing(), existing.getBandwidth(),
-                                            existing.getTimeslotCount());
+                                        if(bandIdentifier.isPreferredOver(existing))
+                                        {
+                                            mLog.warn("P25 P2 frequency band replacing existing opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} with class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+                                                macMessage.getMacStructure().getOpcode(), existing.getClass().getSimpleName(),
+                                                existing.getIdentifier(), existing.getBaseFrequency(), existing.getChannelSpacing(),
+                                                existing.getBandwidth(), existing.getTimeslotCount(),
+                                                bandIdentifier.getClass().getSimpleName(), base, spacing,
+                                                bandIdentifier.getBandwidth(), bandIdentifier.getTimeslotCount());
+                                            mFrequencyBandMap.put(bandIdentifier.getIdentifier(), bandIdentifier);
+                                        }
+                                        else
+                                        {
+                                            mLog.warn("P25 P2 frequency band rejected opcode:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
+                                                macMessage.getMacStructure().getOpcode(), bandIdentifier.getClass().getSimpleName(),
+                                                bandIdentifier.getIdentifier(), base, spacing, bandIdentifier.getBandwidth(),
+                                                bandIdentifier.getTimeslotCount(), getCorrectedBitCount(bandIdentifier),
+                                                existing.getClass().getSimpleName(),
+                                                existing.getBaseFrequency(), existing.getChannelSpacing(), existing.getBandwidth(),
+                                                existing.getTimeslotCount());
+                                        }
                                     }
                                     else
                                     {
@@ -365,6 +380,16 @@ public class P25P2MessageProcessor implements Listener<IMessage>
         return false;
     }
 
+    private int getCorrectedBitCount(IFrequencyBand frequencyBand)
+    {
+        if(frequencyBand instanceof AbstractMessage message)
+        {
+            return message.getMessage().getCorrectedBitCount();
+        }
+
+        return Integer.MIN_VALUE;
+    }
+
     private boolean matches(IFrequencyBand existing, IFrequencyBand candidate)
     {
         return existing.getBaseFrequency() == candidate.getBaseFrequency() &&
@@ -372,4 +397,5 @@ public class P25P2MessageProcessor implements Listener<IMessage>
             existing.getBandwidth() == candidate.getBandwidth() &&
             existing.getTimeslotCount() == candidate.getTimeslotCount();
     }
+
 }
