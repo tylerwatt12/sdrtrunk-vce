@@ -21,9 +21,10 @@ package io.github.dsheirer.module.decode.p25.phase1.message.tsbk;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.CRCP25;
-import io.github.dsheirer.edac.trellis.ViterbiDecoder_1_2_P25;
+import io.github.dsheirer.edac.trellis.SoftViterbiDecoder_1_2_P25;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1Interleave;
+import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.harris.isp.UnknownHarrisISPMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.harris.osp.L3HarrisGroupRegroupExplicitEncryptionCommand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.harris.osp.UnknownHarrisOSPMessage;
@@ -131,48 +132,46 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
  */
 public class TSBKMessageFactory
 {
-    private static final ViterbiDecoder_1_2_P25 VITERBI_HALF_RATE_DECODER = new ViterbiDecoder_1_2_P25();
+    private static final SoftViterbiDecoder_1_2_P25 SOFT_VITERBI_HALF_RATE_DECODER = new SoftViterbiDecoder_1_2_P25();
     public static final int CRC_FAIL = -1;
 
     private TSBKMessageFactory()
     {
     }
 
-    /**
-     * Performs deinterleave, Viterbi decoding, and applies the CRC-CCITT error detection/correction.
-     * @param raw interleaved message
-     * @return null or the decoded message with CRC results set in the message where 0 or 1 bit errors is valid and
-     * 2 bit errors is invalid.
-     */
-    public static CorrectedBinaryMessage deinterleaveViterbiAndCrc(CorrectedBinaryMessage raw)
+    public static CorrectedBinaryMessage deinterleaveViterbiAndCrc(SoftDibitMessage softDibits)
     {
-        //Get deinterleaved header chunk
-        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveDataChunk(raw);
-
-        //Decode 1/2 rate trellis encoded PDU header
-        CorrectedBinaryMessage message = VITERBI_HALF_RATE_DECODER.decode(deinterleaved);
-
-        if(message == null)
+        if(softDibits == null)
         {
             return null;
         }
 
-        //The CRC-CCITT can correct up to 1 bit error or detect 2 or more errors.  We mark the message as
-        //invalid if the algorithm detects more than 1 correctable error.
-        int errors = CRCP25.correctCCITT80(message, 0, 80);
+        SoftDibitMessage deinterleaved = P25P1Interleave.deinterleaveDataDibits(softDibits);
 
-        if(errors > 1)
+        if(deinterleaved == null)
         {
-            message.setCorrectedBitCount(CRC_FAIL);
+            return null;
         }
 
-        return message;
+        CorrectedBinaryMessage softMessage = SOFT_VITERBI_HALF_RATE_DECODER.decode(deinterleaved);
+
+        if(softMessage != null)
+        {
+            int errors = CRCP25.correctCCITT80(softMessage, 0, 80);
+
+            if(errors > 1)
+            {
+                softMessage.setCorrectedBitCount(CRC_FAIL);
+            }
+        }
+
+        return softMessage;
     }
 
     public static TSBKMessage create(Direction direction, P25P1DataUnitID dataUnitID,
-                                     CorrectedBinaryMessage correctedBinaryMessage, int nac, long timestamp)
+                                     SoftDibitMessage softDibits, int nac, long timestamp)
     {
-        CorrectedBinaryMessage message = deinterleaveViterbiAndCrc(correctedBinaryMessage);
+        CorrectedBinaryMessage message = deinterleaveViterbiAndCrc(softDibits);
 
         if(message == null)
         {

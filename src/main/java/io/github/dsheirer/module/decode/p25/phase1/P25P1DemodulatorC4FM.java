@@ -172,7 +172,7 @@ public class P25P1DemodulatorC4FM
                     Dibit symbol = toSymbol(softSymbol);
                     samplePoint += mEqualizer.getAdjustment(softSymbol, symbol, bufferPointer);
 
-                    mMessageFramer.process(symbol);
+                    mMessageFramer.process(softSymbol, symbol);
 
                     //We delay sending the symbol to the dibit assembler so that we have a chance to fully correct
                     //detected sync patterns in the delay buffer before they are sent downstream for recording.  This

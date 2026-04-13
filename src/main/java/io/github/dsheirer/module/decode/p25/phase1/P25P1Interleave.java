@@ -22,6 +22,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
 
 import java.util.BitSet;
 
@@ -76,6 +77,8 @@ public class P25P1Interleave
         131, 136, 143, 5, 10, 17, 22, 29, 34, 41, 46, 53, 58, 65, 70, 77, 82, 89, 94, 101, 106, 113,
         118, 125, 130, 137, 142};
 
+    private static final int[] DATA_DEINTERLEAVE_DIBITS = createDibitPattern(DATA_DEINTERLEAVE);
+
     /**
      * Deinterleaves the 196-bit block in message, identified by start and end
      * bit positions.  Note: end index (exclusive) should be one more than the
@@ -100,6 +103,23 @@ public class P25P1Interleave
     public static CorrectedBinaryMessage deinterleaveDataChunk(BitSet interleaved)
     {
         return deinterleaveChunk(DATA_DEINTERLEAVE, interleaved);
+    }
+
+    public static SoftDibitMessage deinterleaveDataDibits(SoftDibitMessage interleaved)
+    {
+        if(interleaved.size() < DATA_DEINTERLEAVE_DIBITS.length)
+        {
+            return null;
+        }
+
+        SoftDibitMessage deinterleaved = new SoftDibitMessage(DATA_DEINTERLEAVE_DIBITS.length);
+
+        for(int dibit = 0; dibit < DATA_DEINTERLEAVE_DIBITS.length; dibit++)
+        {
+            deinterleaved.set(DATA_DEINTERLEAVE_DIBITS[dibit], interleaved.get(dibit));
+        }
+
+        return deinterleaved;
     }
 
     public static BinaryMessage deinterleave(int[] pattern, BinaryMessage message,
@@ -183,5 +203,17 @@ public class P25P1Interleave
         }
 
         return message;
+    }
+
+    private static int[] createDibitPattern(int[] bitPattern)
+    {
+        int[] dibitPattern = new int[bitPattern.length / 2];
+
+        for(int x = 0; x < bitPattern.length; x += 2)
+        {
+            dibitPattern[x / 2] = bitPattern[x] / 2;
+        }
+
+        return dibitPattern;
     }
 }

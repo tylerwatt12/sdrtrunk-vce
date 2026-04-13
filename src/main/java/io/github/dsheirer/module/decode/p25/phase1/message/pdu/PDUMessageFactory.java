@@ -22,6 +22,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1Interleave;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
+import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCAuthenticationQuery;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCAuthenticationResponse;
@@ -79,33 +80,10 @@ public class PDUMessageFactory
     {
     }
 
-    /**
-     * Creates a PDU sequence from the header
-     * @param nac for the system
-     * @param timestamp of the header message
-     * @param correctedBinaryMessage containing an interleaved, viterbi encoded header message.
-     * @return
-     */
-    public static PDUSequence createPacketSequence(int nac, long timestamp, CorrectedBinaryMessage correctedBinaryMessage)
+    public static PDUHeader createHeader(SoftDibitMessage softDibits)
     {
-        PDUHeader header = createHeader(correctedBinaryMessage);
-
-         if(header != null)
-        {
-            return new PDUSequence(header, timestamp, nac);
-        }
-
-        return null;
-    }
-
-    /**
-     * Creates a PDU header message
-     * @param message containing an interleaved, viterbi encoded message
-     * @return header or null.
-     */
-    public static PDUHeader createHeader(CorrectedBinaryMessage message)
-    {
-        CorrectedBinaryMessage decoded = TSBKMessageFactory.deinterleaveViterbiAndCrc(message.getSubMessage(0, 195));
+        CorrectedBinaryMessage decoded = TSBKMessageFactory.deinterleaveViterbiAndCrc(
+            softDibits != null ? softDibits.getSubMessage(0, 195) : null);
 
         if(decoded != null)
         {

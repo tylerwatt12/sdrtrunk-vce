@@ -28,6 +28,7 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25MessageFactory;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
+import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUMessageFactory;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
@@ -86,7 +87,7 @@ public class P25P1MessageFramer
      */
     public boolean processWithSoftSyncDetect(float softSymbol, Dibit symbol)
     {
-        boolean validNIDDetected = process(symbol);
+        boolean validNIDDetected = process(softSymbol, symbol);
 
         if(mSoftSyncDetector.process(softSymbol) > SYNC_DETECTION_THRESHOLD)
         {
@@ -102,7 +103,7 @@ public class P25P1MessageFramer
      */
     public boolean processWithHardSyncDetect(Dibit symbol)
     {
-        boolean validNIDDetected = process(symbol);
+        boolean validNIDDetected = process(symbol.getIdealPhase(), symbol);
 
         if(mHardSyncDetector.process(symbol))
         {
@@ -125,7 +126,7 @@ public class P25P1MessageFramer
      * Process hard symbol decision without sync detection.
      * @param symbol that was demodulated.
      */
-    public boolean process(Dibit symbol)
+    public boolean process(float softSymbol, Dibit symbol)
     {
         boolean validNIDDetected = false;
 
@@ -137,12 +138,20 @@ public class P25P1MessageFramer
 
         if(mSyncDetected)
         {
-            mNIDBuffer[mNIDPointer++] = symbol;
-
-            if(mNIDPointer >= DIBIT_LENGTH_NID)
+            if(mNIDPointer < DIBIT_LENGTH_NID)
             {
-                validNIDDetected = checkNID();
+                mNIDBuffer[mNIDPointer++] = symbol;
+
+                if(mNIDPointer >= DIBIT_LENGTH_NID)
+                {
+                    validNIDDetected = checkNID();
+                    mSyncDetected = false;
+                }
+            }
+            else
+            {
                 mSyncDetected = false;
+                mNIDPointer = 0;
             }
         }
 
@@ -170,12 +179,12 @@ public class P25P1MessageFramer
                 //If we still have an assembler, feed it the current dibit (e.g. TSBK and PDU continuation block assembly)
                 if(mMessageAssembler != null)
                 {
-                    mMessageAssembler.receive(symbol);
+                    mMessageAssembler.receive(softSymbol, symbol);
                 }
             }
             else
             {
-                mMessageAssembler.receive(symbol);
+                mMessageAssembler.receive(softSymbol, symbol);
             }
         }
         //Start a message assembler after ignoring 24x Sync, 32x NID, and 1x status dibits. Trigger assembler
@@ -354,8 +363,9 @@ public class P25P1MessageFramer
         switch(mMessageAssembler.getDataUnitID())
         {
             case TRUNKING_SIGNALING_BLOCK_1:
-                CorrectedBinaryMessage message1 = mMessageAssembler.getMessage().getSubMessage(0, 196);
-                TSBKMessage tsbk1 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(), mMessageAssembler.getDataUnitID(), message1, mMessageAssembler.getNAC(), getTimestamp());
+                TSBKMessage tsbk1 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
+                    mMessageAssembler.getDataUnitID(), mMessageAssembler.getSoftMessage().getSubMessage(0, 196),
+                    mMessageAssembler.getNAC(), getTimestamp());
 
                 if(tsbk1 != null)
                 {
@@ -363,7 +373,8 @@ public class P25P1MessageFramer
                     tsbk1.getMessage().incrementCorrectedBitCount(mDetectedSyncBitErrors);
                     broadcast(tsbk1);
 
-                    if(mMessageAssembler.getMessage().currentSize() >= 391) //Detect forced completion
+                    if(mMessageAssembler.getMessage().currentSize() >= 391 &&
+                       mMessageAssembler.getSoftMessage().currentSize() >= 196) //Detect forced completion
                     {
                         mMessageAssembler.setDataUnitID(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2);
                         dispatchTSBK(); //Recursive call
@@ -385,14 +396,16 @@ public class P25P1MessageFramer
                 }
                 break;
             case TRUNKING_SIGNALING_BLOCK_2:
-                CorrectedBinaryMessage message2 = mMessageAssembler.getMessage().getSubMessage(196, 392);
-                TSBKMessage tsbk2 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(), mMessageAssembler.getDataUnitID(), message2, mMessageAssembler.getNAC(), getTimestamp());
+                TSBKMessage tsbk2 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
+                    mMessageAssembler.getDataUnitID(), mMessageAssembler.getSoftMessage().getSubMessage(196, 392),
+                    mMessageAssembler.getNAC(), getTimestamp());
 
                 if(tsbk2 != null)
                 {
                     broadcast(tsbk2);
 
-                    if(mMessageAssembler.getMessage().currentSize() >= 588) //Detect forced completion
+                    if(mMessageAssembler.getMessage().currentSize() >= 588 &&
+                       mMessageAssembler.getSoftMessage().currentSize() >= 294) //Detect forced completion
                     {
                         mMessageAssembler.setDataUnitID(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3);
                         dispatchTSBK(); //Recursive call
@@ -414,8 +427,9 @@ public class P25P1MessageFramer
                 }
                 break;
             case TRUNKING_SIGNALING_BLOCK_3:
-                CorrectedBinaryMessage message3 = mMessageAssembler.getMessage().getSubMessage(392, 588);
-                TSBKMessage tsbk3 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(), mMessageAssembler.getDataUnitID(), message3, mMessageAssembler.getNAC(), getTimestamp());
+                TSBKMessage tsbk3 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
+                    mMessageAssembler.getDataUnitID(), mMessageAssembler.getSoftMessage().getSubMessage(392, 588),
+                    mMessageAssembler.getNAC(), getTimestamp());
                 broadcast(tsbk3);
 
                 adjustDibitCounterFromMessageAssembler();
@@ -459,8 +473,8 @@ public class P25P1MessageFramer
         switch(mMessageAssembler.getDataUnitID())
         {
             case PACKET_DATA_UNIT:
-                CorrectedBinaryMessage message = mMessageAssembler.getMessage().getSubMessage(0, 196);
-                PDUHeader header = PDUMessageFactory.createHeader(message);
+                PDUHeader header = PDUMessageFactory.createHeader(
+                    mMessageAssembler.getSoftMessage().getSubMessage(0, 196));
 
                 if(header != null)
                 {
