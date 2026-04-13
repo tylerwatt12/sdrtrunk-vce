@@ -477,6 +477,13 @@ public class P25P1MessageFramer
         switch(mMessageAssembler.getDataUnitID())
         {
             case PACKET_DATA_UNIT:
+                if(mMessageAssembler.getSoftMessage().currentSize() < 98)
+                {
+                    adjustDibitCounterFromMessageAssembler();
+                    mMessageAssembler = null;
+                    mPDUSequence = null;
+                    break;
+                }
                 PDUHeader header = PDUMessageFactory.createHeader(
                     mMessageAssembler.getSoftMessage().getSubMessage(0, 196));
 
