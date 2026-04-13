@@ -1096,7 +1096,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
         int clampedConfiguredLnaState = clampLnaState(mConfiguredLnaState);
         if(clampedConfiguredLnaState != mConfiguredLnaState)
         {
-            mLog.info("{} Saved RF gain [{}] is outside the current tuner range [{}-{}]; clamped to [{}]",
+            mLog.info("{} Saved LNA state [{}] is outside the current tuner range [{}-{}]; clamped to [{}]",
                 mLogPrefix, mConfiguredLnaState, mLnaStateMinimum, mLnaStateMaximum, clampedConfiguredLnaState);
         }
 
@@ -1124,7 +1124,7 @@ public class SDRconnectTunerController extends TunerController implements WebSoc
 
         if(clampedCurrentLnaState != mLnaState)
         {
-            mLog.info("{} Active RF gain [{}] is outside the current tuner range [{}-{}]; clamping to [{}]",
+            mLog.info("{} Active LNA state [{}] is outside the current tuner range [{}-{}]; clamping to [{}]",
                 mLogPrefix, mLnaState, mLnaStateMinimum, mLnaStateMaximum, clampedCurrentLnaState);
             requestLnaState(clampedCurrentLnaState);
         }

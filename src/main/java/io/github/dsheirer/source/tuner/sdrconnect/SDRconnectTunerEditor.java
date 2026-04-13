@@ -228,7 +228,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         leftPanel.add(getSampleRateCombo());
         leftPanel.add(new JLabel("Antenna:"));
         leftPanel.add(getAntennaCombo(), WRAP);
-        leftPanel.add(new JLabel("RF Gain:"));
+        leftPanel.add(new JLabel("LNA State:"));
         leftPanel.add(getLnaStateControlPanel(), "span 3,growx");
         JPanel rightPanel = new JPanel(new MigLayout("fillx,gapy 0,wrap 1", "[grow,fill]", "[][]"));
         rightPanel.add(getButtonPanel(), "shrink,align left");
@@ -396,9 +396,10 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
         if(mLnaStateSlider == null)
         {
             mLnaStateSlider = new JSlider(SwingConstants.HORIZONTAL, 0, 0, 0);
-            mLnaStateSlider.setToolTipText("Set SDRconnect LNA gain state.");
+            mLnaStateSlider.setToolTipText("Set SDRconnect LNA state (0 = maximum gain; higher values reduce gain).");
             mLnaStateSlider.setMajorTickSpacing(1);
             mLnaStateSlider.setPaintTicks(true);
+            mLnaStateSlider.setInverted(true);
             mLnaStateSlider.setUI(new BasicSliderUI(mLnaStateSlider)
             {
                 @Override
@@ -510,7 +511,7 @@ public class SDRconnectTunerEditor extends TunerEditor<SDRconnectTuner, SDRconne
 
     private void updateLnaStateValueDisplay(int value, boolean visible)
     {
-        getLnaStateValueLabel().setText(value + " dB");
+        getLnaStateValueLabel().setText("State " + value + " (0 = max gain)");
         getLnaStateValueLabel().setVisible(visible);
     }
 
