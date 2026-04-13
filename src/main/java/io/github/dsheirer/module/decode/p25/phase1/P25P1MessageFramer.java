@@ -357,86 +357,80 @@ public class P25P1MessageFramer
 
     /**
      * Dispatches the message currently in the message assembler when the DUID is TSBK1, TSBK2, or TSBK3.
+     * Iterates through available continuation blocks rather than recursing, using a unified hard+soft
+     * readiness gate to prevent dispatch ahead of available soft dibits.
      */
     private void dispatchTSBK()
     {
-        switch(mMessageAssembler.getDataUnitID())
+        // Block start bit offsets for each TSBK slot in the accumulation buffer
+        final int[] TSBK_BIT_OFFSETS = {0, 196, 392};
+        final P25P1DataUnitID[] TSBK_DUIDS = {
+            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
+            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2,
+            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3
+        };
+
+        int slot = switch(mMessageAssembler.getDataUnitID())
         {
-            case TRUNKING_SIGNALING_BLOCK_1:
-                TSBKMessage tsbk1 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
-                    mMessageAssembler.getDataUnitID(), mMessageAssembler.getSoftMessage().getSubMessage(0, 196),
-                    mMessageAssembler.getNAC(), getTimestamp());
+            case TRUNKING_SIGNALING_BLOCK_1 -> 0;
+            case TRUNKING_SIGNALING_BLOCK_2 -> 1;
+            case TRUNKING_SIGNALING_BLOCK_3 -> 2;
+            default ->
+            {
+                mLog.warn("Unexpected TSBK DUID: {}", mMessageAssembler.getDataUnitID());
+                yield -1;
+            }
+        };
 
-                if(tsbk1 != null)
-                {
-                    //Add in the sync and nid detected bit error counts
-                    tsbk1.getMessage().incrementCorrectedBitCount(mDetectedSyncBitErrors);
-                    broadcast(tsbk1);
+        if(slot < 0)
+        {
+            return;
+        }
 
-                    if(mMessageAssembler.getMessage().currentSize() >= 391 &&
-                       mMessageAssembler.getSoftMessage().currentSize() >= 196) //Detect forced completion
-                    {
-                        mMessageAssembler.setDataUnitID(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2);
-                        dispatchTSBK(); //Recursive call
-                    }
-                    else if(tsbk1.isValid() && tsbk1.isLastBlock())
-                    {
-                        adjustDibitCounterFromMessageAssembler();
-                        mMessageAssembler = null;
-                    }
-                    else //Reconfigure the assembler to continue capturing TSBK2
-                    {
-                        mMessageAssembler.reconfigure(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2);
-                    }
-                }
-                else
-                {
-                    adjustDibitCounterFromMessageAssembler();
-                    mMessageAssembler = null;
-                }
-                break;
-            case TRUNKING_SIGNALING_BLOCK_2:
-                TSBKMessage tsbk2 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
-                    mMessageAssembler.getDataUnitID(), mMessageAssembler.getSoftMessage().getSubMessage(196, 392),
-                    mMessageAssembler.getNAC(), getTimestamp());
+        while(slot <= 2 && mMessageAssembler != null)
+        {
+            int startBit = TSBK_BIT_OFFSETS[slot];
+            TSBKMessage tsbk = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
+                TSBK_DUIDS[slot], mMessageAssembler.getSoftMessage().getSubMessage(startBit, startBit + 196),
+                mMessageAssembler.getNAC(), getTimestamp());
 
-                if(tsbk2 != null)
-                {
-                    broadcast(tsbk2);
+            if(slot == 0 && tsbk != null)
+            {
+                tsbk.getMessage().incrementCorrectedBitCount(mDetectedSyncBitErrors);
+            }
 
-                    if(mMessageAssembler.getMessage().currentSize() >= 588 &&
-                       mMessageAssembler.getSoftMessage().currentSize() >= 294) //Detect forced completion
-                    {
-                        mMessageAssembler.setDataUnitID(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3);
-                        dispatchTSBK(); //Recursive call
-                    }
-                    else if(tsbk2.isValid() && tsbk2.isLastBlock())
-                    {
-                        adjustDibitCounterFromMessageAssembler();
-                        mMessageAssembler = null;
-                    }
-                    else //Reconfigure the assembler to continue capturing TSBK3
-                    {
-                        mMessageAssembler.reconfigure(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3);
-                    }
-                }
-                else
-                {
-                    adjustDibitCounterFromMessageAssembler();
-                    mMessageAssembler = null;
-                }
-                break;
-            case TRUNKING_SIGNALING_BLOCK_3:
-                TSBKMessage tsbk3 = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
-                    mMessageAssembler.getDataUnitID(), mMessageAssembler.getSoftMessage().getSubMessage(392, 588),
-                    mMessageAssembler.getNAC(), getTimestamp());
-                broadcast(tsbk3);
+            if(tsbk != null)
+            {
+                broadcast(tsbk);
+            }
 
+            if(slot == 2 || tsbk == null)
+            {
+                // TSBK3 is always last; also terminate if decode failed
                 adjustDibitCounterFromMessageAssembler();
                 mMessageAssembler = null;
-                break;
-            default:
-                mLog.warn("Unexpected TSBK DUID: {}", mMessageAssembler.getDataUnitID());
+            }
+            else if(tsbk.isValid() && tsbk.isLastBlock())
+            {
+                adjustDibitCounterFromMessageAssembler();
+                mMessageAssembler = null;
+            }
+            else
+            {
+                // Advance to next slot — check whether enough soft dibits already arrived (forced completion)
+                // or whether we need to wait for more (normal continuation).
+                slot++;
+                int nextSlotSoftEnd = TSBK_BIT_OFFSETS[slot] / 2 + 98; // dibits needed through end of next slot
+                if(mMessageAssembler.getSoftMessage().currentSize() >= nextSlotSoftEnd)
+                {
+                    mMessageAssembler.setDataUnitID(TSBK_DUIDS[slot]);
+                }
+                else
+                {
+                    mMessageAssembler.reconfigure(TSBK_DUIDS[slot]);
+                    break;
+                }
+            }
         }
     }
 
