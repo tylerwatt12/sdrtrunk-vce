@@ -224,7 +224,7 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
     {
         public AliasCellRenderer()
         {
-            setHorizontalAlignment(SwingConstants.LEFT);
+            setHorizontalAlignment(SwingConstants.CENTER);
         }
 
         @Override
