@@ -43,7 +43,7 @@ every tuner type; it exists because SDRconnect has requirements the other tuner 
 filtering, voice enhancement, bass boost, and output gain.
 - The NBFM high-pass stage now runs inside the decoder's own post-processing chain rather than downstream in the generic audio module. The current order is: de-emphasis, resample, high-pass, low-pass, voice enhance, bass boost, then output gain.
 - With NBFM, just tune the LNA state as you would normally until you get adequate gain, then adjust the NBFM audio settings
-to taste requiring a decent amount of gain with NBFM is normal.
+to taste. Requiring a decent amount of gain with NBFM is normal.
 - With P25, a lot of gain is going to be detrimental to decoding. My recommendation is to let the waterfall display be your
 guide; what you're looking for is a nice red signal in the waterfall, the redder, the better. Adjust the LNA state until you
 start seeing yellow splatter on either side of the red; that's too much gain, back it off a notch or two until the yellow
