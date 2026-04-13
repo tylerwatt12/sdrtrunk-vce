@@ -136,6 +136,7 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         mMessageFramer.setSampleRate(sampleRate);
 
         mQPSKDemodulator.setSymbolListener(getDibitBroadcaster());
+        getDibitBroadcaster().addListener(mMessageFramer);
     }
 
     /**
