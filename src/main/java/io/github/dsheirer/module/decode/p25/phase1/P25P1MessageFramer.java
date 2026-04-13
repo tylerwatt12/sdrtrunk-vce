@@ -390,6 +390,16 @@ public class P25P1MessageFramer
         while(slot <= 2 && mMessageAssembler != null)
         {
             int startBit = TSBK_BIT_OFFSETS[slot];
+            int softDibitsNeeded = startBit / 2 + 98;
+
+            if(mMessageAssembler.getSoftMessage().currentSize() < softDibitsNeeded)
+            {
+                // Soft buffer hasn't caught up — can't decode this slot
+                adjustDibitCounterFromMessageAssembler();
+                mMessageAssembler = null;
+                break;
+            }
+
             TSBKMessage tsbk = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
                 TSBK_DUIDS[slot], mMessageAssembler.getSoftMessage().getSubMessage(startBit, startBit + 196),
                 mMessageAssembler.getNAC(), getTimestamp());
