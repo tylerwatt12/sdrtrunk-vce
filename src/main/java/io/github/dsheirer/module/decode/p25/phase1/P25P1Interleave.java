@@ -107,11 +107,6 @@ public class P25P1Interleave
 
     public static SoftDibitMessage deinterleaveDataDibits(SoftDibitMessage interleaved)
     {
-        if(interleaved.size() < DATA_DEINTERLEAVE_DIBITS.length)
-        {
-            return null;
-        }
-
         SoftDibitMessage deinterleaved = new SoftDibitMessage(DATA_DEINTERLEAVE_DIBITS.length);
 
         for(int dibit = 0; dibit < DATA_DEINTERLEAVE_DIBITS.length; dibit++)

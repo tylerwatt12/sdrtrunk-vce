@@ -146,14 +146,8 @@ public class TSBKMessageFactory
             return null;
         }
 
-        SoftDibitMessage deinterleaved = P25P1Interleave.deinterleaveDataDibits(softDibits);
-
-        if(deinterleaved == null)
-        {
-            return null;
-        }
-
-        CorrectedBinaryMessage softMessage = SOFT_VITERBI_HALF_RATE_DECODER.decode(deinterleaved);
+        CorrectedBinaryMessage softMessage = SOFT_VITERBI_HALF_RATE_DECODER.decode(
+            P25P1Interleave.deinterleaveDataDibits(softDibits));
 
         if(softMessage != null)
         {
