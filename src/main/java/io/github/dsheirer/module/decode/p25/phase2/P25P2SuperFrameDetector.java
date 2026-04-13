@@ -36,6 +36,8 @@ import io.github.dsheirer.module.decode.p25.phase2.timeslot.Timeslot;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * APCO25 Phase 2 super-frame fragment detector uses a pair of sync pattern detectors and a circular dibit buffer to
@@ -47,6 +49,8 @@ import java.util.List;
  */
 public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectListener
 {
+    private static final Logger mLog = LoggerFactory.getLogger(P25P2SuperFrameDetector.class);
+
     /**
      * Number of dibits that we use to oversize the fragment delay buffer where the total oversize is 2x this quantity
      * for padding the left and padding the right by this quantity.
@@ -118,7 +122,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     private int mDibitsProcessed = 0;
     private boolean mSynchronized = false;
     private boolean mLastAcquisitionWasForcedRealign = false;
-    private boolean mLastAcquisitionWasUnsynchronizedDirect = false;
     private ISyncDetectListener mSyncDetectListener;
 
     public P25P2SuperFrameDetector(IPhaseLockedLoop phaseLockedLoop)
@@ -238,13 +241,11 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
         boolean afterForcedRealign = mLastAcquisitionWasForcedRealign;
         mLastAcquisitionWasForcedRealign = false;
-        boolean afterUnsynchronizedDirect = mLastAcquisitionWasUnsynchronizedDirect;
-        mLastAcquisitionWasUnsynchronizedDirect = false;
         mDibitsProcessed = 0 + dibitOffset;
         SuperFrameFragment frameFragment = createFragment(bitErrors, dibitOffset);
 
         boolean invalidIISCHs = !frameFragment.getIISCH1().isValid() && !frameFragment.getIISCH2().isValid();
-        boolean acquisitionAttempt = afterForcedRealign || afterUnsynchronizedDirect;
+        boolean acquisitionAttempt = afterForcedRealign;
 
         if(invalidIISCHs && acquisitionAttempt)
         {
@@ -458,11 +459,12 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
                 if(!candidate.getIISCH1().isValid() && !candidate.getIISCH2().isValid())
                 {
+                    mLog.info("P25 P2 fragment acquisition rejected before sync commit due to invalid IISCHs context:mode=unsynchronized/direct sync1Errors:{} sync2DetectorErrors:{}",
+                        sync1BitErrorCount, syncDetectorBitErrorCount);
                     return;
                 }
 
                 mSynchronized = true;
-                mLastAcquisitionWasUnsynchronizedDirect = true;
                 broadcastFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0,
                     "mode=unsynchronized/direct sync1Errors=" + sync1BitErrorCount + " sync2DetectorErrors=" +
                         syncDetectorBitErrorCount);
