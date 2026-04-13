@@ -38,16 +38,17 @@ every tuner type; it exists because SDRconnect has requirements the other tuner 
 - We default the covered bandwidth to 5MHz as a reasonable default for P25; 2MHz will almost always be too small, and 5MHz will typically be enough; large simulcast systems may require more, but it's a reasonable starting point. If instead, you're just using this for public service NBFM, 500kHz is probably going to be plenty; agencies will tend to use channels clustered in a small span.
 - Note that 5MHz bandwidth, Full IQ is going to require almost exactly 20MBps (note, that's megabytes, not megabits) of network bandwidth per RSP in play, so be cognizant of that in terms of your network setup; oodles of RSPs is going to require oodles of bandwidth. Ideally, keep everything on the same switch and don't cross a router, and I'd avoid using WiFi.
 - All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful, but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's something you'd like to do, have at it; proper attribution to W2NJL's work and my meager efforts here would be apropos in that case.
-- My present focus is on reliability; introducing dependency on a separate process creates some complications in terms of ensuring that the processes auto-recover from transient errors, crashes, etc., which isn't the case when talking directly to a dongle. The interface to the radios is fairly thin at the moment; I've only worked in rate, antenna selection, and LNA gain so far. However, they are outstanding radios, and I haven't needed to do any tweaking yet, so it hasn't been a priority, and I'm not sure it will be -- heck, the things go down to 1KHz; if you can literally discern audio, how much tweaking do you need, really.
-- The NBFM path in this fork now has a post-demod audio shaping chain. Available stages include de-emphasis, high-pass filtering, low-pass filtering, voice enhancement, bass boost, and output gain.
+- My present focus is on reliability; introducing dependency on a separate process creates some complications in terms of ensuring that the processes auto-recover from transient errors, crashes, etc., which isn't the case when talking directly to a dongle. The interface to the radios is still fairly thin at the moment; I've only worked in rate, antenna selection, and the SDRconnect `lna_state` control so far. One important gotcha: SDRconnect's `lna_state` is not a dB gain value, and `0` represents maximum gain. Higher `lna_state` values reduce frontend gain, so the UI and handling here now treat it as an indexed hardware state rather than as ordinary RF gain.
+- The NBFM path now has a post-demod audio shaping chain. Available stages include de-emphasis, high-pass filtering, low-pass
+filtering, voice enhancement, bass boost, and output gain.
 - The NBFM high-pass stage now runs inside the decoder's own post-processing chain rather than downstream in the generic audio module. The current order is: de-emphasis, resample, high-pass, low-pass, voice enhance, bass boost, then output gain.
-- With NBFM, you might not need any RF gain at all; start with zero and see how it plays; repeaters are typically on the
-top of mountains, and they're usually not hard to hear. Rather than more RF gain, the NBFM audio tuning settings are probably
-going to be more effective.
-- With P25, likewise, with nRSP-ST radios you may not need any RF gain. Follow the instructions in the Wiki and bring it
-up if it's increasing signal, but stop when it doing so starts increasing noise. Excessive RF gain is definitely not going
-to help, and will cause decode failures.
-- For multi-frequency tuner sources, this fork now supports an optional frequency envelope using `min_frequency` and
+- With NBFM, just tune the LNA state as you would normally until you get adequate gain, then adjust the NBFM audio settings
+to taste requiring a decent amount of gain with NBFM is normal.
+- With P25, a lot of gain is going to be detrimental to decoding. My recommendation is to let the waterfall display be your
+guide; what you're looking for is a nice red signal in the waterfall, the redder, the better. Adjust the LNA state until you
+start seeing yellow splatter on either side of the red; that's too much gain, back it off a notch or two until the yellow
+disappears, and you should be in an optimal state.
+- For multi-frequency tuner sources, the playlist now supports an optional frequency envelope using `min_frequency` and
 `max_frequency`. This was added for trunked channels, where we'd like to make more optimal channel center choices. The
 problem this addresses is that center frequency selection was not good, resulting in, in my case, the control channels
 being in the marginal upper portion of the passband, and about 1MHz of the unusuable lower portion of the passband being
@@ -78,6 +79,7 @@ and `&&` versus `||` logic errors in fragment plausibility/fallback handling.
 fragment acquisitions earlier instead of committing sync first and letting bad fragments propagate downstream.
 - Phase 2 traffic channels now receive scramble parameters from Phase 1 control-channel state as early as they can,
 reducing the startup window where traffic-channel payloads are present before the descrambler has enough context.
+- Phase 2 audio tone metadata now suppresses short AMBE tone artifacts before they enter the emitted tone sequence. Brief one- or two-frame misclassifications were showing up as spurious tones; those are now held out of the committed sequence unless they persist long enough to look real.
 - For Phase 1 trellis-coded control and packet-data paths, unquantized symbol-phase Viterbi decoding is now used
 instead of hard slicing. That change now covers TSBKs, PDU headers, and PDU data blocks. Semantic validation guards
 were added to reject CRC-valid decodes that are still nonsensical in system context, and symbol buffer readiness gates
