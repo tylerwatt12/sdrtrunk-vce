@@ -55,6 +55,14 @@ public class P25P1MessageFramer
     private static final int DIBIT_LENGTH_NID = 33; //32 dibits (64 bits) +1 status
     private static final float SYNC_DETECTION_THRESHOLD = 60;
     private static final int PDU_BLOCK_DIBITS = 98; //196-bit 1/2-rate trellis block = 98 dibits
+    private static final int TSBK_BLOCK_BITS = 196;
+    private static final int TSBK_BLOCK_DIBITS = TSBK_BLOCK_BITS / 2;
+    private static final int[] TSBK_BIT_OFFSETS = {0, TSBK_BLOCK_BITS, TSBK_BLOCK_BITS * 2};
+    private static final P25P1DataUnitID[] TSBK_DUIDS = {
+        P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
+        P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2,
+        P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3
+    };
     private final BCH_63_16_23_P25 mBCHDecoder = new BCH_63_16_23_P25();
     private static final IntField NAC_FIELD = IntField.length12(0);
     private static final IntField DUID_FIELD = IntField.length4(12);
@@ -364,37 +372,17 @@ public class P25P1MessageFramer
      */
     private void dispatchTSBK()
     {
-        // Block start bit offsets for each TSBK slot in the accumulation buffer
-        final int[] TSBK_BIT_OFFSETS = {0, 196, 392};
-        final P25P1DataUnitID[] TSBK_DUIDS = {
-            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
-            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2,
-            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3
-        };
-
-        int slot = switch(mMessageAssembler.getDataUnitID())
-        {
-            case TRUNKING_SIGNALING_BLOCK_1 -> 0;
-            case TRUNKING_SIGNALING_BLOCK_2 -> 1;
-            case TRUNKING_SIGNALING_BLOCK_3 -> 2;
-            default ->
-            {
-                mLog.warn("Unexpected TSBK DUID: {}", mMessageAssembler.getDataUnitID());
-                yield -1;
-            }
-        };
+        int slot = getTSBKSlot(mMessageAssembler.getDataUnitID());
 
         if(slot < 0)
         {
+            mLog.warn("Unexpected TSBK DUID: {}", mMessageAssembler.getDataUnitID());
             return;
         }
 
         while(slot <= 2 && mMessageAssembler != null)
         {
-            int startBit = TSBK_BIT_OFFSETS[slot];
-            int symbolsNeeded = startBit / 2 + 98;
-
-            if(mMessageAssembler.getSymbolMessage().currentSize() < symbolsNeeded)
+            if(!canDispatchTSBKSlot(slot))
             {
                 // Symbol buffer hasn't caught up — can't decode this slot
                 adjustDibitCounterFromMessageAssembler();
@@ -402,21 +390,14 @@ public class P25P1MessageFramer
                 break;
             }
 
-            TSBKMessage tsbk = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
-                TSBK_DUIDS[slot], mMessageAssembler.getSymbolMessage().getSubMessage(startBit, startBit + 196),
-                mMessageAssembler.getNAC(), getTimestamp());
-
-            if(slot == 0 && tsbk != null)
-            {
-                tsbk.getMessage().incrementCorrectedBitCount(mDetectedSyncBitErrors);
-            }
+            TSBKMessage tsbk = decodeTSBKSlot(slot);
 
             if(tsbk != null)
             {
                 broadcast(tsbk);
             }
 
-            if(slot == 2 || tsbk == null || (tsbk.isValid() && tsbk.isLastBlock()))
+            if(isTerminalTSBKSlot(slot, tsbk))
             {
                 // TSBK3 is always last; also terminate if decode failed or block signals end of sequence
                 adjustDibitCounterFromMessageAssembler();
@@ -427,8 +408,7 @@ public class P25P1MessageFramer
                 // Advance to next slot — check whether enough symbols already arrived (forced completion)
                 // or whether we need to wait for more (normal continuation).
                 slot++;
-                int nextSlotSymbolsNeeded = TSBK_BIT_OFFSETS[slot] / 2 + 98; // dibits needed through end of next slot
-                if(mMessageAssembler.getSymbolMessage().currentSize() >= nextSlotSymbolsNeeded)
+                if(canDispatchTSBKSlot(slot))
                 {
                     mMessageAssembler.setDataUnitID(TSBK_DUIDS[slot]);
                 }
@@ -439,6 +419,47 @@ public class P25P1MessageFramer
                 }
             }
         }
+    }
+
+    private boolean canDispatchTSBKSlot(int slot)
+    {
+        return mMessageAssembler.getSymbolMessage().currentSize() >= getTSBKSymbolsNeeded(slot);
+    }
+
+    private int getTSBKSlot(P25P1DataUnitID duid)
+    {
+        return switch(duid)
+        {
+            case TRUNKING_SIGNALING_BLOCK_1 -> 0;
+            case TRUNKING_SIGNALING_BLOCK_2 -> 1;
+            case TRUNKING_SIGNALING_BLOCK_3 -> 2;
+            default -> -1;
+        };
+    }
+
+    private TSBKMessage decodeTSBKSlot(int slot)
+    {
+        int startBit = TSBK_BIT_OFFSETS[slot];
+        TSBKMessage tsbk = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
+            TSBK_DUIDS[slot], mMessageAssembler.getSymbolMessage().getSubMessage(startBit, startBit + TSBK_BLOCK_BITS),
+            mMessageAssembler.getNAC(), getTimestamp());
+
+        if(slot == 0 && tsbk != null)
+        {
+            tsbk.getMessage().incrementCorrectedBitCount(mDetectedSyncBitErrors);
+        }
+
+        return tsbk;
+    }
+
+    private boolean isTerminalTSBKSlot(int slot, TSBKMessage tsbk)
+    {
+        return slot == 2 || tsbk == null || (tsbk.isValid() && tsbk.isLastBlock());
+    }
+
+    private int getTSBKSymbolsNeeded(int slot)
+    {
+        return TSBK_BIT_OFFSETS[slot] / 2 + TSBK_BLOCK_DIBITS;
     }
 
     /**
@@ -474,7 +495,7 @@ public class P25P1MessageFramer
         switch(mMessageAssembler.getDataUnitID())
         {
             case PACKET_DATA_UNIT:
-                if(mMessageAssembler.getSymbolMessage().currentSize() < 98)
+                if(mMessageAssembler.getSymbolMessage().currentSize() < PDU_BLOCK_DIBITS)
                 {
                     adjustDibitCounterFromMessageAssembler();
                     mMessageAssembler = null;
