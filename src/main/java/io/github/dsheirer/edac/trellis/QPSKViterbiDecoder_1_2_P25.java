@@ -19,7 +19,11 @@
 
 package io.github.dsheirer.edac.trellis;
 
-public class SoftViterbiDecoder_1_2_P25 extends SoftViterbiDecoder
+/**
+ * Unquantized Viterbi decoder for P25 Phase 1 1/2-rate trellis coded modulation (TCM).
+ * Used for TSBK, PDU headers, and unconfirmed data blocks.
+ */
+public class QPSKViterbiDecoder_1_2_P25 extends QPSKViterbiDecoder
 {
     private static final int[][] TRANSITION_MATRIX = new int[][]
     {
@@ -29,7 +33,7 @@ public class SoftViterbiDecoder_1_2_P25 extends SoftViterbiDecoder
         {5, 11, 6, 8}
     };
 
-    public SoftViterbiDecoder_1_2_P25()
+    public QPSKViterbiDecoder_1_2_P25()
     {
         super(2, TRANSITION_MATRIX);
     }

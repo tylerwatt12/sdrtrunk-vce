@@ -21,7 +21,7 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.SymbolMessage;
 
 import java.util.BitSet;
 
@@ -99,9 +99,9 @@ public class P25P1Interleave
         return deinterleave(VOICE_DEINTERLEAVE, message, start, end);
     }
 
-    public static SoftDibitMessage deinterleaveDataDibits(SoftDibitMessage interleaved)
+    public static SymbolMessage deinterleaveDataSymbols(SymbolMessage interleaved)
     {
-        SoftDibitMessage deinterleaved = new SoftDibitMessage(DATA_DEINTERLEAVE_DIBITS.length);
+        SymbolMessage deinterleaved = new SymbolMessage(DATA_DEINTERLEAVE_DIBITS.length);
 
         for(int dibit = 0; dibit < DATA_DEINTERLEAVE_DIBITS.length; dibit++)
         {

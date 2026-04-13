@@ -21,24 +21,24 @@
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu.block;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import io.github.dsheirer.edac.trellis.SoftViterbiDecoder_1_2_P25;
-import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
+import io.github.dsheirer.edac.trellis.QPSKViterbiDecoder_1_2_P25;
+import io.github.dsheirer.module.decode.p25.phase1.message.SymbolMessage;
 
 /**
  * P25 Unconfirmed Data block that uses 1/2 rate trellis coding.
  */
 public class UnconfirmedDataBlock extends DataBlock
 {
-    private static final SoftViterbiDecoder_1_2_P25 SOFT_VITERBI_HALF_RATE_DECODER = new SoftViterbiDecoder_1_2_P25();
+    private static final QPSKViterbiDecoder_1_2_P25 VITERBI_HALF_RATE_DECODER = new QPSKViterbiDecoder_1_2_P25();
     private CorrectedBinaryMessage mDecodedMessage;
 
     /**
-     * Constructs an unconfirmed data block from the deinterleaved soft dibit message.
-     * @param softDibits containing deinterleaved soft dibits for the 196-bit data block.
+     * Constructs an unconfirmed data block from the deinterleaved symbol message.
+     * @param symbols containing deinterleaved symbol phase angles for the 196-bit data block.
      */
-    public UnconfirmedDataBlock(SoftDibitMessage softDibits)
+    public UnconfirmedDataBlock(SymbolMessage symbols)
     {
-        mDecodedMessage = SOFT_VITERBI_HALF_RATE_DECODER.decode(softDibits);
+        mDecodedMessage = VITERBI_HALF_RATE_DECODER.decode(symbols);
     }
 
     /**

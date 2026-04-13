@@ -21,10 +21,10 @@ package io.github.dsheirer.module.decode.p25.phase1.message.tsbk;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.CRCP25;
-import io.github.dsheirer.edac.trellis.SoftViterbiDecoder_1_2_P25;
+import io.github.dsheirer.edac.trellis.QPSKViterbiDecoder_1_2_P25;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1Interleave;
-import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.SymbolMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.harris.isp.UnknownHarrisISPMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.harris.osp.L3HarrisGroupRegroupExplicitEncryptionCommand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.harris.osp.UnknownHarrisOSPMessage;
@@ -132,40 +132,40 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
  */
 public class TSBKMessageFactory
 {
-    private static final SoftViterbiDecoder_1_2_P25 SOFT_VITERBI_HALF_RATE_DECODER = new SoftViterbiDecoder_1_2_P25();
+    private static final QPSKViterbiDecoder_1_2_P25 VITERBI_HALF_RATE_DECODER = new QPSKViterbiDecoder_1_2_P25();
     public static final int CRC_FAIL = -1;
 
     private TSBKMessageFactory()
     {
     }
 
-    public static CorrectedBinaryMessage deinterleaveViterbiAndCrc(SoftDibitMessage softDibits)
+    public static CorrectedBinaryMessage deinterleaveViterbiAndCrc(SymbolMessage symbols)
     {
-        if(softDibits == null)
+        if(symbols == null)
         {
             return null;
         }
 
-        CorrectedBinaryMessage softMessage = SOFT_VITERBI_HALF_RATE_DECODER.decode(
-            P25P1Interleave.deinterleaveDataDibits(softDibits));
+        CorrectedBinaryMessage decoded = VITERBI_HALF_RATE_DECODER.decode(
+            P25P1Interleave.deinterleaveDataSymbols(symbols));
 
-        if(softMessage != null)
+        if(decoded != null)
         {
-            int errors = CRCP25.correctCCITT80(softMessage, 0, 80);
+            int errors = CRCP25.correctCCITT80(decoded, 0, 80);
 
             if(errors > 1)
             {
-                softMessage.setCorrectedBitCount(CRC_FAIL);
+                decoded.setCorrectedBitCount(CRC_FAIL);
             }
         }
 
-        return softMessage;
+        return decoded;
     }
 
     public static TSBKMessage create(Direction direction, P25P1DataUnitID dataUnitID,
-                                     SoftDibitMessage softDibits, int nac, long timestamp)
+                                     SymbolMessage symbols, int nac, long timestamp)
     {
-        CorrectedBinaryMessage message = deinterleaveViterbiAndCrc(softDibits);
+        CorrectedBinaryMessage message = deinterleaveViterbiAndCrc(symbols);
 
         if(message == null)
         {

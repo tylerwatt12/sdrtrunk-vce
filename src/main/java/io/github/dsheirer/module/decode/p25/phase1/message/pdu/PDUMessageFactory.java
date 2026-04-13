@@ -22,7 +22,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1Interleave;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
-import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.SymbolMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCAuthenticationQuery;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCAuthenticationResponse;
@@ -80,10 +80,10 @@ public class PDUMessageFactory
     {
     }
 
-    public static PDUHeader createHeader(SoftDibitMessage softDibits)
+    public static PDUHeader createHeader(SymbolMessage symbols)
     {
         CorrectedBinaryMessage decoded = TSBKMessageFactory.deinterleaveViterbiAndCrc(
-            softDibits != null ? softDibits.getSubMessage(0, 195) : null);
+            symbols != null ? symbols.getSubMessage(0, 195) : null);
 
         if(decoded != null)
         {
@@ -117,19 +117,19 @@ public class PDUMessageFactory
     }
 
     /**
-     * Creates a confirmed data block for a packet sequence using soft-decision Viterbi decoding.
+     * Creates a confirmed data block for a packet sequence using unquantized Viterbi decoding.
      */
-    public static DataBlock createConfirmedDataBlock(SoftDibitMessage softDibits)
+    public static DataBlock createConfirmedDataBlock(SymbolMessage symbols)
     {
-        return new ConfirmedDataBlock(P25P1Interleave.deinterleaveDataDibits(softDibits));
+        return new ConfirmedDataBlock(P25P1Interleave.deinterleaveDataSymbols(symbols));
     }
 
     /**
-     * Creates an unconfirmed data block for a packet sequence using soft-decision Viterbi decoding.
+     * Creates an unconfirmed data block for a packet sequence using unquantized Viterbi decoding.
      */
-    public static DataBlock createUnconfirmedDataBlock(SoftDibitMessage softDibits)
+    public static DataBlock createUnconfirmedDataBlock(SymbolMessage symbols)
     {
-        return new UnconfirmedDataBlock(P25P1Interleave.deinterleaveDataDibits(softDibits));
+        return new UnconfirmedDataBlock(P25P1Interleave.deinterleaveDataSymbols(symbols));
     }
 
     /**

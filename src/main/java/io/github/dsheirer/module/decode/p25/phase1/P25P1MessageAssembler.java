@@ -21,7 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.dsp.symbol.Dibit;
-import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.SymbolMessage;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessageFactory;
@@ -45,7 +45,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
     private static final int MINIMUM_LDU_BIT_LENGTH = 1500; //actual length is 1568
     private CorrectedBinaryMessage mMessage;
-    private SoftDibitMessage mSoftMessage;
+    private SymbolMessage mSymbolMessage;
     private P25P1DataUnitID mDataUnitID;
     private int mNac;
 
@@ -72,7 +72,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
         }
 
         mMessage = new CorrectedBinaryMessage(length);
-        mSoftMessage = new SoftDibitMessage(length / 2);
+        mSymbolMessage = new SymbolMessage(length / 2);
     }
 
     /**
@@ -88,12 +88,12 @@ public class P25P1MessageAssembler implements Listener<Dibit>
         if(mMessage != null)
         {
             mMessage.setSize(duid.getMessageLength());
-            mSoftMessage.setSize(duid.getMessageLength() / 2);
+            mSymbolMessage.setSize(duid.getMessageLength() / 2);
         }
         else
         {
             mMessage = new CorrectedBinaryMessage(duid.getMessageLength());
-            mSoftMessage = new SoftDibitMessage(duid.getMessageLength() / 2);
+            mSymbolMessage = new SymbolMessage(duid.getMessageLength() / 2);
         }
     }
 
@@ -142,7 +142,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
                         {
                             //Determine if this is a TSBK or an AMBTC PDU
                             CorrectedBinaryMessage candidate = TSBKMessageFactory.deinterleaveViterbiAndCrc(
-                                getSoftMessage().getSubMessage(0, 195));
+                                getSymbolMessage().getSubMessage(0, 195));
 
                             if(candidate != null && candidate.getCorrectedBitCount() >= 0)
                             {
@@ -199,7 +199,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
         }
 
         getMessage().setSize(mDataUnitID.getMessageLength());
-        getSoftMessage().setSize(mDataUnitID.getMessageLength() / 2);
+        getSymbolMessage().setSize(mDataUnitID.getMessageLength() / 2);
         return getMessage().size() - getMessage().currentSize();
     }
 
@@ -221,9 +221,9 @@ public class P25P1MessageAssembler implements Listener<Dibit>
         return mMessage;
     }
 
-    public SoftDibitMessage getSoftMessage()
+    public SymbolMessage getSymbolMessage()
     {
-        return mSoftMessage;
+        return mSymbolMessage;
     }
 
     /**
@@ -236,9 +236,11 @@ public class P25P1MessageAssembler implements Listener<Dibit>
     }
 
     /**
-     * Primary input method for demodulated soft/hard dibits to be appended to the message under assembly.
+     * Primary input method for a demodulated symbol. The raw phase angle and sliced dibit are both appended.
+     * @param symbolPhase raw demodulated phase angle in radians, used as unquantized branch metric input
+     * @param dibit hard-sliced dibit decision
      */
-    public void receive(float softDibit, Dibit dibit)
+    public void receive(float symbolPhase, Dibit dibit)
     {
         if(mMessage.isFull())
         {
@@ -248,7 +250,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
         else
         {
             mMessage.add(dibit.getBit1(), dibit.getBit2());
-            mSoftMessage.add(softDibit);
+            mSymbolMessage.add(symbolPhase);
         }
     }
 
@@ -282,7 +284,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
     public void setDataUnitID(P25P1DataUnitID dataUnitID)
     {
         mMessage.setSize(dataUnitID.getMessageLength());
-        mSoftMessage.setSize(dataUnitID.getMessageLength() / 2);
+        mSymbolMessage.setSize(dataUnitID.getMessageLength() / 2);
         mDataUnitID = dataUnitID;
     }
 

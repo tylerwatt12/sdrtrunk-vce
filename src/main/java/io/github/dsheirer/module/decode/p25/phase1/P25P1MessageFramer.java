@@ -28,7 +28,7 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25MessageFactory;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
-import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.SymbolMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUMessageFactory;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;
@@ -81,16 +81,16 @@ public class P25P1MessageFramer
     private PDUSequence mPDUSequence;
 
     /**
-     * Process soft symbol and apply soft symbol sync pattern detection.
-     * @param softSymbol demodulated soft symbol
-     * @param symbol as decision from the soft symbol
+     * Process a demodulated symbol phase angle and apply sync pattern detection using the phase correlator.
+     * @param symbolPhase raw demodulated phase angle in radians
+     * @param symbol hard-sliced dibit decision from the phase angle
      * @return true if a sync pattern is detected and the following NID is decoded correctly.
      */
-    public boolean processWithSoftSyncDetect(float softSymbol, Dibit symbol)
+    public boolean processWithSoftSyncDetect(float symbolPhase, Dibit symbol)
     {
-        boolean validNIDDetected = process(softSymbol, symbol);
+        boolean validNIDDetected = process(symbolPhase, symbol);
 
-        if(mSoftSyncDetector.process(softSymbol) > SYNC_DETECTION_THRESHOLD)
+        if(mSoftSyncDetector.process(symbolPhase) > SYNC_DETECTION_THRESHOLD)
         {
             syncDetected();
         }
@@ -124,10 +124,11 @@ public class P25P1MessageFramer
     }
 
     /**
-     * Process hard symbol decision without sync detection.
-     * @param symbol that was demodulated.
+     * Process a symbol phase angle and hard-sliced decision without sync detection.
+     * @param symbolPhase raw demodulated phase angle in radians
+     * @param symbol hard-sliced dibit decision
      */
-    public boolean process(float softSymbol, Dibit symbol)
+    public boolean process(float symbolPhase, Dibit symbol)
     {
         boolean validNIDDetected = false;
 
@@ -180,12 +181,12 @@ public class P25P1MessageFramer
                 //If we still have an assembler, feed it the current dibit (e.g. TSBK and PDU continuation block assembly)
                 if(mMessageAssembler != null)
                 {
-                    mMessageAssembler.receive(softSymbol, symbol);
+                    mMessageAssembler.receive(symbolPhase, symbol);
                 }
             }
             else
             {
-                mMessageAssembler.receive(softSymbol, symbol);
+                mMessageAssembler.receive(symbolPhase, symbol);
             }
         }
         //Start a message assembler after ignoring 24x Sync, 32x NID, and 1x status dibits. Trigger assembler
@@ -358,8 +359,8 @@ public class P25P1MessageFramer
 
     /**
      * Dispatches the message currently in the message assembler when the DUID is TSBK1, TSBK2, or TSBK3.
-     * Iterates through available continuation blocks rather than recursing, using a unified hard+soft
-     * readiness gate to prevent dispatch ahead of available soft dibits.
+     * Iterates through available continuation blocks rather than recursing, using a unified
+     * readiness gate to prevent dispatch ahead of available symbol phase angles.
      */
     private void dispatchTSBK()
     {
@@ -391,18 +392,18 @@ public class P25P1MessageFramer
         while(slot <= 2 && mMessageAssembler != null)
         {
             int startBit = TSBK_BIT_OFFSETS[slot];
-            int softDibitsNeeded = startBit / 2 + 98;
+            int symbolsNeeded = startBit / 2 + 98;
 
-            if(mMessageAssembler.getSoftMessage().currentSize() < softDibitsNeeded)
+            if(mMessageAssembler.getSymbolMessage().currentSize() < symbolsNeeded)
             {
-                // Soft buffer hasn't caught up — can't decode this slot
+                // Symbol buffer hasn't caught up — can't decode this slot
                 adjustDibitCounterFromMessageAssembler();
                 mMessageAssembler = null;
                 break;
             }
 
             TSBKMessage tsbk = TSBKMessageFactory.create(mChannelStatusProcessor.getDirection(),
-                TSBK_DUIDS[slot], mMessageAssembler.getSoftMessage().getSubMessage(startBit, startBit + 196),
+                TSBK_DUIDS[slot], mMessageAssembler.getSymbolMessage().getSubMessage(startBit, startBit + 196),
                 mMessageAssembler.getNAC(), getTimestamp());
 
             if(slot == 0 && tsbk != null)
@@ -423,11 +424,11 @@ public class P25P1MessageFramer
             }
             else
             {
-                // Advance to next slot — check whether enough soft dibits already arrived (forced completion)
+                // Advance to next slot — check whether enough symbols already arrived (forced completion)
                 // or whether we need to wait for more (normal continuation).
                 slot++;
-                int nextSlotSoftEnd = TSBK_BIT_OFFSETS[slot] / 2 + 98; // dibits needed through end of next slot
-                if(mMessageAssembler.getSoftMessage().currentSize() >= nextSlotSoftEnd)
+                int nextSlotSymbolsNeeded = TSBK_BIT_OFFSETS[slot] / 2 + 98; // dibits needed through end of next slot
+                if(mMessageAssembler.getSymbolMessage().currentSize() >= nextSlotSymbolsNeeded)
                 {
                     mMessageAssembler.setDataUnitID(TSBK_DUIDS[slot]);
                 }
@@ -473,7 +474,7 @@ public class P25P1MessageFramer
         switch(mMessageAssembler.getDataUnitID())
         {
             case PACKET_DATA_UNIT:
-                if(mMessageAssembler.getSoftMessage().currentSize() < 98)
+                if(mMessageAssembler.getSymbolMessage().currentSize() < 98)
                 {
                     adjustDibitCounterFromMessageAssembler();
                     mMessageAssembler = null;
@@ -481,7 +482,7 @@ public class P25P1MessageFramer
                     break;
                 }
                 PDUHeader header = PDUMessageFactory.createHeader(
-                    mMessageAssembler.getSoftMessage().getSubMessage(0, 196));
+                    mMessageAssembler.getSymbolMessage().getSubMessage(0, 196));
 
                 if(header != null)
                 {
@@ -508,7 +509,7 @@ public class P25P1MessageFramer
             case PACKET_DATA_UNIT_BLOCK_1:
                 if(mPDUSequence != null)
                 {
-                    if(mMessageAssembler.getSoftMessage().currentSize() < 2 * PDU_BLOCK_DIBITS)
+                    if(mMessageAssembler.getSymbolMessage().currentSize() < 2 * PDU_BLOCK_DIBITS)
                     {
                         adjustDibitCounterFromMessageAssembler();
                         mMessageAssembler = null;
@@ -518,12 +519,12 @@ public class P25P1MessageFramer
                     if(mPDUSequence.getHeader().isConfirmationRequired())
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createConfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(1 * PDU_BLOCK_DIBITS * 2, 2 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(1 * PDU_BLOCK_DIBITS * 2, 2 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
                     else
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createUnconfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(1 * PDU_BLOCK_DIBITS * 2, 2 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(1 * PDU_BLOCK_DIBITS * 2, 2 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
 
                     if(mPDUSequence.isComplete())
@@ -546,7 +547,7 @@ public class P25P1MessageFramer
             case PACKET_DATA_UNIT_BLOCK_2:
                 if(mPDUSequence != null)
                 {
-                    if(mMessageAssembler.getSoftMessage().currentSize() < 3 * PDU_BLOCK_DIBITS)
+                    if(mMessageAssembler.getSymbolMessage().currentSize() < 3 * PDU_BLOCK_DIBITS)
                     {
                         adjustDibitCounterFromMessageAssembler();
                         mMessageAssembler = null;
@@ -556,12 +557,12 @@ public class P25P1MessageFramer
                     if(mPDUSequence.getHeader().isConfirmationRequired())
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createConfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(2 * PDU_BLOCK_DIBITS * 2, 3 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(2 * PDU_BLOCK_DIBITS * 2, 3 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
                     else
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createUnconfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(2 * PDU_BLOCK_DIBITS * 2, 3 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(2 * PDU_BLOCK_DIBITS * 2, 3 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
 
                     if(mPDUSequence.isComplete())
@@ -584,7 +585,7 @@ public class P25P1MessageFramer
             case PACKET_DATA_UNIT_BLOCK_3:
                 if(mPDUSequence != null)
                 {
-                    if(mMessageAssembler.getSoftMessage().currentSize() < 4 * PDU_BLOCK_DIBITS)
+                    if(mMessageAssembler.getSymbolMessage().currentSize() < 4 * PDU_BLOCK_DIBITS)
                     {
                         adjustDibitCounterFromMessageAssembler();
                         mMessageAssembler = null;
@@ -594,12 +595,12 @@ public class P25P1MessageFramer
                     if(mPDUSequence.getHeader().isConfirmationRequired())
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createConfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(3 * PDU_BLOCK_DIBITS * 2, 4 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(3 * PDU_BLOCK_DIBITS * 2, 4 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
                     else
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createUnconfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(3 * PDU_BLOCK_DIBITS * 2, 4 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(3 * PDU_BLOCK_DIBITS * 2, 4 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
 
                     if(mPDUSequence.isComplete())
@@ -622,7 +623,7 @@ public class P25P1MessageFramer
             case PACKET_DATA_UNIT_BLOCK_4:
                 if(mPDUSequence != null)
                 {
-                    if(mMessageAssembler.getSoftMessage().currentSize() < 5 * PDU_BLOCK_DIBITS)
+                    if(mMessageAssembler.getSymbolMessage().currentSize() < 5 * PDU_BLOCK_DIBITS)
                     {
                         adjustDibitCounterFromMessageAssembler();
                         mMessageAssembler = null;
@@ -632,12 +633,12 @@ public class P25P1MessageFramer
                     if(mPDUSequence.getHeader().isConfirmationRequired())
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createConfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(4 * PDU_BLOCK_DIBITS * 2, 5 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(4 * PDU_BLOCK_DIBITS * 2, 5 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
                     else
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createUnconfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(4 * PDU_BLOCK_DIBITS * 2, 5 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(4 * PDU_BLOCK_DIBITS * 2, 5 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
 
                     if(mPDUSequence.isComplete())
@@ -660,7 +661,7 @@ public class P25P1MessageFramer
             case PACKET_DATA_UNIT_BLOCK_5:
                 if(mPDUSequence != null)
                 {
-                    if(mMessageAssembler.getSoftMessage().currentSize() < 6 * PDU_BLOCK_DIBITS)
+                    if(mMessageAssembler.getSymbolMessage().currentSize() < 6 * PDU_BLOCK_DIBITS)
                     {
                         adjustDibitCounterFromMessageAssembler();
                         mMessageAssembler = null;
@@ -670,12 +671,12 @@ public class P25P1MessageFramer
                     if(mPDUSequence.getHeader().isConfirmationRequired())
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createConfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(5 * PDU_BLOCK_DIBITS * 2, 6 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(5 * PDU_BLOCK_DIBITS * 2, 6 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
                     else
                     {
                         mPDUSequence.addDataBlock(PDUMessageFactory.createUnconfirmedDataBlock(
-                            mMessageAssembler.getSoftMessage().getSubMessage(5 * PDU_BLOCK_DIBITS * 2, 6 * PDU_BLOCK_DIBITS * 2 - 1)));
+                            mMessageAssembler.getSymbolMessage().getSubMessage(5 * PDU_BLOCK_DIBITS * 2, 6 * PDU_BLOCK_DIBITS * 2 - 1)));
                     }
 
                     adjustDibitCounterFromMessageAssembler();

@@ -22,39 +22,48 @@ package io.github.dsheirer.module.decode.p25.phase1.message;
 import java.util.Arrays;
 
 /**
- * Soft dibit container for assembled Phase 1 messages. Stores one demodulated soft symbol value per dibit.
+ * Stores the raw demodulated symbol phase angles for an assembled P25 Phase 1 message, one
+ * floating-point value per dibit position. These unquantized phase angles are used directly
+ * as branch metric inputs to the unquantized Viterbi decoder, preserving full channel
+ * reliability information without discretization.
  */
-public class SoftDibitMessage
+public class SymbolMessage
 {
-    private float[] mSoftDibits;
+    private float[] mSymbols;
     private int mPointer;
 
-    public SoftDibitMessage(int dibitCount)
+    public SymbolMessage(int dibitCount)
     {
-        mSoftDibits = new float[dibitCount];
+        mSymbols = new float[dibitCount];
     }
 
-    public SoftDibitMessage(float[] softDibits)
+    public SymbolMessage(float[] symbols)
     {
-        mSoftDibits = Arrays.copyOf(softDibits, softDibits.length);
-        mPointer = softDibits.length;
+        mSymbols = Arrays.copyOf(symbols, symbols.length);
+        mPointer = symbols.length;
     }
 
-    public void add(float softDibit)
+    public void add(float symbolPhase)
     {
-        mSoftDibits[mPointer++] = softDibit;
+        mSymbols[mPointer++] = symbolPhase;
     }
 
     public boolean isFull()
     {
-        return mPointer >= mSoftDibits.length;
+        return mPointer >= mSymbols.length;
     }
 
+    /**
+     * Capacity — total number of symbol positions allocated.
+     */
     public int size()
     {
-        return mSoftDibits.length;
+        return mSymbols.length;
     }
 
+    /**
+     * Write pointer — number of symbol phase values written so far.
+     */
     public int currentSize()
     {
         return mPointer;
@@ -62,31 +71,32 @@ public class SoftDibitMessage
 
     public float get(int index)
     {
-        return mSoftDibits[index];
+        return mSymbols[index];
     }
 
     public void set(int index, float value)
     {
-        mSoftDibits[index] = value;
+        mSymbols[index] = value;
     }
 
     public void setSize(int dibitCount)
     {
-        if(dibitCount != mSoftDibits.length)
+        if(dibitCount != mSymbols.length)
         {
-            mSoftDibits = Arrays.copyOf(mSoftDibits, dibitCount);
+            mSymbols = Arrays.copyOf(mSymbols, dibitCount);
             mPointer = Math.min(mPointer, dibitCount);
         }
     }
 
     /**
-     * Returns a sub message using bit offsets so callers can mirror CorrectedBinaryMessage slicing.
+     * Returns a sub-message using bit offsets so callers can mirror CorrectedBinaryMessage slicing.
+     * Uses currentSize() (write pointer) as the upper bound to avoid reading unwritten positions.
      */
-    public SoftDibitMessage getSubMessage(int startBit, int endBit)
+    public SymbolMessage getSubMessage(int startBit, int endBit)
     {
         int startDibit = Math.max(0, startBit / 2);
         int endDibit = Math.min(currentSize(), (endBit + 1) / 2);
         startDibit = Math.min(startDibit, endDibit);
-        return new SoftDibitMessage(Arrays.copyOfRange(mSoftDibits, startDibit, endDibit));
+        return new SymbolMessage(Arrays.copyOfRange(mSymbols, startDibit, endDibit));
     }
 }

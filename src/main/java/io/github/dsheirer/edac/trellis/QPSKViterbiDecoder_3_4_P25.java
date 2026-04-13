@@ -20,10 +20,10 @@
 package io.github.dsheirer.edac.trellis;
 
 /**
- * Soft-decision Viterbi decoder for P25 3/4-rate Trellis Coded Modulation (TCM).
- * Uses the same state transition table as P25_3_4_Node.
+ * Unquantized Viterbi decoder for P25 Phase 1 3/4-rate trellis coded modulation (TCM).
+ * Used for confirmed data blocks.
  */
-public class SoftViterbiDecoder_3_4_P25 extends SoftViterbiDecoder
+public class QPSKViterbiDecoder_3_4_P25 extends QPSKViterbiDecoder
 {
     private static final int[][] TRANSITION_MATRIX = new int[][]
     {
@@ -37,7 +37,7 @@ public class SoftViterbiDecoder_3_4_P25 extends SoftViterbiDecoder
         {11,  4,  2, 13, 14,  1,  7,  8}
     };
 
-    public SoftViterbiDecoder_3_4_P25()
+    public QPSKViterbiDecoder_3_4_P25()
     {
         super(3, TRANSITION_MATRIX);
     }
