@@ -21,7 +21,6 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
 
 import java.util.BitSet;
@@ -100,11 +99,6 @@ public class P25P1Interleave
         return deinterleave(VOICE_DEINTERLEAVE, message, start, end);
     }
 
-    public static CorrectedBinaryMessage deinterleaveDataChunk(BitSet interleaved)
-    {
-        return deinterleaveChunk(DATA_DEINTERLEAVE, interleaved);
-    }
-
     public static SoftDibitMessage deinterleaveDataDibits(SoftDibitMessage interleaved)
     {
         SoftDibitMessage deinterleaved = new SoftDibitMessage(DATA_DEINTERLEAVE_DIBITS.length);
@@ -135,28 +129,6 @@ public class P25P1Interleave
         }
 
         return message;
-    }
-
-    /**
-     * Deinterleaves the message bits between start and end and returns them in a new message
-     * @param pattern to use for deinterleaving
-     * @param interleaved bitset from the original message
-     * @return binary message with length equal to the pattern size
-     */
-    public static CorrectedBinaryMessage deinterleaveChunk(int[] pattern, BitSet interleaved)
-    {
-        CorrectedBinaryMessage deinterleaved = new CorrectedBinaryMessage(pattern.length);
-
-        /* Iterate only the set bits in the original message and apply
-         * the deinterleave -- we don't have to evaluate the 0 bits */
-        for(int i = interleaved.nextSetBit(0);
-            i >= 0 && i < pattern.length;
-            i = interleaved.nextSetBit(i + 1))
-        {
-            deinterleaved.set(pattern[i]);
-        }
-
-        return deinterleaved;
     }
 
     /**

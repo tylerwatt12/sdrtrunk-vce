@@ -117,21 +117,19 @@ public class PDUMessageFactory
     }
 
     /**
-     * Creates a confirmed data block for a packet sequence
+     * Creates a confirmed data block for a packet sequence using soft-decision Viterbi decoding.
      */
-    public static DataBlock createConfirmedDataBlock(CorrectedBinaryMessage interleaved)
+    public static DataBlock createConfirmedDataBlock(SoftDibitMessage softDibits)
     {
-        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveDataChunk(interleaved);
-        return new ConfirmedDataBlock(deinterleaved);
+        return new ConfirmedDataBlock(P25P1Interleave.deinterleaveDataDibits(softDibits));
     }
 
     /**
-     * Creates an unconfirmed data block for a packet sequence
+     * Creates an unconfirmed data block for a packet sequence using soft-decision Viterbi decoding.
      */
-    public static DataBlock createUnconfirmedDataBlock(CorrectedBinaryMessage interleaved)
+    public static DataBlock createUnconfirmedDataBlock(SoftDibitMessage softDibits)
     {
-        CorrectedBinaryMessage deinterleaved = P25P1Interleave.deinterleaveDataChunk(interleaved);
-        return new UnconfirmedDataBlock(deinterleaved);
+        return new UnconfirmedDataBlock(P25P1Interleave.deinterleaveDataDibits(softDibits));
     }
 
     /**

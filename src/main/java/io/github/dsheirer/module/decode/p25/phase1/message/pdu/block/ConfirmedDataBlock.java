@@ -25,7 +25,8 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.edac.CRCP25;
-import io.github.dsheirer.edac.trellis.ViterbiDecoder_3_4_P25;
+import io.github.dsheirer.edac.trellis.SoftViterbiDecoder_3_4_P25;
+import io.github.dsheirer.module.decode.p25.phase1.message.SoftDibitMessage;
 
 public class ConfirmedDataBlock extends DataBlock
 {
@@ -33,15 +34,13 @@ public class ConfirmedDataBlock extends DataBlock
     public static final int PAYLOAD_START = 16;
     public static final int PAYLOAD_END = 144;
 
-    private static final ViterbiDecoder_3_4_P25 VITERBI_THREE_QUARTER_RATE_DECODER = new ViterbiDecoder_3_4_P25();
+    private static final SoftViterbiDecoder_3_4_P25 SOFT_VITERBI_THREE_QUARTER_RATE_DECODER = new SoftViterbiDecoder_3_4_P25();
     private CorrectedBinaryMessage mDecodedMessage;
     private boolean mValid;
 
-    public ConfirmedDataBlock(CorrectedBinaryMessage correctedBinaryMessage)
+    public ConfirmedDataBlock(SoftDibitMessage softDibits)
     {
-        mDecodedMessage = VITERBI_THREE_QUARTER_RATE_DECODER.decode(correctedBinaryMessage);
-        mDecodedMessage.incrementCorrectedBitCount(correctedBinaryMessage.getCorrectedBitCount());
-
+        mDecodedMessage = SOFT_VITERBI_THREE_QUARTER_RATE_DECODER.decode(softDibits);
         checkCRC();
     }
 
