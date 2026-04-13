@@ -65,11 +65,28 @@ used for control-channel acquisition and rotation; the envelope is only a tuner-
 - More generally, the polyphase center-frequency allocator now prefers midpoint-aligned valid centers instead of the
 first low-edge fit. That produces more sensible passband placement for ordinary multi-channel uses too, such asclustered
 NBFM channels on a 500kHz tuner span.
+- The main window now persists its position and split-pane state across restarts, so the working layout comes back as
+you left it.
 - I also did a broad parser cleanup pass replacing large numbers of hand-written contiguous `int[]` bit-position maps
 with `IntField`, and reversed/irregular descriptor maps with `FragmentedIntField` where appropriate. The main value is
 not raw speed; it is eliminating an error-prone representation that made it far too easy to duplicate or skip bit
 positions in protocol parsers. That pass also smoked out a handful of real field-definition bugs that had been hiding
 in plain sight.
+- On the Phase 2 side, a few plain parser bugs turned up in the course of cleanup, including typo/copy-paste mistakes
+and `&&` versus `||` logic errors in fragment plausibility/fallback handling.
+- The Phase 2 superframe detector was also too optimistic about some sync candidates. It now rejects clearly implausible
+fragment acquisitions earlier instead of committing sync first and letting bad fragments propagate downstream.
+- Phase 2 traffic channels now receive scramble parameters from Phase 1 control-channel state as early as they can,
+reducing the startup window where traffic-channel payloads are present before the descrambler has enough context.
+- For Phase 1 trellis-coded control and packet-data paths, unquantized symbol-phase Viterbi decoding is now used
+instead of hard slicing. That change now covers TSBKs, PDU headers, and PDU data blocks. Semantic validation guards
+were added to reject CRC-valid decodes that are still nonsensical in system context, and symbol buffer readiness gates
+were added at each decode point to ensure the buffer is fully populated before dispatch. The hard decoder did not
+need these because the hard bit buffer was always structurally full by the time dispatch fired — any short-buffer
+situation would still produce a full-length hard decode, just from partially valid data, which CRC would then quietly
+discard. With the unquantized decoder operating on a parallel symbol buffer that fills independently, the guarantee
+had to be made explicit, and the gates also have the benefit of avoiding a decode attempt that was never going to
+succeed.
 - While the SDRconnect tuner type will display drift and PPM, the auto-correct feature is disabled, as the drift will in
 general be so low as to be uninteresting.
 - Gettting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
