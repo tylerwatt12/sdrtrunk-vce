@@ -1417,7 +1417,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
          * based solely on the null info in the traffic channel.  Ultimately, the existing call event will either be
          * updated by a subsequent call, or removed via the traffic channel teardown.
          */
-        if(message.getMacPduType() != MacPduType.MAC_4_ACTIVE) //Don't change the state when we're in a call
+        // MAC_4_ACTIVE = voice call in progress; MAC_6_HANGTIME = channel allocated between PTT bursts.
+        // In both cases the channel is call-allocated; downgrading to ACTIVE would squelch the audio
+        // module and clear its encrypted-call-established flag, causing audio to queue silently until
+        // the next PTT or ESS re-establishes it.
+        MacPduType macPduType = message.getMacPduType();
+
+        if(macPduType != MacPduType.MAC_4_ACTIVE &&
+           macPduType != MacPduType.MAC_6_HANGTIME)
         {
             continueState(State.ACTIVE);
         }
