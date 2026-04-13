@@ -450,7 +450,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
                 if(!candidate.getIISCH1().isValid() && !candidate.getIISCH2().isValid())
                 {
-                    mLog.info("P25 P2 fragment acquisition rejected before sync commit due to invalid IISCHs context:mode=unsynchronized/direct sync1Errors:{} sync2DetectorErrors:{}",
+                    mLog.debug("P25 P2 fragment acquisition rejected before sync commit due to invalid IISCHs context:mode=unsynchronized/direct sync1Errors:{} sync2DetectorErrors:{}",
                         sync1BitErrorCount, syncDetectorBitErrorCount);
                     return;
                 }
