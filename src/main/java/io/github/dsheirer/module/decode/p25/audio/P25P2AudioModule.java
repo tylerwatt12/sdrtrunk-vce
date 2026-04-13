@@ -294,6 +294,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
      */
     public class ToneMetadataProcessor
     {
+        // Minimum consecutive frames reporting the same tone before it is treated as real.
+        // AMBE frames are ~20ms each; 3 frames = ~60ms holdoff. Real tones are sustained for
+        // hundreds of milliseconds; single-frame artifacts from voice misclassification are suppressed.
+        private static final int MINIMUM_TONE_FRAME_COUNT = 3;
+
         private List<Tone> mTones = new ArrayList<>();
         private Tone mCurrentTone;
 
@@ -303,13 +308,15 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         public void reset()
         {
             mTones.clear();
+            mCurrentTone = null;
         }
 
         /**
          * Process the tone metadata
          * @param type of tone
          * @param value of tone
-         * @return an identifier with the accumulated tone metadata set
+         * @return an identifier with the accumulated tone metadata set once the minimum frame
+         *         threshold is met, or null if still in the holdoff window
          */
         public ToneIdentifier process(String type, String value)
         {
@@ -327,20 +334,40 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
             if(mCurrentTone == null || mCurrentTone.getAmbeTone() != tone)
             {
+                // Don't add to mTones yet — hold in mCurrentTone until the threshold is met
+                // so that short artifacts never enter the committed tone sequence.
                 mCurrentTone = new Tone(tone);
-                mTones.add(mCurrentTone);
             }
 
             mCurrentTone.incrementDuration();
+
+            if(mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
+            {
+                // Still in holdoff — not yet committed to sequence
+                return null;
+            }
+
+            if(mCurrentTone.getDuration() == MINIMUM_TONE_FRAME_COUNT)
+            {
+                // Threshold just crossed — commit to sequence now
+                mTones.add(mCurrentTone);
+            }
 
             return P25ToneIdentifier.create(new ToneSequence(new ArrayList<>(mTones)));
         }
 
         /**
          * Closes current tone metadata when there is no metadata for the current audio frame.
+         * Logs if the pending tone never met the minimum frame threshold (artifact suppressed).
+         * The pending tone is discarded without entering mTones.
          */
         public void closeMetadata()
         {
+            if(mCurrentTone != null && mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
+            {
+                mLog.debug("TS{} tone artifact suppressed at close ({} frame(s)): {}",
+                    getTimeslot(), mCurrentTone.getDuration(), mCurrentTone.getAmbeTone());
+            }
             mCurrentTone = null;
         }
     }
