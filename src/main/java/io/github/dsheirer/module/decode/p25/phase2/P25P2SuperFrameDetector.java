@@ -232,7 +232,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * @param dibitOffset to shift the extraction left (-) or right (+) by one or two dibits when dibit stuffing or
      * deletion are detected.
      */
-    private void broadcastFragment(int bitErrors, int dibitOffset, String acquisitionContext)
+    private void broadcastFragment(int bitErrors, int dibitOffset)
     {
         if((mDibitsProcessed + dibitOffset) > FRAGMENT_DIBIT_LENGTH)
         {
@@ -270,7 +270,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * @param sync1Offset to align the first part of the message with sync pattern 1.
      * @param sync2Offset to align the second part of the message with sync patter 2.
      */
-    private void broadcastSplitFragment(int bitErrors, int sync1Offset, int sync2Offset, String acquisitionContext)
+    private void broadcastSplitFragment(int bitErrors, int sync1Offset, int sync2Offset)
     {
         if((mDibitsProcessed) > FRAGMENT_DIBIT_LENGTH)
         {
@@ -377,9 +377,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
                     if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
                     {
-                        broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, 0,
-                            "mode=synchronized/aligned sync1Errors=" + sync1BitErrorCount + " sync2Errors=" +
-                                sync2BitErrorCount);
+                        broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, 0);
                         return;
                     }
                     else
@@ -393,9 +391,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                         {
                             //Recalculate the sync 2 bit error count using the offset value.
                             sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync2Offset);
-                            broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, 0, sync2Offset,
-                                "mode=synchronized/split sync1Offset=0 sync1Errors=" + sync1BitErrorCount +
-                                    " sync2Offset=" + sync2Offset + " sync2Errors=" + sync2BitErrorCount);
+                            broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, 0, sync2Offset);
                         }
 
                         //Since we're getting misaligned, set unsynchronized to re-enter active sync inspection
@@ -418,9 +414,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                         if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
                         {
                             //Broadcast the fragment using just the sync 1 offset.
-                            broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset,
-                                "mode=synchronized/realigned sync1Offset=" + sync1Offset + " sync1Errors=" +
-                                    sync1BitErrorCount + " sync2Errors=" + sync2BitErrorCount);
+                            broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset);
                         }
                         else
                         {
@@ -434,10 +428,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                                 //Don't allow the total (sync 1 + sync2) offset to exceed the range (-2 to +2)
                                 if(isValidSyncOffset(totalOffset))
                                 {
-                                    broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset, sync2Offset,
-                                        "mode=synchronized/resplit sync1Offset=" + sync1Offset + " sync1Errors=" +
-                                            sync1BitErrorCount + " sync2Offset=" + sync2Offset + " sync2Errors=" +
-                                            sync2BitErrorCount);
+                                    broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset, sync2Offset);
                                 }
                             }
                         }
@@ -465,9 +456,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                 }
 
                 mSynchronized = true;
-                broadcastFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0,
-                    "mode=unsynchronized/direct sync1Errors=" + sync1BitErrorCount + " sync2DetectorErrors=" +
-                        syncDetectorBitErrorCount);
+                broadcastFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0);
             }
             else
             {
