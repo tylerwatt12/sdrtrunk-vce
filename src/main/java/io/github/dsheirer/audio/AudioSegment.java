@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -64,6 +66,7 @@ import javafx.collections.ObservableSet;
  */
 public class AudioSegment implements Listener<IdentifierUpdateNotification>
 {
+    private static final Logger mLog = LoggerFactory.getLogger(AudioSegment.class);
     private BooleanProperty mComplete = new SimpleBooleanProperty(false);
     private BooleanProperty mDuplicate = new SimpleBooleanProperty(false);
     private BooleanProperty mEncrypted = new SimpleBooleanProperty(false);
@@ -76,8 +79,10 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     private AtomicInteger mConsumerCount = new AtomicInteger();
     private AliasList mAliasList;
     private long mStartTimestamp = System.currentTimeMillis();
+    private long mLastActivityTimestamp = mStartTimestamp;
     private long mSampleCount = 0;
     private boolean mDisposing = false;
+    private boolean mStartTimestampPinned = false;
     private AudioSegment mLinkedAudioSegment;
     private int mTimeslot;
 
@@ -116,6 +121,42 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     public long getEndTimestamp()
     {
         return mStartTimestamp + getDuration();
+    }
+
+    /**
+     * Timestamp of the last producer activity for this segment. Activity includes audio appends and explicit
+     * producer heartbeats to indicate that the segment is still intentionally open across a gap.
+     */
+    public long getLastActivityTimestamp()
+    {
+        return mLastActivityTimestamp;
+    }
+
+    /**
+     * Updates the last-activity timestamp without appending audio, allowing a producer to mark the segment as
+     * intentionally alive during an inter-burst gap.
+     */
+    public void touch()
+    {
+        if(!mDisposing)
+        {
+            mLastActivityTimestamp = System.currentTimeMillis();
+        }
+    }
+
+    /**
+     * Explicitly marks the segment as started before audio is appended, pinning the start timestamp to the current
+     * call/control event instead of the first decoded audio frame.
+     */
+    public void begin()
+    {
+        if(!mDisposing)
+        {
+            long now = System.currentTimeMillis();
+            mStartTimestamp = now;
+            mLastActivityTimestamp = now;
+            mStartTimestampPinned = true;
+        }
     }
 
     /**
@@ -367,6 +408,11 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
      */
     public void incrementConsumerCount()
     {
+        if(mDisposing)
+        {
+            mLog.warn("Incremented disposed audio segment:{}", formatIdentity());
+        }
+
         mConsumerCount.incrementAndGet();
     }
 
@@ -379,10 +425,22 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     {
         int count = mConsumerCount.decrementAndGet();
 
-        if(count <= 0)
+        if(count == 0)
         {
             dispose();
         }
+        else if(count < 0)
+        {
+            mLog.warn("Audio segment consumer count underflow:{} count:{}", formatIdentity(), count);
+        }
+    }
+
+    /**
+     * Current consumer count.  Intended for diagnostics and lifecycle assertions.
+     */
+    public int getConsumerCount()
+    {
+        return mConsumerCount.get();
     }
 
     /**
@@ -404,13 +462,19 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
             throw new IllegalStateException("Can't add audio to an audio segment that is being disposed");
         }
 
-        if(mAudioBuffers.isEmpty())
+        if(mAudioBuffers.isEmpty() && !mStartTimestampPinned)
         {
             mStartTimestamp = System.currentTimeMillis() - 20;
         }
 
         mAudioBuffers.add(audioBuffer);
         mSampleCount += audioBuffer.length;
+        mLastActivityTimestamp = System.currentTimeMillis();
+    }
+
+    private String formatIdentity()
+    {
+        return mTimeslot + ":" + mStartTimestamp + ":" + System.identityHashCode(this);
     }
 
     /**

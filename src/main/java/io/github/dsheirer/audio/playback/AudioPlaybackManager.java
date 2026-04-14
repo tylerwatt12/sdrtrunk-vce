@@ -58,6 +58,9 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
     private final LinkedTransferQueue<AudioSegment> mNewAudioSegmentQueue = new LinkedTransferQueue<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
+    private final ScheduledExecutorService mProcessingExecutorService;
+    private final AudioSegmentProcessor mAudioSegmentProcessor = new AudioSegmentProcessor();
+    private final AtomicBoolean mProcessTriggerPending = new AtomicBoolean();
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
     private ScheduledFuture<?> mProcessingTask;
@@ -91,9 +94,9 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
         }
 
         //Even if we don't have an audio device, setup the queue processor to always process the audio segment queue
-        ScheduledExecutorService scheduledExecutorService =
+        mProcessingExecutorService =
                 Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk audio manager"));
-        mProcessingTask = scheduledExecutorService.scheduleAtFixedRate(new AudioSegmentProcessor(),
+        mProcessingTask = mProcessingExecutorService.scheduleAtFixedRate(mAudioSegmentProcessor,
                 0, 100, TimeUnit.MILLISECONDS);
     }
 
@@ -105,6 +108,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
     public void receive(AudioSegment audioSegment)
     {
         mNewAudioSegmentQueue.add(audioSegment);
+        triggerAudioSegmentProcessing();
     }
 
     public void dispose()
@@ -116,8 +120,53 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
             mProcessingTask = null;
         }
 
-        mNewAudioSegmentQueue.clear();
-        mAudioSegments.clear();
+        mProcessingExecutorService.shutdownNow();
+
+        releaseAudioSegments(mNewAudioSegmentQueue);
+        releaseAudioSegments(mPendingAudioSegments);
+        releaseAudioSegments(mAudioSegments);
+    }
+
+    private void triggerAudioSegmentProcessing()
+    {
+        if(mProcessTriggerPending.compareAndSet(false, true))
+        {
+            mProcessingExecutorService.execute(() -> {
+                try
+                {
+                    mAudioSegmentProcessor.run();
+                }
+                finally
+                {
+                    mProcessTriggerPending.set(false);
+                }
+            });
+        }
+    }
+
+    private void releaseAudioSegments(Iterable<AudioSegment> audioSegments)
+    {
+        if(audioSegments == null)
+        {
+            return;
+        }
+
+        for(AudioSegment audioSegment : audioSegments)
+        {
+            if(audioSegment != null)
+            {
+                audioSegment.decrementConsumerCount();
+            }
+        }
+
+        if(audioSegments instanceof LinkedTransferQueue<AudioSegment> queue)
+        {
+            queue.clear();
+        }
+        else if(audioSegments instanceof List<AudioSegment> list)
+        {
+            list.clear();
+        }
     }
 
     /**

@@ -136,6 +136,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     {
         if(message.getTimeslot() == getTimeslot())
         {
+            if(getCurrentAudioSegment() != null && shouldTouchSegment(message))
+            {
+                touchCurrentAudioSegment();
+            }
+
             if(message instanceof AbstractVoiceTimeslot abstractVoiceTimeslot)
             {
                 if(mEncryptedCallStateEstablished)
@@ -159,6 +164,12 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 {
                     mEncryptedCallStateEstablished = true;
                     mEncryptedCall = pushToTalk.isEncrypted();
+
+                    if(!mEncryptedCall)
+                    {
+                        beginCurrentAudioSegment();
+                    }
+
                     //There should not be any pending voice timeslots to process since the PTT message is the first in
                     //the audio call sequence.
                     clearPendingVoiceTimeslots();
@@ -168,9 +179,27 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             {
                 mEncryptedCallStateEstablished = true;
                 mEncryptedCall = encryptionSynchronizationSequence.isEncrypted();
+
+                if(!mEncryptedCall)
+                {
+                    beginCurrentAudioSegment();
+                }
+
                 processPendingVoiceTimeslots();
             }
         }
+    }
+
+    /**
+     * Indicates whether the message is a same-timeslot signal that confirms the current segment is still intentionally
+     * alive, even if no audio is being committed at this instant.
+     */
+    private boolean shouldTouchSegment(IMessage message)
+    {
+        return message instanceof AbstractVoiceTimeslot ||
+            (message instanceof MacMessage macMessage && macMessage.isValid()) ||
+            (message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence &&
+                encryptionSynchronizationSequence.isValid());
     }
 
     /**

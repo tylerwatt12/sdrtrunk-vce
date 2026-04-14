@@ -144,6 +144,34 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
         }
     }
 
+    /**
+     * Marks the current segment as intentionally active without appending audio.
+     */
+    protected void touchCurrentAudioSegment()
+    {
+        synchronized(this)
+        {
+            if(mAudioSegment != null)
+            {
+                mAudioSegment.touch();
+            }
+        }
+    }
+
+    /**
+     * Explicitly begins the current segment, creating it if necessary and pinning its start timestamp to the current
+     * signaling event instead of the first audio append.
+     */
+    protected AudioSegment beginCurrentAudioSegment()
+    {
+        synchronized(this)
+        {
+            AudioSegment audioSegment = getAudioSegment();
+            audioSegment.begin();
+            return audioSegment;
+        }
+    }
+
     public void addAudio(float[] audioBuffer)
     {
         AudioSegment audioSegment = getAudioSegment();
