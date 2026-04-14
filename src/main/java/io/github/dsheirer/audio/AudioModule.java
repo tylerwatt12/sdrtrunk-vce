@@ -94,6 +94,17 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     {
         if(mSquelchState == SquelchState.UNSQUELCH)
         {
+            AudioSegment currentAudioSegment = beginCurrentAudioSegment();
+
+            if(!currentAudioSegment.isBurstActive())
+            {
+                beginCurrentAudioBurst();
+            }
+            else
+            {
+                touchCurrentAudioSegment();
+            }
+
             if(mAudioFilterEnable)
             {
                 audioBuffer = mHighPassFilter.filter(audioBuffer);
@@ -126,7 +137,13 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
 
                 if(mSquelchState == SquelchState.SQUELCH)
                 {
+                    endCurrentAudioBurst();
                     closeAudioSegment();
+                }
+                else
+                {
+                    beginCurrentAudioSegment();
+                    beginCurrentAudioBurst();
                 }
             }
         }
