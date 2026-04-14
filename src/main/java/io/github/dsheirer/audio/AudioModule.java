@@ -25,6 +25,8 @@ import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.real.IRealBufferListener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Provides packaging of demodulated audio sample buffers into audio segments for broadcast to registered listeners.
@@ -35,6 +37,7 @@ import io.github.dsheirer.sample.real.IRealBufferListener;
 public class AudioModule extends AbstractAudioModule implements ISquelchStateListener, IRealBufferListener,
     Listener<float[]>
 {
+    private static final Logger mLog = LoggerFactory.getLogger(AudioModule.class);
     private final boolean mAudioFilterEnable;
     private final IRealFilter mHighPassFilter = AudioFilterFactory.getAudioHighPassFilter();
     private final SquelchStateListener mSquelchStateListener = new SquelchStateListener();
@@ -98,6 +101,13 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
 
             if(!currentAudioSegment.isBurstActive())
             {
+                if(currentAudioSegment.getAudioBufferCount() > 0)
+                {
+                    mLog.warn("Analog audio resumed on inactive burst segment:{} buffers:{} complete:{}",
+                        formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                        currentAudioSegment.isComplete());
+                }
+
                 beginCurrentAudioBurst();
             }
             else
@@ -133,19 +143,45 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
 
             if(mSquelchState != squelchState)
             {
+                AudioSegment currentAudioSegment = getCurrentAudioSegment();
                 mSquelchState = squelchState;
 
                 if(mSquelchState == SquelchState.SQUELCH)
                 {
+                    if(currentAudioSegment != null)
+                    {
+                        mLog.debug("Analog audio closing segment on squelch segment:{} buffers:{} bursts:{} burstActive:{}",
+                            formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                            currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive());
+                    }
+
                     endCurrentAudioBurst();
                     closeAudioSegment();
                 }
                 else
                 {
+                    if(currentAudioSegment != null)
+                    {
+                        mLog.warn("Analog audio unsquelch with open segment:{} buffers:{} bursts:{} burstActive:{}",
+                            formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                            currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive());
+                    }
+
                     beginCurrentAudioSegment();
                     beginCurrentAudioBurst();
                 }
             }
         }
+    }
+
+    private String formatSegment(AudioSegment audioSegment)
+    {
+        if(audioSegment == null)
+        {
+            return "null";
+        }
+
+        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
+            System.identityHashCode(audioSegment);
     }
 }
