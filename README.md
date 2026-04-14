@@ -81,8 +81,10 @@ fragment acquisitions earlier instead of committing sync first and letting bad f
 - Phase 2 traffic channels now receive scramble parameters from Phase 1 control-channel state as early as they can,
 reducing the startup window where traffic-channel payloads are present before the descrambler has enough context.
 - Phase 2 audio tone metadata now suppresses short AMBE tone artifacts before they enter the emitted tone sequence. Brief one- or two-frame misclassifications were showing up as spurious tones; those are now held out of the committed sequence unless they persist long enough to look real.
-- The local playback path had a real live-audio drop bug: `AudioChannel` could dispose an incomplete segment after a short no-audio interval even though the decoder was still appending more audio to that same segment. The stall disposal rule now only applies to completed segments, so brief production gaps no longer kill active playback.
-- The stereo playback scheduler also had an availability bug: a channel could still be treated as available if it was actively playing but its follow-on queue happened to be empty. `AudioChannel.isEmpty()` has been corrected and renamed to `isIdle()`, so playback assignment now only targets channels that are truly idle.
+- The local playback path had a real live-audio drop bug: `AudioChannel` could dispose an incomplete segment after a short no-audio interval even though the decoder was still appending more audio to that same segment. The playback logic now distinguishes between completed and incomplete segments: completed segments are retired promptly, while incomplete/live segments are allowed a much longer stale timeout so brief production gaps no longer kill active playback, but channels still recover if a segment never gets closed upstream.
+- This is a workaround, not a fix, I'm still trying to find out why this is required, but it should work for now.
+- The stereo playback scheduler also had an availability bug: a channel could still be treated as available if it was actively playing but its follow-on queue happened to be empty. `AudioChannel.isEmpty()` has been corrected and renamed to `isIdle()`, so playback assignment now only targets channels that are truly idle. This bug caused the left channel to be used almost
+exclusively, when the right channel was available. The right channel should be in play much more often now.
 - For Phase 1 trellis-coded control and packet-data paths, unquantized symbol-phase Viterbi decoding is now used
 instead of hard slicing. That change now covers TSBKs, PDU headers, and PDU data blocks. Semantic validation guards
 were added to reject CRC-valid decodes that are still nonsensical in system context, and symbol buffer readiness gates
@@ -102,7 +104,6 @@ warnings against JDK 26, and it's got a clean bill of health from Sonar, with th
 that Sonar gets peeved about in anything more complicated than a Hello World.
 - I've got a parallel version of the jmbe library that this uses likewise lint-clean and optimized that can be used instead
 of the public version; if you auto-install the library in the configuration panels, you'll get the public version, not mine. My version has a number of fixes that arose from problems encountered in testing; if you A/B them and mine does a better job for you, I'd like to know.
-- One key thread I'm presently pulling on is that the default P25 channel frequency rotation delay of 400ms might be a bit too aggressive; it seems fine for the most part, but in debug tracing I see it missing from time to time by ~200ms or so, and it seems as if it's being just a bit too quick to pull the trigger into rotation every so often.
 - I've limited the JVM maximum heap to 2GB in `build.gradle`, as my machine has 64GB, and thus apparently the JVM defaults
 decide that it's a 'server', and does a 25% of memory virtual allocation of 16GB, which is a bit on the generous side for
 the testing I'm doing at present; 2GB is more than enough. If you need more, just increase the settings in `build.gradle`.
