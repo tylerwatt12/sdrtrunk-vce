@@ -82,7 +82,10 @@ fragment acquisitions earlier instead of committing sync first and letting bad f
 reducing the startup window where traffic-channel payloads are present before the descrambler has enough context.
 - Phase 2 audio tone metadata now suppresses short AMBE tone artifacts before they enter the emitted tone sequence. Brief one- or two-frame misclassifications were showing up as spurious tones; those are now held out of the committed sequence unless they persist long enough to look real.
 - The local playback path had a real live-audio drop bug: `AudioChannel` could dispose an incomplete segment after a short no-audio interval even though the decoder was still appending more audio to that same segment. The playback logic now distinguishes between completed and incomplete segments: completed segments are retired promptly, while incomplete/live segments are allowed a much longer stale timeout so brief production gaps no longer kill active playback, but channels still recover if a segment never gets closed upstream.
-- This is a workaround, not a fix, I'm still trying to find out why this is required, but it should work for now.
+- This is a workaround, not a fix, I'm still trying to find out why this is required, but it should work for now. I've got
+a speculative fix in to the encrypted state transition table, which previously wouldn't allow transition to a few common
+states. I suspect this might be causing incomplete audio to get trapped on a channel, but the problem happens so infrequently
+that I'm pretty much grasping at straws here. In theory, the change seems sound, but evidence is hard to gather.
 - The stereo playback scheduler also had an availability bug: a channel could still be treated as available if it was actively playing but its follow-on queue happened to be empty. `AudioChannel.isEmpty()` has been corrected and renamed to `isIdle()`, so playback assignment now only targets channels that are truly idle. This bug caused the left channel to be used almost
 exclusively, when the right channel was available. The right channel should be in play much more often now.
 - For Phase 1 trellis-coded control and packet-data paths, unquantized symbol-phase Viterbi decoding is now used
