@@ -370,11 +370,6 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                     else if(audioSegment.completeProperty().get())
                     {
                         //Rare situation: the audio segment completed but never had audio ... dispose it
-                        if(isExpectedAudibleSegment(audioSegment))
-                        {
-                            mLog.debug("Playback manager disposing completed expected-audible segment with no audio:{} complete:{} encrypted:{}",
-                                formatSegment(audioSegment), audioSegment.isComplete(), audioSegment.isEncrypted());
-                        }
                         it.remove();
                         audioSegment.decrementConsumerCount();
                     }
