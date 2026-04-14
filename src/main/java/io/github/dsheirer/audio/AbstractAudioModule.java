@@ -172,6 +172,33 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
         }
     }
 
+    /**
+     * Marks the current audio segment as actively carrying a talk burst, creating the segment if necessary.
+     */
+    protected AudioSegment beginCurrentAudioBurst()
+    {
+        synchronized(this)
+        {
+            AudioSegment audioSegment = getAudioSegment();
+            audioSegment.beginBurst();
+            return audioSegment;
+        }
+    }
+
+    /**
+     * Marks the current talk burst as ended while leaving the audio segment open.
+     */
+    protected void endCurrentAudioBurst()
+    {
+        synchronized(this)
+        {
+            if(mAudioSegment != null)
+            {
+                mAudioSegment.endBurst();
+            }
+        }
+    }
+
     public void addAudio(float[] audioBuffer)
     {
         AudioSegment audioSegment = getAudioSegment();

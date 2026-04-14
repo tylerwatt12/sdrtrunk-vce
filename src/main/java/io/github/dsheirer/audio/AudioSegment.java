@@ -80,11 +80,15 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     private AliasList mAliasList;
     private long mStartTimestamp = System.currentTimeMillis();
     private long mLastActivityTimestamp = mStartTimestamp;
+    private long mLastBurstStartTimestamp = 0;
+    private long mLastBurstEndTimestamp = 0;
     private long mSampleCount = 0;
     private boolean mDisposing = false;
     private boolean mStartTimestampPinned = false;
+    private boolean mBurstActive = false;
     private AudioSegment mLinkedAudioSegment;
     private int mTimeslot;
+    private int mBurstCount = 0;
 
     /**
      * Constructs an instance
@@ -156,6 +160,72 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
             mStartTimestamp = now;
             mLastActivityTimestamp = now;
             mStartTimestampPinned = true;
+        }
+    }
+
+    /**
+     * Indicates if this audio segment is currently in an active talk burst.
+     */
+    public boolean isBurstActive()
+    {
+        return mBurstActive;
+    }
+
+    /**
+     * Count of distinct talk bursts observed for this audio segment.
+     */
+    public int getBurstCount()
+    {
+        return mBurstCount;
+    }
+
+    /**
+     * Timestamp of the most recent burst start, or zero if no burst has started.
+     */
+    public long getLastBurstStartTimestamp()
+    {
+        return mLastBurstStartTimestamp;
+    }
+
+    /**
+     * Timestamp of the most recent burst end, or zero if no burst has ended.
+     */
+    public long getLastBurstEndTimestamp()
+    {
+        return mLastBurstEndTimestamp;
+    }
+
+    /**
+     * Marks the start of a talk burst within this segment.
+     */
+    public void beginBurst()
+    {
+        if(!mDisposing)
+        {
+            long now = System.currentTimeMillis();
+
+            if(!mBurstActive)
+            {
+                mBurstActive = true;
+                mBurstCount++;
+                mLastBurstStartTimestamp = now;
+            }
+
+            mLastActivityTimestamp = now;
+        }
+    }
+
+    /**
+     * Marks the end of the current talk burst while keeping the segment itself open.
+     */
+    public void endBurst()
+    {
+        if(!mDisposing && mBurstActive)
+        {
+            long now = System.currentTimeMillis();
+            mBurstActive = false;
+            mLastBurstEndTimestamp = now;
+            mLastActivityTimestamp = now;
         }
     }
 

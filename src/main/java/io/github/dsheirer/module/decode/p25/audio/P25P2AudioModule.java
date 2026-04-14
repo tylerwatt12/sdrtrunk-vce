@@ -38,6 +38,7 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageProvider;
 import io.github.dsheirer.module.decode.p25.phase2.message.EncryptionSynchronizationSequence;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacPduType;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructure;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractVoiceTimeslot;
@@ -168,11 +169,17 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     if(!mEncryptedCall)
                     {
                         beginCurrentAudioSegment();
+                        beginCurrentAudioBurst();
                     }
 
                     //There should not be any pending voice timeslots to process since the PTT message is the first in
                     //the audio call sequence.
                     clearPendingVoiceTimeslots();
+                }
+                else if(macMessage.getMacPduType() == MacPduType.MAC_2_END_PTT ||
+                    macMessage.getMacPduType() == MacPduType.MAC_6_HANGTIME)
+                {
+                    endCurrentAudioBurst();
                 }
             }
             else if(message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence && message.isValid())
@@ -183,6 +190,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 if(!mEncryptedCall)
                 {
                     beginCurrentAudioSegment();
+                    beginCurrentAudioBurst();
                 }
 
                 processPendingVoiceTimeslots();
@@ -230,12 +238,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
         if(currentAudioSegment != null)
         {
-            mLog.debug("TS{} closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
-                getTimeslot(), reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+            mLog.debug("TS{} closing audio segment reason:{} segment:{} bursts:{} burstActive:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
+                getTimeslot(), reason, formatSegment(currentAudioSegment), currentAudioSegment.getBurstCount(),
+                currentAudioSegment.isBurstActive(), currentAudioSegment.getAudioBufferCount(),
                 currentAudioSegment.isComplete(), mEncryptedCallStateEstablished, mEncryptedCall,
                 mQueuedAudioTimeslots.size());
         }
 
+        endCurrentAudioBurst();
         super.closeAudioSegment();
     }
 
@@ -281,6 +291,12 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                         if(!audioCommitted)
                         {
                             AudioSegment currentAudioSegment = getAudioSegment();
+
+                            if(!currentAudioSegment.isBurstActive())
+                            {
+                                beginCurrentAudioBurst();
+                            }
+
                             String currentSegmentId = formatSegment(currentAudioSegment);
 
                             if(mLastAudioTimestamp != Long.MIN_VALUE && currentSegmentId.equals(mLastAudioSegmentId))

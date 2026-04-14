@@ -248,8 +248,9 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
                 if(isExpectedAudibleSegment(mCurrentAudioSegment))
                 {
                     long inactiveDuration = System.currentTimeMillis() - mCurrentAudioSegment.getLastActivityTimestamp();
-                    mLog.warn("Audio channel {} disposing stale incomplete segment:{} delivered:{} buffers:{} index:{} inactiveMs:{}",
+                    mLog.warn("Audio channel {} disposing stale incomplete segment:{} delivered:{} bursts:{} burstActive:{} buffers:{} index:{} inactiveMs:{}",
                         getChannelName(), formatSegment(mCurrentAudioSegment), mCurrentSegmentAudioDelivered,
+                        mCurrentAudioSegment.getBurstCount(), mCurrentAudioSegment.isBurstActive(),
                         mCurrentAudioSegment.getAudioBufferCount(), mCurrentBufferIndex, inactiveDuration);
                 }
                 disposeCurrentAudioSegment();
@@ -458,8 +459,10 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             if(!mCurrentSegmentAudioDelivered && mCurrentAudioSegment.hasAudio() &&
                 isExpectedAudibleSegment(mCurrentAudioSegment))
             {
-                mLog.warn("Audio channel {} released undelivered audio segment:{} buffers:{} complete:{} noAudioIntervals:{} queueDepth:{}",
-                    getChannelName(), formatSegment(mCurrentAudioSegment), mCurrentAudioSegment.getAudioBufferCount(),
+                mLog.warn("Audio channel {} released undelivered audio segment:{} bursts:{} burstActive:{} buffers:{} complete:{} noAudioIntervals:{} queueDepth:{}",
+                    getChannelName(), formatSegment(mCurrentAudioSegment),
+                    mCurrentAudioSegment.getBurstCount(), mCurrentAudioSegment.isBurstActive(),
+                    mCurrentAudioSegment.getAudioBufferCount(),
                     mCurrentAudioSegment.isComplete(), mNoAudioFromSegmentIntervalCount, mAudioSegmentQueue.size());
             }
             mCurrentAudioSegment.removeIdentifierUpdateNotificationListener(this);
