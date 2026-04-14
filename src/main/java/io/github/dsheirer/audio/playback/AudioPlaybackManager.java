@@ -526,22 +526,16 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     }
                 }
 
-                //Remove any audio segments marked as complete that didn't get assigned to an output
+                //Remove any audio segments that became non-playable while waiting for assignment.
+                //Completed segments must remain queued until an output is available.
                 it = mAudioSegments.iterator(); //reset the iterator
                 while(it.hasNext())
                 {
                     audioSegment = it.next();
 
-                    if(audioSegment.completeProperty().get() || (audioSegment.isDuplicate() &&
-                       mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled()))
+                    if(audioSegment.isDuplicate() &&
+                       mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled())
                     {
-                        if(audioSegment.hasAudio() && isExpectedAudibleSegment(audioSegment))
-                        {
-                            mLog.warn("Playback manager disposing unassigned audio segment:{} buffers:{} complete:{} encrypted:{} channels:{} backlog:{}",
-                                formatSegment(audioSegment), audioSegment.getAudioBufferCount(), audioSegment.isComplete(),
-                                audioSegment.isEncrypted(), formatChannels(mAudioOutput.getAudioProvider().getAudioChannels()),
-                                formatSegments(mAudioSegments));
-                        }
                         it.remove();
                         releaseOwnedSegment(audioSegment);
                     }
