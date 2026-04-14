@@ -393,12 +393,12 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     }
 
     /**
-     * Indicates if this audio output doesn't currently have any audio segments queued for playback.
-     * @return true if empty
+     * Indicates if this audio channel is idle with no current segment and no queued segments.
+     * @return true if idle
      */
-    public boolean isEmpty()
+    public boolean isIdle()
     {
-        return mAudioSegmentQueue.isEmpty();
+        return mCurrentAudioSegment == null && mAudioSegmentQueue.isEmpty();
     }
 
     /**

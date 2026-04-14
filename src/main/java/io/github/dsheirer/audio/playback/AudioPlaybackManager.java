@@ -376,10 +376,10 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
                     try
                     {
-                        //Assign empty audio outputs first
+                        //Assign idle audio outputs first
                         for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
                         {
-                            if(audioChannel.isEmpty())
+                            if(audioChannel.isIdle())
                             {
                                 audioChannel.play(mAudioSegments.removeFirst());
                                 if(mAudioSegments.isEmpty())
