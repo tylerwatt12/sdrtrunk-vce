@@ -85,6 +85,12 @@ public class P25P1AudioModule extends ImbeAudioModule
         // No startup work is required beyond base-class construction for this audio module.
     }
 
+    @Override
+    public void stop()
+    {
+        closeAudioSegment("stop");
+    }
+
     /**
      * Processes call header (HDU) and voice frame (LDU1/LDU2) messages to decode audio and to determine the
      * encrypted audio status of a call event. Only the HDU and LDU2 messages convey encrypted call status. If an
@@ -96,6 +102,11 @@ public class P25P1AudioModule extends ImbeAudioModule
     {
         if(hasAudioCodec())
         {
+            if(getCurrentAudioSegment() != null && shouldTouchSegment(message))
+            {
+                touchCurrentAudioSegment();
+            }
+
             if(mEncryptedCallStateEstablished)
             {
                 if(message instanceof LDUMessage ldu)
@@ -109,6 +120,12 @@ public class P25P1AudioModule extends ImbeAudioModule
                 {
                     mEncryptedCallStateEstablished = true;
                     mEncryptedCall = hdu.getHeaderData().isEncryptedAudio();
+
+                    if(!mEncryptedCall)
+                    {
+                        beginCurrentAudioSegment();
+                        beginCurrentAudioBurst();
+                    }
                 }
                 else if(message instanceof LDU1Message ldu1)
                 {
@@ -122,6 +139,12 @@ public class P25P1AudioModule extends ImbeAudioModule
                     {
                         mEncryptedCallStateEstablished = true;
                         mEncryptedCall = ldu2.getEncryptionSyncParameters().isEncryptedAudio();
+
+                        if(!mEncryptedCall)
+                        {
+                            beginCurrentAudioSegment();
+                            beginCurrentAudioBurst();
+                        }
                     }
 
                     if(mEncryptedCallStateEstablished)
@@ -144,6 +167,15 @@ public class P25P1AudioModule extends ImbeAudioModule
     }
 
     /**
+     * Indicates whether the message confirms an already-open segment is still intentionally alive.
+     */
+    private boolean shouldTouchSegment(IMessage message)
+    {
+        return (message instanceof HDUMessage hdu && hdu.isValid()) ||
+            (message instanceof LDUMessage ldu && ldu.isValid());
+    }
+
+    /**
      * Processes an audio packet by decoding the IMBE audio frames and rebroadcasting them as PCM audio packets.
      */
     private void processAudio(LDUMessage ldu)
@@ -158,6 +190,13 @@ public class P25P1AudioModule extends ImbeAudioModule
 
             for(byte[] frame : ldu.getIMBEFrames())
             {
+                AudioSegment currentAudioSegment = getAudioSegment();
+
+                if(!currentAudioSegment.isBurstActive())
+                {
+                    beginCurrentAudioBurst();
+                }
+
                 float[] audio = getAudioCodec().getAudio(frame);
                 audio = mGain.apply(audio);
                 addAudio(audio);
@@ -191,6 +230,7 @@ public class P25P1AudioModule extends ImbeAudioModule
 
     private void closeAudioSegment(String reason)
     {
+        endCurrentAudioBurst();
         AudioSegment currentAudioSegment = getCurrentAudioSegment();
 
         if(currentAudioSegment != null)
