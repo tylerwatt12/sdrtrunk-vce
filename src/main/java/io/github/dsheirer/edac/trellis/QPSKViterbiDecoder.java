@@ -100,52 +100,66 @@ public abstract class QPSKViterbiDecoder
     {
         int symbolCount = symbols.size() / 2;
         int stateCount = mTransitionMatrix.length;
-        double[] previousMetrics = new double[stateCount];
-        double[] nextMetrics = new double[stateCount];
-        int[][] previousState = new int[symbolCount][stateCount];
-        int[][] inputValue = new int[symbolCount][stateCount];
+        DecodeContext context = new DecodeContext(symbolCount, stateCount);
 
-        Arrays.fill(previousMetrics, Double.POSITIVE_INFINITY);
-        previousMetrics[0] = 0.0d;
+        Arrays.fill(context.previousMetrics, Double.POSITIVE_INFINITY);
+        context.previousMetrics[0] = 0.0d;
 
+        decodeSurvivorPaths(symbols, symbolCount, stateCount, context);
+        int bestState = evaluateFinalFlushSymbol(symbols, symbolCount, stateCount, context);
+
+        return buildMessage(context.previousState, context.inputValue, bestState, symbolCount);
+    }
+
+    private void decodeSurvivorPaths(SymbolMessage symbols, int symbolCount, int stateCount, DecodeContext context)
+    {
         for(int symbolIndex = 0; symbolIndex < symbolCount - 1; symbolIndex++)
         {
-            Arrays.fill(nextMetrics, Double.POSITIVE_INFINITY);
+            Arrays.fill(context.nextMetrics, Double.POSITIVE_INFINITY);
 
             for(int previousStateIndex = 0; previousStateIndex < stateCount; previousStateIndex++)
             {
-                double baseMetric = previousMetrics[previousStateIndex];
+                double baseMetric = context.previousMetrics[previousStateIndex];
 
                 if(Double.isInfinite(baseMetric))
                 {
                     continue;
                 }
 
-                for(int candidateInput = 0; candidateInput < stateCount; candidateInput++)
-                {
-                    double metric = baseMetric + getBranchMetric(previousStateIndex, candidateInput, symbolIndex, symbols);
-
-                    if(metric < nextMetrics[candidateInput])
-                    {
-                        nextMetrics[candidateInput] = metric;
-                        previousState[symbolIndex][candidateInput] = previousStateIndex;
-                        inputValue[symbolIndex][candidateInput] = candidateInput;
-                    }
-                }
+                updateCandidateTransitions(symbols, stateCount, symbolIndex, previousStateIndex, baseMetric, context);
             }
 
-            double[] swap = previousMetrics;
-            previousMetrics = nextMetrics;
-            nextMetrics = swap;
+            double[] swap = context.previousMetrics;
+            context.previousMetrics = context.nextMetrics;
+            context.nextMetrics = swap;
         }
+    }
 
+    private void updateCandidateTransitions(SymbolMessage symbols, int stateCount, int symbolIndex, int previousStateIndex,
+                                            double baseMetric, DecodeContext context)
+    {
+        for(int candidateInput = 0; candidateInput < stateCount; candidateInput++)
+        {
+            double metric = baseMetric + getBranchMetric(previousStateIndex, candidateInput, symbolIndex, symbols);
+
+            if(metric < context.nextMetrics[candidateInput])
+            {
+                context.nextMetrics[candidateInput] = metric;
+                context.previousState[symbolIndex][candidateInput] = previousStateIndex;
+                context.inputValue[symbolIndex][candidateInput] = candidateInput;
+            }
+        }
+    }
+
+    private int evaluateFinalFlushSymbol(SymbolMessage symbols, int symbolCount, int stateCount, DecodeContext context)
+    {
         int finalSymbolIndex = symbolCount - 1;
         double bestMetric = Double.POSITIVE_INFINITY;
         int bestState = 0;
 
         for(int previousStateIndex = 0; previousStateIndex < stateCount; previousStateIndex++)
         {
-            double baseMetric = previousMetrics[previousStateIndex];
+            double baseMetric = context.previousMetrics[previousStateIndex];
 
             if(Double.isInfinite(baseMetric))
             {
@@ -158,12 +172,28 @@ public abstract class QPSKViterbiDecoder
             {
                 bestMetric = metric;
                 bestState = 0;
-                previousState[finalSymbolIndex][0] = previousStateIndex;
-                inputValue[finalSymbolIndex][0] = 0;
+                context.previousState[finalSymbolIndex][0] = previousStateIndex;
+                context.inputValue[finalSymbolIndex][0] = 0;
             }
         }
 
-        return buildMessage(previousState, inputValue, bestState, symbolCount);
+        return bestState;
+    }
+
+    private static class DecodeContext
+    {
+        private double[] previousMetrics;
+        private double[] nextMetrics;
+        private final int[][] previousState;
+        private final int[][] inputValue;
+
+        private DecodeContext(int symbolCount, int stateCount)
+        {
+            previousMetrics = new double[stateCount];
+            nextMetrics = new double[stateCount];
+            previousState = new int[symbolCount][stateCount];
+            inputValue = new int[symbolCount][stateCount];
+        }
     }
 
     /**
