@@ -57,7 +57,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     private final UserPreferences mUserPreferences;
     private final String mChannelName;
 
-    private AudioSegment mCurrentAudioSegment;
+    private AudioPlaybackBurst mCurrentPlaybackBurst;
     private Listener<IdentifierCollection> mIdentifierCollectionListener;
     private boolean mDropDuplicates;
     private boolean mMetadataSent = false;
@@ -65,10 +65,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     private boolean mDisabled;
     private float[] mAudioSegmentStartTone;
     private float[] mAudioSegmentDropTone;
-    private int mCurrentBufferIndex = -1;
     private int mNoAudioFromSegmentIntervalCount = 0;
-    private boolean mCurrentSegmentAudioDelivered = false;
-    private long mCurrentBurstGeneration = 0;
 
     /**
      * Constructs an instance
@@ -153,7 +150,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      */
     public boolean hasAudioSegment()
     {
-        return mCurrentAudioSegment != null;
+        return getCurrentAudioSegment() != null;
     }
 
     /**
@@ -188,15 +185,15 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             }
         }
 
-        if(mCurrentAudioSegment == null)
+        if(getCurrentAudioSegment() == null)
         {
             loadNextAudioSegment();
         }
 
         //Evaluate current audio segment to see if the status has changed for duplicate or do-not-monitor.
-        while(isThrowaway(mCurrentAudioSegment))
+        while(isThrowaway(getCurrentAudioSegment()))
         {
-            if(mCurrentBufferIndex > 0)
+            if(getCurrentPlaybackBufferIndex() > 0)
             {
                 //Flush the buffer and insert the drop tone
                 mAudioBuffer.replace(mAudioSegmentDropTone);
@@ -206,9 +203,9 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             loadNextAudioSegment();
         }
 
-        if(mCurrentAudioSegment != null)
+        if(mCurrentPlaybackBurst != null)
         {
-            if(mCurrentAudioSegment.getBurstGeneration() != mCurrentBurstGeneration)
+            if(!mCurrentPlaybackBurst.isBurstGenerationCurrent())
             {
                 handleBurstGenerationChange();
             }
@@ -216,21 +213,18 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             mNoAudioFromSegmentIntervalCount++;
         }
 
-        while(!mAudioBuffer.isFull() && mCurrentAudioSegment != null &&
-                mCurrentBufferIndex < mCurrentAudioSegment.getAudioBufferCount())
+        while(!mAudioBuffer.isFull() && mCurrentPlaybackBurst != null && mCurrentPlaybackBurst.hasPendingBuffers())
         {
-            if(mCurrentBufferIndex < 0)
+            if(mCurrentPlaybackBurst.isStartOfBurst())
             {
                 mAudioBuffer.add(mAudioSegmentStartTone);
-                mAudioBuffer.add(mCurrentAudioSegment.getAudioBuffer(0));
-                mCurrentBufferIndex = 1;
-                broadcast(mCurrentAudioSegment.getIdentifierCollection());
+                mAudioBuffer.add(mCurrentPlaybackBurst.nextBuffer());
+                broadcast(getCurrentAudioSegment().getIdentifierCollection());
                 mMetadataSent = true;
-                mCurrentSegmentAudioDelivered = true;
             }
             else
             {
-                mAudioBuffer.add(mCurrentAudioSegment.getAudioBuffer(mCurrentBufferIndex++));
+                mAudioBuffer.add(mCurrentPlaybackBurst.nextBuffer());
             }
 
             mNoAudioFromSegmentIntervalCount = 0;
@@ -239,26 +233,27 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
         // Completed segments can be retired quickly once playback is done. Incomplete segments get a much longer
         // stale timeout so brief decoder gaps do not kill active audio, while channels that never receive a close
         // still eventually recover.
-        if(mCurrentAudioSegment != null)
+        if(getCurrentAudioSegment() != null)
         {
-            if(mCurrentAudioSegment.isComplete() &&
+            if(getCurrentAudioSegment().isComplete() &&
                 ((mNoAudioFromSegmentIntervalCount >= COMPLETED_SEGMENT_STALL_INTERVAL_LIMIT) ||
-                 (mCurrentBufferIndex >= mCurrentAudioSegment.getAudioBufferCount())))
+                 !mCurrentPlaybackBurst.hasPendingBuffers()))
             {
                 disposeCurrentAudioSegment();
                 mNoAudioFromSegmentIntervalCount = 0;
             }
-            else if(!mCurrentAudioSegment.isComplete() &&
-                isIncompleteSegmentStale(mCurrentAudioSegment))
+            else if(!getCurrentAudioSegment().isComplete() &&
+                isIncompleteSegmentStale(getCurrentAudioSegment()))
             {
-                if(isExpectedAudibleSegment(mCurrentAudioSegment))
+                if(isExpectedAudibleSegment(getCurrentAudioSegment()))
                 {
-                    long inactiveDuration = getIncompleteSegmentInactiveDuration(mCurrentAudioSegment);
-                    long timeout = getIncompleteSegmentStallTimeout(mCurrentAudioSegment);
+                    long inactiveDuration = getIncompleteSegmentInactiveDuration(getCurrentAudioSegment());
+                    long timeout = getIncompleteSegmentStallTimeout(getCurrentAudioSegment());
                     mLog.warn("Audio channel {} disposing stale incomplete segment:{} delivered:{} bursts:{} burstActive:{} buffers:{} index:{} inactiveMs:{} timeoutMs:{}",
-                        getChannelName(), formatSegment(mCurrentAudioSegment), mCurrentSegmentAudioDelivered,
-                        mCurrentAudioSegment.getBurstCount(), mCurrentAudioSegment.isBurstActive(),
-                        mCurrentAudioSegment.getAudioBufferCount(), mCurrentBufferIndex, inactiveDuration, timeout);
+                        getChannelName(), formatSegment(getCurrentAudioSegment()), isCurrentBurstAudioDelivered(),
+                        getCurrentAudioSegment().getBurstCount(), getCurrentAudioSegment().isBurstActive(),
+                        getCurrentAudioSegment().getAudioBufferCount(), getCurrentPlaybackBufferIndex(),
+                        inactiveDuration, timeout);
                 }
                 disposeCurrentAudioSegment();
                 mNoAudioFromSegmentIntervalCount = 0;
@@ -271,7 +266,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
         {
             audio = mAudioBuffer.get();
         }
-        else if(mCurrentAudioSegment == null && !mAudioBuffer.isEmpty())
+        else if(getCurrentAudioSegment() == null && !mAudioBuffer.isEmpty())
         {
             audio = mAudioBuffer.flush();
         }
@@ -397,7 +392,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      */
     public boolean isLinkedTo(AudioSegment audioSegment)
     {
-        return audioSegment.isLinked() && audioSegment.isLinkedTo(mCurrentAudioSegment);
+        return audioSegment.isLinked() && audioSegment.isLinkedTo(getCurrentAudioSegment());
     }
 
     /**
@@ -405,9 +400,9 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      */
     public void receive(IdentifierUpdateNotification identifierUpdateNotification)
     {
-        if(mCurrentAudioSegment != null)
+        if(getCurrentAudioSegment() != null)
         {
-            IdentifierCollection identifierCollection = mCurrentAudioSegment.getIdentifierCollection();
+            IdentifierCollection identifierCollection = getCurrentAudioSegment().getIdentifierCollection();
 
             if(identifierCollection != null)
             {
@@ -431,7 +426,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      */
     public boolean isIdle()
     {
-        return mCurrentAudioSegment == null && mAudioSegmentQueue.isEmpty();
+        return getCurrentAudioSegment() == null && mAudioSegmentQueue.isEmpty();
     }
 
     /**
@@ -461,21 +456,22 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      */
     private void disposeCurrentAudioSegment()
     {
-        if(mCurrentAudioSegment != null)
+        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+
+        if(currentAudioSegment != null)
         {
-            if(!mCurrentSegmentAudioDelivered && mCurrentAudioSegment.hasAudio() &&
-                isExpectedAudibleSegment(mCurrentAudioSegment))
+            if(!isCurrentBurstAudioDelivered() && currentAudioSegment.hasAudio() &&
+                isExpectedAudibleSegment(currentAudioSegment))
             {
                 mLog.warn("Audio channel {} released undelivered audio segment:{} bursts:{} burstActive:{} buffers:{} complete:{} noAudioIntervals:{} queueDepth:{}",
-                    getChannelName(), formatSegment(mCurrentAudioSegment),
-                    mCurrentAudioSegment.getBurstCount(), mCurrentAudioSegment.isBurstActive(),
-                    mCurrentAudioSegment.getAudioBufferCount(),
-                    mCurrentAudioSegment.isComplete(), mNoAudioFromSegmentIntervalCount, mAudioSegmentQueue.size());
+                    getChannelName(), formatSegment(currentAudioSegment),
+                    currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive(),
+                    currentAudioSegment.getAudioBufferCount(),
+                    currentAudioSegment.isComplete(), mNoAudioFromSegmentIntervalCount, mAudioSegmentQueue.size());
             }
-            mCurrentAudioSegment.removeIdentifierUpdateNotificationListener(this);
-            releaseQueuedSegment(mCurrentAudioSegment);
-            mCurrentAudioSegment = null;
-            mCurrentBurstGeneration = 0;
+            currentAudioSegment.removeIdentifierUpdateNotificationListener(this);
+            releaseQueuedSegment(currentAudioSegment);
+            mCurrentPlaybackBurst = null;
         }
     }
 
@@ -509,39 +505,34 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             }
         }
 
-        mCurrentAudioSegment = audioSegment;
-
         if(audioSegment != null)
         {
-            mCurrentAudioSegment.addIdentifierUpdateNotificationListener(this);
-            broadcast(mCurrentAudioSegment.getIdentifierCollection());
-            mCurrentBurstGeneration = mCurrentAudioSegment.getBurstGeneration();
+            audioSegment.addIdentifierUpdateNotificationListener(this);
+            broadcast(audioSegment.getIdentifierCollection());
+            mCurrentPlaybackBurst = new AudioPlaybackBurst(audioSegment);
+        }
+        else
+        {
+            mCurrentPlaybackBurst = null;
         }
 
-        mCurrentBufferIndex = -1;
-        mCurrentSegmentAudioDelivered = false;
     }
 
     private void handleBurstGenerationChange()
     {
-        if(mCurrentAudioSegment == null)
+        if(mCurrentPlaybackBurst == null)
         {
             return;
         }
 
-        mCurrentBurstGeneration = mCurrentAudioSegment.getBurstGeneration();
+        boolean newBurstAfterPlayback = mCurrentPlaybackBurst.advanceToCurrentBurst();
         mNoAudioFromSegmentIntervalCount = 0;
 
-        if(mCurrentAudioSegment.getAudioBufferCount() > mCurrentBufferIndex)
+        if(newBurstAfterPlayback)
         {
-            mCurrentBufferIndex = Math.max(0, mCurrentBufferIndex);
-
-            if(mCurrentSegmentAudioDelivered)
-            {
-                mAudioBuffer.add(mAudioSegmentStartTone);
-                broadcast(mCurrentAudioSegment.getIdentifierCollection());
-                mMetadataSent = true;
-            }
+            mAudioBuffer.add(mAudioSegmentStartTone);
+            broadcast(getCurrentAudioSegment().getIdentifierCollection());
+            mMetadataSent = true;
         }
     }
 
@@ -568,6 +559,21 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
         {
             audioSegment.decrementConsumerCount();
         }
+    }
+
+    private AudioSegment getCurrentAudioSegment()
+    {
+        return mCurrentPlaybackBurst != null ? mCurrentPlaybackBurst.getAudioSegment() : null;
+    }
+
+    private int getCurrentPlaybackBufferIndex()
+    {
+        return mCurrentPlaybackBurst != null ? mCurrentPlaybackBurst.getCurrentBufferIndex() : -1;
+    }
+
+    private boolean isCurrentBurstAudioDelivered()
+    {
+        return mCurrentPlaybackBurst != null && mCurrentPlaybackBurst.isAudioDelivered();
     }
 
     private boolean isIncompleteSegmentStale(AudioSegment audioSegment)
