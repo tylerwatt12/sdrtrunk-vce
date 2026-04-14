@@ -781,7 +781,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private void processChannelGrant(MacMessage message, MacStructure mac)
     {
         //TODO: will we ever see a channel grant on a non-control channel?
-        if(message.getMacPduType() == MacPduType.MAC_3_IDLE || message.getMacPduType() == MacPduType.MAC_6_HANGTIME)
+        MacPduType grantPduType = message.getMacPduType();
+        if(grantPduType == MacPduType.MAC_3_IDLE || grantPduType == MacPduType.MAC_6_HANGTIME)
         {
             for(Identifier identifier : mac.getIdentifiers())
             {
@@ -791,7 +792,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
             mTrafficChannelManager.getTalkerAliasManager().enrichMutable(getIdentifierCollection());
 
-            continueState(State.ACTIVE);
+            // MAC_3_IDLE and MAC_6_HANGTIME on a traffic channel do not mean the call has ended — do not downgrade.
         }
 
         //All channel grant messages implement this interface
@@ -818,11 +819,9 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processChannelGrantUpdate(MacMessage message, MacStructure mac)
     {
-        if(message.getMacPduType() == MacPduType.MAC_3_IDLE || message.getMacPduType() == MacPduType.MAC_6_HANGTIME)
-        {
-            continueState(State.ACTIVE);
-        }
-
+        // MAC_3_IDLE and MAC_6_HANGTIME on a traffic channel do not mean the call has ended — the
+        // infrastructure signals these on one timeslot while voice is active on the other.  Downgrading
+        // to ACTIVE here would squelch the audio module and clear encrypted-call-established state.
         switch(mac.getOpcode())
         {
             case TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT:
@@ -1130,10 +1129,13 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
         mTrafficChannelManager.getTalkerAliasManager().enrichMutable(getIdentifierCollection());
 
-        if(message.getMacPduType() == MacPduType.MAC_3_IDLE || message.getMacPduType() == MacPduType.MAC_6_HANGTIME)
+        if(message.getMacPduType() == MacPduType.MAC_6_HANGTIME)
         {
-            continueState(State.ACTIVE);
+            // Channel still allocated between PTT bursts — stay in CALL so the audio module
+            // does not reset encrypted-call-established state before the next talker keys up.
+            continueState(State.CALL);
         }
+        // MAC_3_IDLE on a traffic channel does not mean the call has ended — do not downgrade.
         else
         {
             if(mac instanceof IServiceOptionsProvider sop)
@@ -1349,11 +1351,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processNetwork(MacMessage message, MacStructure mac)
     {
-        if(message.getMacPduType() == MacPduType.MAC_3_IDLE || message.getMacPduType() == MacPduType.MAC_6_HANGTIME)
-        {
-            continueState(State.ACTIVE);
-        }
-
+        // MAC_3_IDLE and MAC_6_HANGTIME on a traffic channel do not mean the call has ended — do not downgrade.
         mNetworkConfigurationMonitor.processMacMessage(message);
 
         if(mac instanceof NetworkStatusBroadcastImplicit nsbi)
@@ -1417,14 +1415,15 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
          * based solely on the null info in the traffic channel.  Ultimately, the existing call event will either be
          * updated by a subsequent call, or removed via the traffic channel teardown.
          */
-        // MAC_4_ACTIVE = voice call in progress; MAC_6_HANGTIME = channel allocated between PTT bursts.
-        // In both cases the channel is call-allocated; downgrading to ACTIVE would squelch the audio
-        // module and clear its encrypted-call-established flag, causing audio to queue silently until
-        // the next PTT or ESS re-establishes it.
+        // MAC_4_ACTIVE = voice call in progress; MAC_6_HANGTIME = channel allocated between PTT bursts;
+        // MAC_3_IDLE = infrastructure idle signal on the other timeslot while voice is active here.
+        // In all three cases downgrading to ACTIVE would squelch the audio module and clear its
+        // encrypted-call-established flag, causing audio to queue silently until the next PTT or ESS.
         MacPduType macPduType = message.getMacPduType();
 
         if(macPduType != MacPduType.MAC_4_ACTIVE &&
-           macPduType != MacPduType.MAC_6_HANGTIME)
+           macPduType != MacPduType.MAC_6_HANGTIME &&
+           macPduType != MacPduType.MAC_3_IDLE)
         {
             continueState(State.ACTIVE);
         }
