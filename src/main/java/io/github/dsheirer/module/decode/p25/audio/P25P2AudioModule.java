@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.codec.mbe.AmbeAudioModule;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
@@ -55,6 +56,7 @@ import org.slf4j.LoggerFactory;
 public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P2AudioModule.class);
+    private static final long LONG_AUDIO_GAP_LOG_THRESHOLD_MS = 1000;
 
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateNotificationListener;
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
@@ -63,6 +65,8 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     private boolean mEncryptedCallStateEstablished = false;
     private boolean mEncryptedCall = false;
     private Listener<IMessage> mMessageListener;
+    private long mLastAudioTimestamp = Long.MIN_VALUE;
+    private String mLastAudioSegmentId;
 
     public P25P2AudioModule(UserPreferences userPreferences, int timeslot, AliasList aliasList)
     {
@@ -82,6 +86,16 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     @Override
     public void reset()
     {
+        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+
+        if(currentAudioSegment != null)
+        {
+            mLog.warn("TS{} reset with open audio segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
+                getTimeslot(), formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                currentAudioSegment.isComplete(), mEncryptedCallStateEstablished, mEncryptedCall,
+                mQueuedAudioTimeslots.size());
+        }
+
         //Explicitly clear FROM identifiers to ensure previous call TONE identifiers are cleared.
         mIdentifierCollection.remove(Role.FROM);
 
@@ -91,12 +105,20 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         //Reset encrypted call handling flags
         mEncryptedCallStateEstablished = false;
         mEncryptedCall = false;
+        mLastAudioTimestamp = Long.MIN_VALUE;
+        mLastAudioSegmentId = null;
     }
 
     @Override
     public void start()
     {
         reset();
+    }
+
+    @Override
+    public void stop()
+    {
+        closeAudioSegment("stop");
     }
 
     /**
@@ -172,6 +194,32 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         mQueuedAudioTimeslots.clear();
     }
 
+    private void closeAudioSegment(String reason)
+    {
+        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+
+        if(currentAudioSegment != null)
+        {
+            mLog.debug("TS{} closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
+                getTimeslot(), reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                currentAudioSegment.isComplete(), mEncryptedCallStateEstablished, mEncryptedCall,
+                mQueuedAudioTimeslots.size());
+        }
+
+        super.closeAudioSegment();
+    }
+
+    private String formatSegment(AudioSegment audioSegment)
+    {
+        if(audioSegment == null)
+        {
+            return "null";
+        }
+
+        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
+            System.identityHashCode(audioSegment);
+    }
+
     /**
      * Process the audio voice frames
      * @param voiceFrames to process
@@ -181,6 +229,21 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     {
         if(hasAudioCodec())
         {
+            AudioSegment currentAudioSegment = getAudioSegment();
+            String currentSegmentId = formatSegment(currentAudioSegment);
+
+            if(mLastAudioTimestamp != Long.MIN_VALUE && currentSegmentId.equals(mLastAudioSegmentId))
+            {
+                long gap = timestamp - mLastAudioTimestamp;
+
+                if(gap >= LONG_AUDIO_GAP_LOG_THRESHOLD_MS)
+                {
+                    mLog.warn("TS{} audio resumed after long gap segment:{} gapMs:{} buffers:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
+                        getTimeslot(), currentSegmentId, gap, currentAudioSegment.getAudioBufferCount(),
+                        mEncryptedCallStateEstablished, mEncryptedCall, mQueuedAudioTimeslots.size());
+                }
+            }
+
             for(BinaryMessage voiceFrame: voiceFrames)
             {
                 byte[] voiceFrameBytes = voiceFrame.getBytes();
@@ -196,6 +259,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     mLog.error("Error synthesizing AMBE audio - continuing [{}]", e.getLocalizedMessage());
                 }
             }
+
+            mLastAudioTimestamp = timestamp;
+            mLastAudioSegmentId = currentSegmentId;
         }
     }
 
@@ -384,7 +450,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         {
             if(event.getTimeslot() == getTimeslot() && event.getSquelchState() == SquelchState.SQUELCH)
             {
-                closeAudioSegment();
+                closeAudioSegment("squelch");
                 reset();
             }
         }

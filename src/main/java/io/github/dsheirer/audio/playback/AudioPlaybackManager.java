@@ -321,6 +321,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                     else if(audioSegment.completeProperty().get())
                     {
                         //Rare situation: the audio segment completed but never had audio ... dispose it
+                        if(isExpectedAudibleSegment(audioSegment))
+                        {
+                            mLog.debug("Playback manager disposing completed expected-audible segment with no audio:{} complete:{} encrypted:{}",
+                                formatSegment(audioSegment), audioSegment.isComplete(), audioSegment.isEncrypted());
+                        }
                         it.remove();
                         audioSegment.decrementConsumerCount();
                     }
@@ -404,6 +409,13 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                     if(audioSegment.completeProperty().get() || (audioSegment.isDuplicate() &&
                        mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled()))
                     {
+                        if(audioSegment.hasAudio() && isExpectedAudibleSegment(audioSegment))
+                        {
+                            mLog.warn("Playback manager disposing unassigned audio segment:{} buffers:{} complete:{} encrypted:{} channels:{} backlog:{}",
+                                formatSegment(audioSegment), audioSegment.getAudioBufferCount(), audioSegment.isComplete(),
+                                audioSegment.isEncrypted(), formatChannels(mAudioOutput.getAudioProvider().getAudioChannels()),
+                                formatSegments(mAudioSegments));
+                        }
                         it.remove();
                         audioSegment.decrementConsumerCount();
                     }
@@ -428,6 +440,60 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 mProcessing.set(false);
             }
         }
+    }
+
+    private String formatSegment(AudioSegment audioSegment)
+    {
+        if(audioSegment == null)
+        {
+            return "null";
+        }
+
+        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
+            System.identityHashCode(audioSegment);
+    }
+
+    private String formatSegments(List<AudioSegment> audioSegments)
+    {
+        StringBuilder sb = new StringBuilder();
+
+        for(AudioSegment audioSegment: audioSegments)
+        {
+            if(!sb.isEmpty())
+            {
+                sb.append(",");
+            }
+
+            sb.append(formatSegment(audioSegment));
+            sb.append("[buffers=").append(audioSegment.getAudioBufferCount());
+            sb.append(",complete=").append(audioSegment.isComplete()).append("]");
+        }
+
+        return sb.toString();
+    }
+
+    private String formatChannels(List<AudioChannel> audioChannels)
+    {
+        StringBuilder sb = new StringBuilder();
+
+        for(AudioChannel audioChannel: audioChannels)
+        {
+            if(!sb.isEmpty())
+            {
+                sb.append(",");
+            }
+
+            sb.append(audioChannel.getChannelName());
+            sb.append("[idle=").append(audioChannel.isIdle());
+            sb.append(",hasSegment=").append(audioChannel.hasAudioSegment()).append("]");
+        }
+
+        return sb.toString();
+    }
+
+    private boolean isExpectedAudibleSegment(AudioSegment audioSegment)
+    {
+        return audioSegment != null && !audioSegment.isEncrypted() && !audioSegment.isDoNotMonitor();
     }
 
     /**

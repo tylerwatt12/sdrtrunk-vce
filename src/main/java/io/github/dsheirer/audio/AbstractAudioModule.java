@@ -133,6 +133,17 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
         }
     }
 
+    /**
+     * Gets the current audio segment without creating a new one.
+     */
+    protected AudioSegment getCurrentAudioSegment()
+    {
+        synchronized(this)
+        {
+            return mAudioSegment;
+        }
+    }
+
     public void addAudio(float[] audioBuffer)
     {
         AudioSegment audioSegment = getAudioSegment();

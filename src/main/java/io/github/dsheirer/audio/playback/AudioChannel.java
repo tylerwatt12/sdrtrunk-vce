@@ -34,19 +34,22 @@ import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Manages the incoming audio segments and provides access to audio buffers from those segments.
  */
 public class AudioChannel implements Listener<IdentifierUpdateNotification>
 {
+    private static final Logger mLog = LoggerFactory.getLogger(AudioChannel.class);
     /**
      * Quantity of audio samples to deliver per getAudio() method invocation, equivalent to 20 milliseconds at an 8 kHz
      * sample rate.
      */
     public static final int SAMPLES_PER_INTERVAL = 160;
     private static final int COMPLETED_SEGMENT_STALL_INTERVAL_LIMIT = 6;
-    private static final int INCOMPLETE_SEGMENT_STALL_INTERVAL_LIMIT = 50;
+    private static final int INCOMPLETE_SEGMENT_STALL_INTERVAL_LIMIT = 250;
     private final AudioBuffer mAudioBuffer = new AudioBuffer();
     private final Broadcaster<AudioEvent> mAudioEventBroadcaster = new Broadcaster<>();
     private final LinkedTransferQueue<AudioSegment> mAudioSegmentQueue = new LinkedTransferQueue<>();
@@ -63,6 +66,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     private float[] mAudioSegmentDropTone;
     private int mCurrentBufferIndex = -1;
     private int mNoAudioFromSegmentIntervalCount = 0;
+    private boolean mCurrentSegmentAudioDelivered = false;
 
     /**
      * Constructs an instance
@@ -215,6 +219,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
                 mCurrentBufferIndex = 1;
                 broadcast(mCurrentAudioSegment.getIdentifierCollection());
                 mMetadataSent = true;
+                mCurrentSegmentAudioDelivered = true;
             }
             else
             {
@@ -239,6 +244,12 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             else if(!mCurrentAudioSegment.isComplete() &&
                 mNoAudioFromSegmentIntervalCount >= INCOMPLETE_SEGMENT_STALL_INTERVAL_LIMIT)
             {
+                if(isExpectedAudibleSegment(mCurrentAudioSegment))
+                {
+                    mLog.warn("Audio channel {} disposing stale incomplete segment:{} delivered:{} buffers:{} index:{} noAudioIntervals:{}",
+                        getChannelName(), formatSegment(mCurrentAudioSegment), mCurrentSegmentAudioDelivered,
+                        mCurrentAudioSegment.getAudioBufferCount(), mCurrentBufferIndex, mNoAudioFromSegmentIntervalCount);
+                }
                 disposeCurrentAudioSegment();
                 mNoAudioFromSegmentIntervalCount = 0;
             }
@@ -442,6 +453,13 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     {
         if(mCurrentAudioSegment != null)
         {
+            if(!mCurrentSegmentAudioDelivered && mCurrentAudioSegment.hasAudio() &&
+                isExpectedAudibleSegment(mCurrentAudioSegment))
+            {
+                mLog.warn("Audio channel {} released undelivered audio segment:{} buffers:{} complete:{} noAudioIntervals:{} queueDepth:{}",
+                    getChannelName(), formatSegment(mCurrentAudioSegment), mCurrentAudioSegment.getAudioBufferCount(),
+                    mCurrentAudioSegment.isComplete(), mNoAudioFromSegmentIntervalCount, mAudioSegmentQueue.size());
+            }
             mCurrentAudioSegment.decrementConsumerCount();
             mCurrentAudioSegment.removeIdentifierUpdateNotificationListener(this);
             mCurrentAudioSegment = null;
@@ -487,6 +505,24 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
         }
 
         mCurrentBufferIndex = -1;
+        mCurrentSegmentAudioDelivered = false;
+    }
+
+    private String formatSegment(AudioSegment audioSegment)
+    {
+        if(audioSegment == null)
+        {
+            return "null";
+        }
+
+        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
+            System.identityHashCode(audioSegment);
+    }
+
+    private boolean isExpectedAudibleSegment(AudioSegment audioSegment)
+    {
+        return audioSegment != null && !isMuted() && !isDisabled() && !audioSegment.isEncrypted() &&
+            !audioSegment.isDoNotMonitor();
     }
 
     /**
