@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.codec.mbe.ImbeAudioModule;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
@@ -32,9 +33,12 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class P25P1AudioModule extends ImbeAudioModule
 {
+    private static final Logger mLog = LoggerFactory.getLogger(P25P1AudioModule.class);
     private boolean mEncryptedCall = false;
     private boolean mEncryptedCallStateEstablished = false;
 
@@ -62,6 +66,16 @@ public class P25P1AudioModule extends ImbeAudioModule
     @Override
     public void reset()
     {
+        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+
+        if(currentAudioSegment != null)
+        {
+            mLog.warn("P25P1 reset with open audio segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                currentAudioSegment.isComplete(), mEncryptedCallStateEstablished, mEncryptedCall,
+                mCachedLDUMessages.size());
+        }
+
         getIdentifierCollection().clear();
     }
 
@@ -136,6 +150,12 @@ public class P25P1AudioModule extends ImbeAudioModule
     {
         if(!mEncryptedCall)
         {
+            if(!mEncryptedCallStateEstablished)
+            {
+                mLog.warn("P25P1 processing clear audio without established encrypted state cachedLdus:{}",
+                    mCachedLDUMessages.size());
+            }
+
             for(byte[] frame : ldu.getIMBEFrames())
             {
                 float[] audio = getAudioCodec().getAudio(frame);
@@ -161,11 +181,37 @@ public class P25P1AudioModule extends ImbeAudioModule
         {
             if(event.getSquelchState() == SquelchState.SQUELCH)
             {
-                closeAudioSegment();
+                closeAudioSegment("squelch");
                 mEncryptedCallStateEstablished = false;
                 mEncryptedCall = false;
                 mCachedLDUMessages.clear();
             }
         }
+    }
+
+    private void closeAudioSegment(String reason)
+    {
+        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+
+        if(currentAudioSegment != null)
+        {
+            mLog.debug("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                currentAudioSegment.isComplete(), mEncryptedCallStateEstablished, mEncryptedCall,
+                mCachedLDUMessages.size());
+        }
+
+        super.closeAudioSegment();
+    }
+
+    private String formatSegment(AudioSegment audioSegment)
+    {
+        if(audioSegment == null)
+        {
+            return "null";
+        }
+
+        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
+            System.identityHashCode(audioSegment);
     }
 }
