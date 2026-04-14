@@ -222,9 +222,11 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             mNoAudioFromSegmentIntervalCount = 0;
         }
 
-        //Dispose completed/fully-played audio segments and segments that have stalled/failed to progress
-        if(mCurrentAudioSegment != null && ((mNoAudioFromSegmentIntervalCount >= 6) ||
-          (mCurrentAudioSegment.isComplete() && (mCurrentBufferIndex >= mCurrentAudioSegment.getAudioBufferCount()))))
+        //Dispose completed/fully-played audio segments.  For incomplete/live segments, tolerate production gaps
+        // because the decoder can append additional audio buffers after a brief lull between bursts.
+        if(mCurrentAudioSegment != null && mCurrentAudioSegment.isComplete() &&
+            ((mNoAudioFromSegmentIntervalCount >= 6) ||
+             (mCurrentBufferIndex >= mCurrentAudioSegment.getAudioBufferCount())))
         {
             disposeCurrentAudioSegment();
             mNoAudioFromSegmentIntervalCount = 0;
