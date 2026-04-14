@@ -55,6 +55,8 @@ import org.slf4j.LoggerFactory;
 public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmentLifecycleListener, IAudioController
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioPlaybackManager.class);
+    private static final long WATCHDOG_INTERVAL_MS = 1000;
+    private static final long WATCHDOG_STARTUP_GRACE_PERIOD_MS = 5000;
     private final AudioSegmentPrioritySorter mAudioSegmentPrioritySorter = new AudioSegmentPrioritySorter();
     private final Broadcaster<AudioEvent> mControllerBroadcaster = new Broadcaster<>();
     private final List<AudioSegment> mAudioSegments = new ArrayList<>();
@@ -66,6 +68,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     private final ScheduledExecutorService mProcessingExecutorService;
     private final AudioSegmentProcessor mAudioSegmentProcessor = new AudioSegmentProcessor();
     private final AtomicBoolean mProcessTriggerPending = new AtomicBoolean();
+    private final long mCreatedTimestamp = System.currentTimeMillis();
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
     private ScheduledFuture<?> mProcessingTask;
@@ -101,8 +104,8 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         //Even if we don't have an audio device, setup the queue processor to always process the audio segment queue
         mProcessingExecutorService =
                 Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk audio manager"));
-        mProcessingTask = mProcessingExecutorService.scheduleAtFixedRate(mAudioSegmentProcessor,
-                0, 100, TimeUnit.MILLISECONDS);
+        mProcessingTask = mProcessingExecutorService.scheduleAtFixedRate(() -> mAudioSegmentProcessor.run(true),
+                0, WATCHDOG_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -152,7 +155,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             mProcessingExecutorService.execute(() -> {
                 try
                 {
-                    mAudioSegmentProcessor.run();
+                    mAudioSegmentProcessor.run(false);
                 }
                 finally
                 {
@@ -333,13 +336,56 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     {
         private final AtomicBoolean mProcessing = new AtomicBoolean();
 
+        private record WatchdogRescueSummary(boolean drainedNewQueue, boolean promotedPendingSegment,
+                                             boolean assignedReadySegment)
+        {
+            boolean rescuedWork()
+            {
+                return drainedNewQueue || promotedPendingSegment || assignedReadySegment;
+            }
+
+            String rescuedTypes()
+            {
+                StringBuilder sb = new StringBuilder();
+
+                if(drainedNewQueue)
+                {
+                    sb.append("new-queue");
+                }
+
+                if(promotedPendingSegment)
+                {
+                    if(!sb.isEmpty())
+                    {
+                        sb.append(",");
+                    }
+                    sb.append("pending-promotion");
+                }
+
+                if(assignedReadySegment)
+                {
+                    if(!sb.isEmpty())
+                    {
+                        sb.append(",");
+                    }
+                    sb.append("ready-assignment");
+                }
+
+                return sb.toString();
+            }
+        }
+
         /**
          * Processes new audio segments and automatically assigns them to audio outputs.
          *
          * Note: this method is intended to be repeatedly invoked by a scheduled processing thread.
          */
-        private void processAudioSegments()
+        private WatchdogRescueSummary processAudioSegments(boolean watchdog)
         {
+            boolean drainedNewQueue = false;
+            boolean promotedPendingSegment = false;
+            boolean assignedReadySegment = false;
+
             //Process new audio segments queue.  If segment has audio, queue it for replay, otherwise place in pending queue
             AudioSegment newSegment = mNewAudioSegmentQueue.poll();
 
@@ -353,6 +399,10 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 else if(newSegment.hasAudio())
                 {
                     mAudioSegments.add(newSegment);
+                    if(watchdog)
+                    {
+                        drainedNewQueue = true;
+                    }
                 }
                 else
                 {
@@ -362,7 +412,10 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 newSegment = mNewAudioSegmentQueue.poll();
             }
 
-            processChangedPendingSegments();
+            if(processChangedPendingSegments() && watchdog)
+            {
+                promotedPendingSegment = true;
+            }
 
             //Transfer pending audio segments that now have audio or that completed without ever having audio
             if(!mPendingAudioSegments.isEmpty())
@@ -386,6 +439,10 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                         //Queue it up for replay
                         it.remove();
                         mAudioSegments.add(audioSegment);
+                        if(watchdog)
+                        {
+                            promotedPendingSegment = true;
+                        }
                     }
                     else if(audioSegment.completeProperty().get())
                     {
@@ -451,9 +508,14 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                             if(audioChannel.isIdle())
                             {
                                 transferToAudioChannel(mAudioSegments.removeFirst(), audioChannel);
+                                if(watchdog)
+                                {
+                                    assignedReadySegment = true;
+                                }
                                 if(mAudioSegments.isEmpty())
                                 {
-                                    return;
+                                    return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment,
+                                        assignedReadySegment);
                                 }
                             }
                         }
@@ -485,13 +547,15 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     }
                 }
             }
+
+            return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment, assignedReadySegment);
         }
 
-        private void processChangedPendingSegments()
+        private boolean processChangedPendingSegments()
         {
             if(mLifecycleChangedSegments.isEmpty() || mPendingAudioSegments.isEmpty())
             {
-                return;
+                return false;
             }
 
             Set<AudioSegment> changedSegments = new HashSet<>();
@@ -505,10 +569,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
 
             if(changedSegments.isEmpty())
             {
-                return;
+                return false;
             }
 
             Iterator<AudioSegment> it = mPendingAudioSegments.iterator();
+            boolean changedWorkProcessed = false;
 
             while(it.hasNext())
             {
@@ -529,30 +594,55 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 {
                     it.remove();
                     mAudioSegments.add(audioSegment);
+                    changedWorkProcessed = true;
                 }
                 else if(audioSegment.completeProperty().get())
                 {
                     it.remove();
                     releaseOwnedSegment(audioSegment);
+                    changedWorkProcessed = true;
                 }
             }
+
+            return changedWorkProcessed;
         }
 
         @Override
         public void run()
         {
+            run(false);
+        }
+
+        public void run(boolean watchdog)
+        {
             if(mProcessing.compareAndSet(false, true))
             {
                 try
                 {
-                    processAudioSegments();
+                    int preNewQueue = mNewAudioSegmentQueue.size();
+                    int preLifecycleQueue = mLifecycleChangedSegments.size();
+                    int prePending = mPendingAudioSegments.size();
+                    int preReady = mAudioSegments.size();
+
+                    WatchdogRescueSummary summary = processAudioSegments(watchdog);
+
+                    if(watchdog && summary.rescuedWork() &&
+                        (System.currentTimeMillis() - mCreatedTimestamp) >= WATCHDOG_STARTUP_GRACE_PERIOD_MS)
+                    {
+                        mLog.warn("Playback watchdog rescued work types:{} pre[new:{} lifecycle:{} pending:{} ready:{}] post[new:{} lifecycle:{} pending:{} ready:{}] channels:{}",
+                            summary.rescuedTypes(), preNewQueue, preLifecycleQueue, prePending, preReady,
+                            mNewAudioSegmentQueue.size(), mLifecycleChangedSegments.size(), mPendingAudioSegments.size(),
+                            mAudioSegments.size(), formatChannels(getAudioChannels()));
+                    }
                 }
                 catch(Exception e)
                 {
                     mLog.error("Encountered error while processing audio segments", e);
                 }
-
-                mProcessing.set(false);
+                finally
+                {
+                    mProcessing.set(false);
+                }
             }
         }
     }

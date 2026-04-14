@@ -69,6 +69,7 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     public enum AudioSegmentLifecycleEventType
     {
         SEGMENT_OPENED,
+        AUDIO_AVAILABLE,
         BURST_STARTED,
         BURST_ENDED,
         SEGMENT_COMPLETED
@@ -606,9 +607,15 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
             mStartTimestamp = System.currentTimeMillis() - 20;
         }
 
+        boolean firstAudioBuffer = mAudioBuffers.isEmpty();
         mAudioBuffers.add(audioBuffer);
         mSampleCount += audioBuffer.length;
         mLastActivityTimestamp = System.currentTimeMillis();
+
+        if(firstAudioBuffer)
+        {
+            broadcastLifecycleEvent(AudioSegmentLifecycleEventType.AUDIO_AVAILABLE);
+        }
     }
 
     private String formatIdentity()
