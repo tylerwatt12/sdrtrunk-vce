@@ -46,6 +46,7 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -229,20 +230,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     {
         if(hasAudioCodec())
         {
-            AudioSegment currentAudioSegment = getAudioSegment();
-            String currentSegmentId = formatSegment(currentAudioSegment);
-
-            if(mLastAudioTimestamp != Long.MIN_VALUE && currentSegmentId.equals(mLastAudioSegmentId))
-            {
-                long gap = timestamp - mLastAudioTimestamp;
-
-                if(gap >= LONG_AUDIO_GAP_LOG_THRESHOLD_MS)
-                {
-                    mLog.warn("TS{} audio resumed after long gap segment:{} gapMs:{} buffers:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
-                        getTimeslot(), currentSegmentId, gap, currentAudioSegment.getAudioBufferCount(),
-                        mEncryptedCallStateEstablished, mEncryptedCall, mQueuedAudioTimeslots.size());
-                }
-            }
+            boolean audioCommitted = false;
 
             for(BinaryMessage voiceFrame: voiceFrames)
             {
@@ -251,8 +239,42 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 try
                 {
                     IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(voiceFrameBytes);
-                    addAudio(audioWithMetadata.getAudio());
-                    processMetadata(audioWithMetadata, timestamp);
+                    // Route audio through the tone processor so it can hold artifact frames during
+                    // the holdoff window and discard them if the tone never reaches threshold.
+                    // Returns a list of committed buffers — empty while in holdoff or if artifact
+                    // was discarded; may contain previously held frames when threshold is first crossed.
+                    List<float[]> committed = mToneMetadataProcessor.processAudio(audioWithMetadata, timestamp);
+
+                    if(!committed.isEmpty())
+                    {
+                        // Defer segment creation until we have audio that will actually be committed,
+                        // so suppressed artifact bursts do not create empty segments.
+                        if(!audioCommitted)
+                        {
+                            AudioSegment currentAudioSegment = getAudioSegment();
+                            String currentSegmentId = formatSegment(currentAudioSegment);
+
+                            if(mLastAudioTimestamp != Long.MIN_VALUE && currentSegmentId.equals(mLastAudioSegmentId))
+                            {
+                                long gap = timestamp - mLastAudioTimestamp;
+
+                                if(gap >= LONG_AUDIO_GAP_LOG_THRESHOLD_MS)
+                                {
+                                    mLog.warn("TS{} audio resumed after long gap segment:{} gapMs:{} buffers:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
+                                        getTimeslot(), currentSegmentId, gap, currentAudioSegment.getAudioBufferCount(),
+                                        mEncryptedCallStateEstablished, mEncryptedCall, mQueuedAudioTimeslots.size());
+                                }
+                            }
+
+                            mLastAudioSegmentId = currentSegmentId;
+                            audioCommitted = true;
+                        }
+
+                        for(float[] audio : committed)
+                        {
+                            addAudio(audio);
+                        }
+                    }
                 }
                 catch(Exception e)
                 {
@@ -260,36 +282,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 }
             }
 
-            mLastAudioTimestamp = timestamp;
-            mLastAudioSegmentId = currentSegmentId;
-        }
-    }
-
-    /**
-     * Processes optional metadata that can be included with decoded audio (ie dtmf, tones, knox, etc.) so that the
-     * tone metadata can be converted into a FROM identifier and included with any call segment.
-     */
-    private void processMetadata(IAudioWithMetadata audioWithMetadata, long timestamp)
-    {
-        if(audioWithMetadata.hasMetadata())
-        {
-            //JMBE only places 1 entry in the map, but for consistency we'll process the map entry set
-            for(Map.Entry<String,String> entry: audioWithMetadata.getMetadata().entrySet())
+            // Only advance the timestamp when audio was actually committed this timeslot.
+            if(audioCommitted)
             {
-                //Each metadata map entry contains a tone-type (key) and tone (value)
-                ToneIdentifier toneIdentifier = mToneMetadataProcessor.process(entry.getKey(), entry.getValue());
-
-                if(toneIdentifier != null)
-                {
-                    broadcast(toneIdentifier, timestamp);
-                }
+                mLastAudioTimestamp = timestamp;
             }
         }
-        else
-        {
-            mToneMetadataProcessor.closeMetadata();
-        }
     }
+
 
     /**
      * Broadcasts the identifier to a registered listener and creates a new AMBE tone identifier message when tones are
@@ -363,10 +363,15 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         // Minimum consecutive frames reporting the same tone before it is treated as real.
         // AMBE frames are ~20ms each; 3 frames = ~60ms holdoff. Real tones are sustained for
         // hundreds of milliseconds; single-frame artifacts from voice misclassification are suppressed.
+        // Audio frames are held during the holdoff window and discarded if the tone never qualifies,
+        // so the audible artifact is suppressed, not just the metadata identifier.
         private static final int MINIMUM_TONE_FRAME_COUNT = 3;
+
+        private static final List<float[]> EMPTY = Collections.emptyList();
 
         private List<Tone> mTones = new ArrayList<>();
         private Tone mCurrentTone;
+        private List<float[]> mHeldAudio = new ArrayList<>();
 
         /**
          * Resets or clears any accumulated call tone sequences to prepare for the next call.
@@ -375,66 +380,112 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         {
             mTones.clear();
             mCurrentTone = null;
+            mHeldAudio.clear();
         }
 
         /**
-         * Process the tone metadata
-         * @param type of tone
-         * @param value of tone
-         * @return an identifier with the accumulated tone metadata set once the minimum frame
-         *         threshold is met, or null if still in the holdoff window
+         * Processes one decoded AMBE frame: evaluates tone metadata and gates audio output.
+         *
+         * Returns the audio buffers that should be committed to the audio segment.  During the
+         * holdoff window the returned list is empty; once the threshold is crossed the previously
+         * held frames plus the current frame are all returned together.  When there is no tone
+         * metadata the single decoded frame is returned immediately.
+         *
+         * Any pending identifier broadcast is handled internally via the outer class broadcast().
+         *
+         * @param audioWithMetadata decoded AMBE frame with optional tone metadata
+         * @param timestamp of the carrier message
+         * @return list of float[] audio buffers to commit; never null, may be empty
          */
-        public ToneIdentifier process(String type, String value)
+        public List<float[]> processAudio(IAudioWithMetadata audioWithMetadata, long timestamp)
         {
-            if(type == null || value == null)
+            float[] audio = audioWithMetadata.getAudio();
+
+            if(!audioWithMetadata.hasMetadata())
             {
-                return null;
+                // No tone on this frame — flush any held audio and close any pending tone.
+                if(mCurrentTone != null && mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
+                {
+                    mLog.debug("TS{} tone artifact suppressed at close ({} frame(s)): {}",
+                        getTimeslot(), mCurrentTone.getDuration(), mCurrentTone.getAmbeTone());
+                    mHeldAudio.clear();
+                }
+                mCurrentTone = null;
+
+                if(audio != null)
+                {
+                    return List.of(audio);
+                }
+                return EMPTY;
             }
 
-            AmbeTone tone = AmbeTone.fromValues(type, value);
+            // Frame has tone metadata — process each entry (JMBE puts at most one).
+            ToneIdentifier toneIdentifier = null;
 
-            if(tone == AmbeTone.INVALID)
+            for(Map.Entry<String,String> entry : audioWithMetadata.getMetadata().entrySet())
             {
-                return null;
+                AmbeTone tone = AmbeTone.fromValues(entry.getKey(), entry.getValue());
+
+                if(tone == AmbeTone.INVALID)
+                {
+                    continue;
+                }
+
+                if(mCurrentTone == null || mCurrentTone.getAmbeTone() != tone)
+                {
+                    // New tone — discard any held audio from a previous sub-threshold tone
+                    if(mCurrentTone != null && mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
+                    {
+                        mLog.debug("TS{} tone artifact suppressed on tone change ({} frame(s)): {}",
+                            getTimeslot(), mCurrentTone.getDuration(), mCurrentTone.getAmbeTone());
+                        mHeldAudio.clear();
+                    }
+                    mCurrentTone = new Tone(tone);
+                }
+
+                mCurrentTone.incrementDuration();
+
+                if(mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
+                {
+                    // Still in holdoff — buffer audio, suppress output
+                    if(audio != null)
+                    {
+                        mHeldAudio.add(audio);
+                    }
+                    return EMPTY;
+                }
+
+                if(mCurrentTone.getDuration() == MINIMUM_TONE_FRAME_COUNT)
+                {
+                    // Threshold just crossed — commit tone to sequence
+                    mTones.add(mCurrentTone);
+                }
+
+                toneIdentifier = P25ToneIdentifier.create(new ToneSequence(new ArrayList<>(mTones)));
             }
 
-            if(mCurrentTone == null || mCurrentTone.getAmbeTone() != tone)
+            if(toneIdentifier != null)
             {
-                // Don't add to mTones yet — hold in mCurrentTone until the threshold is met
-                // so that short artifacts never enter the committed tone sequence.
-                mCurrentTone = new Tone(tone);
+                broadcast(toneIdentifier, timestamp);
             }
 
-            mCurrentTone.incrementDuration();
-
-            if(mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
+            // Threshold met — flush any held frames plus the current frame
+            if(!mHeldAudio.isEmpty())
             {
-                // Still in holdoff — not yet committed to sequence
-                return null;
+                List<float[]> toCommit = new ArrayList<>(mHeldAudio);
+                mHeldAudio.clear();
+                if(audio != null)
+                {
+                    toCommit.add(audio);
+                }
+                return toCommit;
             }
 
-            if(mCurrentTone.getDuration() == MINIMUM_TONE_FRAME_COUNT)
+            if(audio != null)
             {
-                // Threshold just crossed — commit to sequence now
-                mTones.add(mCurrentTone);
+                return List.of(audio);
             }
-
-            return P25ToneIdentifier.create(new ToneSequence(new ArrayList<>(mTones)));
-        }
-
-        /**
-         * Closes current tone metadata when there is no metadata for the current audio frame.
-         * Logs if the pending tone never met the minimum frame threshold (artifact suppressed).
-         * The pending tone is discarded without entering mTones.
-         */
-        public void closeMetadata()
-        {
-            if(mCurrentTone != null && mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
-            {
-                mLog.debug("TS{} tone artifact suppressed at close ({} frame(s)): {}",
-                    getTimeslot(), mCurrentTone.getDuration(), mCurrentTone.getAmbeTone());
-            }
-            mCurrentTone = null;
+            return EMPTY;
         }
     }
 
