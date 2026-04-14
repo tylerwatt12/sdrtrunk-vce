@@ -37,7 +37,6 @@ public class RealResampler
     private Listener<float[]> mResampledListener;
     private BufferManager mBufferManager;
     private double mResampleFactor;
-    private boolean mLastBatch;
 
     /**
      * Constructs an instance.
@@ -105,10 +104,13 @@ public class RealResampler
      */
     public void resample(float[] samples, boolean lastBatch)
     {
-        // store state of lastBatch for buffer flushing in consumeOutput below
-        mLastBatch = lastBatch;
         mBufferManager.load(samples);
         mResampler.process(mResampleFactor, mBufferManager, lastBatch);
+
+        if(lastBatch)
+        {
+            mBufferManager.flushPartialOutput();
+        }
     }
 
     /**
@@ -189,36 +191,46 @@ public class RealResampler
         public void consumeOutput(float[] samples, int offset, int length)
         {
             mOutputBuffer.put(samples, offset, length);
+            dispatchFullOutputBuffers();
+        }
 
+        /**
+         * Dispatches any complete resampled output buffers.
+         */
+        private void dispatchFullOutputBuffers()
+        {
             while(mOutputBuffer.position() > mOutputArrayLength)
             {
-                float[] resampled = new float[mOutputArrayLength];
-
-                mOutputBuffer.flip();
-                mOutputBuffer.get(resampled);
-                mOutputBuffer.compact();
-
-                if(mResampledListener != null)
-                {
-                    mResampledListener.receive(resampled);
-                }
+                dispatchOutputBuffer(mOutputArrayLength);
             }
-            
-            // if this is the last batch of audio being processed by the resampler and there are still
-            //  samples remaining in the buffer, pad the block with zeros to make
-            //  mOutputArrayLength (usually 512) samples.
-            
-            if(mLastBatch && mOutputBuffer.position() != 0)
-            {
-                float[] resampled = new float[mOutputArrayLength];
-                mOutputBuffer.flip();       // sets limit to remaining array length
-                mOutputBuffer.get(resampled, 0, mOutputBuffer.limit());     // unused are already zeroed, for padding
-                mOutputBuffer.compact();
+        }
 
-                if (mResampledListener != null)
-                {
-                    mResampledListener.receive(resampled);
-                }
+        /**
+         * Flushes any remaining partial output by zero-padding to a full output buffer length.
+         */
+        public void flushPartialOutput()
+        {
+            if(mOutputBuffer.position() > 0)
+            {
+                dispatchOutputBuffer(mOutputBuffer.position());
+            }
+        }
+
+        /**
+         * Dispatches the requested number of queued output samples, zero-padding the remainder of the fixed-size
+         * output block when fewer than {@code mOutputArrayLength} samples are available.
+         */
+        private void dispatchOutputBuffer(int sampleCount)
+        {
+            float[] resampled = new float[mOutputArrayLength];
+
+            mOutputBuffer.flip();
+            mOutputBuffer.get(resampled, 0, sampleCount);
+            mOutputBuffer.compact();
+
+            if(mResampledListener != null)
+            {
+                mResampledListener.receive(resampled);
             }
         }
     }
