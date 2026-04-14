@@ -77,6 +77,7 @@ in plain sight.
 and `&&` versus `||` logic errors in fragment plausibility/fallback handling.
 - The Phase 2 superframe detector was also too optimistic about some sync candidates. It now rejects clearly implausible
 fragment acquisitions earlier instead of committing sync first and letting bad fragments propagate downstream.
+- Phase 2 traffic-channel state handling was also too eager to downgrade on informational MAC PDUs. `MAC_3_IDLE` and `MAC_6_HANGTIME` do not mean a live call has ended, but several handlers were treating them that way and forcing `CALL -> ACTIVE -> SQUELCH` transitions. Those paths now hold the call state instead of tearing audio state down between PTT bursts.
 - Phase 2 traffic channels now receive scramble parameters from Phase 1 control-channel state as early as they can,
 reducing the startup window where traffic-channel payloads are present before the descrambler has enough context.
 - Phase 2 audio tone metadata now suppresses short AMBE tone artifacts before they enter the emitted tone sequence. Brief one- or two-frame misclassifications were showing up as spurious tones; those are now held out of the committed sequence unless they persist long enough to look real.
