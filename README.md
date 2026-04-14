@@ -54,6 +54,9 @@ problem this addresses is that center frequency selection was not good, resultin
 being in the marginal upper portion of the passband, and about 1MHz of the unusuable lower portion of the passband being
 in play. In practice, that meant a 5MHz sample rate could look insufficient, and losing lock was not unusual, when the real
 issue was poor center-frequency selection.
+- Note, this could be simply a me problem, due to my primary focus being getting the SDRconnect tuner type up and
+running; could be I could be just doing a better job there in terms of unusable rolloff zones, etc., but the min and
+max has additional value in terms of sanity checking P25 channel frequency messages.
 - When a frequency envelope is present, sdrtrunk uses that full span to pre-position idle polyphase tuners, to guide
 subsequent control-channel reacquisition, and to keep later traffic-channel allocations on the same tuner from
 recentering around only the currently active voice channels. The envelope defines the preferred center by itself; the
@@ -64,7 +67,7 @@ path populates them automatically from the full imported site frequency list.
 - This does not change the actual rotating control-channel list. The `Control (MHz)` entries are still the frequencies
 used for control-channel acquisition and rotation; the envelope is only a tuner-centering hint.
 - More generally, the polyphase center-frequency allocator now prefers midpoint-aligned valid centers instead of the
-first low-edge fit. That produces more sensible passband placement for ordinary multi-channel uses too, such asclustered
+first low-edge fit. That produces more sensible passband placement for ordinary multi-channel uses too, such as clustered
 NBFM channels on a 500kHz tuner span.
 - The main window now persists its position and split-pane state across restarts, so the working layout comes back as
 you left it.
