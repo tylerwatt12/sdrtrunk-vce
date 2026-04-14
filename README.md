@@ -80,6 +80,8 @@ fragment acquisitions earlier instead of committing sync first and letting bad f
 - Phase 2 traffic channels now receive scramble parameters from Phase 1 control-channel state as early as they can,
 reducing the startup window where traffic-channel payloads are present before the descrambler has enough context.
 - Phase 2 audio tone metadata now suppresses short AMBE tone artifacts before they enter the emitted tone sequence. Brief one- or two-frame misclassifications were showing up as spurious tones; those are now held out of the committed sequence unless they persist long enough to look real.
+- The local playback path had a real live-audio drop bug: `AudioChannel` could dispose an incomplete segment after a short no-audio interval even though the decoder was still appending more audio to that same segment. The stall disposal rule now only applies to completed segments, so brief production gaps no longer kill active playback.
+- The stereo playback scheduler also had an availability bug: a channel could still be treated as available if it was actively playing but its follow-on queue happened to be empty. `AudioChannel.isEmpty()` has been corrected and renamed to `isIdle()`, so playback assignment now only targets channels that are truly idle.
 - For Phase 1 trellis-coded control and packet-data paths, unquantized symbol-phase Viterbi decoding is now used
 instead of hard slicing. That change now covers TSBKs, PDU headers, and PDU data blocks. Semantic validation guards
 were added to reject CRC-valid decodes that are still nonsensical in system context, and symbol buffer readiness gates
