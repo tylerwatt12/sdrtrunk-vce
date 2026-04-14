@@ -45,6 +45,8 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      * sample rate.
      */
     public static final int SAMPLES_PER_INTERVAL = 160;
+    private static final int COMPLETED_SEGMENT_STALL_INTERVAL_LIMIT = 6;
+    private static final int INCOMPLETE_SEGMENT_STALL_INTERVAL_LIMIT = 50;
     private final AudioBuffer mAudioBuffer = new AudioBuffer();
     private final Broadcaster<AudioEvent> mAudioEventBroadcaster = new Broadcaster<>();
     private final LinkedTransferQueue<AudioSegment> mAudioSegmentQueue = new LinkedTransferQueue<>();
@@ -222,14 +224,24 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             mNoAudioFromSegmentIntervalCount = 0;
         }
 
-        //Dispose completed/fully-played audio segments.  For incomplete/live segments, tolerate production gaps
-        // because the decoder can append additional audio buffers after a brief lull between bursts.
-        if(mCurrentAudioSegment != null && mCurrentAudioSegment.isComplete() &&
-            ((mNoAudioFromSegmentIntervalCount >= 6) ||
-             (mCurrentBufferIndex >= mCurrentAudioSegment.getAudioBufferCount())))
+        // Completed segments can be retired quickly once playback is done. Incomplete segments get a much longer
+        // stale timeout so brief decoder gaps do not kill active audio, while channels that never receive a close
+        // still eventually recover.
+        if(mCurrentAudioSegment != null)
         {
-            disposeCurrentAudioSegment();
-            mNoAudioFromSegmentIntervalCount = 0;
+            if(mCurrentAudioSegment.isComplete() &&
+                ((mNoAudioFromSegmentIntervalCount >= COMPLETED_SEGMENT_STALL_INTERVAL_LIMIT) ||
+                 (mCurrentBufferIndex >= mCurrentAudioSegment.getAudioBufferCount())))
+            {
+                disposeCurrentAudioSegment();
+                mNoAudioFromSegmentIntervalCount = 0;
+            }
+            else if(!mCurrentAudioSegment.isComplete() &&
+                mNoAudioFromSegmentIntervalCount >= INCOMPLETE_SEGMENT_STALL_INTERVAL_LIMIT)
+            {
+                disposeCurrentAudioSegment();
+                mNoAudioFromSegmentIntervalCount = 0;
+            }
         }
 
         float[] audio = null;
