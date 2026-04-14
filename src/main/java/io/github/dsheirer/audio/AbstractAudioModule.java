@@ -86,7 +86,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
         {
             if(mAudioSegment != null)
             {
-                mAudioSegment.completeProperty().set(true);
+                mAudioSegment.complete();
                 mIdentifierUpdateNotificationBroadcaster.removeListener(mAudioSegment);
                 mAudioSegment.decrementConsumerCount();
                 mAudioSegment = null;

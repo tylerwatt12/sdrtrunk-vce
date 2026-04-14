@@ -38,14 +38,14 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Audio segment containing all related metadata and a dynamic collection of audio packets.  An audio segment can be
@@ -66,6 +66,23 @@ import javafx.collections.ObservableSet;
  */
 public class AudioSegment implements Listener<IdentifierUpdateNotification>
 {
+    public enum AudioSegmentLifecycleEventType
+    {
+        SEGMENT_OPENED,
+        BURST_STARTED,
+        BURST_ENDED,
+        SEGMENT_COMPLETED
+    }
+
+    public record AudioSegmentLifecycleEvent(AudioSegment audioSegment, AudioSegmentLifecycleEventType eventType)
+    {
+    }
+
+    public interface AudioSegmentLifecycleListener
+    {
+        void receive(AudioSegmentLifecycleEvent event);
+    }
+
     private static final Logger mLog = LoggerFactory.getLogger(AudioSegment.class);
     private BooleanProperty mComplete = new SimpleBooleanProperty(false);
     private BooleanProperty mDuplicate = new SimpleBooleanProperty(false);
@@ -75,6 +92,7 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     private ObservableSet<BroadcastChannel> mBroadcastChannels = FXCollections.observableSet(new HashSet<>());
     private MutableIdentifierCollection mIdentifierCollection = new MutableIdentifierCollection();
     private Broadcaster<IdentifierUpdateNotification> mIdentifierUpdateNotificationBroadcaster = new Broadcaster<>();
+    private List<AudioSegmentLifecycleListener> mLifecycleListeners = new CopyOnWriteArrayList<>();
     private List<float[]> mAudioBuffers = new CopyOnWriteArrayList<>();
     private AtomicInteger mConsumerCount = new AtomicInteger();
     private AliasList mAliasList;
@@ -89,6 +107,7 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     private AudioSegment mLinkedAudioSegment;
     private int mTimeslot;
     private int mBurstCount = 0;
+    private long mBurstGeneration = 0;
 
     /**
      * Constructs an instance
@@ -157,9 +176,15 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
         if(!mDisposing)
         {
             long now = System.currentTimeMillis();
-            mStartTimestamp = now;
+
+            if(!mStartTimestampPinned)
+            {
+                mStartTimestamp = now;
+                mStartTimestampPinned = true;
+                broadcastLifecycleEvent(AudioSegmentLifecycleEventType.SEGMENT_OPENED);
+            }
+
             mLastActivityTimestamp = now;
-            mStartTimestampPinned = true;
         }
     }
 
@@ -177,6 +202,14 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     public int getBurstCount()
     {
         return mBurstCount;
+    }
+
+    /**
+     * Monotonically increasing generation for each new burst observed on this segment.
+     */
+    public long getBurstGeneration()
+    {
+        return mBurstGeneration;
     }
 
     /**
@@ -208,7 +241,9 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
             {
                 mBurstActive = true;
                 mBurstCount++;
+                mBurstGeneration++;
                 mLastBurstStartTimestamp = now;
+                broadcastLifecycleEvent(AudioSegmentLifecycleEventType.BURST_STARTED);
             }
 
             mLastActivityTimestamp = now;
@@ -226,6 +261,39 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
             mBurstActive = false;
             mLastBurstEndTimestamp = now;
             mLastActivityTimestamp = now;
+            broadcastLifecycleEvent(AudioSegmentLifecycleEventType.BURST_ENDED);
+        }
+    }
+
+    /**
+     * Adds a listener to receive lifecycle transition events for this segment.
+     */
+    public void addLifecycleListener(AudioSegmentLifecycleListener listener)
+    {
+        if(listener != null && !mLifecycleListeners.contains(listener))
+        {
+            mLifecycleListeners.add(listener);
+        }
+    }
+
+    /**
+     * Removes a lifecycle transition listener.
+     */
+    public void removeLifecycleListener(AudioSegmentLifecycleListener listener)
+    {
+        mLifecycleListeners.remove(listener);
+    }
+
+    /**
+     * Marks this segment complete and emits a lifecycle event once.
+     */
+    public void complete()
+    {
+        if(!mComplete.get())
+        {
+            endBurst();
+            mComplete.set(true);
+            broadcastLifecycleEvent(AudioSegmentLifecycleEventType.SEGMENT_COMPLETED);
         }
     }
 
@@ -465,6 +533,7 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
         mAudioBuffers.clear();
         mIdentifierCollection.clear();
         mIdentifierUpdateNotificationBroadcaster.clear();
+        mLifecycleListeners.clear();
         mLinkedAudioSegment = null;
     }
 
@@ -545,6 +614,16 @@ public class AudioSegment implements Listener<IdentifierUpdateNotification>
     private String formatIdentity()
     {
         return mTimeslot + ":" + mStartTimestamp + ":" + System.identityHashCode(this);
+    }
+
+    private void broadcastLifecycleEvent(AudioSegmentLifecycleEventType eventType)
+    {
+        AudioSegmentLifecycleEvent event = new AudioSegmentLifecycleEvent(this, eventType);
+
+        for(AudioSegmentLifecycleListener listener : mLifecycleListeners)
+        {
+            listener.receive(event);
+        }
     }
 
     /**
