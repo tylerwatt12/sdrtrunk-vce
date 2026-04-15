@@ -147,12 +147,6 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     @Override
     public void stateChanged(State state, int timeslot)
     {
-        if(isP25P1Channel())
-        {
-            mLog.debug("SingleChannelState state changed decoder:{} state:{} timeslot:{}",
-                getChannel().getDecodeConfiguration().getDecoderType(), state, timeslot);
-        }
-
         ChannelStateIdentifier stateIdentifier = ChannelStateIdentifier.get(state);
         mIdentifierCollection.update(stateIdentifier);
         mChannelMetadata.receive(new IdentifierUpdateNotification(stateIdentifier, IdentifierUpdateNotification.Operation.ADD, timeslot));
@@ -441,13 +435,6 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         {
             if(event.getSource() != this)
             {
-                if(isP25P1Channel())
-                {
-                    mLog.debug("SingleChannelState received decoder event decoder:{} event:{} state:{} timeslot:{} frequency:{}",
-                        getChannel().getDecodeConfiguration().getDecoderType(), event.getEvent(), event.getState(),
-                        event.getTimeslot(), event.getFrequency());
-                }
-
                 switch(event.getEvent())
                 {
                     case REQUEST_ALWAYS_UNSQUELCH:
