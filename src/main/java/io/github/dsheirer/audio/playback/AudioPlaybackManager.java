@@ -27,6 +27,8 @@ import io.github.dsheirer.audio.AudioSegment.AudioSegmentLifecycleEvent;
 import io.github.dsheirer.audio.IAudioController;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.playback.PlayTestAudioRequest;
@@ -337,7 +339,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         private final AtomicBoolean mProcessing = new AtomicBoolean();
 
         private record WatchdogRescueSummary(boolean drainedNewQueue, boolean promotedPendingSegment,
-                                             boolean assignedReadySegment)
+                                             boolean assignedReadySegment, String rescuedSegments)
         {
             boolean rescuedWork()
             {
@@ -385,6 +387,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             boolean drainedNewQueue = false;
             boolean promotedPendingSegment = false;
             boolean assignedReadySegment = false;
+            Set<AudioSegment> rescuedSegments = watchdog ? new HashSet<>() : Collections.emptySet();
 
             //Process new audio segments queue.  If segment has audio, queue it for replay, otherwise place in pending queue
             AudioSegment newSegment = mNewAudioSegmentQueue.poll();
@@ -402,6 +405,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     if(watchdog)
                     {
                         drainedNewQueue = true;
+                        rescuedSegments.add(newSegment);
                     }
                 }
                 else
@@ -442,6 +446,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                         if(watchdog)
                         {
                             promotedPendingSegment = true;
+                            rescuedSegments.add(audioSegment);
                         }
                     }
                     else if(audioSegment.completeProperty().get())
@@ -507,15 +512,17 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                         {
                             if(audioChannel.isIdle())
                             {
-                                transferToAudioChannel(mAudioSegments.removeFirst(), audioChannel);
+                                AudioSegment assignedSegment = mAudioSegments.removeFirst();
+                                transferToAudioChannel(assignedSegment, audioChannel);
                                 if(watchdog)
                                 {
                                     assignedReadySegment = true;
+                                    rescuedSegments.add(assignedSegment);
                                 }
                                 if(mAudioSegments.isEmpty())
                                 {
                                     return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment,
-                                        assignedReadySegment);
+                                        assignedReadySegment, formatSegments(rescuedSegments));
                                 }
                             }
                         }
@@ -542,7 +549,8 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
 
-            return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment, assignedReadySegment);
+            return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment, assignedReadySegment,
+                formatSegments(rescuedSegments));
         }
 
         private boolean processChangedPendingSegments()
@@ -623,8 +631,9 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     if(watchdog && summary.rescuedWork() &&
                         (System.currentTimeMillis() - mCreatedTimestamp) >= WATCHDOG_STARTUP_GRACE_PERIOD_MS)
                     {
-                        mLog.warn("Playback watchdog rescued work types:{} pre[new:{} lifecycle:{} pending:{} ready:{}] post[new:{} lifecycle:{} pending:{} ready:{}] channels:{}",
-                            summary.rescuedTypes(), preNewQueue, preLifecycleQueue, prePending, preReady,
+                        mLog.warn("Playback watchdog rescued work types:{} segments:{} pre[new:{} lifecycle:{} pending:{} ready:{}] post[new:{} lifecycle:{} pending:{} ready:{}] channels:{}",
+                            summary.rescuedTypes(), summary.rescuedSegments(),
+                            preNewQueue, preLifecycleQueue, prePending, preReady,
                             mNewAudioSegmentQueue.size(), mLifecycleChangedSegments.size(), mPendingAudioSegments.size(),
                             mAudioSegments.size(), formatChannels(getAudioChannels()));
                     }
@@ -639,6 +648,62 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
         }
+    }
+
+    private String formatSegments(Set<AudioSegment> audioSegments)
+    {
+        if(audioSegments == null || audioSegments.isEmpty())
+        {
+            return "";
+        }
+
+        List<String> formatted = new ArrayList<>();
+
+        for(AudioSegment audioSegment : audioSegments)
+        {
+            if(audioSegment != null)
+            {
+                formatted.add(formatSegmentSummary(audioSegment));
+            }
+        }
+
+        Collections.sort(formatted);
+        return String.join(",", formatted);
+    }
+
+    private String formatSegmentSummary(AudioSegment audioSegment)
+    {
+        if(audioSegment == null)
+        {
+            return "null";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(formatSegment(audioSegment));
+        sb.append("[decoder=").append(getDecoderType(audioSegment));
+        sb.append(",buffers=").append(audioSegment.getAudioBufferCount());
+        sb.append(",complete=").append(audioSegment.isComplete());
+        sb.append(",encrypted=").append(audioSegment.isEncrypted());
+        sb.append("]");
+        return sb.toString();
+    }
+
+    private String getDecoderType(AudioSegment audioSegment)
+    {
+        if(audioSegment == null || audioSegment.getIdentifierCollection() == null)
+        {
+            return "unknown";
+        }
+
+        List<Identifier> decoderTypeIdentifiers = audioSegment.getIdentifierCollection().getIdentifiers(Form.DECODER_TYPE);
+
+        if(!decoderTypeIdentifiers.isEmpty())
+        {
+            Identifier identifier = decoderTypeIdentifiers.getFirst();
+            return identifier != null ? identifier.toString() : "unknown";
+        }
+
+        return "unknown";
     }
 
     private String formatSegment(AudioSegment audioSegment)
