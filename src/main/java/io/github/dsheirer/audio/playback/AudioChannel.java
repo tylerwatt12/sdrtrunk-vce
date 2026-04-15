@@ -215,7 +215,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
 
         while(!mAudioBuffer.isFull() && mCurrentPlaybackBurst != null && mCurrentPlaybackBurst.hasPendingBuffers())
         {
-            if(mCurrentPlaybackBurst.isStartOfBurst())
+            if(mCurrentPlaybackBurst.isStartOfBurst() || mCurrentPlaybackBurst.consumePendingBurstStartNotification())
             {
                 mAudioBuffer.add(mAudioSegmentStartTone);
                 mAudioBuffer.add(mCurrentPlaybackBurst.nextBuffer());
@@ -525,15 +525,8 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             return;
         }
 
-        boolean newBurstAfterPlayback = mCurrentPlaybackBurst.advanceToCurrentBurst();
+        mCurrentPlaybackBurst.advanceToCurrentBurst();
         mNoAudioFromSegmentIntervalCount = 0;
-
-        if(newBurstAfterPlayback)
-        {
-            mAudioBuffer.add(mAudioSegmentStartTone);
-            broadcast(getCurrentAudioSegment().getIdentifierCollection());
-            mMetadataSent = true;
-        }
     }
 
     private String formatSegment(AudioSegment audioSegment)

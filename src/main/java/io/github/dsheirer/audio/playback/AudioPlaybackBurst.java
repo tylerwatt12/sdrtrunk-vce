@@ -31,6 +31,7 @@ public class AudioPlaybackBurst
     private long mBurstGeneration;
     private int mCurrentBufferIndex = -1;
     private boolean mAudioDelivered;
+    private boolean mPendingBurstStartNotification;
 
     public AudioPlaybackBurst(AudioSegment audioSegment)
     {
@@ -72,6 +73,7 @@ public class AudioPlaybackBurst
 
         boolean newBurstAfterPlayback = mAudioDelivered;
         mBurstGeneration = mAudioSegment.getBurstGeneration();
+        mPendingBurstStartNotification = true;
 
         if(mAudioSegment.getAudioBufferCount() > mCurrentBufferIndex)
         {
@@ -89,6 +91,21 @@ public class AudioPlaybackBurst
     public boolean isStartOfBurst()
     {
         return mCurrentBufferIndex < 0;
+    }
+
+    /**
+     * Indicates that a new burst began on an already-loaded segment and the next delivered audio buffer should be
+     * treated as the audible start of that burst.
+     */
+    public boolean consumePendingBurstStartNotification()
+    {
+        if(mPendingBurstStartNotification)
+        {
+            mPendingBurstStartNotification = false;
+            return true;
+        }
+
+        return false;
     }
 
     public float[] nextBuffer()
