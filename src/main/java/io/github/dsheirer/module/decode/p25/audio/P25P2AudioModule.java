@@ -62,8 +62,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private ToneMetadataProcessor mToneMetadataProcessor = new ToneMetadataProcessor();
     private Queue<AbstractVoiceTimeslot> mQueuedAudioTimeslots = new ArrayDeque<>();
-    private boolean mEncryptedCallStateEstablished = false;
-    private boolean mEncryptedCall = false;
+    private P25AudioEncryptionState mEncryptionState = P25AudioEncryptionState.UNKNOWN;
     private Listener<IMessage> mMessageListener;
     public P25P2AudioModule(UserPreferences userPreferences, int timeslot, AliasList aliasList)
     {
@@ -89,7 +88,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         {
             mLog.warn("TS{} reset with open audio segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
                 getTimeslot(), formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                currentAudioSegment.isComplete(), mEncryptedCallStateEstablished, mEncryptedCall,
+                currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
                 mQueuedAudioTimeslots.size());
         }
 
@@ -100,8 +99,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         mQueuedAudioTimeslots.clear();
 
         //Reset encrypted call handling flags
-        mEncryptedCallStateEstablished = false;
-        mEncryptedCall = false;
+        mEncryptionState = P25AudioEncryptionState.UNKNOWN;
     }
 
     @Override
@@ -137,9 +135,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
             if(message instanceof AbstractVoiceTimeslot abstractVoiceTimeslot)
             {
-                if(mEncryptedCallStateEstablished)
+                if(mEncryptionState.isEstablished())
                 {
-                    if(!mEncryptedCall)
+                    if(mEncryptionState.isClear())
                     {
                         processAudio(abstractVoiceTimeslot.getVoiceFrames(), message.getTimestamp());
                     }
@@ -156,10 +154,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                 if(macStructure instanceof PushToTalk pushToTalk)
                 {
-                    mEncryptedCallStateEstablished = true;
-                    mEncryptedCall = pushToTalk.isEncrypted();
+                    mEncryptionState = P25AudioEncryptionState.fromEncrypted(pushToTalk.isEncrypted());
 
-                    if(!mEncryptedCall)
+                    if(mEncryptionState.isClear())
                     {
                         beginCurrentAudioSegment();
                         beginCurrentAudioBurst();
@@ -177,10 +174,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             }
             else if(message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence && message.isValid())
             {
-                mEncryptedCallStateEstablished = true;
-                mEncryptedCall = encryptionSynchronizationSequence.isEncrypted();
+                mEncryptionState = P25AudioEncryptionState.fromEncrypted(encryptionSynchronizationSequence.isEncrypted());
 
-                if(!mEncryptedCall)
+                if(mEncryptionState.isClear())
                 {
                     beginCurrentAudioSegment();
                     beginCurrentAudioBurst();
