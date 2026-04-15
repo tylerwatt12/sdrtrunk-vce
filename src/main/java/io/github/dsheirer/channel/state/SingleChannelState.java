@@ -48,6 +48,8 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.Collections;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Channel state tracks the overall state of all processing modules and decoders configured for the channel and
@@ -79,6 +81,7 @@ import java.util.List;
 public class SingleChannelState extends AbstractChannelState implements IDecoderStateEventListener, ISourceEventListener,
     IdentifierUpdateListener, IStateMachineListener
 {
+    private static final Logger mLog = LoggerFactory.getLogger(SingleChannelState.class);
     public static final long FADE_TIMEOUT_DELAY = 1200;
     public static final long RESET_TIMEOUT_DELAY = 2000;
 
@@ -144,6 +147,12 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     @Override
     public void stateChanged(State state, int timeslot)
     {
+        if(isP25P1Channel())
+        {
+            mLog.debug("SingleChannelState state changed decoder:{} state:{} timeslot:{}",
+                getChannel().getDecodeConfiguration().getDecoderType(), state, timeslot);
+        }
+
         ChannelStateIdentifier stateIdentifier = ChannelStateIdentifier.get(state);
         mIdentifierCollection.update(stateIdentifier);
         mChannelMetadata.receive(new IdentifierUpdateNotification(stateIdentifier, IdentifierUpdateNotification.Operation.ADD, timeslot));
@@ -184,6 +193,21 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     @Override
     protected void checkState()
     {
+        if(isP25P1Channel())
+        {
+            State currentState = mStateMachine.getState();
+            mStateMachine.checkState();
+            State updatedState = mStateMachine.getState();
+
+            if(updatedState != currentState)
+            {
+                mLog.debug("SingleChannelState timeout transition decoder:{} from:{} to:{}",
+                    getChannel().getDecodeConfiguration().getDecoderType(), currentState, updatedState);
+            }
+
+            return;
+        }
+
         mStateMachine.checkState();
     }
 
@@ -417,6 +441,13 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         {
             if(event.getSource() != this)
             {
+                if(isP25P1Channel())
+                {
+                    mLog.debug("SingleChannelState received decoder event decoder:{} event:{} state:{} timeslot:{} frequency:{}",
+                        getChannel().getDecodeConfiguration().getDecoderType(), event.getEvent(), event.getState(),
+                        event.getTimeslot(), event.getFrequency());
+                }
+
                 switch(event.getEvent())
                 {
                     case REQUEST_ALWAYS_UNSQUELCH:
@@ -493,5 +524,11 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         {
             mIdentifierUpdateNotificationListener = null;
         }
+    }
+
+    private boolean isP25P1Channel()
+    {
+        return getChannel().getDecodeConfiguration() != null &&
+            getChannel().getDecodeConfiguration().getDecoderType() == io.github.dsheirer.module.decode.DecoderType.P25_PHASE1;
     }
 }

@@ -203,6 +203,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final P25TrafficChannelManager mTrafficChannelManager;
     private ServiceOptions mCurrentServiceOptions;
 
+    private void traceStateEvent(String reason, DecoderStateEvent.Event event, State state, long timestamp)
+    {
+        LOGGER.debug("P25P1 state event reason:{} event:{} state:{} frequency:{} timestamp:{}",
+            reason, event, state, getCurrentFrequency(), timestamp);
+    }
+
     /**
      * Constructs an APCO-25 decoder state with an optional traffic channel manager.
      * @param channel with configuration details
@@ -445,10 +451,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
         if(serviceOptions.isEncrypted())
         {
+            traceStateEvent("lc channel user encrypted", Event.CONTINUATION, State.ENCRYPTED, timestamp);
             broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ENCRYPTED));
         }
         else
         {
+            traceStateEvent("lc channel user clear", Event.CONTINUATION, State.CALL, timestamp);
             broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CALL));
         }
     }
@@ -844,10 +852,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 if(headerData.isEncryptedAudio())
                 {
+                    traceStateEvent("hdu encrypted", Event.START, State.ENCRYPTED, message.getTimestamp());
                     broadcast(new DecoderStateEvent(this, Event.START, State.ENCRYPTED));
                 }
                 else
                 {
+                    traceStateEvent("hdu clear", Event.START, State.CALL, message.getTimestamp());
                     broadcast(new DecoderStateEvent(this, Event.START, State.CALL));
                 }
             }
@@ -886,6 +896,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 {
                     mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), esp.getEncryptionKey(),
                             message.getTimestamp());
+                    traceStateEvent("ldu2 encrypted", Event.CONTINUATION, State.ENCRYPTED, message.getTimestamp());
                     broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ENCRYPTED));
                 }
                 else
@@ -893,6 +904,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     getIdentifierCollection().remove(Form.ENCRYPTION_KEY);
                     mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), null,
                             message.getTimestamp());
+                    traceStateEvent("ldu2 clear", Event.CONTINUATION, State.CALL, message.getTimestamp());
                     broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CALL));
                 }
             }
@@ -905,6 +917,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processTDU(P25P1Message message)
     {
         mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
+        traceStateEvent("tdu", Event.DECODE, State.ACTIVE, message.getTimestamp());
         broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
     }
 
