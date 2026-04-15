@@ -387,7 +387,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             boolean drainedNewQueue = false;
             boolean promotedPendingSegment = false;
             boolean assignedReadySegment = false;
-            Set<AudioSegment> rescuedSegments = watchdog ? new HashSet<>() : Collections.emptySet();
+            Set<AudioSegment> rescuedSegments = new HashSet<>();
 
             //Process new audio segments queue.  If segment has audio, queue it for replay, otherwise place in pending queue
             AudioSegment newSegment = mNewAudioSegmentQueue.poll();
@@ -405,8 +405,8 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     if(watchdog)
                     {
                         drainedNewQueue = true;
-                        rescuedSegments.add(newSegment);
                     }
+                    rescuedSegments.add(newSegment);
                 }
                 else
                 {
@@ -446,8 +446,8 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                         if(watchdog)
                         {
                             promotedPendingSegment = true;
-                            rescuedSegments.add(audioSegment);
                         }
+                        rescuedSegments.add(audioSegment);
                     }
                     else if(audioSegment.completeProperty().get())
                     {
@@ -517,8 +517,8 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                                 if(watchdog)
                                 {
                                     assignedReadySegment = true;
-                                    rescuedSegments.add(assignedSegment);
                                 }
+                                rescuedSegments.add(assignedSegment);
                                 if(mAudioSegments.isEmpty())
                                 {
                                     return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment,
