@@ -59,6 +59,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
 
     private AudioPlaybackBurst mCurrentPlaybackBurst;
     private Listener<IdentifierCollection> mIdentifierCollectionListener;
+    private Listener<AudioChannel> mIdleStateListener;
     private boolean mDropDuplicates;
     private boolean mMetadataSent = false;
     private boolean mMuted;
@@ -171,6 +172,8 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
      */
     public float @Nullable [] getAudio()
     {
+        boolean hadWork = getCurrentAudioSegment() != null || !mAudioSegmentQueue.isEmpty();
+
         if(mAudioBuffer.isFull())
         {
             float[] audio = mAudioBuffer.get();
@@ -277,6 +280,11 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             audio = new float[SAMPLES_PER_INTERVAL];
         }
 
+        if(hadWork && isIdle())
+        {
+            notifyIdleStateListener();
+        }
+
         return audio;
     }
 
@@ -352,6 +360,22 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     }
 
     /**
+     * Registers a listener to be notified when this channel transitions back to an idle state.
+     */
+    public void setIdleStateListener(Listener<AudioChannel> listener)
+    {
+        mIdleStateListener = listener;
+    }
+
+    /**
+     * Removes the idle state listener.
+     */
+    public void removeIdleStateListener()
+    {
+        mIdleStateListener = null;
+    }
+
+    /**
      * Unregisters the current audio metadata listener
      */
     public void removeAudioMetadataListener()
@@ -369,6 +393,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
         disposeCurrentAudioSegment();
         mAudioEventBroadcaster.clear();
         mIdentifierCollectionListener = null;
+        mIdleStateListener = null;
     }
 
     /**
@@ -418,6 +443,14 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     {
         mAudioSegmentStartTone = mUserPreferences.getPlaybackPreference().getStartTone();
         mAudioSegmentDropTone = mUserPreferences.getPlaybackPreference().getDropTone();
+    }
+
+    private void notifyIdleStateListener()
+    {
+        if(mIdleStateListener != null)
+        {
+            mIdleStateListener.receive(this);
+        }
     }
 
     /**

@@ -69,6 +69,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     private final UserPreferences mUserPreferences;
     private final ScheduledExecutorService mProcessingExecutorService;
     private final AudioSegmentProcessor mAudioSegmentProcessor = new AudioSegmentProcessor();
+    private final Listener<AudioChannel> mAudioChannelIdleListener = audioChannel -> triggerAudioSegmentProcessing();
     private final AtomicBoolean mProcessTriggerPending = new AtomicBoolean();
     private final long mCreatedTimestamp = System.currentTimeMillis();
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
@@ -270,6 +271,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 //Note: audio output can use an alternate device if the requested device can't be used, so we assign
                 //the descriptor that was actually used by the audio output
                 mAudioPlaybackDevice = mAudioOutput.getAudioPlaybackDeviceDescriptor();
+
+                for(AudioChannel audioChannel : mAudioOutput.getAudioProvider().getAudioChannels())
+                {
+                    audioChannel.setIdleStateListener(mAudioChannelIdleListener);
+                }
             }
             finally
             {
