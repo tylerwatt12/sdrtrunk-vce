@@ -39,12 +39,15 @@ import org.slf4j.LoggerFactory;
 public class P25P1AudioModule extends ImbeAudioModule
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P1AudioModule.class);
+    private static final long LONG_AUDIO_GAP_LOG_THRESHOLD_MS = 1000;
     private boolean mEncryptedCall = false;
     private boolean mEncryptedCallStateEstablished = false;
 
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private NonClippingGain mGain = new NonClippingGain(5.0f, 0.95f);
     private List<LDUMessage> mCachedLDUMessages = new ArrayList<>();
+    private long mLastAudioTimestamp = Long.MIN_VALUE;
+    private String mLastAudioSegmentId;
 
     public P25P1AudioModule(UserPreferences userPreferences, AliasList aliasList)
     {
@@ -121,6 +124,9 @@ public class P25P1AudioModule extends ImbeAudioModule
                     mEncryptedCallStateEstablished = true;
                     mEncryptedCall = hdu.getHeaderData().isEncryptedAudio();
 
+                    mLog.debug("P25P1 HDU established encrypted state encrypted:{} segmentOpen:{} cachedLdus:{}",
+                        mEncryptedCall, getCurrentAudioSegment() != null, mCachedLDUMessages.size());
+
                     if(!mEncryptedCall)
                     {
                         beginCurrentAudioSegment();
@@ -139,6 +145,9 @@ public class P25P1AudioModule extends ImbeAudioModule
                     {
                         mEncryptedCallStateEstablished = true;
                         mEncryptedCall = ldu2.getEncryptionSyncParameters().isEncryptedAudio();
+
+                        mLog.debug("P25P1 LDU2 established encrypted state encrypted:{} segmentOpen:{} cachedLdus:{}",
+                            mEncryptedCall, getCurrentAudioSegment() != null, mCachedLDUMessages.size());
 
                         if(!mEncryptedCall)
                         {
@@ -191,15 +200,39 @@ public class P25P1AudioModule extends ImbeAudioModule
             for(byte[] frame : ldu.getIMBEFrames())
             {
                 AudioSegment currentAudioSegment = getAudioSegment();
+                String currentSegmentId = formatSegment(currentAudioSegment);
 
                 if(!currentAudioSegment.isBurstActive())
                 {
+                    if(currentAudioSegment.getAudioBufferCount() > 0)
+                    {
+                        mLog.warn("P25P1 audio resumed on inactive burst segment:{} buffers:{} complete:{} encryptedStateEstablished:{} cachedLdus:{}",
+                            currentSegmentId, currentAudioSegment.getAudioBufferCount(), currentAudioSegment.isComplete(),
+                            mEncryptedCallStateEstablished, mCachedLDUMessages.size());
+                    }
+
                     beginCurrentAudioBurst();
+                }
+
+                long timestamp = ldu.getTimestamp();
+
+                if(mLastAudioTimestamp != Long.MIN_VALUE && currentSegmentId.equals(mLastAudioSegmentId))
+                {
+                    long gap = timestamp - mLastAudioTimestamp;
+
+                    if(gap >= LONG_AUDIO_GAP_LOG_THRESHOLD_MS)
+                    {
+                        mLog.warn("P25P1 audio resumed after long gap segment:{} gapMs:{} buffers:{} burstActive:{} encryptedStateEstablished:{} cachedLdus:{}",
+                            currentSegmentId, gap, currentAudioSegment.getAudioBufferCount(), currentAudioSegment.isBurstActive(),
+                            mEncryptedCallStateEstablished, mCachedLDUMessages.size());
+                    }
                 }
 
                 float[] audio = getAudioCodec().getAudio(frame);
                 audio = mGain.apply(audio);
                 addAudio(audio);
+                mLastAudioTimestamp = timestamp;
+                mLastAudioSegmentId = currentSegmentId;
             }
         }
         else
@@ -218,6 +251,18 @@ public class P25P1AudioModule extends ImbeAudioModule
         @Override
         public void receive(SquelchStateEvent event)
         {
+            AudioSegment currentAudioSegment = getCurrentAudioSegment();
+
+            if(currentAudioSegment != null || event.getSquelchState() == SquelchState.SQUELCH)
+            {
+                mLog.debug("P25P1 squelch event state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    event.getSquelchState(), formatSegment(currentAudioSegment),
+                    currentAudioSegment != null ? currentAudioSegment.getAudioBufferCount() : 0,
+                    currentAudioSegment != null ? currentAudioSegment.getBurstCount() : 0,
+                    currentAudioSegment != null && currentAudioSegment.isBurstActive(),
+                    mEncryptedCallStateEstablished, mEncryptedCall, mCachedLDUMessages.size());
+            }
+
             if(event.getSquelchState() == SquelchState.SQUELCH)
             {
                 closeAudioSegment("squelch");
