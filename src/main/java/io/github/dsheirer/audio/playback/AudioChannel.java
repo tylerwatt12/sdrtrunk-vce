@@ -215,7 +215,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
 
         while(!mAudioBuffer.isFull() && mCurrentPlaybackBurst != null && mCurrentPlaybackBurst.hasPendingBuffers())
         {
-            if(mCurrentPlaybackBurst.isStartOfBurst() || mCurrentPlaybackBurst.consumePendingBurstStartNotification())
+            if(mCurrentPlaybackBurst.isStartOfBurst())
             {
                 mAudioBuffer.add(mAudioSegmentStartTone);
                 mAudioBuffer.add(mCurrentPlaybackBurst.nextBuffer());

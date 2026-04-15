@@ -27,11 +27,17 @@ import io.github.dsheirer.audio.AudioSegment;
  */
 public class AudioPlaybackBurst
 {
+    private enum BurstPlaybackState
+    {
+        NOT_STARTED,
+        PENDING_START_TONE,
+        PLAYING
+    }
+
     private final AudioSegment mAudioSegment;
     private long mBurstGeneration;
     private int mCurrentBufferIndex = -1;
-    private boolean mAudioDelivered;
-    private boolean mPendingBurstStartNotification;
+    private BurstPlaybackState mPlaybackState = BurstPlaybackState.NOT_STARTED;
 
     public AudioPlaybackBurst(AudioSegment audioSegment)
     {
@@ -71,9 +77,10 @@ public class AudioPlaybackBurst
             return false;
         }
 
-        boolean newBurstAfterPlayback = mAudioDelivered;
+        boolean newBurstAfterPlayback = mPlaybackState == BurstPlaybackState.PLAYING;
         mBurstGeneration = mAudioSegment.getBurstGeneration();
-        mPendingBurstStartNotification = true;
+        mPlaybackState = newBurstAfterPlayback ? BurstPlaybackState.PENDING_START_TONE :
+            BurstPlaybackState.NOT_STARTED;
 
         if(mAudioSegment.getAudioBufferCount() > mCurrentBufferIndex)
         {
@@ -90,22 +97,16 @@ public class AudioPlaybackBurst
 
     public boolean isStartOfBurst()
     {
-        return mCurrentBufferIndex < 0;
+        return mCurrentBufferIndex < 0 || mPlaybackState == BurstPlaybackState.PENDING_START_TONE;
     }
 
     /**
      * Indicates that a new burst began on an already-loaded segment and the next delivered audio buffer should be
      * treated as the audible start of that burst.
      */
-    public boolean consumePendingBurstStartNotification()
+    public void beginBurstPlayback()
     {
-        if(mPendingBurstStartNotification)
-        {
-            mPendingBurstStartNotification = false;
-            return true;
-        }
-
-        return false;
+        mPlaybackState = BurstPlaybackState.PLAYING;
     }
 
     public float[] nextBuffer()
@@ -127,7 +128,7 @@ public class AudioPlaybackBurst
             audio = mAudioSegment.getAudioBuffer(mCurrentBufferIndex++);
         }
 
-        mAudioDelivered = true;
+        beginBurstPlayback();
         return audio;
     }
 
@@ -138,6 +139,6 @@ public class AudioPlaybackBurst
 
     public boolean isAudioDelivered()
     {
-        return mAudioDelivered;
+        return mPlaybackState == BurstPlaybackState.PLAYING;
     }
 }
