@@ -163,7 +163,7 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         if(filter == null)
         {
             FIRFilterSpecification specification = FIRFilterSpecification.lowPassBuilder()
-                .sampleRate(50000.0)
+                .sampleRate(getSampleRate())
                 .passBandCutoff(6500)
                 .passBandAmplitude(1.0)
                 .passBandRipple(0.005)
