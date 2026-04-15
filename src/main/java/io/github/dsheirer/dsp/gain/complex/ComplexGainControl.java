@@ -25,19 +25,12 @@ public class ComplexGainControl implements IComplexGainControl
 {
     public static final float OBJECTIVE_ENVELOPE = 1.0f;
     public static final float MINIMUM_ENVELOPE = 0.0001f;
+    public static final float MAXIMUM_GAIN = 20.0f;
 
     /**
-     * Dynamic gain control for incoming sample stream to amplify or attenuate
-     * all samples toward an objective unity)gain, using the maximum envelope
-     * value detected in the stream history window.
-     *
-     * Uses the specified damping factor to limit gain swings.  Damping factor
-     * is applied against the delta between current gain value and a recalculated
-     * gain value to limit how quickly the gain value will increase or decrease.
-     */
-    /**
-     * Processes the complex I & Q samples and applies gain to achieve an objective unity
-     * gain for the single sample in the buffer that has the largest envelope.
+     * Processes the complex I & Q samples and applies gain to bring the peak envelope in the buffer toward unity.
+     * Gain is computed per-buffer from the peak envelope of the current buffer only (no history or smoothing).
+     * Gain is capped at MAXIMUM_GAIN to prevent extreme amplification of near-silent buffers.
      * @param i samples
      * @param q samples
      * @param timestamp of the first sample
@@ -52,7 +45,7 @@ public class ComplexGainControl implements IComplexGainControl
             maxEnvelope = Math.max(maxEnvelope, Complex.envelope(i[x], q[x]));
         }
 
-        float gain = OBJECTIVE_ENVELOPE / maxEnvelope;
+        float gain = Math.min(OBJECTIVE_ENVELOPE / maxEnvelope, MAXIMUM_GAIN);
 
         float[] iProcessed = new float[i.length];
         float[] qProcessed = new float[q.length];

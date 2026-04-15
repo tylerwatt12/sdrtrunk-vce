@@ -35,6 +35,7 @@ public class VectorComplexGainControl implements IComplexGainControl
     private static final VectorSpecies<Float> VECTOR_SPECIES = FloatVector.SPECIES_PREFERRED;
     private static final float OBJECTIVE_ENVELOPE = 1.0f;
     private static final float MINIMUM_ENVELOPE = 0.0001f;
+    private static final float MAXIMUM_GAIN = 20.0f;
     private static final float ENVELOPE_ESTIMATE = 0.4f;
 
     @Override public ComplexSamples process(float[] i, float[] q, long timestamp)
@@ -56,7 +57,7 @@ public class VectorComplexGainControl implements IComplexGainControl
             maxEnvelope = maxEnvelope.max(qAbs.add(iAbs.mul(ENVELOPE_ESTIMATE)));
         }
 
-        float gain = OBJECTIVE_ENVELOPE / maxEnvelope.reduceLanes(VectorOperators.MAX);
+        float gain = Math.min(OBJECTIVE_ENVELOPE / maxEnvelope.reduceLanes(VectorOperators.MAX), MAXIMUM_GAIN);
 
         float[] iProcessed = new float[i.length];
         float[] qProcessed = new float[q.length];
