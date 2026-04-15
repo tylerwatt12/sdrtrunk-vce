@@ -23,6 +23,9 @@ import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.codec.mbe.ImbeAudioModule;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
+import io.github.dsheirer.channel.state.DecoderStateEvent;
+import io.github.dsheirer.channel.state.IDecoderStateEventListener;
+import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.dsp.gain.NonClippingGain;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
@@ -36,13 +39,14 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class P25P1AudioModule extends ImbeAudioModule
+public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEventListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P1AudioModule.class);
     private static final long LONG_AUDIO_GAP_LOG_THRESHOLD_MS = 1000;
     private boolean mEncryptedCall = false;
     private boolean mEncryptedCallStateEstablished = false;
 
+    private DecoderStateEventListener mDecoderStateEventListener = new DecoderStateEventListener();
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private NonClippingGain mGain = new NonClippingGain(5.0f, 0.95f);
     private List<LDUMessage> mCachedLDUMessages = new ArrayList<>();
@@ -64,6 +68,12 @@ public class P25P1AudioModule extends ImbeAudioModule
     public Listener<SquelchStateEvent> getSquelchStateListener()
     {
         return mSquelchStateListener;
+    }
+
+    @Override
+    public Listener<DecoderStateEvent> getDecoderStateListener()
+    {
+        return mDecoderStateEventListener;
     }
 
     @Override
@@ -298,5 +308,45 @@ public class P25P1AudioModule extends ImbeAudioModule
 
         return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
             System.identityHashCode(audioSegment);
+    }
+
+    private boolean isCallActiveState(State state)
+    {
+        return state == State.CALL || state == State.ENCRYPTED;
+    }
+
+    private void closeAudioSegmentForDecoderState(String reason, State state)
+    {
+        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+
+        if(currentAudioSegment != null)
+        {
+            mLog.warn("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                reason, state, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive(),
+                mEncryptedCallStateEstablished, mEncryptedCall, mCachedLDUMessages.size());
+        }
+
+        closeAudioSegment(reason);
+        mEncryptedCallStateEstablished = false;
+        mEncryptedCall = false;
+        mCachedLDUMessages.clear();
+    }
+
+    public class DecoderStateEventListener implements Listener<DecoderStateEvent>
+    {
+        @Override
+        public void receive(DecoderStateEvent event)
+        {
+            if(event.getEvent() == DecoderStateEvent.Event.REQUEST_RESET)
+            {
+                closeAudioSegmentForDecoderState("decoder reset", State.RESET);
+            }
+            else if(event.getEvent() == DecoderStateEvent.Event.NOTIFICATION_CHANNEL_STATE &&
+                !isCallActiveState(event.getState()))
+            {
+                closeAudioSegmentForDecoderState("channel state", event.getState());
+            }
+        }
     }
 }
