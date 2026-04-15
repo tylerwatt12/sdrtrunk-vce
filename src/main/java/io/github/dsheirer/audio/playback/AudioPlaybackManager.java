@@ -383,6 +383,10 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             }
         }
 
+        private record PendingChangeSummary(boolean changedWorkProcessed, Set<AudioSegment> rescuedSegments)
+        {
+        }
+
         /**
          * Processes new audio segments and automatically assigns them to audio outputs.
          *
@@ -422,9 +426,15 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 newSegment = mNewAudioSegmentQueue.poll();
             }
 
-            if(processChangedPendingSegments() && watchdog)
+            PendingChangeSummary pendingChangeSummary = processChangedPendingSegments();
+
+            if(pendingChangeSummary.changedWorkProcessed())
             {
-                promotedPendingSegment = true;
+                if(watchdog)
+                {
+                    promotedPendingSegment = true;
+                    rescuedSegments.addAll(pendingChangeSummary.rescuedSegments());
+                }
             }
 
             //Transfer pending audio segments that now have audio or that completed without ever having audio
@@ -559,11 +569,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 formatSegments(rescuedSegments));
         }
 
-        private boolean processChangedPendingSegments()
+        private PendingChangeSummary processChangedPendingSegments()
         {
             if(mLifecycleChangedSegments.isEmpty() || mPendingAudioSegments.isEmpty())
             {
-                return false;
+                return new PendingChangeSummary(false, Collections.emptySet());
             }
 
             Set<AudioSegment> changedSegments = new HashSet<>();
@@ -577,11 +587,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
 
             if(changedSegments.isEmpty())
             {
-                return false;
+                return new PendingChangeSummary(false, Collections.emptySet());
             }
 
             Iterator<AudioSegment> it = mPendingAudioSegments.iterator();
             boolean changedWorkProcessed = false;
+            Set<AudioSegment> rescuedSegments = new HashSet<>();
 
             while(it.hasNext())
             {
@@ -603,6 +614,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     it.remove();
                     mAudioSegments.add(audioSegment);
                     changedWorkProcessed = true;
+                    rescuedSegments.add(audioSegment);
                 }
                 else if(audioSegment.completeProperty().get())
                 {
@@ -612,7 +624,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
 
-            return changedWorkProcessed;
+            return new PendingChangeSummary(changedWorkProcessed, rescuedSegments);
         }
 
         @Override
