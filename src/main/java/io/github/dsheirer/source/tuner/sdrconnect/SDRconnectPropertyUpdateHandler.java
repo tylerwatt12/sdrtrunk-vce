@@ -26,11 +26,17 @@ import org.slf4j.Logger;
  */
 class SDRconnectPropertyUpdateHandler
 {
+    private enum StartedState
+    {
+        UNKNOWN,
+        STOPPED,
+        STARTED
+    }
+
     private final Logger mLog;
     private final String mLogPrefix;
     private final Callback mCallback;
-    private boolean mStartedStateInitialized;
-    private boolean mLastStartedState;
+    private StartedState mStartedState = StartedState.UNKNOWN;
 
     SDRconnectPropertyUpdateHandler(Logger log, String logPrefix, Callback callback)
     {
@@ -124,21 +130,21 @@ class SDRconnectPropertyUpdateHandler
 
     private void handleStartedStateUpdate(String value)
     {
-        boolean started = "true".equalsIgnoreCase(value);
+        StartedState startedState = "true".equalsIgnoreCase(value) ? StartedState.STARTED : StartedState.STOPPED;
 
-        if(!mStartedStateInitialized)
+        if(mStartedState == StartedState.UNKNOWN)
         {
-            mStartedStateInitialized = true;
-            mLastStartedState = started;
+            mStartedState = startedState;
             return;
         }
 
-        if(started && !mLastStartedState && mCallback.shouldScheduleRecoveryReinitialization())
+        if(startedState == StartedState.STARTED && mStartedState == StartedState.STOPPED &&
+            mCallback.shouldScheduleRecoveryReinitialization())
         {
             mCallback.scheduleRecoveryReinitialization();
         }
 
-        mLastStartedState = started;
+        mStartedState = startedState;
     }
 
     private void handleLnaStateUpdate(String value)
