@@ -905,7 +905,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processTDU(P25P1Message message)
     {
         mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
-        broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
+        broadcast(new DecoderStateEvent(this, Event.END, State.FADE));
     }
 
     /**
@@ -923,8 +923,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(lcw != null && lcw.isValid())
             {
                 mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
-                broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
                 processLC(lcw, message.getTimestamp(), true);
+
+                if(!isExplicitTerminationLCW(lcw))
+                {
+                    broadcast(new DecoderStateEvent(this, Event.END, State.FADE));
+                }
             }
         }
     }
@@ -2103,6 +2107,15 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             default:
                 break;
         }
+    }
+
+    /**
+     * Indicates if the TDULC link control word already represents an explicit network-commanded termination that
+     * will broadcast its own END transition.
+     */
+    private boolean isExplicitTerminationLCW(LinkControlWord lcw)
+    {
+        return lcw instanceof LCCallTermination lcct && lcct.isNetworkCommandedTeardown();
     }
 
     @Override
