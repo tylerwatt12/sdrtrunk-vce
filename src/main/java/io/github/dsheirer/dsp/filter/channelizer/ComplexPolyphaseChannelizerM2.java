@@ -335,27 +335,16 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     private float[] process()
     {
-        int bufferLength = getSubChannelCount() * mTapsPerChannel;
-        float[] inlineInterimOutput = new float[bufferLength];
-
-        //Multiply each of the samples by the corresponding filter tap
-        for(int x = 0; x < mInlineSamples.length; x++)
-        {
-            inlineInterimOutput[x] = mInlineSamples[x] * mInlineFilter[x];
-        }
-
         float[] filterAccumulator = new float[getSubChannelCount()];
 
-        int tapOffset = 0;
-
-        //Accumulate the sample/filter product results into each of the I/Q sub-channels
+        //Accumulate each sample/filter product directly into the I/Q sub-channels.
         for(int tap = 0; tap < mTapsPerChannel; tap++)
         {
-            tapOffset = tap * getSubChannelCount();
+            int tapOffset = tap * getSubChannelCount();
 
             for(int channel = 0; channel < getSubChannelCount(); channel++)
             {
-                filterAccumulator[channel] += inlineInterimOutput[tapOffset + channel];
+                filterAccumulator[channel] += mInlineSamples[tapOffset + channel] * mInlineFilter[tapOffset + channel];
             }
         }
 
