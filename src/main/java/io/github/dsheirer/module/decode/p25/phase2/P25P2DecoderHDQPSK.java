@@ -50,9 +50,9 @@ import io.github.dsheirer.source.wave.ComplexWaveSource;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,11 +63,11 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P2DecoderHDQPSK.class);
     protected static final float SYMBOL_TIMING_GAIN = 0.1f;
+    private static final Map<Double, float[]> BASEBAND_FILTER_CACHE = new ConcurrentHashMap<>();
     protected InterpolatingSampleBuffer mInterpolatingSampleBuffer;
     protected DQPSKGardnerDemodulator mQPSKDemodulator;
     protected CostasLoop mCostasLoop;
     protected P25P2MessageFramer mMessageFramer;
-    private Map<Double,float[]> mBasebandFilters = new HashMap<>();
     protected IRealFilter mIBasebandFilter;
     protected IRealFilter mQBasebandFilter;
     private DecodeConfigP25Phase2 mDecodeConfigP25Phase2;
@@ -75,8 +75,8 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2)
     {
         super(6000.0);
-        setSampleRate(25000.0);
         mDecodeConfigP25Phase2 = decodeConfigP25Phase2;
+        setSampleRate(DecodeConfigP25Phase2.CHANNEL_SAMPLE_RATE);
     }
 
     @Override
@@ -102,10 +102,16 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
 
     public void setSampleRate(double sampleRate)
     {
+        if(Double.compare(sampleRate, getSampleRate()) == 0 && mQPSKDemodulator != null)
+        {
+            return;
+        }
+
         super.setSampleRate(sampleRate);
 
-        mIBasebandFilter = FilterFactory.getRealFilter(getBasebandFilter());
-        mQBasebandFilter = FilterFactory.getRealFilter(getBasebandFilter());
+        float[] filterTaps = getBasebandFilter(sampleRate);
+        mIBasebandFilter = FilterFactory.getRealFilter(filterTaps);
+        mQBasebandFilter = FilterFactory.getRealFilter(filterTaps);
         mCostasLoop = new CostasLoop(getSampleRate(), getSymbolRate());
         mCostasLoop.setPLLBandwidth(PLLBandwidth.BW_300);
 
@@ -153,45 +159,34 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     }
 
     /**
-     * Constructs a baseband filter for this decoder using the current sample rate
+     * Returns baseband lowpass filter taps for the given sample rate, designing and caching them on first use.
+     * The filter has a 6.5 kHz passband and 7.2 kHz stopband, matching the 6 kbaud P25 Phase 2 symbol rate.
      */
-    private float[] getBasebandFilter()
+    private static float[] getBasebandFilter(double sampleRate)
     {
-        //Attempt to reuse a cached (ie already-designed) filter if available
-        float[] filter = mBasebandFilters.get(getSampleRate());
-
-        if(filter == null)
+        return BASEBAND_FILTER_CACHE.computeIfAbsent(sampleRate, rate ->
         {
             FIRFilterSpecification specification = FIRFilterSpecification.lowPassBuilder()
-                .sampleRate(50000.0)
-                .passBandCutoff(6500)
+                .sampleRate(rate)
+                .passBandCutoff(DecodeConfigP25Phase2.CHANNEL_PASS_FREQUENCY)
                 .passBandAmplitude(1.0)
                 .passBandRipple(0.005)
                 .stopBandAmplitude(0.0)
-                .stopBandStart(7200)
+                .stopBandStart(DecodeConfigP25Phase2.CHANNEL_STOP_FREQUENCY)
                 .stopBandRipple(0.01)
                 .build();
 
             try
             {
-                filter = FilterFactory.getTaps(specification);
+                float[] taps = FilterFactory.getTaps(specification);
+                mLog.debug("P25P2 baseband filter designed: sampleRate:{} tapCount:{}", rate, taps.length);
+                return taps;
             }
             catch(FilterDesignException fde)
             {
-                mLog.error("Couldn't design low pass baseband filter for sample rate: " + getSampleRate());
+                throw new IllegalStateException("Couldn't design baseband filter for P25 Phase 2 decoder at rate " + rate, fde);
             }
-
-            if(filter != null)
-            {
-                mBasebandFilters.put(getSampleRate(), filter);
-            }
-            else
-            {
-                throw new IllegalStateException("Couldn't design a C4FM baseband filter for sample rate: " + getSampleRate());
-            }
-        }
-
-        return filter;
+        });
     }
 
     @Override

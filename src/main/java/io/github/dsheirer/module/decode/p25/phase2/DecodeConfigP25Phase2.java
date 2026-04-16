@@ -32,6 +32,11 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
  */
 public class DecodeConfigP25Phase2 extends DecodeConfigP25
 {
+    public static final double CHANNEL_SAMPLE_RATE = 50000.0;
+    public static final int CHANNEL_BANDWIDTH = 12500;
+    public static final double CHANNEL_PASS_FREQUENCY = 6500.0;
+    public static final double CHANNEL_STOP_FREQUENCY = 7200.0;
+
     private ScrambleParameters mScrambleParameters;
     private boolean mAutoDetectScrambleParameters;
 
@@ -48,7 +53,7 @@ public class DecodeConfigP25Phase2 extends DecodeConfigP25
     @Override
     public ChannelSpecification getChannelSpecification()
     {
-        return new ChannelSpecification(50000.0, 12500, 6500.0, 7200.0);
+        return new ChannelSpecification(CHANNEL_SAMPLE_RATE, CHANNEL_BANDWIDTH, CHANNEL_PASS_FREQUENCY, CHANNEL_STOP_FREQUENCY);
     }
 
     /**
