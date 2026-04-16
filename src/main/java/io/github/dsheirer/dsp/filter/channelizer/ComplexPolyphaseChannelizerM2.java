@@ -24,6 +24,7 @@ import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import io.github.dsheirer.util.Dispatcher;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import org.apache.commons.math3.util.FastMath;
 import org.jtransforms.fft.FloatFFT_1D;
@@ -62,6 +63,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private static final Logger mLog = LoggerFactory.getLogger(ComplexPolyphaseChannelizerM2.class);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.0");
     private static final int DEFAULT_MINIMUM_CHANNEL_BANDWIDTH = 25000;
+    private static final String POWER_OF_TWO_CHANNEL_COUNTS_PROPERTY = "sdrtrunk.channelizer.power.of.two";
 
     /**
      * Determines how many processed channel results to dispatch for threaded IFFT processing per batch
@@ -78,7 +80,8 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private int mSampleBufferPointer;
     private int mSamplesPerBlock;
     private int mTapsPerChannel;
-    private List<float[]> mProcessedChannelResultsList = new ArrayList<>();
+    private List<float[]> mProcessedChannelResultsList = new ArrayList<>(PROCESSED_CHANNEL_RESULTS_THRESHOLD);
+    private float[] mFilterAccumulator;
 
     /**
      * Creates a NMDPFB channelizer instance.
@@ -155,8 +158,19 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             channels--;
         }
 
+        if(Boolean.getBoolean(POWER_OF_TWO_CHANNEL_COUNTS_PROPERTY) && channels > 2)
+        {
+            channels = Integer.highestOneBit(channels);
+
+            if(channels < 2)
+            {
+                channels = 2;
+            }
+        }
+
         mLog.info("Sample Rate [" + DECIMAL_FORMAT.format(sampleRate) + "] providing [" + channels +
-            "] channels at [" + DECIMAL_FORMAT.format(sampleRate / channels) + "] Hz each");
+            "] channels at [" + DECIMAL_FORMAT.format(sampleRate / channels) + "] Hz each" +
+            (Boolean.getBoolean(POWER_OF_TWO_CHANNEL_COUNTS_PROPERTY) ? " using power-of-two channel count experiment" : ""));
 
         return channels;
     }
@@ -222,8 +236,9 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
 
                 if(mProcessedChannelResultsList.size() >= PROCESSED_CHANNEL_RESULTS_THRESHOLD)
                 {
-                    mIFFTProcessorDispatcher.receive(new ArrayList<>(mProcessedChannelResultsList));
-                    mProcessedChannelResultsList.clear();
+                    List<float[]> processedChannelResults = mProcessedChannelResultsList;
+                    mProcessedChannelResultsList = new ArrayList<>(PROCESSED_CHANNEL_RESULTS_THRESHOLD);
+                    mIFFTProcessorDispatcher.receive(processedChannelResults);
                 }
 
                 //Right-shift the samples in the buffer over to make room for a new block of samples
@@ -335,7 +350,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     private float[] process()
     {
-        float[] filterAccumulator = new float[getSubChannelCount()];
+        Arrays.fill(mFilterAccumulator, 0.0f);
 
         //Accumulate each sample/filter product directly into the I/Q sub-channels.
         for(int tap = 0; tap < mTapsPerChannel; tap++)
@@ -344,7 +359,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
 
             for(int channel = 0; channel < getSubChannelCount(); channel++)
             {
-                filterAccumulator[channel] += mInlineSamples[tapOffset + channel] * mInlineFilter[tapOffset + channel];
+                mFilterAccumulator[channel] += mInlineSamples[tapOffset + channel] * mInlineFilter[tapOffset + channel];
             }
         }
 
@@ -354,14 +369,14 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         {
             for(int x = 0; x < getSubChannelCount(); x++)
             {
-                processed[x] = filterAccumulator[mTopBlockMap[x]];
+                processed[x] = mFilterAccumulator[mTopBlockMap[x]];
             }
         }
         else
         {
             for(int x = 0; x < getSubChannelCount(); x++)
             {
-                processed[x] = filterAccumulator[mMiddleBlockMap[x]];
+                processed[x] = mFilterAccumulator[mMiddleBlockMap[x]];
             }
         }
 
@@ -385,6 +400,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         mMiddleBlockMap = getMiddleBlockMap(channelCount);
         mInlineFilter = getAlignedFilter(coefficients, channelCount, mTapsPerChannel);
         mInlineSamples = new float[bufferLength];
+        mFilterAccumulator = new float[getSubChannelCount()];
     }
 
     /**
@@ -407,19 +423,16 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             setListener(list -> {
                 try
                 {
-                    List<float[]> processedChannelResults = new ArrayList<>();
-
                     for(float[] channelResults: list)
                     {
                         if(channelResults != null)
                         {
                             //Rotate each of the channels to the correct phase using the IFFT
                             mFFT.complexInverse(channelResults, true);
-                            processedChannelResults.add(channelResults);
                         }
                     }
 
-                    dispatch(processedChannelResults);
+                    dispatch(list);
                 }
                 catch(Throwable t)
                 {
