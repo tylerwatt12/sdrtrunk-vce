@@ -62,7 +62,6 @@ import org.slf4j.LoggerFactory;
 public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdateListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P2DecoderHDQPSK.class);
-    private static final long ACQUISITION_LOG_THRESHOLD_MS = 250;
     protected static final float SYMBOL_TIMING_GAIN = 0.1f;
     private static final Map<Double, float[]> BASEBAND_FILTER_CACHE = new ConcurrentHashMap<>();
     protected InterpolatingSampleBuffer mInterpolatingSampleBuffer;
@@ -74,25 +73,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     protected IRealFilter mQBasebandFilter;
     private final AcquisitionMonitor mAcquisitionMonitor = new AcquisitionMonitor();
     private DecodeConfigP25Phase2 mDecodeConfigP25Phase2;
-    private long mAcquisitionStartMillis;
-    private long mAcquisitionSampleBufferCount;
-    private long mFirstDibitMillis;
-    private long mFirstCandidateMillis;
-    private boolean mAwaitingFirstSync;
-    private boolean mAwaitingFirstDibit;
-    private boolean mAwaitingFirstCandidate;
-    private String mAcquisitionReason = "startup";
-    private int mAcquisitionCandidateCount;
-    private boolean mFirstCandidateAccepted;
-    private boolean mFirstCandidatePhaseAligned;
-    private int mFirstCandidateBitErrors;
-    private boolean mFirstCandidateIISCH1Valid;
-    private int mFirstCandidateIISCH1BitErrors;
-    private boolean mFirstCandidateIISCH2Valid;
-    private int mFirstCandidateIISCH2BitErrors;
-    private int mFirstCandidateDibitsProcessed;
-    private int mFirstCandidateSync1BitErrors;
-    private int mFirstCandidateDetectorBitErrors;
 
     public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2, double initialSampleRate)
     {
@@ -105,7 +85,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     public void start()
     {
         super.start();
-        beginAcquisition("start");
         mQPSKDemodulator.start();
 
         //Refresh the scramble parameters each time we start in case they change
@@ -119,7 +98,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     @Override
     public void stop()
     {
-        logAcquisitionOutcome("stop");
         super.stop();
         mQPSKDemodulator.stop();
     }
@@ -157,7 +135,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
 
         mFrequencyCorrectionSyncMonitor = new FrequencyCorrectionSyncMonitor(mCostasLoop, this);
         mMessageFramer.setSyncDetectListener(mAcquisitionMonitor);
-        mMessageFramer.setSyncObservationListener(mAcquisitionMonitor);
         mMessageFramer.setListener(getMessageProcessor());
         mMessageFramer.setSampleRate(sampleRate);
 
@@ -172,11 +149,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     @Override
     public void receive(ComplexSamples samples)
     {
-        if(mAwaitingFirstSync)
-        {
-            mAcquisitionSampleBufferCount++;
-        }
-
         float[] i = mIBasebandFilter.filter(samples.i());
         float[] q = mQBasebandFilter.filter(samples.q());
 
@@ -222,20 +194,16 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     {
         if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_SAMPLE_RATE_CHANGE)
         {
-            logAcquisitionOutcome("sample-rate-change");
             mCostasLoop.reset();
             mFrequencyCorrectionSyncMonitor.reset();
             setSampleRate(sourceEvent.getValue().doubleValue());
-            beginAcquisition("sample-rate-change");
         }
         else if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CORRECTION_CHANGE)
         {
             //Retain current PLL bandwidth — this event fires at channel startup (replayed source events)
             //and on live tuner PPM corrections; in both cases the loop can track out the residual offset
             //without widening bandwidth.
-            logAcquisitionOutcome("frequency-correction-change");
             mCostasLoop.reset();
-            beginAcquisition("frequency-correction-change");
         }
     }
 
@@ -245,85 +213,12 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     @Override
     public void reset()
     {
-        logAcquisitionOutcome("reset");
         mCostasLoop.reset();
         mFrequencyCorrectionSyncMonitor.reset();
-        beginAcquisition("reset");
     }
 
-    private void beginAcquisition(String reason)
+    private final class AcquisitionMonitor implements ISyncDetectListener
     {
-        mAcquisitionReason = reason;
-        mAcquisitionStartMillis = System.currentTimeMillis();
-        mAcquisitionSampleBufferCount = 0;
-        mAcquisitionCandidateCount = 0;
-        mFirstDibitMillis = 0;
-        mFirstCandidateMillis = 0;
-        mAwaitingFirstSync = true;
-        mAwaitingFirstDibit = true;
-        mAwaitingFirstCandidate = true;
-        mFirstCandidateAccepted = false;
-        mFirstCandidatePhaseAligned = false;
-        mFirstCandidateBitErrors = 0;
-        mFirstCandidateIISCH1Valid = false;
-        mFirstCandidateIISCH1BitErrors = 0;
-        mFirstCandidateIISCH2Valid = false;
-        mFirstCandidateIISCH2BitErrors = 0;
-        mFirstCandidateDibitsProcessed = 0;
-        mFirstCandidateSync1BitErrors = 0;
-        mFirstCandidateDetectorBitErrors = 0;
-    }
-
-    private void logAcquisitionOutcome(String reason)
-    {
-        if(mAwaitingFirstSync && mAcquisitionSampleBufferCount > 0)
-        {
-            long elapsed = System.currentTimeMillis() - mAcquisitionStartMillis;
-            mLog.warn("P25P2 acquisition no sync outcome previousReason:{} endReason:{} elapsedMs:{} sampleBuffers:{}",
-                mAcquisitionReason, reason, elapsed, mAcquisitionSampleBufferCount);
-        }
-
-        mAwaitingFirstSync = false;
-        mAwaitingFirstDibit = false;
-        mAwaitingFirstCandidate = false;
-    }
-
-    private final class AcquisitionMonitor implements ISyncDetectListener, P25P2SyncObservationListener
-    {
-        @Override
-        public void firstDibitReceived()
-        {
-            if(mAwaitingFirstDibit)
-            {
-                mFirstDibitMillis = System.currentTimeMillis();
-                mAwaitingFirstDibit = false;
-            }
-        }
-
-        @Override
-        public void syncCandidateEvaluated(int totalBitErrors, boolean accepted, boolean iisch1Valid, int iisch1BitErrors,
-                                           boolean iisch2Valid, int iisch2BitErrors, int dibitsProcessed,
-                                           int sync1BitErrorCount, int syncDetectorBitErrorCount, boolean phaseAligned)
-        {
-            mAcquisitionCandidateCount++;
-
-            if(mAwaitingFirstCandidate)
-            {
-                mFirstCandidateMillis = System.currentTimeMillis();
-                mAwaitingFirstCandidate = false;
-                mFirstCandidateAccepted = accepted;
-                mFirstCandidatePhaseAligned = phaseAligned;
-                mFirstCandidateBitErrors = totalBitErrors;
-                mFirstCandidateIISCH1Valid = iisch1Valid;
-                mFirstCandidateIISCH1BitErrors = iisch1BitErrors;
-                mFirstCandidateIISCH2Valid = iisch2Valid;
-                mFirstCandidateIISCH2BitErrors = iisch2BitErrors;
-                mFirstCandidateDibitsProcessed = dibitsProcessed;
-                mFirstCandidateSync1BitErrors = sync1BitErrorCount;
-                mFirstCandidateDetectorBitErrors = syncDetectorBitErrorCount;
-            }
-        }
-
         @Override
         public void syncDetected(int bitErrors)
         {
@@ -334,35 +229,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         public void syncLost(int bitsProcessed)
         {
             mFrequencyCorrectionSyncMonitor.syncLost(bitsProcessed);
-        }
-
-        @Override
-        public void syncAcquired(int bitErrors)
-        {
-            if(mAwaitingFirstSync)
-            {
-                long now = System.currentTimeMillis();
-                long elapsed = now - mAcquisitionStartMillis;
-                long elapsedFromFirstDibit = mFirstDibitMillis > 0 ? now - mFirstDibitMillis : -1;
-                long elapsedFromFirstCandidate = mFirstCandidateMillis > 0 ? now - mFirstCandidateMillis : -1;
-                boolean logAcquisition = elapsed >= ACQUISITION_LOG_THRESHOLD_MS ||
-                    mAcquisitionCandidateCount > 1;
-
-                if(logAcquisition)
-                {
-                    mLog.info("P25P2 acquisition reason:{} elapsedMs:{} sampleBuffers:{} bitErrors:{} bandwidth:{} " +
-                            "elapsedFromFirstDibitMs:{} elapsedFromFirstCandidateMs:{} candidateCount:{} firstAcceptedCandidate:{} " +
-                            "firstCandidate[accepted:{},bitErrors:{},iisch1Valid:{},iisch1BitErrors:{},iisch2Valid:{},iisch2BitErrors:{},dibitsProcessed:{},sync1BitErrors:{},detectorBitErrors:{},phaseAligned:{}]",
-                        mAcquisitionReason, elapsed, mAcquisitionSampleBufferCount, bitErrors,
-                        mFrequencyCorrectionSyncMonitor.getCurrentBandwidth(), elapsedFromFirstDibit, elapsedFromFirstCandidate,
-                        mAcquisitionCandidateCount, mAcquisitionCandidateCount == 1, mFirstCandidateAccepted,
-                        mFirstCandidateBitErrors, mFirstCandidateIISCH1Valid, mFirstCandidateIISCH1BitErrors,
-                        mFirstCandidateIISCH2Valid, mFirstCandidateIISCH2BitErrors, mFirstCandidateDibitsProcessed,
-                        mFirstCandidateSync1BitErrors, mFirstCandidateDetectorBitErrors, mFirstCandidatePhaseAligned);
-                }
-
-                mAwaitingFirstSync = false;
-            }
         }
     }
 

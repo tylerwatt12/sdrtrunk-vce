@@ -132,7 +132,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     private int mDibitsProcessed = 0;
     private SyncState mSyncState = SyncState.SEARCHING_SYNC;
     private ISyncDetectListener mSyncDetectListener;
-    private P25P2SyncObservationListener mSyncObservationListener;
     private boolean mObservedFirstDibit;
 
     public P25P2SuperFrameDetector(IPhaseLockedLoop phaseLockedLoop)
@@ -155,11 +154,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     public void setSyncDetectListener(ISyncDetectListener listener)
     {
         mSyncDetectListener = listener;
-    }
-
-    public void setSyncObservationListener(P25P2SyncObservationListener listener)
-    {
-        mSyncObservationListener = listener;
     }
 
     public void setListener(Listener<IMessage> listener)
@@ -215,11 +209,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         if(!mObservedFirstDibit)
         {
             mObservedFirstDibit = true;
-
-            if(mSyncObservationListener != null)
-            {
-                mSyncObservationListener.firstDibitReceived();
-            }
         }
 
         mDibitsProcessed++;
@@ -266,7 +255,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
 
         boolean afterPhaseEstablishment = mSyncState == SyncState.ESTIMATING_PHASE;
-        int dibitsProcessed = mDibitsProcessed;
         enterTracking(dibitOffset);
         SuperFrameFragment frameFragment = createFragment(bitErrors, dibitOffset);
 
@@ -277,17 +265,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         {
             enterSearchingSync();
             return;
-        }
-
-        if(acquisitionAttempt && mSyncObservationListener != null)
-        {
-            boolean iisch1Valid = frameFragment.getIISCH1().isValid();
-            int iisch1BitErrors = frameFragment.getIISCH1().getMessage().getCorrectedBitCount();
-            boolean iisch2Valid = frameFragment.getIISCH2().isValid();
-            int iisch2BitErrors = frameFragment.getIISCH2().getMessage().getCorrectedBitCount();
-            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true, iisch1Valid, iisch1BitErrors,
-                iisch2Valid, iisch2BitErrors, dibitsProcessed, 0, bitErrors, true);
-            mSyncObservationListener.syncAcquired(bitErrors);
         }
 
         updateScramblingCode(frameFragment);
@@ -315,7 +292,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
 
         boolean afterPhaseEstablishment = mSyncState == SyncState.ESTIMATING_PHASE;
-        int dibitsProcessed = mDibitsProcessed;
         enterTracking(sync2Offset); //We're only concerned with adjusting for sync 2 offset from here on out.
         CorrectedBinaryMessage message1 = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + sync1Offset, 720);
         //Clear the bits from sync 2 start bit index 1080 (dibit 540) inclusive through bit index 1440 (exclusive).
@@ -327,17 +303,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         message1.xor(message2);
         message1.setCorrectedBitCount(bitErrors); //Not even sure what the correct bit error count is here?
         SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence);
-
-        if(afterPhaseEstablishment && mSyncObservationListener != null)
-        {
-            boolean iisch1Valid = frameFragment.getIISCH1().isValid();
-            int iisch1BitErrors = frameFragment.getIISCH1().getMessage().getCorrectedBitCount();
-            boolean iisch2Valid = frameFragment.getIISCH2().isValid();
-            int iisch2BitErrors = frameFragment.getIISCH2().getMessage().getCorrectedBitCount();
-            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true, iisch1Valid, iisch1BitErrors,
-                iisch2Valid, iisch2BitErrors, dibitsProcessed, 0, bitErrors, true);
-            mSyncObservationListener.syncAcquired(bitErrors);
-        }
 
         updateScramblingCode(frameFragment);
         broadcast(frameFragment);
@@ -530,26 +495,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         {
             int totalBitErrors = sync1BitErrorCount + syncDetectorBitErrorCount;
             SuperFrameFragment candidate = createFragment(totalBitErrors, 0);
-            boolean iisch1Valid = candidate.getIISCH1().isValid();
-            int iisch1BitErrors = candidate.getIISCH1().getMessage().getCorrectedBitCount();
-            boolean iisch2Valid = candidate.getIISCH2().isValid();
-            int iisch2BitErrors = candidate.getIISCH2().getMessage().getCorrectedBitCount();
-            boolean accepted = iisch1Valid || iisch2Valid;
 
-            if(mSyncObservationListener != null)
+            if(candidate.getIISCH1().isValid() || candidate.getIISCH2().isValid())
             {
-                mSyncObservationListener.syncCandidateEvaluated(totalBitErrors, accepted,
-                    iisch1Valid, iisch1BitErrors, iisch2Valid, iisch2BitErrors,
-                    mDibitsProcessed, sync1BitErrorCount, syncDetectorBitErrorCount, false);
-            }
-
-            if(accepted)
-            {
-                if(mSyncObservationListener != null)
-                {
-                    mSyncObservationListener.syncAcquired(totalBitErrors);
-                }
-
                 enterTracking(0);
                 broadcastFragment(totalBitErrors, 0);
                 return;

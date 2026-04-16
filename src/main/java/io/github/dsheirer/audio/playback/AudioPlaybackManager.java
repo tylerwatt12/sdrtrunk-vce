@@ -24,6 +24,7 @@ import io.github.dsheirer.audio.AudioException;
 import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.AudioSegment.AudioSegmentLifecycleListener;
 import io.github.dsheirer.audio.AudioSegment.AudioSegmentLifecycleEvent;
+import io.github.dsheirer.audio.AudioSegment.AudioSegmentLifecycleEventType;
 import io.github.dsheirer.audio.IAudioController;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -37,9 +38,11 @@ import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedTransferQueue;
@@ -64,7 +67,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     private final List<AudioSegment> mAudioSegments = new ArrayList<>();
     private final List<AudioSegment> mPendingAudioSegments = new ArrayList<>();
     private final LinkedTransferQueue<AudioSegment> mNewAudioSegmentQueue = new LinkedTransferQueue<>();
-    private final LinkedTransferQueue<AudioSegment> mLifecycleChangedSegments = new LinkedTransferQueue<>();
+    private final LinkedTransferQueue<AudioSegmentLifecycleEvent> mLifecycleChangedSegments = new LinkedTransferQueue<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
     private final ScheduledExecutorService mProcessingExecutorService;
@@ -128,7 +131,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     {
         if(event != null && event.audioSegment() != null)
         {
-            mLifecycleChangedSegments.add(event.audioSegment());
+            mLifecycleChangedSegments.add(event);
         }
 
         triggerAudioSegmentProcessing();
@@ -383,7 +386,8 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             }
         }
 
-        private record PendingChangeSummary(boolean changedWorkProcessed, Set<AudioSegment> rescuedSegments)
+        private record PendingChangeSummary(boolean changedWorkProcessed, Set<AudioSegment> rescuedSegments,
+                                           Map<AudioSegment, AudioSegmentLifecycleEventType> rescuedEventTypes)
         {
         }
 
@@ -398,6 +402,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             boolean promotedPendingSegment = false;
             boolean assignedReadySegment = false;
             Set<AudioSegment> rescuedSegments = new HashSet<>();
+            Map<AudioSegment, AudioSegmentLifecycleEventType> rescuedEventTypes = new HashMap<>();
 
             //Process new audio segments queue.  If segment has audio, queue it for replay, otherwise place in pending queue
             AudioSegment newSegment = mNewAudioSegmentQueue.poll();
@@ -434,6 +439,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 {
                     promotedPendingSegment = true;
                     rescuedSegments.addAll(pendingChangeSummary.rescuedSegments());
+                    rescuedEventTypes.putAll(pendingChangeSummary.rescuedEventTypes());
                 }
             }
 
@@ -538,7 +544,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                                 if(mAudioSegments.isEmpty())
                                 {
                                     return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment,
-                                        assignedReadySegment, formatSegments(rescuedSegments));
+                                        assignedReadySegment, formatSegments(rescuedSegments, rescuedEventTypes));
                                 }
                             }
                         }
@@ -566,39 +572,42 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             }
 
             return new WatchdogRescueSummary(drainedNewQueue, promotedPendingSegment, assignedReadySegment,
-                formatSegments(rescuedSegments));
+                formatSegments(rescuedSegments, rescuedEventTypes));
         }
 
         private PendingChangeSummary processChangedPendingSegments()
         {
             if(mLifecycleChangedSegments.isEmpty() || mPendingAudioSegments.isEmpty())
             {
-                return new PendingChangeSummary(false, Collections.emptySet());
+                return new PendingChangeSummary(false, Collections.emptySet(), Collections.emptyMap());
             }
 
-            Set<AudioSegment> changedSegments = new HashSet<>();
-            AudioSegment changed = mLifecycleChangedSegments.poll();
+            Map<AudioSegment, AudioSegmentLifecycleEventType> changedSegments = new HashMap<>();
+            AudioSegmentLifecycleEvent changed = mLifecycleChangedSegments.poll();
 
             while(changed != null)
             {
-                changedSegments.add(changed);
+                changedSegments.put(changed.audioSegment(), changed.eventType());
                 changed = mLifecycleChangedSegments.poll();
             }
 
             if(changedSegments.isEmpty())
             {
-                return new PendingChangeSummary(false, Collections.emptySet());
+                return new PendingChangeSummary(false, Collections.emptySet(), Collections.emptyMap());
             }
 
             Iterator<AudioSegment> it = mPendingAudioSegments.iterator();
             boolean changedWorkProcessed = false;
             Set<AudioSegment> rescuedSegments = new HashSet<>();
+            Map<AudioSegment, AudioSegmentLifecycleEventType> rescuedEventTypes = new HashMap<>();
 
             while(it.hasNext())
             {
                 AudioSegment audioSegment = it.next();
 
-                if(!changedSegments.contains(audioSegment))
+                AudioSegmentLifecycleEventType eventType = changedSegments.get(audioSegment);
+
+                if(eventType == null)
                 {
                     continue;
                 }
@@ -615,6 +624,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     mAudioSegments.add(audioSegment);
                     changedWorkProcessed = true;
                     rescuedSegments.add(audioSegment);
+                    rescuedEventTypes.put(audioSegment, eventType);
                 }
                 else if(audioSegment.completeProperty().get())
                 {
@@ -624,7 +634,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
 
-            return new PendingChangeSummary(changedWorkProcessed, rescuedSegments);
+            return new PendingChangeSummary(changedWorkProcessed, rescuedSegments, rescuedEventTypes);
         }
 
         @Override
@@ -668,7 +678,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         }
     }
 
-    private String formatSegments(Set<AudioSegment> audioSegments)
+    private String formatSegments(Set<AudioSegment> audioSegments, Map<AudioSegment, AudioSegmentLifecycleEventType> eventTypes)
     {
         if(audioSegments == null || audioSegments.isEmpty())
         {
@@ -681,7 +691,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         {
             if(audioSegment != null)
             {
-                formatted.add(formatSegmentSummary(audioSegment));
+                formatted.add(formatSegmentSummary(audioSegment, eventTypes != null ? eventTypes.get(audioSegment) : null));
             }
         }
 
@@ -689,7 +699,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         return String.join(",", formatted);
     }
 
-    private String formatSegmentSummary(AudioSegment audioSegment)
+    private String formatSegmentSummary(AudioSegment audioSegment, AudioSegmentLifecycleEventType queuedLifecycleEvent)
     {
         if(audioSegment == null)
         {
@@ -702,6 +712,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         sb.append(",buffers=").append(audioSegment.getAudioBufferCount());
         sb.append(",complete=").append(audioSegment.isComplete());
         sb.append(",encrypted=").append(audioSegment.isEncrypted());
+        sb.append(",queuedLifecycleEvent=").append(queuedLifecycleEvent != null ? queuedLifecycleEvent.name() : "unknown");
         sb.append("]");
         return sb.toString();
     }
