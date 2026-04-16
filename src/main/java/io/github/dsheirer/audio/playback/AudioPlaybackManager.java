@@ -159,13 +159,18 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         if(mProcessTriggerPending.compareAndSet(false, true))
         {
             mProcessingExecutorService.execute(() -> {
-                try
+                //Clear the trigger flag before draining queues so that any lifecycle event enqueued
+                //concurrently during this pass is not silently dropped.  After draining, re-check
+                //whether new work arrived and reschedule immediately if so.
+                mProcessTriggerPending.set(false);
+
+                mAudioSegmentProcessor.run(false);
+
+                //Re-check for work that may have arrived after we cleared the flag but before
+                //we drained the queues, and schedule a follow-up pass if needed.
+                if(!mNewAudioSegmentQueue.isEmpty() || !mLifecycleChangedSegments.isEmpty())
                 {
-                    mAudioSegmentProcessor.run(false);
-                }
-                finally
-                {
-                    mProcessTriggerPending.set(false);
+                    triggerAudioSegmentProcessing();
                 }
             });
         }
