@@ -59,9 +59,9 @@ public class CarrierOffsetProcessor
     /**
      * Constructs an instance.
      */
-    public CarrierOffsetProcessor()
+    public CarrierOffsetProcessor(double initialSampleRate)
     {
-        setSampleRate(50000.0);
+        setSampleRate(initialSampleRate);
     }
 
     /**

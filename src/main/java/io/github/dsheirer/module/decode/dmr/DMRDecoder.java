@@ -98,7 +98,7 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
     private RealFIRFilter mRRCFilterI;
     private RealFIRFilter mRRCFilterQ;
     private final PowerMonitor mPowerMonitor = new PowerMonitor();
-    private final CarrierOffsetProcessor mCarrierOffsetProcessor = new CarrierOffsetProcessor();
+    private final CarrierOffsetProcessor mCarrierOffsetProcessor;
 
     /**
      * Constructs an instance
@@ -110,6 +110,7 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         mMessageFramer = new DMRMessageFramer(crcMaskManager);
         mSymbolProcessor = new DMRSoftSymbolProcessor(mMessageFramer, this);
         mMessageProcessor = new DMRMessageProcessor(config, crcMaskManager);
+        mCarrierOffsetProcessor = new CarrierOffsetProcessor(initialSampleRate);
         mMessageProcessor.setMessageListener(getMessageListener());
         setSampleRate(initialSampleRate);
 
