@@ -30,7 +30,7 @@ public enum CalibrationType
     //There's an oddity with these two vector implementations where it takes ~30x longer when it runs
     //after any other calibrations ... so we always sort to top to run this one first
     OSCILLATOR_COMPLEX("Complex Oscillator", 1),
-    GAIN_COMPLEX("Complex Gain", 1),
+    GAIN_COMPLEX("Complex Gain", 2),
 
     AM_DEMODULATOR("AM Demodulator", 1),
     DC_REMOVAL_REAL("Real DC Removal Filter", 1),

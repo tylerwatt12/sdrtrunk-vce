@@ -116,12 +116,17 @@ public class ComplexGainCalibration extends Calibration
         long count = 0;
 
         ComplexGain scalar = new ScalarComplexGain(GAIN);
+        float[] iCopy = new float[i.length];
+        float[] qCopy = new float[q.length];
 
         long start = System.currentTimeMillis();
 
         while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
         {
-            ComplexSamples amplified = scalar.apply(i, q, start);
+            System.arraycopy(i, 0, iCopy, 0, i.length);
+            System.arraycopy(q, 0, qCopy, 0, q.length);
+
+            ComplexSamples amplified = scalar.apply(iCopy, qCopy, start);
             accumulator += amplified.i()[2];
             count++;
         }
@@ -134,13 +139,18 @@ public class ComplexGainCalibration extends Calibration
         float accumulator = 0.0f;
         long count = 0;
 
-        ComplexGain scalar = new VectorComplexGain(GAIN);
+        ComplexGain vector = new VectorComplexGain(GAIN);
+        float[] iCopy = new float[i.length];
+        float[] qCopy = new float[q.length];
 
         long start = System.currentTimeMillis();
 
         while((System.currentTimeMillis() - start) < ITERATION_DURATION_MS)
         {
-            ComplexSamples amplified = scalar.apply(i, q, start);
+            System.arraycopy(i, 0, iCopy, 0, i.length);
+            System.arraycopy(q, 0, qCopy, 0, q.length);
+
+            ComplexSamples amplified = vector.apply(iCopy, qCopy, start);
             accumulator += amplified.i()[2];
             count++;
         }
