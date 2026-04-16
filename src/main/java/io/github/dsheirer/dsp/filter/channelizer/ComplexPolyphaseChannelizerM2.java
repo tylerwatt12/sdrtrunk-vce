@@ -63,8 +63,6 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private static final Logger mLog = LoggerFactory.getLogger(ComplexPolyphaseChannelizerM2.class);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.0");
     private static final int DEFAULT_MINIMUM_CHANNEL_BANDWIDTH = 25000;
-    private static final String POWER_OF_TWO_CHANNEL_COUNTS_PROPERTY = "sdrtrunk.channelizer.power.of.two";
-
     /**
      * Determines how many processed channel results to dispatch for threaded IFFT processing per batch
      */
@@ -158,19 +156,8 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             channels--;
         }
 
-        if(Boolean.getBoolean(POWER_OF_TWO_CHANNEL_COUNTS_PROPERTY) && channels > 2)
-        {
-            channels = Integer.highestOneBit(channels);
-
-            if(channels < 2)
-            {
-                channels = 2;
-            }
-        }
-
         mLog.info("Sample Rate [" + DECIMAL_FORMAT.format(sampleRate) + "] providing [" + channels +
-            "] channels at [" + DECIMAL_FORMAT.format(sampleRate / channels) + "] Hz each" +
-            (Boolean.getBoolean(POWER_OF_TWO_CHANNEL_COUNTS_PROPERTY) ? " using power-of-two channel count experiment" : ""));
+            "] channels at [" + DECIMAL_FORMAT.format(sampleRate / channels) + "] Hz each");
 
         return channels;
     }
