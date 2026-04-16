@@ -32,7 +32,6 @@ import io.github.dsheirer.vector.calibrate.filter.RealHalfBand23TapFilterCalibra
 import io.github.dsheirer.vector.calibrate.filter.RealHalfBand63TapFilterCalibration;
 import io.github.dsheirer.vector.calibrate.filter.RealHalfBandDefaultFilterCalibration;
 import io.github.dsheirer.vector.calibrate.gain.ComplexGainCalibration;
-import io.github.dsheirer.vector.calibrate.gain.ComplexGainControlCalibration;
 import io.github.dsheirer.vector.calibrate.interpolator.InterpolatorCalibration;
 import io.github.dsheirer.vector.calibrate.magnitude.MagnitudeCalibration;
 import io.github.dsheirer.vector.calibrate.mixer.ComplexMixerCalibration;
@@ -106,7 +105,6 @@ public class CalibrationManager
             sInstance.add(new UnpackedInterleavedSampleConverterCalibration());
             sInstance.add(new AmDemodulatorCalibration());
             sInstance.add(new ComplexGainCalibration());
-            sInstance.add(new ComplexGainControlCalibration());
             sInstance.add(new ComplexOscillatorCalibration());
             sInstance.add(new ComplexMixerCalibration());
             sInstance.add(new DMRSoftSyncCalibration());

@@ -43,7 +43,6 @@ public enum CalibrationType
     FILTER_HALF_BAND_REAL_63_TAP("Real Half-Band Decimation Filter - 63 Tap", 1),
     FILTER_HALF_BAND_REAL_DEFAULT("Real Half-Band Decimation Filter - Default", 1),
     FM_DEMODULATOR("FM Demodulator", 2),
-    GAIN_CONTROL_COMPLEX("Complex Gain Control", 1),
     HILBERT_TRANSFORM("Hilbert Transform", 1),
     INTERPOLATOR("Interpolator", 1),
     MAGNITUDE("Magnitude", 1),

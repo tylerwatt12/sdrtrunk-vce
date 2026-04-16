@@ -34,32 +34,12 @@ public class ComplexGainFactory
     }
 
     /**
-     * Instantiates the optimal complex gain control implementation for this hardware,
-     * as determined by the Calibration Manager.
-     */
-    public static IComplexGainControl getComplexGainControl()
-    {
-        Implementation implementation = CalibrationManager.getInstance().getImplementation(CalibrationType.GAIN_CONTROL_COMPLEX);
-
-        switch(implementation)
-        {
-            case VECTOR_SIMD_PREFERRED:
-            {
-                return new VectorComplexGainControl();
-            }
-            case SCALAR:
-            default:
-                return new ComplexGainControl();
-        }
-    }
-
-    /**
      * Instantiates the optimal complex gain implementation for this hardware,
      * as determined by the Calibration Manager.
      */
     public static ComplexGain getComplexGain(float gain)
     {
-        Implementation implementation = CalibrationManager.getInstance().getImplementation(CalibrationType.GAIN_CONTROL_COMPLEX);
+        Implementation implementation = CalibrationManager.getInstance().getImplementation(CalibrationType.GAIN_COMPLEX);
 
         switch(implementation)
         {
