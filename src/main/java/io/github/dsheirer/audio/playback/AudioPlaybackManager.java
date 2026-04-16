@@ -485,6 +485,20 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
 
+            if(!watchdog)
+            {
+                for(AudioSegment audioSegment : mPendingAudioSegments)
+                {
+                    if(audioSegment != null && audioSegment.hasAudio())
+                    {
+                        mLog.warn("Playback pending invariant violated segment:{} queuedLifecycleEvent:{} pending:{} ready:{} new:{} lifecycle:{}",
+                            formatSegmentSummary(audioSegment, null), "unknown", mPendingAudioSegments.size(),
+                            mAudioSegments.size(), mNewAudioSegmentQueue.size(), mLifecycleChangedSegments.size());
+                        break;
+                    }
+                }
+            }
+
             //Process all audio segments that have audio
             if(!mAudioSegments.isEmpty())
             {
