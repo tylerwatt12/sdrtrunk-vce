@@ -45,7 +45,7 @@ public class CostasLoop implements IPhaseLockedLoop
     private double mDamping = FastMath.sqrt(2.0) / 2.0;
     private double mAlphaGain;
     private double mBetaGain;
-    private PLLBandwidth mPLLBandwidth = PLLBandwidth.BW_400;
+    private PLLBandwidth mPLLBandwidth = PLLBandwidth.BW_300;
     private double mSymbolRate;
     private double mSampleRate;
     private IFrequencyErrorProcessor mFrequencyErrorProcessor;

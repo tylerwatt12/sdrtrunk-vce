@@ -119,6 +119,8 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     private boolean mSynchronized = false;
     private boolean mLastAcquisitionWasForcedRealign = false;
     private ISyncDetectListener mSyncDetectListener;
+    private P25P2SyncObservationListener mSyncObservationListener;
+    private boolean mObservedFirstDibit;
 
     public P25P2SuperFrameDetector(IPhaseLockedLoop phaseLockedLoop)
     {
@@ -142,6 +144,11 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         mSyncDetectListener = listener;
     }
 
+    public void setSyncObservationListener(P25P2SyncObservationListener listener)
+    {
+        mSyncObservationListener = listener;
+    }
+
     public void setListener(Listener<IMessage> listener)
     {
         mMessageListener = listener;
@@ -157,7 +164,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
     public void reset()
     {
-        //No detector state needs to be cleared here; sync handling resets the rolling buffers as needed.
+        mObservedFirstDibit = false;
     }
 
     @Override
@@ -192,6 +199,16 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     @Override
     public void receive(Dibit dibit)
     {
+        if(!mObservedFirstDibit)
+        {
+            mObservedFirstDibit = true;
+
+            if(mSyncObservationListener != null)
+            {
+                mSyncObservationListener.firstDibitReceived();
+            }
+        }
+
         mDibitsProcessed++;
 
         mFragmentBuffer.put(dibit);
@@ -249,6 +266,15 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             return;
         }
 
+        if(acquisitionAttempt && mSyncObservationListener != null)
+        {
+            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true,
+                frameFragment.getIISCH1().isValid(), frameFragment.getIISCH1().getMessage().getCorrectedBitCount(),
+                frameFragment.getIISCH2().isValid(), frameFragment.getIISCH2().getMessage().getCorrectedBitCount(),
+                mDibitsProcessed, 0, bitErrors, true);
+            mSyncObservationListener.syncAcquired(bitErrors);
+        }
+
         updateScramblingCode(frameFragment);
         broadcast(frameFragment);
     }
@@ -286,6 +312,16 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         message1.xor(message2);
         message1.setCorrectedBitCount(bitErrors); //Not even sure what the correct bit error count is here?
         SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence);
+
+        if(afterForcedRealign && mSyncObservationListener != null)
+        {
+            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true,
+                frameFragment.getIISCH1().isValid(), frameFragment.getIISCH1().getMessage().getCorrectedBitCount(),
+                frameFragment.getIISCH2().isValid(), frameFragment.getIISCH2().getMessage().getCorrectedBitCount(),
+                mDibitsProcessed, 0, bitErrors, true);
+            mSyncObservationListener.syncAcquired(bitErrors);
+        }
+
         updateScramblingCode(frameFragment);
         broadcast(frameFragment);
     }
@@ -350,6 +386,23 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         {
             mMessageListener.receive(message);
         }
+    }
+
+    /**
+     * Use the current sync hit to establish fragment phase, then defer acceptance until the next aligned fragment
+     * check when sync1 and sync2 should both be in the expected positions.
+     */
+    private void setupForcedRealign()
+    {
+        mSynchronized = true;
+
+        if(mDibitsProcessed > DIBIT_COUNT_MISALIGNED_SYNC)
+        {
+            broadcastSyncLoss(mDibitsProcessed - DIBIT_COUNT_MISALIGNED_SYNC);
+        }
+
+        mDibitsProcessed = DIBIT_COUNT_MISALIGNED_SYNC;
+        mLastAcquisitionWasForcedRealign = true;
     }
 
     /**
@@ -442,15 +495,34 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
             if(sync1BitErrorCount <= UN_SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
             {
-                SuperFrameFragment candidate = createFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0);
+                int totalBitErrors = sync1BitErrorCount + syncDetectorBitErrorCount;
+                SuperFrameFragment candidate = createFragment(totalBitErrors, 0);
+                boolean iisch1Valid = candidate.getIISCH1().isValid();
+                int iisch1BitErrors = candidate.getIISCH1().getMessage().getCorrectedBitCount();
+                boolean iisch2Valid = candidate.getIISCH2().isValid();
+                int iisch2BitErrors = candidate.getIISCH2().getMessage().getCorrectedBitCount();
+                boolean accepted = iisch1Valid || iisch2Valid;
 
-                if(!candidate.getIISCH1().isValid() && !candidate.getIISCH2().isValid())
+                if(mSyncObservationListener != null)
                 {
+                    mSyncObservationListener.syncCandidateEvaluated(totalBitErrors, accepted,
+                        iisch1Valid, iisch1BitErrors, iisch2Valid, iisch2BitErrors,
+                        mDibitsProcessed, sync1BitErrorCount, syncDetectorBitErrorCount, false);
+                }
+
+                if(!accepted)
+                {
+                    setupForcedRealign();
                     return;
                 }
 
+                if(mSyncObservationListener != null)
+                {
+                    mSyncObservationListener.syncAcquired(totalBitErrors);
+                }
+
                 mSynchronized = true;
-                broadcastFragment(sync1BitErrorCount + syncDetectorBitErrorCount, 0);
+                broadcastFragment(totalBitErrors, 0);
             }
             else
             {
@@ -462,15 +534,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                 //We're probably mis-aligned on the fragment.  Setup as if we're synchronized and adjust the dibits
                 // processed counter so that we guarantee a fragment check after another 180 dibits have arrived which
                 // means that sync1 and sync2 should be aligned
-                mSynchronized = true;
-
-                if(mDibitsProcessed > DIBIT_COUNT_MISALIGNED_SYNC)
-                {
-                    broadcastSyncLoss(mDibitsProcessed - DIBIT_COUNT_MISALIGNED_SYNC);
-                }
-
-                mDibitsProcessed = DIBIT_COUNT_MISALIGNED_SYNC;
-                mLastAcquisitionWasForcedRealign = true;
+                setupForcedRealign();
             }
         }
     }

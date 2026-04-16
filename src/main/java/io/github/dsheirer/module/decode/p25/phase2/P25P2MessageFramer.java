@@ -94,6 +94,11 @@ public class P25P2MessageFramer implements Listener<Dibit>
         mSuperFrameDetector.setSyncDetectListener(listener);
     }
 
+    public void setSyncObservationListener(P25P2SyncObservationListener listener)
+    {
+        mSuperFrameDetector.setSyncObservationListener(listener);
+    }
+
     /**
      * Registers the listener for messages produced by this message framer
      *

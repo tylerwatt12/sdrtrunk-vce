@@ -24,14 +24,22 @@ import io.github.dsheirer.source.SourceEvent;
 
 /**
  * Monitors decode sync events to adaptively control frequency correction broadcasts.
+ *
+ * The original author tested adaptive PLL bandwidth and deliberately removed it (commit b3b2e746, Feb 2020),
+ * citing extensive testing, but retained the PLLBandwidth infrastructure (fromSyncCount mapping, MAX_SYNC_COUNT)
+ * without wiring the bandwidth updates. A ComplexGainControl AGC was also present in the P25P2 signal path during
+ * that earlier testing. Since that AGC introduced per-buffer gain changes ahead of the Costas loop, those results
+ * may not generalize cleanly to the current decoder path with the AGC removed. This implementation starts from the
+ * same fixed BW_300 baseline he settled on: bandwidth narrows from BW_300 (acquisition) to BW_200 (tracking)
+ * after two consecutive sync detections, and resets to BW_300 on each decoder reset.
  */
 public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFrequencyErrorProcessor
 {
-
     private static final int MAX_SYNC_COUNT = PLLBandwidth.BW_200.getRangeEnd();
     private FeedbackDecoder mFeedbackDecoder;
     private CostasLoop mCostasLoop;
     private int mSyncCount;
+    private PLLBandwidth mCurrentBandwidth = PLLBandwidth.BW_300;
 
     /**
      * Constructs an adaptive monitor to monitor the sync state of a decoder
@@ -67,28 +75,41 @@ public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFre
     }
 
     /**
-     * Updates the sync count
+     * Updates the sync count and adjusts PLL bandwidth adaptively.
      */
     private void update()
     {
         if(mSyncCount < 0)
         {
             mSyncCount = 0;
-            return;
         }
-
-        if(mSyncCount > MAX_SYNC_COUNT)
+        else if(mSyncCount > MAX_SYNC_COUNT)
         {
             mSyncCount = MAX_SYNC_COUNT;
+        }
+
+        PLLBandwidth bandwidth = PLLBandwidth.fromSyncCount(mSyncCount);
+
+        if(bandwidth != mCurrentBandwidth)
+        {
+            mCurrentBandwidth = bandwidth;
+            mCostasLoop.setPLLBandwidth(bandwidth);
         }
     }
 
     /**
-     * Resets the monitor
+     * Resets the monitor and restores acquisition bandwidth.
      */
     public void reset()
     {
         mSyncCount = 0;
+        mCurrentBandwidth = PLLBandwidth.BW_300;
+        mCostasLoop.setPLLBandwidth(PLLBandwidth.BW_300);
+    }
+
+    public PLLBandwidth getCurrentBandwidth()
+    {
+        return mCurrentBandwidth;
     }
 
     @Override
