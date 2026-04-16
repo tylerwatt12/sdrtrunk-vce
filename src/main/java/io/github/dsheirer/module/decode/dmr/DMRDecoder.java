@@ -104,14 +104,14 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
      * Constructs an instance
      * @param config for the DMR decoder
      */
-    public DMRDecoder(DecodeConfigDMR config, boolean isTrafficChannel)
+    public DMRDecoder(DecodeConfigDMR config, boolean isTrafficChannel, double initialSampleRate)
     {
         DMRCrcMaskManager crcMaskManager = new DMRCrcMaskManager(config.getIgnoreCRCChecksums());
         mMessageFramer = new DMRMessageFramer(crcMaskManager);
         mSymbolProcessor = new DMRSoftSymbolProcessor(mMessageFramer, this);
         mMessageProcessor = new DMRMessageProcessor(config, crcMaskManager);
         mMessageProcessor.setMessageListener(getMessageListener());
-        setSampleRate(25000.0);
+        setSampleRate(initialSampleRate);
 
         if(isTrafficChannel)
         {

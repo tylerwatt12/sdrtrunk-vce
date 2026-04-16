@@ -173,7 +173,7 @@ public class DecoderFactory
                 break;
             case DMR:
                 processDMR(channel, userPreferences, modules, aliasList, (DecodeConfigDMR)decodeConfig,
-                    trafficChannelManager, channelDescriptor);
+                    trafficChannelManager, channelDescriptor, initialSourceSampleRate);
                 break;
             case NBFM:
                 processNBFM(channel, modules, aliasList, decodeConfig);
@@ -483,9 +483,10 @@ public class DecoderFactory
      */
     private static void processDMR(Channel channel, UserPreferences userPreferences, List<Module> modules,
                                    AliasList aliasList, DecodeConfigDMR decodeConfig,
-                                   TrafficChannelManager trafficChannelManager, IChannelDescriptor channelDescriptor)
+                                   TrafficChannelManager trafficChannelManager, IChannelDescriptor channelDescriptor,
+                                   double initialSourceSampleRate)
     {
-        modules.add(new DMRDecoder(decodeConfig, channel.isTrafficChannel()));
+        modules.add(new DMRDecoder(decodeConfig, channel.isTrafficChannel(), initialSourceSampleRate));
 
         DMRTrafficChannelManager dmrTrafficChannelManager = null;
 
