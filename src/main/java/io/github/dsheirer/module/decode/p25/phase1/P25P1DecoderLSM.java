@@ -73,10 +73,11 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
         return DecoderType.P25_PHASE1;
     }
 
-    public P25P1DecoderLSM()
+    public P25P1DecoderLSM(double initialSampleRate)
     {
         mMessageProcessor.setMessageListener(getMessageListener());
         mDemodulator = new P25P1DemodulatorLSM(mMessageFramer, this);
+        setSampleRate(initialSampleRate);
     }
 
     @Override

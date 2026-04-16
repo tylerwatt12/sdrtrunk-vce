@@ -192,7 +192,8 @@ public class DecoderFactory
                 processPassport(channel, modules, aliasList, decodeConfig);
                 break;
             case P25_PHASE1:
-                processP25Phase1(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor);
+                processP25Phase1(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor,
+                    initialSourceSampleRate);
                 break;
             case P25_PHASE2:
                 processP25Phase2(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor,
@@ -273,17 +274,17 @@ public class DecoderFactory
      */
     private static void processP25Phase1(Channel channel, UserPreferences userPreferences, List<Module> modules,
                                          AliasList aliasList, TrafficChannelManager trafficChannelManager,
-                                         IChannelDescriptor channelDescriptor)
+                                         IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
     {
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 p1)
         {
             switch(p1.getModulation())
             {
                 case C4FM:
-                    modules.add(new P25P1DecoderC4FM());
+                    modules.add(new P25P1DecoderC4FM(initialSourceSampleRate));
                     break;
                 case CQPSK:
-                    modules.add(new P25P1DecoderLSM());
+                    modules.add(new P25P1DecoderLSM(initialSourceSampleRate));
                     break;
                 default:
                     throw new IllegalArgumentException("Unrecognized P25 Phase 1 Modulation [" + p1.getModulation() + "]");

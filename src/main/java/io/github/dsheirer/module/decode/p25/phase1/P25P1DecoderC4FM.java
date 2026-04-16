@@ -77,10 +77,11 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
         return DecoderType.P25_PHASE1;
     }
 
-    public P25P1DecoderC4FM()
+    public P25P1DecoderC4FM(double initialSampleRate)
     {
         mMessageProcessor.setMessageListener(getMessageListener());
         mSymbolProcessor = new P25P1DemodulatorC4FM(mMessageFramer, this);
+        setSampleRate(initialSampleRate);
     }
 
     @Override
