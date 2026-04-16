@@ -47,6 +47,13 @@ import java.util.List;
  */
 public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectListener
 {
+    private enum SyncState
+    {
+        UNSYNCHRONIZED,
+        PHASE_ALIGNED_PENDING,
+        SYNCHRONIZED
+    }
+
     /**
      * Number of dibits that we use to oversize the fragment delay buffer where the total oversize is 2x this quantity
      * for padding the left and padding the right by this quantity.
@@ -116,8 +123,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      */
     private DibitDelayBuffer mFragmentBuffer = new DibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
     private int mDibitsProcessed = 0;
-    private boolean mSynchronized = false;
-    private boolean mPendingPhaseAlignedAcquisition = false;
+    private SyncState mSyncState = SyncState.UNSYNCHRONIZED;
     private ISyncDetectListener mSyncDetectListener;
     private P25P2SyncObservationListener mSyncObservationListener;
     private boolean mObservedFirstDibit;
@@ -213,7 +219,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
         mFragmentBuffer.put(dibit);
 
-        if(mSynchronized)
+        if(mSyncState != SyncState.UNSYNCHRONIZED)
         {
             mSyncDetectionDelayBuffer.put(dibit);
 
@@ -252,9 +258,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             broadcastSyncLoss(mDibitsProcessed + dibitOffset - FRAGMENT_DIBIT_LENGTH);
         }
 
-        boolean afterPhaseEstablishment = mPendingPhaseAlignedAcquisition;
+        boolean afterPhaseEstablishment = mSyncState == SyncState.PHASE_ALIGNED_PENDING;
         int dibitsProcessed = mDibitsProcessed;
-        mPendingPhaseAlignedAcquisition = false;
+        mSyncState = SyncState.SYNCHRONIZED;
         mDibitsProcessed = 0 + dibitOffset;
         SuperFrameFragment frameFragment = createFragment(bitErrors, dibitOffset);
 
@@ -263,7 +269,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
         if(invalidIISCHs && acquisitionAttempt)
         {
-            mSynchronized = false;
+            mSyncState = SyncState.UNSYNCHRONIZED;
             return;
         }
 
@@ -300,9 +306,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             broadcastSyncLoss(mDibitsProcessed + FRAGMENT_DIBIT_LENGTH);
         }
 
-        boolean afterPhaseEstablishment = mPendingPhaseAlignedAcquisition;
+        boolean afterPhaseEstablishment = mSyncState == SyncState.PHASE_ALIGNED_PENDING;
         int dibitsProcessed = mDibitsProcessed;
-        mPendingPhaseAlignedAcquisition = false;
+        mSyncState = SyncState.SYNCHRONIZED;
         mDibitsProcessed = 0 + sync2Offset; //We're only concerned with adjusting for sync 2 offset from here on out.
         CorrectedBinaryMessage message1 = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + sync1Offset, 720);
         //Clear the bits from sync 2 start bit index 1080 (dibit 540) inclusive through bit index 1440 (exclusive).
@@ -396,7 +402,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      */
     private void establishFragmentPhase()
     {
-        mSynchronized = true;
+        mSyncState = SyncState.PHASE_ALIGNED_PENDING;
 
         if(mDibitsProcessed > DIBIT_COUNT_MISALIGNED_SYNC)
         {
@@ -404,7 +410,6 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
 
         mDibitsProcessed = DIBIT_COUNT_MISALIGNED_SYNC;
-        mPendingPhaseAlignedAcquisition = true;
     }
 
     /**
@@ -417,7 +422,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         //to fire will cause the fragment to be processed and any subsequent, simultaneous detection will be ignored.
         if(mDibitsProcessed > 0)
         {
-            if(mSynchronized)
+            if(mSyncState != SyncState.UNSYNCHRONIZED)
             {
                 //If we're synchronized, then this is a counter based trigger and we check both sync locations
                 int sync1BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_1);
@@ -446,7 +451,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                         }
 
                         //Since we're getting misaligned, set unsynchronized to re-enter active sync inspection
-                        mSynchronized = false;
+                        mSyncState = SyncState.UNSYNCHRONIZED;
                         return;
                     }
                 }
@@ -486,7 +491,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                     }
 
                     //Since we're getting misaligned, set unsynchronized to re-enter active sync inspection
-                    mSynchronized = false;
+                    mSyncState = SyncState.UNSYNCHRONIZED;
                     return;
                 }
             }
@@ -519,7 +524,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                         mSyncObservationListener.syncAcquired(totalBitErrors);
                     }
 
-                    mSynchronized = true;
+                    mSyncState = SyncState.SYNCHRONIZED;
                     broadcastFragment(totalBitErrors, 0);
                     return;
                 }
