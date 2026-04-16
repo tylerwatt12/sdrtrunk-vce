@@ -346,7 +346,7 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
                 long elapsedFromFirstDibit = mFirstDibitMillis > 0 ? now - mFirstDibitMillis : -1;
                 long elapsedFromFirstCandidate = mFirstCandidateMillis > 0 ? now - mFirstCandidateMillis : -1;
                 boolean logAcquisition = elapsed >= ACQUISITION_LOG_THRESHOLD_MS ||
-                    mAcquisitionCandidateCount > 1 || mFirstCandidatePhaseAligned;
+                    mAcquisitionCandidateCount > 1;
 
                 if(logAcquisition)
                 {
