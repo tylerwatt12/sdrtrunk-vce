@@ -62,6 +62,7 @@ import org.slf4j.LoggerFactory;
 public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdateListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P2DecoderHDQPSK.class);
+    private static final long ACQUISITION_LOG_THRESHOLD_MS = 250;
     protected static final float SYMBOL_TIMING_GAIN = 0.1f;
     private static final Map<Double, float[]> BASEBAND_FILTER_CACHE = new ConcurrentHashMap<>();
     protected InterpolatingSampleBuffer mInterpolatingSampleBuffer;
@@ -82,6 +83,16 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     private boolean mAwaitingFirstCandidate;
     private String mAcquisitionReason = "startup";
     private int mAcquisitionCandidateCount;
+    private boolean mFirstCandidateAccepted;
+    private boolean mFirstCandidatePhaseAligned;
+    private int mFirstCandidateBitErrors;
+    private boolean mFirstCandidateIISCH1Valid;
+    private int mFirstCandidateIISCH1BitErrors;
+    private boolean mFirstCandidateIISCH2Valid;
+    private int mFirstCandidateIISCH2BitErrors;
+    private int mFirstCandidateDibitsProcessed;
+    private int mFirstCandidateSync1BitErrors;
+    private int mFirstCandidateDetectorBitErrors;
 
     public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2, double initialSampleRate)
     {
@@ -251,6 +262,16 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         mAwaitingFirstSync = true;
         mAwaitingFirstDibit = true;
         mAwaitingFirstCandidate = true;
+        mFirstCandidateAccepted = false;
+        mFirstCandidatePhaseAligned = false;
+        mFirstCandidateBitErrors = 0;
+        mFirstCandidateIISCH1Valid = false;
+        mFirstCandidateIISCH1BitErrors = 0;
+        mFirstCandidateIISCH2Valid = false;
+        mFirstCandidateIISCH2BitErrors = 0;
+        mFirstCandidateDibitsProcessed = 0;
+        mFirstCandidateSync1BitErrors = 0;
+        mFirstCandidateDetectorBitErrors = 0;
     }
 
     private void logAcquisitionOutcome(String reason)
@@ -290,15 +311,16 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
             {
                 mFirstCandidateMillis = System.currentTimeMillis();
                 mAwaitingFirstCandidate = false;
-
-                long elapsedFromStart = mFirstCandidateMillis - mAcquisitionStartMillis;
-                long elapsedFromFirstDibit = mFirstDibitMillis > 0 ? mFirstCandidateMillis - mFirstDibitMillis : -1;
-                mLog.info("P25P2 acquisition first sync candidate reason:{} elapsedFromStartMs:{} elapsedFromFirstDibitMs:{} " +
-                        "candidateBitErrors:{} accepted:{} iisch1[valid:{},bitErrors:{}] iisch2[valid:{},bitErrors:{}] " +
-                        "dibitsProcessed:{} sync1BitErrors:{} detectorBitErrors:{} phaseAligned:{}",
-                    mAcquisitionReason, elapsedFromStart, elapsedFromFirstDibit, totalBitErrors, accepted,
-                    iisch1Valid, iisch1BitErrors, iisch2Valid, iisch2BitErrors, dibitsProcessed,
-                    sync1BitErrorCount, syncDetectorBitErrorCount, phaseAligned);
+                mFirstCandidateAccepted = accepted;
+                mFirstCandidatePhaseAligned = phaseAligned;
+                mFirstCandidateBitErrors = totalBitErrors;
+                mFirstCandidateIISCH1Valid = iisch1Valid;
+                mFirstCandidateIISCH1BitErrors = iisch1BitErrors;
+                mFirstCandidateIISCH2Valid = iisch2Valid;
+                mFirstCandidateIISCH2BitErrors = iisch2BitErrors;
+                mFirstCandidateDibitsProcessed = dibitsProcessed;
+                mFirstCandidateSync1BitErrors = sync1BitErrorCount;
+                mFirstCandidateDetectorBitErrors = syncDetectorBitErrorCount;
             }
         }
 
@@ -323,12 +345,22 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
                 long elapsed = now - mAcquisitionStartMillis;
                 long elapsedFromFirstDibit = mFirstDibitMillis > 0 ? now - mFirstDibitMillis : -1;
                 long elapsedFromFirstCandidate = mFirstCandidateMillis > 0 ? now - mFirstCandidateMillis : -1;
-                mLog.info("P25P2 acquisition first sync reason:{} elapsedMs:{} sampleBuffers:{} bitErrors:{} bandwidth:{}",
-                    mAcquisitionReason, elapsed, mAcquisitionSampleBufferCount, bitErrors,
-                    mFrequencyCorrectionSyncMonitor.getCurrentBandwidth());
-                mLog.info("P25P2 acquisition sync path reason:{} elapsedFromFirstDibitMs:{} elapsedFromFirstCandidateMs:{} candidateCount:{} firstAcceptedCandidate:{}",
-                    mAcquisitionReason, elapsedFromFirstDibit, elapsedFromFirstCandidate, mAcquisitionCandidateCount,
-                    mAcquisitionCandidateCount == 1);
+                boolean logAcquisition = elapsed >= ACQUISITION_LOG_THRESHOLD_MS ||
+                    mAcquisitionCandidateCount > 1 || mFirstCandidatePhaseAligned;
+
+                if(logAcquisition)
+                {
+                    mLog.info("P25P2 acquisition reason:{} elapsedMs:{} sampleBuffers:{} bitErrors:{} bandwidth:{} " +
+                            "elapsedFromFirstDibitMs:{} elapsedFromFirstCandidateMs:{} candidateCount:{} firstAcceptedCandidate:{} " +
+                            "firstCandidate[accepted:{},bitErrors:{},iisch1Valid:{},iisch1BitErrors:{},iisch2Valid:{},iisch2BitErrors:{},dibitsProcessed:{},sync1BitErrors:{},detectorBitErrors:{},phaseAligned:{}]",
+                        mAcquisitionReason, elapsed, mAcquisitionSampleBufferCount, bitErrors,
+                        mFrequencyCorrectionSyncMonitor.getCurrentBandwidth(), elapsedFromFirstDibit, elapsedFromFirstCandidate,
+                        mAcquisitionCandidateCount, mAcquisitionCandidateCount == 1, mFirstCandidateAccepted,
+                        mFirstCandidateBitErrors, mFirstCandidateIISCH1Valid, mFirstCandidateIISCH1BitErrors,
+                        mFirstCandidateIISCH2Valid, mFirstCandidateIISCH2BitErrors, mFirstCandidateDibitsProcessed,
+                        mFirstCandidateSync1BitErrors, mFirstCandidateDetectorBitErrors, mFirstCandidatePhaseAligned);
+                }
+
                 mAwaitingFirstSync = false;
             }
         }
