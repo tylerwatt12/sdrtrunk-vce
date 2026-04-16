@@ -187,21 +187,6 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     @Override
     protected void checkState()
     {
-        if(isP25P1Channel())
-        {
-            State currentState = mStateMachine.getState();
-            mStateMachine.checkState();
-            State updatedState = mStateMachine.getState();
-
-            if(updatedState != currentState)
-            {
-                mLog.debug("SingleChannelState timeout transition decoder:{} from:{} to:{}",
-                    getChannel().getDecodeConfiguration().getDecoderType(), currentState, updatedState);
-            }
-
-            return;
-        }
-
         mStateMachine.checkState();
     }
 

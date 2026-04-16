@@ -148,13 +148,6 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
 
                 if(mSquelchState == SquelchState.SQUELCH)
                 {
-                    if(currentAudioSegment != null)
-                    {
-                        mLog.debug("Analog audio closing segment on squelch segment:{} buffers:{} bursts:{} burstActive:{}",
-                            formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                            currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive());
-                    }
-
                     endCurrentAudioBurst();
                     closeAudioSegment();
                 }
