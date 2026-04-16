@@ -282,7 +282,7 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         @Override
         public void syncCandidateEvaluated(int totalBitErrors, boolean accepted, boolean iisch1Valid, int iisch1BitErrors,
                                            boolean iisch2Valid, int iisch2BitErrors, int dibitsProcessed,
-                                           int sync1BitErrorCount, int syncDetectorBitErrorCount, boolean forcedRealign)
+                                           int sync1BitErrorCount, int syncDetectorBitErrorCount, boolean phaseAligned)
         {
             mAcquisitionCandidateCount++;
 
@@ -295,10 +295,10 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
                 long elapsedFromFirstDibit = mFirstDibitMillis > 0 ? mFirstCandidateMillis - mFirstDibitMillis : -1;
                 mLog.info("P25P2 acquisition first sync candidate reason:{} elapsedFromStartMs:{} elapsedFromFirstDibitMs:{} " +
                         "candidateBitErrors:{} accepted:{} iisch1[valid:{},bitErrors:{}] iisch2[valid:{},bitErrors:{}] " +
-                        "dibitsProcessed:{} sync1BitErrors:{} detectorBitErrors:{} forcedRealign:{}",
+                        "dibitsProcessed:{} sync1BitErrors:{} detectorBitErrors:{} phaseAligned:{}",
                     mAcquisitionReason, elapsedFromStart, elapsedFromFirstDibit, totalBitErrors, accepted,
                     iisch1Valid, iisch1BitErrors, iisch2Valid, iisch2BitErrors, dibitsProcessed,
-                    sync1BitErrorCount, syncDetectorBitErrorCount, forcedRealign);
+                    sync1BitErrorCount, syncDetectorBitErrorCount, phaseAligned);
             }
         }
 

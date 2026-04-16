@@ -117,7 +117,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     private DibitDelayBuffer mFragmentBuffer = new DibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
     private int mDibitsProcessed = 0;
     private boolean mSynchronized = false;
-    private boolean mLastAcquisitionWasForcedRealign = false;
+    private boolean mPendingPhaseAlignedAcquisition = false;
     private ISyncDetectListener mSyncDetectListener;
     private P25P2SyncObservationListener mSyncObservationListener;
     private boolean mObservedFirstDibit;
@@ -252,13 +252,14 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             broadcastSyncLoss(mDibitsProcessed + dibitOffset - FRAGMENT_DIBIT_LENGTH);
         }
 
-        boolean afterForcedRealign = mLastAcquisitionWasForcedRealign;
-        mLastAcquisitionWasForcedRealign = false;
+        boolean afterPhaseEstablishment = mPendingPhaseAlignedAcquisition;
+        int dibitsProcessed = mDibitsProcessed;
+        mPendingPhaseAlignedAcquisition = false;
         mDibitsProcessed = 0 + dibitOffset;
         SuperFrameFragment frameFragment = createFragment(bitErrors, dibitOffset);
 
         boolean invalidIISCHs = !frameFragment.getIISCH1().isValid() && !frameFragment.getIISCH2().isValid();
-        boolean acquisitionAttempt = afterForcedRealign;
+        boolean acquisitionAttempt = afterPhaseEstablishment;
 
         if(invalidIISCHs && acquisitionAttempt)
         {
@@ -271,7 +272,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             mSyncObservationListener.syncCandidateEvaluated(bitErrors, true,
                 frameFragment.getIISCH1().isValid(), frameFragment.getIISCH1().getMessage().getCorrectedBitCount(),
                 frameFragment.getIISCH2().isValid(), frameFragment.getIISCH2().getMessage().getCorrectedBitCount(),
-                mDibitsProcessed, 0, bitErrors, true);
+                dibitsProcessed, 0, bitErrors, true);
             mSyncObservationListener.syncAcquired(bitErrors);
         }
 
@@ -299,8 +300,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             broadcastSyncLoss(mDibitsProcessed + FRAGMENT_DIBIT_LENGTH);
         }
 
-        boolean afterForcedRealign = mLastAcquisitionWasForcedRealign;
-        mLastAcquisitionWasForcedRealign = false;
+        boolean afterPhaseEstablishment = mPendingPhaseAlignedAcquisition;
+        int dibitsProcessed = mDibitsProcessed;
+        mPendingPhaseAlignedAcquisition = false;
         mDibitsProcessed = 0 + sync2Offset; //We're only concerned with adjusting for sync 2 offset from here on out.
         CorrectedBinaryMessage message1 = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + sync1Offset, 720);
         //Clear the bits from sync 2 start bit index 1080 (dibit 540) inclusive through bit index 1440 (exclusive).
@@ -313,12 +315,12 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         message1.setCorrectedBitCount(bitErrors); //Not even sure what the correct bit error count is here?
         SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence);
 
-        if(afterForcedRealign && mSyncObservationListener != null)
+        if(afterPhaseEstablishment && mSyncObservationListener != null)
         {
             mSyncObservationListener.syncCandidateEvaluated(bitErrors, true,
                 frameFragment.getIISCH1().isValid(), frameFragment.getIISCH1().getMessage().getCorrectedBitCount(),
                 frameFragment.getIISCH2().isValid(), frameFragment.getIISCH2().getMessage().getCorrectedBitCount(),
-                mDibitsProcessed, 0, bitErrors, true);
+                dibitsProcessed, 0, bitErrors, true);
             mSyncObservationListener.syncAcquired(bitErrors);
         }
 
@@ -392,7 +394,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * Use the current sync hit to establish fragment phase, then defer acceptance until the next aligned fragment
      * check when sync1 and sync2 should both be in the expected positions.
      */
-    private void setupForcedRealign()
+    private void establishFragmentPhase()
     {
         mSynchronized = true;
 
@@ -402,7 +404,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
 
         mDibitsProcessed = DIBIT_COUNT_MISALIGNED_SYNC;
-        mLastAcquisitionWasForcedRealign = true;
+        mPendingPhaseAlignedAcquisition = true;
     }
 
     /**
@@ -510,19 +512,20 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                         mDibitsProcessed, sync1BitErrorCount, syncDetectorBitErrorCount, false);
                 }
 
-                if(!accepted)
+                if(accepted)
                 {
-                    setupForcedRealign();
+                    if(mSyncObservationListener != null)
+                    {
+                        mSyncObservationListener.syncAcquired(totalBitErrors);
+                    }
+
+                    mSynchronized = true;
+                    broadcastFragment(totalBitErrors, 0);
                     return;
                 }
 
-                if(mSyncObservationListener != null)
-                {
-                    mSyncObservationListener.syncAcquired(totalBitErrors);
-                }
-
-                mSynchronized = true;
-                broadcastFragment(totalBitErrors, 0);
+                establishFragmentPhase();
+                return;
             }
             else
             {
@@ -534,7 +537,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
                 //We're probably mis-aligned on the fragment.  Setup as if we're synchronized and adjust the dibits
                 // processed counter so that we guarantee a fragment check after another 180 dibits have arrived which
                 // means that sync1 and sync2 should be aligned
-                setupForcedRealign();
+                establishFragmentPhase();
             }
         }
     }

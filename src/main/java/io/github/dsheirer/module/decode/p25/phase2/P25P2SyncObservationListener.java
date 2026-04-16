@@ -26,6 +26,6 @@ public interface P25P2SyncObservationListener
     void firstDibitReceived();
     void syncCandidateEvaluated(int totalBitErrors, boolean accepted, boolean iisch1Valid, int iisch1BitErrors,
                                 boolean iisch2Valid, int iisch2BitErrors, int dibitsProcessed,
-                                int sync1BitErrorCount, int syncDetectorBitErrorCount, boolean forcedRealign);
+                                int sync1BitErrorCount, int syncDetectorBitErrorCount, boolean phaseAligned);
     void syncAcquired(int bitErrors);
 }
