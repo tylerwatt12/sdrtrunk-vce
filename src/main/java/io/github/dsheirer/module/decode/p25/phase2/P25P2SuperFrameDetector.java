@@ -47,11 +47,18 @@ import java.util.List;
  */
 public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectListener
 {
+    /**
+     * Current acquisition/tracking states.
+     *
+     * Current implementation makes fragment-phase establishment explicit while preserving the validated acquisition
+     * behavior:
+     * SEARCHING_SYNC -> ESTIMATING_PHASE -> TRACKING.
+     */
     private enum SyncState
     {
-        UNSYNCHRONIZED,
-        PHASE_ALIGNED_PENDING,
-        SYNCHRONIZED
+        SEARCHING_SYNC,
+        ESTIMATING_PHASE,
+        TRACKING
     }
 
     /**
@@ -123,7 +130,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      */
     private DibitDelayBuffer mFragmentBuffer = new DibitDelayBuffer(720 + (2 * FRAGMENT_BUFFER_OVERSIZE));
     private int mDibitsProcessed = 0;
-    private SyncState mSyncState = SyncState.UNSYNCHRONIZED;
+    private SyncState mSyncState = SyncState.SEARCHING_SYNC;
     private ISyncDetectListener mSyncDetectListener;
     private P25P2SyncObservationListener mSyncObservationListener;
     private boolean mObservedFirstDibit;
@@ -219,7 +226,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
         mFragmentBuffer.put(dibit);
 
-        if(mSyncState != SyncState.UNSYNCHRONIZED)
+        if(mSyncState == SyncState.ESTIMATING_PHASE || mSyncState == SyncState.TRACKING)
         {
             mSyncDetectionDelayBuffer.put(dibit);
 
@@ -258,10 +265,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             broadcastSyncLoss(mDibitsProcessed + dibitOffset - FRAGMENT_DIBIT_LENGTH);
         }
 
-        boolean afterPhaseEstablishment = mSyncState == SyncState.PHASE_ALIGNED_PENDING;
+        boolean afterPhaseEstablishment = mSyncState == SyncState.ESTIMATING_PHASE;
         int dibitsProcessed = mDibitsProcessed;
-        mSyncState = SyncState.SYNCHRONIZED;
-        mDibitsProcessed = 0 + dibitOffset;
+        enterTracking(dibitOffset);
         SuperFrameFragment frameFragment = createFragment(bitErrors, dibitOffset);
 
         boolean invalidIISCHs = !frameFragment.getIISCH1().isValid() && !frameFragment.getIISCH2().isValid();
@@ -269,16 +275,18 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
         if(invalidIISCHs && acquisitionAttempt)
         {
-            mSyncState = SyncState.UNSYNCHRONIZED;
+            enterSearchingSync();
             return;
         }
 
         if(acquisitionAttempt && mSyncObservationListener != null)
         {
-            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true,
-                frameFragment.getIISCH1().isValid(), frameFragment.getIISCH1().getMessage().getCorrectedBitCount(),
-                frameFragment.getIISCH2().isValid(), frameFragment.getIISCH2().getMessage().getCorrectedBitCount(),
-                dibitsProcessed, 0, bitErrors, true);
+            boolean iisch1Valid = frameFragment.getIISCH1().isValid();
+            int iisch1BitErrors = frameFragment.getIISCH1().getMessage().getCorrectedBitCount();
+            boolean iisch2Valid = frameFragment.getIISCH2().isValid();
+            int iisch2BitErrors = frameFragment.getIISCH2().getMessage().getCorrectedBitCount();
+            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true, iisch1Valid, iisch1BitErrors,
+                iisch2Valid, iisch2BitErrors, dibitsProcessed, 0, bitErrors, true);
             mSyncObservationListener.syncAcquired(bitErrors);
         }
 
@@ -306,10 +314,9 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             broadcastSyncLoss(mDibitsProcessed + FRAGMENT_DIBIT_LENGTH);
         }
 
-        boolean afterPhaseEstablishment = mSyncState == SyncState.PHASE_ALIGNED_PENDING;
+        boolean afterPhaseEstablishment = mSyncState == SyncState.ESTIMATING_PHASE;
         int dibitsProcessed = mDibitsProcessed;
-        mSyncState = SyncState.SYNCHRONIZED;
-        mDibitsProcessed = 0 + sync2Offset; //We're only concerned with adjusting for sync 2 offset from here on out.
+        enterTracking(sync2Offset); //We're only concerned with adjusting for sync 2 offset from here on out.
         CorrectedBinaryMessage message1 = mFragmentBuffer.getMessage(FRAGMENT_BUFFER_OVERSIZE + sync1Offset, 720);
         //Clear the bits from sync 2 start bit index 1080 (dibit 540) inclusive through bit index 1440 (exclusive).
         message1.clear(1080, 1440);
@@ -323,10 +330,12 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
         if(afterPhaseEstablishment && mSyncObservationListener != null)
         {
-            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true,
-                frameFragment.getIISCH1().isValid(), frameFragment.getIISCH1().getMessage().getCorrectedBitCount(),
-                frameFragment.getIISCH2().isValid(), frameFragment.getIISCH2().getMessage().getCorrectedBitCount(),
-                dibitsProcessed, 0, bitErrors, true);
+            boolean iisch1Valid = frameFragment.getIISCH1().isValid();
+            int iisch1BitErrors = frameFragment.getIISCH1().getMessage().getCorrectedBitCount();
+            boolean iisch2Valid = frameFragment.getIISCH2().isValid();
+            int iisch2BitErrors = frameFragment.getIISCH2().getMessage().getCorrectedBitCount();
+            mSyncObservationListener.syncCandidateEvaluated(bitErrors, true, iisch1Valid, iisch1BitErrors,
+                iisch2Valid, iisch2BitErrors, dibitsProcessed, 0, bitErrors, true);
             mSyncObservationListener.syncAcquired(bitErrors);
         }
 
@@ -396,14 +405,34 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         }
     }
 
+    private void enterSearchingSync()
+    {
+        mSyncState = SyncState.SEARCHING_SYNC;
+    }
+
+    private void enterEstimatingPhase()
+    {
+        mSyncState = SyncState.ESTIMATING_PHASE;
+    }
+
+    private void enterTracking(int dibitOffset)
+    {
+        mSyncState = SyncState.TRACKING;
+        mDibitsProcessed = dibitOffset;
+    }
+
     /**
      * Use the current sync hit to establish fragment phase, then defer acceptance until the next aligned fragment
      * check when sync1 and sync2 should both be in the expected positions.
      */
     private void establishFragmentPhase()
     {
-        mSyncState = SyncState.PHASE_ALIGNED_PENDING;
+        enterEstimatingPhase();
+        alignForNextFragmentCheck();
+    }
 
+    private void alignForNextFragmentCheck()
+    {
         if(mDibitsProcessed > DIBIT_COUNT_MISALIGNED_SYNC)
         {
             broadcastSyncLoss(mDibitsProcessed - DIBIT_COUNT_MISALIGNED_SYNC);
@@ -420,130 +449,119 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     {
         //Since we're using multi-sync detection, only proceed if we've processed enough dibits.  The first sync detector
         //to fire will cause the fragment to be processed and any subsequent, simultaneous detection will be ignored.
-        if(mDibitsProcessed > 0)
+        if(mDibitsProcessed <= 0)
         {
-            if(mSyncState != SyncState.UNSYNCHRONIZED)
+            return;
+        }
+
+        switch(mSyncState)
+        {
+            case SEARCHING_SYNC:
+                handleUnsynchronizedSyncHit(syncDetectorBitErrorCount);
+                break;
+            case ESTIMATING_PHASE:
+            case TRACKING:
+                handleSynchronizedFragmentCheck();
+                break;
+        }
+    }
+
+    private void handleSynchronizedFragmentCheck()
+    {
+        int sync1BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_1);
+
+        if(sync1BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
+        {
+            int sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2);
+
+            if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
             {
-                //If we're synchronized, then this is a counter based trigger and we check both sync locations
-                int sync1BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_1);
-
-                if(sync1BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
-                {
-                    int sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2);
-
-                    if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
-                    {
-                        broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, 0);
-                        return;
-                    }
-                    else
-                    {
-                        //We are synchronized on sync 1 but not on sync 2.  Check to see if we have a good sync 2
-                        //pattern by shifting left or right by one or two dibits to detect dibit stuffing/deletion
-                        // between sync 1 and sync 2.
-                        int sync2Offset = getSynchronizedSyncOffset(DIBIT_DELAY_BUFFER_INDEX_SYNC_2);
-
-                        if(isValidSyncOffset(sync2Offset))
-                        {
-                            //Recalculate the sync 2 bit error count using the offset value.
-                            sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync2Offset);
-                            broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, 0, sync2Offset);
-                        }
-
-                        //Since we're getting misaligned, set unsynchronized to re-enter active sync inspection
-                        mSyncState = SyncState.UNSYNCHRONIZED;
-                        return;
-                    }
-                }
-                else
-                {
-                    //We are synchronized but we've lost sync on current sync 1.  Check to see if we have a good sync
-                    //pattern by shifting left or right by one or two dibits to detect dibit stuffing/deletion.
-                    int sync1Offset = getSynchronizedSyncOffset(DIBIT_DELAY_BUFFER_INDEX_SYNC_1);
-
-                    if(isValidSyncOffset(sync1Offset))
-                    {
-                        //Update the sync 1 bit error count, calculated using the new offset.
-                        sync1BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_1 + sync1Offset);
-                        int sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync1Offset);
-
-                        if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
-                        {
-                            //Broadcast the fragment using just the sync 1 offset.
-                            broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset);
-                        }
-                        else
-                        {
-                            //Check to see if there's a different offset for sync 2, relative to the new sync 1 offset
-                            int sync2Offset = getSynchronizedSyncOffset(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync1Offset);
-
-                            if(isValidSyncOffset(sync2Offset))
-                            {
-                                int totalOffset = sync1Offset + sync2Offset;
-
-                                //Don't allow the total (sync 1 + sync2) offset to exceed the range (-2 to +2)
-                                if(isValidSyncOffset(totalOffset))
-                                {
-                                    broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset, sync2Offset);
-                                }
-                            }
-                        }
-                    }
-
-                    //Since we're getting misaligned, set unsynchronized to re-enter active sync inspection
-                    mSyncState = SyncState.UNSYNCHRONIZED;
-                    return;
-                }
+                broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, 0);
+                return;
             }
 
-            //If we're not synchronized, this is a sync detector trigger and we only have to check sync 1 for error
-            // count because the sync detector has already triggered on sync 2
-            int sync1BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_1);
+            int sync2Offset = getSynchronizedSyncOffset(DIBIT_DELAY_BUFFER_INDEX_SYNC_2);
 
-            if(sync1BitErrorCount <= UN_SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
+            if(isValidSyncOffset(sync2Offset))
             {
-                int totalBitErrors = sync1BitErrorCount + syncDetectorBitErrorCount;
-                SuperFrameFragment candidate = createFragment(totalBitErrors, 0);
-                boolean iisch1Valid = candidate.getIISCH1().isValid();
-                int iisch1BitErrors = candidate.getIISCH1().getMessage().getCorrectedBitCount();
-                boolean iisch2Valid = candidate.getIISCH2().isValid();
-                int iisch2BitErrors = candidate.getIISCH2().getMessage().getCorrectedBitCount();
-                boolean accepted = iisch1Valid || iisch2Valid;
+                sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync2Offset);
+                broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, 0, sync2Offset);
+            }
 
-                if(mSyncObservationListener != null)
-                {
-                    mSyncObservationListener.syncCandidateEvaluated(totalBitErrors, accepted,
-                        iisch1Valid, iisch1BitErrors, iisch2Valid, iisch2BitErrors,
-                        mDibitsProcessed, sync1BitErrorCount, syncDetectorBitErrorCount, false);
-                }
+            enterSearchingSync();
+            return;
+        }
 
-                if(accepted)
-                {
-                    if(mSyncObservationListener != null)
-                    {
-                        mSyncObservationListener.syncAcquired(totalBitErrors);
-                    }
+        int sync1Offset = getSynchronizedSyncOffset(DIBIT_DELAY_BUFFER_INDEX_SYNC_1);
 
-                    mSyncState = SyncState.SYNCHRONIZED;
-                    broadcastFragment(totalBitErrors, 0);
-                    return;
-                }
+        if(isValidSyncOffset(sync1Offset))
+        {
+            sync1BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_1 + sync1Offset);
+            int sync2BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync1Offset);
 
-                establishFragmentPhase();
-                return;
+            if(sync2BitErrorCount <= SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
+            {
+                broadcastFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset);
             }
             else
             {
-                if(sync1BitErrorCount >= FORCED_REALIGN_MAX_SYNC1_ERRORS)
+                int sync2Offset = getSynchronizedSyncOffset(DIBIT_DELAY_BUFFER_INDEX_SYNC_2 + sync1Offset);
+
+                if(isValidSyncOffset(sync2Offset))
                 {
-                    return;
+                    int totalOffset = sync1Offset + sync2Offset;
+
+                    if(isValidSyncOffset(totalOffset))
+                    {
+                        broadcastSplitFragment(sync1BitErrorCount + sync2BitErrorCount, sync1Offset, sync2Offset);
+                    }
+                }
+            }
+        }
+
+        enterSearchingSync();
+    }
+
+    private void handleUnsynchronizedSyncHit(int syncDetectorBitErrorCount)
+    {
+        int sync1BitErrorCount = getSyncBitErrorCount(DIBIT_DELAY_BUFFER_INDEX_SYNC_1);
+
+        if(sync1BitErrorCount <= UN_SYNCHRONIZED_SYNC_MATCH_THRESHOLD)
+        {
+            int totalBitErrors = sync1BitErrorCount + syncDetectorBitErrorCount;
+            SuperFrameFragment candidate = createFragment(totalBitErrors, 0);
+            boolean iisch1Valid = candidate.getIISCH1().isValid();
+            int iisch1BitErrors = candidate.getIISCH1().getMessage().getCorrectedBitCount();
+            boolean iisch2Valid = candidate.getIISCH2().isValid();
+            int iisch2BitErrors = candidate.getIISCH2().getMessage().getCorrectedBitCount();
+            boolean accepted = iisch1Valid || iisch2Valid;
+
+            if(mSyncObservationListener != null)
+            {
+                mSyncObservationListener.syncCandidateEvaluated(totalBitErrors, accepted,
+                    iisch1Valid, iisch1BitErrors, iisch2Valid, iisch2BitErrors,
+                    mDibitsProcessed, sync1BitErrorCount, syncDetectorBitErrorCount, false);
+            }
+
+            if(accepted)
+            {
+                if(mSyncObservationListener != null)
+                {
+                    mSyncObservationListener.syncAcquired(totalBitErrors);
                 }
 
-                //We're probably mis-aligned on the fragment.  Setup as if we're synchronized and adjust the dibits
-                // processed counter so that we guarantee a fragment check after another 180 dibits have arrived which
-                // means that sync1 and sync2 should be aligned
-                establishFragmentPhase();
+                enterTracking(0);
+                broadcastFragment(totalBitErrors, 0);
+                return;
             }
+
+            establishFragmentPhase();
+            return;
+        }
+
+        if(sync1BitErrorCount < FORCED_REALIGN_MAX_SYNC1_ERRORS)
+        {
+            establishFragmentPhase();
         }
     }
 
