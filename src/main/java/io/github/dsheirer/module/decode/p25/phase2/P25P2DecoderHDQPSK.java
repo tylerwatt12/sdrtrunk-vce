@@ -72,11 +72,11 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     protected IRealFilter mQBasebandFilter;
     private DecodeConfigP25Phase2 mDecodeConfigP25Phase2;
 
-    public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2)
+    public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2, double initialSampleRate)
     {
         super(6000.0);
         mDecodeConfigP25Phase2 = decodeConfigP25Phase2;
-        setSampleRate(DecodeConfigP25Phase2.CHANNEL_SAMPLE_RATE);
+        setSampleRate(initialSampleRate);
     }
 
     @Override

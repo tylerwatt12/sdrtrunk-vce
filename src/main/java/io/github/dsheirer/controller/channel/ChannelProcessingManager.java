@@ -465,7 +465,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         /* Processing Modules */
         List<Module> modules = DecoderFactory.getModules(mChannelMapModel, channel, mAliasModel, mUserPreferences,
-            request.getTrafficChannelManager(), request.getChannelDescriptor());
+            request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate());
         processingChain.addModules(modules);
 
         //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate

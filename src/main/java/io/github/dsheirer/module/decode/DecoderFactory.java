@@ -133,10 +133,10 @@ public class DecoderFactory
      */
     public static List<Module> getModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
                                           UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
-                                          IChannelDescriptor channelDescriptor)
+                                          IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
     {
         List<Module> modules = getPrimaryModules(channelMapModel, channel, aliasModel, userPreferences,
-                trafficChannelManager, channelDescriptor);
+                trafficChannelManager, channelDescriptor, initialSourceSampleRate);
         modules.addAll(getAuxiliaryDecoders(channel.getAuxDecodeConfiguration()));
         return modules;
     }
@@ -154,7 +154,7 @@ public class DecoderFactory
      */
     public static List<Module> getPrimaryModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
                                                  UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
-                                                 IChannelDescriptor channelDescriptor)
+                                                 IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
     {
         List<Module> modules = new ArrayList<>();
 
@@ -195,7 +195,8 @@ public class DecoderFactory
                 processP25Phase1(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor);
                 break;
             case P25_PHASE2:
-                processP25Phase2(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor);
+                processP25Phase2(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor,
+                    initialSourceSampleRate);
                 break;
             default:
                 throw new IllegalArgumentException("Unknown decoder type [" + decodeConfig.getDecoderType().toString() + "]");
@@ -215,10 +216,10 @@ public class DecoderFactory
      */
     private static void processP25Phase2(Channel channel, UserPreferences userPreferences, List<Module> modules,
                                          AliasList aliasList, TrafficChannelManager trafficChannelManager,
-                                         IChannelDescriptor channelDescriptor)
+                                         IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
     {
-
-        modules.add(new P25P2DecoderHDQPSK((DecodeConfigP25Phase2)channel.getDecodeConfiguration()));
+        modules.add(new P25P2DecoderHDQPSK((DecodeConfigP25Phase2)channel.getDecodeConfiguration(),
+            initialSourceSampleRate));
 
         P25TrafficChannelManager p25TrafficChannelManager = null;
 
