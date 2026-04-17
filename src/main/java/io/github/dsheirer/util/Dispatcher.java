@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.util;
 
-import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.heartbeat.HeartbeatManager;
 import java.util.ArrayList;
@@ -27,33 +26,58 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Threaded scheduled processor for receiving elements from a separate producer thread and forwarding those buffers to a
- * registered listener on this consumer/dispatcher thread.  Internally uses a single-thread thread pool to effect a
- * timer-based interval for processing to avoid excessive context switching inherent in a blocking queue.  Sizes the
- * thread pool to a single thread to ensure Garbage Collector can efficiently clean objects created on the thread.
+ * registered listener on this consumer/dispatcher thread.
+ *
+ * Instances that use the shared-pool constructor share a fixed-size daemon thread pool rather than allocating one
+ * thread per dispatcher.  Per-instance ordering is preserved by the Processor guard (an AtomicBoolean that prevents
+ * concurrent re-entry on the same dispatcher).  Shutdown cancels the per-instance ScheduledFuture without touching
+ * the shared pool.
+ *
+ * Instances that use the private-pool constructor (recorders and other I/O-heavy users) get their own executor so
+ * that slow I/O cannot starve the shared channel-dispatch pool.
  */
 public class Dispatcher<E> implements Listener<E>
 {
+    public enum ExecutorType { SHARED, PRIVATE }
+
     private static final Logger mLog = LoggerFactory.getLogger(Dispatcher.class);
+    //Daemon threads: the pool must not prevent JVM shutdown.
+    private static final ScheduledExecutorService SHARED_POOL =
+        Executors.newScheduledThreadPool(8, new ThreadFactory()
+        {
+            private final AtomicInteger mCount = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r)
+            {
+                Thread t = new Thread(r, "sdrtrunk dispatcher thread " + mCount.getAndIncrement());
+                t.setDaemon(true);
+                t.setPriority(Thread.NORM_PRIORITY);
+                return t;
+            }
+        });
     private final LinkedTransferQueue<E> mQueue = new LinkedTransferQueue<>();
     private final List<E> mDrainBuffer = new ArrayList<>();
     private Listener<E> mListener;
     private final AtomicBoolean mRunning = new AtomicBoolean();
-    private String mThreadName;
-    private ScheduledExecutorService mExecutorService;
     private ScheduledFuture<?> mScheduledFuture;
+    private ScheduledExecutorService mPrivateExecutor;
+    private final ExecutorType mExecutorType;
     private final long mInterval;
     private HeartbeatManager mHeartbeatManager;
 
     /**
-     * Constructs an instance of a Dispatcher with integrated heartbeat support.
-     * @param threadName to name the dispatcher thread
+     * Constructs an instance that uses the shared dispatcher pool.  Use for channel sources and channel output
+     * processors where thread-per-instance overhead is the primary concern.
+     * @param threadName ignored (retained for call-site compatibility)
      * @param interval for processing each batch in milliseconds.
      * @param heartbeatManager to receive a heartbeat command at each processing interval.
      */
@@ -64,23 +88,28 @@ public class Dispatcher<E> implements Listener<E>
     }
 
     /**
-     * Constructs an instance
-     * @param threadName to name the dispatcher thread
+     * Constructs an instance that uses the shared dispatcher pool.  Use for channel sources and channel output
+     * processors where thread-per-instance overhead is the primary concern.
+     * @param threadName ignored (retained for call-site compatibility)
      * @param interval for processing each batch in milliseconds.
      */
     public Dispatcher(String threadName, long interval)
     {
-        mThreadName = threadName;
         mInterval = interval;
+        mExecutorType = ExecutorType.SHARED;
     }
 
     /**
-     * Sets the thread name.  If this dispatcher is already started, this has no effect.
-     * @param threadName to use for this dispatcher.
+     * Constructs an instance with the specified executor type.  Use {@link ExecutorType#PRIVATE} for I/O-bound
+     * recorders and other users where slow tasks must not starve the shared channel-dispatch pool.
+     * @param threadName ignored (retained for call-site compatibility)
+     * @param interval for processing each batch in milliseconds.
+     * @param executorType whether to use the shared pool or a private single-thread executor.
      */
-    public void setThreadName(String threadName)
+    public Dispatcher(String threadName, long interval, ExecutorType executorType)
     {
-        mThreadName = threadName;
+        mInterval = interval;
+        mExecutorType = executorType;
     }
 
     /**
@@ -121,17 +150,25 @@ public class Dispatcher<E> implements Listener<E>
                 mScheduledFuture.cancel(false);
             }
 
-            if(mExecutorService != null)
+            mQueue.clear();
+            ScheduledExecutorService executor;
+
+            if(mExecutorType == ExecutorType.SHARED)
             {
-                mExecutorService.shutdown();
-                mExecutorService = null;
+                executor = SHARED_POOL;
+            }
+            else
+            {
+                if(mPrivateExecutor != null)
+                {
+                    mPrivateExecutor.shutdown();
+                }
+                mPrivateExecutor = Executors.newSingleThreadScheduledExecutor();
+                executor = mPrivateExecutor;
             }
 
-            mQueue.clear();
-            mExecutorService = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(mThreadName));
-
             Runnable r = (mHeartbeatManager != null ? new ProcessorWithHeartbeat() : new Processor());
-            mScheduledFuture = mExecutorService.scheduleAtFixedRate(r, 0, mInterval, TimeUnit.MILLISECONDS);
+            mScheduledFuture = executor.scheduleAtFixedRate(r, 0, mInterval, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -151,10 +188,10 @@ public class Dispatcher<E> implements Listener<E>
                 mQueue.clear();
             }
 
-            if(mExecutorService != null)
+            if(mPrivateExecutor != null)
             {
-                mExecutorService.shutdown();
-                mExecutorService = null;
+                mPrivateExecutor.shutdown();
+                mPrivateExecutor = null;
             }
         }
     }
@@ -174,10 +211,10 @@ public class Dispatcher<E> implements Listener<E>
                 mScheduledFuture = null;
             }
 
-            if(mExecutorService != null)
+            if(mPrivateExecutor != null)
             {
-                mExecutorService.shutdown();
-                mExecutorService = null;
+                mPrivateExecutor.shutdown();
+                mPrivateExecutor = null;
             }
 
             List<E> elements = new ArrayList<>();

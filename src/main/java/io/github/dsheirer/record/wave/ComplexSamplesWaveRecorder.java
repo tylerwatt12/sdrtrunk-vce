@@ -44,7 +44,7 @@ public class ComplexSamplesWaveRecorder extends Module implements IComplexSample
 {
     private static final Logger mLog = LoggerFactory.getLogger(ComplexSamplesWaveRecorder.class);
 
-    private Dispatcher<ComplexSamples> mBufferProcessor = new Dispatcher<>("sdrtrunk complex wave recorder", 250);
+    private Dispatcher<ComplexSamples> mBufferProcessor = new Dispatcher<>("sdrtrunk complex wave recorder", 250, Dispatcher.ExecutorType.PRIVATE);
     private AtomicBoolean mRunning = new AtomicBoolean();
     private BufferWaveWriter mWriter;
     private String mFilePrefix;
