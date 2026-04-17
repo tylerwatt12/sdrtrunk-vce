@@ -784,6 +784,13 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 return;
             }
 
+            boolean hasAudioAvailableEvent = changedSegments.containsValue(AudioSegmentLifecycleEventType.AUDIO_AVAILABLE);
+
+            if(!hasAudioAvailableEvent)
+            {
+                return;
+            }
+
             Set<Integer> changedIdentities = new HashSet<>();
             List<String> changed = new ArrayList<>();
 
