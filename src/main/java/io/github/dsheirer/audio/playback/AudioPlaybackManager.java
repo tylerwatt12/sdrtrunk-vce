@@ -60,6 +60,7 @@ import org.slf4j.LoggerFactory;
 public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmentLifecycleListener, IAudioController
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioPlaybackManager.class);
+    private static final String UNKNOWN = "unknown";
     private static final long WATCHDOG_INTERVAL_MS = 1000;
     private static final long WATCHDOG_STARTUP_GRACE_PERIOD_MS = 5000;
     private final AudioSegmentPrioritySorter mAudioSegmentPrioritySorter = new AudioSegmentPrioritySorter();
@@ -446,14 +447,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
 
             PendingChangeSummary pendingChangeSummary = processChangedPendingSegments();
 
-            if(pendingChangeSummary.changedWorkProcessed())
+            if(pendingChangeSummary.changedWorkProcessed() && watchdog)
             {
-                if(watchdog)
-                {
-                    promotedPendingSegment = true;
-                    rescuedSegments.addAll(pendingChangeSummary.rescuedSegments());
-                    rescuedEventTypes.putAll(pendingChangeSummary.rescuedEventTypes());
-                }
+                promotedPendingSegment = true;
+                rescuedSegments.addAll(pendingChangeSummary.rescuedSegments());
+                rescuedEventTypes.putAll(pendingChangeSummary.rescuedEventTypes());
             }
 
             //Transfer pending audio segments that now have audio or that completed without ever having audio
@@ -500,7 +498,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     if(audioSegment != null && audioSegment.hasAudio())
                     {
                         mLog.warn("Playback pending invariant violated segment:{} queuedLifecycleEvent:{} pending:{} ready:{} new:{} lifecycle:{}",
-                            formatSegmentSummary(audioSegment, null), "unknown", mPendingAudioSegments.size(),
+                            formatSegmentSummary(audioSegment, null), UNKNOWN, mPendingAudioSegments.size(),
                             mAudioSegments.size(), mNewAudioSegmentQueue.size(), mLifecycleChangedSegments.size());
                         break;
                     }
@@ -707,63 +705,92 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
         }
-    }
 
-    private String formatSegments(Set<AudioSegment> audioSegments, Map<AudioSegment, AudioSegmentLifecycleEventType> eventTypes)
-    {
-        if(audioSegments == null || audioSegments.isEmpty())
+        private void transferToAudioChannel(AudioSegment audioSegment, AudioChannel audioChannel)
         {
-            return "";
-        }
-
-        List<String> formatted = new ArrayList<>();
-
-        for(AudioSegment audioSegment : audioSegments)
-        {
-            if(audioSegment != null)
+            if(audioSegment != null && audioChannel != null)
             {
-                formatted.add(formatSegmentSummary(audioSegment, eventTypes != null ? eventTypes.get(audioSegment) : null));
+                audioSegment.removeLifecycleListener(AudioPlaybackManager.this);
+                audioChannel.play(audioSegment);
             }
         }
 
-        Collections.sort(formatted);
-        return String.join(",", formatted);
-    }
-
-    private String formatSegmentSummary(AudioSegment audioSegment, AudioSegmentLifecycleEventType queuedLifecycleEvent)
-    {
-        if(audioSegment == null)
+        private String formatChannels(List<AudioChannel> audioChannels)
         {
-            return "null";
+            StringBuilder sb = new StringBuilder();
+
+            for(AudioChannel audioChannel: audioChannels)
+            {
+                if(!sb.isEmpty())
+                {
+                    sb.append(",");
+                }
+
+                sb.append(audioChannel.getChannelName());
+                sb.append("[idle=").append(audioChannel.isIdle());
+                sb.append(",hasSegment=").append(audioChannel.hasAudioSegment()).append("]");
+            }
+
+            return sb.toString();
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append(formatSegment(audioSegment));
-        sb.append("[decoder=").append(getDecoderType(audioSegment));
-        sb.append(",buffers=").append(audioSegment.getAudioBufferCount());
-        sb.append(",complete=").append(audioSegment.isComplete());
-        sb.append(",encrypted=").append(audioSegment.isEncrypted());
-        sb.append(",queuedLifecycleEvent=").append(queuedLifecycleEvent != null ? queuedLifecycleEvent.name() : "unknown");
-        sb.append("]");
-        return sb.toString();
-    }
-
-    private String getDecoderType(AudioSegment audioSegment)
-    {
-        if(audioSegment == null || audioSegment.getIdentifierCollection() == null)
+        private String formatSegments(Set<AudioSegment> audioSegments, Map<AudioSegment, AudioSegmentLifecycleEventType> eventTypes)
         {
-            return "unknown";
+            if(audioSegments == null || audioSegments.isEmpty())
+            {
+                return "";
+            }
+
+            List<String> formatted = new ArrayList<>();
+
+            for(AudioSegment audioSegment : audioSegments)
+            {
+                if(audioSegment != null)
+                {
+                    formatted.add(formatSegmentSummary(audioSegment,
+                        eventTypes != null ? eventTypes.get(audioSegment) : null));
+                }
+            }
+
+            Collections.sort(formatted);
+            return String.join(",", formatted);
         }
 
-        List<Identifier> decoderTypeIdentifiers = audioSegment.getIdentifierCollection().getIdentifiers(Form.DECODER_TYPE);
-
-        if(!decoderTypeIdentifiers.isEmpty())
+        private String formatSegmentSummary(AudioSegment audioSegment, AudioSegmentLifecycleEventType queuedLifecycleEvent)
         {
-            Identifier identifier = decoderTypeIdentifiers.getFirst();
-            return identifier != null ? identifier.toString() : "unknown";
+            if(audioSegment == null)
+            {
+                return "null";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(formatSegment(audioSegment));
+            sb.append("[decoder=").append(getDecoderType(audioSegment));
+            sb.append(",buffers=").append(audioSegment.getAudioBufferCount());
+            sb.append(",complete=").append(audioSegment.isComplete());
+            sb.append(",encrypted=").append(audioSegment.isEncrypted());
+            sb.append(",queuedLifecycleEvent=").append(queuedLifecycleEvent != null ? queuedLifecycleEvent.name() : UNKNOWN);
+            sb.append("]");
+            return sb.toString();
         }
 
-        return "unknown";
+        private String getDecoderType(AudioSegment audioSegment)
+        {
+            if(audioSegment == null || audioSegment.getIdentifierCollection() == null)
+            {
+                return UNKNOWN;
+            }
+
+            List<Identifier> decoderTypeIdentifiers = audioSegment.getIdentifierCollection().getIdentifiers(Form.DECODER_TYPE);
+
+            if(!decoderTypeIdentifiers.isEmpty())
+            {
+                Identifier identifier = decoderTypeIdentifiers.getFirst();
+                return identifier != null ? identifier.toString() : UNKNOWN;
+            }
+
+            return UNKNOWN;
+        }
     }
 
     private String formatSegment(AudioSegment audioSegment)
@@ -796,45 +823,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         return sb.toString();
     }
 
-    private String formatChannels(List<AudioChannel> audioChannels)
-    {
-        StringBuilder sb = new StringBuilder();
-
-        for(AudioChannel audioChannel: audioChannels)
-        {
-            if(!sb.isEmpty())
-            {
-                sb.append(",");
-            }
-
-            sb.append(audioChannel.getChannelName());
-            sb.append("[idle=").append(audioChannel.isIdle());
-            sb.append(",hasSegment=").append(audioChannel.hasAudioSegment()).append("]");
-        }
-
-        return sb.toString();
-    }
-
-    private boolean isExpectedAudibleSegment(AudioSegment audioSegment)
-    {
-        return audioSegment != null && !audioSegment.isEncrypted() && !audioSegment.isDoNotMonitor();
-    }
-
     private void releaseOwnedSegment(AudioSegment audioSegment)
     {
         if(audioSegment != null)
         {
             audioSegment.removeLifecycleListener(this);
             audioSegment.decrementConsumerCount();
-        }
-    }
-
-    private void transferToAudioChannel(AudioSegment audioSegment, AudioChannel audioChannel)
-    {
-        if(audioSegment != null && audioChannel != null)
-        {
-            audioSegment.removeLifecycleListener(this);
-            audioChannel.play(audioSegment);
         }
     }
 
