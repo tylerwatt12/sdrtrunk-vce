@@ -596,11 +596,15 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
 
         private PendingChangeSummary processChangedPendingSegments()
         {
-            if(mLifecycleChangedSegments.isEmpty() || mPendingAudioSegments.isEmpty())
+            if(mLifecycleChangedSegments.isEmpty())
             {
                 return new PendingChangeSummary(false, Collections.emptySet(), Collections.emptyMap());
             }
 
+            //Drain the lifecycle queue unconditionally.  A segment may not yet be in mPendingAudioSegments
+            //when AUDIO_AVAILABLE fires (it may still be in transit from the new-segment queue), so
+            //short-circuiting on mPendingAudioSegments.isEmpty() would silently drop the event and strand
+            //the segment until the watchdog rescues it.
             Map<AudioSegment, AudioSegmentLifecycleEventType> changedSegments = new HashMap<>();
             AudioSegmentLifecycleEvent changed = mLifecycleChangedSegments.poll();
 
@@ -610,7 +614,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 changed = mLifecycleChangedSegments.poll();
             }
 
-            if(changedSegments.isEmpty())
+            if(changedSegments.isEmpty() || mPendingAudioSegments.isEmpty())
             {
                 return new PendingChangeSummary(false, Collections.emptySet(), Collections.emptyMap());
             }
