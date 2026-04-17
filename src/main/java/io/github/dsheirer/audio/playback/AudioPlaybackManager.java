@@ -733,6 +733,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             boolean changedWorkProcessed = false;
             Set<AudioSegment> rescuedSegments = new HashSet<>();
             Map<AudioSegment, AudioSegmentLifecycleEventType> rescuedEventTypes = new HashMap<>();
+            List<AudioSegment> pendingSnapshot = new ArrayList<>(mPendingAudioSegments);
 
             while(it.hasNext())
             {
@@ -767,7 +768,53 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
 
+            if(!changedWorkProcessed)
+            {
+                logPendingChangeMiss(changedSegments, pendingSnapshot);
+            }
+
             return new PendingChangeSummary(changedWorkProcessed, rescuedSegments, rescuedEventTypes);
+        }
+
+        private void logPendingChangeMiss(Map<AudioSegment, AudioSegmentLifecycleEventType> changedSegments,
+                                          List<AudioSegment> pendingSnapshot)
+        {
+            if(changedSegments.isEmpty() || pendingSnapshot.isEmpty())
+            {
+                return;
+            }
+
+            Set<Integer> changedIdentities = new HashSet<>();
+            List<String> changed = new ArrayList<>();
+
+            for(Map.Entry<AudioSegment, AudioSegmentLifecycleEventType> entry : changedSegments.entrySet())
+            {
+                AudioSegment audioSegment = entry.getKey();
+                if(audioSegment != null)
+                {
+                    int identity = System.identityHashCode(audioSegment);
+                    changedIdentities.add(identity);
+                    changed.add(identity + ":" + entry.getValue() + ":audio=" + audioSegment.hasAudio() +
+                        ":complete=" + audioSegment.completeProperty().get());
+                }
+            }
+
+            List<String> pending = new ArrayList<>();
+            boolean matched = false;
+
+            for(AudioSegment audioSegment : pendingSnapshot)
+            {
+                if(audioSegment != null)
+                {
+                    int identity = System.identityHashCode(audioSegment);
+                    matched |= changedIdentities.contains(identity);
+                    pending.add(identity + ":audio=" + audioSegment.hasAudio() + ":complete=" +
+                        audioSegment.completeProperty().get());
+                }
+            }
+
+            mLog.warn("Playback pending change miss changed:{} pending:{} matched:{}",
+                changed, pending, matched);
         }
 
         @Override
