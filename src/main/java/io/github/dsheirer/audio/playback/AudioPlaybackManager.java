@@ -22,9 +22,6 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.AudioEvent;
 import io.github.dsheirer.audio.AudioException;
 import io.github.dsheirer.audio.AudioSegment;
-import io.github.dsheirer.audio.AudioSegment.AudioSegmentLifecycleListener;
-import io.github.dsheirer.audio.AudioSegment.AudioSegmentLifecycleEvent;
-import io.github.dsheirer.audio.AudioSegment.AudioSegmentLifecycleEventType;
 import io.github.dsheirer.audio.IAudioController;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -40,6 +37,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -58,43 +56,45 @@ import org.slf4j.LoggerFactory;
 /**
  * Manages scheduling and playback of audio segments to the local users audio system.
  */
-public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmentLifecycleListener, IAudioController
+public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioController
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioPlaybackManager.class);
     private static final String UNKNOWN = "unknown";
+    private static final long NORMAL_PROCESS_INTERVAL_MS = 20;
     private static final long WATCHDOG_INTERVAL_MS = 1000;
     private static final long WATCHDOG_STARTUP_GRACE_PERIOD_MS = 5000;
-    private record QueuedLifecycleEvent(AudioSegmentLifecycleEvent event, long audioAvailableSequence, long enqueuedAt)
-    {
-    }
     private final AudioSegmentPrioritySorter mAudioSegmentPrioritySorter = new AudioSegmentPrioritySorter();
     private final Broadcaster<AudioEvent> mControllerBroadcaster = new Broadcaster<>();
-    private final List<AudioSegment> mAudioSegments = new ArrayList<>();
-    private final List<AudioSegment> mPendingAudioSegments = new ArrayList<>();
-    private final LinkedTransferQueue<AudioSegment> mNewAudioSegmentQueue = new LinkedTransferQueue<>();
-    private final LinkedTransferQueue<QueuedLifecycleEvent> mLifecycleChangedSegments = new LinkedTransferQueue<>();
+    private final LinkedTransferQueue<AudioSegment> mIncomingSegments = new LinkedTransferQueue<>();
+    private final Map<AudioSegment, PlaybackCallContext> mCallContexts = new IdentityHashMap<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
     private final ScheduledExecutorService mProcessingExecutorService;
     private final AudioSegmentProcessor mAudioSegmentProcessor = new AudioSegmentProcessor();
-    private final Listener<AudioChannel> mAudioChannelIdleListener = audioChannel -> triggerAudioSegmentProcessing();
-    private final AtomicBoolean mNormalProcessingScheduled = new AtomicBoolean();
-    private final AtomicBoolean mWorkRequested = new AtomicBoolean();
-    private final AtomicLong mNormalTriggerRequests = new AtomicLong();
-    private final AtomicLong mNormalTriggerSchedules = new AtomicLong();
+    private final Listener<AudioChannel> mAudioChannelIdleListener = audioChannel -> { };
     private final AtomicLong mNormalRunsStarted = new AtomicLong();
     private final AtomicLong mNormalRunsCompleted = new AtomicLong();
     private final AtomicLong mLastNormalRunStartTimestamp = new AtomicLong();
     private final AtomicLong mLastNormalRunCompleteTimestamp = new AtomicLong();
-    private final AtomicLong mAudioAvailableSequence = new AtomicLong();
-    private final AtomicLong mLastAudioAvailableEnqueueSequence = new AtomicLong();
-    private final AtomicLong mLastAudioAvailableEnqueueTimestamp = new AtomicLong();
-    private final AtomicLong mLastAudioAvailableProcessedSequence = new AtomicLong();
-    private final AtomicLong mLastAudioAvailableProcessedTimestamp = new AtomicLong();
     private final long mCreatedTimestamp = System.currentTimeMillis();
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
-    private ScheduledFuture<?> mProcessingTask;
+    private ScheduledFuture<?> mNormalProcessingTask;
+    private ScheduledFuture<?> mWatchdogTask;
+
+    private enum PlaybackCallState
+    {
+        WAITING_FOR_AUDIO,
+        READY
+    }
+
+    private record PlaybackCallContext(AudioSegment audioSegment, PlaybackCallState state)
+    {
+        private PlaybackCallContext withState(PlaybackCallState newState)
+        {
+            return new PlaybackCallContext(audioSegment, newState);
+        }
+    }
 
     /**
      * Constructs an instance.
@@ -124,11 +124,14 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             mLog.warn("No audio output devices available");
         }
 
-        //Even if we don't have an audio device, setup the queue processor to always process the audio segment queue
+        //Run normal processing on a fixed cadence so playback correctness does not depend on lifecycle wakeups.
+        //The watchdog remains as a diagnostic backstop, not the primary progress mechanism.
         mProcessingExecutorService =
                 Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk audio manager"));
-        mProcessingTask = mProcessingExecutorService.scheduleAtFixedRate(() -> mAudioSegmentProcessor.run(true),
-                0, WATCHDOG_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        mNormalProcessingTask = mProcessingExecutorService.scheduleAtFixedRate(() -> mAudioSegmentProcessor.run(false),
+            0, NORMAL_PROCESS_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        mWatchdogTask = mProcessingExecutorService.scheduleAtFixedRate(() -> mAudioSegmentProcessor.run(true),
+            0, WATCHDOG_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -138,83 +141,28 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     @Override
     public void receive(AudioSegment audioSegment)
     {
-        //Enqueue before registering the lifecycle listener.  AUDIO_AVAILABLE fires synchronously on the
-        //producer thread the first time addAudio() is called — if the listener were registered first,
-        //the lifecycle event could arrive and be processed before the segment is visible in
-        //mNewAudioSegmentQueue, leaving it stranded in mPendingAudioSegments with no further signal.
-        mNewAudioSegmentQueue.add(audioSegment);
-        audioSegment.addLifecycleListener(this);
-        triggerAudioSegmentProcessing();
-    }
-
-    @Override
-    public void receive(AudioSegmentLifecycleEvent event)
-    {
-        if(event != null && event.audioSegment() != null)
-        {
-            long audioAvailableSequence = 0;
-            long enqueuedAt = 0;
-
-            if(event.eventType() == AudioSegmentLifecycleEventType.AUDIO_AVAILABLE)
-            {
-                audioAvailableSequence = mAudioAvailableSequence.incrementAndGet();
-                enqueuedAt = System.currentTimeMillis();
-                mLastAudioAvailableEnqueueSequence.set(audioAvailableSequence);
-                mLastAudioAvailableEnqueueTimestamp.set(enqueuedAt);
-            }
-
-            mLifecycleChangedSegments.add(new QueuedLifecycleEvent(event, audioAvailableSequence, enqueuedAt));
-        }
-
-        triggerAudioSegmentProcessing();
+        mIncomingSegments.add(audioSegment);
     }
 
     public void dispose()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
-        if(mProcessingTask != null)
+        if(mNormalProcessingTask != null)
         {
-            mProcessingTask.cancel(true);
-            mProcessingTask = null;
+            mNormalProcessingTask.cancel(true);
+            mNormalProcessingTask = null;
+        }
+
+        if(mWatchdogTask != null)
+        {
+            mWatchdogTask.cancel(true);
+            mWatchdogTask = null;
         }
 
         mProcessingExecutorService.shutdownNow();
 
-        releaseAudioSegments(mNewAudioSegmentQueue);
-        mLifecycleChangedSegments.clear();
-        releaseAudioSegments(mPendingAudioSegments);
-        releaseAudioSegments(mAudioSegments);
-    }
-
-    private void triggerAudioSegmentProcessing()
-    {
-        mNormalTriggerRequests.incrementAndGet();
-        mWorkRequested.set(true);
-
-        if(mNormalProcessingScheduled.compareAndSet(false, true))
-        {
-            mNormalTriggerSchedules.incrementAndGet();
-            mProcessingExecutorService.execute(() -> {
-                try
-                {
-                    do
-                    {
-                        mWorkRequested.set(false);
-                        mAudioSegmentProcessor.run(false);
-                    }
-                    while(mWorkRequested.get());
-                }
-                finally
-                {
-                    mNormalProcessingScheduled.set(false);
-
-                    if(mWorkRequested.get())
-                    {
-                        triggerAudioSegmentProcessing();
-                    }
-                }
-            });
-        }
+        releaseAudioSegments(mIncomingSegments);
+        releaseCallContexts();
     }
 
     private void releaseAudioSegments(Iterable<AudioSegment> audioSegments)
@@ -236,10 +184,24 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         {
             queue.clear();
         }
-        else if(audioSegments instanceof List<AudioSegment> list)
+    }
+
+    private void releaseCallContexts()
+    {
+        if(mCallContexts.isEmpty())
         {
-            list.clear();
+            return;
         }
+
+        for(PlaybackCallContext context : mCallContexts.values())
+        {
+            if(context != null)
+            {
+                releaseOwnedSegment(context.audioSegment());
+            }
+        }
+
+        mCallContexts.clear();
     }
 
     /**
@@ -393,30 +355,34 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     {
         private final AtomicBoolean mProcessing = new AtomicBoolean();
 
-        private record WatchdogRescueSummary(boolean drainedNewQueue, boolean promotedPendingSegment,
+        private record QueueSnapshot(int incoming, int contexts, int waiting, int ready)
+        {
+        }
+
+        private record WatchdogRescueSummary(boolean acceptedIncomingSegment, boolean promotedWaitingSegment,
                                              boolean assignedReadySegment, String rescuedSegments)
         {
             boolean rescuedWork()
             {
-                return drainedNewQueue || promotedPendingSegment || assignedReadySegment;
+                return acceptedIncomingSegment || promotedWaitingSegment || assignedReadySegment;
             }
 
             String rescuedTypes()
             {
                 StringBuilder sb = new StringBuilder();
 
-                if(drainedNewQueue)
+                if(acceptedIncomingSegment)
                 {
-                    sb.append("new-queue");
+                    sb.append("incoming-accept");
                 }
 
-                if(promotedPendingSegment)
+                if(promotedWaitingSegment)
                 {
                     if(!sb.isEmpty())
                     {
                         sb.append(",");
                     }
-                    sb.append("pending-promotion");
+                    sb.append("waiting-promotion");
                 }
 
                 if(assignedReadySegment)
@@ -432,17 +398,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             }
         }
 
-        private record PendingChangeSummary(boolean changedWorkProcessed, Set<AudioSegment> rescuedSegments,
-                                           Map<AudioSegment, AudioSegmentLifecycleEventType> rescuedEventTypes)
-        {
-        }
-
         private class RescueAccumulator
         {
             private final Set<AudioSegment> mRescuedSegments = new HashSet<>();
-            private final Map<AudioSegment, AudioSegmentLifecycleEventType> mRescuedEventTypes = new HashMap<>();
-            private boolean mDrainedNewQueue;
-            private boolean mPromotedPendingSegment;
+            private boolean mAcceptedIncomingSegment;
+            private boolean mPromotedWaitingSegment;
             private boolean mAssignedReadySegment;
 
             private void addRescued(AudioSegment audioSegment)
@@ -461,41 +421,10 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
             }
 
-            private void addRescuedEventTypes(Map<AudioSegment, AudioSegmentLifecycleEventType> eventTypes)
-            {
-                if(eventTypes != null)
-                {
-                    mRescuedEventTypes.putAll(eventTypes);
-                }
-            }
-
             private WatchdogRescueSummary toSummary()
             {
-                return new WatchdogRescueSummary(mDrainedNewQueue, mPromotedPendingSegment, mAssignedReadySegment,
-                    formatSegments(mRescuedSegments, mRescuedEventTypes));
-            }
-
-            private String formatSegments(Set<AudioSegment> audioSegments,
-                                          Map<AudioSegment, AudioSegmentLifecycleEventType> eventTypes)
-            {
-                if(audioSegments == null || audioSegments.isEmpty())
-                {
-                    return "";
-                }
-
-                List<String> formatted = new ArrayList<>();
-
-                for(AudioSegment audioSegment : audioSegments)
-                {
-                    if(audioSegment != null)
-                    {
-                        formatted.add(formatSegmentSummary(audioSegment,
-                            eventTypes != null ? eventTypes.get(audioSegment) : null));
-                    }
-                }
-
-                Collections.sort(formatted);
-                return String.join(",", formatted);
+                return new WatchdogRescueSummary(mAcceptedIncomingSegment, mPromotedWaitingSegment, mAssignedReadySegment,
+                    formatSegments(mRescuedSegments));
             }
         }
 
@@ -507,186 +436,121 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         private WatchdogRescueSummary processAudioSegments(boolean watchdog)
         {
             RescueAccumulator rescueAccumulator = new RescueAccumulator();
-            processNewAudioSegments(watchdog, rescueAccumulator);
-            processPendingLifecycleChanges(watchdog, rescueAccumulator);
-            processPendingAudioSegments(watchdog, rescueAccumulator);
-            logPendingInvariantViolationIfPresent(watchdog);
-            pruneAndTransferReadyAudioSegments();
-            assignReadyAudioSegments(watchdog, rescueAccumulator);
-            removeDuplicateReadyAudioSegments();
+            drainIncomingSegments(watchdog, rescueAccumulator);
+            refreshCallContexts(watchdog, rescueAccumulator);
+            assignLinkedReadySegments(watchdog, rescueAccumulator);
+            assignReadySegments(watchdog, rescueAccumulator);
             return rescueAccumulator.toSummary();
         }
 
-        private void processNewAudioSegments(boolean watchdog, RescueAccumulator rescueAccumulator)
+        private void drainIncomingSegments(boolean watchdog, RescueAccumulator rescueAccumulator)
         {
-            AudioSegment newSegment = mNewAudioSegmentQueue.poll();
+            AudioSegment incomingSegment = mIncomingSegments.poll();
 
-            while(newSegment != null)
+            while(incomingSegment != null)
             {
-                if(isSuppressedDuplicate(newSegment))
+                if(isSuppressedDuplicate(incomingSegment) || incomingSegment.isDoNotMonitor())
                 {
-                    releaseOwnedSegment(newSegment);
+                    releaseOwnedSegment(incomingSegment);
                 }
-                else if(newSegment.hasAudio())
+                else if(incomingSegment.completeProperty().get() && !incomingSegment.hasAudio())
                 {
-                    mAudioSegments.add(newSegment);
-
-                    if(watchdog)
-                    {
-                        rescueAccumulator.mDrainedNewQueue = true;
-                    }
-
-                    rescueAccumulator.addRescued(newSegment);
+                    releaseOwnedSegment(incomingSegment);
                 }
                 else
                 {
-                    mPendingAudioSegments.add(newSegment);
+                    PlaybackCallState initialState = incomingSegment.hasAudio() ? PlaybackCallState.READY :
+                        PlaybackCallState.WAITING_FOR_AUDIO;
+                    mCallContexts.put(incomingSegment, new PlaybackCallContext(incomingSegment, initialState));
+
+                    if(watchdog)
+                    {
+                        rescueAccumulator.mAcceptedIncomingSegment = true;
+                    }
+
+                    rescueAccumulator.addRescued(incomingSegment);
                 }
 
-                newSegment = mNewAudioSegmentQueue.poll();
+                incomingSegment = mIncomingSegments.poll();
             }
         }
 
-        private void processPendingLifecycleChanges(boolean watchdog, RescueAccumulator rescueAccumulator)
+        private void refreshCallContexts(boolean watchdog, RescueAccumulator rescueAccumulator)
         {
-            PendingChangeSummary pendingChangeSummary = processChangedPendingSegments();
-
-            if(pendingChangeSummary.changedWorkProcessed() && watchdog)
-            {
-                rescueAccumulator.mPromotedPendingSegment = true;
-                rescueAccumulator.addRescuedAll(pendingChangeSummary.rescuedSegments());
-                rescueAccumulator.addRescuedEventTypes(pendingChangeSummary.rescuedEventTypes());
-            }
-        }
-
-        private void processPendingAudioSegments(boolean watchdog, RescueAccumulator rescueAccumulator)
-        {
-            if(mPendingAudioSegments.isEmpty())
+            if(mCallContexts.isEmpty())
             {
                 return;
             }
 
-            Iterator<AudioSegment> it = mPendingAudioSegments.iterator();
+            Iterator<Map.Entry<AudioSegment, PlaybackCallContext>> iterator = mCallContexts.entrySet().iterator();
 
-            while(it.hasNext())
+            while(iterator.hasNext())
             {
-                AudioSegment audioSegment = it.next();
+                Map.Entry<AudioSegment, PlaybackCallContext> entry = iterator.next();
+                PlaybackCallContext context = entry.getValue();
+                AudioSegment audioSegment = context.audioSegment();
 
-                if(isSuppressedDuplicate(audioSegment))
+                if(audioSegment == null)
                 {
-                    it.remove();
+                    iterator.remove();
+                    continue;
+                }
+
+                if(audioSegment.isDoNotMonitor() || isSuppressedDuplicate(audioSegment))
+                {
+                    iterator.remove();
                     releaseOwnedSegment(audioSegment);
                 }
-                else if(audioSegment.hasAudio())
+                else if(audioSegment.completeProperty().get() && !audioSegment.hasAudio())
                 {
-                    it.remove();
-                    mAudioSegments.add(audioSegment);
+                    iterator.remove();
+                    releaseOwnedSegment(audioSegment);
+                }
+                else if(context.state() == PlaybackCallState.WAITING_FOR_AUDIO && audioSegment.hasAudio())
+                {
+                    entry.setValue(context.withState(PlaybackCallState.READY));
 
                     if(watchdog)
                     {
-                        rescueAccumulator.mPromotedPendingSegment = true;
+                        rescueAccumulator.mPromotedWaitingSegment = true;
                     }
 
                     rescueAccumulator.addRescued(audioSegment);
                 }
-                else if(audioSegment.completeProperty().get())
-                {
-                    it.remove();
-                    releaseOwnedSegment(audioSegment);
-                }
             }
         }
 
-        private void logPendingInvariantViolationIfPresent(boolean watchdog)
+        private void assignLinkedReadySegments(boolean watchdog, RescueAccumulator rescueAccumulator)
         {
-            if(watchdog)
+            if(mCallContexts.isEmpty() || mAudioOutput == null)
             {
                 return;
             }
 
-            for(AudioSegment audioSegment : mPendingAudioSegments)
-            {
-                if(audioSegment != null && audioSegment.hasAudio())
-                {
-                    mLog.warn("Playback pending invariant violated segment:{} queuedLifecycleEvent:{} pending:{} ready:{} new:{} lifecycle:{}",
-                        formatSegmentSummary(audioSegment, null), UNKNOWN, mPendingAudioSegments.size(),
-                        mAudioSegments.size(), mNewAudioSegmentQueue.size(), mLifecycleChangedSegments.size());
-                    break;
-                }
-            }
-        }
-
-        private void pruneAndTransferReadyAudioSegments()
-        {
-            if(mAudioSegments.isEmpty())
-            {
-                return;
-            }
-
-            Iterator<AudioSegment> it = mAudioSegments.iterator();
-
-            while(it.hasNext())
-            {
-                AudioSegment audioSegment = it.next();
-
-                if(audioSegment.isDoNotMonitor() || isSuppressedDuplicate(audioSegment))
-                {
-                    it.remove();
-                    releaseOwnedSegment(audioSegment);
-                }
-                else if(audioSegment.isLinked())
-                {
-                    transferLinkedAudioSegment(it, audioSegment);
-                }
-            }
-        }
-
-        private void transferLinkedAudioSegment(Iterator<AudioSegment> it, AudioSegment audioSegment)
-        {
-            mAudioChannelsLock.lock();
-
-            try
-            {
-                for(AudioChannel audioOutput : mAudioOutput.getAudioProvider().getAudioChannels())
-                {
-                    if(audioOutput.isLinkedTo(audioSegment))
-                    {
-                        it.remove();
-                        transferToAudioChannel(audioSegment, audioOutput);
-                    }
-                }
-            }
-            finally
-            {
-                mAudioChannelsLock.unlock();
-            }
-        }
-
-        private void assignReadyAudioSegments(boolean watchdog, RescueAccumulator rescueAccumulator)
-        {
-            if(mAudioSegments.isEmpty())
-            {
-                return;
-            }
-
-            mAudioSegments.sort(mAudioSegmentPrioritySorter);
             mAudioChannelsLock.lock();
 
             try
             {
                 for(AudioChannel audioChannel : mAudioOutput.getAudioProvider().getAudioChannels())
                 {
-                    if(audioChannel.isIdle() && !mAudioSegments.isEmpty())
+                    if(audioChannel == null || !audioChannel.isIdle())
                     {
-                        AudioSegment assignedSegment = mAudioSegments.removeFirst();
-                        transferToAudioChannel(assignedSegment, audioChannel);
+                        continue;
+                    }
+
+                    AudioSegment linkedSegment = findLinkedReadySegment(audioChannel);
+
+                    if(linkedSegment != null)
+                    {
+                        mCallContexts.remove(linkedSegment);
+                        transferToAudioChannel(linkedSegment, audioChannel);
 
                         if(watchdog)
                         {
                             rescueAccumulator.mAssignedReadySegment = true;
                         }
 
-                        rescueAccumulator.addRescued(assignedSegment);
+                        rescueAccumulator.addRescued(linkedSegment);
                     }
                 }
             }
@@ -696,25 +560,21 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             }
         }
 
-        private void removeDuplicateReadyAudioSegments()
+        private AudioSegment findLinkedReadySegment(AudioChannel audioChannel)
         {
-            if(mAudioSegments.isEmpty())
+            for(PlaybackCallContext context : mCallContexts.values())
             {
-                return;
-            }
-
-            Iterator<AudioSegment> it = mAudioSegments.iterator();
-
-            while(it.hasNext())
-            {
-                AudioSegment audioSegment = it.next();
-
-                if(isSuppressedDuplicate(audioSegment))
+                if(context != null && context.state() == PlaybackCallState.READY)
                 {
-                    it.remove();
-                    releaseOwnedSegment(audioSegment);
+                    AudioSegment audioSegment = context.audioSegment();
+                    if(audioSegment != null && audioSegment.isLinked() && audioChannel.isLinkedTo(audioSegment))
+                    {
+                        return audioSegment;
+                    }
                 }
             }
+
+            return null;
         }
 
         private boolean isSuppressedDuplicate(AudioSegment audioSegment)
@@ -723,141 +583,60 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled();
         }
 
-        private PendingChangeSummary processChangedPendingSegments()
+        private void assignReadySegments(boolean watchdog, RescueAccumulator rescueAccumulator)
         {
-            if(mLifecycleChangedSegments.isEmpty())
-            {
-                return new PendingChangeSummary(false, Collections.emptySet(), Collections.emptyMap());
-            }
-
-            //Drain the lifecycle queue unconditionally.  A segment may not yet be in mPendingAudioSegments
-            //when AUDIO_AVAILABLE fires (it may still be in transit from the new-segment queue), so
-            //short-circuiting on mPendingAudioSegments.isEmpty() would silently drop the event and strand
-            //the segment until the watchdog rescues it.
-            Map<AudioSegment, AudioSegmentLifecycleEventType> changedSegments = new HashMap<>();
-            QueuedLifecycleEvent changed = mLifecycleChangedSegments.poll();
-            long maxProcessedAudioAvailableSequence = 0;
-            long maxProcessedAudioAvailableTimestamp = 0;
-
-            while(changed != null)
-            {
-                changedSegments.put(changed.event().audioSegment(), changed.event().eventType());
-
-                if(changed.audioAvailableSequence() > 0)
-                {
-                    maxProcessedAudioAvailableSequence =
-                        Math.max(maxProcessedAudioAvailableSequence, changed.audioAvailableSequence());
-                    maxProcessedAudioAvailableTimestamp =
-                        Math.max(maxProcessedAudioAvailableTimestamp, changed.enqueuedAt());
-                }
-
-                changed = mLifecycleChangedSegments.poll();
-            }
-
-            if(maxProcessedAudioAvailableSequence > 0)
-            {
-                mLastAudioAvailableProcessedSequence.set(maxProcessedAudioAvailableSequence);
-                mLastAudioAvailableProcessedTimestamp.set(maxProcessedAudioAvailableTimestamp);
-            }
-
-            if(changedSegments.isEmpty() || mPendingAudioSegments.isEmpty())
-            {
-                return new PendingChangeSummary(false, Collections.emptySet(), Collections.emptyMap());
-            }
-
-            Iterator<AudioSegment> it = mPendingAudioSegments.iterator();
-            boolean changedWorkProcessed = false;
-            Set<AudioSegment> rescuedSegments = new HashSet<>();
-            Map<AudioSegment, AudioSegmentLifecycleEventType> rescuedEventTypes = new HashMap<>();
-            List<AudioSegment> pendingSnapshot = new ArrayList<>(mPendingAudioSegments);
-
-            while(it.hasNext())
-            {
-                AudioSegment audioSegment = it.next();
-
-                AudioSegmentLifecycleEventType eventType = changedSegments.get(audioSegment);
-
-                if(eventType == null)
-                {
-                    continue;
-                }
-
-                if(audioSegment.isDuplicate() &&
-                    mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled())
-                {
-                    it.remove();
-                    releaseOwnedSegment(audioSegment);
-                }
-                else if(audioSegment.hasAudio())
-                {
-                    it.remove();
-                    mAudioSegments.add(audioSegment);
-                    changedWorkProcessed = true;
-                    rescuedSegments.add(audioSegment);
-                    rescuedEventTypes.put(audioSegment, eventType);
-                }
-                else if(audioSegment.completeProperty().get())
-                {
-                    it.remove();
-                    releaseOwnedSegment(audioSegment);
-                    changedWorkProcessed = true;
-                }
-            }
-
-            if(!changedWorkProcessed)
-            {
-                logPendingChangeMiss(changedSegments, pendingSnapshot);
-            }
-
-            return new PendingChangeSummary(changedWorkProcessed, rescuedSegments, rescuedEventTypes);
-        }
-
-        private void logPendingChangeMiss(Map<AudioSegment, AudioSegmentLifecycleEventType> changedSegments,
-                                          List<AudioSegment> pendingSnapshot)
-        {
-            if(changedSegments.isEmpty() || pendingSnapshot.isEmpty())
+            if(mCallContexts.isEmpty() || mAudioOutput == null)
             {
                 return;
             }
 
-            boolean hasAudioAvailableEvent = changedSegments.containsValue(AudioSegmentLifecycleEventType.AUDIO_AVAILABLE);
+            List<AudioSegment> readySegments = new ArrayList<>();
 
-            if(!hasAudioAvailableEvent)
+            for(PlaybackCallContext context : mCallContexts.values())
+            {
+                if(context != null && context.state() == PlaybackCallState.READY)
+                {
+                    AudioSegment audioSegment = context.audioSegment();
+                    if(audioSegment != null && !audioSegment.isLinked())
+                    {
+                        readySegments.add(audioSegment);
+                    }
+                }
+            }
+
+            if(readySegments.isEmpty())
             {
                 return;
             }
 
-            Set<Integer> changedIdentities = new HashSet<>();
-            List<String> changed = new ArrayList<>();
+            readySegments.sort(mAudioSegmentPrioritySorter);
+            mAudioChannelsLock.lock();
 
-            for(Map.Entry<AudioSegment, AudioSegmentLifecycleEventType> entry : changedSegments.entrySet())
+            try
             {
-                AudioSegment audioSegment = entry.getKey();
-                if(audioSegment != null)
+                for(AudioChannel audioChannel : mAudioOutput.getAudioProvider().getAudioChannels())
                 {
-                    int identity = System.identityHashCode(audioSegment);
-                    changedIdentities.add(identity);
-                    changed.add(identity + ":" + entry.getValue() + ":audio=" + audioSegment.hasAudio() +
-                        ":complete=" + audioSegment.completeProperty().get());
+                    if(audioChannel == null || !audioChannel.isIdle() || readySegments.isEmpty())
+                    {
+                        continue;
+                    }
+
+                    AudioSegment assignedSegment = readySegments.removeFirst();
+                    mCallContexts.remove(assignedSegment);
+                    transferToAudioChannel(assignedSegment, audioChannel);
+
+                    if(watchdog)
+                    {
+                        rescueAccumulator.mAssignedReadySegment = true;
+                    }
+
+                    rescueAccumulator.addRescued(assignedSegment);
                 }
             }
-
-            List<String> pending = new ArrayList<>();
-            boolean matched = false;
-
-            for(AudioSegment audioSegment : pendingSnapshot)
+            finally
             {
-                if(audioSegment != null)
-                {
-                    int identity = System.identityHashCode(audioSegment);
-                    matched |= changedIdentities.contains(identity);
-                    pending.add(identity + ":audio=" + audioSegment.hasAudio() + ":complete=" +
-                        audioSegment.completeProperty().get());
-                }
+                mAudioChannelsLock.unlock();
             }
-
-            mLog.warn("Playback pending change miss changed:{} pending:{} matched:{}",
-                changed, pending, matched);
         }
 
         @Override
@@ -878,21 +657,19 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                         mLastNormalRunStartTimestamp.set(System.currentTimeMillis());
                     }
 
-                    int preNewQueue = mNewAudioSegmentQueue.size();
-                    int preLifecycleQueue = mLifecycleChangedSegments.size();
-                    int prePending = mPendingAudioSegments.size();
-                    int preReady = mAudioSegments.size();
+                    QueueSnapshot preSnapshot = snapshotQueues();
 
                     WatchdogRescueSummary summary = processAudioSegments(watchdog);
 
                     if(watchdog && summary.rescuedWork() &&
                         (System.currentTimeMillis() - mCreatedTimestamp) >= WATCHDOG_STARTUP_GRACE_PERIOD_MS)
                     {
-                        mLog.warn("Playback watchdog rescued work types:{} segments:{} pre[new:{} lifecycle:{} pending:{} ready:{}] post[new:{} lifecycle:{} pending:{} ready:{}] channels:{} normal:{}",
+                        QueueSnapshot postSnapshot = snapshotQueues();
+                        mLog.warn("Playback watchdog rescued work types:{} segments:{} pre[incoming:{} contexts:{} waiting:{} ready:{}] post[incoming:{} contexts:{} waiting:{} ready:{}] channels:{} normal:{}",
                             summary.rescuedTypes(), summary.rescuedSegments(),
-                            preNewQueue, preLifecycleQueue, prePending, preReady,
-                            mNewAudioSegmentQueue.size(), mLifecycleChangedSegments.size(), mPendingAudioSegments.size(),
-                            mAudioSegments.size(), formatChannels(getAudioChannels()), formatNormalProcessingState());
+                            preSnapshot.incoming(), preSnapshot.contexts(), preSnapshot.waiting(), preSnapshot.ready(),
+                            postSnapshot.incoming(), postSnapshot.contexts(), postSnapshot.waiting(), postSnapshot.ready(),
+                            formatChannels(getAudioChannels()), formatNormalProcessingState());
                     }
                 }
                 catch(Exception e)
@@ -912,11 +689,35 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             }
         }
 
+        private QueueSnapshot snapshotQueues()
+        {
+            int waiting = 0;
+            int ready = 0;
+
+            for(PlaybackCallContext context : mCallContexts.values())
+            {
+                if(context == null)
+                {
+                    continue;
+                }
+
+                if(context.state() == PlaybackCallState.READY)
+                {
+                    ready++;
+                }
+                else
+                {
+                    waiting++;
+                }
+            }
+
+            return new QueueSnapshot(mIncomingSegments.size(), mCallContexts.size(), waiting, ready);
+        }
+
         private void transferToAudioChannel(AudioSegment audioSegment, AudioChannel audioChannel)
         {
             if(audioSegment != null && audioChannel != null)
             {
-                audioSegment.removeLifecycleListener(AudioPlaybackManager.this);
                 audioChannel.play(audioSegment);
             }
         }
@@ -945,22 +746,14 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             long now = System.currentTimeMillis();
             long lastStart = mLastNormalRunStartTimestamp.get();
             long lastComplete = mLastNormalRunCompleteTimestamp.get();
-            long lastAudioAvailableEnqueued = mLastAudioAvailableEnqueueTimestamp.get();
-            long lastAudioAvailableProcessed = mLastAudioAvailableProcessedTimestamp.get();
 
-            return "req=" + mNormalTriggerRequests.get() +
-                " sched=" + mNormalTriggerSchedules.get() +
-                " start=" + mNormalRunsStarted.get() +
+            return "start=" + mNormalRunsStarted.get() +
                 " done=" + mNormalRunsCompleted.get() +
-                " audioAvailEnqSeq=" + mLastAudioAvailableEnqueueSequence.get() +
-                " audioAvailProcSeq=" + mLastAudioAvailableProcessedSequence.get() +
-                " audioAvailEnqAgoMs=" + (lastAudioAvailableEnqueued > 0 ? now - lastAudioAvailableEnqueued : -1) +
-                " audioAvailProcAgoMs=" + (lastAudioAvailableProcessed > 0 ? now - lastAudioAvailableProcessed : -1) +
                 " lastStartAgoMs=" + (lastStart > 0 ? now - lastStart : -1) +
                 " lastDoneAgoMs=" + (lastComplete > 0 ? now - lastComplete : -1);
         }
 
-        private String formatSegmentSummary(AudioSegment audioSegment, AudioSegmentLifecycleEventType queuedLifecycleEvent)
+        private String formatSegmentSummary(AudioSegment audioSegment)
         {
             if(audioSegment == null)
             {
@@ -973,7 +766,6 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             sb.append(",buffers=").append(audioSegment.getAudioBufferCount());
             sb.append(",complete=").append(audioSegment.isComplete());
             sb.append(",encrypted=").append(audioSegment.isEncrypted());
-            sb.append(",queuedLifecycleEvent=").append(queuedLifecycleEvent != null ? queuedLifecycleEvent.name() : UNKNOWN);
             sb.append("]");
             return sb.toString();
         }
@@ -1027,11 +819,31 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
         return sb.toString();
     }
 
+    private String formatSegments(Set<AudioSegment> audioSegments)
+    {
+        if(audioSegments == null || audioSegments.isEmpty())
+        {
+            return "";
+        }
+
+        List<String> formatted = new ArrayList<>();
+
+        for(AudioSegment audioSegment : audioSegments)
+        {
+            if(audioSegment != null)
+            {
+                formatted.add(mAudioSegmentProcessor.formatSegmentSummary(audioSegment));
+            }
+        }
+
+        Collections.sort(formatted);
+        return String.join(",", formatted);
+    }
+
     private void releaseOwnedSegment(AudioSegment audioSegment)
     {
         if(audioSegment != null)
         {
-            audioSegment.removeLifecycleListener(this);
             audioSegment.decrementConsumerCount();
         }
     }
