@@ -64,12 +64,15 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     private static final String UNKNOWN = "unknown";
     private static final long WATCHDOG_INTERVAL_MS = 1000;
     private static final long WATCHDOG_STARTUP_GRACE_PERIOD_MS = 5000;
+    private record QueuedLifecycleEvent(AudioSegmentLifecycleEvent event, long audioAvailableSequence, long enqueuedAt)
+    {
+    }
     private final AudioSegmentPrioritySorter mAudioSegmentPrioritySorter = new AudioSegmentPrioritySorter();
     private final Broadcaster<AudioEvent> mControllerBroadcaster = new Broadcaster<>();
     private final List<AudioSegment> mAudioSegments = new ArrayList<>();
     private final List<AudioSegment> mPendingAudioSegments = new ArrayList<>();
     private final LinkedTransferQueue<AudioSegment> mNewAudioSegmentQueue = new LinkedTransferQueue<>();
-    private final LinkedTransferQueue<AudioSegmentLifecycleEvent> mLifecycleChangedSegments = new LinkedTransferQueue<>();
+    private final LinkedTransferQueue<QueuedLifecycleEvent> mLifecycleChangedSegments = new LinkedTransferQueue<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
     private final ScheduledExecutorService mProcessingExecutorService;
@@ -83,6 +86,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     private final AtomicLong mNormalRunsCompleted = new AtomicLong();
     private final AtomicLong mLastNormalRunStartTimestamp = new AtomicLong();
     private final AtomicLong mLastNormalRunCompleteTimestamp = new AtomicLong();
+    private final AtomicLong mAudioAvailableSequence = new AtomicLong();
+    private final AtomicLong mLastAudioAvailableEnqueueSequence = new AtomicLong();
+    private final AtomicLong mLastAudioAvailableEnqueueTimestamp = new AtomicLong();
+    private final AtomicLong mLastAudioAvailableProcessedSequence = new AtomicLong();
+    private final AtomicLong mLastAudioAvailableProcessedTimestamp = new AtomicLong();
     private final long mCreatedTimestamp = System.currentTimeMillis();
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
@@ -144,7 +152,18 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     {
         if(event != null && event.audioSegment() != null)
         {
-            mLifecycleChangedSegments.add(event);
+            long audioAvailableSequence = 0;
+            long enqueuedAt = 0;
+
+            if(event.eventType() == AudioSegmentLifecycleEventType.AUDIO_AVAILABLE)
+            {
+                audioAvailableSequence = mAudioAvailableSequence.incrementAndGet();
+                enqueuedAt = System.currentTimeMillis();
+                mLastAudioAvailableEnqueueSequence.set(audioAvailableSequence);
+                mLastAudioAvailableEnqueueTimestamp.set(enqueuedAt);
+            }
+
+            mLifecycleChangedSegments.add(new QueuedLifecycleEvent(event, audioAvailableSequence, enqueuedAt));
         }
 
         triggerAudioSegmentProcessing();
@@ -716,12 +735,29 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             //short-circuiting on mPendingAudioSegments.isEmpty() would silently drop the event and strand
             //the segment until the watchdog rescues it.
             Map<AudioSegment, AudioSegmentLifecycleEventType> changedSegments = new HashMap<>();
-            AudioSegmentLifecycleEvent changed = mLifecycleChangedSegments.poll();
+            QueuedLifecycleEvent changed = mLifecycleChangedSegments.poll();
+            long maxProcessedAudioAvailableSequence = 0;
+            long maxProcessedAudioAvailableTimestamp = 0;
 
             while(changed != null)
             {
-                changedSegments.put(changed.audioSegment(), changed.eventType());
+                changedSegments.put(changed.event().audioSegment(), changed.event().eventType());
+
+                if(changed.audioAvailableSequence() > 0)
+                {
+                    maxProcessedAudioAvailableSequence =
+                        Math.max(maxProcessedAudioAvailableSequence, changed.audioAvailableSequence());
+                    maxProcessedAudioAvailableTimestamp =
+                        Math.max(maxProcessedAudioAvailableTimestamp, changed.enqueuedAt());
+                }
+
                 changed = mLifecycleChangedSegments.poll();
+            }
+
+            if(maxProcessedAudioAvailableSequence > 0)
+            {
+                mLastAudioAvailableProcessedSequence.set(maxProcessedAudioAvailableSequence);
+                mLastAudioAvailableProcessedTimestamp.set(maxProcessedAudioAvailableTimestamp);
             }
 
             if(changedSegments.isEmpty() || mPendingAudioSegments.isEmpty())
@@ -909,11 +945,17 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             long now = System.currentTimeMillis();
             long lastStart = mLastNormalRunStartTimestamp.get();
             long lastComplete = mLastNormalRunCompleteTimestamp.get();
+            long lastAudioAvailableEnqueued = mLastAudioAvailableEnqueueTimestamp.get();
+            long lastAudioAvailableProcessed = mLastAudioAvailableProcessedTimestamp.get();
 
             return "req=" + mNormalTriggerRequests.get() +
                 " sched=" + mNormalTriggerSchedules.get() +
                 " start=" + mNormalRunsStarted.get() +
                 " done=" + mNormalRunsCompleted.get() +
+                " audioAvailEnqSeq=" + mLastAudioAvailableEnqueueSequence.get() +
+                " audioAvailProcSeq=" + mLastAudioAvailableProcessedSequence.get() +
+                " audioAvailEnqAgoMs=" + (lastAudioAvailableEnqueued > 0 ? now - lastAudioAvailableEnqueued : -1) +
+                " audioAvailProcAgoMs=" + (lastAudioAvailableProcessed > 0 ? now - lastAudioAvailableProcessed : -1) +
                 " lastStartAgoMs=" + (lastStart > 0 ? now - lastStart : -1) +
                 " lastDoneAgoMs=" + (lastComplete > 0 ? now - lastComplete : -1);
         }
