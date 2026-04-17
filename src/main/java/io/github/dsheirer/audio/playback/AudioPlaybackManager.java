@@ -50,6 +50,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,7 +75,14 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     private final ScheduledExecutorService mProcessingExecutorService;
     private final AudioSegmentProcessor mAudioSegmentProcessor = new AudioSegmentProcessor();
     private final Listener<AudioChannel> mAudioChannelIdleListener = audioChannel -> triggerAudioSegmentProcessing();
-    private final AtomicBoolean mProcessTriggerPending = new AtomicBoolean();
+    private final AtomicBoolean mNormalProcessingScheduled = new AtomicBoolean();
+    private final AtomicBoolean mWorkRequested = new AtomicBoolean();
+    private final AtomicLong mNormalTriggerRequests = new AtomicLong();
+    private final AtomicLong mNormalTriggerSchedules = new AtomicLong();
+    private final AtomicLong mNormalRunsStarted = new AtomicLong();
+    private final AtomicLong mNormalRunsCompleted = new AtomicLong();
+    private final AtomicLong mLastNormalRunStartTimestamp = new AtomicLong();
+    private final AtomicLong mLastNormalRunCompleteTimestamp = new AtomicLong();
     private final long mCreatedTimestamp = System.currentTimeMillis();
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
@@ -122,8 +130,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
     @Override
     public void receive(AudioSegment audioSegment)
     {
-        audioSegment.addLifecycleListener(this);
+        //Enqueue before registering the lifecycle listener.  AUDIO_AVAILABLE fires synchronously on the
+        //producer thread the first time addAudio() is called — if the listener were registered first,
+        //the lifecycle event could arrive and be processed before the segment is visible in
+        //mNewAudioSegmentQueue, leaving it stranded in mPendingAudioSegments with no further signal.
         mNewAudioSegmentQueue.add(audioSegment);
+        audioSegment.addLifecycleListener(this);
         triggerAudioSegmentProcessing();
     }
 
@@ -157,26 +169,27 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
 
     private void triggerAudioSegmentProcessing()
     {
-        if(mProcessTriggerPending.compareAndSet(false, true))
+        mNormalTriggerRequests.incrementAndGet();
+        mWorkRequested.set(true);
+
+        if(mNormalProcessingScheduled.compareAndSet(false, true))
         {
+            mNormalTriggerSchedules.incrementAndGet();
             mProcessingExecutorService.execute(() -> {
-                // Hold the trigger flag for the entire drain loop so producers cannot observe an
-                // idle trigger state while work is still being drained. After releasing the flag,
-                // immediately re-check the queues and resubmit if anything arrived in the small
-                // handoff window between the final emptiness check and the flag clear.
                 try
                 {
                     do
                     {
+                        mWorkRequested.set(false);
                         mAudioSegmentProcessor.run(false);
                     }
-                    while(!mNewAudioSegmentQueue.isEmpty() || !mLifecycleChangedSegments.isEmpty());
+                    while(mWorkRequested.get());
                 }
                 finally
                 {
-                    mProcessTriggerPending.set(false);
+                    mNormalProcessingScheduled.set(false);
 
-                    if(!mNewAudioSegmentQueue.isEmpty() || !mLifecycleChangedSegments.isEmpty())
+                    if(mWorkRequested.get())
                     {
                         triggerAudioSegmentProcessing();
                     }
@@ -678,6 +691,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             {
                 try
                 {
+                    if(!watchdog)
+                    {
+                        mNormalRunsStarted.incrementAndGet();
+                        mLastNormalRunStartTimestamp.set(System.currentTimeMillis());
+                    }
+
                     int preNewQueue = mNewAudioSegmentQueue.size();
                     int preLifecycleQueue = mLifecycleChangedSegments.size();
                     int prePending = mPendingAudioSegments.size();
@@ -688,11 +707,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                     if(watchdog && summary.rescuedWork() &&
                         (System.currentTimeMillis() - mCreatedTimestamp) >= WATCHDOG_STARTUP_GRACE_PERIOD_MS)
                     {
-                        mLog.warn("Playback watchdog rescued work types:{} segments:{} pre[new:{} lifecycle:{} pending:{} ready:{}] post[new:{} lifecycle:{} pending:{} ready:{}] channels:{}",
+                        mLog.warn("Playback watchdog rescued work types:{} segments:{} pre[new:{} lifecycle:{} pending:{} ready:{}] post[new:{} lifecycle:{} pending:{} ready:{}] channels:{} normal:{}",
                             summary.rescuedTypes(), summary.rescuedSegments(),
                             preNewQueue, preLifecycleQueue, prePending, preReady,
                             mNewAudioSegmentQueue.size(), mLifecycleChangedSegments.size(), mPendingAudioSegments.size(),
-                            mAudioSegments.size(), formatChannels(getAudioChannels()));
+                            mAudioSegments.size(), formatChannels(getAudioChannels()), formatNormalProcessingState());
                     }
                 }
                 catch(Exception e)
@@ -701,6 +720,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
                 }
                 finally
                 {
+                    if(!watchdog)
+                    {
+                        mNormalRunsCompleted.incrementAndGet();
+                        mLastNormalRunCompleteTimestamp.set(System.currentTimeMillis());
+                    }
+
                     mProcessing.set(false);
                 }
             }
@@ -732,6 +757,20 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, AudioSegmen
             }
 
             return sb.toString();
+        }
+
+        private String formatNormalProcessingState()
+        {
+            long now = System.currentTimeMillis();
+            long lastStart = mLastNormalRunStartTimestamp.get();
+            long lastComplete = mLastNormalRunCompleteTimestamp.get();
+
+            return "req=" + mNormalTriggerRequests.get() +
+                " sched=" + mNormalTriggerSchedules.get() +
+                " start=" + mNormalRunsStarted.get() +
+                " done=" + mNormalRunsCompleted.get() +
+                " lastStartAgoMs=" + (lastStart > 0 ? now - lastStart : -1) +
+                " lastDoneAgoMs=" + (lastComplete > 0 ? now - lastComplete : -1);
         }
 
         private String formatSegments(Set<AudioSegment> audioSegments, Map<AudioSegment, AudioSegmentLifecycleEventType> eventTypes)
