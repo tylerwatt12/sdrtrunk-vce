@@ -44,10 +44,7 @@ filtering, voice enhancement, bass boost, and output gain.
 - The NBFM high-pass stage now runs inside the decoder's own post-processing chain rather than downstream in the generic audio module. The current order is: de-emphasis, resample, high-pass, low-pass, voice enhance, bass boost, then output gain.
 - With NBFM, just tune the LNA state as you would normally until you get adequate gain, then adjust the NBFM audio settings
 to taste. Requiring a decent amount of gain with NBFM is normal.
-- With P25, a lot of gain is going to be detrimental to decoding. My recommendation is to let the waterfall display be your
-guide; what you're looking for is a nice red signal in the waterfall, the redder, the better. Adjust the LNA state until you
-start seeing yellow splatter on either side of the red; that's too much gain, back it off a notch or two until the yellow
-disappears, and you should be in an optimal state.
+- With P25, more gain is not automatically better. HDQPSK demodulation depends on clean phase information, so once the signal is strong enough, extra frontend gain mostly increases the risk of overload, clipping, and adjacent-channel splatter. Use the waterfall as a sanity check: aim for a clean, narrow signal without obvious widening or shoulders on either side. If increasing gain starts to broaden the signal or create visible splatter, back it off a notch or two.
 - For multi-frequency tuner sources, the playlist now supports an optional frequency envelope using `min_frequency` and
 `max_frequency`. This was added for trunked channels, where we'd like to make more optimal channel center choices. The
 problem this addresses is that center frequency selection was not good, resulting in, in my case, the control channels
