@@ -54,6 +54,7 @@ import javafx.stage.Stage;
 import jiconfont.javafx.IconFontFX;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Java FX window manager.  Handles all secondary Java FX windows that are used within this primarily
@@ -75,7 +76,7 @@ public class JavaFxWindowManager extends Application
     public static final String STAGE_MONITOR_KEY_PLAYLIST_EDITOR = "playlist";
     public static final String STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR = "user.preferences";
 
-    private JFXPanel mJFXPanel;
+    private static final AtomicBoolean FX_TOOLKIT_STARTED = new AtomicBoolean();
     private ChannelMapEditor mChannelMapEditor;
     private IconManager mIconManager;
     private JmbeEditor mJmbeEditor;
@@ -151,7 +152,7 @@ public class JavaFxWindowManager extends Application
         IconFontFX.register(jiconfont.icons.font_awesome.FontAwesome.getIconFont());
         ApplicationIcon.applyTaskbarIcon();
 
-        createJFXPanel();
+        initFxToolkit();
     }
 
     /**
@@ -159,8 +160,6 @@ public class JavaFxWindowManager extends Application
      */
     private void execute(Runnable runnable)
     {
-        createJFXPanel();
-
         if(Platform.isFxApplicationThread())
         {
             runnable.run();
@@ -172,14 +171,15 @@ public class JavaFxWindowManager extends Application
     }
 
     /**
-     * Creates a JavaFX panel for Swing application compatibility
+     * Initializes the JavaFX toolkit without creating an unparented JFXPanel.  An unparented JFXPanel on macOS
+     * causes the CVDisplayLink pulse timer to repeatedly spawn and destroy OS threads (~1/second) because the
+     * panel has no display connection.  Using Platform.startup() avoids this entirely.
      */
-    private void createJFXPanel()
+    private void initFxToolkit()
     {
-        if(mJFXPanel == null)
+        if(FX_TOOLKIT_STARTED.compareAndSet(false, true))
         {
-            mJFXPanel = new JFXPanel();
-            Platform.setImplicitExit(false);
+            Platform.startup(() -> Platform.setImplicitExit(false));
         }
     }
 
@@ -195,7 +195,6 @@ public class JavaFxWindowManager extends Application
 
     public CalibrationDialog getCalibrationDialog(UserPreferences userPreferences)
     {
-        createJFXPanel();
         return new CalibrationDialog(userPreferences);
     }
 
@@ -206,7 +205,6 @@ public class JavaFxWindowManager extends Application
     {
         if(mRecordingViewerStage == null)
         {
-            createJFXPanel();
             Scene scene = new Scene(getRecordingViewer(), 1100, 800);
             mRecordingViewerStage = new Stage();
             mRecordingViewerStage.setTitle("sdrtrunk - Message Recording Viewer (.bits)");
@@ -232,7 +230,6 @@ public class JavaFxWindowManager extends Application
     {
         if(mIconManagerStage == null)
         {
-            createJFXPanel();
             Scene scene = new Scene(getIconManager(), 500, 500);
             mIconManagerStage = new Stage();
             mIconManagerStage.setTitle("sdrtrunk - Icon Manager");
@@ -281,7 +278,6 @@ public class JavaFxWindowManager extends Application
     {
         if(mJmbeEditorStage == null)
         {
-            createJFXPanel();
             Scene scene = new Scene(getJmbeEditor(), 650, 650);
             mJmbeEditorStage = new Stage();
             mJmbeEditorStage.setTitle("sdrtrunk - JMBE Library Updater");
@@ -323,7 +319,6 @@ public class JavaFxWindowManager extends Application
     {
         if(mPlaylistStage == null)
         {
-            createJFXPanel();
             Scene scene = new Scene(getPlaylistEditor(), 1000, 750);
             mPlaylistStage = new Stage();
             mPlaylistStage.setTitle("sdrtrunk - Playlist Editor");
@@ -374,7 +369,6 @@ public class JavaFxWindowManager extends Application
     {
         if(mUserPreferencesStage == null)
         {
-            createJFXPanel();
             Scene scene = new Scene(getUserPreferencesEditor(), 900, 500);
             mUserPreferencesStage = new Stage();
             mUserPreferencesStage.setTitle("sdrtrunk - User Preferences");
@@ -418,7 +412,6 @@ public class JavaFxWindowManager extends Application
     {
         if(mChannelMapStage == null)
         {
-            createJFXPanel();
             Scene scene = new Scene(getChannelMapEditor(), 500, 500);
             mChannelMapStage = new Stage();
             mChannelMapStage.setTitle("sdrtrunk - Channel Map Editor");

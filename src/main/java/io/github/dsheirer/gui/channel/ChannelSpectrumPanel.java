@@ -44,6 +44,7 @@ import io.github.dsheirer.spectrum.FrequencyOverlayPanel;
 import io.github.dsheirer.spectrum.SpectrumPanel;
 import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import io.github.dsheirer.spectrum.converter.DFTResultsConverter;
+import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.EventQueue;
 import java.awt.event.ComponentAdapter;
@@ -78,6 +79,10 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
     private static final String GROW_FILL = "[grow,fill]";
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
+    private static final String CARD_NOISE_SQUELCH = "noise_squelch";
+    private static final String CARD_SIGNAL_POWER = "signal_power";
+    private static final String CARD_SYMBOL = "symbol";
+    private static final String CARD_EMPTY = "empty";
     private final PlaylistManager mPlaylistManager;
     private final UserPreferences mUserPreferences;
     private ProcessingChain mProcessingChain;
@@ -96,6 +101,8 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     private final JFXPanel mNoiseSquelchPanel;
     private final JFXPanel mSymbolPanel;
     private JSplitPane mSplitPane;
+    private JPanel mRightCardPanel;
+    private CardLayout mRightCardLayout;
 
     /**
      * Constructs an instance.
@@ -220,9 +227,21 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
             mSymbolPanel.setScene(scene2);
         });
 
+        //Keep all right-side panels in a CardLayout so JFXPanel instances are never removed from the
+        //Swing component hierarchy.  Removing a JFXPanel from the hierarchy destroys its CVDisplayLink
+        //connection on macOS, causing a new PulseTimer-CVDisplayLink thread to be spawned on every
+        //channel switch — resulting in hundreds of leaked threads.
+        mRightCardLayout = new CardLayout();
+        mRightCardPanel = new JPanel(mRightCardLayout);
+        mRightCardPanel.add(mNoiseSquelchPanel, CARD_NOISE_SQUELCH);
+        mRightCardPanel.add(mSignalPowerView, CARD_SIGNAL_POWER);
+        mRightCardPanel.add(mSymbolPanel, CARD_SYMBOL);
+        mRightCardPanel.add(new JPanel(), CARD_EMPTY);
+        mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+
         mSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         mSplitPane.add(fftPanel, JSplitPane.LEFT);
-        mSplitPane.add(mNoiseSquelchPanel, JSplitPane.RIGHT);
+        mSplitPane.add(mRightCardPanel, JSplitPane.RIGHT);
         mSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, event ->
             mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_DIVIDER_IDENTIFIER, mSplitPane.getDividerLocation()));
         add(mSplitPane);
@@ -354,26 +373,34 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
 
         mProcessingChain = processingChain;
 
-        if(mProcessingChain != null)
+        if(mProcessingChain == null)
+        {
+            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+        }
+        else
         {
             mProcessingChain.addSourceEventListener(mSourceEventProcessor);
 
             PrimaryDecoder primaryDecoder = mProcessingChain.getPrimaryDecoder();
             if(primaryDecoder instanceof NBFMDecoder nbfmDecoder)
             {
-                setRightComponent(mNoiseSquelchPanel);
+                mRightCardLayout.show(mRightCardPanel, CARD_NOISE_SQUELCH);
                 mNoiseSquelchView.setController(nbfmDecoder);
             }
             else if(primaryDecoder instanceof AMDecoder)
             {
-                setRightComponent(mSignalPowerView);
+                mRightCardLayout.show(mRightCardPanel, CARD_SIGNAL_POWER);
                 mSignalPowerView.setProcessingChain(mProcessingChain);
             }
             else if(primaryDecoder instanceof FeedbackDecoder feedbackDecoder)
             {
-                setRightComponent(mSymbolPanel);
+                mRightCardLayout.show(mRightCardPanel, CARD_SYMBOL);
                 mSymbolView.setSymbolProvider(feedbackDecoder);
                 mSymbolView.setProtocol(feedbackDecoder.getProtocolDescription());
+            }
+            else
+            {
+                mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
             }
 
             mProcessingChain.addModule(mSampleStreamTapModule);
@@ -399,22 +426,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
         }
 
         updateFFTProcessing();
-    }
-
-    /**
-     * Shows the component on the right side of the split pane.
-     * @param component to show.
-     */
-    private void setRightComponent(Component component)
-    {
-        Component rightComponent = mSplitPane.getRightComponent();
-
-        if(rightComponent != component)
-        {
-            mSplitPane.remove(rightComponent);
-            mSplitPane.setRightComponent(component);
-            mSplitPane.setDividerLocation(0.4);
-        }
     }
 
     /**
