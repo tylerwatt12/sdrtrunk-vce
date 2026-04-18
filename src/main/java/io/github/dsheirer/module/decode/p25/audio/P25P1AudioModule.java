@@ -382,22 +382,12 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             boolean benignControlSuppression = currentAudioCall != null && "channel state".equals(reason) &&
                 state == State.CONTROL && currentAudioCall.getAudioBufferCount() == 0;
 
-            if(currentAudioCall != null)
+            if(currentAudioCall != null && !benignControlSuppression)
             {
-                if(benignControlSuppression)
-                {
-                    mLog.debug("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                        reason, state, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
-                        currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
-                        mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
-                }
-                else
-                {
-                    mLog.info("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                        reason, state, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
-                        currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
-                        mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
-                }
+                mLog.info("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    reason, state, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                    currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
+                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
             }
 
             closeAudioSegment(reason, !benignControlSuppression);
