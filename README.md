@@ -26,6 +26,8 @@ The SDRconnect work in this fork was inspired by, and partially based on, W2NJL'
 - [W2NJL/sdrtrunk](https://github.com/W2NJL/sdrtrunk)
 
 Current assumptions and behavior:
+
+### SDRconnect and Tuner Behavior
 - SDRconnect support is being exercised against the SDRplay SDRconnect WebSocket API as implemented in SDRconnect 1.0.8.
 - Current testing is focused on nRSP-ST devices. In principle the SDRconnect path should work with other RSP devices exposed through SDRconnect, but that is not the current validation target; I don't have any to test with, which presents a bit of a hurdle.
 - SDRconnect tuners are configured per `host:port`, with the optional device field used as selection metadata rather than as part of tuner identity.
@@ -39,12 +41,6 @@ every tuner type; it exists because SDRconnect has requirements the other tuner 
 - Note that 5MHz bandwidth, Full IQ is going to require almost exactly 20MBps (note, that's megabytes, not megabits) of network bandwidth per RSP in play, so be cognizant of that in terms of your network setup; oodles of RSPs is going to require oodles of bandwidth. Ideally, keep everything on the same switch and don't cross a router, and I'd avoid using WiFi.
 - All of this is pretty much just "get it working reliably for me, in my particular scenario". You might find it interesting or useful, but bottom line, this is just a line of experimentation for me, not something that I'd expect to do a PR for any time soon. If that's something you'd like to do, have at it; proper attribution to W2NJL's work and my meager efforts here would be apropos in that case.
 - My present focus is on reliability; introducing dependency on a separate process creates some complications in terms of ensuring that the processes auto-recover from transient errors, crashes, etc., which isn't the case when talking directly to a dongle. The interface to the radios is still fairly thin at the moment; I've only worked in rate, antenna selection, and the SDRconnect `lna_state` control so far. One important gotcha: SDRconnect's `lna_state` is not a dB gain value, and `0` represents maximum gain. Higher `lna_state` values reduce frontend gain, so the UI and handling here now treat it as an indexed hardware state rather than as ordinary RF gain.
-- The NBFM path now has a post-demod audio shaping chain. Available stages include de-emphasis, high-pass filtering, low-pass
-filtering, voice enhancement, bass boost, and output gain.
-- The NBFM high-pass stage now runs inside the decoder's own post-processing chain rather than downstream in the generic audio module. The current order is: de-emphasis, resample, high-pass, low-pass, voice enhance, bass boost, then output gain.
-- With NBFM, just tune the LNA state as you would normally until you get adequate gain, then adjust the NBFM audio settings
-to taste. Requiring a decent amount of gain with NBFM is normal.
-- With P25, more gain is not automatically better. HDQPSK demodulation depends on clean phase information, so once the signal is strong enough, extra frontend gain mostly increases the risk of overload, clipping, and adjacent-channel splatter. Use the waterfall as a sanity check: aim for a clean, narrow signal without obvious widening or shoulders on either side. If increasing gain starts to broaden the signal or create visible splatter, back it off a notch or two.
 - For multi-frequency tuner sources, the playlist now supports an optional frequency envelope using `min_frequency` and
 `max_frequency`. This was added for trunked channels, where we'd like to make more optimal channel center choices. The
 problem this addresses is that center frequency selection was not good, resulting in, in my case, the control channels
@@ -66,8 +62,18 @@ used for control-channel acquisition and rotation; the envelope is only a tuner-
 - More generally, the polyphase center-frequency allocator now prefers midpoint-aligned valid centers instead of the
 first low-edge fit. That produces more sensible passband placement for ordinary multi-channel uses too, such as clustered
 NBFM channels on a 500kHz tuner span.
+
+### NBFM and Frontend Tuning
+- The NBFM path now has a post-demod audio shaping chain. Available stages include de-emphasis, high-pass filtering, low-pass
+filtering, voice enhancement, bass boost, and output gain.
+- The NBFM high-pass stage now runs inside the decoder's own post-processing chain rather than downstream in the generic audio module. The current order is: de-emphasis, resample, high-pass, low-pass, voice enhance, bass boost, then output gain.
+- With NBFM, just tune the LNA state as you would normally until you get adequate gain, then adjust the NBFM audio settings
+to taste. Requiring a decent amount of gain with NBFM is normal.
+- With P25, more gain is not automatically better. HDQPSK demodulation depends on clean phase information, so once the signal is strong enough, extra frontend gain mostly increases the risk of overload, clipping, and adjacent-channel splatter. Use the waterfall as a sanity check: aim for a clean, narrow signal without obvious widening or shoulders on either side. If increasing gain starts to broaden the signal or create visible splatter, back it off a notch or two.
 - The main window now persists its position and split-pane state across restarts, so the working layout comes back as
 you left it.
+
+### Decoder and DSP Work
 - I also did a broad parser cleanup pass replacing large numbers of hand-written contiguous `int[]` bit-position maps
 with `IntField`, and reversed/irregular descriptor maps with `FragmentedIntField` where appropriate. The main value is
 not raw speed; it is eliminating an error-prone representation that made it far too easy to duplicate or skip bit
@@ -79,9 +85,13 @@ and `&&` versus `||` logic errors in fragment plausibility/fallback handling.
 fragment acquisitions earlier instead of committing sync first and letting bad fragments propagate downstream.
 - The Phase 2 HDQPSK path was also carrying a per-buffer complex gain stage ahead of the demodulator. That turned out to be redundant and, I think, actively harmful. As the demodulator uses phase angle, not amplitude, I don't see the rationale for it, so it's been removed.
 - The Phase 2 HDQPSK Costas loop PLL bandwidth is now adaptive rather than fixed. The original author (commit b3b2e746) tested adaptive bandwidth, found it problematic, and reverted to a fixed BW_300 — but left the PLLBandwidth infrastructure in place. A likely contributing factor to that earlier regression was the complex gain AGC stage that was present at the time, which introduced per-buffer gain changes ahead of the loop and likely distorted the test conditions. With the AGC removed, adaptive narrowing is stable: the loop starts at BW_300 for acquisition, then narrows to BW_200 after enough sync detections, typically during normal traffic. BW_200 provides lower phase jitter during tracking, which reduces bit errors on locked channels. This is still an experiment, but so far it has been successful, with BW_200 being reached regularly on real traffic and no observed lock-loss attributable to the bandwidth transition. The channelized output dispatcher interval was also reduced from 50ms to 20ms, which reduced the most obvious scheduling quantization in acquisition latency.
+
+### Runtime, GC, and Threading
 - JFR showed that memory pressure was dominated by primitive-array churn around the FFT and polyphase channelizer paths, especially `float[]` allocation in `ComplexPolyphaseChannelizerM2` and adjacent spectrum/FFT scratch handling. The channelizer now accumulates directly instead of materializing a temporary multiply buffer for every pass, reuses its non-escaping accumulator scratch buffer, and hands channel results across the asynchronous IFFT/output boundary through an explicit pooled shared-batch handoff rather than copying transient batch lists and channel-result arrays. The spectrum and carrier-offset FFT paths also now reuse their local scratch buffers instead of allocating fresh interleaved and magnitude arrays per frame. On my captures, those changes reduced channelizer-driven `float[]` allocation by roughly 80%, and overall GC pressure improved by about an order of magnitude: one representative before/after comparison dropped from `1020` GC events and `15093 ms` of total GC pause time over five minutes to `120` GC events and `1157 ms` of pause time over the same interval, with humongous-allocation-triggered collections falling from `964` to `62`. The remaining dominant allocator in that area is now inside JTransforms' FFT implementation rather than in local scratch buffers. I investigated power-of-two FFT sizing for that allocation, but it's not viable here: the channel count is constrained by the 25 kHz P25 channel grid, and rounding to a power of two breaks that alignment.
 - JFR thread profiling also showed a large number of short-lived P25 traffic-channel threads. The underlying problem was that `Dispatcher` allocated a dedicated scheduled executor per instance, which was tolerable for long-lived channels but wasteful for bursty P25 Phase 2 traffic channels that spin up and tear down constantly. Channel-oriented dispatchers now use a shared daemon thread pool instead of one thread per dispatcher, while recorders keep private executors so slow file I/O does not interfere with channel work. This is an experiment; it has tested well for the P25-heavy workloads I have on hand, but it is definitely workload-dependent and should be treated that way.
 - The Phase 2 baseband FIR path now uses a real sample-rate-keyed tap cache instead of effectively behaving like a fixed-design pseudo-cache. The decoder is now constructed with the actual acquired source sample rate, so the initial filter design and later cache lookups reflect the real channel rate rather than a placeholder default.
+
+### Audio Runtime and Playback
 - Phase 2 audio/call handling had a few correctness bugs. Informational `MAC_3_IDLE` and `MAC_6_HANGTIME` PDUs were being treated as if a live call had ended, scramble parameters were not always reaching traffic channels early enough, brief one- or two-frame AMBE tone misclassifications could leak through as spurious tones/chirps, and `State.ENCRYPTED` could not transition directly back to `ACTIVE`, `CALL`, or `DATA` on a reused timeslot. Those paths are now handled correctly.
 - The playback layer also had policy bugs. `AudioChannel` could reclaim a live incomplete call after too short a quiet interval even though the decoder was still appending audio, `AudioChannel.isEmpty()` could treat an actively playing channel as available simply because its follow-on queue was empty, and completed audio could be dropped if it finished before any output became idle. Playback now reports a channel as idle only when it has neither an active call nor queued follow-on work, keeps completed audio queued until it can actually be played, and uses burst/activity state to distinguish a genuinely abandoned call from a normal inter-burst pause.
 - More broadly, the audio runtime has now been fully reworked around immutable call events and single-owner coordination. Decoder/audio modules assemble producer-side state in `MutableAudioCallBuilder` and emit immutable `AudioCallEvent` objects, `AudioCallCoordinator` owns live call state on a serialized thread, playback consumes direct `PlayableAudioCall` instances, and recording/streaming consume completed immutable calls through `AudioCallRecorder`. The old shared refcounted `AudioSegment` ownership model is gone entirely, which was the biggest correctness fix in the playback path. The playback manager now advances from coordinator-owned call state instead of depending on lifecycle-listener races, and the old polling/watchdog machinery has been reduced to a diagnostic backstop rather than the mechanism that makes audio work at all.
@@ -94,6 +104,8 @@ situation would still produce a full-length hard decode, just from partially val
 discard. With the unquantized decoder operating on a parallel symbol buffer that fills independently, the guarantee
 had to be made explicit, and the gates also have the benefit of avoiding a decode attempt that was never going to
 succeed.
+
+### Miscellaneous Notes
 - While the SDRconnect tuner type will display drift and PPM, the auto-correct feature is disabled, as the drift will in
 general be so low as to be uninteresting.
 - Getting this to work reliably on my system was a bit of a struggle; at this point my conclusion is that OSX Tahoe seems
