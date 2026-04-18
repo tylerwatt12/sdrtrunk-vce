@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 /**
  * Serialized owner of live audio call state. Normalizes immutable producer events, applies duplicate suppression,
@@ -50,18 +51,29 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         Executors.newSingleThreadExecutor(new NamingThreadFactory("sdrtrunk audio coordinator"));
     private final Map<AudioCallId, ManagedAudioCall> mCalls = new HashMap<>();
     private final ICallManagementProvider mCallManagementProvider;
-    private final AudioPlaybackManager mAudioPlaybackManager;
-    private final AudioRecordingManager mAudioRecordingManager;
-    private final AudioStreamingManager mAudioStreamingManager;
+    private final Consumer<ManagedPlayableAudioCall> mPlaybackConsumer;
+    private final Consumer<CompletedAudioCall> mRecordingConsumer;
+    private final Consumer<CompletedAudioCall> mStreamingConsumer;
 
     public AudioCallCoordinator(UserPreferences userPreferences, AudioPlaybackManager audioPlaybackManager,
                                 AudioRecordingManager audioRecordingManager,
                                 AudioStreamingManager audioStreamingManager)
     {
-        mCallManagementProvider = userPreferences.getCallManagementPreference();
-        mAudioPlaybackManager = audioPlaybackManager;
-        mAudioRecordingManager = audioRecordingManager;
-        mAudioStreamingManager = audioStreamingManager;
+        this(userPreferences.getCallManagementPreference(),
+            audioPlaybackManager != null ? audioPlaybackManager::receive : null,
+            audioRecordingManager != null ? audioRecordingManager::receive : null,
+            audioStreamingManager != null ? audioStreamingManager::receive : null);
+    }
+
+    AudioCallCoordinator(ICallManagementProvider callManagementProvider,
+                         Consumer<ManagedPlayableAudioCall> playbackConsumer,
+                         Consumer<CompletedAudioCall> recordingConsumer,
+                         Consumer<CompletedAudioCall> streamingConsumer)
+    {
+        mCallManagementProvider = callManagementProvider;
+        mPlaybackConsumer = playbackConsumer;
+        mRecordingConsumer = recordingConsumer;
+        mStreamingConsumer = streamingConsumer;
     }
 
     @Override
@@ -91,13 +103,24 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         ManagedAudioCall context = mCalls.computeIfAbsent(incomingSnapshot.callId(),
             key -> new ManagedAudioCall(incomingSnapshot, createPlaybackCall(incomingSnapshot)));
 
+        // Ownership boundary:
+        // 1) producers emit immutable AudioCallEvent/AudioCallSnapshot objects
+        // 2) the coordinator is the only writer of live call state and playback-call buffers
+        // 3) playback/recording/streaming consume snapshots or coordinator-owned playback calls and do not mutate
+        //    the shared call context directly
         context.snapshot = incomingSnapshot.withDuplicate(context.snapshot != null && context.snapshot.duplicate());
-        context.playbackCall.updateSnapshot(context.snapshot);
+        if(context.playbackCall != null)
+        {
+            context.playbackCall.updateSnapshot(context.snapshot);
+        }
 
         if(event.audioFrame() != null)
         {
             context.audioBuffers.add(event.audioFrame());
-            context.playbackCall.appendAudio(event.audioFrame());
+            if(context.playbackCall != null)
+            {
+                context.playbackCall.appendAudio(event.audioFrame());
+            }
         }
 
         updateDuplicateState(context.snapshot);
@@ -107,14 +130,14 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             CompletedAudioCall completedAudioCall =
                 new CompletedAudioCall(context.snapshot, List.copyOf(context.audioBuffers));
 
-            if(mAudioRecordingManager != null)
+            if(mRecordingConsumer != null)
             {
-                mAudioRecordingManager.receive(completedAudioCall);
+                mRecordingConsumer.accept(completedAudioCall);
             }
 
-            if(mAudioStreamingManager != null)
+            if(mStreamingConsumer != null)
             {
-                mAudioStreamingManager.receive(completedAudioCall);
+                mStreamingConsumer.accept(completedAudioCall);
             }
 
             mCalls.remove(context.snapshot.callId());
@@ -123,13 +146,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
     private ManagedPlayableAudioCall createPlaybackCall(AudioCallSnapshot snapshot)
     {
-        if(mAudioPlaybackManager == null || snapshot == null)
+        if(mPlaybackConsumer == null || snapshot == null)
         {
             return null;
         }
 
         ManagedPlayableAudioCall playbackCall = new ManagedPlayableAudioCall(snapshot);
-        mAudioPlaybackManager.receive(playbackCall);
+        mPlaybackConsumer.accept(playbackCall);
         return playbackCall;
     }
 
@@ -179,7 +202,10 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 if(!toCheck.snapshot.duplicate() && isDuplicate(current.snapshot, toCheck.snapshot))
                 {
                     toCheck.snapshot = toCheck.snapshot.withDuplicate(true);
-                    toCheck.playbackCall.updateSnapshot(toCheck.snapshot);
+                    if(toCheck.playbackCall != null)
+                    {
+                        toCheck.playbackCall.updateSnapshot(toCheck.snapshot);
+                    }
                 }
             }
         }

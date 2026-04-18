@@ -20,12 +20,8 @@ package io.github.dsheirer.module;
 
 import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.alias.AliasModel;
-import io.github.dsheirer.audio.AudioSegment;
-import io.github.dsheirer.audio.AudioSegmentBroadcaster;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.IAudioCallProvider;
-import io.github.dsheirer.audio.IAudioSegmentListener;
-import io.github.dsheirer.audio.IAudioSegmentProvider;
 import io.github.dsheirer.audio.codec.mbe.MBECallSequenceRecorder;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.audio.squelch.ISquelchStateProvider;
@@ -111,7 +107,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private Broadcaster<ComplexSamples> mBasebandComplexSamplesBroadcaster = new Broadcaster<>();
     private Broadcaster<ByteBuffer> mDemodulatedBitstreamBufferBroadcaster = new Broadcaster<>();
     private Broadcaster<AudioCallEvent> mAudioCallBroadcaster = new Broadcaster<>();
-    private Broadcaster<AudioSegment> mAudioSegmentBroadcaster = new AudioSegmentBroadcaster<>();
     private Broadcaster<IDecodeEvent> mDecodeEventBroadcaster = new Broadcaster<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
     private Broadcaster<DecoderStateEvent> mDecoderStateEventBroadcaster = new Broadcaster<>();
@@ -263,7 +258,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         }
 
         mAudioCallBroadcaster.dispose();
-        mAudioSegmentBroadcaster.dispose();
         mDecodeEventBroadcaster.dispose();
         mChannelEventBroadcaster.dispose();
         mBasebandComplexSamplesBroadcaster.dispose();
@@ -439,11 +433,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
             mIdentifierUpdateNotificationBroadcaster.addListener(((IdentifierUpdateListener)module).getIdentifierUpdateListener());
         }
 
-        if(module instanceof IAudioSegmentListener)
-        {
-            mAudioSegmentBroadcaster.addListener(((IAudioSegmentListener)module).getAudioSegmentListener());
-        }
-
         if(module instanceof IDecodeEventListener)
         {
             mDecodeEventBroadcaster.addListener(((IDecodeEventListener)module).getDecodeEventListener());
@@ -511,11 +500,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
             mIdentifierUpdateNotificationBroadcaster.removeListener(((IdentifierUpdateListener)module).getIdentifierUpdateListener());
         }
 
-        if(module instanceof IAudioSegmentListener)
-        {
-            mAudioSegmentBroadcaster.removeListener(((IAudioSegmentListener)module).getAudioSegmentListener());
-        }
-
         if(module instanceof IDecodeEventListener)
         {
             mDecodeEventBroadcaster.removeListener(((IDecodeEventListener)module).getDecodeEventListener());
@@ -576,11 +560,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         if(module instanceof IdentifierUpdateProvider)
         {
             ((IdentifierUpdateProvider)module).setIdentifierUpdateListener(mIdentifierUpdateNotificationBroadcaster);
-        }
-
-        if(module instanceof IAudioSegmentProvider)
-        {
-            ((IAudioSegmentProvider)module).setAudioSegmentListener(mAudioSegmentBroadcaster);
         }
 
         if(module instanceof IAudioCallProvider)
@@ -648,11 +627,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         if(module instanceof IdentifierUpdateProvider)
         {
             ((IdentifierUpdateProvider)module).removeIdentifierUpdateListener();
-        }
-
-        if(module instanceof IAudioSegmentProvider)
-        {
-            ((IAudioSegmentProvider)module).setAudioSegmentListener(null);
         }
 
         if(module instanceof IAudioCallProvider)
@@ -892,19 +866,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         {
             removeModule(recordingModule);
         }
-    }
-
-    /**
-     * Adds the listener to receive audio packets from all modules.
-     */
-    public void addAudioSegmentListener(Listener<AudioSegment> listener)
-    {
-        mAudioSegmentBroadcaster.addListener(listener);
-    }
-
-    public void removeAudioSegmentListener(Listener<AudioSegment> listener)
-    {
-        mAudioSegmentBroadcaster.removeListener(listener);
     }
 
     public void addAudioCallListener(Listener<AudioCallEvent> listener)

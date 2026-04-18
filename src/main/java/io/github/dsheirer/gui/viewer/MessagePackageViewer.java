@@ -69,7 +69,7 @@ public class MessagePackageViewer extends VBox
         TabPane tabPane = new TabPane();
         Tab startTab = new Tab("Channel Start Processing Request");
         startTab.setContent(getChannelStartProcessingRequestViewer());
-        Tab audioTab = new Tab("Audio Segment");
+        Tab audioTab = new Tab("Audio Call");
         audioTab.setContent(getAudioSegmentIdCollectionViewer());
         tabPane.getTabs().addAll(audioTab, startTab);
 
@@ -106,9 +106,9 @@ public class MessagePackageViewer extends VBox
                 getDecodeEventTableView().getSelectionModel().select(0);
             }
 
-            if(messagePackage.getAudioSegment() != null)
+            if(messagePackage.getAudioCallSnapshot() != null)
             {
-                getAudioSegmentIdCollectionViewer().set(messagePackage.getAudioSegment().getIdentifierCollection());
+                getAudioSegmentIdCollectionViewer().set(messagePackage.getAudioCallSnapshot().identifierCollection());
             }
             else
             {

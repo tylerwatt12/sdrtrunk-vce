@@ -219,7 +219,7 @@ public class P25P1Viewer extends VBox
 
                 P25P1AudioModule audioModule = new P25P1AudioModule(mUserPreferences, new AliasList("debug"));
                 decoderState.setIdentifierUpdateListener(audioModule.getIdentifierUpdateListener());
-                audioModule.setAudioSegmentListener(messagePackager::add);
+                audioModule.setAudioCallEventListener(messagePackager::add);
                 messageBroadcaster.addListener(audioModule);
                 audioModule.start();
                 SingleChannelState singleChannelState = new SingleChannelState(empty, new AliasModel());
@@ -487,10 +487,10 @@ public class P25P1Viewer extends VBox
             channelStartCountColumn.setText("Starts");
             channelStartCountColumn.setCellValueFactory(new PropertyValueFactory<>("channelStartProcessingRequestCount"));
 
-            TableColumn<MessagePackage, Number> audioSegmentCountColumn = new TableColumn<>();
-            audioSegmentCountColumn.setPrefWidth(50);
-            audioSegmentCountColumn.setText("Audio");
-            audioSegmentCountColumn.setCellValueFactory(new PropertyValueFactory<>("audioSegmentCount"));
+            TableColumn<MessagePackage, Number> audioCallCountColumn = new TableColumn<>();
+            audioCallCountColumn.setPrefWidth(50);
+            audioCallCountColumn.setText("Audio");
+            audioCallCountColumn.setCellValueFactory(new PropertyValueFactory<>("audioCallCount"));
 
             mMessagePackageTableView.getColumns().add(timestampColumn);
             mMessagePackageTableView.getColumns().add(validColumn);
@@ -499,7 +499,7 @@ public class P25P1Viewer extends VBox
             mMessagePackageTableView.getColumns().add(decodeEventCountColumn);
             mMessagePackageTableView.getColumns().add(decoderStateEventCountColumn);
             mMessagePackageTableView.getColumns().add(channelStartCountColumn);
-            mMessagePackageTableView.getColumns().add(audioSegmentCountColumn);
+            mMessagePackageTableView.getColumns().add(audioCallCountColumn);
         }
 
         return mMessagePackageTableView;

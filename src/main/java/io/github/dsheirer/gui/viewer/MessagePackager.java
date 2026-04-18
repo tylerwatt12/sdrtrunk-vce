@@ -20,7 +20,7 @@
 package io.github.dsheirer.gui.viewer;
 
 import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.message.IMessage;
@@ -34,18 +34,6 @@ import io.github.dsheirer.module.decode.event.IDecodeEvent;
 public class MessagePackager
 {
     private MessagePackage mMessagePackage;
-
-    /**
-     * Adds an audio segment.
-     * @param audioSegment to add
-     */
-    public void add(AudioSegment audioSegment)
-    {
-        if(mMessagePackage != null)
-        {
-            mMessagePackage.add(audioSegment);
-        }
-    }
 
     /**
      * Adds the message and creates a new MessageWithEvents instance, wrapping the message, ready to also receive any
@@ -94,6 +82,18 @@ public class MessagePackager
             {
                 e.printStackTrace();
             }
+        }
+    }
+
+    /**
+     * Adds the latest audio call snapshot to the current message package.
+     * @param event to add
+     */
+    public void add(AudioCallEvent event)
+    {
+        if(mMessagePackage != null && event != null && event.snapshot() != null)
+        {
+            mMessagePackage.add(event.snapshot());
         }
     }
 

@@ -22,9 +22,6 @@ package io.github.dsheirer.audio.broadcast;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.audio.AudioSegment;
-import io.github.dsheirer.audio.call.AudioCallId;
-import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -55,7 +52,7 @@ import org.slf4j.LoggerFactory;
  * Audio streaming manager monitors audio segments through completion and creates temporary streaming recordings on
  * disk and enqueues the temporary recording for streaming.
  */
-public class AudioStreamingManager implements Listener<AudioSegment>
+public class AudioStreamingManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioStreamingManager.class);
     private LinkedTransferQueue<CompletedAudioCall> mNewAudioCalls = new LinkedTransferQueue<>();
@@ -77,15 +74,6 @@ public class AudioStreamingManager implements Listener<AudioSegment>
         mAudioRecordingListener = listener;
         mBroadcastFormat = broadcastFormat;
         mUserPreferences = userPreferences;
-    }
-
-    /**
-     * Primary receive method
-     */
-    @Override
-    public void receive(AudioSegment audioSegment)
-    {
-        mNewAudioCalls.add(toCompletedAudioCall(audioSegment));
     }
 
     /**
@@ -278,28 +266,5 @@ public class AudioStreamingManager implements Listener<AudioSegment>
         {
             mNewAudioCalls.add(completedAudioCall);
         }
-    }
-
-    private CompletedAudioCall toCompletedAudioCall(AudioSegment audioSegment)
-    {
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(
-            new AudioCallId(System.identityHashCode(audioSegment), 0, audioSegment.getTimeslot()),
-            null,
-            audioSegment.getAliasList(),
-            audioSegment.getIdentifierCollection(),
-            audioSegment.getBroadcastChannels(),
-            audioSegment.getStartTimestamp(),
-            audioSegment.getLastActivityTimestamp(),
-            audioSegment.getBurstCount(),
-            audioSegment.getBurstGeneration(),
-            audioSegment.getLastBurstStartTimestamp(),
-            audioSegment.getLastBurstEndTimestamp(),
-            audioSegment.isBurstActive(),
-            audioSegment.isComplete(),
-            audioSegment.isEncrypted(),
-            audioSegment.recordAudioProperty().get(),
-            audioSegment.monitorPriorityProperty().get(),
-            audioSegment.isDuplicate());
-        return new CompletedAudioCall(snapshot, audioSegment.getAudioBuffers());
     }
 }

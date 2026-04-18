@@ -26,7 +26,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Mutable, thread-safe playback call owned by the coordinator and consumed by audio channels.
+ * Mutable, thread-safe playback call owned exclusively by {@link io.github.dsheirer.audio.call.AudioCallCoordinator}.
+ *
+ * The coordinator is the only writer for snapshots and audio buffers. Playback code may read from this object on
+ * other threads, but must not mutate it or treat it as a shared call-lifecycle authority.
  */
 public class ManagedPlayableAudioCall implements PlayableAudioCall
 {

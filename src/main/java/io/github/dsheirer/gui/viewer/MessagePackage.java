@@ -19,7 +19,7 @@
 
 package io.github.dsheirer.gui.viewer;
 
-import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.message.IMessage;
@@ -37,7 +37,7 @@ public class MessagePackage
     private List<DecoderStateEvent> mDecoderStateEvents = new ArrayList<>();
     private List<DecodeEventSnapshot> mDecodeEvents = new ArrayList<>();
     private ChannelStartProcessingRequest mChannelStartProcessingRequest;
-    private AudioSegment mAudioSegment;
+    private AudioCallSnapshot mAudioCallSnapshot;
 
     /**
      * Constructs an instance
@@ -154,11 +154,11 @@ public class MessagePackage
     }
 
     /**
-     * Count (0 or 1) of audio segment.
+     * Count (0 or 1) of audio call snapshot.
      */
-    public int getAudioSegmentCount()
+    public int getAudioCallCount()
     {
-        return mAudioSegment == null ? 0 : 1;
+        return mAudioCallSnapshot == null ? 0 : 1;
     }
 
     public ChannelStartProcessingRequest getChannelStartProcessingRequest()
@@ -167,25 +167,25 @@ public class MessagePackage
     }
 
     /**
-     * Generated audio segment.
-     * @return segment or null.
+     * Latest audio call snapshot associated with this message package.
+     * @return snapshot or null.
      */
-    public AudioSegment getAudioSegment()
+    public AudioCallSnapshot getAudioCallSnapshot()
     {
-        return mAudioSegment;
+        return mAudioCallSnapshot;
     }
 
     /**
-     * Adds the audio segment to the package
-     * @param audioSegment to add
+     * Adds the audio call snapshot to the package.
+     * @param audioCallSnapshot to add
      */
-    public void add(AudioSegment audioSegment)
+    public void add(AudioCallSnapshot audioCallSnapshot)
     {
-        if(mAudioSegment != null)
+        if(mAudioCallSnapshot != null)
         {
-            throw new IllegalStateException("AudioSegment already set");
+            throw new IllegalStateException("AudioCallSnapshot already set");
         }
 
-        mAudioSegment = audioSegment;
+        mAudioCallSnapshot = audioCallSnapshot;
     }
 }

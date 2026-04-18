@@ -331,15 +331,30 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
 
     private void closeAudioSegment(String reason)
     {
+        closeAudioSegment(reason, true);
+    }
+
+    private void closeAudioSegment(String reason, boolean logAtInfo)
+    {
         endCurrentAudioBurst();
         AudioSegment currentAudioSegment = getCurrentAudioSegment();
 
         if(currentAudioSegment != null)
         {
-            mLog.info("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
-                getCachedLduCount());
+            if(logAtInfo)
+            {
+                mLog.info("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                    currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
+                    getCachedLduCount());
+            }
+            else
+            {
+                mLog.debug("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                    currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
+                    getCachedLduCount());
+            }
         }
 
         super.closeAudioSegment();
@@ -364,16 +379,28 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     private void closeAudioSegmentForDecoderState(String reason, State state)
     {
         AudioSegment currentAudioSegment = getCurrentAudioSegment();
+        boolean benignControlSuppression = currentAudioSegment != null && "channel state".equals(reason) &&
+            state == State.CONTROL && currentAudioSegment.getAudioBufferCount() == 0;
 
         if(currentAudioSegment != null)
         {
-            mLog.info("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                reason, state, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive(),
-                mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+            if(benignControlSuppression)
+            {
+                mLog.debug("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    reason, state, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                    currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive(),
+                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+            }
+            else
+            {
+                mLog.info("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    reason, state, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
+                    currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive(),
+                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+            }
         }
 
-        closeAudioSegment(reason);
+        closeAudioSegment(reason, !benignControlSuppression);
         mEncryptionState = P25AudioEncryptionState.UNKNOWN;
         mPendingEncryptionLdus.clear();
         mDeferredClearAudioLdus.clear();

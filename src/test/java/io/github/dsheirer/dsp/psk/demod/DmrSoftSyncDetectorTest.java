@@ -55,7 +55,7 @@ public class DmrSoftSyncDetectorTest
 
         float symbol;
 
-        for(DMRSyncPattern pattern: DMRSyncPattern.SYNC_PATTERNS)
+        for(DMRSyncPattern pattern: DMRSyncPattern.getSyncPatterns())
         {
             for(Dibit dibit: pattern.toDibits())
             {

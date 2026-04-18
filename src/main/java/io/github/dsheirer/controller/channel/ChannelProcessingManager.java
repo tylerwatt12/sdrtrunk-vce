@@ -20,7 +20,6 @@ package io.github.dsheirer.controller.channel;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
-import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
@@ -85,7 +84,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private Lock mLock = new ReentrantLock();
 
     private ChannelSourceEventErrorListener mSourceErrorListener = new ChannelSourceEventErrorListener();
-    private List<Listener<AudioSegment>> mAudioSegmentListeners = new CopyOnWriteArrayList<>();
     private List<Listener<AudioCallEvent>> mAudioCallListeners = new CopyOnWriteArrayList<>();
     private List<Listener<IDecodeEvent>> mDecodeEventListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
@@ -444,11 +442,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mChannelEventBroadcaster.addListener(processingChain);
 
         /* Register global listeners */
-        for(Listener<AudioSegment> listener : mAudioSegmentListeners)
-        {
-            processingChain.addAudioSegmentListener(listener);
-        }
-
         for(Listener<AudioCallEvent> listener : mAudioCallListeners)
         {
             processingChain.addAudioCallListener(listener);
@@ -787,23 +780,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 processingChain.getEventBus().post(request.getEvent());
             }
         }
-    }
-
-    /**
-     * Adds a message listener that will be added to all channels to receive
-     * any messages.
-     */
-    public void addAudioSegmentListener(Listener<AudioSegment> listener)
-    {
-        mAudioSegmentListeners.add(listener);
-    }
-
-    /**
-     * Removes a message listener.
-     */
-    public void removeAudioSegmentListener(Listener<AudioSegment> listener)
-    {
-        mAudioSegmentListeners.remove(listener);
     }
 
     public void addAudioCallListener(Listener<AudioCallEvent> listener)

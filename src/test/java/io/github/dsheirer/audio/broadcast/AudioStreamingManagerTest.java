@@ -24,6 +24,9 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.dsp.oscillator.ScalarRealOscillator;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -72,7 +75,7 @@ public class AudioStreamingManagerTest
         userPreferences.getCallManagementPreference().setPatchGroupStreamingOption(PatchGroupStreamingOption.PATCH_GROUP);
         AudioStreamingManager manager = new AudioStreamingManager(listener, BroadcastFormat.MP3, userPreferences);
         manager.start();
-        manager.receive(getAudioSegment());
+        manager.receive(getCompletedAudioCall());
 
         boolean success = false;
 
@@ -107,7 +110,7 @@ public class AudioStreamingManagerTest
         userPreferences.getCallManagementPreference().setPatchGroupStreamingOption(PatchGroupStreamingOption.TALKGROUPS);
         AudioStreamingManager manager = new AudioStreamingManager(listener, BroadcastFormat.MP3, userPreferences);
         manager.start();
-        manager.receive(getAudioSegment());
+        manager.receive(getCompletedAudioCall());
 
         boolean success = false;
 
@@ -172,6 +175,30 @@ public class AudioStreamingManagerTest
         audioSegment.addIdentifier(getRadio());
         audioSegment.completeProperty().set(true);
         return audioSegment;
+    }
+
+    private static CompletedAudioCall getCompletedAudioCall()
+    {
+        AudioSegment audioSegment = getAudioSegment();
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(
+            new AudioCallId(System.identityHashCode(audioSegment), 0, audioSegment.getTimeslot()),
+            null,
+            audioSegment.getAliasList(),
+            audioSegment.getIdentifierCollection(),
+            audioSegment.getBroadcastChannels(),
+            audioSegment.getStartTimestamp(),
+            audioSegment.getLastActivityTimestamp(),
+            audioSegment.getBurstCount(),
+            audioSegment.getBurstGeneration(),
+            audioSegment.getLastBurstStartTimestamp(),
+            audioSegment.getLastBurstEndTimestamp(),
+            audioSegment.isBurstActive(),
+            audioSegment.isComplete(),
+            audioSegment.isEncrypted(),
+            audioSegment.recordAudioProperty().get(),
+            audioSegment.monitorPriorityProperty().get(),
+            audioSegment.isDuplicate());
+        return new CompletedAudioCall(snapshot, audioSegment.getAudioBuffers());
     }
 
     private static AliasList getAliasList()

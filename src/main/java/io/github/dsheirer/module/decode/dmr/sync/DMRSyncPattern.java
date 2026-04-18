@@ -234,6 +234,14 @@ public enum DMRSyncPattern
     }
 
     /**
+     * Supported on-air sync patterns that have concrete dibit representations.
+     */
+    public static Set<DMRSyncPattern> getSyncPatterns()
+    {
+        return Set.copyOf(SYNC_PATTERNS);
+    }
+
+    /**
      * String representation of the sync pattern
      */
     @Override

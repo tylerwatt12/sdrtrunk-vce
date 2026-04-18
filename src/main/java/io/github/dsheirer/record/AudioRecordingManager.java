@@ -19,9 +19,6 @@
 
 package io.github.dsheirer.record;
 
-import io.github.dsheirer.audio.AudioSegment;
-import io.github.dsheirer.audio.call.AudioCallId;
-import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -33,7 +30,6 @@ import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.StringUtils;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
@@ -43,15 +39,13 @@ import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import javafx.beans.value.ChangeListener;
-import javafx.beans.value.ObservableValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Monitors audio segments and upon completion records any audio segments that have been flagged as recordable
+ * Records completed immutable audio calls that have been flagged as recordable.
  */
-public class AudioRecordingManager implements Listener<AudioSegment>
+public class AudioRecordingManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioRecordingManager.class);
     private LinkedTransferQueue<CompletedAudioCall> mCompletedAudioCallQueue = new LinkedTransferQueue<>();
@@ -96,31 +90,6 @@ public class AudioRecordingManager implements Listener<AudioSegment>
     }
 
     /**
-     * Primary receive method for incoming audio segments to be recorded
-     */
-    @Override
-    public void receive(AudioSegment audioSegment)
-    {
-        audioSegment.completeProperty().addListener(new AudioSegmentCompletionMonitor(audioSegment));
-    }
-
-    /**
-     * Processes audio segments that have been flagged as complete.
-     * @param audioSegment
-     */
-    public void processCompletedAudioSegment(AudioSegment audioSegment)
-    {
-        if(audioSegment.recordAudioProperty().get())
-        {
-            mCompletedAudioCallQueue.add(toCompletedAudioCall(audioSegment));
-        }
-        else
-        {
-            audioSegment.decrementConsumerCount();
-        }
-    }
-
-    /**
      * Processes any queued audio segments
      */
     private void processAudioSegments()
@@ -156,29 +125,6 @@ public class AudioRecordingManager implements Listener<AudioSegment>
         {
             mCompletedAudioCallQueue.add(completedAudioCall);
         }
-    }
-
-    private CompletedAudioCall toCompletedAudioCall(AudioSegment audioSegment)
-    {
-        AudioCallSnapshot snapshot = new AudioCallSnapshot(
-            new AudioCallId(System.identityHashCode(audioSegment), 0, audioSegment.getTimeslot()),
-            null,
-            audioSegment.getAliasList(),
-            audioSegment.getIdentifierCollection(),
-            audioSegment.getBroadcastChannels(),
-            audioSegment.getStartTimestamp(),
-            audioSegment.getLastActivityTimestamp(),
-            audioSegment.getBurstCount(),
-            audioSegment.getBurstGeneration(),
-            audioSegment.getLastBurstStartTimestamp(),
-            audioSegment.getLastBurstEndTimestamp(),
-            audioSegment.isBurstActive(),
-            audioSegment.isComplete(),
-            audioSegment.isEncrypted(),
-            audioSegment.recordAudioProperty().get(),
-            audioSegment.monitorPriorityProperty().get(),
-            audioSegment.isDuplicate());
-        return new CompletedAudioCall(snapshot, audioSegment.getAudioBuffers());
     }
 
     /**
@@ -332,28 +278,6 @@ public class AudioRecordingManager implements Listener<AudioSegment>
         sbFinal.append(recordFormat.getExtension());
 
         return getRecordingBasePath().resolve(sbFinal.toString());
-    }
-
-
-    /**
-     * Audio segment completion monitor.  Listens for the audio segment's complete flag to be set and then
-     * queues the audio segment for recording.
-     */
-    public class AudioSegmentCompletionMonitor implements ChangeListener<Boolean>
-    {
-        private AudioSegment mAudioSegment;
-
-        public AudioSegmentCompletionMonitor(AudioSegment audioSegment)
-        {
-            mAudioSegment = audioSegment;
-        }
-
-        @Override
-        public void changed(ObservableValue<? extends Boolean> observable, Boolean oldValue, Boolean newValue)
-        {
-            mAudioSegment.completeProperty().removeListener(this);
-            processCompletedAudioSegment(mAudioSegment);
-        }
     }
 
     public static String clean(String value)

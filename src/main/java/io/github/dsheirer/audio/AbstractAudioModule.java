@@ -41,13 +41,12 @@ import java.util.Set;
 /**
  * Base audio module implementation.
  */
-public abstract class AbstractAudioModule extends Module implements IAudioSegmentProvider, IAudioCallProvider,
+public abstract class AbstractAudioModule extends Module implements IAudioCallProvider,
     IdentifierUpdateListener
 {
     public static final long DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH = 60L * 8000; // 1 minute @ 8kHz
     public static final int DEFAULT_TIMESLOT = 0;
     private final int mMaxSegmentAudioSampleLength;
-    private Listener<AudioSegment> mAudioSegmentListener;
     private Listener<AudioCallEvent> mAudioCallEventListener;
     protected MutableIdentifierCollection mIdentifierCollection;
     private Broadcaster<IdentifierUpdateNotification> mIdentifierUpdateNotificationBroadcaster = new Broadcaster<>();
@@ -151,12 +150,6 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
                 if(mRecordAudioOverride)
                 {
                     mAudioSegment.recordAudioProperty().set(true);
-                }
-
-                if(mAudioSegmentListener != null)
-                {
-                    mAudioSegment.incrementConsumerCount();
-                    mAudioSegmentListener.receive(mAudioSegment);
                 }
 
                 mAudioSampleCount = 0;
@@ -301,24 +294,6 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
     public MutableIdentifierCollection getIdentifierCollection()
     {
         return mIdentifierCollection;
-    }
-
-    /**
-     * Registers an audio segment listener to receive the output from this audio module.
-     */
-    @Override
-    public void setAudioSegmentListener(Listener<AudioSegment> listener)
-    {
-        mAudioSegmentListener = listener;
-    }
-
-    /**
-     * Unregisters the audio segment listener from receiving audio segments from this module.
-     */
-    @Override
-    public void removeAudioSegmentListener()
-    {
-        mAudioSegmentListener = null;
     }
 
     @Override
