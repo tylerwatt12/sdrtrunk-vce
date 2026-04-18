@@ -30,7 +30,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.record.AudioSegmentRecorder;
+import io.github.dsheirer.record.AudioCallRecorder;
 import io.github.dsheirer.record.RecordFormat;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.ThreadPool;
@@ -49,8 +49,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Audio streaming manager monitors audio segments through completion and creates temporary streaming recordings on
- * disk and enqueues the temporary recording for streaming.
+ * Streams completed immutable audio calls by creating temporary recordings and enqueueing them for broadcast.
  */
 public class AudioStreamingManager
 {
@@ -77,7 +76,7 @@ public class AudioStreamingManager
     }
 
     /**
-     * Starts the scheduled audio segment processor
+     * Starts the scheduled completed-call processor.
      */
     public void start()
     {
@@ -89,7 +88,7 @@ public class AudioStreamingManager
     }
 
     /**
-     * Stops the scheduled audio segment processor
+     * Stops the scheduled completed-call processor.
      */
     public void stop()
     {
@@ -104,7 +103,7 @@ public class AudioStreamingManager
     }
 
     /**
-     * Scheduled runnable to process audio segments.
+     * Scheduled runnable to process completed calls.
      */
     public class AudioSegmentProcessor implements Runnable
     {
@@ -132,10 +131,10 @@ public class AudioStreamingManager
         }
 
         /**
-         * Processes an audio segment for streaming by creating a temporary MP3 recording and submitting the recording
+         * Processes a completed call for streaming by creating a temporary MP3 recording and submitting the recording
          * to the specific broadcast channel(s).
-         * @param audioSegment to process for streaming
-         * @param identifierCollection to use for the streamed audio recording.
+         * @param completedAudioCall to process for streaming
+         * @param identifierCollection to use for the streamed audio recording
          * @param broadcastChannels to receive the audio recording
          */
         private void processAudioCall(CompletedAudioCall completedAudioCall, IdentifierCollection identifierCollection,
@@ -146,7 +145,7 @@ public class AudioStreamingManager
 
             try
             {
-                AudioSegmentRecorder.write(completedAudioCall, path, RecordFormat.MP3, mUserPreferences,
+                AudioCallRecorder.write(completedAudioCall, path, RecordFormat.MP3, mUserPreferences,
                     identifierCollection);
 
                 AudioRecording audioRecording = new AudioRecording(path, broadcastChannels, identifierCollection,
@@ -160,7 +159,7 @@ public class AudioStreamingManager
         }
 
         /**
-         * Main processing method to process audio segments
+         * Main processing method to process completed calls.
          */
         private void processAudioSegments()
         {
@@ -191,8 +190,8 @@ public class AudioStreamingManager
                             if(mUserPreferences.getCallManagementPreference()
                                 .getPatchGroupStreamingOption() == PatchGroupStreamingOption.TALKGROUPS)
                             {
-                                //Decompose the patch group into the individual (patched) talkgroups and process the audio
-                                //segment for each patched talkgroup.
+                                //Decompose the patch group into the individual (patched) talkgroups and process the
+                                //completed call for each patched talkgroup.
                                 PatchGroup patchGroup = patchGroupIdentifier.getValue();
 
                                 List<Identifier> ids = new ArrayList<>();
@@ -255,7 +254,7 @@ public class AudioStreamingManager
             }
             catch(Exception e)
             {
-                mLog.error("Error processing audio segments for streaming", e);
+                mLog.error("Error processing completed audio calls for streaming", e);
             }
         }
     }

@@ -64,7 +64,7 @@ public class AudioPlaybackBurst
     }
 
     /**
-     * Updates this playback view to the segment's current burst generation.
+     * Updates this playback view to the call's current burst generation.
      *
      * @return true if this represents a new burst after audio was already delivered for a prior burst
      */
@@ -99,7 +99,7 @@ public class AudioPlaybackBurst
     }
 
     /**
-     * Indicates that a new burst began on an already-loaded segment and the next delivered audio buffer should be
+     * Indicates that a new burst began on an already-loaded call and the next delivered audio buffer should be
      * treated as the audible start of that burst.
      */
     public void beginBurstPlayback()

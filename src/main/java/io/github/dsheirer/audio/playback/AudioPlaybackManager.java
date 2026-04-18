@@ -54,7 +54,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Manages scheduling and playback of audio segments to the local users audio system.
+ * Manages scheduling and playback of playable audio calls to the local user's audio system.
  */
 public class AudioPlaybackManager implements IAudioController
 {
@@ -135,8 +135,8 @@ public class AudioPlaybackManager implements IAudioController
     }
 
     /**
-     * Receives audio segments from channel audio modules.
-     * @param audioSegment to receive and process
+     * Receives playable calls from the audio-call coordinator.
+     * @param audioCall to receive and process
      */
     public void receive(PlayableAudioCall audioCall)
     {
@@ -332,7 +332,7 @@ public class AudioPlaybackManager implements IAudioController
     }
 
     /**
-     * Scheduled runnable to process incoming audio segments
+     * Scheduled runnable to process incoming playable calls.
      */
     public class AudioSegmentProcessor implements Runnable
     {
@@ -461,7 +461,7 @@ public class AudioPlaybackManager implements IAudioController
         }
 
         /**
-         * Processes new audio segments and automatically assigns them to audio outputs.
+         * Processes new playable calls and automatically assigns them to audio outputs.
          *
          * Note: this method is intended to be repeatedly invoked by a scheduled processing thread.
          */
@@ -697,7 +697,7 @@ public class AudioPlaybackManager implements IAudioController
                 }
                 catch(Exception e)
                 {
-                    mLog.error("Encountered error while processing audio segments", e);
+                    mLog.error("Encountered error while processing playable audio calls", e);
                 }
                 finally
                 {
@@ -779,7 +779,7 @@ public class AudioPlaybackManager implements IAudioController
     }
 
     /**
-     * Audio segment comparator for sorting audio segments by: 1)Playback priority and 2)Segment start time
+     * Comparator for sorting playable audio calls by playback priority and start time.
      */
     public static class AudioSegmentPrioritySorter implements Comparator<PlayableAudioCall>
     {

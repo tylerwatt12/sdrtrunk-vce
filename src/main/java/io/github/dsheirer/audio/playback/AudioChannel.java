@@ -51,7 +51,7 @@ public class AudioChannel
     private static final long INTER_BURST_STALL_TIMEOUT_MS = 15000;
     private final AudioBuffer mAudioBuffer = new AudioBuffer();
     private final Broadcaster<AudioEvent> mAudioEventBroadcaster = new Broadcaster<>();
-    private final LinkedTransferQueue<PlayableAudioCall> mAudioSegmentQueue = new LinkedTransferQueue<>();
+    private final LinkedTransferQueue<PlayableAudioCall> mPlayableCallQueue = new LinkedTransferQueue<>();
     private final UserPreferences mUserPreferences;
     private final String mChannelName;
 
@@ -91,11 +91,11 @@ public class AudioChannel
 
         if(disabled)
         {
-            PlayableAudioCall segment = mAudioSegmentQueue.poll();
+            PlayableAudioCall audioCall = mPlayableCallQueue.poll();
 
-            while(segment != null)
+            while(audioCall != null)
             {
-                segment = mAudioSegmentQueue.poll();
+                audioCall = mPlayableCallQueue.poll();
             }
         }
     }
@@ -142,9 +142,9 @@ public class AudioChannel
     }
 
     /**
-     * Indicates if this channel has an active playable call, indicating that it is right in the middle of playback and
-     * the audio output should temporarily pause until more audio is available from the call.
-     * @return true if this channel is processing a non-complete audio segment.
+     * Indicates if this channel has an active playable call, meaning playback is in progress and the audio output
+     * should temporarily pause until more audio is available from that call.
+     * @return true if this channel is processing a non-complete playable call
      */
     public boolean hasAudioSegment()
     {
@@ -164,12 +164,12 @@ public class AudioChannel
     }
 
     /**
-     * Provides audio for this channel from the audio segment queue.
-     * @return audio or null if there are no audio segments or test audio to play.
+     * Provides audio for this channel from the playable-call queue.
+     * @return audio or null if there are no calls or test audio to play
      */
     public float @Nullable [] getAudio()
     {
-        boolean hadWork = getCurrentAudioCall() != null || !mAudioSegmentQueue.isEmpty();
+        boolean hadWork = getCurrentAudioCall() != null || !mPlayableCallQueue.isEmpty();
 
         if(mAudioBuffer.isFull())
         {
@@ -190,7 +190,7 @@ public class AudioChannel
             loadNextAudioSegment();
         }
 
-        //Evaluate current audio segment to see if the status has changed for duplicate or do-not-monitor.
+        //Evaluate the current call to see if its status has changed for duplicate or do-not-monitor.
         while(isThrowaway(getCurrentAudioCall()))
         {
             if(getCurrentPlaybackBufferIndex() > 0)
@@ -230,7 +230,7 @@ public class AudioChannel
             mNoAudioFromSegmentIntervalCount = 0;
         }
 
-        // Completed segments can be retired quickly once playback is done. Incomplete segments get a much longer
+        // Completed calls can be retired quickly once playback is done. Incomplete calls get a much longer
         // stale timeout so brief decoder gaps do not kill active audio, while channels that never receive a close
         // still eventually recover.
         if(getCurrentAudioCall() != null)
@@ -319,9 +319,9 @@ public class AudioChannel
     }
 
     /**
-     * Indicates if the audio segment should be thrown away because it is marked as duplicate or do-not-monitor.
-     * @param audioSegment to evaluate
-     * @return true if the audio should be thrown away.
+     * Indicates if the call should be thrown away because it is marked as duplicate or do-not-monitor.
+     * @param audioCall to evaluate
+     * @return true if the audio should be thrown away
      */
     private boolean isThrowaway(PlayableAudioCall audioCall)
     {
@@ -394,7 +394,7 @@ public class AudioChannel
     }
 
     /**
-     * Guava event bus notifications that the preferences have been updated, so that we can update audio segment tones.
+     * Guava event bus notifications that the preferences have been updated, so that we can update playback tones.
      */
     @Subscribe
     public void preferenceUpdated(PreferenceType preferenceType)
@@ -410,7 +410,7 @@ public class AudioChannel
     }
 
     /**
-     * Indicates if the audio segment is linked to the current playback audio segment
+     * Indicates if the call is linked to the current playback call.
      */
     public boolean isLinkedTo(PlayableAudioCall audioCall)
     {
@@ -435,30 +435,29 @@ public class AudioChannel
     }
 
     /**
-     * Indicates if this audio channel is idle with no current segment and no queued segments.
+     * Indicates if this audio channel is idle with no current call and no queued calls.
      * @return true if idle
      */
     public boolean isIdle()
     {
-        return getCurrentAudioCall() == null && mAudioSegmentQueue.isEmpty();
+        return getCurrentAudioCall() == null && mPlayableCallQueue.isEmpty();
     }
 
     /**
-     * Schedules the audio segment for playback.  The audio segment user count should already be incremented by the
-     * calling entity.
+     * Schedules the playable call for playback.
      *
-     * @param audioSegment to schedule for playback.
+     * @param audioCall to schedule for playback
      */
     public void play(PlayableAudioCall audioCall)
     {
         if(audioCall != null && !isDisabled())
         {
-            mAudioSegmentQueue.add(audioCall);
+            mPlayableCallQueue.add(audioCall);
         }
     }
 
     /**
-     * Dispose of the currently assigned audio segment.
+     * Dispose of the currently assigned playable call.
      */
     private void disposeCurrentAudioSegment()
     {
@@ -473,18 +472,18 @@ public class AudioChannel
                     getChannelName(), formatSegment(currentAudioCall),
                     currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
                     currentAudioCall.getAudioBufferCount(),
-                    currentAudioCall.isComplete(), mNoAudioFromSegmentIntervalCount, mAudioSegmentQueue.size());
+                    currentAudioCall.isComplete(), mNoAudioFromSegmentIntervalCount, mPlayableCallQueue.size());
             }
             mCurrentPlaybackBurst = null;
         }
     }
 
     /**
-     * Loads the next audio segment from the queue.
+     * Loads the next playable call from the queue.
      */
     private void loadNextAudioSegment()
     {
-        PlayableAudioCall audioCall = mAudioSegmentQueue.poll();
+        PlayableAudioCall audioCall = mPlayableCallQueue.poll();
 
         boolean verificationInProgress = (audioCall != null);
 
@@ -492,10 +491,10 @@ public class AudioChannel
         {
             if(audioCall != null)
             {
-                //Throw away the audio segment if it has been flagged as do not monitor or is duplicate
+                //Throw away the call if it has been flagged as do not monitor or duplicate.
                 if(isThrowaway(audioCall))
                 {
-                    audioCall = mAudioSegmentQueue.poll();
+                    audioCall = mPlayableCallQueue.poll();
                 }
                 else
                 {

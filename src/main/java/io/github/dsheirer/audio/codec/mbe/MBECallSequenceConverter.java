@@ -32,7 +32,7 @@ import io.github.dsheirer.module.decode.p25.audio.VoiceFrame;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.record.AudioSegmentRecorder;
+import io.github.dsheirer.record.AudioCallRecorder;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -137,7 +137,7 @@ public class MBECallSequenceConverter
             {
                 try
                 {
-                    AudioSegmentRecorder.recordWAVE(call, outputPath, call.snapshot().identifierCollection());
+                    AudioCallRecorder.recordWAVE(call, outputPath, call.snapshot().identifierCollection());
                 }
                 catch(IOException ioe)
                 {

@@ -41,13 +41,13 @@ import java.util.Map;
 /**
  * Recording utility for completed immutable audio calls.
  */
-public class AudioSegmentRecorder
+public class AudioCallRecorder
 {
 
     public static final int MP3_BIT_RATE = 16;
     public static final boolean CONSTANT_BIT_RATE = false;
 
-    private AudioSegmentRecorder()
+    private AudioCallRecorder()
     {
     }
 

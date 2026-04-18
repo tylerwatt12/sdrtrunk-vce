@@ -44,8 +44,8 @@ import javax.sound.sampled.Mixer;
 import javax.sound.sampled.SourceDataLine;
 
 /**
- * Audio output/playback channel for a single audio mixer channel.  Providers support for playback of audio segments
- * and broadcasts audio segment metadata to registered listeners (ie gui components).
+ * Audio output/playback channel for a single audio mixer channel. Providers supply playable calls and broadcast
+ * playback metadata to registered listeners (for example GUI components).
  */
 public class AudioOutput implements LineListener
 {
@@ -68,7 +68,7 @@ public class AudioOutput implements LineListener
      * manages the start/stop control for the dataline based on audio availability.
      *
      * @param descriptor for the mixer and audio format
-     * @param audioProvider for access to audio from audio segments
+     * @param audioProvider for access to audio from playable calls
      */
     public AudioOutput(AudioPlaybackDeviceDescriptor descriptor, AudioProvider audioProvider)
     {
@@ -124,7 +124,7 @@ public class AudioOutput implements LineListener
             }
             else
             {
-                //Disable each of the audio channels so they don't queue audio segments.
+                //Disable each audio channel so it stops queueing playable calls.
                 for(AudioChannel audioChannel: mAudioProvider.getAudioChannels())
                 {
                     audioChannel.setDisabled(true);

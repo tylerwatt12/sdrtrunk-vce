@@ -65,7 +65,7 @@ public class AudioRecordingManager
     }
 
     /**
-     * Starts the manager and begins audio segment recording.
+     * Starts the manager and begins completed-call recording.
      */
     public void start()
     {
@@ -77,7 +77,7 @@ public class AudioRecordingManager
     }
 
     /**
-     * Stops the manager and records any remaining queued audio segments.
+     * Stops the manager and records any remaining queued completed calls.
      */
     public void stop()
     {
@@ -90,7 +90,7 @@ public class AudioRecordingManager
     }
 
     /**
-     * Processes any queued audio segments
+     * Processes any queued completed calls.
      */
     private void processAudioSegments()
     {
@@ -106,11 +106,11 @@ public class AudioRecordingManager
 
                 try
                 {
-                    AudioSegmentRecorder.write(completedAudioCall, path, recordFormat, mUserPreferences);
+                    AudioCallRecorder.write(completedAudioCall, path, recordFormat, mUserPreferences);
                 }
                 catch(IOException ioe)
                 {
-                    mLog.error("Error recording audio segment to [" + path.toString() + "]");
+                    mLog.error("Error recording completed audio call to [" + path.toString() + "]");
                 }
             }
 
@@ -296,7 +296,7 @@ public class AudioRecordingManager
     }
 
     /**
-     * Threaded queue processor to process/record each recordable audio segment
+     * Threaded queue processor to record each recordable completed call.
      */
     public class QueueProcessor implements Runnable
     {
