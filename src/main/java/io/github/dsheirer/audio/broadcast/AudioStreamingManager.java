@@ -23,6 +23,9 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -55,8 +58,8 @@ import org.slf4j.LoggerFactory;
 public class AudioStreamingManager implements Listener<AudioSegment>
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioStreamingManager.class);
-    private LinkedTransferQueue<AudioSegment> mNewAudioSegments = new LinkedTransferQueue<>();
-    private List<AudioSegment> mAudioSegments = new ArrayList<>();
+    private LinkedTransferQueue<CompletedAudioCall> mNewAudioCalls = new LinkedTransferQueue<>();
+    private List<CompletedAudioCall> mAudioCalls = new ArrayList<>();
     private Listener<AudioRecording> mAudioRecordingListener;
     private BroadcastFormat mBroadcastFormat;
     private UserPreferences mUserPreferences;
@@ -82,7 +85,7 @@ public class AudioStreamingManager implements Listener<AudioSegment>
     @Override
     public void receive(AudioSegment audioSegment)
     {
-        mNewAudioSegments.add(audioSegment);
+        mNewAudioCalls.add(toCompletedAudioCall(audioSegment));
     }
 
     /**
@@ -108,19 +111,8 @@ public class AudioStreamingManager implements Listener<AudioSegment>
             mAudioSegmentProcessorFuture = null;
         }
 
-        for(AudioSegment audioSegment: mNewAudioSegments)
-        {
-            audioSegment.decrementConsumerCount();
-        }
-
-        mNewAudioSegments.clear();
-
-        for(AudioSegment audioSegment: mAudioSegments)
-        {
-            audioSegment.decrementConsumerCount();
-        }
-
-        mAudioSegments.clear();
+        mNewAudioCalls.clear();
+        mAudioCalls.clear();
     }
 
     /**
@@ -158,25 +150,19 @@ public class AudioStreamingManager implements Listener<AudioSegment>
          * @param identifierCollection to use for the streamed audio recording.
          * @param broadcastChannels to receive the audio recording
          */
-        private void processAudioSegment(AudioSegment audioSegment, IdentifierCollection identifierCollection,
+        private void processAudioCall(CompletedAudioCall completedAudioCall, IdentifierCollection identifierCollection,
                                          Set<BroadcastChannel> broadcastChannels)
         {
             Path path = getTemporaryRecordingPath();
-            long length = 0;
-
-            for(float[] audioBuffer: audioSegment.getAudioBuffers())
-            {
-                length += audioBuffer.length;
-            }
-
-            length /= 8; //Sample rate is 8000 samples per second, or 8 samples per millisecond.
+            long length = completedAudioCall.getDuration();
 
             try
             {
-                AudioSegmentRecorder.write(audioSegment, path, RecordFormat.MP3, mUserPreferences, identifierCollection);
+                AudioSegmentRecorder.write(completedAudioCall, path, RecordFormat.MP3, mUserPreferences,
+                    identifierCollection);
 
                 AudioRecording audioRecording = new AudioRecording(path, broadcastChannels, identifierCollection,
-                    audioSegment.getStartTimestamp(), length);
+                    completedAudioCall.snapshot().startTimestamp(), length);
                 mAudioRecordingListener.receive(audioRecording);
             }
             catch(IOException ioe)
@@ -190,27 +176,27 @@ public class AudioStreamingManager implements Listener<AudioSegment>
          */
         private void processAudioSegments()
         {
-            mNewAudioSegments.drainTo(mAudioSegments);
+            mNewAudioCalls.drainTo(mAudioCalls);
 
-            Iterator<AudioSegment> it = mAudioSegments.iterator();
-            AudioSegment audioSegment;
+            Iterator<CompletedAudioCall> it = mAudioCalls.iterator();
+            CompletedAudioCall completedAudioCall;
             while(it.hasNext())
             {
-                audioSegment = it.next();
+                completedAudioCall = it.next();
 
-                if(audioSegment.isDuplicate() && mUserPreferences.getCallManagementPreference().isDuplicateStreamingSuppressionEnabled())
+                if(completedAudioCall.snapshot().duplicate() &&
+                    mUserPreferences.getCallManagementPreference().isDuplicateStreamingSuppressionEnabled())
                 {
                     it.remove();
-                    audioSegment.decrementConsumerCount();
                 }
-                else if(audioSegment.completeProperty().get())
+                else
                 {
                     it.remove();
 
-                    if(mAudioRecordingListener != null && audioSegment.hasBroadcastChannels())
+                    if(mAudioRecordingListener != null && completedAudioCall.snapshot().hasBroadcastChannels())
                     {
                         IdentifierCollection identifiers =
-                            new IdentifierCollection(audioSegment.getIdentifierCollection().getIdentifiers());
+                            new IdentifierCollection(completedAudioCall.snapshot().identifierCollection().getIdentifiers());
 
                         if(identifiers.getToIdentifier() instanceof PatchGroupIdentifier patchGroupIdentifier)
                         {
@@ -226,13 +212,14 @@ public class AudioStreamingManager implements Listener<AudioSegment>
                                 ids.addAll(patchGroup.getPatchedRadioIdentifiers());
 
                                 //If there are no patched radios/talkgroups, override user preference and stream as a patch group
-                                if(ids.isEmpty() || audioSegment.getAliasList() == null)
+                                if(ids.isEmpty() || completedAudioCall.snapshot().aliasList() == null)
                                 {
-                                    processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
+                                    processAudioCall(completedAudioCall, identifiers,
+                                        completedAudioCall.snapshot().broadcastChannels());
                                 }
                                 else
                                 {
-                                    AliasList aliasList = audioSegment.getAliasList();
+                                    AliasList aliasList = completedAudioCall.snapshot().aliasList();
 
                                     for(Identifier identifier: ids)
                                     {
@@ -250,23 +237,23 @@ public class AudioStreamingManager implements Listener<AudioSegment>
                                             //Remove patch group TO identifier & replace with the patched talkgroup/radio
                                             decomposedIdentifiers.remove(Role.TO);
                                             decomposedIdentifiers.update(identifier);
-                                            processAudioSegment(audioSegment, decomposedIdentifiers, broadcastChannels);
+                                            processAudioCall(completedAudioCall, decomposedIdentifiers, broadcastChannels);
                                         }
                                     }
                                 }
                             }
                             else
                             {
-                                processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
+                                processAudioCall(completedAudioCall, identifiers,
+                                    completedAudioCall.snapshot().broadcastChannels());
                             }
                         }
                         else
                         {
-                            processAudioSegment(audioSegment, identifiers, audioSegment.getBroadcastChannels());
+                            processAudioCall(completedAudioCall, identifiers,
+                                completedAudioCall.snapshot().broadcastChannels());
                         }
                     }
-
-                    audioSegment.decrementConsumerCount();
                 }
             }
         }
@@ -283,5 +270,36 @@ public class AudioStreamingManager implements Listener<AudioSegment>
                 mLog.error("Error processing audio segments for streaming", e);
             }
         }
+    }
+
+    public void receive(CompletedAudioCall completedAudioCall)
+    {
+        if(completedAudioCall != null)
+        {
+            mNewAudioCalls.add(completedAudioCall);
+        }
+    }
+
+    private CompletedAudioCall toCompletedAudioCall(AudioSegment audioSegment)
+    {
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(
+            new AudioCallId(System.identityHashCode(audioSegment), 0, audioSegment.getTimeslot()),
+            null,
+            audioSegment.getAliasList(),
+            audioSegment.getIdentifierCollection(),
+            audioSegment.getBroadcastChannels(),
+            audioSegment.getStartTimestamp(),
+            audioSegment.getLastActivityTimestamp(),
+            audioSegment.getBurstCount(),
+            audioSegment.getBurstGeneration(),
+            audioSegment.getLastBurstStartTimestamp(),
+            audioSegment.getLastBurstEndTimestamp(),
+            audioSegment.isBurstActive(),
+            audioSegment.isComplete(),
+            audioSegment.isEncrypted(),
+            audioSegment.recordAudioProperty().get(),
+            audioSegment.monitorPriorityProperty().get(),
+            audioSegment.isDuplicate());
+        return new CompletedAudioCall(snapshot, audioSegment.getAudioBuffers());
     }
 }

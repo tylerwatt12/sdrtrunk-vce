@@ -22,6 +22,8 @@ import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.AudioSegmentBroadcaster;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.IAudioCallProvider;
 import io.github.dsheirer.audio.IAudioSegmentListener;
 import io.github.dsheirer.audio.IAudioSegmentProvider;
 import io.github.dsheirer.audio.codec.mbe.MBECallSequenceRecorder;
@@ -108,6 +110,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private Broadcaster<float[]> mDemodulatedAudioBufferBroadcaster = new Broadcaster<>();
     private Broadcaster<ComplexSamples> mBasebandComplexSamplesBroadcaster = new Broadcaster<>();
     private Broadcaster<ByteBuffer> mDemodulatedBitstreamBufferBroadcaster = new Broadcaster<>();
+    private Broadcaster<AudioCallEvent> mAudioCallBroadcaster = new Broadcaster<>();
     private Broadcaster<AudioSegment> mAudioSegmentBroadcaster = new AudioSegmentBroadcaster<>();
     private Broadcaster<IDecodeEvent> mDecodeEventBroadcaster = new Broadcaster<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
@@ -259,6 +262,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
             mModuleLock.unlock();
         }
 
+        mAudioCallBroadcaster.dispose();
         mAudioSegmentBroadcaster.dispose();
         mDecodeEventBroadcaster.dispose();
         mChannelEventBroadcaster.dispose();
@@ -579,6 +583,11 @@ public class ProcessingChain implements Listener<ChannelEvent>
             ((IAudioSegmentProvider)module).setAudioSegmentListener(mAudioSegmentBroadcaster);
         }
 
+        if(module instanceof IAudioCallProvider)
+        {
+            ((IAudioCallProvider)module).setAudioCallEventListener(mAudioCallBroadcaster);
+        }
+
         if(module instanceof IDecodeEventProvider)
         {
             ((IDecodeEventProvider)module).addDecodeEventListener(mDecodeEventBroadcaster);
@@ -644,6 +653,11 @@ public class ProcessingChain implements Listener<ChannelEvent>
         if(module instanceof IAudioSegmentProvider)
         {
             ((IAudioSegmentProvider)module).setAudioSegmentListener(null);
+        }
+
+        if(module instanceof IAudioCallProvider)
+        {
+            ((IAudioCallProvider)module).setAudioCallEventListener(null);
         }
 
         if(module instanceof IByteBufferProvider)
@@ -891,6 +905,16 @@ public class ProcessingChain implements Listener<ChannelEvent>
     public void removeAudioSegmentListener(Listener<AudioSegment> listener)
     {
         mAudioSegmentBroadcaster.removeListener(listener);
+    }
+
+    public void addAudioCallListener(Listener<AudioCallEvent> listener)
+    {
+        mAudioCallBroadcaster.addListener(listener);
+    }
+
+    public void removeAudioCallListener(Listener<AudioCallEvent> listener)
+    {
+        mAudioCallBroadcaster.removeListener(listener);
     }
 
     /**

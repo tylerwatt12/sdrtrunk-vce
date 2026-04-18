@@ -21,7 +21,7 @@ package io.github.dsheirer.gui;
 import com.jidesoft.plaf.LookAndFeelFactory;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
-import io.github.dsheirer.audio.DuplicateCallDetector;
+import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
@@ -131,6 +131,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
     private boolean mNowPlayingDetailsVisible;
+    private AudioCallCoordinator mAudioCallCoordinator;
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
     private BroadcastStatusPanel mBroadcastStatusPanel;
@@ -233,12 +234,10 @@ public class SDRTrunk implements Listener<TunerEvent>
             mUserPreferences);
         mAudioStreamingManager.start();
 
-        DuplicateCallDetector duplicateCallDetector = new DuplicateCallDetector(mUserPreferences);
+        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, audioPlaybackManager,
+            mAudioRecordingManager, mAudioStreamingManager);
 
-        mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(duplicateCallDetector);
-        mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(audioPlaybackManager);
-        mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioRecordingManager);
-        mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioStreamingManager);
+        mPlaylistManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
 
         MapService mapService = new MapService(aliasModel);
         mPlaylistManager.getChannelProcessingManager().addDecodeEventListener(mapService);
@@ -639,6 +638,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
         mPlaylistManager.getChannelProcessingManager().shutdown();
+        if(mAudioCallCoordinator != null)
+        {
+            mAudioCallCoordinator.dispose();
+        }
         mAudioRecordingManager.stop();
         mResourceMonitor.stop();
 

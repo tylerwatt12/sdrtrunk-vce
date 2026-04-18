@@ -20,6 +20,9 @@
 package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -51,7 +54,7 @@ import org.slf4j.LoggerFactory;
 public class AudioRecordingManager implements Listener<AudioSegment>
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioRecordingManager.class);
-    private LinkedTransferQueue<AudioSegment> mCompletedAudioSegmentQueue = new LinkedTransferQueue<>();
+    private LinkedTransferQueue<CompletedAudioCall> mCompletedAudioCallQueue = new LinkedTransferQueue<>();
     private ScheduledFuture<?> mQueueProcessorHandle;
     private UserPreferences mUserPreferences;
     private int mUnknownAudioRecordingIndex = 1;
@@ -109,7 +112,7 @@ public class AudioRecordingManager implements Listener<AudioSegment>
     {
         if(audioSegment.recordAudioProperty().get())
         {
-            mCompletedAudioSegmentQueue.add(audioSegment);
+            mCompletedAudioCallQueue.add(toCompletedAudioCall(audioSegment));
         }
         else
         {
@@ -123,33 +126,59 @@ public class AudioRecordingManager implements Listener<AudioSegment>
     private void processAudioSegments()
     {
         RecordFormat recordFormat = mUserPreferences.getRecordPreference().getAudioRecordFormat();
-        AudioSegment audioSegment = mCompletedAudioSegmentQueue.poll();
+        CompletedAudioCall completedAudioCall = mCompletedAudioCallQueue.poll();
 
-        while(audioSegment != null)
+        while(completedAudioCall != null)
         {
-            if(audioSegment.isDuplicate() && mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled())
+            if(!(completedAudioCall.snapshot().duplicate() &&
+                mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled()))
             {
-                audioSegment.decrementConsumerCount();
-            }
-            else
-            {
-                Path path = getAudioRecordingPath(audioSegment.getIdentifierCollection(), recordFormat);
+                Path path = getAudioRecordingPath(completedAudioCall.snapshot().identifierCollection(), recordFormat);
 
                 try
                 {
-                    AudioSegmentRecorder.write(audioSegment, path, recordFormat, mUserPreferences);
+                    AudioSegmentRecorder.write(completedAudioCall, path, recordFormat, mUserPreferences);
                 }
                 catch(IOException ioe)
                 {
                     mLog.error("Error recording audio segment to [" + path.toString() + "]");
                 }
-
-                audioSegment.decrementConsumerCount();
             }
 
             //Grab the next one to record
-            audioSegment = mCompletedAudioSegmentQueue.poll();
+            completedAudioCall = mCompletedAudioCallQueue.poll();
         }
+    }
+
+    public void receive(CompletedAudioCall completedAudioCall)
+    {
+        if(completedAudioCall != null && completedAudioCall.snapshot().recordAudio())
+        {
+            mCompletedAudioCallQueue.add(completedAudioCall);
+        }
+    }
+
+    private CompletedAudioCall toCompletedAudioCall(AudioSegment audioSegment)
+    {
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(
+            new AudioCallId(System.identityHashCode(audioSegment), 0, audioSegment.getTimeslot()),
+            null,
+            audioSegment.getAliasList(),
+            audioSegment.getIdentifierCollection(),
+            audioSegment.getBroadcastChannels(),
+            audioSegment.getStartTimestamp(),
+            audioSegment.getLastActivityTimestamp(),
+            audioSegment.getBurstCount(),
+            audioSegment.getBurstGeneration(),
+            audioSegment.getLastBurstStartTimestamp(),
+            audioSegment.getLastBurstEndTimestamp(),
+            audioSegment.isBurstActive(),
+            audioSegment.isComplete(),
+            audioSegment.isEncrypted(),
+            audioSegment.recordAudioProperty().get(),
+            audioSegment.monitorPriorityProperty().get(),
+            audioSegment.isDuplicate());
+        return new CompletedAudioCall(snapshot, audioSegment.getAudioBuffers());
     }
 
     /**

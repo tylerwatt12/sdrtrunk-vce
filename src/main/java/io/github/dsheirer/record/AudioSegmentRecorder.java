@@ -21,6 +21,7 @@ package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.AudioFormats;
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3AudioConverter;
 import io.github.dsheirer.audio.convert.MP3Setting;
@@ -88,6 +89,29 @@ public class AudioSegmentRecorder
         }
     }
 
+    public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
+                             UserPreferences userPreferences) throws IOException
+    {
+        write(completedAudioCall, path, recordFormat, userPreferences, completedAudioCall.snapshot().identifierCollection());
+    }
+
+    public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
+                             UserPreferences userPreferences, IdentifierCollection identifierCollection)
+        throws IOException
+    {
+        switch(recordFormat)
+        {
+            case MP3:
+                recordMP3(completedAudioCall, path, userPreferences, identifierCollection);
+                break;
+            case WAVE:
+                recordWAVE(completedAudioCall, path, identifierCollection);
+                break;
+            default:
+                throw new IllegalArgumentException("Unrecognized recording format [" + recordFormat.name() + "]");
+        }
+    }
+
     /**
      * Records the audio segment as an MP3 file to the specified path.
      * @param audioSegment to record
@@ -138,6 +162,44 @@ public class AudioSegmentRecorder
         }
     }
 
+    public static void recordMP3(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
+                                 IdentifierCollection identifierCollection) throws IOException
+    {
+        if(completedAudioCall.hasAudio())
+        {
+            OutputStream outputStream = new FileOutputStream(path.toFile());
+            Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
+                completedAudioCall.snapshot().aliasList());
+
+            byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap);
+            outputStream.write(id3Bytes);
+
+            InputAudioFormat inputAudioFormat = userPreferences.getMP3Preference().getAudioSampleRate();
+            MP3Setting mp3Setting = userPreferences.getMP3Preference().getMP3Setting();
+            boolean normalizeAudio = userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode();
+
+            MP3AudioConverter converter = new MP3AudioConverter(inputAudioFormat, mp3Setting, normalizeAudio);
+            List<byte[]> mp3Frames = converter.convert(completedAudioCall.audioBuffers());
+            for(byte[] mp3Frame: mp3Frames)
+            {
+                outputStream.write(mp3Frame);
+            }
+
+            List<byte[]> lastFrames = converter.flush();
+
+            if(!lastFrames.isEmpty())
+            {
+                for(byte[] lastFrame: lastFrames)
+                {
+                    outputStream.write(lastFrame);
+                }
+            }
+
+            outputStream.flush();
+            outputStream.close();
+        }
+    }
+
     /**
      * Records the audio segment as a WAVe file to the specified path.
      * @param audioSegment to record
@@ -158,6 +220,29 @@ public class AudioSegmentRecorder
 
             Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
                 audioSegment.getAliasList());
+
+            ByteBuffer listChunk = AudioMetadataUtils.getLISTChunk(metadataMap);
+            byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap);
+            ByteBuffer id3Chunk = AudioMetadataUtils.getID3Chunk(id3Bytes);
+            writer.writeMetadata(listChunk, id3Chunk);
+            writer.close();
+        }
+    }
+
+    public static void recordWAVE(CompletedAudioCall completedAudioCall, Path path, IdentifierCollection identifierCollection)
+        throws IOException
+    {
+        if(completedAudioCall.hasAudio())
+        {
+            WaveWriter writer = new WaveWriter(AudioFormats.PCM_SIGNED_8000_HZ_16_BIT_MONO, path);
+
+            for(float[] audioBuffer: completedAudioCall.audioBuffers())
+            {
+                writer.writeData(ConversionUtils.convertToSigned16BitSamples(audioBuffer));
+            }
+
+            Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
+                completedAudioCall.snapshot().aliasList());
 
             ByteBuffer listChunk = AudioMetadataUtils.getLISTChunk(metadataMap);
             byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap);

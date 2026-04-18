@@ -21,6 +21,7 @@ package io.github.dsheirer.controller.channel;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataModel;
@@ -85,6 +86,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private ChannelSourceEventErrorListener mSourceErrorListener = new ChannelSourceEventErrorListener();
     private List<Listener<AudioSegment>> mAudioSegmentListeners = new CopyOnWriteArrayList<>();
+    private List<Listener<AudioCallEvent>> mAudioCallListeners = new CopyOnWriteArrayList<>();
     private List<Listener<IDecodeEvent>> mDecodeEventListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
@@ -447,6 +449,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             processingChain.addAudioSegmentListener(listener);
         }
 
+        for(Listener<AudioCallEvent> listener : mAudioCallListeners)
+        {
+            processingChain.addAudioCallListener(listener);
+        }
+
         for(Listener<IDecodeEvent> listener : mDecodeEventListeners)
         {
             processingChain.addDecodeEventListener(listener);
@@ -797,6 +804,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeAudioSegmentListener(Listener<AudioSegment> listener)
     {
         mAudioSegmentListeners.remove(listener);
+    }
+
+    public void addAudioCallListener(Listener<AudioCallEvent> listener)
+    {
+        mAudioCallListeners.add(listener);
+    }
+
+    public void removeAudioCallListener(Listener<AudioCallEvent> listener)
+    {
+        mAudioCallListeners.remove(listener);
     }
 
     /**

@@ -21,8 +21,8 @@ package io.github.dsheirer.audio.playback;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.AudioEvent;
 import io.github.dsheirer.audio.AudioException;
-import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.IAudioController;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Form;
@@ -56,7 +56,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Manages scheduling and playback of audio segments to the local users audio system.
  */
-public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioController
+public class AudioPlaybackManager implements IAudioController
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioPlaybackManager.class);
     private static final String UNKNOWN = "unknown";
@@ -65,13 +65,13 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
     private static final long WATCHDOG_STARTUP_GRACE_PERIOD_MS = 5000;
     private final AudioSegmentPrioritySorter mAudioSegmentPrioritySorter = new AudioSegmentPrioritySorter();
     private final Broadcaster<AudioEvent> mControllerBroadcaster = new Broadcaster<>();
-    private final LinkedTransferQueue<AudioSegment> mIncomingSegments = new LinkedTransferQueue<>();
-    private final Map<AudioSegment, PlaybackCallContext> mCallContexts = new IdentityHashMap<>();
+    private final LinkedTransferQueue<PlayableAudioCall> mIncomingSegments = new LinkedTransferQueue<>();
+    private final Map<PlayableAudioCall, PlaybackCallContext> mCallContexts = new IdentityHashMap<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
     private final ScheduledExecutorService mProcessingExecutorService;
     private final AudioSegmentProcessor mAudioSegmentProcessor = new AudioSegmentProcessor();
-    private final Listener<AudioChannel> mAudioChannelIdleListener = audioChannel -> { };
+    private static final Listener<AudioChannel> AUDIO_CHANNEL_IDLE_LISTENER = audioChannel -> { };
     private final AtomicLong mNormalRunsStarted = new AtomicLong();
     private final AtomicLong mNormalRunsCompleted = new AtomicLong();
     private final AtomicLong mLastNormalRunStartTimestamp = new AtomicLong();
@@ -88,11 +88,11 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
         READY
     }
 
-    private record PlaybackCallContext(AudioSegment audioSegment, PlaybackCallState state)
+    private record PlaybackCallContext(PlayableAudioCall audioCall, PlaybackCallState state)
     {
         private PlaybackCallContext withState(PlaybackCallState newState)
         {
-            return new PlaybackCallContext(audioSegment, newState);
+            return new PlaybackCallContext(audioCall, newState);
         }
     }
 
@@ -138,10 +138,9 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
      * Receives audio segments from channel audio modules.
      * @param audioSegment to receive and process
      */
-    @Override
-    public void receive(AudioSegment audioSegment)
+    public void receive(PlayableAudioCall audioCall)
     {
-        mIncomingSegments.add(audioSegment);
+        mIncomingSegments.add(audioCall);
     }
 
     public void dispose()
@@ -165,22 +164,14 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
         releaseCallContexts();
     }
 
-    private void releaseAudioSegments(Iterable<AudioSegment> audioSegments)
+    private void releaseAudioSegments(Iterable<PlayableAudioCall> audioSegments)
     {
         if(audioSegments == null)
         {
             return;
         }
 
-        for(AudioSegment audioSegment : audioSegments)
-        {
-            if(audioSegment != null)
-            {
-                releaseOwnedSegment(audioSegment);
-            }
-        }
-
-        if(audioSegments instanceof LinkedTransferQueue<AudioSegment> queue)
+        if(audioSegments instanceof LinkedTransferQueue<PlayableAudioCall> queue)
         {
             queue.clear();
         }
@@ -191,14 +182,6 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
         if(mCallContexts.isEmpty())
         {
             return;
-        }
-
-        for(PlaybackCallContext context : mCallContexts.values())
-        {
-            if(context != null)
-            {
-                releaseOwnedSegment(context.audioSegment());
-            }
         }
 
         mCallContexts.clear();
@@ -285,7 +268,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
                 for(AudioChannel audioChannel : mAudioOutput.getAudioProvider().getAudioChannels())
                 {
-                    audioChannel.setIdleStateListener(mAudioChannelIdleListener);
+                    audioChannel.setIdleStateListener(AUDIO_CHANNEL_IDLE_LISTENER);
                 }
             }
             finally
@@ -400,12 +383,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
         private class RescueAccumulator
         {
-            private final Set<AudioSegment> mRescuedSegments = new HashSet<>();
+            private final Set<PlayableAudioCall> mRescuedSegments = new HashSet<>();
             private boolean mAcceptedIncomingSegment;
             private boolean mPromotedWaitingSegment;
             private boolean mAssignedReadySegment;
 
-            private void addRescued(AudioSegment audioSegment)
+            private void addRescued(PlayableAudioCall audioSegment)
             {
                 if(audioSegment != null)
                 {
@@ -413,18 +396,67 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 }
             }
 
-            private void addRescuedAll(Set<AudioSegment> audioSegments)
-            {
-                if(audioSegments != null)
-                {
-                    mRescuedSegments.addAll(audioSegments);
-                }
-            }
-
             private WatchdogRescueSummary toSummary()
             {
                 return new WatchdogRescueSummary(mAcceptedIncomingSegment, mPromotedWaitingSegment, mAssignedReadySegment,
-                    formatSegments(mRescuedSegments));
+                    formatRescuedSegments());
+            }
+
+            private String formatRescuedSegments()
+            {
+                if(mRescuedSegments.isEmpty())
+                {
+                    return "";
+                }
+
+                List<String> formatted = new ArrayList<>();
+
+                for(PlayableAudioCall audioSegment : mRescuedSegments)
+                {
+                    if(audioSegment != null)
+                    {
+                        formatted.add(formatSegmentSummary(audioSegment));
+                    }
+                }
+
+                Collections.sort(formatted);
+                return String.join(",", formatted);
+            }
+
+            private String formatSegmentSummary(PlayableAudioCall audioSegment)
+            {
+                if(audioSegment == null)
+                {
+                    return "null";
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.append(audioSegment.callId());
+                sb.append("[decoder=").append(getDecoderType(audioSegment));
+                sb.append(",buffers=").append(audioSegment.getAudioBufferCount());
+                sb.append(",complete=").append(audioSegment.isComplete());
+                sb.append(",encrypted=").append(audioSegment.isEncrypted());
+                sb.append("]");
+                return sb.toString();
+            }
+
+            private String getDecoderType(PlayableAudioCall audioSegment)
+            {
+                if(audioSegment == null || audioSegment.getIdentifierCollection() == null)
+                {
+                    return UNKNOWN;
+                }
+
+                List<Identifier> decoderTypeIdentifiers =
+                    audioSegment.getIdentifierCollection().getIdentifiers(Form.DECODER_TYPE);
+
+                if(!decoderTypeIdentifiers.isEmpty())
+                {
+                    Identifier identifier = decoderTypeIdentifiers.getFirst();
+                    return identifier != null ? identifier.toString() : UNKNOWN;
+                }
+
+                return UNKNOWN;
             }
         }
 
@@ -445,19 +477,12 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
         private void drainIncomingSegments(boolean watchdog, RescueAccumulator rescueAccumulator)
         {
-            AudioSegment incomingSegment = mIncomingSegments.poll();
+            PlayableAudioCall incomingSegment = mIncomingSegments.poll();
 
             while(incomingSegment != null)
             {
-                if(isSuppressedDuplicate(incomingSegment) || incomingSegment.isDoNotMonitor())
-                {
-                    releaseOwnedSegment(incomingSegment);
-                }
-                else if(incomingSegment.completeProperty().get() && !incomingSegment.hasAudio())
-                {
-                    releaseOwnedSegment(incomingSegment);
-                }
-                else
+                if(!isSuppressedDuplicate(incomingSegment) && !incomingSegment.isDoNotMonitor() &&
+                    !(incomingSegment.isComplete() && !incomingSegment.hasAudio()))
                 {
                     PlaybackCallState initialState = incomingSegment.hasAudio() ? PlaybackCallState.READY :
                         PlaybackCallState.WAITING_FOR_AUDIO;
@@ -482,13 +507,13 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 return;
             }
 
-            Iterator<Map.Entry<AudioSegment, PlaybackCallContext>> iterator = mCallContexts.entrySet().iterator();
+            Iterator<Map.Entry<PlayableAudioCall, PlaybackCallContext>> iterator = mCallContexts.entrySet().iterator();
 
             while(iterator.hasNext())
             {
-                Map.Entry<AudioSegment, PlaybackCallContext> entry = iterator.next();
+                Map.Entry<PlayableAudioCall, PlaybackCallContext> entry = iterator.next();
                 PlaybackCallContext context = entry.getValue();
-                AudioSegment audioSegment = context.audioSegment();
+                PlayableAudioCall audioSegment = context.audioCall();
 
                 if(audioSegment == null)
                 {
@@ -499,12 +524,10 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 if(audioSegment.isDoNotMonitor() || isSuppressedDuplicate(audioSegment))
                 {
                     iterator.remove();
-                    releaseOwnedSegment(audioSegment);
                 }
-                else if(audioSegment.completeProperty().get() && !audioSegment.hasAudio())
+                else if(audioSegment.isComplete() && !audioSegment.hasAudio())
                 {
                     iterator.remove();
-                    releaseOwnedSegment(audioSegment);
                 }
                 else if(context.state() == PlaybackCallState.WAITING_FOR_AUDIO && audioSegment.hasAudio())
                 {
@@ -538,7 +561,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                         continue;
                     }
 
-                    AudioSegment linkedSegment = findLinkedReadySegment(audioChannel);
+                    PlayableAudioCall linkedSegment = findLinkedReadySegment(audioChannel);
 
                     if(linkedSegment != null)
                     {
@@ -560,13 +583,13 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
             }
         }
 
-        private AudioSegment findLinkedReadySegment(AudioChannel audioChannel)
+        private PlayableAudioCall findLinkedReadySegment(AudioChannel audioChannel)
         {
             for(PlaybackCallContext context : mCallContexts.values())
             {
                 if(context != null && context.state() == PlaybackCallState.READY)
                 {
-                    AudioSegment audioSegment = context.audioSegment();
+                    PlayableAudioCall audioSegment = context.audioCall();
                     if(audioSegment != null && audioSegment.isLinked() && audioChannel.isLinkedTo(audioSegment))
                     {
                         return audioSegment;
@@ -577,7 +600,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
             return null;
         }
 
-        private boolean isSuppressedDuplicate(AudioSegment audioSegment)
+        private boolean isSuppressedDuplicate(PlayableAudioCall audioSegment)
         {
             return audioSegment.isDuplicate() &&
                 mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled();
@@ -590,13 +613,13 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 return;
             }
 
-            List<AudioSegment> readySegments = new ArrayList<>();
+            List<PlayableAudioCall> readySegments = new ArrayList<>();
 
             for(PlaybackCallContext context : mCallContexts.values())
             {
                 if(context != null && context.state() == PlaybackCallState.READY)
                 {
-                    AudioSegment audioSegment = context.audioSegment();
+                    PlayableAudioCall audioSegment = context.audioCall();
                     if(audioSegment != null && !audioSegment.isLinked())
                     {
                         readySegments.add(audioSegment);
@@ -621,7 +644,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                         continue;
                     }
 
-                    AudioSegment assignedSegment = readySegments.removeFirst();
+                    PlayableAudioCall assignedSegment = readySegments.removeFirst();
                     mCallContexts.remove(assignedSegment);
                     transferToAudioChannel(assignedSegment, audioChannel);
 
@@ -714,7 +737,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
             return new QueueSnapshot(mIncomingSegments.size(), mCallContexts.size(), waiting, ready);
         }
 
-        private void transferToAudioChannel(AudioSegment audioSegment, AudioChannel audioChannel)
+        private void transferToAudioChannel(PlayableAudioCall audioSegment, AudioChannel audioChannel)
         {
             if(audioSegment != null && audioChannel != null)
             {
@@ -753,108 +776,15 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 " lastDoneAgoMs=" + (lastComplete > 0 ? now - lastComplete : -1);
         }
 
-        private String formatSegmentSummary(AudioSegment audioSegment)
-        {
-            if(audioSegment == null)
-            {
-                return "null";
-            }
-
-            StringBuilder sb = new StringBuilder();
-            sb.append(formatSegment(audioSegment));
-            sb.append("[decoder=").append(getDecoderType(audioSegment));
-            sb.append(",buffers=").append(audioSegment.getAudioBufferCount());
-            sb.append(",complete=").append(audioSegment.isComplete());
-            sb.append(",encrypted=").append(audioSegment.isEncrypted());
-            sb.append("]");
-            return sb.toString();
-        }
-
-        private String getDecoderType(AudioSegment audioSegment)
-        {
-            if(audioSegment == null || audioSegment.getIdentifierCollection() == null)
-            {
-                return UNKNOWN;
-            }
-
-            List<Identifier> decoderTypeIdentifiers = audioSegment.getIdentifierCollection().getIdentifiers(Form.DECODER_TYPE);
-
-            if(!decoderTypeIdentifiers.isEmpty())
-            {
-                Identifier identifier = decoderTypeIdentifiers.getFirst();
-                return identifier != null ? identifier.toString() : UNKNOWN;
-            }
-
-            return UNKNOWN;
-        }
-    }
-
-    private String formatSegment(AudioSegment audioSegment)
-    {
-        if(audioSegment == null)
-        {
-            return "null";
-        }
-
-        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
-            System.identityHashCode(audioSegment);
-    }
-
-    private String formatSegments(List<AudioSegment> audioSegments)
-    {
-        StringBuilder sb = new StringBuilder();
-
-        for(AudioSegment audioSegment: audioSegments)
-        {
-            if(!sb.isEmpty())
-            {
-                sb.append(",");
-            }
-
-            sb.append(formatSegment(audioSegment));
-            sb.append("[buffers=").append(audioSegment.getAudioBufferCount());
-            sb.append(",complete=").append(audioSegment.isComplete()).append("]");
-        }
-
-        return sb.toString();
-    }
-
-    private String formatSegments(Set<AudioSegment> audioSegments)
-    {
-        if(audioSegments == null || audioSegments.isEmpty())
-        {
-            return "";
-        }
-
-        List<String> formatted = new ArrayList<>();
-
-        for(AudioSegment audioSegment : audioSegments)
-        {
-            if(audioSegment != null)
-            {
-                formatted.add(mAudioSegmentProcessor.formatSegmentSummary(audioSegment));
-            }
-        }
-
-        Collections.sort(formatted);
-        return String.join(",", formatted);
-    }
-
-    private void releaseOwnedSegment(AudioSegment audioSegment)
-    {
-        if(audioSegment != null)
-        {
-            audioSegment.decrementConsumerCount();
-        }
     }
 
     /**
      * Audio segment comparator for sorting audio segments by: 1)Playback priority and 2)Segment start time
      */
-    public static class AudioSegmentPrioritySorter implements Comparator<AudioSegment>
+    public static class AudioSegmentPrioritySorter implements Comparator<PlayableAudioCall>
     {
         @Override
-        public int compare(AudioSegment segment1, AudioSegment segment2)
+        public int compare(PlayableAudioCall segment1, PlayableAudioCall segment2)
         {
             if(segment1 == null || segment2 == null)
             {
@@ -862,14 +792,14 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
             }
 
             //If priority is the same, sort by start time
-            if(segment1.monitorPriorityProperty().get() == segment2.monitorPriorityProperty().get())
+            if(segment1.getMonitorPriority() == segment2.getMonitorPriority())
             {
                 return Long.compare(segment1.getStartTimestamp(), segment2.getStartTimestamp());
             }
             //Otherwise, sort by priority
             else
             {
-                return Integer.compare(segment1.monitorPriorityProperty().get(), segment2.monitorPriorityProperty().get());
+                return Integer.compare(segment1.getMonitorPriority(), segment2.getMonitorPriority());
             }
         }
     }

@@ -19,10 +19,8 @@
 
 package io.github.dsheirer.audio.playback;
 
-import io.github.dsheirer.audio.AudioSegment;
-
 /**
- * Playback-side view of one talk burst on an {@link AudioSegment}.  The segment remains the call/session object;
+ * Playback-side view of one talk burst on a {@link PlayableAudioCall}.
  * this wrapper owns the mutable playback state for the currently observed burst.
  */
 public class AudioPlaybackBurst
@@ -34,25 +32,25 @@ public class AudioPlaybackBurst
         PLAYING
     }
 
-    private final AudioSegment mAudioSegment;
+    private final PlayableAudioCall mAudioCall;
     private long mBurstGeneration;
     private int mCurrentBufferIndex = -1;
     private BurstPlaybackState mPlaybackState = BurstPlaybackState.NOT_STARTED;
 
-    public AudioPlaybackBurst(AudioSegment audioSegment)
+    public AudioPlaybackBurst(PlayableAudioCall audioCall)
     {
-        mAudioSegment = audioSegment;
-        mBurstGeneration = audioSegment != null ? audioSegment.getBurstGeneration() : 0;
+        mAudioCall = audioCall;
+        mBurstGeneration = audioCall != null ? audioCall.getBurstGeneration() : 0;
     }
 
-    public AudioSegment getAudioSegment()
+    public PlayableAudioCall getAudioCall()
     {
-        return mAudioSegment;
+        return mAudioCall;
     }
 
     public boolean hasSegment()
     {
-        return mAudioSegment != null;
+        return mAudioCall != null;
     }
 
     public long getBurstGeneration()
@@ -62,7 +60,7 @@ public class AudioPlaybackBurst
 
     public boolean isBurstGenerationCurrent()
     {
-        return mAudioSegment != null && mAudioSegment.getBurstGeneration() == mBurstGeneration;
+        return mAudioCall != null && mAudioCall.getBurstGeneration() == mBurstGeneration;
     }
 
     /**
@@ -72,17 +70,17 @@ public class AudioPlaybackBurst
      */
     public boolean advanceToCurrentBurst()
     {
-        if(mAudioSegment == null || isBurstGenerationCurrent())
+        if(mAudioCall == null || isBurstGenerationCurrent())
         {
             return false;
         }
 
         boolean newBurstAfterPlayback = mPlaybackState == BurstPlaybackState.PLAYING;
-        mBurstGeneration = mAudioSegment.getBurstGeneration();
+        mBurstGeneration = mAudioCall.getBurstGeneration();
         mPlaybackState = newBurstAfterPlayback ? BurstPlaybackState.PENDING_START_TONE :
             BurstPlaybackState.NOT_STARTED;
 
-        if(mAudioSegment.getAudioBufferCount() > mCurrentBufferIndex)
+        if(mAudioCall.getAudioBufferCount() > mCurrentBufferIndex)
         {
             mCurrentBufferIndex = Math.max(0, mCurrentBufferIndex);
         }
@@ -92,7 +90,7 @@ public class AudioPlaybackBurst
 
     public boolean hasPendingBuffers()
     {
-        return mAudioSegment != null && mCurrentBufferIndex < mAudioSegment.getAudioBufferCount();
+        return mAudioCall != null && mCurrentBufferIndex < mAudioCall.getAudioBufferCount();
     }
 
     public boolean isStartOfBurst()
@@ -111,7 +109,7 @@ public class AudioPlaybackBurst
 
     public float[] nextBuffer()
     {
-        if(mAudioSegment == null)
+        if(mAudioCall == null)
         {
             return null;
         }
@@ -120,12 +118,12 @@ public class AudioPlaybackBurst
 
         if(mCurrentBufferIndex < 0)
         {
-            audio = mAudioSegment.getAudioBuffer(0);
+            audio = mAudioCall.getAudioBuffer(0);
             mCurrentBufferIndex = 1;
         }
         else
         {
-            audio = mAudioSegment.getAudioBuffer(mCurrentBufferIndex++);
+            audio = mAudioCall.getAudioBuffer(mCurrentBufferIndex++);
         }
 
         beginBurstPlayback();
