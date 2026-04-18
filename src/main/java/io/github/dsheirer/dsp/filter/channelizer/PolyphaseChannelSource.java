@@ -267,10 +267,9 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
      * queued for processing to extract the target channel samples, process them for frequency correction and/or
      * channel aggregation, and dispatch the results to the downstream sample listener/consumer.
      *
-     * @param channelResultsList containing a list of polyphase channelizer output arrays.
-     * @param currentSamplesTimestamp for the samples
+     * @param channelResultsBuffer containing a batch of polyphase channelizer output arrays.
      */
-    public void receiveChannelResults(List<float[]> channelResultsList, long currentSamplesTimestamp)
+    public void receiveChannelResults(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer channelResultsBuffer)
     {
         if(mPendingOutputProcessorUpdate != null)
         {
@@ -284,11 +283,16 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
         {
             if(mPolyphaseChannelOutputProcessor != null)
             {
-                mPolyphaseChannelOutputProcessor.receiveChannelResults(channelResultsList, currentSamplesTimestamp);
+                mPolyphaseChannelOutputProcessor.receiveChannelResults(channelResultsBuffer);
+            }
+            else
+            {
+                channelResultsBuffer.release();
             }
         }
         catch(Exception e)
         {
+            channelResultsBuffer.release();
             mLog.error("Error processing channel results", e);
         }
     }

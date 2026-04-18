@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.dsp.filter.channelizer.output;
 
+import io.github.dsheirer.dsp.filter.channelizer.ComplexPolyphaseChannelizerM2;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.heartbeat.HeartbeatManager;
 import java.util.List;
@@ -105,19 +106,20 @@ public class TwoChannelOutputProcessor extends ChannelOutputProcessor
      * Extract the channel from the channel results array, apply frequency translation, and deliver the
      * extracted frequency-corrected channel I/Q sample set to the complex sample listener.
      *
-     * @param channelResultsList to process containing a list of a list of an array of channel I/Q sample pairs (I0,Q0,I1,Q1...In,Qn)
+     * @param channelResultsBuffer to process containing channel I/Q sample pairs (I0,Q0,I1,Q1...In,Qn)
      */
     @Override
-    public void process(List<float[]> channelResultsList)
+    public void process(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer channelResultsBuffer)
     {
-        for(float[] channelResults : channelResultsList)
+        for(int index = 0; index < channelResultsBuffer.size(); index++)
         {
+            float[] channelResults = channelResultsBuffer.get(index);
             mMixerAssembler.receive(channelResults[mChannelOffset1], channelResults[mChannelOffset1 + 1],
                     channelResults[mChannelOffset2], channelResults[mChannelOffset2 + 1]);
 
             if(mMixerAssembler.hasBuffer())
             {
-                ComplexSamples buffer = mMixerAssembler.getBuffer(getCurrentSampleTimestamp());
+                ComplexSamples buffer = mMixerAssembler.getBuffer(channelResultsBuffer.timestamp());
 
                 if(mComplexSamplesListener != null)
                 {
