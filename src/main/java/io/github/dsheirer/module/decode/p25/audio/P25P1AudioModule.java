@@ -329,31 +329,10 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
 
     private void closeAudioSegment(String reason)
     {
-        closeAudioSegment(reason, true);
-    }
-
-    private void closeAudioSegment(String reason, boolean logAtInfo)
-    {
         endCurrentAudioBurst();
         MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
 
-        if(currentAudioCall != null)
-        {
-            if(logAtInfo)
-            {
-                mLog.info("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                    reason, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
-                    currentAudioCall.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
-                    getCachedLduCount());
-            }
-            else
-            {
-                mLog.debug("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                    reason, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
-                    currentAudioCall.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
-                    getCachedLduCount());
-            }
-        }
+        logAnomalousClose(reason, null, currentAudioCall);
 
         super.closeAudioSegment();
     }
@@ -374,23 +353,65 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         return state == State.CALL || state == State.ENCRYPTED;
     }
 
+    private void logAnomalousClose(String reason, State state, MutableAudioCallBuilder currentAudioCall)
+    {
+        if(currentAudioCall == null)
+        {
+            return;
+        }
+
+        boolean suspiciousControlAudio = state == State.CONTROL && currentAudioCall.getAudioBufferCount() > 0;
+        boolean unresolvedEncryption = !mEncryptionState.isEstablished();
+        boolean cachedLdusPresent = getCachedLduCount() > 0;
+
+        if(suspiciousControlAudio || unresolvedEncryption || cachedLdusPresent)
+        {
+            if(state != null)
+            {
+                mLog.warn("P25P1 anomalous close reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    reason, state, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                    currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(), currentAudioCall.isComplete(),
+                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+            }
+            else
+            {
+                mLog.warn("P25P1 anomalous close reason:{} segment:{} buffers:{} bursts:{} burstActive:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                    reason, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                    currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(), currentAudioCall.isComplete(),
+                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+            }
+        }
+    }
+
     public class DecoderStateEventListener implements Listener<DecoderStateEvent>
     {
+        /**
+         * Closes the current call without emitting the normal close log. This is only used for the benign
+         * control-state suppression case where no audio was ever committed.
+         */
+        private void closeAudioSegmentSilently()
+        {
+            endCurrentAudioBurst();
+            P25P1AudioModule.super.closeAudioSegment();
+        }
+
         private void closeAudioSegmentForDecoderState(String reason, State state)
         {
             MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
             boolean benignControlSuppression = currentAudioCall != null && "channel state".equals(reason) &&
                 state == State.CONTROL && currentAudioCall.getAudioBufferCount() == 0;
 
-            if(currentAudioCall != null && !benignControlSuppression)
+            logAnomalousClose(reason, state, currentAudioCall);
+
+            if(benignControlSuppression)
             {
-                mLog.info("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                    reason, state, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
-                    currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
-                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+                closeAudioSegmentSilently();
+            }
+            else
+            {
+                closeAudioSegment(reason);
             }
 
-            closeAudioSegment(reason, !benignControlSuppression);
             mEncryptionState = P25AudioEncryptionState.UNKNOWN;
             mPendingEncryptionLdus.clear();
             mDeferredClearAudioLdus.clear();
