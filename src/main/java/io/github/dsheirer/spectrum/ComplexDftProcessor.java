@@ -56,7 +56,8 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     private ScheduledFuture<?> mProcessorTaskHandle;
     private ScheduledExecutorService mExecutorService = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk dft processor"));
     private CopyOnWriteArrayList<DFTResultsConverter> mListeners = new CopyOnWriteArrayList<>();
-    private NativeBufferManager<INativeBuffer> mDftBufferManager = new NativeBufferManager<>(mDFTSize.getSize() * 2);
+    private NativeBufferManager<INativeBuffer> mDftBufferManager = new NativeBufferManager<>(mDFTSize.getSize());
+    private float[] mCurrentSamples = new float[mDFTSize.getSize() * 2];
     private float[] mPreviousSamples = new float[mDFTSize.getSize() * 2];
 
     public ComplexDftProcessor()
@@ -183,6 +184,8 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
                 mDFTSize = mNewDFTSize;
                 updateWindow();
                 mFFT = new FloatFFT_1D(mDFTSize.getSize());
+                mCurrentSamples = new float[mDFTSize.getSize() * 2];
+                mPreviousSamples = new float[mDFTSize.getSize() * 2];
             }
         }
 
@@ -208,10 +211,12 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
             try
             {
                 //If this throws an IO exception, the buffer queue is (temporarily) empty and we return from the method
-                float[] samples = mDftBufferManager.get(mDFTSize.getSize());
-                WindowFactory.apply(mWindow, samples);
-                mFFT.complexForward(samples);
-                mPreviousSamples = samples;
+                mDftBufferManager.get(mDFTSize.getSize(), mCurrentSamples);
+                WindowFactory.apply(mWindow, mCurrentSamples);
+                mFFT.complexForward(mCurrentSamples);
+                float[] completedSamples = mPreviousSamples;
+                mPreviousSamples = mCurrentSamples;
+                mCurrentSamples = completedSamples;
             }
             catch(IOException ioe)
             {

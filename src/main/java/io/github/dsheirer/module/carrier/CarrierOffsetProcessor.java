@@ -23,7 +23,6 @@ import io.github.dsheirer.buffer.FloatAveragingBuffer;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.sample.complex.ComplexSamples;
-import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import org.apache.commons.math3.stat.descriptive.moment.StandardDeviation;
 import org.jtransforms.fft.FloatFFT_1D;
 
@@ -47,6 +46,8 @@ public class CarrierOffsetProcessor
     private final FloatAveragingBuffer mAveragingBuffer = new FloatAveragingBuffer(5);
     private final FloatAveragingBuffer mOffsetAverage = new FloatAveragingBuffer(10, 3);
     private final StandardDeviation mStandardDeviation = new StandardDeviation();
+    private final float[] mFftSamples = new float[FFT_BIN_SIZE * 2];
+    private final float[] mMagnitudeBuffer = new float[FFT_BIN_SIZE];
     private float mCarrierOffset;
     private float mResolution;
     private int mHalfWidth;
@@ -173,11 +174,11 @@ public class CarrierOffsetProcessor
      */
     private float calculateCarrierOffset(ComplexSamples complexSamples, int offset)
     {
-        float[] samples = complexSamples.toInterleaved(offset, FFT_BIN_SIZE).samples();
-        WindowFactory.apply(WINDOW, samples);
-        FFT.complexForward(samples);
-        float[] magnitudes = ComplexDecibelConverter.convert(samples);
-        float peakIndex = findPeak(magnitudes);
+        fillInterleavedSamples(complexSamples, offset);
+        WindowFactory.apply(WINDOW, mFftSamples);
+        FFT.complexForward(mFftSamples);
+        convertToDecibels(mFftSamples, mMagnitudeBuffer);
+        float peakIndex = findPeak(mMagnitudeBuffer);
 
         //Return float max value for Low SNR or no signal
         if(peakIndex == Float.MAX_VALUE)
@@ -187,6 +188,49 @@ public class CarrierOffsetProcessor
 
         mStandardDeviation.increment(peakIndex);
         return mResolution * (peakIndex - CENTER_INDEX);
+    }
+
+    /**
+     * Copies the requested complex sample window into the reusable interleaved FFT buffer.
+     */
+    private void fillInterleavedSamples(ComplexSamples complexSamples, int offset)
+    {
+        float[] i = complexSamples.i();
+        float[] q = complexSamples.q();
+
+        for(int sample = 0; sample < FFT_BIN_SIZE; sample++)
+        {
+            int target = sample * 2;
+            int source = offset + sample;
+            mFftSamples[target] = i[source];
+            mFftSamples[target + 1] = q[source];
+        }
+    }
+
+    /**
+     * Converts the FFT output to reordered dB magnitudes in the same layout previously produced by the spectrum
+     * converter, but without allocating a throwaway array for each measurement.
+     */
+    private static void convertToDecibels(float[] fftResults, float[] destination)
+    {
+        final float dftBinSizeScalar = 1.0f / destination.length;
+        int middle = destination.length / 2;
+
+        for(int x = 0; x < fftResults.length; x += 2)
+        {
+            float power = (fftResults[x] * fftResults[x]) + (fftResults[x + 1] * fftResults[x + 1]);
+            float decibels = power == 0.0f ? -196.0f : (float)(10.0d * Math.log10(power * dftBinSizeScalar));
+            int index = x / 2;
+
+            if(index >= middle)
+            {
+                destination[index - middle] = decibels;
+            }
+            else
+            {
+                destination[index + middle] = decibels;
+            }
+        }
     }
 
     /**

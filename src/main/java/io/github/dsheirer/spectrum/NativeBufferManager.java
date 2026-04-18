@@ -49,6 +49,8 @@ public class NativeBufferManager<T extends INativeBuffer>
     private LinkedTransferQueue<T> mTransferQueue = new LinkedTransferQueue<>();
     private List<T> mProducerQueue = new ArrayList<>();
     private List<T> mConsumerQueue = new ArrayList<>();
+    //Single-consumer scratch list reused by get() to avoid a throwaway drained-list allocation on every request.
+    private List<T> mDrainedQueue = new ArrayList<>();
     private int mRequestSize;
     private int mProducerAvailable;
 
@@ -93,23 +95,29 @@ public class NativeBufferManager<T extends INativeBuffer>
     }
 
     /**
-     * Returns an array of complex samples of the length requested.  If there are not sufficient samples in the queue
-     * to fully satisfy the request, an IOException is thrown.
-     * @param requestedSamples number of complex sample pairs.
-     * @return a float array with twice as many (2 samples for each I & Q pair) values as requested.
+     * Fills the destination array with the requested quantity of complex samples.  If there are not sufficient
+     * samples in the queue to fully satisfy the request, an IOException is thrown.
+     * @param requestedSamples number of complex sample pairs
+     * @param destination interleaved I/Q sample array sized for requestedSamples * 2
      * @throws IOException if there are (temporarily) insufficient samples available.
      */
-    public float[] get(int requestedSamples) throws IOException
+    public void get(int requestedSamples, float[] destination) throws IOException
     {
+        if(destination.length < requestedSamples * 2)
+        {
+            throw new IllegalArgumentException("Destination length [" + destination.length +
+                "] must be at least [" + requestedSamples * 2 + "]");
+        }
+
         //Update the producer's sample quota if it changes
         if(requestedSamples != mRequestSize)
         {
             mRequestSize = requestedSamples;
         }
 
-        List<T> drained = new ArrayList<>();
-        mTransferQueue.drainTo(drained);
-        mConsumerQueue.addAll(drained);
+        mDrainedQueue.clear();
+        mTransferQueue.drainTo(mDrainedQueue);
+        mConsumerQueue.addAll(mDrainedQueue);
 
         int count = 0;
 
@@ -123,28 +131,26 @@ public class NativeBufferManager<T extends INativeBuffer>
             throw new IOException("Insufficient samples.  Please try again later");
         }
 
-        float[] samples = new float[requestedSamples * 2];
         int samplesPointer = 0;
 
         for(T buffer: mConsumerQueue)
         {
             Iterator<InterleavedComplexSamples> iterator = buffer.iteratorInterleaved();
 
-            while(iterator.hasNext() && samplesPointer < samples.length)
+            while(iterator.hasNext() && samplesPointer < destination.length)
             {
                 InterleavedComplexSamples complexSamples = iterator.next();
-                int toCopy = Math.min(samples.length - samplesPointer, complexSamples.samples().length);
-                System.arraycopy(complexSamples.samples(), 0, samples, samplesPointer, toCopy);
+                int toCopy = Math.min(destination.length - samplesPointer, complexSamples.samples().length);
+                System.arraycopy(complexSamples.samples(), 0, destination, samplesPointer, toCopy);
                 samplesPointer += toCopy;
             }
 
-            if(samplesPointer >= samples.length)
+            if(samplesPointer >= destination.length)
             {
                 break;
             }
         }
 
         mConsumerQueue.clear();
-        return samples;
     }
 }
