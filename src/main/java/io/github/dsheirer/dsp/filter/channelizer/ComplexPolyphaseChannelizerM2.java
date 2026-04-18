@@ -220,9 +220,6 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
 
             if(mSampleBufferPointer >= mSamplesPerBlock)
             {
-                //Filter buffered samples and produce a single sample across each of the polyphase channels
-                mProcessedChannelResultsBuffer.add(process());
-
                 if(mProcessedChannelResultsBuffer.isFull())
                 {
                     ChannelResultsBuffer processedChannelResults = mProcessedChannelResultsBuffer;
@@ -230,6 +227,9 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
                     mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
                     mIFFTProcessorDispatcher.receive(processedChannelResults);
                 }
+
+                //Filter buffered samples and produce a single sample across each of the polyphase channels
+                mProcessedChannelResultsBuffer.add(process());
 
                 //Right-shift the samples in the buffer over to make room for a new block of samples
                 System.arraycopy(mInlineSamples, 0, mInlineSamples, mSamplesPerBlock, (mInlineSamples.length - mSamplesPerBlock));
