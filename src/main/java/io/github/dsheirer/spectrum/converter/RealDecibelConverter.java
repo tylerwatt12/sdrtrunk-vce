@@ -1,7 +1,5 @@
 package io.github.dsheirer.spectrum.converter;
 
-import org.apache.commons.math3.util.FastMath;
-
 public class RealDecibelConverter extends DFTResultsConverter
 {
 	/**
@@ -24,7 +22,7 @@ public class RealDecibelConverter extends DFTResultsConverter
 		{
 			index = x * 2;
 			
-			processed[ x ] = 20.0f * (float) FastMath.log10(
+			processed[ x ] = 20.0f * (float) Math.log10(
 				( ( results[ index ] * results[ index ] ) + 
 				  ( results[ index + 1 ] * results[ index + 1 ] ) ) * dftBinSizeScalor );
 		}

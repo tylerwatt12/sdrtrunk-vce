@@ -18,9 +18,6 @@
  */
 package io.github.dsheirer.spectrum.converter;
 
-
-import org.apache.commons.math3.util.FastMath;
-
 /**
  * Converts complex DFT output to scaled dB values with a maximum amplitude of 0 dB and all values scaled to the
  * minimum dB value which is:
@@ -79,7 +76,7 @@ public class ComplexDecibelConverter extends DFTResultsConverter
 			}
 			else
 			{
-				decibels = 10.0f * (float)FastMath.log10(temp * dftBinSizeScalor);
+				decibels = 10.0f * (float)Math.log10(temp * dftBinSizeScalor);
 			}
 
 			// We have to swap the upper and lower halves of the JTransforms DFT results for correct display

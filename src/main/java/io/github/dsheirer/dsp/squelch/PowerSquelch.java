@@ -82,7 +82,7 @@ public class PowerSquelch implements Listener<SourceEvent>
      */
     public float getSquelchThreshold()
     {
-        return 10.0f * (float)FastMath.log10(mSquelchThreshold);
+        return 10.0f * (float)Math.log10(mSquelchThreshold);
     }
 
     /**

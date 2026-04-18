@@ -126,7 +126,7 @@ public class AutomaticGainControl
 
         if(mAGCEnabled)
         {
-            float currentMagnitude = (float)(FastMath.log10(FastMath.abs(currentSample) + MIN_CONSTANT) - FastMath.log10(MAX_AMPLITUDE));
+            float currentMagnitude = (float)(Math.log10(FastMath.abs(currentSample) + MIN_CONSTANT) - Math.log10(MAX_AMPLITUDE));
             float delayedMagnitude = mMagnitudeBuffer.get(currentMagnitude);
 
             if(currentMagnitude > mPeakMagnitude)

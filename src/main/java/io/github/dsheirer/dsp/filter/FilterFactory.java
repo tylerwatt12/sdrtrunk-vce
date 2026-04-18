@@ -737,7 +737,7 @@ public class FilterFactory
      */
     public static double decibel(double real, double imag)
     {
-        return (float)(10.0 * FastMath.log10(FastMath.pow(real, 2.0) + FastMath.pow(imag, 2.0)));
+        return (float)(10.0 * Math.log10(FastMath.pow(real, 2.0) + FastMath.pow(imag, 2.0)));
     }
 
 

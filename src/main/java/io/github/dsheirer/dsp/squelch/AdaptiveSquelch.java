@@ -94,7 +94,7 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
      */
     private float toDb(float value)
     {
-        return 10.0f * (float)FastMath.log10(value);
+        return 10.0f * (float)Math.log10(value);
     }
 
     /**
