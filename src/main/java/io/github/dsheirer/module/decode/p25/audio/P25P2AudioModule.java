@@ -20,7 +20,7 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.codec.mbe.AmbeAudioModule;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
@@ -82,13 +82,13 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     @Override
     public void reset()
     {
-        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+        MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
 
-        if(currentAudioSegment != null)
+        if(currentAudioCall != null)
         {
             mLog.warn("TS{} reset with open audio segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
-                getTimeslot(), formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
+                getTimeslot(), formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                currentAudioCall.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
                 mQueuedAudioTimeslots.size());
         }
 
@@ -111,7 +111,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     @Override
     public void stop()
     {
-        closeAudioSegment("stop");
+        closeCurrentAudioSegment();
     }
 
     /**
@@ -128,7 +128,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     {
         if(message.getTimeslot() == getTimeslot())
         {
-            if(getCurrentAudioSegment() != null && shouldTouchSegment(message))
+            if(getCurrentAudioCall() != null && shouldTouchSegment(message))
             {
                 touchCurrentAudioSegment();
             }
@@ -221,21 +221,21 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         mQueuedAudioTimeslots.clear();
     }
 
-    private void closeAudioSegment(String reason)
+    private void closeCurrentAudioSegment()
     {
         endCurrentAudioBurst();
         super.closeAudioSegment();
     }
 
-    private String formatSegment(AudioSegment audioSegment)
+    private String formatSegment(MutableAudioCallBuilder audioCall)
     {
-        if(audioSegment == null)
+        if(audioCall == null)
         {
             return "null";
         }
 
-        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
-            System.identityHashCode(audioSegment);
+        return audioCall.getTimeslot() + ":" + audioCall.getStartTimestamp() + ":" +
+            System.identityHashCode(audioCall);
     }
 
     /**
@@ -268,9 +268,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                         // so suppressed artifact bursts do not create empty segments.
                         if(!audioCommitted)
                         {
-                            AudioSegment currentAudioSegment = getAudioSegment();
+                            MutableAudioCallBuilder currentAudioCall = getAudioCall();
 
-                            if(!currentAudioSegment.isBurstActive())
+                            if(!currentAudioCall.isBurstActive())
                             {
                                 beginCurrentAudioBurst();
                             }
@@ -291,31 +291,6 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         }
     }
 
-
-    /**
-     * Broadcasts the identifier to a registered listener and creates a new AMBE tone identifier message when tones are
-     * present to send to the alias action manager
-     */
-    private void broadcast(ToneIdentifier identifier, long timestamp)
-    {
-        if(mIdentifierUpdateNotificationListener != null)
-        {
-            mIdentifierUpdateNotificationListener.receive(new IdentifierUpdateNotification(identifier,
-                IdentifierUpdateNotification.Operation.ADD, getTimeslot()));
-        }
-
-        if(mMessageListener != null)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.append("P25.2 Timeslot ");
-            sb.append(getTimeslot());
-            sb.append("Audio Tone Sequence Decoded: ");
-            sb.append(identifier.toString());
-
-            mMessageListener.receive(new ToneIdentifierMessage(Protocol.APCO25_PHASE2, getTimeslot(), timestamp,
-                    identifier, sb.toString()));
-        }
-    }
 
     /**
      * Registers the listener to receive identifier updates
@@ -391,8 +366,6 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
          * holdoff window the returned list is empty; once the threshold is crossed the previously
          * held frames plus the current frame are all returned together.  When there is no tone
          * metadata the single decoded frame is returned immediately.
-         *
-         * Any pending identifier broadcast is handled internally via the outer class broadcast().
          *
          * @param audioWithMetadata decoded AMBE frame with optional tone metadata
          * @param timestamp of the carrier message
@@ -484,6 +457,31 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             }
             return EMPTY;
         }
+
+        /**
+         * Broadcasts the identifier to a registered listener and creates a new AMBE tone identifier message when tones
+         * are present to send to the alias action manager.
+         */
+        private void broadcast(ToneIdentifier identifier, long timestamp)
+        {
+            if(mIdentifierUpdateNotificationListener != null)
+            {
+                mIdentifierUpdateNotificationListener.receive(new IdentifierUpdateNotification(identifier,
+                    IdentifierUpdateNotification.Operation.ADD, getTimeslot()));
+            }
+
+            if(mMessageListener != null)
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.append("P25.2 Timeslot ");
+                sb.append(getTimeslot());
+                sb.append("Audio Tone Sequence Decoded: ");
+                sb.append(identifier);
+
+                mMessageListener.receive(new ToneIdentifierMessage(Protocol.APCO25_PHASE2, getTimeslot(), timestamp,
+                    identifier, sb.toString()));
+            }
+        }
     }
 
     /**
@@ -498,7 +496,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         {
             if(event.getTimeslot() == getTimeslot() && event.getSquelchState() == SquelchState.SQUELCH)
             {
-                closeAudioSegment("squelch");
+                closeCurrentAudioSegment();
                 reset();
             }
         }

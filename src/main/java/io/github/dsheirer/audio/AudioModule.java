@@ -19,6 +19,7 @@
 package io.github.dsheirer.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
@@ -97,15 +98,15 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     {
         if(mSquelchState == SquelchState.UNSQUELCH)
         {
-            AudioSegment currentAudioSegment = beginCurrentAudioSegment();
+            MutableAudioCallBuilder currentAudioCall = beginCurrentAudioSegment();
 
-            if(!currentAudioSegment.isBurstActive())
+            if(!currentAudioCall.isBurstActive())
             {
-                if(currentAudioSegment.getAudioBufferCount() > 0)
+                if(currentAudioCall.getAudioBufferCount() > 0)
                 {
                     mLog.warn("Analog audio resumed on inactive burst segment:{} buffers:{} complete:{}",
-                        formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                        currentAudioSegment.isComplete());
+                        formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                        currentAudioCall.isComplete());
                 }
 
                 beginCurrentAudioBurst();
@@ -143,7 +144,7 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
 
             if(mSquelchState != squelchState)
             {
-                AudioSegment currentAudioSegment = getCurrentAudioSegment();
+                MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
                 mSquelchState = squelchState;
 
                 if(mSquelchState == SquelchState.SQUELCH)
@@ -153,11 +154,11 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
                 }
                 else
                 {
-                    if(currentAudioSegment != null)
+                    if(currentAudioCall != null)
                     {
                         mLog.warn("Analog audio unsquelch with open segment:{} buffers:{} bursts:{} burstActive:{}",
-                            formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                            currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive());
+                            formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                            currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive());
                     }
 
                     beginCurrentAudioSegment();
@@ -167,14 +168,14 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
         }
     }
 
-    private String formatSegment(AudioSegment audioSegment)
+    private String formatSegment(MutableAudioCallBuilder audioCall)
     {
-        if(audioSegment == null)
+        if(audioCall == null)
         {
             return "null";
         }
 
-        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
-            System.identityHashCode(audioSegment);
+        return audioCall.getTimeslot() + ":" + audioCall.getStartTimestamp() + ":" +
+            System.identityHashCode(audioCall);
     }
 }

@@ -21,7 +21,10 @@ package io.github.dsheirer.audio.codec.mbe;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P1CallSequenceRecorder;
@@ -36,7 +39,10 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import jmbe.iface.IAudioCodec;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.filefilter.DirectoryFileFilter;
@@ -75,6 +81,11 @@ public class MBECallSequenceConverter
         if(callSequence.getProtocol().equals(P25P1CallSequenceRecorder.PROTOCOL))
         {
             P25P1AudioModule audioModule = new P25P1AudioModule(new UserPreferences(), new AliasList("mbe generator"));
+            AtomicReference<CompletedAudioCall> completedAudioCall = new AtomicReference<>();
+            AtomicReference<AudioCallSnapshot> latestSnapshot = new AtomicReference<>();
+            List<float[]> audioBuffers = new ArrayList<>();
+            audioModule.setAudioCallEventListener(event -> captureCompletedAudioCall(event, latestSnapshot,
+                audioBuffers, completedAudioCall));
             audioModule.setRecordAudio(true);
             audioModule.start();
 
@@ -119,18 +130,41 @@ public class MBECallSequenceConverter
                 audioModule.addAudio(audio);
             }
 
-            AudioSegment audioSegment = audioModule.getAudioSegment();
-
-            try
-            {
-                AudioSegmentRecorder.recordWAVE(audioSegment, outputPath, audioSegment.getIdentifierCollection());
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("Error writing audio segment, ioe");
-            }
-
             audioModule.stop();
+            CompletedAudioCall call = completedAudioCall.get();
+
+            if(call != null)
+            {
+                try
+                {
+                    AudioSegmentRecorder.recordWAVE(call, outputPath, call.snapshot().identifierCollection());
+                }
+                catch(IOException ioe)
+                {
+                    mLog.error("Error writing completed audio call", ioe);
+                }
+            }
+        }
+    }
+
+    private static void captureCompletedAudioCall(AudioCallEvent event, AtomicReference<AudioCallSnapshot> latestSnapshot,
+                                                  List<float[]> audioBuffers,
+                                                  AtomicReference<CompletedAudioCall> completedAudioCall)
+    {
+        if(event == null || event.snapshot() == null)
+        {
+            return;
+        }
+
+        latestSnapshot.set(event.snapshot());
+
+        if(event.eventType() == AudioCallEventType.AUDIO_FRAME && event.audioFrame() != null)
+        {
+            audioBuffers.add(event.audioFrame());
+        }
+        else if(event.eventType() == AudioCallEventType.CALL_COMPLETED)
+        {
+            completedAudioCall.set(new CompletedAudioCall(event.snapshot(), List.copyOf(audioBuffers)));
         }
     }
 

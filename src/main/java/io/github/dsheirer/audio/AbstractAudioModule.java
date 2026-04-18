@@ -26,6 +26,7 @@ import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.IAudioCallProvider;
+import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
@@ -51,7 +52,6 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     protected MutableIdentifierCollection mIdentifierCollection;
     private Broadcaster<IdentifierUpdateNotification> mIdentifierUpdateNotificationBroadcaster = new Broadcaster<>();
     private AliasList mAliasList;
-    private AudioSegment mAudioSegment;
     private int mAudioSampleCount = 0;
     private boolean mRecordAudioOverride;
     private int mTimeslot;
@@ -61,6 +61,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private AudioCallId mCurrentLinkedAudioCallId;
     private AudioCallId mPreviousAudioCallId;
     private boolean mLinkNextAudioCallToPrevious;
+    private MutableAudioCallBuilder mCurrentAudioCall;
 
     /**
      * Constructs an abstract audio module
@@ -78,7 +79,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         mIdentifierUpdateNotificationBroadcaster.addListener(notification -> {
             synchronized(AbstractAudioModule.this)
             {
-                if(mAudioSegment != null)
+                if(mCurrentAudioCall != null)
                 {
                     emitAudioCallEvent(AudioCallEventType.METADATA_UPDATED, null);
                 }
@@ -109,13 +110,12 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
-            if(mAudioSegment != null)
+            if(mCurrentAudioCall != null)
             {
-                mAudioSegment.complete();
+                mCurrentAudioCall.complete();
                 emitAudioCallEvent(AudioCallEventType.CALL_COMPLETED, null);
-                mIdentifierUpdateNotificationBroadcaster.removeListener(mAudioSegment);
-                mAudioSegment.decrementConsumerCount();
-                mAudioSegment = null;
+                mIdentifierUpdateNotificationBroadcaster.removeListener(mCurrentAudioCall);
+                mCurrentAudioCall = null;
                 mPreviousAudioCallId = mCurrentAudioCallId;
                 mCurrentAudioCallId = null;
                 mCurrentLinkedAudioCallId = null;
@@ -130,44 +130,42 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     }
 
     /**
-     * Gets the current audio segment, or creates a new audio segment as necessary and broadcasts it to any registered
-     * listener(s).
+     * Gets the current mutable producer-side audio call, creating it as necessary.
      */
-    public AudioSegment getAudioSegment()
+    protected MutableAudioCallBuilder getAudioCall()
     {
         synchronized(this)
         {
-            if(mAudioSegment == null)
+            if(mCurrentAudioCall == null)
             {
-                mAudioSegment = new AudioSegment(mAliasList, getTimeslot());
+                mCurrentAudioCall = new MutableAudioCallBuilder(mAliasList, getTimeslot());
                 mCurrentAudioCallId = new AudioCallId(mProducerId, mNextAudioCallSequence++, getTimeslot());
                 mCurrentLinkedAudioCallId = mLinkNextAudioCallToPrevious ? mPreviousAudioCallId : null;
                 mLinkNextAudioCallToPrevious = false;
-                mAudioSegment.incrementConsumerCount();
-                mAudioSegment.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
-                mIdentifierUpdateNotificationBroadcaster.addListener(mAudioSegment);
+                mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
+                mIdentifierUpdateNotificationBroadcaster.addListener(mCurrentAudioCall);
 
                 if(mRecordAudioOverride)
                 {
-                    mAudioSegment.recordAudioProperty().set(true);
+                    mCurrentAudioCall.setRecordAudio(true);
                 }
 
                 mAudioSampleCount = 0;
                 emitAudioCallEvent(AudioCallEventType.CALL_CREATED, null);
             }
 
-            return mAudioSegment;
+            return mCurrentAudioCall;
         }
     }
 
     /**
-     * Gets the current audio segment without creating a new one.
+     * Gets the current mutable producer-side audio call without creating a new one.
      */
-    protected AudioSegment getCurrentAudioSegment()
+    protected MutableAudioCallBuilder getCurrentAudioCall()
     {
         synchronized(this)
         {
-            return mAudioSegment;
+            return mCurrentAudioCall;
         }
     }
 
@@ -178,9 +176,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
-            if(mAudioSegment != null)
+            if(mCurrentAudioCall != null)
             {
-                mAudioSegment.touch();
+                mCurrentAudioCall.touch();
                 emitAudioCallEvent(AudioCallEventType.ACTIVITY, null);
             }
         }
@@ -190,28 +188,28 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      * Explicitly begins the current segment, creating it if necessary and pinning its start timestamp to the current
      * signaling event instead of the first audio append.
      */
-    protected AudioSegment beginCurrentAudioSegment()
+    protected MutableAudioCallBuilder beginCurrentAudioSegment()
     {
         synchronized(this)
         {
-            AudioSegment audioSegment = getAudioSegment();
-            audioSegment.begin();
+            MutableAudioCallBuilder audioCall = getAudioCall();
+            audioCall.begin();
             emitAudioCallEvent(AudioCallEventType.ACTIVITY, null);
-            return audioSegment;
+            return audioCall;
         }
     }
 
     /**
      * Marks the current audio segment as actively carrying a talk burst, creating the segment if necessary.
      */
-    protected AudioSegment beginCurrentAudioBurst()
+    protected MutableAudioCallBuilder beginCurrentAudioBurst()
     {
         synchronized(this)
         {
-            AudioSegment audioSegment = getAudioSegment();
-            audioSegment.beginBurst();
+            MutableAudioCallBuilder audioCall = getAudioCall();
+            audioCall.beginBurst();
             emitAudioCallEvent(AudioCallEventType.BURST_STARTED, null);
-            return audioSegment;
+            return audioCall;
         }
     }
 
@@ -222,9 +220,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
-            if(mAudioSegment != null)
+            if(mCurrentAudioCall != null)
             {
-                mAudioSegment.endBurst();
+                mCurrentAudioCall.endBurst();
                 emitAudioCallEvent(AudioCallEventType.BURST_ENDED, null);
             }
         }
@@ -232,22 +230,20 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 
     public void addAudio(float[] audioBuffer)
     {
-        AudioSegment audioSegment = getAudioSegment();
+        MutableAudioCallBuilder audioCall = getAudioCall();
 
         //If the current segment exceeds the max samples length, close it so that a new segment gets generated
         //and then link the segments together
         if(mAudioSampleCount >= mMaxSegmentAudioSampleLength)
         {
-            AudioSegment previous = getAudioSegment();
             mLinkNextAudioCallToPrevious = true;
             closeAudioSegment();
-            audioSegment = getAudioSegment();
-            audioSegment.linkTo(previous);
+            audioCall = getAudioCall();
         }
 
         try
         {
-            audioSegment.addAudio(audioBuffer);
+            audioCall.addAudio(audioBuffer);
             mAudioSampleCount += audioBuffer.length;
             emitAudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioBuffer);
         }
@@ -270,9 +266,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         {
             synchronized(this)
             {
-                if(mAudioSegment != null)
+                if(mCurrentAudioCall != null)
                 {
-                    mAudioSegment.recordAudioProperty().set(true);
+                    mCurrentAudioCall.setRecordAudio(true);
                     emitAudioCallEvent(AudioCallEventType.METADATA_UPDATED, null);
                 }
             }
@@ -310,27 +306,26 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 
     private AudioCallSnapshot getCurrentAudioCallSnapshot()
     {
-        return createSnapshot(mAudioSegment, mCurrentAudioCallId, mCurrentLinkedAudioCallId);
+        return createSnapshot(mCurrentAudioCall, mCurrentAudioCallId, mCurrentLinkedAudioCallId);
     }
 
-    private AudioCallSnapshot createSnapshot(AudioSegment audioSegment, AudioCallId callId, AudioCallId linkedCallId)
+    private AudioCallSnapshot createSnapshot(MutableAudioCallBuilder audioCall, AudioCallId callId, AudioCallId linkedCallId)
     {
-        if(audioSegment == null || callId == null)
+        if(audioCall == null || callId == null)
         {
             return null;
         }
 
         IdentifierCollection identifierCollection =
-            new IdentifierCollection(audioSegment.getIdentifierCollection().getIdentifiers());
+            new IdentifierCollection(audioCall.getIdentifierCollection().getIdentifiers());
         identifierCollection.setTimeslot(callId.timeslot());
-        Set<BroadcastChannel> broadcastChannels = new HashSet<>(audioSegment.getBroadcastChannels());
+        Set<BroadcastChannel> broadcastChannels = new HashSet<>(audioCall.getBroadcastChannels());
 
         return new AudioCallSnapshot(callId, linkedCallId, mAliasList, identifierCollection, broadcastChannels,
-            audioSegment.getStartTimestamp(), audioSegment.getLastActivityTimestamp(), audioSegment.getBurstCount(),
-            audioSegment.getBurstGeneration(), audioSegment.getLastBurstStartTimestamp(),
-            audioSegment.getLastBurstEndTimestamp(), audioSegment.isBurstActive(), audioSegment.isComplete(), audioSegment.isEncrypted(),
-            audioSegment.recordAudioProperty().get(), audioSegment.monitorPriorityProperty().get(),
-            audioSegment.isDuplicate());
+            audioCall.getStartTimestamp(), audioCall.getLastActivityTimestamp(), audioCall.getBurstCount(),
+            audioCall.getBurstGeneration(), audioCall.getLastBurstStartTimestamp(),
+            audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(), audioCall.isEncrypted(),
+            audioCall.isRecordAudio(), audioCall.getMonitorPriority(), audioCall.isDuplicate());
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame)

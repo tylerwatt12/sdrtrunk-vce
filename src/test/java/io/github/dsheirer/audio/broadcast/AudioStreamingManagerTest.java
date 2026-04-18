@@ -23,11 +23,11 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
-import io.github.dsheirer.audio.AudioSegment;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.dsp.oscillator.ScalarRealOscillator;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -41,6 +41,10 @@ import io.github.dsheirer.sample.Listener;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -157,48 +161,44 @@ public class AudioStreamingManagerTest
         }
     }
 
-    /**
-     * Creates an audio segment with audio using the supplied alias list.
-     * @return audio segment
-     */
-    private static AudioSegment getAudioSegment()
+    private static CompletedAudioCall getCompletedAudioCall()
     {
         AliasList aliasList = getAliasList();
-
-        AudioSegment audioSegment = new AudioSegment(aliasList, TimeslotMessage.TIMESLOT_0);
+        List<float[]> audioBuffers = new ArrayList<>();
         ScalarRealOscillator oscillator = new ScalarRealOscillator(1000, 8000);
         for(int x = 0; x < 100; x++)
         {
-            audioSegment.addAudio(oscillator.generate(500));
+            audioBuffers.add(oscillator.generate(500));
         }
-        audioSegment.addIdentifier(getPatchGroup());
-        audioSegment.addIdentifier(getRadio());
-        audioSegment.completeProperty().set(true);
-        return audioSegment;
-    }
 
-    private static CompletedAudioCall getCompletedAudioCall()
-    {
-        AudioSegment audioSegment = getAudioSegment();
+        MutableIdentifierCollection identifierCollection = new MutableIdentifierCollection();
+        identifierCollection.setTimeslot(TimeslotMessage.TIMESLOT_0);
+        identifierCollection.update(getPatchGroup());
+        identifierCollection.update(getRadio());
+
+        Set<BroadcastChannel> broadcastChannels = new HashSet<>();
+        broadcastChannels.add(new BroadcastChannel("Stream A"));
+
+        long now = System.currentTimeMillis();
         AudioCallSnapshot snapshot = new AudioCallSnapshot(
-            new AudioCallId(System.identityHashCode(audioSegment), 0, audioSegment.getTimeslot()),
+            new AudioCallId(1L, 1L, TimeslotMessage.TIMESLOT_0),
             null,
-            audioSegment.getAliasList(),
-            audioSegment.getIdentifierCollection(),
-            audioSegment.getBroadcastChannels(),
-            audioSegment.getStartTimestamp(),
-            audioSegment.getLastActivityTimestamp(),
-            audioSegment.getBurstCount(),
-            audioSegment.getBurstGeneration(),
-            audioSegment.getLastBurstStartTimestamp(),
-            audioSegment.getLastBurstEndTimestamp(),
-            audioSegment.isBurstActive(),
-            audioSegment.isComplete(),
-            audioSegment.isEncrypted(),
-            audioSegment.recordAudioProperty().get(),
-            audioSegment.monitorPriorityProperty().get(),
-            audioSegment.isDuplicate());
-        return new CompletedAudioCall(snapshot, audioSegment.getAudioBuffers());
+            aliasList,
+            identifierCollection,
+            broadcastChannels,
+            now,
+            now,
+            1,
+            1,
+            now,
+            now,
+            false,
+            true,
+            false,
+            false,
+            100,
+            false);
+        return new CompletedAudioCall(snapshot, audioBuffers);
     }
 
     private static AliasList getAliasList()

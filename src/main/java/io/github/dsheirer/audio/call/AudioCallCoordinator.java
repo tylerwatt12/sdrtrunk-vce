@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.audio.call;
 
-import io.github.dsheirer.audio.DuplicateCallDetector;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
@@ -214,7 +213,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private boolean isDuplicate(AudioCallSnapshot snapshot1, AudioCallSnapshot snapshot2)
     {
         if(mCallManagementProvider.isDuplicateCallDetectionByTalkgroupEnabled() &&
-            DuplicateCallDetector.SystemDuplicateCallDetector.isDuplicate(getIdentifiers(snapshot1, Role.TO),
+            AudioCallDuplicateDetector.isDuplicate(getIdentifiers(snapshot1, Role.TO),
                 getIdentifiers(snapshot2, Role.TO)))
         {
             return true;
@@ -222,7 +221,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         if(mCallManagementProvider.isDuplicateCallDetectionByRadioEnabled())
         {
-            return DuplicateCallDetector.SystemDuplicateCallDetector.isDuplicate(getIdentifiers(snapshot1, Role.FROM),
+            return AudioCallDuplicateDetector.isDuplicate(getIdentifiers(snapshot1, Role.FROM),
                 getIdentifiers(snapshot2, Role.FROM));
         }
 

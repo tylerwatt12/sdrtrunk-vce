@@ -19,7 +19,7 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.audio.AudioSegment;
+import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.codec.mbe.ImbeAudioModule;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
@@ -80,13 +80,13 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     @Override
     public void reset()
     {
-        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+        MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
 
-        if(currentAudioSegment != null)
+        if(currentAudioCall != null)
         {
             mLog.warn("P25P1 reset with open audio segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
+                formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                currentAudioCall.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
                 getCachedLduCount());
         }
 
@@ -119,7 +119,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             return;
         }
 
-        if(getCurrentAudioSegment() != null && shouldTouchSegment(message))
+        if(getCurrentAudioCall() != null && shouldTouchSegment(message))
         {
             touchCurrentAudioSegment();
         }
@@ -265,15 +265,15 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
 
             for(byte[] frame : ldu.getIMBEFrames())
             {
-                AudioSegment currentAudioSegment = getAudioSegment();
-                String currentSegmentId = formatSegment(currentAudioSegment);
+                MutableAudioCallBuilder currentAudioCall = getAudioCall();
+                String currentSegmentId = formatSegment(currentAudioCall);
 
-                if(!currentAudioSegment.isBurstActive())
+                if(!currentAudioCall.isBurstActive())
                 {
-                    if(currentAudioSegment.getAudioBufferCount() > 0)
+                    if(currentAudioCall.getAudioBufferCount() > 0)
                     {
                         mLog.warn("P25P1 audio resumed on inactive burst segment:{} buffers:{} complete:{} encryptedStateEstablished:{} cachedLdus:{}",
-                            currentSegmentId, currentAudioSegment.getAudioBufferCount(), currentAudioSegment.isComplete(),
+                            currentSegmentId, currentAudioCall.getAudioBufferCount(), currentAudioCall.isComplete(),
                             mEncryptionState.isEstablished(), getCachedLduCount());
                     }
 
@@ -289,7 +289,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                     if(gap >= LONG_AUDIO_GAP_LOG_THRESHOLD_MS)
                     {
                         mLog.warn("P25P1 audio resumed after long gap segment:{} gapMs:{} buffers:{} burstActive:{} encryptedStateEstablished:{} cachedLdus:{}",
-                            currentSegmentId, gap, currentAudioSegment.getAudioBufferCount(), currentAudioSegment.isBurstActive(),
+                            currentSegmentId, gap, currentAudioCall.getAudioBufferCount(), currentAudioCall.isBurstActive(),
                             mEncryptionState.isEstablished(), getCachedLduCount());
                     }
                 }
@@ -317,8 +317,6 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         @Override
         public void receive(SquelchStateEvent event)
         {
-            AudioSegment currentAudioSegment = getCurrentAudioSegment();
-
             if(event.getSquelchState() == SquelchState.SQUELCH)
             {
                 closeAudioSegment("squelch");
@@ -337,22 +335,22 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     private void closeAudioSegment(String reason, boolean logAtInfo)
     {
         endCurrentAudioBurst();
-        AudioSegment currentAudioSegment = getCurrentAudioSegment();
+        MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
 
-        if(currentAudioSegment != null)
+        if(currentAudioCall != null)
         {
             if(logAtInfo)
             {
                 mLog.info("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                    reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                    currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
+                    reason, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                    currentAudioCall.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
                     getCachedLduCount());
             }
             else
             {
                 mLog.debug("P25P1 closing audio segment reason:{} segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                    reason, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                    currentAudioSegment.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
+                    reason, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                    currentAudioCall.isComplete(), mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(),
                     getCachedLduCount());
             }
         }
@@ -360,15 +358,15 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         super.closeAudioSegment();
     }
 
-    private String formatSegment(AudioSegment audioSegment)
+    private String formatSegment(MutableAudioCallBuilder audioCall)
     {
-        if(audioSegment == null)
+        if(audioCall == null)
         {
             return "null";
         }
 
-        return audioSegment.getTimeslot() + ":" + audioSegment.getStartTimestamp() + ":" +
-            System.identityHashCode(audioSegment);
+        return audioCall.getTimeslot() + ":" + audioCall.getStartTimestamp() + ":" +
+            System.identityHashCode(audioCall);
     }
 
     private boolean isCallActiveState(State state)
@@ -376,38 +374,38 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         return state == State.CALL || state == State.ENCRYPTED;
     }
 
-    private void closeAudioSegmentForDecoderState(String reason, State state)
-    {
-        AudioSegment currentAudioSegment = getCurrentAudioSegment();
-        boolean benignControlSuppression = currentAudioSegment != null && "channel state".equals(reason) &&
-            state == State.CONTROL && currentAudioSegment.getAudioBufferCount() == 0;
-
-        if(currentAudioSegment != null)
-        {
-            if(benignControlSuppression)
-            {
-                mLog.debug("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                    reason, state, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                    currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive(),
-                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
-            }
-            else
-            {
-                mLog.info("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
-                    reason, state, formatSegment(currentAudioSegment), currentAudioSegment.getAudioBufferCount(),
-                    currentAudioSegment.getBurstCount(), currentAudioSegment.isBurstActive(),
-                    mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
-            }
-        }
-
-        closeAudioSegment(reason, !benignControlSuppression);
-        mEncryptionState = P25AudioEncryptionState.UNKNOWN;
-        mPendingEncryptionLdus.clear();
-        mDeferredClearAudioLdus.clear();
-    }
-
     public class DecoderStateEventListener implements Listener<DecoderStateEvent>
     {
+        private void closeAudioSegmentForDecoderState(String reason, State state)
+        {
+            MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
+            boolean benignControlSuppression = currentAudioCall != null && "channel state".equals(reason) &&
+                state == State.CONTROL && currentAudioCall.getAudioBufferCount() == 0;
+
+            if(currentAudioCall != null)
+            {
+                if(benignControlSuppression)
+                {
+                    mLog.debug("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                        reason, state, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                        currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
+                        mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+                }
+                else
+                {
+                    mLog.info("P25P1 closing audio segment reason:{} state:{} segment:{} buffers:{} bursts:{} burstActive:{} encryptedStateEstablished:{} encrypted:{} cachedLdus:{}",
+                        reason, state, formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
+                        currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
+                        mEncryptionState.isEstablished(), mEncryptionState.isEncrypted(), getCachedLduCount());
+                }
+            }
+
+            closeAudioSegment(reason, !benignControlSuppression);
+            mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+            mPendingEncryptionLdus.clear();
+            mDeferredClearAudioLdus.clear();
+        }
+
         @Override
         public void receive(DecoderStateEvent event)
         {
