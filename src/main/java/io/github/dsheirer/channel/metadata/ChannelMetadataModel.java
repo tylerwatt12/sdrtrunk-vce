@@ -33,6 +33,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 
 public class ChannelMetadataModel extends AbstractTableModel implements IChannelMetadataUpdateListener
@@ -180,18 +181,37 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
 
     public void remove(ChannelMetadata channelMetadata)
     {
-        //Execute on the swing thread to avoid threading issues
-        EventQueue.invokeLater(() -> {
-            channelMetadata.removeUpdateEventListener();
-            int index = mChannelMetadata.indexOf(channelMetadata);
-            mChannelMetadata.remove(channelMetadata);
-            mMetadataChannelMap.remove(channelMetadata);
+        remove(channelMetadata, 0);
+    }
 
-            if(index >= 0)
-            {
-                fireTableRowsDeleted(index, index);
-            }
-        });
+    public void remove(ChannelMetadata channelMetadata, long delayMilliseconds)
+    {
+        if(delayMilliseconds <= 0)
+        {
+            EventQueue.invokeLater(() -> removeNow(channelMetadata));
+        }
+        else
+        {
+            EventQueue.invokeLater(() -> {
+                Timer timer = new Timer((int)Math.min(delayMilliseconds, Integer.MAX_VALUE),
+                    event -> removeNow(channelMetadata));
+                timer.setRepeats(false);
+                timer.start();
+            });
+        }
+    }
+
+    private void removeNow(ChannelMetadata channelMetadata)
+    {
+        channelMetadata.removeUpdateEventListener();
+        int index = mChannelMetadata.indexOf(channelMetadata);
+        mChannelMetadata.remove(channelMetadata);
+        mMetadataChannelMap.remove(channelMetadata);
+
+        if(index >= 0)
+        {
+            fireTableRowsDeleted(index, index);
+        }
     }
 
     /**
@@ -312,47 +332,44 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
     @Override
     public void updated(ChannelMetadata channelMetadata, ChannelMetadataField channelMetadataField)
     {
-        final int rowIndex = mChannelMetadata.indexOf(channelMetadata);
+        //Execute on the swing thread to avoid threading issues
+        EventQueue.invokeLater(() -> {
+            int rowIndex = mChannelMetadata.indexOf(channelMetadata);
 
-        if(rowIndex >= 0)
-        {
-            //Execute on the swing thread to avoid threading issues
-            EventQueue.invokeLater(() -> {
-                if(rowIndex >= mChannelMetadata.size())
-                {
-                    return;
-                }
+            if(rowIndex < 0)
+            {
+                return;
+            }
 
-                switch(channelMetadataField)
-                {
-                    case CONFIGURATION_CHANNEL:
-                        fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_CHANNEL);
-                        break;
-                    case CONFIGURATION_FREQUENCY:
-                        fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_FREQUENCY);
-                        break;
-                    case DECODER_CHANNEL_NAME:
-                        fireTableCellUpdated(rowIndex, COLUMN_DECODER_LOGICAL_CHANNEL_NAME);
-                        break;
-                    case DECODER_TYPE:
-                        fireTableCellUpdated(rowIndex, COLUMN_DECODER_TYPE);
-                        break;
-                    case DECODER_STATE:
-                        fireTableCellUpdated(rowIndex, COLUMN_DECODER_STATE);
-                        break;
-                    case USER_FROM:
-                        fireTableCellUpdated(rowIndex, COLUMN_USER_FROM);
-                        fireTableCellUpdated(rowIndex, COLUMN_USER_FROM_ALIAS);
-                        break;
-                    case USER_TO:
-                        fireTableCellUpdated(rowIndex, COLUMN_USER_TO);
-                        fireTableCellUpdated(rowIndex, COLUMN_USER_TO_ALIAS);
-                        break;
-                    default:
-                        // Other metadata fields are not displayed in this table model.
-                        break;
-                }
-            });
-        }
+            switch(channelMetadataField)
+            {
+                case CONFIGURATION_CHANNEL:
+                    fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_CHANNEL);
+                    break;
+                case CONFIGURATION_FREQUENCY:
+                    fireTableCellUpdated(rowIndex, COLUMN_CONFIGURATION_FREQUENCY);
+                    break;
+                case DECODER_CHANNEL_NAME:
+                    fireTableCellUpdated(rowIndex, COLUMN_DECODER_LOGICAL_CHANNEL_NAME);
+                    break;
+                case DECODER_TYPE:
+                    fireTableCellUpdated(rowIndex, COLUMN_DECODER_TYPE);
+                    break;
+                case DECODER_STATE:
+                    fireTableCellUpdated(rowIndex, COLUMN_DECODER_STATE);
+                    break;
+                case USER_FROM:
+                    fireTableCellUpdated(rowIndex, COLUMN_USER_FROM);
+                    fireTableCellUpdated(rowIndex, COLUMN_USER_FROM_ALIAS);
+                    break;
+                case USER_TO:
+                    fireTableCellUpdated(rowIndex, COLUMN_USER_TO);
+                    fireTableCellUpdated(rowIndex, COLUMN_USER_TO_ALIAS);
+                    break;
+                default:
+                    // Other metadata fields are not displayed in this table model.
+                    break;
+            }
+        });
     }
 }

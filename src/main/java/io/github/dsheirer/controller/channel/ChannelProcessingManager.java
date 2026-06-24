@@ -80,6 +80,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final String ERROR_STOPPING_CHANNEL_LABEL = "Error stopping channel [";
     private static final Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
     private static final String TUNER_UNAVAILABLE_DESCRIPTION = "TUNER UNAVAILABLE";
+    private static final long NOW_PLAYING_TRAFFIC_CHANNEL_HANG_TIME_MILLISECONDS =
+        Math.max(0, Long.getLong("sdrtrunk.nowPlaying.trafficChannelHangMs", 5000L));
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
 
@@ -619,9 +621,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             if(removed != null)
             {
+                long hangTime = channel.isTrafficChannel() ? NOW_PLAYING_TRAFFIC_CHANNEL_HANG_TIME_MILLISECONDS : 0;
+
                 for(ChannelMetadata channelMetadata: removed.getChannelState().getChannelMetadata())
                 {
-                    getChannelMetadataModel().remove(channelMetadata);
+                    getChannelMetadataModel().remove(channelMetadata, hangTime);
                 }
             }
         }
