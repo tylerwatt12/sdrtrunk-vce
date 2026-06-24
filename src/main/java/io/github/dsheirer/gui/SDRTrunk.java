@@ -26,6 +26,7 @@ import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
@@ -57,7 +58,6 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.source.tuner.ui.TunerSpectralDisplayManager;
-import io.github.dsheirer.spectrum.DisableSpectrumWaterfallMenuItem;
 import io.github.dsheirer.spectrum.ShowTunerMenuItem;
 import io.github.dsheirer.spectrum.SpectralDisplayPanel;
 import io.github.dsheirer.util.ThreadPool;
@@ -141,6 +141,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private PlaylistManager mPlaylistManager;
     private SettingsManager mSettingsManager;
     private SpectralDisplayPanel mSpectralPanel;
+    private TunerSpectralDisplayManager mTunerSpectralDisplayManager;
     private JFrame mMainGui;
     private JideSplitPane mSplitPane;
     private JavaFxWindowManager mJavaFxWindowManager;
@@ -150,6 +151,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private ResourceMonitor mResourceMonitor;
     private JFXPanel mResourceStatusPanel;
     private boolean mShutdownProcessed;
+    private boolean mSpectralPanelVisible;
 
     private String mTitle;
 
@@ -253,9 +255,9 @@ public class SDRTrunk implements Listener<TunerEvent>
         mSpectralPanel = new SpectralDisplayPanel(mPlaylistManager, mSettingsManager,
             mTunerManager.getDiscoveredTunerModel(), mUserPreferences, SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER);
 
-        TunerSpectralDisplayManager tunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
+        mTunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
             mPlaylistManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel());
-        mTunerManager.getDiscoveredTunerModel().addListener(tunerSpectralDisplayManager);
+        mTunerManager.getDiscoveredTunerModel().addListener(mTunerSpectralDisplayManager);
         mTunerManager.getDiscoveredTunerModel().addListener(this);
 
         mPlaylistManager.init();
@@ -279,7 +281,7 @@ public class SDRTrunk implements Listener<TunerEvent>
                 if(!GraphicsEnvironment.isHeadless())
                 {
                     mMainGui.setVisible(true);
-                    Tuner tuner = tunerSpectralDisplayManager.showFirstTuner();
+                    Tuner tuner = mTunerSpectralDisplayManager.showFirstTuner();
 
                     if(tuner != null)
                     {
@@ -288,7 +290,7 @@ public class SDRTrunk implements Listener<TunerEvent>
                     else
                     {
                         // Allow delayed tuner startup paths up to about 20 seconds to populate the first display.
-                        tunerSpectralDisplayManager.retryShowFirstTuner(1, java.util.concurrent.TimeUnit.SECONDS, 20);
+                        mTunerSpectralDisplayManager.retryShowFirstTuner(1, java.util.concurrent.TimeUnit.SECONDS, 20);
                     }
                 }
 
@@ -416,7 +418,13 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
         mSplitPane = new JideSplitPane(JideSplitPane.VERTICAL_SPLIT);
         mSplitPane.setDividerSize(5);
-        mSplitPane.add(mSpectralPanel);
+        mSpectralPanelVisible = SystemProperties.getInstance().get(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
+
+        if(mSpectralPanelVisible)
+        {
+            mSplitPane.add(mSpectralPanel);
+        }
+
         mSplitPane.add(mControllerPanel);
         mBroadcastStatusVisible = mPreferences.getBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, false);
 
@@ -426,9 +434,12 @@ public class SDRTrunk implements Listener<TunerEvent>
             mSplitPane.add(getBroadcastStatusPanel());
         }
 
-        EventQueue.invokeLater(() -> mSplitPane.setDividerLocation(0,
-            mUserPreferences.getSwingPreference().getInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER,
-                mSpectralPanel.getPreferredSize().height)));
+        if(mSpectralPanelVisible)
+        {
+            EventQueue.invokeLater(() -> mSplitPane.setDividerLocation(0,
+                mUserPreferences.getSwingPreference().getInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER,
+                    mSpectralPanel.getPreferredSize().height)));
+        }
 
         mMainGui.add(mSplitPane, "cell 0 0,span,grow");
 
@@ -548,8 +559,9 @@ public class SDRTrunk implements Listener<TunerEvent>
         viewMenu.add(new JSeparator());
         viewMenu.add(new TunersMenu());
         viewMenu.add(new JSeparator());
-        viewMenu.add(new DisableSpectrumWaterfallMenuItem(mSpectralPanel));
+        viewMenu.add(new SpectrumWaterfallVisibleMenuItem());
         viewMenu.add(new NowPlayingChannelDetailsVisibleMenuItem());
+        viewMenu.add(new NowPlayingRetainIdleCallDetailsMenuItem());
         viewMenu.add(new BroadcastStatusVisibleMenuItem());
         viewMenu.add(new ResourceStatusVisibleMenuItem());
 
@@ -624,9 +636,14 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
         mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
             (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
-        mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
+        if(mSpectralPanelVisible)
+        {
+            mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
+            mUserPreferences.getSwingPreference().setInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER,
+                mSplitPane.getDividerLocation(0));
+        }
+
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
-        mUserPreferences.getSwingPreference().setInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER, mSplitPane.getDividerLocation(0));
         mUserPreferences.getSwingPreference().setInt(SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER,
             mSpectralPanel.getSplitPaneDividerLocation());
         mUserPreferences.getSwingPreference().setInt(NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER,
@@ -846,6 +863,55 @@ public class SDRTrunk implements Listener<TunerEvent>
     }
 
     /**
+     * Spectrum and waterfall add/remove menu item.
+     */
+    public class SpectrumWaterfallVisibleMenuItem extends JMenuItem
+    {
+        public SpectrumWaterfallVisibleMenuItem()
+        {
+            updateLabel();
+            addActionListener(e -> EventQueue.invokeLater(() -> {
+                if(mSpectralPanelVisible)
+                {
+                    mSpectralPanel.clearTuner();
+                    mSplitPane.remove(mSpectralPanel);
+                    mSpectralPanelVisible = false;
+                    SystemProperties.getInstance().set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, false);
+                }
+                else
+                {
+                    mSplitPane.add(mSpectralPanel, 0);
+                    mSpectralPanelVisible = true;
+                    SystemProperties.getInstance().set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
+                    mSplitPane.setDividerLocation(0,
+                        mUserPreferences.getSwingPreference().getInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER,
+                            mSpectralPanel.getPreferredSize().height));
+
+                    if(mTunerSpectralDisplayManager != null)
+                    {
+                        Tuner tuner = mTunerSpectralDisplayManager.showFirstTuner();
+
+                        if(tuner != null)
+                        {
+                            updateTitle(tuner.getPreferredName());
+                        }
+                    }
+                }
+
+                mSplitPane.revalidate();
+                mSplitPane.repaint();
+                updateLabel();
+            }));
+        }
+
+        private void updateLabel()
+        {
+            setText(mSpectralPanelVisible ? "Remove Spectrum & Waterfall" : "Add Spectrum & Waterfall");
+            setIcon(IconFontSwing.buildIcon(mSpectralPanelVisible ? FontAwesome.EYE_SLASH : FontAwesome.EYE, 12));
+        }
+    }
+
+    /**
      * Now Playing channel details visible toggle menu item
      */
     public class NowPlayingChannelDetailsVisibleMenuItem extends JCheckBoxMenuItem
@@ -860,6 +926,20 @@ public class SDRTrunk implements Listener<TunerEvent>
                 mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, mNowPlayingDetailsVisible);
                 setSelected(mNowPlayingDetailsVisible);
             });
+        }
+    }
+
+    /**
+     * Now Playing idle row call detail retention toggle.
+     */
+    public class NowPlayingRetainIdleCallDetailsMenuItem extends JCheckBoxMenuItem
+    {
+        public NowPlayingRetainIdleCallDetailsMenuItem()
+        {
+            super("Retain Now Playing Idle Call Details");
+            setSelected(SystemProperties.getInstance().get(ChannelActivityModel.RETAIN_IDLE_CALL_DETAILS_PROPERTY, false));
+            addActionListener(e -> SystemProperties.getInstance()
+                .set(ChannelActivityModel.RETAIN_IDLE_CALL_DETAILS_PROPERTY, isSelected()));
         }
     }
 

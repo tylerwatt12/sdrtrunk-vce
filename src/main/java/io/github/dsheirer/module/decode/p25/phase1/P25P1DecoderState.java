@@ -216,6 +216,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
         if(trafficChannelManager != null)
         {
+            mNetworkConfigurationMonitor.setCurrentControlChannelListener(trafficChannelManager::processCurrentControlChannel);
+            mNetworkConfigurationMonitor.setSecondaryControlChannelListener(trafficChannelManager::processSecondaryControlChannel);
+            mNetworkConfigurationMonitor.setSiteIdentifierListener(trafficChannelManager::processSiteIdentifier);
             mTrafficChannelManager = trafficChannelManager;
             mChannelEventListener = trafficChannelManager.getChannelEventListener();
         }

@@ -24,6 +24,7 @@ import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataModel;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.AbstractChannelState;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
@@ -92,6 +93,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private ChannelMapModel mChannelMapModel;
     private ChannelMetadataModel mChannelMetadataModel;
+    private ChannelActivityModel mChannelActivityModel;
     private EventLogManager mEventLogManager;
     private TunerManager mTunerManager;
     private AliasModel mAliasModel;
@@ -117,6 +119,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mChannelMetadataModel = new ChannelMetadataModel();
+        mChannelActivityModel = new ChannelActivityModel(aliasModel);
+        mChannelMetadataModel.addUpdateListener(mChannelActivityModel);
     }
 
     /**
@@ -125,6 +129,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public ChannelMetadataModel getChannelMetadataModel()
     {
         return mChannelMetadataModel;
+    }
+
+    public ChannelActivityModel getChannelActivityModel()
+    {
+        return mChannelActivityModel;
     }
 
     /**
@@ -467,7 +476,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         /* Processing Modules */
         List<Module> modules = DecoderFactory.getModules(mChannelMapModel, channel, mAliasModel, mUserPreferences,
-            request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate());
+            request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
+            mChannelActivityModel);
         processingChain.addModules(modules);
 
         //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate
@@ -593,6 +603,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 added[0] = true;
                 getChannelMetadataModel().add(new ChannelAndMetadata(key,
                     processingChain.getChannelState().getChannelMetadata()));
+                getChannelActivityModel().channelStarted(key, processingChain.getChannelState().getChannelMetadata());
                 return processingChain;
             });
         }
@@ -621,6 +632,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             if(removed != null)
             {
+                getChannelActivityModel().channelStopped(channel);
                 long hangTime = channel.isTrafficChannel() ? NOW_PLAYING_TRAFFIC_CHANNEL_HANG_TIME_MILLISECONDS : 0;
 
                 for(ChannelMetadata channelMetadata: removed.getChannelState().getChannelMetadata())

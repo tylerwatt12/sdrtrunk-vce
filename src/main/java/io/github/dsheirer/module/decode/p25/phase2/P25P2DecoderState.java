@@ -188,6 +188,16 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
         mPatchGroupManager = patchGroupManager;
+
+        if(mTrafficChannelManager != null)
+        {
+            mNetworkConfigurationMonitor.setCurrentControlChannelListener(
+                mTrafficChannelManager::processCurrentControlChannel);
+            mNetworkConfigurationMonitor.setSecondaryControlChannelListener(
+                mTrafficChannelManager::processSecondaryControlChannel);
+            mNetworkConfigurationMonitor.setSiteIdentifierListener(
+                mTrafficChannelManager::processSiteIdentifier);
+        }
     }
 
     /**

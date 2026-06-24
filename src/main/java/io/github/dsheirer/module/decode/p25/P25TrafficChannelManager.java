@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
@@ -130,6 +131,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private ScrambleParameters mPhase2ScrambleParameters;
     private Listener<IMessage> mMessageListener;
     private boolean mIgnoreDataCalls;
+    private ChannelActivityModel mChannelActivityModel;
     //Used only for data calls
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
@@ -154,6 +156,41 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             createPhase1TrafficChannels(phase2.getTrafficChannelPoolSize(), new DecodeConfigP25Phase1());
             createPhase2TrafficChannels(phase2.getTrafficChannelPoolSize(), phase2);
         }
+    }
+
+    public void setChannelActivityModel(ChannelActivityModel channelActivityModel)
+    {
+        mChannelActivityModel = channelActivityModel;
+    }
+
+    public void processCurrentControlChannel(IChannelDescriptor channelDescriptor)
+    {
+        if(mChannelActivityModel != null && isMultiFrequencyControlChannel())
+        {
+            mChannelActivityModel.p25CurrentControl(mParentChannel, channelDescriptor);
+        }
+    }
+
+    public void processSiteIdentifier(P25SiteIdentifier siteIdentifier)
+    {
+        if(mChannelActivityModel != null && isMultiFrequencyControlChannel())
+        {
+            mChannelActivityModel.p25SiteIdentifier(mParentChannel, siteIdentifier);
+        }
+    }
+
+    public void processSecondaryControlChannel(IChannelDescriptor channelDescriptor)
+    {
+        if(mChannelActivityModel != null && isMultiFrequencyControlChannel())
+        {
+            mChannelActivityModel.p25AlternateControl(mParentChannel, channelDescriptor);
+        }
+    }
+
+    private boolean isMultiFrequencyControlChannel()
+    {
+        return mParentChannel != null &&
+            mParentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency;
     }
 
     /**
@@ -304,6 +341,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             //Store the current control channel in the allocated channel map so that we don't allocate a traffic channel against it
             mAllocatedTrafficChannelMap.put(current, parentChannel);
+
+            if(mChannelActivityModel != null && parentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency)
+            {
+                mChannelActivityModel.p25CurrentControl(parentChannel, current);
+            }
         }
         finally
         {
@@ -396,6 +438,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void broadcast(P25TrafficChannelEventTracker tracker)
     {
+        notifyActivityGrant(tracker);
         broadcast(tracker.getEvent());
     }
 
@@ -542,6 +585,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 completed = true;
                 broadcast(tracker);
+                notifyActivityIdle(frequency, timeslot);
             }
         }
         finally
@@ -577,6 +621,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 completed = true;
                 broadcast(tracker);
+                notifyActivityIdle(frequency, timeslot);
             }
         }
         finally
@@ -1239,6 +1284,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 completed = true;
                 broadcast(tracker);
+                notifyActivityIdle(frequency, TimeslotMessage.TIMESLOT_1);
             }
         }
         finally
@@ -1247,6 +1293,25 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         return completed;
+    }
+
+    private void notifyActivityGrant(P25TrafficChannelEventTracker tracker)
+    {
+        if(mChannelActivityModel != null && tracker != null && tracker.getEvent() != null &&
+            tracker.getEvent().getChannelDescriptor() instanceof APCO25Channel channel)
+        {
+            Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
+            mChannelActivityModel.p25TrafficGrant(mParentChannel, trafficChannel, channel,
+                tracker.getEvent().getIdentifierCollection(), tracker.getEvent().getEventType());
+        }
+    }
+
+    private void notifyActivityIdle(long frequency, int timeslot)
+    {
+        if(mChannelActivityModel != null)
+        {
+            mChannelActivityModel.p25TrafficIdle(mParentChannel, frequency, timeslot);
+        }
     }
 
     /**

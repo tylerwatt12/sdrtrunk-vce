@@ -32,6 +32,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
@@ -53,6 +54,7 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
     private transient List<ChannelMetadata> mChannelMetadata = new ArrayList<>();
     private transient Map<ChannelMetadata,Channel> mMetadataChannelMap = new HashMap<>();
     private transient Listener<ChannelAndMetadata> mChannelAddListener;
+    private transient List<IChannelMetadataUpdateListener> mUpdateListeners = new CopyOnWriteArrayList<>();
 
     public ChannelMetadataModel()
     {
@@ -144,6 +146,14 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
     public void setChannelAddListener(Listener<ChannelAndMetadata> listener)
     {
         mChannelAddListener = listener;
+    }
+
+    public void addUpdateListener(IChannelMetadataUpdateListener listener)
+    {
+        if(listener != null)
+        {
+            mUpdateListeners.add(listener);
+        }
     }
 
     public void add(ChannelAndMetadata channelAndMetadata)
@@ -332,6 +342,11 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
     @Override
     public void updated(ChannelMetadata channelMetadata, ChannelMetadataField channelMetadataField)
     {
+        for(IChannelMetadataUpdateListener listener: mUpdateListeners)
+        {
+            listener.updated(channelMetadata, channelMetadataField);
+        }
+
         //Execute on the swing thread to avoid threading issues
         EventQueue.invokeLater(() -> {
             int rowIndex = mChannelMetadata.indexOf(channelMetadata);

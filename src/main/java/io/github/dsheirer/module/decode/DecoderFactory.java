@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.action.AliasActionManager;
 import io.github.dsheirer.audio.AbstractAudioModule;
 import io.github.dsheirer.audio.AudioModule;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
@@ -133,10 +134,11 @@ public class DecoderFactory
      */
     public static List<Module> getModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
                                           UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
-                                          IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
+                                          IChannelDescriptor channelDescriptor, double initialSourceSampleRate,
+                                          ChannelActivityModel channelActivityModel)
     {
         List<Module> modules = getPrimaryModules(channelMapModel, channel, aliasModel, userPreferences,
-                trafficChannelManager, channelDescriptor, initialSourceSampleRate);
+                trafficChannelManager, channelDescriptor, initialSourceSampleRate, channelActivityModel);
         modules.addAll(getAuxiliaryDecoders(channel.getAuxDecodeConfiguration()));
         return modules;
     }
@@ -154,7 +156,8 @@ public class DecoderFactory
      */
     public static List<Module> getPrimaryModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
                                                  UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
-                                                 IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
+                                                 IChannelDescriptor channelDescriptor, double initialSourceSampleRate,
+                                                 ChannelActivityModel channelActivityModel)
     {
         List<Module> modules = new ArrayList<>();
 
@@ -193,11 +196,11 @@ public class DecoderFactory
                 break;
             case P25_PHASE1:
                 processP25Phase1(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor,
-                    initialSourceSampleRate);
+                    initialSourceSampleRate, channelActivityModel);
                 break;
             case P25_PHASE2:
                 processP25Phase2(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor,
-                    initialSourceSampleRate);
+                    initialSourceSampleRate, channelActivityModel);
                 break;
             default:
                 throw new IllegalArgumentException("Unknown decoder type [" + decodeConfig.getDecoderType().toString() + "]");
@@ -217,7 +220,8 @@ public class DecoderFactory
      */
     private static void processP25Phase2(Channel channel, UserPreferences userPreferences, List<Module> modules,
                                          AliasList aliasList, TrafficChannelManager trafficChannelManager,
-                                         IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
+                                         IChannelDescriptor channelDescriptor, double initialSourceSampleRate,
+                                         ChannelActivityModel channelActivityModel)
     {
         modules.add(new P25P2DecoderHDQPSK((DecodeConfigP25Phase2)channel.getDecodeConfiguration(),
             initialSourceSampleRate));
@@ -236,6 +240,8 @@ public class DecoderFactory
         {
             p25TrafficChannelManager = new P25TrafficChannelManager(channel);
         }
+
+        p25TrafficChannelManager.setChannelActivityModel(channelActivityModel);
 
         //Only add traffic channel manager to the modules if this is the control channel
         if(channel.isStandardChannel())
@@ -274,7 +280,8 @@ public class DecoderFactory
      */
     private static void processP25Phase1(Channel channel, UserPreferences userPreferences, List<Module> modules,
                                          AliasList aliasList, TrafficChannelManager trafficChannelManager,
-                                         IChannelDescriptor channelDescriptor, double initialSourceSampleRate)
+                                         IChannelDescriptor channelDescriptor, double initialSourceSampleRate,
+                                         ChannelActivityModel channelActivityModel)
     {
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 p1)
         {
@@ -294,11 +301,13 @@ public class DecoderFactory
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
             P25TrafficChannelManager primaryTCM = new P25TrafficChannelManager(channel);
+            primaryTCM.setChannelActivityModel(channelActivityModel);
             modules.add(primaryTCM);
             modules.add(new P25P1DecoderState(channel, primaryTCM));
         }
         else if(trafficChannelManager instanceof P25TrafficChannelManager parentTCM)
         {
+            parentTCM.setChannelActivityModel(channelActivityModel);
             P25P1DecoderState decoderState = new P25P1DecoderState(channel, parentTCM);
             decoderState.setCurrentChannel(channelDescriptor);
             modules.add(decoderState);

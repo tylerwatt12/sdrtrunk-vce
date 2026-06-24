@@ -22,8 +22,6 @@ import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.audio.playback.AudioPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.channel.metadata.NowPlayingPanel;
-import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
 import io.github.dsheirer.map.MapService;
@@ -34,18 +32,13 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
 import java.awt.Color;
 import java.awt.Dimension;
-import jiconfont.icons.font_awesome.FontAwesome;
-import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
 
-import javax.swing.Icon;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 
 public class ControllerPanel extends JPanel
 {
     private static final long serialVersionUID = 1L;
-    private int mSettingsTabIndex = -1;
 
     private AudioPanel mAudioPanel;
     private NowPlayingPanel mNowPlayingPanel;
@@ -79,30 +72,12 @@ public class ControllerPanel extends JPanel
 
         add(mAudioPanel, "wrap");
 
-        JideTabbedPane tabbedPane = new JideTabbedPane()
-        {
-            @Override
-            public void setSelectedIndex(int index)
-            {
-                if(index == mSettingsTabIndex)
-                {
-                    MyEventBus.getGlobalEventBus().post(new ViewPlaylistRequest());
-                }
-                else
-                {
-                    super.setSelectedIndex(index);
-                }
-            }
-        };
+        JideTabbedPane tabbedPane = new JideTabbedPane();
         tabbedPane.setFont(this.getFont());
         tabbedPane.setForeground(Color.BLACK);
         tabbedPane.addTab("Now Playing", mNowPlayingPanel);
         tabbedPane.addTab("Map", mMapPanel);
         tabbedPane.addTab("Tuners", mTunerManagerPanel);
-
-        Icon playIcon = IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 20, Color.DARK_GRAY);
-        tabbedPane.addTab("Playlist Editor", playIcon, new JLabel("Show Playlist Manager"));
-        mSettingsTabIndex = tabbedPane.getTabCount() - 1;
 
         //Set preferred size to influence the split between these panels
         tabbedPane.setPreferredSize(new Dimension(880, 500));

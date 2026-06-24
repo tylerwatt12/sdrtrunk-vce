@@ -21,6 +21,7 @@ package io.github.dsheirer.channel.metadata;
 import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.channel.details.ChannelDetailPanel;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
 import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.decode.event.DecodeEventPanel;
@@ -41,7 +42,7 @@ import javax.swing.JPanel;
 public class NowPlayingPanel extends JPanel
 {
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
-    private final ChannelMetadataPanel mChannelMetadataPanel;
+    private final ChannelActivityPanel mChannelActivityPanel;
     private final ChannelDetailPanel mChannelDetailPanel;
     private final DecodeEventPanel mDecodeEventPanel;
     private final MessageActivityPanel mMessageActivityPanel;
@@ -63,7 +64,7 @@ public class NowPlayingPanel extends JPanel
         mChannelDetailPanel = new ChannelDetailPanel(playlistManager.getChannelProcessingManager());
         mDecodeEventPanel = new DecodeEventPanel(iconModel, userPreferences, playlistManager.getAliasModel());
         mMessageActivityPanel = new MessageActivityPanel(userPreferences);
-        mChannelMetadataPanel = new ChannelMetadataPanel(playlistManager, iconModel, userPreferences);
+        mChannelActivityPanel = new ChannelActivityPanel(playlistManager, iconModel, userPreferences);
         mChannelSpectrumSquelchPanel = new ChannelSpectrumPanel(playlistManager, settingsManager, userPreferences);
         mDetailTabsVisible = detailTabsVisible;
 
@@ -139,7 +140,7 @@ public class NowPlayingPanel extends JPanel
     private void init()
     {
         setLayout( new MigLayout( "insets 0 10 10 10", "[grow,fill]", "[grow,fill]") );
-        getSplitPane().add(mChannelMetadataPanel);
+        getSplitPane().add(mChannelActivityPanel);
 
         if(mDetailTabsVisible)
         {
@@ -147,10 +148,10 @@ public class NowPlayingPanel extends JPanel
         }
 
         add(getSplitPane());
-        mChannelMetadataPanel.addProcessingChainSelectionListener(mChannelDetailPanel);
-        mChannelMetadataPanel.addProcessingChainSelectionListener(mDecodeEventPanel);
-        mChannelMetadataPanel.addProcessingChainSelectionListener(mMessageActivityPanel);
-        mChannelMetadataPanel.addProcessingChainSelectionListener(mChannelSpectrumSquelchPanel);
+        mChannelActivityPanel.addProcessingChainSelectionListener(mChannelDetailPanel);
+        mChannelActivityPanel.addProcessingChainSelectionListener(mDecodeEventPanel);
+        mChannelActivityPanel.addProcessingChainSelectionListener(mMessageActivityPanel);
+        mChannelActivityPanel.addProcessingChainSelectionListener(mChannelSpectrumSquelchPanel);
     }
 
     private void restoreSplitPaneDividerLocation()

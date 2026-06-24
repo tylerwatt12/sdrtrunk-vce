@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
@@ -53,6 +54,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Consumer;
 import org.apache.commons.lang3.StringUtils;
 
 /**
@@ -112,6 +114,9 @@ public class P25P1NetworkConfigurationMonitor
     private MotorolaBaseStationId mMotorolaBaseStationId;
 
     private Modulation mModulation;
+    private Consumer<IChannelDescriptor> mCurrentControlChannelListener;
+    private Consumer<IChannelDescriptor> mSecondaryControlChannelListener;
+    private Consumer<P25SiteIdentifier> mSiteIdentifierListener;
 
     /**
      * Constructs a network configuration monitor.
@@ -121,6 +126,45 @@ public class P25P1NetworkConfigurationMonitor
     public P25P1NetworkConfigurationMonitor(Modulation modulation)
     {
         mModulation = modulation;
+    }
+
+    public void setCurrentControlChannelListener(Consumer<IChannelDescriptor> listener)
+    {
+        mCurrentControlChannelListener = listener;
+    }
+
+    public void setSecondaryControlChannelListener(Consumer<IChannelDescriptor> listener)
+    {
+        mSecondaryControlChannelListener = listener;
+    }
+
+    public void setSiteIdentifierListener(Consumer<P25SiteIdentifier> listener)
+    {
+        mSiteIdentifierListener = listener;
+    }
+
+    private void broadcastCurrentControlChannel(IChannelDescriptor channel)
+    {
+        if(mCurrentControlChannelListener != null && channel != null && channel.getDownlinkFrequency() > 0)
+        {
+            mCurrentControlChannelListener.accept(channel);
+        }
+    }
+
+    private void broadcastSecondaryControlChannel(IChannelDescriptor channel)
+    {
+        if(mSecondaryControlChannelListener != null && channel != null && channel.getDownlinkFrequency() > 0)
+        {
+            mSecondaryControlChannelListener.accept(channel);
+        }
+    }
+
+    private void broadcastSiteIdentifier(Identifier<?> wacn, Identifier<?> system, Identifier<?> rfss, Identifier<?> site)
+    {
+        if(mSiteIdentifierListener != null)
+        {
+            mSiteIdentifierListener.accept(new P25SiteIdentifier(wacn, system, rfss, site));
+        }
     }
 
     /**
@@ -140,6 +184,9 @@ public class P25P1NetworkConfigurationMonitor
                 if(tsbk instanceof NetworkStatusBroadcast networkStatusBroadcast)
                 {
                     mTSBKNetworkStatusBroadcast = networkStatusBroadcast;
+                    broadcastCurrentControlChannel(networkStatusBroadcast.getChannel());
+                    broadcastSiteIdentifier(networkStatusBroadcast.getWacn(), networkStatusBroadcast.getSystem(),
+                        null, null);
                 }
                 break;
             case OSP_SYSTEM_SERVICE_BROADCAST:
@@ -152,6 +199,9 @@ public class P25P1NetworkConfigurationMonitor
                 if(tsbk instanceof RFSSStatusBroadcast rfssStatusBroadcast)
                 {
                     mTSBKRFSSStatusBroadcast = rfssStatusBroadcast;
+                    broadcastCurrentControlChannel(rfssStatusBroadcast.getChannel());
+                    broadcastSiteIdentifier(null, rfssStatusBroadcast.getSystem(), rfssStatusBroadcast.getRfss(),
+                        rfssStatusBroadcast.getSite());
                 }
                 break;
             case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST:
@@ -160,6 +210,7 @@ public class P25P1NetworkConfigurationMonitor
                     for(IChannelDescriptor secondaryControlChannel : sccb.getChannels())
                     {
                         mSecondaryControlChannels.put(secondaryControlChannel.toString(), secondaryControlChannel);
+                        broadcastSecondaryControlChannel(secondaryControlChannel);
                     }
                 }
                 break;
@@ -168,6 +219,7 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     IChannelDescriptor channel = sccbe.getChannel();
                     mSecondaryControlChannels.put(channel.toString(), channel);
+                    broadcastSecondaryControlChannel(channel);
                 }
                 break;
             case OSP_ADJACENT_STATUS_BROADCAST:
@@ -216,12 +268,18 @@ public class P25P1NetworkConfigurationMonitor
                 if(ambtc instanceof AMBTCNetworkStatusBroadcast ambtcNetworkStatusBroadcast)
                 {
                     mAMBTCNetworkStatusBroadcast = ambtcNetworkStatusBroadcast;
+                    broadcastCurrentControlChannel(ambtcNetworkStatusBroadcast.getChannel());
+                    broadcastSiteIdentifier(ambtcNetworkStatusBroadcast.getWacn(),
+                        ambtcNetworkStatusBroadcast.getSystem(), null, null);
                 }
                 break;
             case OSP_RFSS_STATUS_BROADCAST:
                 if(ambtc instanceof AMBTCRFSSStatusBroadcast ambtcRfssStatusBroadcast)
                 {
                     mAMBTCRFSSStatusBroadcast = ambtcRfssStatusBroadcast;
+                    broadcastCurrentControlChannel(ambtcRfssStatusBroadcast.getChannel());
+                    broadcastSiteIdentifier(null, ambtcRfssStatusBroadcast.getSystem(),
+                        ambtcRfssStatusBroadcast.getRFSS(), ambtcRfssStatusBroadcast.getSite());
                 }
                 break;
             default:
@@ -261,24 +319,36 @@ public class P25P1NetworkConfigurationMonitor
                     if(lcw instanceof LCNetworkStatusBroadcast networkStatusBroadcast)
                     {
                         mLCNetworkStatusBroadcast = networkStatusBroadcast;
+                        broadcastCurrentControlChannel(networkStatusBroadcast.getChannel());
+                        broadcastSiteIdentifier(networkStatusBroadcast.getWACN(), networkStatusBroadcast.getSystem(),
+                            null, null);
                     }
                     break;
                 case NETWORK_STATUS_BROADCAST_EXPLICIT:
                     if(lcw instanceof LCNetworkStatusBroadcastExplicit networkStatusBroadcastExplicit)
                     {
                         mLCNetworkStatusBroadcastExplicit = networkStatusBroadcastExplicit;
+                        broadcastCurrentControlChannel(networkStatusBroadcastExplicit.getChannel());
+                        broadcastSiteIdentifier(networkStatusBroadcastExplicit.getWACN(),
+                            networkStatusBroadcastExplicit.getSystem(), null, null);
                     }
                     break;
                 case RFSS_STATUS_BROADCAST:
                     if(lcw instanceof LCRFSSStatusBroadcast rfssStatusBroadcast)
                     {
                         mLCRFSSStatusBroadcast = rfssStatusBroadcast;
+                        broadcastCurrentControlChannel(rfssStatusBroadcast.getChannel());
+                        broadcastSiteIdentifier(null, rfssStatusBroadcast.getSystem(), rfssStatusBroadcast.getRfss(),
+                            rfssStatusBroadcast.getSite());
                     }
                     break;
                 case RFSS_STATUS_BROADCAST_EXPLICIT:
                     if(lcw instanceof LCRFSSStatusBroadcastExplicit rfssStatusBroadcastExplicit)
                     {
                         mLCRFSSStatusBroadcastExplicit = rfssStatusBroadcastExplicit;
+                        broadcastCurrentControlChannel(rfssStatusBroadcastExplicit.getChannel());
+                        broadcastSiteIdentifier(null, null, rfssStatusBroadcastExplicit.getRfss(),
+                            rfssStatusBroadcastExplicit.getSite());
                     }
                     break;
                 case SECONDARY_CONTROL_CHANNEL_BROADCAST:
@@ -287,6 +357,7 @@ public class P25P1NetworkConfigurationMonitor
                         for(IChannelDescriptor channel : sccb.getChannels())
                         {
                             mSecondaryControlChannels.put(channel.toString(), channel);
+                            broadcastSecondaryControlChannel(channel);
                         }
                     }
                     break;
@@ -296,6 +367,7 @@ public class P25P1NetworkConfigurationMonitor
                         for(IChannelDescriptor channel : sccb.getChannels())
                         {
                             mSecondaryControlChannels.put(channel.toString(), channel);
+                            broadcastSecondaryControlChannel(channel);
                         }
                     }
                     break;
