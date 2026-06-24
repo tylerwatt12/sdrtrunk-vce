@@ -34,7 +34,6 @@ public enum TunerClass
 	HYDRASDR("HydraSDR"),
 	RTL2832("RTL-2832"),
 	RSP("RSP"),
-	SDRCONNECT("SDRconnect"),
 	TEST_TUNER("Test"),
 	RECORDING_TUNER("Recording"),
 	UNKNOWN("Unknown" );

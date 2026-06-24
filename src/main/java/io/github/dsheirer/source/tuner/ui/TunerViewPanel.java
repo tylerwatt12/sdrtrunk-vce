@@ -29,8 +29,6 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.source.tuner.recording.AddRecordingTunerDialog;
-import io.github.dsheirer.source.tuner.sdrconnect.AddSDRconnectTunerDialog;
-import io.github.dsheirer.source.tuner.sdrconnect.DiscoveredSDRconnectTuner;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -50,7 +48,6 @@ import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowSorter;
 import javax.swing.SortOrder;
-import javax.swing.SwingUtilities;
 import javax.swing.event.TableModelEvent;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableCellRenderer;
@@ -72,8 +69,6 @@ public class TunerViewPanel extends JPanel
     private JTable mTunerTable;
     private JButton mAddRecordingButton;
     private JButton mRemoveRecordingButton;
-    private JButton mAddSDRconnectButton;
-    private JButton mRemoveSDRconnectButton;
 
     /**
      * Constructs an instance
@@ -104,7 +99,6 @@ public class TunerViewPanel extends JPanel
         mTunerTable.getSelectionModel().addListSelectionListener(event ->
         {
             getRemoveRecordingButton().setEnabled(false);
-            getRemoveSDRconnectButton().setEnabled(false);
 
             if(!event.getValueIsAdjusting())
             {
@@ -117,7 +111,6 @@ public class TunerViewPanel extends JPanel
                     DiscoveredTuner selected = mDiscoveredTunerModel.getDiscoveredTuner(modelRow);
                     mDiscoveredTunerEditor.setItem(selected);
                     getRemoveRecordingButton().setEnabled(selected instanceof DiscoveredRecordingTuner);
-                    getRemoveSDRconnectButton().setEnabled(selected instanceof DiscoveredSDRconnectTuner);
                 }
             }
         });
@@ -193,8 +186,6 @@ public class TunerViewPanel extends JPanel
         buttonPanel.setLayout(new MigLayout("insets 0 1 3 0", "", ""));
         buttonPanel.add(getAddRecordingButton());
         buttonPanel.add(getRemoveRecordingButton());
-        buttonPanel.add(getAddSDRconnectButton());
-        buttonPanel.add(getRemoveSDRconnectButton());
         tunerTablePanel.add(buttonPanel);
 
         tunerTablePanel.setPreferredSize(new Dimension(200,200));
@@ -254,52 +245,6 @@ public class TunerViewPanel extends JPanel
         }
 
         return mRemoveRecordingButton;
-    }
-
-    private JButton getAddSDRconnectButton()
-    {
-        if(mAddSDRconnectButton == null)
-        {
-            mAddSDRconnectButton = new JButton("Add SDRconnect");
-            mAddSDRconnectButton.addActionListener(e ->
-            {
-                AddSDRconnectTunerDialog dialog = new AddSDRconnectTunerDialog(
-                    SwingUtilities.getWindowAncestor(TunerViewPanel.this),
-                    mUserPreferences, mDiscoveredTunerModel, mTunerConfigurationManager);
-                dialog.setLocationRelativeTo(TunerViewPanel.this);
-                EventQueue.invokeLater(() -> dialog.setVisible(true));
-            });
-        }
-
-        return mAddSDRconnectButton;
-    }
-
-    private JButton getRemoveSDRconnectButton()
-    {
-        if(mRemoveSDRconnectButton == null)
-        {
-            mRemoveSDRconnectButton = new JButton("Remove SDRconnect");
-            mRemoveSDRconnectButton.setEnabled(false);
-            mRemoveSDRconnectButton.addActionListener(e -> {
-                int[] indexes = mTunerTable.getSelectionModel().getSelectedIndices();
-
-                if(indexes.length == 1)
-                {
-                    int modelIndex = mTunerTable.convertRowIndexToModel(indexes[0]);
-                    DiscoveredTuner selected = mDiscoveredTunerModel.getDiscoveredTuner(modelIndex);
-
-                    if(selected instanceof DiscoveredSDRconnectTuner discoveredSDRconnectTuner)
-                    {
-                        mLog.info("Removing SDRconnect Tuner: " + discoveredSDRconnectTuner);
-                        discoveredSDRconnectTuner.stop();
-                        mTunerConfigurationManager.removeTunerConfiguration(discoveredSDRconnectTuner.getTunerConfiguration());
-                        EventQueue.invokeLater(() -> mDiscoveredTunerModel.removeDiscoveredTuner(discoveredSDRconnectTuner));
-                    }
-                }
-            });
-        }
-
-        return mRemoveSDRconnectButton;
     }
 
     /**

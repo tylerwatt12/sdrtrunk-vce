@@ -38,7 +38,6 @@ import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
-import io.github.dsheirer.source.tuner.sdrconnect.SDRconnectTunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
@@ -79,7 +78,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
-    private final SDRconnectTunerManager mSDRconnectTunerManager;
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
     private boolean mLibUsbInitialized = false;
@@ -94,8 +92,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = new TunerConfigurationManager(userPreferences);
         mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager);
-        mSDRconnectTunerManager = new SDRconnectTunerManager(userPreferences, mDiscoveredTunerModel,
-            mTunerConfigurationManager, this);
     }
 
     /**
@@ -179,12 +175,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
         discoverRecordingTuners();
 
-        // SDRconnect startup can involve launching and waiting for headless instances, so defer it off the
-        // application startup path and let tuners appear shortly after launch.
-        ThreadPool.CACHED.execute(() -> {
-            mSDRconnectTunerManager.discoverConfiguredTuners();
-            mSDRconnectTunerManager.autoDiscoverTuners();
-        });
     }
 
     /**
@@ -199,7 +189,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
         //Stop all tuners
         mDiscoveredTunerModel.releaseDiscoveredTuners();
-        mSDRconnectTunerManager.stop();
 
         //Shutdown SDRplay API instance
         if(mSDRplay != null)

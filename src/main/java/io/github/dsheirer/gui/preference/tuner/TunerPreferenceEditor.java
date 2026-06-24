@@ -27,12 +27,9 @@ import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
-import javafx.scene.control.Spinner;
-import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 
@@ -57,12 +54,6 @@ public class TunerPreferenceEditor extends HBox
     private Label mHelpTextHeterodyneLabel;
     private ChoiceBox<RspDuoSelectionMode> mRspDuoTunerModeChoiceBox;
     private Label mRspDuoModeLabel;
-    private Label mSDRconnectSectionLabel;
-    private CheckBox mSDRconnectAutostartCheckBox;
-    private Label mSDRconnectPathLabel;
-    private TextField mSDRconnectPathField;
-    private Label mSDRconnectTimeoutLabel;
-    private Spinner<Integer> mSDRconnectTimeoutSpinner;
 
     public TunerPreferenceEditor(UserPreferences userPreferences)
     {
@@ -92,14 +83,6 @@ public class TunerPreferenceEditor extends HBox
             mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, row, 2, 1);
             mEditorPane.add(getRspDuoModeLabel(), 0, ++row);
             mEditorPane.add(getRspDuoTunerModeChoiceBox(), 1, row);
-            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, ++row, 2, 1);
-            mEditorPane.add(getSDRconnectSectionLabel(), 0, ++row, 2, 1);
-            mEditorPane.add(getSDRconnectAutostartCheckBox(), 1, ++row);
-            mEditorPane.add(getSDRconnectPathLabel(), 0, ++row);
-            mEditorPane.add(getSDRconnectPathField(), 1, row);
-            mEditorPane.add(getSDRconnectTimeoutLabel(), 0, ++row);
-            mEditorPane.add(getSDRconnectTimeoutSpinner(), 1, row);
-            updateSDRconnectHeadlessControls();
         }
 
         return mEditorPane;
@@ -217,99 +200,5 @@ public class TunerPreferenceEditor extends HBox
         }
 
         return mRspDuoModeLabel;
-    }
-
-    private Label getSDRconnectSectionLabel()
-    {
-        if(mSDRconnectSectionLabel == null)
-        {
-            mSDRconnectSectionLabel = new Label("SDRconnect");
-        }
-
-        return mSDRconnectSectionLabel;
-    }
-
-    private CheckBox getSDRconnectAutostartCheckBox()
-    {
-        if(mSDRconnectAutostartCheckBox == null)
-        {
-            mSDRconnectAutostartCheckBox = new CheckBox("Auto-start local SDRconnect headless instances");
-            mSDRconnectAutostartCheckBox.setSelected(mTunerPreference.isSDRconnectHeadlessAutostartEnabled());
-            mSDRconnectAutostartCheckBox.selectedProperty().addListener((observable, oldValue, newValue) -> {
-                mTunerPreference.setSDRconnectHeadlessAutostartEnabled(newValue);
-                updateSDRconnectHeadlessControls();
-            });
-        }
-
-        return mSDRconnectAutostartCheckBox;
-    }
-
-    private Label getSDRconnectPathLabel()
-    {
-        if(mSDRconnectPathLabel == null)
-        {
-            mSDRconnectPathLabel = new Label("Headless Executable Path");
-        }
-
-        return mSDRconnectPathLabel;
-    }
-
-    private TextField getSDRconnectPathField()
-    {
-        if(mSDRconnectPathField == null)
-        {
-            mSDRconnectPathField = new TextField(mTunerPreference.getSDRconnectHeadlessPath());
-            mSDRconnectPathField.setPrefColumnCount(40);
-            mSDRconnectPathField.focusedProperty().addListener((observable, oldValue, newValue) -> {
-                if(!newValue)
-                {
-                    String path = mSDRconnectPathField.getText() != null ? mSDRconnectPathField.getText().trim() : "";
-
-                    if(!path.equals(mTunerPreference.getSDRconnectHeadlessPath()))
-                    {
-                        mTunerPreference.setSDRconnectHeadlessPath(path);
-                    }
-                }
-            });
-        }
-
-        return mSDRconnectPathField;
-    }
-
-    private Label getSDRconnectTimeoutLabel()
-    {
-        if(mSDRconnectTimeoutLabel == null)
-        {
-            mSDRconnectTimeoutLabel = new Label("Startup Timeout (seconds)");
-        }
-
-        return mSDRconnectTimeoutLabel;
-    }
-
-    private Spinner<Integer> getSDRconnectTimeoutSpinner()
-    {
-        if(mSDRconnectTimeoutSpinner == null)
-        {
-            mSDRconnectTimeoutSpinner = new Spinner<>(1, 60,
-                Math.max(1, mTunerPreference.getSDRconnectHeadlessStartDelayMs() / 1000), 1);
-            mSDRconnectTimeoutSpinner.setEditable(true);
-            mSDRconnectTimeoutSpinner.valueProperty().addListener((observable, oldValue, newValue) -> {
-                if(newValue != null)
-                {
-                    mTunerPreference.setSDRconnectHeadlessStartDelayMs(newValue * 1000);
-                }
-            });
-        }
-
-        return mSDRconnectTimeoutSpinner;
-    }
-
-    private void updateSDRconnectHeadlessControls()
-    {
-        boolean enabled = getSDRconnectAutostartCheckBox().isSelected();
-        getSDRconnectPathField().setDisable(!enabled);
-        getSDRconnectPathLabel().setDisable(!enabled);
-        getSDRconnectTimeoutSpinner().setDisable(!enabled);
-        getSDRconnectTimeoutLabel().setDisable(!enabled);
     }
 }
