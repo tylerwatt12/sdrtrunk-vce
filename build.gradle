@@ -56,8 +56,9 @@ repositories {
 }
 
 def javafxVersion = "26"
-def javafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ? "win" :
+def currentJavafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ? "win" :
     (org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isMacOsX() ? "mac" : "linux")
+def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlatform
 
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
