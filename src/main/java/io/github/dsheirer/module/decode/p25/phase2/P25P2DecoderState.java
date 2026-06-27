@@ -48,7 +48,11 @@ import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.MotorolaTalkerAliasComplete;
@@ -140,7 +144,7 @@ import org.slf4j.LoggerFactory;
  * Decoder state for an APCO-25 Phase II channel.  Maintains the call/control/data/idle state of the channel and
  * produces events by monitoring the decoded message stream.
  */
-public class P25P2DecoderState extends TimeslotDecoderState implements IdentifierUpdateListener
+public class P25P2DecoderState extends TimeslotDecoderState implements IdentifierUpdateListener, P25NetworkConfigurationSnapshotProvider
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P2DecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
@@ -169,9 +173,15 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private static final String USER_LABEL = " USER:";
     private Channel mChannel;
     private PatchGroupManager mPatchGroupManager;
-    private P25P2NetworkConfigurationMonitor mNetworkConfigurationMonitor = new P25P2NetworkConfigurationMonitor();
+    private P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer =
+        new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+    private P25P2NetworkConfigurationMonitor mNetworkConfigurationMonitor =
+        new P25P2NetworkConfigurationMonitor(mNetworkConfigurationStabilizer);
     private P25TrafficChannelManager mTrafficChannelManager;
     private int mEndPttOnFacchCounter = 0;
+    private int mLastPublishedSiteMetadataHash;
+    private long mLastPublishedSiteMetadataTimestamp;
+    private static final long SITE_METADATA_EVENT_INTERVAL_MILLISECONDS = 5000;
 
     /**
      * Constructs an APCO-25 decoder state instance for a traffic or control channel.
@@ -245,6 +255,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
                 {
                     mPatchGroupManager.addPatchGroup(patchGroupIdentifier, preLoadDataContent.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(patchGroupIdentifier,
+                        preLoadDataContent.getTimestamp());
                 }
             }
         }
@@ -300,6 +312,38 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             else if(message instanceof MotorolaTalkerAliasComplete tac && tac.isValid())
             {
                 mTrafficChannelManager.getTalkerAliasManager().update(tac.getRadio(), tac.getAlias());
+            }
+
+            publishStableSiteMetadata(message.getTimestamp());
+        }
+    }
+
+    private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
+    {
+        mNetworkConfigurationStabilizer.observe(observation, timestamp);
+        publishStableSiteMetadata(timestamp);
+    }
+
+    private void publishStableSiteMetadata(long timestamp)
+    {
+        if(!hasInterModuleEventBus())
+        {
+            return;
+        }
+
+        long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        P25NetworkConfigurationSnapshot snapshot = mNetworkConfigurationStabilizer.getSnapshot();
+
+        if(snapshot != null && snapshot.isUseful())
+        {
+            int hash = snapshot.hashCode();
+
+            if(hash != mLastPublishedSiteMetadataHash ||
+                eventTimestamp - mLastPublishedSiteMetadataTimestamp >= SITE_METADATA_EVENT_INTERVAL_MILLISECONDS)
+            {
+                mLastPublishedSiteMetadataHash = hash;
+                mLastPublishedSiteMetadataTimestamp = eventTimestamp;
+                getInterModuleEventBus().post(new SiteMetadataEvent(mChannel, snapshot, eventTimestamp));
             }
         }
     }
@@ -508,6 +552,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     if(gr.hasPatchgroup())
                     {
                         mPatchGroupManager.addPatchGroup(gr.getPatchgroup(), message.getTimestamp());
+                        mNetworkConfigurationStabilizer.observePatchGroup(gr.getPatchgroup(), message.getTimestamp());
                     }
 
                     if(gr.hasPatchgroup() || gr.hasRadio())
@@ -544,6 +589,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupVoiceChannelUserAbbreviated gr)
                 {
                     mPatchGroupManager.addPatchGroup(gr.getPatchGroup(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(gr.getPatchGroup(), message.getTimestamp());
                 }
                 processChannelUser(message, mac);
                 break;
@@ -554,6 +600,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupVoiceChannelUpdate gr)
                 {
                     mPatchGroupManager.addPatchGroup(gr.getPatchgroup(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(gr.getPatchgroup(), message.getTimestamp());
                 }
                 processChannelGrantUpdate(message, mac);
                 break;
@@ -575,6 +622,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupVoiceChannelUserExtended gr)
                 {
                     mPatchGroupManager.addPatchGroup(gr.getPatchgroup(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(gr.getPatchgroup(), message.getTimestamp());
                 }
                 processChannelUser(message, mac);
                 break;
@@ -582,6 +630,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupChannelGrantImplicit gr)
                 {
                     mPatchGroupManager.addPatchGroup(gr.getTargetAddress(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(gr.getTargetAddress(), message.getTimestamp());
                 }
                 processChannelGrant(message, mac);
                 break;
@@ -589,6 +638,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupChannelGrantExplicit gr)
                 {
                     mPatchGroupManager.addPatchGroup(gr.getTargetAddress(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(gr.getTargetAddress(), message.getTimestamp());
                 }
                 processChannelGrant(message, mac);
                 break;
@@ -596,10 +646,12 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupChannelGrantUpdate gr)
                 {
                     mPatchGroupManager.addPatchGroup(gr.getPatchgroupA(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(gr.getPatchgroupA(), message.getTimestamp());
 
                     if(gr.hasPatchgroupB())
                     {
                         mPatchGroupManager.addPatchGroup(gr.getPatchgroupB(), message.getTimestamp());
+                        mNetworkConfigurationStabilizer.observePatchGroup(gr.getPatchgroupB(), message.getTimestamp());
                     }
                 }
                 processChannelGrantUpdate(message, mac);
@@ -1025,6 +1077,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupVoiceChannelUpdate cgu)
                 {
                     mPatchGroupManager.addPatchGroup(cgu.getPatchgroup(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(cgu.getPatchgroup(), message.getTimestamp());
                     updateCurrentChannel(cgu.getChannel());
 
                     if(mChannel.isStandardChannel())
@@ -1040,6 +1093,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupChannelGrantUpdate cgu)
                 {
                     mPatchGroupManager.addPatchGroup(cgu.getPatchgroupA(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroup(cgu.getPatchgroupA(), message.getTimestamp());
                     updateCurrentChannel(cgu.getChannelA());
 
                     //Create an empty service options
@@ -1056,6 +1110,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     if(cgu.hasPatchgroupB())
                     {
                         mPatchGroupManager.addPatchGroup(cgu.getPatchgroupB(), message.getTimestamp());
+                        mNetworkConfigurationStabilizer.observePatchGroup(cgu.getPatchgroupB(), message.getTimestamp());
                         updateCurrentChannel(cgu.getChannelB());
 
                         if(mChannel.isStandardChannel())
@@ -1221,6 +1276,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         if(mPatchGroupManager.addPatchGroup(regroup.getPatchGroup(), message.getTimestamp()))
                         {
+                            mNetworkConfigurationStabilizer.observePatchGroup(regroup.getPatchGroup(),
+                                message.getTimestamp());
                             broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "ACTIVATE " + regroup.getPatchGroup());
                         }
                     }
@@ -1228,6 +1285,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         if(mPatchGroupManager.removePatchGroup(regroup.getPatchGroup()))
                         {
+                            mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup());
                             broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "DEACTIVATE " + regroup.getPatchGroup());
                         }
                     }
@@ -1237,6 +1295,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupAddCommand mgrac &&
                         mPatchGroupManager.addPatchGroup(mgrac.getPatchGroup(), message.getTimestamp()))
                 {
+                    mNetworkConfigurationStabilizer.observePatchGroup(mgrac.getPatchGroup(), message.getTimestamp());
                     broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "ACTIVATE " + mgrac.getPatchGroup());
                 }
                 break;
@@ -1244,6 +1303,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupDeleteCommand mgrdc &&
                         mPatchGroupManager.removePatchGroup(mgrdc.getPatchGroup()))
                 {
+                    mNetworkConfigurationStabilizer.removePatchGroup(mgrdc.getPatchGroup());
                     broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "DEACTIVATE " + mgrdc.getPatchGroup());
                 }
                 break;
@@ -1362,7 +1422,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private void processNetwork(MacMessage message, MacStructure mac)
     {
         // MAC_3_IDLE and MAC_6_HANGTIME on a traffic channel do not mean the call has ended — do not downgrade.
-        mNetworkConfigurationMonitor.processMacMessage(message);
+        observeNetworkConfiguration(mNetworkConfigurationMonitor.processMacMessage(message), message.getTimestamp());
 
         if(mac instanceof NetworkStatusBroadcastImplicit nsbi)
         {
@@ -1874,6 +1934,12 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     }
 
     @Override
+    public P25NetworkConfigurationSnapshot getP25NetworkConfigurationSnapshot()
+    {
+        return mNetworkConfigurationStabilizer.getSnapshot();
+    }
+
+    @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
         if(event.getTimeslot() == getTimeslot())
@@ -1883,6 +1949,9 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 case REQUEST_RESET:
                     resetState();
                     mNetworkConfigurationMonitor.reset();
+                    mNetworkConfigurationStabilizer.reset();
+                    mLastPublishedSiteMetadataHash = 0;
+                    mLastPublishedSiteMetadataTimestamp = 0;
                     break;
                 case NOTIFICATION_SOURCE_FREQUENCY:
                     long frequency = event.getFrequency();

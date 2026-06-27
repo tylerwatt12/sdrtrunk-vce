@@ -22,6 +22,8 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallBroadcaster;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyFeedConfiguration;
+import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveBroadcaster;
+import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerBroadcaster;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerFeedConfiguration;
@@ -77,6 +79,9 @@ public class BroadcastFactory
                 case OPENMHZ:
                     return new OpenMHzBroadcaster((OpenMHzConfiguration)configuration,
                         inputAudioFormat, mp3Setting, aliasModel);
+                case RADIORESOLVE:
+                    return new RadioResolveBroadcaster((RadioResolveConfiguration)configuration,
+                        inputAudioFormat, mp3Setting, aliasModel);
                 case BROADCASTIFY:
                     return new IcecastTCPAudioBroadcaster((BroadcastifyFeedConfiguration) configuration,
                             inputAudioFormat, mp3Setting, aliasModel);
@@ -121,6 +126,8 @@ public class BroadcastFactory
                 return new BroadcastifyFeedConfiguration(format);
             case OPENMHZ:
                 return new OpenMHzConfiguration(format);
+            case RADIORESOLVE:
+                return new RadioResolveConfiguration(format);
             case ICECAST_HTTP:
                 return new IcecastHTTPConfiguration(format);
             case ICECAST_TCP:

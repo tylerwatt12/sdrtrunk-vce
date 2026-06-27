@@ -21,6 +21,8 @@ package io.github.dsheirer.audio.broadcast;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.icon.IconModel;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Broadcaster;
@@ -48,7 +50,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.swing.table.AbstractTableModel;
 
-public class BroadcastModel extends AbstractTableModel implements Listener<AudioRecording>
+public class BroadcastModel extends AbstractTableModel implements Listener<AudioRecording>, SiteMetadataListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(BroadcastModel.class);
 
@@ -326,6 +328,23 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
         }
 
         mRecordingQueue.add(audioRecording);
+    }
+
+    @Override
+    public void receiveSiteMetadata(SiteMetadataEvent event)
+    {
+        if(event == null || !event.isUseful())
+        {
+            return;
+        }
+
+        for(AbstractAudioBroadcaster<?> audioBroadcaster: mBroadcasterMap.values())
+        {
+            if(audioBroadcaster instanceof SiteMetadataListener listener)
+            {
+                listener.receiveSiteMetadata(event);
+            }
+        }
     }
 
     /**

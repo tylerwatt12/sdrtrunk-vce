@@ -42,6 +42,7 @@ import java.beans.Transient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
@@ -79,6 +80,7 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     private StringProperty mSystem = new SimpleStringProperty();
     private StringProperty mSite = new SimpleStringProperty();
     private StringProperty mName = new SimpleStringProperty();
+    private StringProperty mRadresGuid = new SimpleStringProperty();
     private ObservableList<Long> mFrequencyList;
 
     private BooleanProperty mProcessing = new SimpleBooleanProperty();
@@ -132,6 +134,7 @@ public class Channel extends Configuration implements Listener<SourceEvent>
         channel.setSystem(mSystem.get());
         channel.setSite(mSite.get());
         channel.setAliasListName(mAliasListName.get());
+        channel.setRadresGuid(mRadresGuid.get());
         channel.setAutoStart(mAutoStart.get());
         channel.setAutoStartOrder(mAutoStartOrder.get());
 
@@ -292,6 +295,14 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     }
 
     /**
+     * RadioResolve stable source GUID property.
+     */
+    public StringProperty radresGuidProperty()
+    {
+        return mRadresGuid;
+    }
+
+    /**
      * Processing property.  Indicates if this channel configuration is currently processing.
      */
     public BooleanProperty processingProperty()
@@ -436,6 +447,51 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     public void setName(String name)
     {
         mName.set(name);
+    }
+
+    /**
+     * Stable RadioResolve source GUID for configured RF sources.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "radres_guid")
+    public String getRadresGuid()
+    {
+        if(isStandardChannel() && !hasRadresGuid())
+        {
+            mRadresGuid.set(UUID.randomUUID().toString());
+        }
+
+        return mRadresGuid.get();
+    }
+
+    /**
+     * Sets the stable RadioResolve source GUID.
+     */
+    public void setRadresGuid(String radresGuid)
+    {
+        if(radresGuid != null && !radresGuid.isBlank())
+        {
+            try
+            {
+                mRadresGuid.set(UUID.fromString(radresGuid.trim()).toString());
+            }
+            catch(IllegalArgumentException _)
+            {
+                mRadresGuid.set(null);
+            }
+        }
+        else
+        {
+            mRadresGuid.set(null);
+        }
+    }
+
+    /**
+     * Indicates if this channel has a RadioResolve source GUID.
+     */
+    @JsonIgnore
+    public boolean hasRadresGuid()
+    {
+        return mRadresGuid != null && mRadresGuid.get() != null && !mRadresGuid.get().isBlank();
     }
 
     /**
@@ -799,6 +855,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     {
         return (Channel c) -> new Observable[] {c.processingProperty(), c.nameProperty(), c.aliasListNameProperty(),
             c.autoStartOrderProperty(), c.autoStartProperty(), c.siteProperty(), c.systemProperty(),
-            c.getFrequencyList()};
+            c.radresGuidProperty(), c.getFrequencyList()};
     }
 }

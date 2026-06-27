@@ -1,0 +1,73 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2014-2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.module.decode.p25.telemetry;
+
+import java.util.List;
+
+/**
+ * Structured P25 network configuration snapshot for optional external telemetry integrations.
+ */
+public record P25NetworkConfigurationSnapshot(String decoder, Network network, CurrentSite currentSite,
+                                              List<Channel> channels, List<NeighborSite> neighborSites,
+                                              List<FrequencyBand> frequencyBands,
+                                              List<PatchGroup> patchGroups,
+                                              List<TalkerAlias> talkerAliases)
+{
+    /**
+     * Indicates if this snapshot contains enough learned over-the-air configuration to send.
+     */
+    public boolean isUseful()
+    {
+        return network != null || currentSite != null || (channels != null && !channels.isEmpty()) ||
+            (neighborSites != null && !neighborSites.isEmpty()) || (frequencyBands != null && !frequencyBands.isEmpty());
+    }
+
+    public record Network(Integer wacn, Integer system, Integer nac, Integer lra)
+    {
+    }
+
+    public record CurrentSite(Integer system, Integer nac, Integer rfss, Integer site, Integer lra,
+                              Boolean activeRfssNetworkConnection)
+    {
+    }
+
+    public record Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma,
+                          Integer timeslots)
+    {
+    }
+
+    public record NeighborSite(Integer system, Integer nac, Integer rfss, Integer site, Integer lra,
+                               String channel, Long downlink, Long uplink, String status)
+    {
+    }
+
+    public record FrequencyBand(Integer band, Boolean tdma, Long base, Integer bandwidth, Long spacing,
+                                Long transmitOffset, Integer timeslots)
+    {
+    }
+
+    public record PatchGroup(Integer patchGroup, Integer version, List<Integer> talkgroups, List<Integer> radios)
+    {
+    }
+
+    public record TalkerAlias(Integer radio, String alias)
+    {
+    }
+}

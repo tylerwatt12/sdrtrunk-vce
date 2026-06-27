@@ -36,6 +36,8 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.DecoderFactory;
@@ -89,6 +91,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private ChannelSourceEventErrorListener mSourceErrorListener = new ChannelSourceEventErrorListener();
     private List<Listener<AudioCallEvent>> mAudioCallListeners = new CopyOnWriteArrayList<>();
     private List<Listener<IDecodeEvent>> mDecodeEventListeners = new CopyOnWriteArrayList<>();
+    private List<SiteMetadataListener> mSiteMetadataListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
     private ChannelMapModel mChannelMapModel;
@@ -119,7 +122,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mChannelMetadataModel = new ChannelMetadataModel();
-        mChannelActivityModel = new ChannelActivityModel(aliasModel);
+        mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getApplicationPreference(),
+            userPreferences.getNowPlayingPreference());
         mChannelMetadataModel.addUpdateListener(mChannelActivityModel);
     }
 
@@ -174,6 +178,45 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public ProcessingChain getProcessingChain(Channel channel)
     {
         return mProcessingChainsMap.get(channel);
+    }
+
+    /**
+     * Returns the active processing chain whose source frequency exactly matches the requested frequency.
+     *
+     * This is intentionally frequency-only selection support for the Now Playing activity view.  It does not fall back
+     * to owner/control/traffic chains when the source frequency differs from the selected row.
+     *
+     * @param frequency selected row frequency in hertz
+     * @param timeslot selected row timeslot, reserved for future decoder-specific disambiguation
+     * @return exact-frequency processing chain or null
+     */
+    public ProcessingChain getProcessingChainByFrequency(long frequency, Integer timeslot)
+    {
+        if(frequency <= 0)
+        {
+            return null;
+        }
+
+        mLock.lock();
+
+        try
+        {
+            for(ProcessingChain processingChain: mProcessingChainsMap.values())
+            {
+                Source source = processingChain != null ? processingChain.getSource() : null;
+
+                if(source != null && source.getFrequency() == frequency)
+                {
+                    return processingChain;
+                }
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        return null;
     }
 
     /**
@@ -314,6 +357,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                                 "This should not happen, please send this error to the developer.", iae);
                     }
                 }
+                break;
+            case NOTIFICATION_CONFIGURATION_CHANGE:
+                mChannelActivityModel.channelConfigurationChanged(channel);
                 break;
             default:
                 break;
@@ -798,6 +844,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
     }
 
+    @Subscribe
+    public void process(SiteMetadataEvent event)
+    {
+        for(SiteMetadataListener listener: mSiteMetadataListeners)
+        {
+            listener.receiveSiteMetadata(event);
+        }
+    }
+
     public void addAudioCallListener(Listener<AudioCallEvent> listener)
     {
         mAudioCallListeners.add(listener);
@@ -823,6 +878,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeDecodeEventListener(Listener<IDecodeEvent> listener)
     {
         mDecodeEventListeners.remove(listener);
+    }
+
+    public void addSiteMetadataListener(SiteMetadataListener listener)
+    {
+        mSiteMetadataListeners.add(listener);
+    }
+
+    public void removeSiteMetadataListener(SiteMetadataListener listener)
+    {
+        mSiteMetadataListeners.remove(listener);
     }
 
     /**

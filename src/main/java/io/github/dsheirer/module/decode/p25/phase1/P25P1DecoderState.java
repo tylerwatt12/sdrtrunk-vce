@@ -55,6 +55,10 @@ import io.github.dsheirer.module.decode.ip.udp.UDPPacket;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
@@ -180,7 +184,7 @@ import org.slf4j.LoggerFactory;
  * Decoder state for an APCO25 channel.  Maintains the call/data/idle state of the channel and produces events by
  * monitoring the decoded message stream.
  */
-public class P25P1DecoderState extends DecoderState implements IChannelEventListener
+public class P25P1DecoderState extends DecoderState implements IChannelEventListener, P25NetworkConfigurationSnapshotProvider
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderState.class);
     private static final String CALL_ALERT_LABEL = "CALL ALERT";
@@ -199,9 +203,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final Modulation mModulation;
     private final PatchGroupManager mPatchGroupManager = new PatchGroupManager();
     private final P25P1NetworkConfigurationMonitor mNetworkConfigurationMonitor;
+    private final P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer =
+        new P25NetworkConfigurationStabilizer("P25_PHASE_1");
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
     private ServiceOptions mCurrentServiceOptions;
+    private int mLastPublishedSiteMetadataHash;
+    private long mLastPublishedSiteMetadataTimestamp;
+    private static final long SITE_METADATA_EVENT_INTERVAL_MILLISECONDS = 5000;
 
     /**
      * Constructs an APCO-25 decoder state with an optional traffic channel manager.
@@ -212,7 +221,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         mChannel = channel;
         mModulation = ((DecodeConfigP25Phase1)channel.getDecodeConfiguration()).getModulation();
-        mNetworkConfigurationMonitor = new P25P1NetworkConfigurationMonitor(mModulation);
+        mNetworkConfigurationMonitor = new P25P1NetworkConfigurationMonitor(mModulation,
+            mNetworkConfigurationStabilizer);
 
         if(trafficChannelManager != null)
         {
@@ -278,6 +288,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
             {
                 mPatchGroupManager.addPatchGroup(patchGroupIdentifier, preLoadDataContent.getTimestamp());
+                mNetworkConfigurationStabilizer.observePatchGroup(patchGroupIdentifier,
+                    preLoadDataContent.getTimestamp());
             }
         }
     }
@@ -342,6 +354,38 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         else if(iMessage instanceof LinkControlWord lcw)
         {
             processLC(lcw, iMessage.getTimestamp(), false);
+        }
+
+        publishStableSiteMetadata(iMessage.getTimestamp());
+    }
+
+    private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
+    {
+        mNetworkConfigurationStabilizer.observe(observation, timestamp);
+        publishStableSiteMetadata(timestamp);
+    }
+
+    private void publishStableSiteMetadata(long timestamp)
+    {
+        if(!hasInterModuleEventBus())
+        {
+            return;
+        }
+
+        long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        P25NetworkConfigurationSnapshot snapshot = mNetworkConfigurationStabilizer.getSnapshot();
+
+        if(snapshot != null && snapshot.isUseful())
+        {
+            int hash = snapshot.hashCode();
+
+            if(hash != mLastPublishedSiteMetadataHash ||
+                eventTimestamp - mLastPublishedSiteMetadataTimestamp >= SITE_METADATA_EVENT_INTERVAL_MILLISECONDS)
+            {
+                mLastPublishedSiteMetadataHash = hash;
+                mLastPublishedSiteMetadataTimestamp = eventTimestamp;
+                getInterModuleEventBus().post(new SiteMetadataEvent(mChannel, snapshot, eventTimestamp));
+            }
         }
     }
 
@@ -596,7 +640,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 //Network configuration messages
                 case OSP_ADJACENT_STATUS_BROADCAST:
-                    mNetworkConfigurationMonitor.process(ambtc);
+                    observeNetworkConfiguration(mNetworkConfigurationMonitor.process(ambtc), ambtc.getTimestamp());
                     break;
                 case OSP_NETWORK_STATUS_BROADCAST:
                     if((getCurrentChannel() == null || getCurrentChannel().getDownlinkFrequency() > 0) &&
@@ -613,7 +657,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         getIdentifierCollection().update(frequencyID);
 
                     }
-                    mNetworkConfigurationMonitor.process(ambtc);
+                    observeNetworkConfiguration(mNetworkConfigurationMonitor.process(ambtc), ambtc.getTimestamp());
                     break;
                 case OSP_RFSS_STATUS_BROADCAST:
                     if((getCurrentChannel() == null || getCurrentChannel().getDownlinkFrequency() > 0) &&
@@ -630,7 +674,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         getIdentifierCollection().update(frequencyID);
 
                     }
-                    mNetworkConfigurationMonitor.process(ambtc);
+                    observeNetworkConfiguration(mNetworkConfigurationMonitor.process(ambtc), ambtc.getTimestamp());
                     break;
 
                 //Channel grants
@@ -1223,7 +1267,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST, OSP_ADJACENT_STATUS_BROADCAST,
                         OSP_IDENTIFIER_UPDATE, OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN,
                         OSP_RESERVED_3F:
-                    mNetworkConfigurationMonitor.process(tsbk);
+                    observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
 
                     //Send the frequency bands to the traffic channel manager to use for traffic channel preload data
                     if(tsbk instanceof IFrequencyBand frequencyBand)
@@ -1246,7 +1290,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         getIdentifierCollection().update(frequencyID);
 
                     }
-                    mNetworkConfigurationMonitor.process(tsbk);
+                    observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
                     break;
                 case OSP_RFSS_STATUS_BROADCAST:
                     if((getCurrentChannel() == null || getCurrentChannel().getDownlinkFrequency() > 0) &&
@@ -1262,7 +1306,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                                 .create(rfss.getChannel().getDownlinkFrequency());
                         getIdentifierCollection().update(frequencyID);
                     }
-                    mNetworkConfigurationMonitor.process(tsbk);
+                    observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
                     break;
 
                 case OSP_UNIT_TO_UNIT_ANSWER_REQUEST:
@@ -1345,9 +1389,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 //MOTOROLA PATCH GROUP OPCODES
                 case MOTOROLA_OSP_GROUP_REGROUP_ADD:
                     mPatchGroupManager.addPatchGroups(tsbk.getIdentifiers(), message.getTimestamp());
+                    mNetworkConfigurationStabilizer.observePatchGroupsFromIdentifiers(tsbk.getIdentifiers(),
+                        message.getTimestamp());
                     break;
                 case MOTOROLA_OSP_GROUP_REGROUP_DELETE:
                     mPatchGroupManager.removePatchGroups(tsbk.getIdentifiers());
+                    mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(tsbk.getIdentifiers());
                     break;
 
                 //L3HARRIS PATCH GROUP OPCODES
@@ -1357,10 +1404,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         if(regroup.getRegroupOptions().isActivate())
                         {
                             mPatchGroupManager.addPatchGroup(regroup.getPatchGroup(), tsbk.getTimestamp());
+                            mNetworkConfigurationStabilizer.observePatchGroup(regroup.getPatchGroup(),
+                                tsbk.getTimestamp());
                         }
                         else
                         {
                             mPatchGroupManager.removePatchGroup(regroup.getPatchGroup());
+                            mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup());
                         }
                     }
                     break;
@@ -1540,7 +1590,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         if(tsbk instanceof MotorolaExplicitTDMADataChannelAnnouncement tdma && tdma.hasChannel())
         {
             mTrafficChannelManager.processP2DataChannel(tdma.getChannel(), tsbk.getTimestamp());
-            mNetworkConfigurationMonitor.process(tsbk);
+            observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
         }
     }
 
@@ -1685,11 +1735,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(mefc.isSupergroupCreate())
             {
                 mPatchGroupManager.addPatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
+                mNetworkConfigurationStabilizer.observePatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
                 broadcastEvent(tsbk, DecodeEventType.COMMAND, "CREATE SUPERGROUP:" + mefc.getSuperGroup());
             }
             else if(mefc.isSupergroupCancel())
             {
                 mPatchGroupManager.removePatchGroup(mefc.getSuperGroup());
+                mNetworkConfigurationStabilizer.removePatchGroup(mefc.getSuperGroup());
                 broadcastEvent(tsbk, DecodeEventType.COMMAND, "CANCEL SUPERGROUP:" + mefc.getSuperGroup());
             }
             else
@@ -1907,7 +1959,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     getIdentifierCollection().update(frequencyID);
                 }
 
-                mNetworkConfigurationMonitor.process(lcw);
+                observeNetworkConfiguration(mNetworkConfigurationMonitor.process(lcw), timestamp);
                 break;
             case RFSS_STATUS_BROADCAST_EXPLICIT:
                 if((getCurrentChannel() == null || getCurrentChannel().getDownlinkFrequency() > 0) &&
@@ -1924,7 +1976,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     getIdentifierCollection().update(frequencyID);
                 }
 
-                mNetworkConfigurationMonitor.process(lcw);
+                observeNetworkConfiguration(mNetworkConfigurationMonitor.process(lcw), timestamp);
                 break;
 
             case NETWORK_STATUS_BROADCAST:
@@ -1942,7 +1994,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     getIdentifierCollection().update(frequencyID);
                 }
 
-                mNetworkConfigurationMonitor.process(lcw);
+                observeNetworkConfiguration(mNetworkConfigurationMonitor.process(lcw), timestamp);
                 break;
             case NETWORK_STATUS_BROADCAST_EXPLICIT:
                 if((getCurrentChannel() == null || getCurrentChannel().getDownlinkFrequency() > 0) &&
@@ -1959,22 +2011,24 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     getIdentifierCollection().update(frequencyID);
                 }
 
-                mNetworkConfigurationMonitor.process(lcw);
+                observeNetworkConfiguration(mNetworkConfigurationMonitor.process(lcw), timestamp);
                 break;
 
             case ADJACENT_SITE_STATUS_BROADCAST, ADJACENT_SITE_STATUS_BROADCAST_EXPLICIT,
                     CHANNEL_IDENTIFIER_UPDATE, CHANNEL_IDENTIFIER_UPDATE_VU, PROTECTION_PARAMETER_BROADCAST,
                     SECONDARY_CONTROL_CHANNEL_BROADCAST, SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT,
                     SYSTEM_SERVICE_BROADCAST:
-                mNetworkConfigurationMonitor.process(lcw);
+                observeNetworkConfiguration(mNetworkConfigurationMonitor.process(lcw), timestamp);
                 break;
 
             //Patch Group management
             case MOTOROLA_GROUP_REGROUP_ADD:
                 mPatchGroupManager.addPatchGroups(lcw.getIdentifiers(), timestamp);
+                mNetworkConfigurationStabilizer.observePatchGroupsFromIdentifiers(lcw.getIdentifiers(), timestamp);
                 break;
             case MOTOROLA_GROUP_REGROUP_DELETE:
                 mPatchGroupManager.removePatchGroups(lcw.getIdentifiers());
+                mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(lcw.getIdentifiers());
                 break;
             case MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_UPDATE:
                 //Voice Channel Update message - indicates calls in-progress on another channel - ignored
@@ -2134,6 +2188,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     }
 
     @Override
+    public P25NetworkConfigurationSnapshot getP25NetworkConfigurationSnapshot()
+    {
+        return mNetworkConfigurationStabilizer.getSnapshot();
+    }
+
+    @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
         switch(event.getEvent())
@@ -2141,6 +2201,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case REQUEST_RESET:
                 resetState();
                 mNetworkConfigurationMonitor.reset();
+                mNetworkConfigurationStabilizer.reset();
+                mLastPublishedSiteMetadataHash = 0;
+                mLastPublishedSiteMetadataTimestamp = 0;
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 long frequency = event.getFrequency();
