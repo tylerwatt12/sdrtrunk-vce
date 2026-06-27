@@ -91,12 +91,7 @@ public class AudioChannel
 
         if(disabled)
         {
-            PlayableAudioCall audioCall = mPlayableCallQueue.poll();
-
-            while(audioCall != null)
-            {
-                audioCall = mPlayableCallQueue.poll();
-            }
+            clearPlayback();
         }
     }
 
@@ -444,6 +439,28 @@ public class AudioChannel
     }
 
     /**
+     * Number of playable calls queued behind the currently playing call.
+     */
+    public int getQueuedCallCount()
+    {
+        return mPlayableCallQueue.size();
+    }
+
+    /**
+     * Clears all local playback state for this audio channel.
+     */
+    public void clearPlayback()
+    {
+        mPlayableCallQueue.clear();
+        mCurrentPlaybackBurst = null;
+        mNoAudioFromSegmentIntervalCount = 0;
+        mMetadataSent = false;
+        mAudioBuffer.clear();
+        clearMetadata();
+        notifyIdleStateListener();
+    }
+
+    /**
      * Schedules the playable call for playback.
      *
      * @param audioCall to schedule for playback
@@ -672,6 +689,23 @@ public class AudioChannel
                 {
                     mLock.unlock();
                 }
+            }
+        }
+
+        /**
+         * Clears all buffered audio.
+         */
+        public void clear()
+        {
+            mLock.lock();
+
+            try
+            {
+                mBuffer = new float[0];
+            }
+            finally
+            {
+                mLock.unlock();
             }
         }
 

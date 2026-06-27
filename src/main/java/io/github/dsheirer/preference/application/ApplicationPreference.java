@@ -31,10 +31,13 @@ public class ApplicationPreference extends Preference
 {
     private static final String PREFERENCE_KEY_CHANNEL_AUTO_DIAGNOSTIC_MONITORING = "automatic.diagnostic.monitoring";
     private static final String PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT = "channel.auto.start.timeout";
+    private static final String PREFERENCE_KEY_P25_ENCRYPTION_CSV_DEBUG_LOGGER =
+        "p25.encryption.csv.debug.logger";
 
     private Preferences mPreferences = Preferences.userNodeForPackage(ApplicationPreference.class);
     private Integer mChannelAutoStartTimeout;
     private Boolean mAutomaticDiagnosticMonitoring;
+    private Boolean mP25EncryptionCsvDebugLogger;
 
     /**
      * Constructs an instance
@@ -99,6 +102,30 @@ public class ApplicationPreference extends Preference
     {
         mAutomaticDiagnosticMonitoring = enabled;
         mPreferences.putBoolean(PREFERENCE_KEY_CHANNEL_AUTO_DIAGNOSTIC_MONITORING, enabled);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates if the P25 encryption CSV debug logger is enabled.
+     */
+    public boolean isP25EncryptionCsvDebugLogger()
+    {
+        if(mP25EncryptionCsvDebugLogger == null)
+        {
+            mP25EncryptionCsvDebugLogger =
+                mPreferences.getBoolean(PREFERENCE_KEY_P25_ENCRYPTION_CSV_DEBUG_LOGGER, false);
+        }
+
+        return mP25EncryptionCsvDebugLogger;
+    }
+
+    /**
+     * Sets the enabled state for the P25 encryption CSV debug logger.
+     */
+    public void setP25EncryptionCsvDebugLogger(boolean enabled)
+    {
+        mP25EncryptionCsvDebugLogger = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_P25_ENCRYPTION_CSV_DEBUG_LOGGER, enabled);
         notifyPreferenceUpdated();
     }
 }

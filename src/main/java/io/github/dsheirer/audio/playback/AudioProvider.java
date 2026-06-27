@@ -60,6 +60,17 @@ public abstract class AudioProvider
     }
 
     /**
+     * Clears all local playback state for each audio channel.
+     */
+    public void clearPlayback()
+    {
+        for(AudioChannel audioChannel: getAudioChannels())
+        {
+            audioChannel.clearPlayback();
+        }
+    }
+
+    /**
      * Disposes the audio channel to prepare for audio output changes or shutdown.
      */
     public void dispose()

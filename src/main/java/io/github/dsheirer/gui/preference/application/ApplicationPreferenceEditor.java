@@ -45,6 +45,7 @@ public class ApplicationPreferenceEditor extends HBox
     private Label mAutoStartTimeoutLabel;
     private Spinner<Integer> mTimeoutSpinner;
     private ToggleSwitch mAutomaticDiagnosticMonitoringToggle;
+    private ToggleSwitch mP25EncryptionCsvDebugLoggerToggle;
 
     /**
      * Constructs an instance
@@ -83,6 +84,14 @@ public class ApplicationPreferenceEditor extends HBox
             Separator separator = new Separator(Orientation.HORIZONTAL);
             GridPane.setHgrow(separator, Priority.ALWAYS);
             mEditorPane.add(separator, 0, ++row, 3, 1);
+
+            GridPane.setHalignment(getP25EncryptionCsvDebugLoggerToggle(), HPos.RIGHT);
+            mEditorPane.add(getP25EncryptionCsvDebugLoggerToggle(), 0, ++row);
+            mEditorPane.add(new Label("P25 Encryption CSV Debug Logger"), 1, row, 2, 1);
+
+            Separator p25DebugSeparator = new Separator(Orientation.HORIZONTAL);
+            GridPane.setHgrow(p25DebugSeparator, Priority.ALWAYS);
+            mEditorPane.add(p25DebugSeparator, 0, ++row, 3, 1);
 
             mEditorPane.add(getAutoStartTimeoutLabel(), 0, ++row, 2, 1);
             GridPane.setHalignment(getTimeoutSpinner(), HPos.RIGHT);
@@ -138,5 +147,21 @@ public class ApplicationPreferenceEditor extends HBox
         }
 
         return mAutomaticDiagnosticMonitoringToggle;
+    }
+
+    /**
+     * Toggle switch to enable/disable the P25 encryption CSV debug logger.
+     */
+    private ToggleSwitch getP25EncryptionCsvDebugLoggerToggle()
+    {
+        if(mP25EncryptionCsvDebugLoggerToggle == null)
+        {
+            mP25EncryptionCsvDebugLoggerToggle = new ToggleSwitch();
+            mP25EncryptionCsvDebugLoggerToggle.setSelected(mApplicationPreference.isP25EncryptionCsvDebugLogger());
+            mP25EncryptionCsvDebugLoggerToggle.selectedProperty().addListener((observable, oldValue, enabled) ->
+                mApplicationPreference.setP25EncryptionCsvDebugLogger(enabled));
+        }
+
+        return mP25EncryptionCsvDebugLoggerToggle;
     }
 }

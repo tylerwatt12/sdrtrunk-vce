@@ -119,8 +119,7 @@ public class AudioOutput implements LineListener
                 // block against the mixer source data line until it can write all 160 samples.
                 mScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(
                         "sdrtrunk audio output " + descriptor.getMixerInfo().getName()));
-                mProcessorFuture = mScheduledExecutorService.scheduleAtFixedRate(new AudioProcessor(),
-                        0, 19, TimeUnit.MILLISECONDS);
+                resumeProcessing();
             }
             else
             {
@@ -271,8 +270,69 @@ public class AudioOutput implements LineListener
             audioChannel.setMuted(muted);
         }
 
+        if(muted)
+        {
+            pauseProcessing();
+            clearPlayback();
+        }
+        else
+        {
+            resumeProcessing();
+        }
+
         AudioEvent.Type type = muted ? AudioEvent.Type.AUDIO_MUTED : AudioEvent.Type.AUDIO_UNMUTED;
         mAudioProvider.notify(type);
+    }
+
+    /**
+     * Clears all local playback state for each audio channel.
+     */
+    public void clearPlayback()
+    {
+        mAudioProvider.clearPlayback();
+
+        if(mSourceDataLine != null)
+        {
+            mSourceDataLine.flush();
+        }
+    }
+
+    /**
+     * Pauses the output writer loop.
+     */
+    public void pauseProcessing()
+    {
+        if(mProcessorFuture != null)
+        {
+            mProcessorFuture.cancel(false);
+            mProcessorFuture = null;
+        }
+
+        if(mSourceDataLine != null)
+        {
+            mSourceDataLine.stop();
+            mSourceDataLine.flush();
+        }
+    }
+
+    /**
+     * Resumes the output writer loop.
+     */
+    public void resumeProcessing()
+    {
+        if(mCanProcessAudio && mScheduledExecutorService != null &&
+            (mProcessorFuture == null || mProcessorFuture.isCancelled() || mProcessorFuture.isDone()))
+        {
+            openSourceDataLine();
+
+            if(mSourceDataLine != null && mSourceDataLine.isOpen() && !mSourceDataLine.isRunning())
+            {
+                mSourceDataLine.start();
+            }
+
+            mProcessorFuture = mScheduledExecutorService.scheduleAtFixedRate(new AudioProcessor(),
+                0, 19, TimeUnit.MILLISECONDS);
+        }
     }
 
     /**

@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.gui.channel;
 
+import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelSource;
 import io.github.dsheirer.gui.power.SignalPowerView;
@@ -37,8 +38,10 @@ import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.HalfBandTunerChannelSource;
+import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
+import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.spectrum.ComplexDftProcessor;
 import io.github.dsheirer.spectrum.FrequencyOverlayPanel;
 import io.github.dsheirer.spectrum.SpectrumPanel;
@@ -53,6 +56,7 @@ import java.awt.event.MouseEvent;
 import java.net.URL;
 import java.text.DecimalFormat;
 import java.util.List;
+import java.util.Objects;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
@@ -68,15 +72,18 @@ import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.Timer;
 import javax.swing.event.MouseInputAdapter;
 
 /**
  * Display for channel FFT and squelch details
  */
-public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingChain>
+public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFrequencyContext>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(ChannelSpectrumPanel.class);
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
+    private static final int RF_PROBE_BANDWIDTH = 12500;
+    private static final double RF_PROBE_MINIMUM_SAMPLE_RATE = 50000.0;
     private static final String GROW_FILL = "[grow,fill]";
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private static final String CARD_NOISE_SQUELCH = "noise_squelch";
@@ -84,8 +91,11 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     private static final String CARD_SYMBOL = "symbol";
     private static final String CARD_EMPTY = "empty";
     private final PlaylistManager mPlaylistManager;
+    private final TunerManager mTunerManager;
     private final UserPreferences mUserPreferences;
     private ProcessingChain mProcessingChain;
+    private SelectedFrequencyContext mSelectedFrequencyContext;
+    private TunerChannelSource mRfProbeSource;
     private final ComplexSamplesToNativeBufferModule mSampleStreamTapModule = new ComplexSamplesToNativeBufferModule();
     private final ComplexDftProcessor mComplexDftProcessor = new ComplexDftProcessor();
     private SpectrumPanel mSpectrumPanel;
@@ -93,6 +103,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     private final transient SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
     private final SpinnerNumberModel mNoiseFloorSpinnerModel;
     private final JLabel mEstimatedCarrierOffsetFrequencyValueLabel;
+    private final JLabel mViewedFrequencyValueLabel;
     private boolean mPanelVisible = false;
     private boolean mDftProcessing = false;
     private final NoiseSquelchView mNoiseSquelchView;
@@ -103,6 +114,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     private JSplitPane mSplitPane;
     private JPanel mRightCardPanel;
     private CardLayout mRightCardLayout;
+    private Timer mSymbolGraphHangTimer;
 
     /**
      * Constructs an instance.
@@ -111,6 +123,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
                                 UserPreferences userPreferences)
     {
         mPlaylistManager = playlistManager;
+        mTunerManager = playlistManager.getTunerManager();
         mUserPreferences = userPreferences;
         mNoiseSquelchView = new NoiseSquelchView(mPlaylistManager);
         mSignalPowerView = new SignalPowerView(mPlaylistManager);
@@ -120,12 +133,16 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
         fftPanel.setLayout(new MigLayout("insets 0", GROW_FILL, "[]" + GROW_FILL));
 
         JPanel labelPanel = new JPanel();
-        labelPanel.setLayout(new MigLayout("insets 2", GROW_FILL + "[grow,fill,left][right][][]", ""));
+        labelPanel.setLayout(new MigLayout("insets 2", GROW_FILL + "[grow,fill,left][right][right][][]", ""));
         labelPanel.add(new JLabel("Channel Spectrum    "));
 
         mEstimatedCarrierOffsetFrequencyValueLabel = new JLabel(getPaddedCarrierOffsetLabel(0));
         mEstimatedCarrierOffsetFrequencyValueLabel.setEnabled(false);
         labelPanel.add(mEstimatedCarrierOffsetFrequencyValueLabel);
+
+        mViewedFrequencyValueLabel = new JLabel(getPaddedViewedFrequencyLabel(0));
+        mViewedFrequencyValueLabel.setEnabled(false);
+        labelPanel.add(mViewedFrequencyValueLabel);
 
         mNoiseFloorSpinnerModel = new SpinnerNumberModel(18, 8, 36, 1);
         mNoiseFloorSpinnerModel.addChangeListener(e -> {
@@ -262,6 +279,12 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
         return "Carrier Offset: " + paddedText;
     }
 
+    private String getPaddedViewedFrequencyLabel(long frequency)
+    {
+        String frequencyText = frequency > 0 ? FREQUENCY_FORMAT.format(frequency / 1E6d) + " MHz" : "";
+        return "Frequency: " + StringUtils.rightPad(frequencyText, 16);
+    }
+
     /**
      * Signals this panel to indicate if this panel is visible to turn on the FFT processor when the panel is visible
      * and turn off the FFT processor when it's not.
@@ -275,6 +298,30 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     public void setPanelVisible(boolean visible)
     {
         mPanelVisible = visible;
+
+        if(!mPanelVisible)
+        {
+            cancelSymbolGraphHang();
+            stopRfProbe();
+
+            if(mSelectedFrequencyContext != null && mSelectedFrequencyContext.processingChain() == null)
+            {
+                disconnectProcessingChain();
+            }
+        }
+        else if(mProcessingChain == null && mRfProbeSource == null && mSelectedFrequencyContext != null &&
+            !mSelectedFrequencyContext.clearRequested())
+        {
+            if(mSelectedFrequencyContext.processingChain() != null)
+            {
+                attachProcessingChain(mSelectedFrequencyContext.processingChain());
+            }
+            else if(mSelectedFrequencyContext.hasFrequency())
+            {
+                startRfProbe(mSelectedFrequencyContext.frequency());
+            }
+        }
+
         updateFFTProcessing();
         mNoiseSquelchView.setShowing(visible);
         mSymbolView.setShowing(visible);
@@ -292,7 +339,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
      */
     private void updateFFTProcessing()
     {
-        if(mPanelVisible && mProcessingChain != null)
+        if(mPanelVisible && (mProcessingChain != null || mRfProbeSource != null))
         {
             startDftProcessing();
         }
@@ -345,19 +392,112 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
     {
         mEstimatedCarrierOffsetFrequencyValueLabel.setText(getPaddedCarrierOffsetLabel(0));
         mEstimatedCarrierOffsetFrequencyValueLabel.setEnabled(false);
+        mViewedFrequencyValueLabel.setText(getPaddedViewedFrequencyLabel(0));
+        mViewedFrequencyValueLabel.setEnabled(false);
         mFrequencyOverlayPanel.process(SourceEvent.frequencyChange(null, 0));
         mFrequencyOverlayPanel.process(SourceEvent.sampleRateChange(0));
         mFrequencyOverlayPanel.setEstimatedCarrierOffsetFrequency(0);
         mFrequencyOverlayPanel.setChannelBandwidth(0);
     }
 
+    private void updateViewedFrequency(long frequency)
+    {
+        EventQueue.invokeLater(() -> {
+            mViewedFrequencyValueLabel.setText(getPaddedViewedFrequencyLabel(frequency));
+            mViewedFrequencyValueLabel.setEnabled(frequency > 0);
+        });
+    }
+
     /**
      * Receive notifications of request to provide display of processing chain details.
      */
     @Override
+    public void receive(SelectedFrequencyContext context)
+    {
+        if(context == null || context.clearRequested())
+        {
+            cancelSymbolGraphHang();
+            mSelectedFrequencyContext = context;
+            disconnectProcessingChain();
+            stopRfProbe();
+            reset();
+            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+            updateFFTProcessing();
+            return;
+        }
+
+        if(context.processingChain() != null)
+        {
+            cancelSymbolGraphHang();
+            mSelectedFrequencyContext = context;
+            stopRfProbe();
+
+            if(mProcessingChain != context.processingChain())
+            {
+                disconnectProcessingChain();
+                reset();
+                attachProcessingChain(context.processingChain());
+            }
+        }
+        else if(context.hasFrequency())
+        {
+            if(shouldHangSymbolGraph(context))
+            {
+                mSelectedFrequencyContext = context;
+                stopRfProbe();
+                updateViewedFrequency(context.frequency());
+                startSymbolGraphHang(context);
+                updateFFTProcessing();
+                return;
+            }
+
+            cancelSymbolGraphHang();
+            mSelectedFrequencyContext = context;
+            disconnectProcessingChain();
+            stopRfProbe();
+            reset();
+            updateViewedFrequency(context.frequency());
+
+            if(mPanelVisible)
+            {
+                startRfProbe(context.frequency());
+            }
+        }
+        else
+        {
+            cancelSymbolGraphHang();
+            mSelectedFrequencyContext = context;
+            disconnectProcessingChain();
+            stopRfProbe();
+            reset();
+            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+        }
+
+        updateFFTProcessing();
+    }
+
     public void receive(ProcessingChain processingChain)
     {
-        //Disconnect the previous processing chain.
+        long frequency = processingChain != null && processingChain.getSource() != null ?
+            processingChain.getSource().getFrequency() : 0;
+        receive(new SelectedFrequencyContext(frequency, null, null, null, null, null, null, processingChain,
+            processingChain == null));
+    }
+
+    public void dispose()
+    {
+        cancelSymbolGraphHang();
+        disconnectProcessingChain();
+        stopRfProbe();
+        mSelectedFrequencyContext = null;
+        reset();
+        updateFFTProcessing();
+    }
+
+    private void disconnectProcessingChain()
+    {
+        cancelSymbolGraphHang();
+
         if(mProcessingChain != null)
         {
             mNoiseSquelchView.setController(null);
@@ -366,18 +506,82 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
             mSymbolView.setProtocol("");
             mProcessingChain.removeSourceEventListener(mSourceEventProcessor);
             mProcessingChain.removeModule(mSampleStreamTapModule);
+            mProcessingChain = null;
+        }
+    }
+
+    private boolean shouldHangSymbolGraph(SelectedFrequencyContext context)
+    {
+        return mPanelVisible && context != null && context.hasFrequency() && mSelectedFrequencyContext != null &&
+            isSameSelectedFrequency(mSelectedFrequencyContext, context) && mProcessingChain != null &&
+            mProcessingChain.getPrimaryDecoder() instanceof FeedbackDecoder &&
+            getProcessingChainFrequency(mProcessingChain) == context.frequency();
+    }
+
+    private boolean isSameSelectedFrequency(SelectedFrequencyContext first, SelectedFrequencyContext second)
+    {
+        return first != null && second != null && first.frequency() == second.frequency() &&
+            Objects.equals(first.timeslot(), second.timeslot()) &&
+            Objects.equals(first.sessionId(), second.sessionId());
+    }
+
+    private long getProcessingChainFrequency(ProcessingChain processingChain)
+    {
+        return processingChain != null && processingChain.getSource() != null ? processingChain.getSource().getFrequency() : 0;
+    }
+
+    private void startSymbolGraphHang(SelectedFrequencyContext context)
+    {
+        cancelSymbolGraphHang();
+        mSymbolGraphHangTimer = new Timer(mUserPreferences.getNowPlayingPreference().getSymbolGraphHangMilliseconds(),
+            event -> expireSymbolGraphHang(context));
+        mSymbolGraphHangTimer.setRepeats(false);
+        mSymbolGraphHangTimer.start();
+    }
+
+    private void expireSymbolGraphHang(SelectedFrequencyContext context)
+    {
+        mSymbolGraphHangTimer = null;
+
+        if(context != null && context.equals(mSelectedFrequencyContext) && context.processingChain() == null)
+        {
+            disconnectProcessingChain();
+            stopRfProbe();
+            reset();
+
+            if(context.hasFrequency())
+            {
+                updateViewedFrequency(context.frequency());
+
+                if(mPanelVisible)
+                {
+                    startRfProbe(context.frequency());
+                }
+            }
+            else
+            {
+                mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+            }
+
+            updateFFTProcessing();
+        }
+    }
+
+    private void cancelSymbolGraphHang()
+    {
+        if(mSymbolGraphHangTimer != null)
+        {
+            mSymbolGraphHangTimer.stop();
+            mSymbolGraphHangTimer = null;
         }
 
-        //Invoking reset - we're on the Swing dispatch thread here
-        reset();
+    }
 
+    private void attachProcessingChain(ProcessingChain processingChain)
+    {
         mProcessingChain = processingChain;
 
-        if(mProcessingChain == null)
-        {
-            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
-        }
-        else
+        if(mProcessingChain != null)
         {
             mProcessingChain.addSourceEventListener(mSourceEventProcessor);
 
@@ -410,6 +614,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
             {
                 mFrequencyOverlayPanel.process(SourceEvent.frequencyChange(null, tcs.getFrequency()));
                 mFrequencyOverlayPanel.process(SourceEvent.sampleRateChange(tcs.getSampleRate()));
+                updateViewedFrequency(tcs.getFrequency());
             }
 
             Channel channel = mPlaylistManager.getChannelProcessingManager().getChannel(mProcessingChain);
@@ -424,8 +629,44 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
                 }
             }
         }
+    }
 
-        updateFFTProcessing();
+    private void startRfProbe(long frequency)
+    {
+        Source source = mTunerManager.getSource(new TunerChannel(frequency, RF_PROBE_BANDWIDTH),
+            new ChannelSpecification(RF_PROBE_MINIMUM_SAMPLE_RATE, RF_PROBE_BANDWIDTH,
+                RF_PROBE_BANDWIDTH / 2.0d, RF_PROBE_BANDWIDTH * 0.60d),
+            null, "now-playing-rf-probe-" + frequency);
+
+        if(source instanceof TunerChannelSource tunerChannelSource)
+        {
+            mRfProbeSource = tunerChannelSource;
+            mRfProbeSource.setSourceEventListener(mSourceEventProcessor);
+            mRfProbeSource.setListener(mSampleStreamTapModule);
+            mRfProbeSource.start();
+            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+            mFrequencyOverlayPanel.process(SourceEvent.frequencyChange(mRfProbeSource, mRfProbeSource.getFrequency()));
+            mFrequencyOverlayPanel.process(SourceEvent.sampleRateChange(mRfProbeSource.getSampleRate()));
+            mFrequencyOverlayPanel.setChannelBandwidth(RF_PROBE_BANDWIDTH);
+            updateViewedFrequency(mRfProbeSource.getFrequency());
+        }
+        else
+        {
+            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+            updateViewedFrequency(frequency);
+            mFrequencyOverlayPanel.setChannelBandwidth(RF_PROBE_BANDWIDTH);
+        }
+    }
+
+    private void stopRfProbe()
+    {
+        if(mRfProbeSource != null)
+        {
+            mRfProbeSource.setListener(null);
+            mRfProbeSource.removeSourceEventListener();
+            mRfProbeSource.stop();
+            mRfProbeSource = null;
+        }
     }
 
     /**
@@ -439,6 +680,11 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<ProcessingC
             if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED)
             {
                 updateEstimatedCarrierOffsetFrequency(sourceEvent.getValue().longValue());
+            }
+            else if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CHANGE &&
+                sourceEvent.getValue() != null)
+            {
+                updateViewedFrequency(sourceEvent.getValue().longValue());
             }
 
             mSignalPowerView.receive(sourceEvent);

@@ -23,6 +23,11 @@ import io.github.dsheirer.message.StuffBitsMessage;
 import io.github.dsheirer.sample.Listener;
 import java.awt.EventQueue;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Table Model for decoded IMessages.
@@ -37,6 +42,7 @@ public class MessageActivityModel extends ClearableHistoryModel<MessageItem> imp
 
     private String[] mHeaders = new String[]{"Time", "Protocol", "Timeslot", "Message"};
     private SimpleDateFormat mSDFTime = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss");
+    private transient Set<IMessage> mDisplayedMessages = Collections.newSetFromMap(new IdentityHashMap<>());
 
     /**
      * Implements the listener interface and wraps the IMessage in table-compatible message item wrapper.
@@ -44,13 +50,59 @@ public class MessageActivityModel extends ClearableHistoryModel<MessageItem> imp
      */
     public void receive(final IMessage message)
     {
+        EventQueue.invokeLater(() -> addMessage(message));
+    }
+
+    /**
+     * Adds a snapshot of messages without clearing the current model.
+     */
+    public void addMessages(List<IMessage> messages)
+    {
+        if(messages == null || messages.isEmpty())
+        {
+            return;
+        }
+
+        EventQueue.invokeLater(() -> messages.forEach(this::addMessage));
+    }
+
+    @Override
+    public void clear()
+    {
+        mDisplayedMessages.clear();
+        super.clear();
+    }
+
+    @Override
+    public void clearAndSet(List<MessageItem> items)
+    {
+        mDisplayedMessages.clear();
+
+        List<MessageItem> deduplicated = new ArrayList<>();
+
+        for(MessageItem item: items)
+        {
+            if(item != null && item.getMessage() != null && mDisplayedMessages.add(item.getMessage()))
+            {
+                deduplicated.add(item);
+            }
+        }
+
+        super.clearAndSet(deduplicated);
+    }
+
+    private void addMessage(IMessage message)
+    {
         //Don't process tail bits or stuff bits message fragments
         if(message instanceof StuffBitsMessage)
         {
             return;
         }
 
-        EventQueue.invokeLater(() -> add(new MessageItem(message)));
+        if(message != null && mDisplayedMessages.add(message))
+        {
+            add(new MessageItem(message));
+        }
     }
 
     @Override

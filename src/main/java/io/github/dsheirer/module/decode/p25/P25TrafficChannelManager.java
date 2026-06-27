@@ -165,7 +165,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     public void processCurrentControlChannel(IChannelDescriptor channelDescriptor)
     {
-        if(mChannelActivityModel != null && isMultiFrequencyControlChannel())
+        if(mChannelActivityModel != null)
         {
             mChannelActivityModel.p25CurrentControl(mParentChannel, channelDescriptor);
         }
@@ -173,7 +173,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     public void processSiteIdentifier(P25SiteIdentifier siteIdentifier)
     {
-        if(mChannelActivityModel != null && isMultiFrequencyControlChannel())
+        if(mChannelActivityModel != null)
         {
             mChannelActivityModel.p25SiteIdentifier(mParentChannel, siteIdentifier);
         }
@@ -181,16 +181,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     public void processSecondaryControlChannel(IChannelDescriptor channelDescriptor)
     {
-        if(mChannelActivityModel != null && isMultiFrequencyControlChannel())
+        if(mChannelActivityModel != null)
         {
             mChannelActivityModel.p25AlternateControl(mParentChannel, channelDescriptor);
         }
-    }
-
-    private boolean isMultiFrequencyControlChannel()
-    {
-        return mParentChannel != null &&
-            mParentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency;
     }
 
     /**
@@ -438,8 +432,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void broadcast(P25TrafficChannelEventTracker tracker)
     {
-        notifyActivityGrant(tracker);
         broadcast(tracker.getEvent());
+        notifyActivityDetails(tracker);
     }
 
     /**
@@ -554,6 +548,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 if(!processing)
                 {
                     processP2ChannelGrant(channel, serviceOptions, ic, macOpcode, timestamp);
+                }
+                else
+                {
+                    notifyActivityGrant(channel, ic, getEventType(macOpcode, serviceOptions, null));
                 }
             }
             finally
@@ -1242,6 +1240,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //If we have a tracked event, update it.  Otherwise, make sure we have the traffic channel allocated
             if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
             {
+                notifyActivityGrant(channel, ic, getEventType(opcode, serviceOptions, null));
+
                 //Only rebroadcast the tracked event if the timestamp was updated from this control channel timestamp
                 //Once the traffic channel takes over updating the tracked event time/duration, further control channel
                 // updates are ignored.
@@ -1295,13 +1295,23 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         return completed;
     }
 
-    private void notifyActivityGrant(P25TrafficChannelEventTracker tracker)
+    private void notifyActivityGrant(APCO25Channel channel, IdentifierCollection identifiers, DecodeEventType eventType)
+    {
+        if(mChannelActivityModel != null && channel != null)
+        {
+            Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
+            mChannelActivityModel.p25TrafficGrant(mParentChannel, trafficChannel, channel,
+                identifiers, eventType);
+        }
+    }
+
+    private void notifyActivityDetails(P25TrafficChannelEventTracker tracker)
     {
         if(mChannelActivityModel != null && tracker != null && tracker.getEvent() != null &&
             tracker.getEvent().getChannelDescriptor() instanceof APCO25Channel channel)
         {
             Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
-            mChannelActivityModel.p25TrafficGrant(mParentChannel, trafficChannel, channel,
+            mChannelActivityModel.p25TrafficDetails(mParentChannel, trafficChannel, channel,
                 tracker.getEvent().getIdentifierCollection(), tracker.getEvent().getEventType());
         }
     }
@@ -1447,6 +1457,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                                   boolean isDataChannelGrant, long timestamp)
     {
         long frequency = apco25Channel.getDownlinkFrequency();
+        notifyActivityGrant(apco25Channel, ic, decodeEventType);
 
         P25TrafficChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, TimeslotMessage.TIMESLOT_1, timestamp);
 
@@ -1574,6 +1585,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         int timeslot = apco25Channel.getTimeslot();
         long frequency = apco25Channel.getDownlinkFrequency();
         ic.setTimeslot(timeslot);
+        notifyActivityGrant(apco25Channel, ic, decodeEventType);
 
         P25TrafficChannelEventTracker tracker = getTrackerRemoveIfStale(apco25Channel, timestamp);
 

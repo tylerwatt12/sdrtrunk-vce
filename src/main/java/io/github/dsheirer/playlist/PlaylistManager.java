@@ -218,6 +218,14 @@ public class PlaylistManager implements Listener<ChannelEvent>
     }
 
     /**
+     * Tuner manager managed by this playlist manager.
+     */
+    public TunerManager getTunerManager()
+    {
+        return mTunerManager;
+    }
+
+    /**
      * Alias model managed by this playlist manager
      */
     public AliasModel getAliasModel()

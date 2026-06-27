@@ -371,6 +371,7 @@ public class ChannelMetadataModel extends AbstractTableModel implements IChannel
                     fireTableCellUpdated(rowIndex, COLUMN_DECODER_TYPE);
                     break;
                 case DECODER_STATE:
+                case USER_ENCRYPTION:
                     fireTableCellUpdated(rowIndex, COLUMN_DECODER_STATE);
                     break;
                 case USER_FROM:

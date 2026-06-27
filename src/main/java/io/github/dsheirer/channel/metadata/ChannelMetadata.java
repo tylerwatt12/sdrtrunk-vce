@@ -58,6 +58,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     private Identifier<?> mTalkerAliasIdentifier;
     private Identifier<?> mToIdentifier;
     private List<Alias> mToIdentifierAliases;
+    private Identifier<?> mEncryptionIdentifier;
     private Integer mTimeslot;
 
     private IChannelMetadataUpdateListener mIChannelMetadataUpdateListener;
@@ -106,6 +107,8 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
         sb.append("\tFrequency: ").append(frequency != null ? frequency : NULL_DESCRIPTION).append("\n");
         Identifier<?> logical = getDecoderLogicalChannelNameIdentifier();
         sb.append("\tLogical Channel: ").append(logical != null ? logical : NULL_DESCRIPTION).append("\n");
+        Identifier<?> encryption = getEncryptionIdentifier();
+        sb.append("\tEncryption: ").append(encryption != null ? encryption : NULL_DESCRIPTION).append("\n");
         return sb.toString();
     }
 
@@ -275,6 +278,19 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
     }
 
     /**
+     * Current call event encryption key identifier.
+     */
+    public Identifier<?> getEncryptionIdentifier()
+    {
+        return mEncryptionIdentifier;
+    }
+
+    public boolean hasEncryptionIdentifier()
+    {
+        return mEncryptionIdentifier != null;
+    }
+
+    /**
      * Registers the listener for receiving field update events
      */
     public void setUpdateEventListener(IChannelMetadataUpdateListener listener)
@@ -422,7 +438,12 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                 }
                 break;
             case USER:
-                if(identifier.getRole() == Role.FROM)
+                if(identifier.getForm() == Form.ENCRYPTION_KEY)
+                {
+                    mEncryptionIdentifier = (update.isAdd() || update.isSilentAdd()) ? identifier : null;
+                    broadcastUpdate(ChannelMetadataField.USER_ENCRYPTION);
+                }
+                else if(identifier.getRole() == Role.FROM)
                 {
                     if(identifier.getForm() == Form.TALKER_ALIAS)
                     {

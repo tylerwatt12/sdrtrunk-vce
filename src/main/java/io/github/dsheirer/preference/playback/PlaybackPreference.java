@@ -46,6 +46,11 @@ public class PlaybackPreference extends Preference
 
     private static final String PREFERENCE_KEY_AUDIO_DEVICE_NAME = "audio.playback.device.name";
     private static final String PREFERENCE_KEY_AUDIO_CHANNEL_COUNT = "audio.playback.channel.count";
+    private static final String PREFERENCE_KEY_MAXIMUM_BACKLOGGED_CALLS = "audio.playback.maximum.backlogged.calls";
+    private static final String PREFERENCE_KEY_MUTED = "audio.playback.muted";
+    public static final int MINIMUM_BACKLOGGED_CALLS = 0;
+    public static final int MAXIMUM_BACKLOGGED_CALLS = 10000;
+    public static final int DEFAULT_MAXIMUM_BACKLOGGED_CALLS = 500;
     public static final int TONE_LENGTH_SAMPLES = 160;
 
     private static final Logger mLog = LoggerFactory.getLogger(PlaybackPreference.class);
@@ -57,6 +62,8 @@ public class PlaybackPreference extends Preference
     private ToneFrequency mDropToneFrequency;
     private ToneVolume mDropToneVolume;
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDeviceDescriptor;
+    private Integer mMaximumBackloggedCalls;
+    private Boolean mMuted;
 
     /**
      * Constructs this preference with an update listener
@@ -257,6 +264,63 @@ public class PlaybackPreference extends Preference
     public float[] getAudioPlaybackTestTone()
     {
         return ToneUtil.getTone(ToneFrequency.F1200, ToneVolume.V10, TONE_LENGTH_SAMPLES * 4);
+    }
+
+    /**
+     * Maximum queued playback calls to retain before dropping oldest queued calls. Zero disables the limit.
+     */
+    public int getMaximumBackloggedCalls()
+    {
+        if(mMaximumBackloggedCalls == null)
+        {
+            mMaximumBackloggedCalls = clampMaximumBackloggedCalls(mPreferences.getInt(
+                PREFERENCE_KEY_MAXIMUM_BACKLOGGED_CALLS, DEFAULT_MAXIMUM_BACKLOGGED_CALLS));
+        }
+
+        return mMaximumBackloggedCalls;
+    }
+
+    /**
+     * Sets the maximum queued playback calls to retain before dropping oldest queued calls. Zero disables the limit.
+     */
+    public void setMaximumBackloggedCalls(int maximumBackloggedCalls)
+    {
+        mMaximumBackloggedCalls = clampMaximumBackloggedCalls(maximumBackloggedCalls);
+        mPreferences.putInt(PREFERENCE_KEY_MAXIMUM_BACKLOGGED_CALLS, mMaximumBackloggedCalls);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates if audio playback should start muted.
+     */
+    public boolean isMuted()
+    {
+        if(mMuted == null)
+        {
+            mMuted = mPreferences.getBoolean(PREFERENCE_KEY_MUTED, false);
+        }
+
+        return mMuted;
+    }
+
+    /**
+     * Sets the persisted audio playback mute state.
+     */
+    public void setMuted(boolean muted)
+    {
+        mMuted = muted;
+        mPreferences.putBoolean(PREFERENCE_KEY_MUTED, muted);
+        notifyPreferenceUpdated();
+    }
+
+    private int clampMaximumBackloggedCalls(int maximumBackloggedCalls)
+    {
+        if(maximumBackloggedCalls < MINIMUM_BACKLOGGED_CALLS)
+        {
+            return MINIMUM_BACKLOGGED_CALLS;
+        }
+
+        return Math.min(maximumBackloggedCalls, MAXIMUM_BACKLOGGED_CALLS);
     }
 
     /**

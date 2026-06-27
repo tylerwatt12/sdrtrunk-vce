@@ -48,6 +48,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
@@ -76,6 +77,7 @@ public class AudioPlaybackManager implements IAudioController
     private final AtomicLong mNormalRunsCompleted = new AtomicLong();
     private final AtomicLong mLastNormalRunStartTimestamp = new AtomicLong();
     private final AtomicLong mLastNormalRunCompleteTimestamp = new AtomicLong();
+    private final AtomicInteger mQueuedCallCount = new AtomicInteger();
     private final long mCreatedTimestamp = System.currentTimeMillis();
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
@@ -105,6 +107,10 @@ public class AudioPlaybackManager implements IAudioController
     {
         mUserPreferences = userPreferences;
         MyEventBus.getGlobalEventBus().register(this);
+        //Run normal processing on a fixed cadence so playback correctness does not depend on lifecycle wakeups.
+        //The watchdog remains as a diagnostic backstop, not the primary progress mechanism.
+        mProcessingExecutorService =
+                Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk audio manager"));
         AudioPlaybackDeviceDescriptor device = mUserPreferences.getPlaybackPreference().getAudioPlaybackDevice();
 
         if(device != null)
@@ -124,14 +130,10 @@ public class AudioPlaybackManager implements IAudioController
             mLog.warn("No audio output devices available");
         }
 
-        //Run normal processing on a fixed cadence so playback correctness does not depend on lifecycle wakeups.
-        //The watchdog remains as a diagnostic backstop, not the primary progress mechanism.
-        mProcessingExecutorService =
-                Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk audio manager"));
-        mNormalProcessingTask = mProcessingExecutorService.scheduleAtFixedRate(() -> mAudioSegmentProcessor.run(false),
-            0, NORMAL_PROCESS_INTERVAL_MS, TimeUnit.MILLISECONDS);
-        mWatchdogTask = mProcessingExecutorService.scheduleAtFixedRate(() -> mAudioSegmentProcessor.run(true),
-            0, WATCHDOG_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        if(!isMuted())
+        {
+            startAudioProcessing();
+        }
     }
 
     /**
@@ -140,24 +142,16 @@ public class AudioPlaybackManager implements IAudioController
      */
     public void receive(PlayableAudioCall audioCall)
     {
-        mIncomingSegments.add(audioCall);
+        if(!isMuted())
+        {
+            mIncomingSegments.add(audioCall);
+        }
     }
 
     public void dispose()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
-        if(mNormalProcessingTask != null)
-        {
-            mNormalProcessingTask.cancel(true);
-            mNormalProcessingTask = null;
-        }
-
-        if(mWatchdogTask != null)
-        {
-            mWatchdogTask.cancel(true);
-            mWatchdogTask = null;
-        }
-
+        stopAudioProcessing();
         mProcessingExecutorService.shutdownNow();
 
         releaseAudioSegments(mIncomingSegments);
@@ -270,6 +264,8 @@ public class AudioPlaybackManager implements IAudioController
                 {
                     audioChannel.setIdleStateListener(AUDIO_CHANNEL_IDLE_LISTENER);
                 }
+
+                setMuted(mUserPreferences.getPlaybackPreference().isMuted());
             }
             finally
             {
@@ -311,6 +307,88 @@ public class AudioPlaybackManager implements IAudioController
         }
 
         return Collections.emptyList();
+    }
+
+    /**
+     * Sets and persists the mute state for the current and future audio output.
+     */
+    public void setMuted(boolean muted)
+    {
+        mUserPreferences.getPlaybackPreference().setMuted(muted);
+
+        if(mAudioOutput != null)
+        {
+            mAudioOutput.setMuted(muted);
+        }
+
+        if(muted)
+        {
+            clearPlayback();
+            stopAudioProcessing();
+        }
+        else
+        {
+            startAudioProcessing();
+        }
+    }
+
+    /**
+     * Current persisted mute state.
+     */
+    public boolean isMuted()
+    {
+        return mUserPreferences.getPlaybackPreference().isMuted();
+    }
+
+    /**
+     * Approximate number of playable calls queued for local audio playback.
+     */
+    public int getQueuedCallCount()
+    {
+        return mQueuedCallCount.get();
+    }
+
+    private synchronized void startAudioProcessing()
+    {
+        if(mNormalProcessingTask == null || mNormalProcessingTask.isCancelled() || mNormalProcessingTask.isDone())
+        {
+            mNormalProcessingTask = mProcessingExecutorService.scheduleAtFixedRate(() ->
+                mAudioSegmentProcessor.run(false), 0, NORMAL_PROCESS_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        }
+
+        if(mWatchdogTask == null || mWatchdogTask.isCancelled() || mWatchdogTask.isDone())
+        {
+            mWatchdogTask = mProcessingExecutorService.scheduleAtFixedRate(() ->
+                mAudioSegmentProcessor.run(true), 0, WATCHDOG_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private synchronized void stopAudioProcessing()
+    {
+        if(mNormalProcessingTask != null)
+        {
+            mNormalProcessingTask.cancel(false);
+            mNormalProcessingTask = null;
+        }
+
+        if(mWatchdogTask != null)
+        {
+            mWatchdogTask.cancel(false);
+            mWatchdogTask = null;
+        }
+    }
+
+    private void clearPlayback()
+    {
+        releaseAudioSegments(mIncomingSegments);
+        releaseCallContexts();
+
+        if(mAudioOutput != null)
+        {
+            mAudioOutput.clearPlayback();
+        }
+
+        mQueuedCallCount.set(0);
     }
 
     /**
@@ -470,6 +548,7 @@ public class AudioPlaybackManager implements IAudioController
             RescueAccumulator rescueAccumulator = new RescueAccumulator();
             drainIncomingSegments(watchdog, rescueAccumulator);
             refreshCallContexts(watchdog, rescueAccumulator);
+            trimBackloggedCalls();
             assignLinkedReadySegments(watchdog, rescueAccumulator);
             assignReadySegments(watchdog, rescueAccumulator);
             return rescueAccumulator.toSummary();
@@ -606,6 +685,40 @@ public class AudioPlaybackManager implements IAudioController
                 mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled();
         }
 
+        private void trimBackloggedCalls()
+        {
+            int maximumBackloggedCalls = mUserPreferences.getPlaybackPreference().getMaximumBackloggedCalls();
+
+            if(maximumBackloggedCalls <= 0 || mCallContexts.size() <= maximumBackloggedCalls)
+            {
+                return;
+            }
+
+            int callsToDrop = mCallContexts.size() - maximumBackloggedCalls;
+            List<PlayableAudioCall> queuedCalls = new ArrayList<>(mCallContexts.keySet());
+            queuedCalls.sort(Comparator.comparingLong(PlayableAudioCall::getStartTimestamp));
+            int droppedCalls = 0;
+
+            for(PlayableAudioCall queuedCall : queuedCalls)
+            {
+                if(droppedCalls >= callsToDrop)
+                {
+                    break;
+                }
+
+                if(mCallContexts.remove(queuedCall) != null)
+                {
+                    droppedCalls++;
+                }
+            }
+
+            if(droppedCalls > 0)
+            {
+                mLog.debug("Dropped {} queued playback call(s) to enforce maximum playback backlog of {}",
+                    droppedCalls, maximumBackloggedCalls);
+            }
+        }
+
         private void assignReadySegments(boolean watchdog, RescueAccumulator rescueAccumulator)
         {
             if(mCallContexts.isEmpty() || mAudioOutput == null)
@@ -707,9 +820,25 @@ public class AudioPlaybackManager implements IAudioController
                         mLastNormalRunCompleteTimestamp.set(System.currentTimeMillis());
                     }
 
+                    updateQueuedCallCount();
                     mProcessing.set(false);
                 }
             }
+        }
+
+        private void updateQueuedCallCount()
+        {
+            int queued = mIncomingSegments.size() + mCallContexts.size();
+
+            if(mAudioOutput != null)
+            {
+                for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
+                {
+                    queued += audioChannel.getQueuedCallCount();
+                }
+            }
+
+            mQueuedCallCount.set(queued);
         }
 
         private QueueSnapshot snapshotQueues()

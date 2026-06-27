@@ -23,7 +23,9 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +56,9 @@ public class ChannelActivityTableModel extends AbstractTableModel
     private String mTitle;
     private final Channel mOwnerChannel;
     private final boolean mCloseable;
+    private boolean mControlActive;
+    private boolean mActivityViewVisible;
+    private boolean mPendingFullRefresh;
     private final List<ChannelActivityRow> mRows = new ArrayList<>();
     private final Map<String,ChannelActivityRow> mRowsByKey = new HashMap<>();
 
@@ -84,6 +89,47 @@ public class ChannelActivityTableModel extends AbstractTableModel
         return mCloseable;
     }
 
+    /**
+     * Indicates if this trunked table has recently decoded current-control messages.
+     */
+    public boolean isControlActive()
+    {
+        return mControlActive;
+    }
+
+    /**
+     * Sets current-control decode activity for tab header rendering.
+     */
+    public boolean setControlActive(boolean controlActive)
+    {
+        boolean changed = mControlActive != controlActive;
+        mControlActive = controlActive;
+        return changed;
+    }
+
+    /**
+     * Sets visibility state for this table in the Now Playing activity tab view.
+     */
+    public void setActivityViewVisible(boolean activityViewVisible)
+    {
+        boolean becameVisible = !mActivityViewVisible && activityViewVisible;
+        mActivityViewVisible = activityViewVisible;
+
+        if(becameVisible && mPendingFullRefresh)
+        {
+            mPendingFullRefresh = false;
+            fireTableDataChanged();
+        }
+    }
+
+    /**
+     * Indicates if this table is currently visible in the Now Playing activity tab view.
+     */
+    public boolean isActivityViewVisible()
+    {
+        return mActivityViewVisible;
+    }
+
     public ChannelActivityRow getOrCreate(String key, Channel channel, ChannelActivityRow.Role role, long frequency,
                                           Integer timeslot)
     {
@@ -94,22 +140,52 @@ public class ChannelActivityTableModel extends AbstractTableModel
             row = new ChannelActivityRow(key, channel, role, frequency, timeslot);
             mRowsByKey.put(key, row);
             mRows.add(row);
+            mRows.sort(ROW_SORT);
+            int index = mRows.indexOf(row);
+
+            if(index >= 0)
+            {
+                if(mActivityViewVisible)
+                {
+                    fireTableRowsInserted(index, index);
+                }
+                else
+                {
+                    mPendingFullRefresh = true;
+                }
+            }
         }
         else
         {
             row.setChannel(channel);
-            row.setRole(role);
-            row.setFrequency(frequency);
-            row.setTimeslot(timeslot);
         }
 
-        sortAndRefresh();
         return row;
     }
 
     public ChannelActivityRow get(String key)
     {
         return mRowsByKey.get(key);
+    }
+
+    public void remove(ChannelActivityRow row)
+    {
+        int index = mRows.indexOf(row);
+
+        if(index >= 0)
+        {
+            mRows.remove(index);
+            mRowsByKey.remove(row.getKey());
+
+            if(mActivityViewVisible)
+            {
+                fireTableRowsDeleted(index, index);
+            }
+            else
+            {
+                mPendingFullRefresh = true;
+            }
+        }
     }
 
     public List<ChannelActivityRow> getRows()
@@ -127,20 +203,94 @@ public class ChannelActivityTableModel extends AbstractTableModel
         return null;
     }
 
+    public int getRowIndex(String key)
+    {
+        return mRows.indexOf(get(key));
+    }
+
     public void refresh(ChannelActivityRow row)
     {
         int index = mRows.indexOf(row);
 
         if(index >= 0)
         {
-            fireTableRowsUpdated(index, index);
+            if(mActivityViewVisible)
+            {
+                fireTableRowsUpdated(index, index);
+            }
+            else
+            {
+                mPendingFullRefresh = true;
+            }
         }
     }
 
-    public void sortAndRefresh()
+    /**
+     * Refreshes the specified rows, batching contiguous row index ranges.
+     */
+    public void refresh(Collection<ChannelActivityRow> rows)
     {
-        mRows.sort(ROW_SORT);
-        fireTableDataChanged();
+        if(rows == null || rows.isEmpty())
+        {
+            return;
+        }
+
+        if(!mActivityViewVisible)
+        {
+            mPendingFullRefresh = true;
+            return;
+        }
+
+        List<Integer> indexes = new ArrayList<>();
+
+        for(ChannelActivityRow row: rows)
+        {
+            int index = mRows.indexOf(row);
+
+            if(index >= 0)
+            {
+                indexes.add(index);
+            }
+        }
+
+        if(indexes.isEmpty())
+        {
+            return;
+        }
+
+        Collections.sort(indexes);
+        int start = indexes.get(0);
+        int previous = start;
+
+        for(int x = 1; x < indexes.size(); x++)
+        {
+            int current = indexes.get(x);
+
+            if(current > previous + 1)
+            {
+                fireTableRowsUpdated(start, previous);
+                start = current;
+            }
+
+            previous = current;
+        }
+
+        fireTableRowsUpdated(start, previous);
+    }
+
+    public void refreshAllRows()
+    {
+        if(!mRows.isEmpty())
+        {
+            if(mActivityViewVisible)
+            {
+                fireTableRowsUpdated(0, mRows.size() - 1);
+            }
+            else
+            {
+                mPendingFullRefresh = true;
+            }
+        }
     }
 
     @Override
@@ -167,7 +317,6 @@ public class ChannelActivityTableModel extends AbstractTableModel
         return switch(columnIndex)
         {
             case COLUMN_STATUS -> State.class;
-            case COLUMN_LCN -> Integer.class;
             case COLUMN_FREQUENCY -> Long.class;
             case COLUMN_SOURCE_ALIAS, COLUMN_TARGET_ALIAS -> Alias.class;
             case COLUMN_SOURCE, COLUMN_TARGET -> Identifier.class;

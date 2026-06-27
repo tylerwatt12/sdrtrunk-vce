@@ -33,6 +33,8 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -51,6 +53,7 @@ public class PlaybackPreferenceEditor extends HBox
     private GridPane mEditorPane;
     private ComboBox<AudioPlaybackDeviceDescriptor> mAudioPlaybackDevicesCombo;
     private Button mPlaybackDeviceTestButton;
+    private Spinner<Integer> mMaximumBackloggedCallsSpinner;
     private ToggleSwitch mUseAudioSegmentStartToneSwitch;
     private Button mTestStartToneButton;
     private ToggleSwitch mUseAudioSegmentDropToneSwitch;
@@ -82,6 +85,13 @@ public class PlaybackPreferenceEditor extends HBox
             mEditorPane.add(outputLabel, 0, row, 2, 1);
             mEditorPane.add(getAudioPlaybackDevicesCombo(), 2, row, 3, 1);
             mEditorPane.add(getPlaybackDeviceTestButton(), 5, row);
+            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, ++row, 6, 1);
+            mEditorPane.add(new Label("Audio Playback Backlog"), 0, ++row, 2, 1);
+            Label maximumBackloggedCallsLabel = new Label("Maximum Queued Calls:");
+            GridPane.setHalignment(maximumBackloggedCallsLabel, HPos.RIGHT);
+            mEditorPane.add(maximumBackloggedCallsLabel, 1, ++row);
+            mEditorPane.add(getMaximumBackloggedCallsSpinner(), 2, row);
+            mEditorPane.add(new Label("0 = unlimited"), 3, row, 2, 1);
             mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, ++row, 6, 1);
             mEditorPane.add(new Label("Audio Playback Insert Tones"), 0, ++row, 2, 1);
 
@@ -141,6 +151,57 @@ public class PlaybackPreferenceEditor extends HBox
         }
 
         return mPlaybackDeviceTestButton;
+    }
+
+    private Spinner<Integer> getMaximumBackloggedCallsSpinner()
+    {
+        if(mMaximumBackloggedCallsSpinner == null)
+        {
+            mMaximumBackloggedCallsSpinner = new Spinner<>(
+                PlaybackPreference.MINIMUM_BACKLOGGED_CALLS,
+                PlaybackPreference.MAXIMUM_BACKLOGGED_CALLS,
+                mPlaybackPreference.getMaximumBackloggedCalls(),
+                50);
+            mMaximumBackloggedCallsSpinner.setEditable(true);
+            mMaximumBackloggedCallsSpinner.setTooltip(new Tooltip(
+                "Drops oldest queued playback calls when this limit is exceeded. Set 0 for unlimited."));
+            mMaximumBackloggedCallsSpinner.valueProperty().addListener((observable, oldValue, maximum) ->
+            {
+                if(maximum != null)
+                {
+                    mPlaybackPreference.setMaximumBackloggedCalls(maximum);
+                }
+            });
+            mMaximumBackloggedCallsSpinner.focusedProperty().addListener((observable, oldValue, focused) ->
+            {
+                if(!focused)
+                {
+                    commitMaximumBackloggedCallsSpinner();
+                }
+            });
+        }
+
+        return mMaximumBackloggedCallsSpinner;
+    }
+
+    private void commitMaximumBackloggedCallsSpinner()
+    {
+        try
+        {
+            Integer value = mMaximumBackloggedCallsSpinner.getValueFactory().getConverter()
+                .fromString(mMaximumBackloggedCallsSpinner.getEditor().getText());
+
+            if(value != null)
+            {
+                int clampedValue = Math.min(PlaybackPreference.MAXIMUM_BACKLOGGED_CALLS,
+                    Math.max(PlaybackPreference.MINIMUM_BACKLOGGED_CALLS, value));
+                mMaximumBackloggedCallsSpinner.getValueFactory().setValue(clampedValue);
+            }
+        }
+        catch(Exception e)
+        {
+            mMaximumBackloggedCallsSpinner.getValueFactory().setValue(mPlaybackPreference.getMaximumBackloggedCalls());
+        }
     }
 
     private ToggleSwitch getUseAudioSegmentStartToneSwitch()

@@ -33,16 +33,35 @@ public class ChannelActivityRow
     public enum Role
     {
         CONVENTIONAL,
+        CONFIGURED_CONTROL,
         CURRENT_CONTROL,
         ALTERNATE_CONTROL,
         TRAFFIC
     }
 
+    public enum ControlRole
+    {
+        NONE,
+        CURRENT,
+        ALTERNATE
+    }
+
+    public enum Origin
+    {
+        CONVENTIONAL_METADATA,
+        CONFIGURED_CONTROL,
+        DECODED_CURRENT_CONTROL,
+        DECODED_ALTERNATE_CONTROL,
+        TRAFFIC_GRANT
+    }
+
     private final String mKey;
     private Channel mChannel;
     private Role mRole;
+    private Origin mOrigin;
+    private ControlRole mControlRole = ControlRole.NONE;
     private State mState = State.IDLE;
-    private Integer mLcn;
+    private String mLcn;
     private long mFrequency;
     private Integer mTimeslot;
     private Identifier<?> mSource;
@@ -50,14 +69,15 @@ public class ChannelActivityRow
     private Identifier<?> mTarget;
     private List<Alias> mTargetAliases = Collections.emptyList();
     private String mDecoder;
+    private String mEncryptionDetails;
 
     public ChannelActivityRow(String key, Channel channel, Role role, long frequency, Integer timeslot)
     {
         mKey = key;
         mChannel = channel;
-        mRole = role;
         mFrequency = frequency;
         mTimeslot = timeslot;
+        setRole(role);
     }
 
     public String getKey()
@@ -82,7 +102,54 @@ public class ChannelActivityRow
 
     public void setRole(Role role)
     {
-        mRole = role;
+        mRole = role != null ? role : Role.CONVENTIONAL;
+
+        if(mRole == Role.CURRENT_CONTROL)
+        {
+            setControlRole(ControlRole.CURRENT);
+        }
+        else if(mRole == Role.ALTERNATE_CONTROL)
+        {
+            setControlRole(ControlRole.ALTERNATE);
+        }
+        else if(mRole == Role.CONVENTIONAL)
+        {
+            setControlRole(ControlRole.NONE);
+        }
+        else if(mRole == Role.CONFIGURED_CONTROL)
+        {
+            setControlRole(ControlRole.NONE);
+        }
+    }
+
+    public ControlRole getControlRole()
+    {
+        return mControlRole;
+    }
+
+    public void setControlRole(ControlRole controlRole)
+    {
+        mControlRole = controlRole != null ? controlRole : ControlRole.NONE;
+    }
+
+    public boolean hasControlRole()
+    {
+        return mControlRole != ControlRole.NONE;
+    }
+
+    public boolean isControlRow()
+    {
+        return mRole == Role.CONFIGURED_CONTROL || mRole == Role.CURRENT_CONTROL || mRole == Role.ALTERNATE_CONTROL;
+    }
+
+    public Origin getOrigin()
+    {
+        return mOrigin;
+    }
+
+    public void setOrigin(Origin origin)
+    {
+        mOrigin = origin;
     }
 
     public State getState()
@@ -95,12 +162,12 @@ public class ChannelActivityRow
         mState = state != null ? state : State.IDLE;
     }
 
-    public Integer getLcn()
+    public String getLcn()
     {
         return mLcn;
     }
 
-    public void setLcn(Integer lcn)
+    public void setLcn(String lcn)
     {
         mLcn = lcn;
     }
@@ -175,11 +242,22 @@ public class ChannelActivityRow
         mDecoder = decoder;
     }
 
+    public String getEncryptionDetails()
+    {
+        return mEncryptionDetails;
+    }
+
+    public void setEncryptionDetails(String encryptionDetails)
+    {
+        mEncryptionDetails = encryptionDetails;
+    }
+
     public void clearCallDetails()
     {
         mSource = null;
         mSourceAliases = Collections.emptyList();
         mTarget = null;
         mTargetAliases = Collections.emptyList();
+        mEncryptionDetails = null;
     }
 }

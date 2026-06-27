@@ -19,34 +19,54 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import com.google.common.base.Joiner;
+import com.google.common.eventbus.Subscribe;
 import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.SwingUtils;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Component;
-import java.awt.FlowLayout;
+import java.awt.Dimension;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import javax.swing.JButton;
+import javax.swing.BorderFactory;
+import javax.swing.Icon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.event.ChangeEvent;
 import javax.swing.event.ListSelectionEvent;
+import javax.swing.event.TableColumnModelEvent;
+import javax.swing.event.TableColumnModelListener;
+import javax.swing.border.Border;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableColumn;
 import javax.swing.table.TableColumnModel;
 import net.miginfocom.swing.MigLayout;
 
@@ -55,14 +75,25 @@ import net.miginfocom.swing.MigLayout;
  */
 public class ChannelActivityPanel extends JPanel
 {
+    private static final String TABLE_COLUMN_WIDTH_PREFERENCE_KEY = "now.playing.activity.table";
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ChannelActivityModel mActivityModel;
     private final IconModel mIconModel;
-    private final Broadcaster<ProcessingChain> mSelectedProcessingChainBroadcaster = new Broadcaster<>();
+    private final UserPreferences mUserPreferences;
+    private final NowPlayingPreference mNowPlayingPreference;
+    private final Broadcaster<SelectedFrequencyContext> mSelectedFrequencyBroadcaster = new Broadcaster<>();
     private final Map<State,Color> mBackgroundColors = new EnumMap<>(State.class);
     private final Map<State,Color> mForegroundColors = new EnumMap<>(State.class);
     private final Map<ChannelActivityTableModel,Component> mTabComponents = new HashMap<>();
-    private final Map<ChannelActivityTableModel,CloseableTabComponent> mCloseableTabComponents = new HashMap<>();
+    private final Map<ChannelActivityTableModel,JTable> mTables = new HashMap<>();
+    private final Map<JTable,JTableColumnWidthMonitor> mColumnWidthMonitors = new HashMap<>();
+    private final Map<JTable,TableColumnModelListener> mColumnWidthSyncListeners = new HashMap<>();
+    private final Map<JTable,String> mSelectedRowKeys = new HashMap<>();
+    private SelectedFrequencyContext mLastBroadcastSelectedFrequencyContext;
+    private JTable mSelectedTable;
+    private boolean mSuppressSelectionEvents;
+    private boolean mApplyingColumnWidths;
+    private boolean mRegisteredForPreferences;
     private JideTabbedPane mTabbedPane;
 
     public ChannelActivityPanel(PlaylistManager playlistManager, IconModel iconModel, UserPreferences userPreferences)
@@ -70,13 +101,69 @@ public class ChannelActivityPanel extends JPanel
         mChannelProcessingManager = playlistManager.getChannelProcessingManager();
         mActivityModel = mChannelProcessingManager.getChannelActivityModel();
         mIconModel = iconModel;
+        mUserPreferences = userPreferences;
+        mNowPlayingPreference = userPreferences.getNowPlayingPreference();
+        MyEventBus.getGlobalEventBus().register(this);
+        mRegisteredForPreferences = true;
         setColors();
         init();
     }
 
-    public void addProcessingChainSelectionListener(Listener<ProcessingChain> listener)
+    @Override
+    public void removeNotify()
     {
-        mSelectedProcessingChainBroadcaster.addListener(listener);
+        if(mRegisteredForPreferences)
+        {
+            MyEventBus.getGlobalEventBus().unregister(this);
+            mRegisteredForPreferences = false;
+        }
+
+        for(JTableColumnWidthMonitor monitor: mColumnWidthMonitors.values())
+        {
+            monitor.dispose();
+        }
+
+        for(Map.Entry<JTable,TableColumnModelListener> entry: mColumnWidthSyncListeners.entrySet())
+        {
+            entry.getKey().getColumnModel().removeColumnModelListener(entry.getValue());
+        }
+
+        mColumnWidthMonitors.clear();
+        mColumnWidthSyncListeners.clear();
+
+        super.removeNotify();
+    }
+
+    public void addSelectedFrequencyListener(Listener<SelectedFrequencyContext> listener)
+    {
+        mSelectedFrequencyBroadcaster.addListener(listener);
+    }
+
+    public void removeSelectedFrequencyListener(Listener<SelectedFrequencyContext> listener)
+    {
+        mSelectedFrequencyBroadcaster.removeListener(listener);
+    }
+
+    public void clearSelectedFrequencyContext()
+    {
+        mSuppressSelectionEvents = true;
+
+        try
+        {
+            mSelectedRowKeys.clear();
+            mSelectedTable = null;
+
+            for(JTable table: mTables.values())
+            {
+                table.clearSelection();
+            }
+        }
+        finally
+        {
+            mSuppressSelectionEvents = false;
+        }
+
+        broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), true);
     }
 
     private void init()
@@ -88,6 +175,15 @@ public class ChannelActivityPanel extends JPanel
         mActivityModel.addTableChangeListener(tableModel -> SwingUtils.run(() -> updateTable(tableModel)));
     }
 
+    @Subscribe
+    public void preferenceUpdated(PreferenceType preferenceType)
+    {
+        if(preferenceType == PreferenceType.NOW_PLAYING)
+        {
+            refreshTables();
+        }
+    }
+
     private JideTabbedPane getTabbedPane()
     {
         if(mTabbedPane == null)
@@ -95,6 +191,15 @@ public class ChannelActivityPanel extends JPanel
             mTabbedPane = new JideTabbedPane();
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
+            mTabbedPane.addChangeListener(event -> updateTableVisibility());
+            mTabbedPane.addMouseListener(new MouseAdapter()
+            {
+                @Override
+                public void mouseClicked(MouseEvent event)
+                {
+                    handleTabIndicatorClick(event);
+                }
+            });
         }
 
         return mTabbedPane;
@@ -111,10 +216,17 @@ public class ChannelActivityPanel extends JPanel
         if(tableModel.isCloseable())
         {
             int index = getTabbedPane().indexOfComponent(scrollPane);
-            CloseableTabComponent closeableTabComponent = new CloseableTabComponent(tableModel, scrollPane);
-            mCloseableTabComponents.put(tableModel, closeableTabComponent);
-            getTabbedPane().setTabComponentAt(index, closeableTabComponent);
+            getTabbedPane().setIconAt(index, new TabStatusIcon(tableModel));
+            getTabbedPane().setTabClosableAt(index, false);
+            getTabbedPane().setToolTipTextAt(index, getTabToolTip(tableModel));
         }
+        else
+        {
+            int index = getTabbedPane().indexOfComponent(scrollPane);
+            getTabbedPane().setToolTipTextAt(index, tableModel.getTitle());
+        }
+
+        updateTableVisibility();
     }
 
     private void updateTable(ChannelActivityTableModel tableModel)
@@ -124,23 +236,139 @@ public class ChannelActivityPanel extends JPanel
 
         if(index >= 0)
         {
-            CloseableTabComponent closeableTabComponent = mCloseableTabComponents.get(tableModel);
+            String title = tableModel.getTitle();
+            getTabbedPane().setTitleAt(index, title);
+            getTabbedPane().setToolTipTextAt(index, tableModel.isCloseable() ? getTabToolTip(tableModel) : title);
 
-            if(closeableTabComponent != null)
+            if(tableModel.isCloseable() && !(getTabbedPane().getIconAt(index) instanceof TabStatusIcon))
             {
-                closeableTabComponent.updateTitle();
+                getTabbedPane().setIconAt(index, new TabStatusIcon(tableModel));
             }
-            else
+
+            getTabbedPane().revalidate();
+            getTabbedPane().repaint();
+        }
+    }
+
+    private String getTabToolTip(ChannelActivityTableModel tableModel)
+    {
+        if(tableModel.isControlActive())
+        {
+            return "Control channel active. " + tableModel.getTitle();
+        }
+
+        return "Control channel stale or stopped. Click the status dot to close this site tab. " +
+            tableModel.getTitle();
+    }
+
+    private void handleTabIndicatorClick(MouseEvent event)
+    {
+        if(event.getButton() != MouseEvent.BUTTON1)
+        {
+            return;
+        }
+
+        int index = getTabbedPane().indexAtLocation(event.getX(), event.getY());
+        ChannelActivityTableModel tableModel = getTableModel(index);
+
+        if(tableModel != null && tableModel.isCloseable() && !tableModel.isControlActive())
+        {
+            Rectangle tabBounds = getTabbedPane().getUI().getTabBounds(getTabbedPane(), index);
+
+            if(tabBounds != null && event.getX() <= tabBounds.x + TabStatusIcon.WIDTH + 8)
             {
-                getTabbedPane().setTitleAt(index, tableModel.getTitle());
+                closeTab(tableModel);
             }
+        }
+    }
+
+    private ChannelActivityTableModel getTableModel(int tabIndex)
+    {
+        if(tabIndex >= 0)
+        {
+            Component tabComponent = getTabbedPane().getComponentAt(tabIndex);
+
+            for(Map.Entry<ChannelActivityTableModel,Component> entry: mTabComponents.entrySet())
+            {
+                if(entry.getValue() == tabComponent)
+                {
+                    return entry.getKey();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private void closeTab(ChannelActivityTableModel tableModel)
+    {
+        Component component = mTabComponents.remove(tableModel);
+        int index = component != null ? getTabbedPane().indexOfComponent(component) : -1;
+
+        if(index >= 0)
+        {
+            getTabbedPane().remove(index);
+        }
+
+        tableModel.setActivityViewVisible(false);
+
+        JTable table = mTables.remove(tableModel);
+        boolean selectedTableClosed = table != null && mSelectedTable == table;
+
+        if(table != null)
+        {
+            mSelectedRowKeys.remove(table);
+            JTableColumnWidthMonitor monitor = mColumnWidthMonitors.remove(table);
+
+            if(monitor != null)
+            {
+                monitor.dispose();
+            }
+
+            TableColumnModelListener listener = mColumnWidthSyncListeners.remove(table);
+
+            if(listener != null)
+            {
+                table.getColumnModel().removeColumnModelListener(listener);
+            }
+        }
+
+        if(selectedTableClosed)
+        {
+            mSelectedTable = null;
+            broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), true);
+        }
+
+        mActivityModel.close(tableModel);
+        updateTableVisibility();
+    }
+
+    private void updateTableVisibility()
+    {
+        Component selectedComponent = getTabbedPane().getSelectedComponent();
+
+        for(Map.Entry<ChannelActivityTableModel,Component> entry: mTabComponents.entrySet())
+        {
+            entry.getKey().setActivityViewVisible(entry.getValue() == selectedComponent);
+        }
+    }
+
+    private void refreshTables()
+    {
+        for(ChannelActivityTableModel tableModel: mTabComponents.keySet())
+        {
+            tableModel.refreshAllRows();
         }
     }
 
     private JTable createTable(ChannelActivityTableModel tableModel)
     {
         JTable table = new JTable(tableModel);
+        mTables.put(tableModel, table);
         table.setAutoCreateRowSorter(false);
+        table.setSelectionBackground(table.getBackground());
+        table.setSelectionForeground(table.getForeground());
+        tableModel.addTableModelListener(event -> refreshSelectedFrequencyContext(table));
         table.getSelectionModel().addListSelectionListener(event -> processSelection(event, table));
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_STATUS)
             .setCellRenderer(new StateCellRenderer());
@@ -159,14 +387,107 @@ public class ChannelActivityPanel extends JPanel
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_DECODER)
             .setCellRenderer(new CenteredCellRenderer());
         configureColumnWidths(table);
+        mColumnWidthMonitors.put(table, new JTableColumnWidthMonitor(mUserPreferences, table,
+            TABLE_COLUMN_WIDTH_PREFERENCE_KEY));
+        addColumnWidthSync(table);
         return table;
+    }
+
+    private void addColumnWidthSync(JTable table)
+    {
+        TableColumnModelListener listener = new TableColumnModelListener()
+        {
+            @Override
+            public void columnMarginChanged(ChangeEvent event)
+            {
+                if(!mApplyingColumnWidths)
+                {
+                    applyColumnWidthsToOtherTables(table);
+                }
+            }
+
+            @Override
+            public void columnAdded(TableColumnModelEvent event)
+            {
+            }
+
+            @Override
+            public void columnRemoved(TableColumnModelEvent event)
+            {
+            }
+
+            @Override
+            public void columnMoved(TableColumnModelEvent event)
+            {
+            }
+
+            @Override
+            public void columnSelectionChanged(ListSelectionEvent event)
+            {
+            }
+        };
+
+        table.getColumnModel().addColumnModelListener(listener);
+        mColumnWidthSyncListeners.put(table, listener);
+        SwingUtilities.invokeLater(() -> applyExistingColumnWidths(table));
+    }
+
+    private void applyExistingColumnWidths(JTable target)
+    {
+        if(mTables.containsValue(target))
+        {
+            for(JTable source: mTables.values())
+            {
+                if(source != target)
+                {
+                    applyColumnWidths(source, target);
+                    break;
+                }
+            }
+        }
+    }
+
+    private void applyColumnWidthsToOtherTables(JTable source)
+    {
+        for(JTable target: mTables.values())
+        {
+            if(target != source)
+            {
+                applyColumnWidths(source, target);
+            }
+        }
+    }
+
+    private void applyColumnWidths(JTable source, JTable target)
+    {
+        TableColumnModel sourceColumns = source.getColumnModel();
+        TableColumnModel targetColumns = target.getColumnModel();
+        int columnCount = Math.min(sourceColumns.getColumnCount(), targetColumns.getColumnCount());
+        mApplyingColumnWidths = true;
+
+        try
+        {
+            for(int column = 0; column < columnCount; column++)
+            {
+                TableColumn sourceColumn = sourceColumns.getColumn(column);
+                TableColumn targetColumn = targetColumns.getColumn(column);
+                int width = sourceColumn.getWidth();
+                targetColumn.setPreferredWidth(width);
+                targetColumn.setWidth(width);
+            }
+        }
+        finally
+        {
+            mApplyingColumnWidths = false;
+        }
     }
 
     private void configureColumnWidths(JTable table)
     {
         TableColumnModel columns = table.getColumnModel();
-        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setPreferredWidth(80);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setMaxWidth(110);
+        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setPreferredWidth(140);
+        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setMinWidth(80);
+        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setMaxWidth(260);
         columns.getColumn(ChannelActivityTableModel.COLUMN_LCN).setPreferredWidth(52);
         columns.getColumn(ChannelActivityTableModel.COLUMN_LCN).setMaxWidth(70);
         columns.getColumn(ChannelActivityTableModel.COLUMN_FREQUENCY).setPreferredWidth(95);
@@ -183,25 +504,156 @@ public class ChannelActivityPanel extends JPanel
 
     private void processSelection(ListSelectionEvent event, JTable table)
     {
-        if(event.getValueIsAdjusting())
+        if(event.getValueIsAdjusting() || mSuppressSelectionEvents)
         {
             return;
         }
 
-        ProcessingChain processingChain = null;
-        int selectedRow = table.getSelectedRow();
-
-        if(selectedRow >= 0 && table.getModel() instanceof ChannelActivityTableModel model)
+        if(table.getModel() instanceof ChannelActivityTableModel model)
         {
-            ChannelActivityRow row = model.getRow(table.convertRowIndexToModel(selectedRow));
+            int selectedRow = table.getSelectedRow();
 
-            if(row != null && row.getChannel() != null)
+            if(selectedRow >= 0)
             {
-                processingChain = mChannelProcessingManager.getProcessingChain(row.getChannel());
+                ChannelActivityRow row = model.getRow(table.convertRowIndexToModel(selectedRow));
+
+                if(row != null)
+                {
+                    if(mSelectedTable != table)
+                    {
+                        clearOtherTableSelections(table);
+                        mSelectedTable = table;
+                    }
+
+                    mSelectedRowKeys.put(table, row.getKey());
+                    broadcastSelection(row, model, true);
+                    return;
+                }
             }
+
+            String selectedKey = mSelectedRowKeys.get(table);
+
+            if(selectedKey != null && model.get(selectedKey) != null)
+            {
+                SwingUtilities.invokeLater(() -> restoreSelection(table, selectedKey));
+                return;
+            }
+
+            mSelectedRowKeys.remove(table);
         }
 
-        mSelectedProcessingChainBroadcaster.broadcast(processingChain);
+        if(mSelectedTable == table)
+        {
+            mSelectedTable = null;
+            broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), true);
+        }
+    }
+
+    private void refreshSelectedFrequencyContext(JTable table)
+    {
+        if(table != mSelectedTable)
+        {
+            return;
+        }
+
+        if(table.getModel() instanceof ChannelActivityTableModel model)
+        {
+            int selectedRow = table.getSelectedRow();
+
+            if(selectedRow >= 0)
+            {
+                ChannelActivityRow row = model.getRow(table.convertRowIndexToModel(selectedRow));
+
+                if(row != null)
+                {
+                    mSelectedRowKeys.put(table, row.getKey());
+                    broadcastSelection(row, model, false);
+                }
+            }
+        }
+    }
+
+    private void clearOtherTableSelections(JTable activeTable)
+    {
+        mSuppressSelectionEvents = true;
+
+        try
+        {
+            for(JTable table: mTables.values())
+            {
+                if(table != activeTable)
+                {
+                    table.clearSelection();
+                    mSelectedRowKeys.remove(table);
+                }
+            }
+        }
+        finally
+        {
+            mSuppressSelectionEvents = false;
+        }
+    }
+
+    private void broadcastSelection(ChannelActivityRow row, ChannelActivityTableModel model, boolean force)
+    {
+        broadcastSelectedFrequencyContext(getSelectedFrequencyContext(row, model), force);
+    }
+
+    private ProcessingChain getProcessingChain(ChannelActivityRow row, ChannelActivityTableModel model)
+    {
+        if(row == null || row.getFrequency() <= 0)
+        {
+            return null;
+        }
+
+        ProcessingChain processingChain = mChannelProcessingManager.getProcessingChainByFrequency(row.getFrequency(),
+            row.getTimeslot());
+
+        return processingChain != null ? processingChain : null;
+    }
+
+    private SelectedFrequencyContext getSelectedFrequencyContext(ChannelActivityRow row, ChannelActivityTableModel model)
+    {
+        if(row == null)
+        {
+            return SelectedFrequencyContext.clear();
+        }
+
+        Channel ownerChannel = model != null ? model.getOwnerChannel() : null;
+        String sessionId = model != null ? model.getTitle() : null;
+        return new SelectedFrequencyContext(row.getFrequency(), row.getTimeslot(), row.getRole(), row.getDecoder(),
+            sessionId, ownerChannel, row.getChannel(), getProcessingChain(row, model), false);
+    }
+
+    private void broadcastSelectedFrequencyContext(SelectedFrequencyContext context, boolean force)
+    {
+        if(force || !context.equals(mLastBroadcastSelectedFrequencyContext))
+        {
+            mLastBroadcastSelectedFrequencyContext = context;
+            mSelectedFrequencyBroadcaster.broadcast(context);
+        }
+    }
+
+    private void restoreSelection(JTable table, String key)
+    {
+        if(table.getModel() instanceof ChannelActivityTableModel model)
+        {
+            int modelRow = model.getRowIndex(key);
+
+            if(modelRow >= 0)
+            {
+                int viewRow = table.convertRowIndexToView(modelRow);
+
+                if(viewRow >= 0 && table.getSelectedRow() != viewRow)
+                {
+                    table.getSelectionModel().setSelectionInterval(viewRow, viewRow);
+                }
+            }
+            else
+            {
+                mSelectedRowKeys.remove(table);
+            }
+        }
     }
 
     private void setColors()
@@ -226,40 +678,56 @@ public class ChannelActivityPanel extends JPanel
         mForegroundColors.put(State.TEARDOWN, Color.WHITE);
     }
 
-    public class CloseableTabComponent extends JPanel
+    public static class TabStatusIcon implements Icon
     {
+        public static final int WIDTH = 18;
+        private static final int HEIGHT = 14;
         private final ChannelActivityTableModel mTableModel;
-        private final JLabel mTitle;
 
-        public CloseableTabComponent(ChannelActivityTableModel tableModel, Component tabComponent)
+        public TabStatusIcon(ChannelActivityTableModel tableModel)
         {
-            super(new FlowLayout(FlowLayout.LEFT, 0, 0));
             mTableModel = tableModel;
-            setOpaque(false);
-            mTitle = new JLabel(tableModel.getTitle());
-            add(mTitle);
-            JButton close = new JButton("X");
-            close.setFocusable(false);
-            close.setBorderPainted(false);
-            close.setContentAreaFilled(false);
-            close.addActionListener(event -> {
-                int index = getTabbedPane().indexOfComponent(tabComponent);
-
-                if(index >= 0)
-                {
-                    getTabbedPane().remove(index);
-                    mTabComponents.remove(tableModel);
-                    mCloseableTabComponents.remove(tableModel);
-                    mActivityModel.close(tableModel);
-                    mSelectedProcessingChainBroadcaster.broadcast(null);
-                }
-            });
-            add(close);
         }
 
-        public void updateTitle()
+        @Override
+        public int getIconWidth()
         {
-            mTitle.setText(mTableModel.getTitle());
+            return WIDTH;
+        }
+
+        @Override
+        public int getIconHeight()
+        {
+            return HEIGHT;
+        }
+
+        @Override
+        public void paintIcon(Component component, Graphics graphics, int x, int y)
+        {
+            Graphics2D g2 = (Graphics2D)graphics.create();
+
+            try
+            {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int size = 11;
+                int circleX = x + 3;
+                int circleY = y + ((HEIGHT - size) / 2);
+                boolean controlActive = mTableModel.isControlActive();
+                g2.setColor(controlActive ? new Color(0, 145, 40) : Color.BLACK);
+                g2.fillOval(circleX, circleY, size, size);
+
+                if(!controlActive)
+                {
+                    g2.setColor(Color.WHITE);
+                    g2.setStroke(new BasicStroke(1.6f));
+                    g2.drawLine(circleX + 3, circleY + 3, circleX + size - 4, circleY + size - 4);
+                    g2.drawLine(circleX + size - 4, circleY + 3, circleX + 3, circleY + size - 4);
+                }
+            }
+            finally
+            {
+                g2.dispose();
+            }
         }
     }
 
@@ -280,14 +748,74 @@ public class ChannelActivityPanel extends JPanel
             {
                 label.setText(state.toString());
 
-                if(!isSelected)
+                if(state == State.ENCRYPTED && advancedP25EncryptionStatus())
                 {
-                    label.setBackground(mBackgroundColors.getOrDefault(state, table.getBackground()));
-                    label.setForeground(mForegroundColors.getOrDefault(state, table.getForeground()));
+                    ChannelActivityRow activityRow = getActivityRow(table, row);
+
+                    if(activityRow != null && activityRow.getEncryptionDetails() != null)
+                    {
+                        label.setText(activityRow.getEncryptionDetails());
+                    }
                 }
+
+                label.setBackground(mBackgroundColors.getOrDefault(state, table.getBackground()));
+                label.setForeground(mForegroundColors.getOrDefault(state, table.getForeground()));
             }
 
+            applySelectionBorder(table, label, isSelected, column);
             return label;
+        }
+    }
+
+    private boolean advancedP25EncryptionStatus()
+    {
+        return mNowPlayingPreference != null && mNowPlayingPreference.isAdvancedP25EncryptionStatus();
+    }
+
+    private ChannelActivityRow getActivityRow(JTable table, int row)
+    {
+        if(table.getModel() instanceof ChannelActivityTableModel model)
+        {
+            return model.getRow(table.convertRowIndexToModel(row));
+        }
+
+        return null;
+    }
+
+    private void applyControlChannelForeground(JTable table, JLabel label, int row)
+    {
+        ChannelActivityRow activityRow = getActivityRow(table, row);
+
+        if(activityRow != null)
+        {
+            if(activityRow.getControlRole() == ChannelActivityRow.ControlRole.CURRENT)
+            {
+                label.setForeground(Color.RED);
+                return;
+            }
+            else if(activityRow.getControlRole() == ChannelActivityRow.ControlRole.ALTERNATE)
+            {
+                label.setForeground(new Color(180, 130, 0));
+                return;
+            }
+        }
+
+        label.setForeground(table.getForeground());
+    }
+
+    private void applySelectionBorder(JTable table, JLabel label, boolean isSelected, int column)
+    {
+        if(isSelected)
+        {
+            int lastColumn = table.getColumnCount() - 1;
+            int left = column == 0 ? 1 : 0;
+            int right = column == lastColumn ? 1 : 0;
+            Border outline = BorderFactory.createMatteBorder(1, left, 1, right, Color.BLACK);
+            label.setBorder(outline);
+        }
+        else
+        {
+            label.setBorder(null);
         }
     }
 
@@ -305,26 +833,8 @@ public class ChannelActivityPanel extends JPanel
             JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
             label.setText(value != null ? value.toString() : null);
 
-            if(!isSelected && table.getModel() instanceof ChannelActivityTableModel model)
-            {
-                ChannelActivityRow activityRow = model.getRow(table.convertRowIndexToModel(row));
-
-                if(activityRow != null)
-                {
-                    if(activityRow.getRole() == ChannelActivityRow.Role.CURRENT_CONTROL)
-                    {
-                        label.setForeground(Color.RED);
-                    }
-                    else if(activityRow.getRole() == ChannelActivityRow.Role.ALTERNATE_CONTROL)
-                    {
-                        label.setForeground(new Color(180, 130, 0));
-                    }
-                    else
-                    {
-                        label.setForeground(table.getForeground());
-                    }
-                }
-            }
+            applyControlChannelForeground(table, label, row);
+            applySelectionBorder(table, label, isSelected, column);
 
             return label;
         }
@@ -354,6 +864,9 @@ public class ChannelActivityPanel extends JPanel
                 label.setText(null);
             }
 
+            applyControlChannelForeground(table, label, row);
+            applySelectionBorder(table, label, isSelected, column);
+
             return label;
         }
     }
@@ -379,10 +892,7 @@ public class ChannelActivityPanel extends JPanel
                     Alias firstAlias = Alias.class.cast(aliases.getFirst());
                     label.setIcon(mIconModel.getIcon(firstAlias.getIconName(), IconModel.DEFAULT_ICON_SIZE));
 
-                    if(!isSelected)
-                    {
-                        label.setForeground(firstAlias.getDisplayColor());
-                    }
+                    label.setForeground(firstAlias.getDisplayColor());
                 }
                 else
                 {
@@ -398,6 +908,7 @@ public class ChannelActivityPanel extends JPanel
                 label.setForeground(table.getForeground());
             }
 
+            applySelectionBorder(table, label, isSelected, column);
             return label;
         }
     }
@@ -407,6 +918,17 @@ public class ChannelActivityPanel extends JPanel
         public CenteredCellRenderer()
         {
             setHorizontalAlignment(SwingConstants.CENTER);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            label.setForeground(table.getForeground());
+            label.setBackground(table.getBackground());
+            applySelectionBorder(table, label, isSelected, column);
+            return label;
         }
     }
 }

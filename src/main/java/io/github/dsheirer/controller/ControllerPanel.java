@@ -32,6 +32,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.util.function.Consumer;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
@@ -47,11 +48,13 @@ public class ControllerPanel extends JPanel
 
     public ControllerPanel(PlaylistManager playlistManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
-                           TunerManager tunerManager, UserPreferences userPreferences, boolean detailTabsVisible)
+                           TunerManager tunerManager, UserPreferences userPreferences, boolean detailTabsVisible,
+                           Consumer<Boolean> detailTabsVisibilityListener)
     {
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
             playlistManager.getAliasModel());
-        mNowPlayingPanel = new NowPlayingPanel(playlistManager, iconModel, userPreferences, settingsManager, detailTabsVisible);
+        mNowPlayingPanel = new NowPlayingPanel(playlistManager, iconModel, userPreferences, settingsManager,
+            detailTabsVisible, detailTabsVisibilityListener);
         mMapPanel = new MapPanel(mapService, playlistManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
 

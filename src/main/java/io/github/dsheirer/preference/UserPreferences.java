@@ -29,6 +29,7 @@ import io.github.dsheirer.preference.event.DecodeEventPreference;
 import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
 import io.github.dsheirer.preference.javafx.JavaFxPreferences;
 import io.github.dsheirer.preference.mp3.MP3Preference;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.playback.PlaybackPreference;
 import io.github.dsheirer.preference.playlist.PlaylistPreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
@@ -63,6 +64,7 @@ public class UserPreferences implements Listener<PreferenceType>
     private CallManagementPreference mCallManagementPreference;
     private JmbeLibraryPreference mJmbeLibraryPreference;
     private MP3Preference mMP3Preference;
+    private NowPlayingPreference mNowPlayingPreference;
     private PlaybackPreference mPlaybackPreference;
     private PlaylistPreference mPlaylistPreference;
     private RadioReferencePreference mRadioReferencePreference;
@@ -181,6 +183,14 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
+     * Now Playing activity preferences
+     */
+    public NowPlayingPreference getNowPlayingPreference()
+    {
+        return mNowPlayingPreference;
+    }
+
+    /**
      * Identifier preferences
      */
     public TalkgroupFormatPreference getTalkgroupFormatPreference()
@@ -225,6 +235,7 @@ public class UserPreferences implements Listener<PreferenceType>
         mCallManagementPreference = new CallManagementPreference(this::receive);
         mJmbeLibraryPreference = new JmbeLibraryPreference(this::receive);
         mMP3Preference = new MP3Preference(this::receive);
+        mNowPlayingPreference = new NowPlayingPreference(this::receive);
         mPlaybackPreference = new PlaybackPreference(this::receive);
         mPlaylistPreference = new PlaylistPreference(this::receive, mDirectoryPreference);
         mRadioReferencePreference = new RadioReferencePreference(this::receive);

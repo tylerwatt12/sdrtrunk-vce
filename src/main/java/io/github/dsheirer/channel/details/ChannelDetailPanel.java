@@ -18,6 +18,7 @@
  ******************************************************************************/
 package io.github.dsheirer.channel.details;
 
+import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -32,12 +33,12 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.text.DefaultCaret;
 import java.awt.EventQueue;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+import java.text.DecimalFormat;
 
-public class ChannelDetailPanel extends JPanel implements Listener<ProcessingChain>
+public class ChannelDetailPanel extends JPanel implements Listener<SelectedFrequencyContext>
 {
     private static final String EMPTY_DETAILS = "Please select a channel to view details";
+    private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
 
     private JLabel mSystemLabel;
     private JLabel mSiteLabel;
@@ -46,6 +47,7 @@ public class ChannelDetailPanel extends JPanel implements Listener<ProcessingCha
 
     private ChannelProcessingManager mChannelProcessingManager;
     private ProcessingChain mProcessingChain;
+    private SelectedFrequencyContext mSelectedFrequencyContext;
 
     public ChannelDetailPanel(ChannelProcessingManager channelProcessingManager)
     {
@@ -74,7 +76,7 @@ public class ChannelDetailPanel extends JPanel implements Listener<ProcessingCha
         buttonPanel.add(mNameLabel);
 
         JButton refreshButton = new JButton("Refresh");
-        refreshButton.addActionListener(e -> receive(mProcessingChain));
+        refreshButton.addActionListener(e -> receive(mSelectedFrequencyContext));
         buttonPanel.add(refreshButton);
 
         add(buttonPanel, "wrap");
@@ -86,11 +88,27 @@ public class ChannelDetailPanel extends JPanel implements Listener<ProcessingCha
     }
 
     @Override
+    public void receive(SelectedFrequencyContext context)
+    {
+        mSelectedFrequencyContext = context;
+        receive(context != null ? context.processingChain() : null, context);
+    }
+
     public void receive(ProcessingChain processingChain)
+    {
+        receive(processingChain, null);
+    }
+
+    private void receive(ProcessingChain processingChain, SelectedFrequencyContext context)
     {
         mProcessingChain = processingChain;
 
-        Channel channel = mChannelProcessingManager.getChannel(processingChain);
+        Channel channel = processingChain != null ? mChannelProcessingManager.getChannel(processingChain) : null;
+
+        if(channel == null && context != null)
+        {
+            channel = context.rowChannel() != null ? context.rowChannel() : context.ownerChannel();
+        }
 
         final String system = channel != null ? channel.getSystem() : null;
         final String site = channel != null ? channel.getSite() : null;
@@ -116,6 +134,24 @@ public class ChannelDetailPanel extends JPanel implements Listener<ProcessingCha
                 sb.append(decoderState.getActivitySummary());
             }
 
+            details = sb.toString();
+        }
+        else if(context != null && context.hasFrequency() && !context.clearRequested())
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Selected Frequency: ").append(FREQUENCY_FORMAT.format(context.frequency() / 1E6d)).append(" MHz\n");
+
+            if(context.timeslot() != null)
+            {
+                sb.append("Timeslot: ").append(context.timeslot()).append("\n");
+            }
+
+            if(context.decoderHint() != null)
+            {
+                sb.append("Decoder: ").append(context.decoderHint()).append("\n");
+            }
+
+            sb.append("\nNo active decoder chain for the selected frequency.");
             details = sb.toString();
         }
         else

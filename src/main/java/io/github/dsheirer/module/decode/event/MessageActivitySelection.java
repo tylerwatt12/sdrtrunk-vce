@@ -16,38 +16,21 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  * ****************************************************************************
  */
+package io.github.dsheirer.module.decode.event;
 
-package io.github.dsheirer.gui.preference;
+import io.github.dsheirer.module.ProcessingChain;
 
 /**
- * Preference editor tree node enumeration.
+ * Selected message activity context.
+ *
+ * @param processingChain selected processing chain, when active
+ * @param contextKey stable selected call context, usually the selected talkgroup
+ * @param clearRequested true to clear the message activity view
  */
-public enum PreferenceEditorType
+public record MessageActivitySelection(ProcessingChain processingChain, String contextKey, boolean clearRequested)
 {
-    APPLICATION("Application"),
-    CHANNEL_EVENT("Channel Events"),
-    NOW_PLAYING("Now Playing"),
-    DIRECTORY("Directories"),
-    JMBE_LIBRARY("JMBE Audio Library"),
-    AUDIO_MP3("MP3"),
-    AUDIO_RECORD("Record"),
-    AUDIO_OUTPUT("Playback/Tones"),
-    AUDIO_CALL_MANAGEMENT("Call Management"),
-    SOURCE_TUNERS("Tuners"),
-    TALKGROUP_FORMAT("Talkgroup & Radio ID"),
-    VECTOR_CALIBRATION("Vector Calibration"),
-    DEFAULT("Default");
-
-    private String mLabel;
-
-    PreferenceEditorType(String label)
+    public static MessageActivitySelection clear()
     {
-        mLabel = label;
-    }
-
-    @Override
-    public String toString()
-    {
-        return mLabel;
+        return new MessageActivitySelection(null, null, true);
     }
 }

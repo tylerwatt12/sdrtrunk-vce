@@ -25,10 +25,12 @@ import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
 import java.awt.EventQueue;
+import java.awt.Font;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import jiconfont.icons.font_awesome.FontAwesome;
@@ -39,11 +41,13 @@ import javax.sound.sampled.FloatControl;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JSlider;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 
 /**
  * Audio playback panel
@@ -58,6 +62,8 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
     private final SettingsManager mSettingsManager;
     private final UserPreferences mUserPreferences;
     private AudioChannelsPanel mAudioChannelsPanel;
+    private MuteButton mMuteButton;
+    private QueuedCallCountPanel mQueuedCallCountPanel;
 
     /**
      * Constructs an instance
@@ -84,13 +90,13 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
      */
     private void init()
     {
-        setLayout(new MigLayout("insets 0 0 0 0", "[]0[grow,fill]", "[fill]0[]"));
+        setLayout(new MigLayout("insets 0 0 0 0", "[]0[grow,fill][]", "[fill]"));
         setBackground(Color.BLACK);
-        JButton muteButton = new MuteButton();
-        muteButton.setBackground(getBackground());
-        add(muteButton);
+        getMuteButton().setBackground(getBackground());
+        add(getMuteButton(), "cell 0 0");
         mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel);
-        add(mAudioChannelsPanel);
+        add(mAudioChannelsPanel, "cell 1 0,grow");
+        add(getQueuedCallCountPanel(), "cell 2 0,gapleft 8,gapright 8");
         addMouseListener(new MouseSelectionListener());
     }
 
@@ -109,7 +115,8 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                     remove(mAudioChannelsPanel);
                     mAudioChannelsPanel.dispose();
                     mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel);
-                    add(mAudioChannelsPanel);
+                    add(mAudioChannelsPanel, "cell 1 0,grow");
+                    getMuteButton().updateMuted(mAudioPlaybackManager.isMuted());
                     mAudioChannelsPanel.repaint();
                     revalidate();
                     repaint();
@@ -118,6 +125,26 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             default:
                 break;
         }
+    }
+
+    private MuteButton getMuteButton()
+    {
+        if(mMuteButton == null)
+        {
+            mMuteButton = new MuteButton();
+        }
+
+        return mMuteButton;
+    }
+
+    private QueuedCallCountPanel getQueuedCallCountPanel()
+    {
+        if(mQueuedCallCountPanel == null)
+        {
+            mQueuedCallCountPanel = new QueuedCallCountPanel();
+        }
+
+        return mQueuedCallCountPanel;
     }
 
     /**
@@ -260,21 +287,64 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
      */
     public class MuteButton extends JButton
     {
-        private boolean mMuted = false;
+        private boolean mMuted;
 
         public MuteButton()
         {
-            setIcon(UNMUTED_ICON);
+            mMuted = mAudioPlaybackManager.isMuted();
+            updateIcon();
             setBorderPainted(false);
-            getAccessibleContext().setAccessibleName("Mute");
+            setFocusable(false);
             addActionListener(e -> {
                 mMuted = !mMuted;
-                mAudioPlaybackManager.getAudioOutput().setMuted(mMuted);
+                mAudioPlaybackManager.setMuted(mMuted);
                 EventQueue.invokeLater(() -> {
-                    setIcon(mMuted ? MUTED_ICON : UNMUTED_ICON);
-                    getAccessibleContext().setAccessibleName(mMuted ? "Unmute" : "Mute");
+                    updateIcon();
                 });
             });
+        }
+
+        private void updateMuted(boolean muted)
+        {
+            mMuted = muted;
+            updateIcon();
+        }
+
+        private void updateIcon()
+        {
+            setIcon(mMuted ? MUTED_ICON : UNMUTED_ICON);
+            getAccessibleContext().setAccessibleName(mMuted ? "Unmute" : "Mute");
+            setToolTipText(mMuted ? "Unmute Audio Playback" : "Mute Audio Playback");
+        }
+    }
+
+    public class QueuedCallCountPanel extends JPanel
+    {
+        private final Font mFont = new Font(Font.MONOSPACED, Font.PLAIN, 16);
+        private final JLabel mLabel = new JLabel("Queued");
+        private final JLabel mValue = new JLabel("0");
+        private final Timer mUpdateTimer = new Timer(500, event -> update());
+
+        public QueuedCallCountPanel()
+        {
+            setLayout(new MigLayout("insets 2 0 0 0", "[]4[]", "[center]"));
+            Color background = SystemProperties.getInstance().get(AudioChannelPanel.PROPERTY_COLOR_BACKGROUND,
+                Color.BLACK);
+            setBackground(background);
+            mLabel.setFont(mFont);
+            mLabel.setForeground(SystemProperties.getInstance().get(AudioChannelPanel.PROPERTY_COLOR_LABEL,
+                Color.LIGHT_GRAY));
+            mValue.setFont(mFont);
+            mValue.setForeground(SystemProperties.getInstance().get(AudioChannelPanel.PROPERTY_COLOR_VALUE,
+                Color.GREEN));
+            add(mLabel);
+            add(mValue);
+            mUpdateTimer.start();
+        }
+
+        private void update()
+        {
+            mValue.setText(String.valueOf(mAudioPlaybackManager.getQueuedCallCount()));
         }
     }
 }

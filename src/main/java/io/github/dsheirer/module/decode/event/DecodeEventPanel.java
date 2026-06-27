@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterSet;
 import io.github.dsheirer.icon.IconModel;
@@ -58,7 +59,7 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableModel;
 import javax.swing.table.TableRowSorter;
 
-public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain>
+public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequencyContext>
 {
     private static final long serialVersionUID = 1L;
     private static final String TABLE_PREFERENCE_KEY = "decode.event.panel";
@@ -75,6 +76,8 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
     private transient FilterSet<IDecodeEvent> mFilterSet = new DecodeEventFilterSet();
     private transient TableRowSorter<TableModel> mTableRowSorter;
     private transient HistoryManagementPanel<IDecodeEvent> mHistoryManagementPanel;
+    private transient long mSelectedFrequency;
+    private transient Integer mSelectedTimeslot;
 
 
     /**
@@ -142,28 +145,105 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
     }
 
     @Override
+    public void receive(final SelectedFrequencyContext context)
+    {
+        receive(context != null ? context.processingChain() : null, context);
+    }
+
     public void receive(final ProcessingChain processingChain)
     {
-        if(mCurrentEventHistory != null)
-        {
-            mCurrentEventHistory.removeListener(mEventModel);
-        }
+        receive(processingChain, null);
+    }
+
+    private void receive(final ProcessingChain processingChain, final SelectedFrequencyContext context)
+    {
+        final boolean clearRequested = context != null && context.clearRequested();
+        final long selectedFrequency = context != null ? context.frequency() : getSourceFrequency(processingChain);
+        final Integer selectedTimeslot = context != null ? context.timeslot() : null;
+        final boolean selectionChanged = selectionChanged(selectedFrequency, selectedTimeslot);
 
         EventQueue.invokeLater(() -> {
-            if(processingChain != null)
+            detachEventHistory();
+            mSelectedFrequency = selectedFrequency;
+            mSelectedTimeslot = selectedTimeslot;
+
+            if(clearRequested)
+            {
+                mCurrentEventHistory = null;
+                mEventModel.clearAndSet(Collections.emptyList());
+                mHistoryManagementPanel.setEnabled(false);
+            }
+            else if(processingChain != null)
             {
                 mCurrentEventHistory = processingChain.getDecodeEventHistory();
-                mEventModel.clearAndSet(mCurrentEventHistory.getItems());
+                List<IDecodeEvent> selectedEvents = mCurrentEventHistory.getItems().stream()
+                    .filter(this::matchesSelectedFrequency)
+                    .toList();
+
+                if(selectionChanged)
+                {
+                    mEventModel.clearAndSet(selectedEvents);
+                }
+                else
+                {
+                    selectedEvents.forEach(mEventModel::add);
+                }
+
                 processingChain.getDecodeEventHistory().addListener(mEventModel);
                 mHistoryManagementPanel.setEnabled(true);
             }
             else
             {
                 mCurrentEventHistory = null;
-                mEventModel.clearAndSet(Collections.emptyList());
-                mHistoryManagementPanel.setEnabled(false);
+
+                if(selectionChanged)
+                {
+                    mEventModel.clearAndSet(Collections.emptyList());
+                    mHistoryManagementPanel.setEnabled(false);
+                }
             }
         });
+    }
+
+    private void detachEventHistory()
+    {
+        if(mCurrentEventHistory != null)
+        {
+            mCurrentEventHistory.removeListener(mEventModel);
+        }
+
+        mCurrentEventHistory = null;
+    }
+
+    private boolean selectionChanged(long frequency, Integer timeslot)
+    {
+        if(mSelectedFrequency != frequency)
+        {
+            return true;
+        }
+
+        if(mSelectedTimeslot == null)
+        {
+            return timeslot != null;
+        }
+
+        return !mSelectedTimeslot.equals(timeslot);
+    }
+
+    private long getSourceFrequency(ProcessingChain processingChain)
+    {
+        return processingChain != null && processingChain.getSource() != null ? processingChain.getSource().getFrequency() : 0;
+    }
+
+    private boolean matchesSelectedFrequency(IDecodeEvent event)
+    {
+        if(mSelectedFrequency <= 0)
+        {
+            return true;
+        }
+
+        IChannelDescriptor channelDescriptor = event != null ? event.getChannelDescriptor() : null;
+        return channelDescriptor != null && channelDescriptor.getDownlinkFrequency() == mSelectedFrequency;
     }
 
     /**
@@ -438,7 +518,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
                 if(event != null)
                 {
-                    return mFilterSet.canProcess(event) && mFilterSet.passes(event);
+                    return matchesSelectedFrequency(event) && mFilterSet.canProcess(event) && mFilterSet.passes(event);
                 }
             }
 
