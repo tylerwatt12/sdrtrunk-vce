@@ -305,7 +305,7 @@ public class P25NetworkConfigurationStabilizer
         {
             P25NetworkConfigurationSnapshot.Channel channel = tracker.getStableValue();
 
-            if(isControlChannel(channel) && channel.downlink() != null)
+            if(isControlChannel(channel) && channel.downlink() != null && channel.downlink() > 0)
             {
                 frequencies.add(channel.downlink());
             }
@@ -372,7 +372,8 @@ public class P25NetworkConfigurationStabilizer
         P25StableFactTracker.Result result = tracker.observe(channel, timestamp, STATIC_OBSERVATION_THRESHOLD,
             STATIC_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS, true, this::allowChannelPromotion);
 
-        if(result == P25StableFactTracker.Result.PROMOTED && isControlChannel(channel) && channel.downlink() != null)
+        if(result == P25StableFactTracker.Result.PROMOTED && isControlChannel(channel) && channel.downlink() != null &&
+            channel.downlink() > 0)
         {
             LOGGER.info("Promoted stable P25 control channel candidate [{}] role [{}]", channel.downlink(),
                 channel.role());
@@ -386,7 +387,17 @@ public class P25NetworkConfigurationStabilizer
 
     private boolean allowChannelPromotion(P25NetworkConfigurationSnapshot.Channel channel)
     {
-        if(!isControlChannel(channel) || channel.downlink() == null || hasStableControlFrequency(channel.downlink()))
+        if(!isControlChannel(channel) || channel.downlink() == null)
+        {
+            return true;
+        }
+
+        if(channel.downlink() <= 0)
+        {
+            return false;
+        }
+
+        if(hasStableControlFrequency(channel.downlink()))
         {
             return true;
         }
@@ -411,7 +422,8 @@ public class P25NetworkConfigurationStabilizer
         {
             P25NetworkConfigurationSnapshot.Channel stable = tracker.getStableValue();
 
-            if(isControlChannel(stable) && stable.downlink() != null && stable.downlink() == frequency)
+            if(isControlChannel(stable) && stable.downlink() != null && stable.downlink() > 0 &&
+                stable.downlink() == frequency)
             {
                 return true;
             }
@@ -450,7 +462,7 @@ public class P25NetworkConfigurationStabilizer
             T expired = expireCandidate(tracker, timestamp);
 
             if(logControlChannels && expired instanceof P25NetworkConfigurationSnapshot.Channel channel &&
-                isControlChannel(channel) && channel.downlink() != null)
+                isControlChannel(channel) && channel.downlink() != null && channel.downlink() > 0)
             {
                 LOGGER.info("Expired unconfirmed P25 control channel candidate [{}] role [{}]", channel.downlink(),
                     channel.role());
