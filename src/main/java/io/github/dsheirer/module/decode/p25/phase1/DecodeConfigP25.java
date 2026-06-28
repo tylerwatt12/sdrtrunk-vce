@@ -34,6 +34,7 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
 {
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
+    private boolean mLearnAnnouncedControlChannels = false;
 
     protected DecodeConfigP25()
     {
@@ -48,6 +49,17 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     public void setIgnoreDataCalls(boolean ignore)
     {
         mIgnoreDataCalls = ignore;
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "learn_announced_control_channels")
+    public boolean getLearnAnnouncedControlChannels()
+    {
+        return mLearnAnnouncedControlChannels;
+    }
+
+    public void setLearnAnnouncedControlChannels(boolean learn)
+    {
+        mLearnAnnouncedControlChannels = learn;
     }
 
 

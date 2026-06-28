@@ -26,8 +26,8 @@ import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Multiple frequency tuner source configuration is used for a system with a rolling/rotating control
@@ -36,7 +36,7 @@ import java.util.List;
 @JsonSubTypes.Type(value = SourceConfigTunerMultipleFrequency.class, name = "sourceConfigTunerMultipleFrequency")
 public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
 {
-    private List<Long> mFrequencies = new ArrayList<>();
+    private List<Long> mFrequencies = new CopyOnWriteArrayList<>();
     private String mPreferredTuner;
     private Long mPreferredFrequency;
     private Long mMinimumFrequency;
@@ -62,7 +62,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
      */
     public void setFrequencies(List<Long> frequencies)
     {
-        mFrequencies = frequencies;
+        mFrequencies = frequencies != null ? new CopyOnWriteArrayList<>(frequencies) : new CopyOnWriteArrayList<>();
     }
 
     /**
@@ -110,7 +110,10 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
      */
     public void addFrequency(long frequency)
     {
-        mFrequencies.add(frequency);
+        if(!mFrequencies.contains(frequency))
+        {
+            mFrequencies.add(frequency);
+        }
     }
 
     /**

@@ -85,6 +85,7 @@ import io.github.dsheirer.module.decode.nbfm.NBFMDecoderState;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P2AudioModule;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderC4FM;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderLSM;
@@ -261,9 +262,9 @@ public class DecoderFactory
         modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_1, aliasList));
         modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_2, aliasList));
 
-        //Add a channel rotation monitor when we have multiple control channel frequencies specified
+        //Add a channel rotation monitor when control channel rotation is configured or can be learned at runtime
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
-                sctmf.hasMultipleFrequencies())
+                shouldAddP25ControlChannelRotationMonitor(channel, sctmf))
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
@@ -319,14 +320,22 @@ public class DecoderFactory
 
         modules.add(new P25P1AudioModule(userPreferences, aliasList));
 
-        //Add a channel rotation monitor when we have multiple control channel frequencies specified
+        //Add a channel rotation monitor when control channel rotation is configured or can be learned at runtime
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
-            sctmf.hasMultipleFrequencies())
+            shouldAddP25ControlChannelRotationMonitor(channel, sctmf))
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
             modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(), userPreferences));
         }
+    }
+
+    private static boolean shouldAddP25ControlChannelRotationMonitor(Channel channel,
+                                                                    SourceConfigTunerMultipleFrequency sourceConfig)
+    {
+        return sourceConfig.hasMultipleFrequencies() ||
+            (channel.getDecodeConfiguration() instanceof DecodeConfigP25 decodeConfig &&
+                decodeConfig.getLearnAnnouncedControlChannels());
     }
 
     /**

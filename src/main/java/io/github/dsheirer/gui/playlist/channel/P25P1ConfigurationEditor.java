@@ -34,6 +34,8 @@ import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.record.config.RecordConfiguration;
+import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.util.ArrayList;
@@ -42,6 +44,7 @@ import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -67,6 +70,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private RecordConfigurationEditor mRecordConfigurationEditor;
     private ToggleSwitch mIgnoreDataCallsButton;
+    private CheckBox mLearnAnnouncedControlChannelsCheckBox;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
     private SegmentedButton mModulationSegmentedButton;
     private ToggleButton mC4FMToggleButton;
@@ -142,8 +146,11 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(directionLabel, 5, 0);
             gridPane.getChildren().add(directionLabel);
 
+            GridPane.setConstraints(getLearnAnnouncedControlChannelsCheckBox(), 1, 1, 5, 1);
+            gridPane.getChildren().add(getLearnAnnouncedControlChannelsCheckBox());
+
             Label modulationHelpLabel = new Label("C4FM: repeaters and non-simulcast trunked systems.  LSM: simulcast trunked systems.");
-            GridPane.setConstraints(modulationHelpLabel, 0, 1, 6, 1);
+            GridPane.setConstraints(modulationHelpLabel, 0, 2, 6, 1);
             gridPane.getChildren().add(modulationHelpLabel);
 
             mDecoderPane.setContent(gridPane);
@@ -280,6 +287,21 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         return mIgnoreDataCallsButton;
     }
 
+    private CheckBox getLearnAnnouncedControlChannelsCheckBox()
+    {
+        if(mLearnAnnouncedControlChannelsCheckBox == null)
+        {
+            mLearnAnnouncedControlChannelsCheckBox = new CheckBox("Learn announced control channels");
+            mLearnAnnouncedControlChannelsCheckBox.setDisable(true);
+            mLearnAnnouncedControlChannelsCheckBox.setTooltip(new Tooltip(
+                "Adds stabilized current and alternate control channel frequencies announced by this site to the source list"));
+            mLearnAnnouncedControlChannelsCheckBox.selectedProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mLearnAnnouncedControlChannelsCheckBox;
+    }
+
     private Spinner<Integer> getTrafficChannelPoolSizeSpinner()
     {
         if(mTrafficChannelPoolSizeSpinner == null)
@@ -322,12 +344,14 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     protected void setDecoderConfiguration(DecodeConfiguration config)
     {
         getIgnoreDataCallsButton().setDisable(config == null);
+        getLearnAnnouncedControlChannelsCheckBox().setDisable(config == null);
         getTrafficChannelPoolSizeSpinner().setDisable(config == null);
 
         if(config instanceof DecodeConfigP25Phase1)
         {
             DecodeConfigP25Phase1 decodeConfig = (DecodeConfigP25Phase1)config;
             getIgnoreDataCallsButton().setSelected(decodeConfig.getIgnoreDataCalls());
+            getLearnAnnouncedControlChannelsCheckBox().setSelected(decodeConfig.getLearnAnnouncedControlChannels());
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(decodeConfig.getTrafficChannelPoolSize());
             if(decodeConfig.getModulation() == Modulation.C4FM)
             {
@@ -343,6 +367,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         else
         {
             getIgnoreDataCallsButton().setSelected(false);
+            getLearnAnnouncedControlChannelsCheckBox().setSelected(false);
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(0);
         }
     }
@@ -362,6 +387,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         }
 
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
+        config.setLearnAnnouncedControlChannels(getLearnAnnouncedControlChannelsCheckBox().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());
         config.setModulation(getC4FMToggleButton().isSelected() ? Modulation.C4FM : Modulation.CQPSK);
         getItem().setDecodeConfiguration(config);
@@ -426,6 +452,22 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     {
         getSourceConfigurationEditor().save();
         SourceConfiguration sourceConfiguration = getSourceConfigurationEditor().getSourceConfiguration();
-        getItem().setSourceConfiguration(sourceConfiguration);
+        getItem().setSourceConfiguration(convertSingleFrequencySourceIfLearningEnabled(sourceConfiguration));
+    }
+
+    private SourceConfiguration convertSingleFrequencySourceIfLearningEnabled(SourceConfiguration sourceConfiguration)
+    {
+        if(getLearnAnnouncedControlChannelsCheckBox().isSelected() && sourceConfiguration instanceof SourceConfigTuner tuner &&
+            tuner.getFrequency() > 0)
+        {
+            SourceConfigTunerMultipleFrequency multipleFrequency = new SourceConfigTunerMultipleFrequency();
+            multipleFrequency.addFrequency(tuner.getFrequency());
+            multipleFrequency.setPreferredFrequency(tuner.getFrequency());
+            multipleFrequency.setPreferredTuner(tuner.getPreferredTuner());
+            multipleFrequency.setFrequencyRotationDelay(DecodeConfigP25Phase1.CHANNEL_ROTATION_DELAY_DEFAULT_MS);
+            return multipleFrequency;
+        }
+
+        return sourceConfiguration;
     }
 }

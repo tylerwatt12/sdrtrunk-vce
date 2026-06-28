@@ -35,12 +35,16 @@ import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.record.config.RecordConfiguration;
+import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
+import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.util.ArrayList;
 import java.util.List;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -66,6 +70,7 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
     private IntegerTextField mSystemTextField;
     private IntegerTextField mNacTextField;
     private ToggleSwitch mIgnoreDataCallsButton;
+    private CheckBox mLearnAnnouncedControlChannelsCheckBox;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
 
     /**
@@ -130,6 +135,9 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setHalignment(directionLabel, HPos.LEFT);
             GridPane.setConstraints(directionLabel, 3, row);
             gridPane.getChildren().add(directionLabel);
+
+            GridPane.setConstraints(getLearnAnnouncedControlChannelsCheckBox(), 1, ++row, 5, 1);
+            gridPane.getChildren().add(getLearnAnnouncedControlChannelsCheckBox());
 
             Label wacnLabel = new Label("WACN");
             GridPane.setHalignment(wacnLabel, HPos.RIGHT);
@@ -203,7 +211,10 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mSourceConfigurationEditor == null)
         {
-            mSourceConfigurationEditor = new FrequencyEditor(mTunerManager);
+            mSourceConfigurationEditor = new FrequencyEditor(mTunerManager,
+                ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM,
+                ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MAXIMUM,
+                ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT);
 
             //Add a listener so that we can push change notifications up to this editor
             mSourceConfigurationEditor.modifiedProperty()
@@ -240,6 +251,21 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mIgnoreDataCallsButton;
+    }
+
+    private CheckBox getLearnAnnouncedControlChannelsCheckBox()
+    {
+        if(mLearnAnnouncedControlChannelsCheckBox == null)
+        {
+            mLearnAnnouncedControlChannelsCheckBox = new CheckBox("Learn announced control channels");
+            mLearnAnnouncedControlChannelsCheckBox.setDisable(true);
+            mLearnAnnouncedControlChannelsCheckBox.setTooltip(new Tooltip(
+                "Adds stabilized current and alternate control channel frequencies announced by this site to the source list"));
+            mLearnAnnouncedControlChannelsCheckBox.selectedProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mLearnAnnouncedControlChannelsCheckBox;
     }
 
     private Spinner<Integer> getTrafficChannelPoolSizeSpinner()
@@ -342,6 +368,8 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
 
             getIgnoreDataCallsButton().setDisable(false);
             getIgnoreDataCallsButton().setSelected(decodeConfig.getIgnoreDataCalls());
+            getLearnAnnouncedControlChannelsCheckBox().setDisable(false);
+            getLearnAnnouncedControlChannelsCheckBox().setSelected(decodeConfig.getLearnAnnouncedControlChannels());
             getTrafficChannelPoolSizeSpinner().setDisable(false);
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(decodeConfig.getTrafficChannelPoolSize());
         }
@@ -354,6 +382,8 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
             getSystemTextField().setDisable(true);
             getNacTextField().setDisable(true);
             getIgnoreDataCallsButton().setDisable(true);
+            getLearnAnnouncedControlChannelsCheckBox().setDisable(true);
+            getLearnAnnouncedControlChannelsCheckBox().setSelected(false);
             getTrafficChannelPoolSizeSpinner().setDisable(true);
         }
     }
@@ -378,6 +408,7 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
         int nac = getNacTextField().get();
         config.setScrambleParameters(new ScrambleParameters(wacn, system, nac));
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
+        config.setLearnAnnouncedControlChannels(getLearnAnnouncedControlChannelsCheckBox().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());
 
         getItem().setDecodeConfiguration(config);
@@ -442,6 +473,22 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
     {
         getSourceConfigurationEditor().save();
         SourceConfiguration sourceConfiguration = getSourceConfigurationEditor().getSourceConfiguration();
-        getItem().setSourceConfiguration(sourceConfiguration);
+        getItem().setSourceConfiguration(convertSingleFrequencySourceIfLearningEnabled(sourceConfiguration));
+    }
+
+    private SourceConfiguration convertSingleFrequencySourceIfLearningEnabled(SourceConfiguration sourceConfiguration)
+    {
+        if(getLearnAnnouncedControlChannelsCheckBox().isSelected() && sourceConfiguration instanceof SourceConfigTuner tuner &&
+            tuner.getFrequency() > 0)
+        {
+            SourceConfigTunerMultipleFrequency multipleFrequency = new SourceConfigTunerMultipleFrequency();
+            multipleFrequency.addFrequency(tuner.getFrequency());
+            multipleFrequency.setPreferredFrequency(tuner.getFrequency());
+            multipleFrequency.setPreferredTuner(tuner.getPreferredTuner());
+            multipleFrequency.setFrequencyRotationDelay(ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT);
+            return multipleFrequency;
+        }
+
+        return sourceConfiguration;
     }
 }
