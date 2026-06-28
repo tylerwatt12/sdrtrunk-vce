@@ -161,7 +161,7 @@ public class PlaybackPreferenceEditor extends HBox
                 PlaybackPreference.MINIMUM_BACKLOGGED_CALLS,
                 PlaybackPreference.MAXIMUM_BACKLOGGED_CALLS,
                 mPlaybackPreference.getMaximumBackloggedCalls(),
-                50);
+                1);
             mMaximumBackloggedCallsSpinner.setEditable(true);
             mMaximumBackloggedCallsSpinner.setTooltip(new Tooltip(
                 "Drops oldest queued playback calls when this limit is exceeded. Set 0 for unlimited."));

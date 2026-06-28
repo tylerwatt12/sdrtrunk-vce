@@ -442,6 +442,27 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
+        runOnSwing(() -> {
+            SiteActivitySession session = mSiteSessions.get(parentChannel);
+            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+
+            if(table == null)
+            {
+                return;
+            }
+
+            ChannelActivityRow row = session.traffic(frequency, timeslot);
+
+            if(row == null)
+            {
+                return;
+            }
+
+            cancelPendingTrafficGrantAgeOut(row);
+            applyTrafficGrantAgeOut(row, table, parentChannel);
+            flushQueuedRefreshes();
+            stopActivitySweeperIfIdle();
+        });
     }
 
     public void p25SiteIdentifier(Channel parentChannel, P25SiteIdentifier siteIdentifier)

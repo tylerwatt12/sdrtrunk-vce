@@ -15,6 +15,10 @@ import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.gui.control.IntegerTextField;
 import io.github.dsheirer.playlist.PlaylistManager;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import javafx.collections.FXCollections;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
@@ -34,7 +38,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
     private TextField mHostTextField;
     private PasswordField mApiKeyTextField;
     private TextField mNodeNameTextField;
-    private TextField mNodeTimezoneTextField;
+    private ComboBox<String> mNodeTimezoneComboBox;
     private IntegerTextField mMaxAgeTextField;
     private ComboBox<RadioResolveConfiguration.Mode> mModeComboBox;
     private CheckBox mIgnoreCertificateErrorsCheckBox;
@@ -53,7 +57,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         getHostTextField().setDisable(item == null);
         getApiKeyTextField().setDisable(item == null);
         getNodeNameTextField().setDisable(item == null);
-        getNodeTimezoneTextField().setDisable(item == null);
+        getNodeTimezoneComboBox().setDisable(item == null);
         getMaxAgeTextField().setDisable(item == null);
         getModeComboBox().setDisable(item == null);
         getIgnoreCertificateErrorsCheckBox().setDisable(item == null);
@@ -64,7 +68,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             getHostTextField().setText(item.getHost());
             getApiKeyTextField().setText(item.getApiKey());
             getNodeNameTextField().setText(item.getNodeName());
-            getNodeTimezoneTextField().setText(item.getNodeTimezone());
+            getNodeTimezoneComboBox().getSelectionModel().select(getValidTimezone(item.getNodeTimezone()));
             getMaxAgeTextField().set((int)(item.getMaximumRecordingAge() / 1000));
             getModeComboBox().getSelectionModel().select(item.getMode());
             getIgnoreCertificateErrorsCheckBox().setSelected(item.getIgnoreCertificateErrors());
@@ -75,7 +79,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             getHostTextField().setText(null);
             getApiKeyTextField().setText(null);
             getNodeNameTextField().setText(null);
-            getNodeTimezoneTextField().setText(null);
+            getNodeTimezoneComboBox().getSelectionModel().clearSelection();
             getMaxAgeTextField().set(0);
             getModeComboBox().getSelectionModel().select(RadioResolveConfiguration.Mode.CALLS_AND_METADATA);
             getIgnoreCertificateErrorsCheckBox().setSelected(false);
@@ -99,7 +103,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             getItem().setHost(getHostTextField().getText());
             getItem().setApiKey(getApiKeyTextField().getText());
             getItem().setNodeName(getNodeNameTextField().getText());
-            getItem().setNodeTimezone(getNodeTimezoneTextField().getText());
+            getItem().setNodeTimezone(getValidTimezone(getNodeTimezoneComboBox().getSelectionModel().getSelectedItem()));
             Integer maxAge = getMaxAgeTextField().get();
             getItem().setMaximumRecordingAge((maxAge != null ? maxAge : 0) * 1000L);
             getItem().setMode(getModeComboBox().getSelectionModel().getSelectedItem());
@@ -159,8 +163,8 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             mEditorPane.getChildren().add(getNodeNameTextField());
 
             addLabel("Node Timezone", ++row);
-            GridPane.setConstraints(getNodeTimezoneTextField(), 1, row);
-            mEditorPane.getChildren().add(getNodeTimezoneTextField());
+            GridPane.setConstraints(getNodeTimezoneComboBox(), 1, row);
+            mEditorPane.getChildren().add(getNodeTimezoneComboBox());
 
             addLabel("Max Recording Age (seconds)", ++row);
             GridPane.setConstraints(getMaxAgeTextField(), 1, row);
@@ -222,16 +226,42 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         return mNodeNameTextField;
     }
 
-    private TextField getNodeTimezoneTextField()
+    private ComboBox<String> getNodeTimezoneComboBox()
     {
-        if(mNodeTimezoneTextField == null)
+        if(mNodeTimezoneComboBox == null)
         {
-            mNodeTimezoneTextField = new TextField();
-            mNodeTimezoneTextField.setDisable(true);
-            mNodeTimezoneTextField.textProperty().addListener(mEditorModificationListener);
+            mNodeTimezoneComboBox = new ComboBox<>(FXCollections.observableArrayList(getTimezoneIds()));
+            mNodeTimezoneComboBox.setDisable(true);
+            mNodeTimezoneComboBox.setMaxWidth(Double.MAX_VALUE);
+            mNodeTimezoneComboBox.getSelectionModel().select(getValidTimezone(null));
+            mNodeTimezoneComboBox.valueProperty().addListener(mEditorModificationListener);
         }
 
-        return mNodeTimezoneTextField;
+        return mNodeTimezoneComboBox;
+    }
+
+    private List<String> getTimezoneIds()
+    {
+        List<String> timezoneIds = new ArrayList<>(ZoneId.getAvailableZoneIds());
+        Collections.sort(timezoneIds);
+        return timezoneIds;
+    }
+
+    private String getValidTimezone(String timezone)
+    {
+        if(timezone != null && ZoneId.getAvailableZoneIds().contains(timezone))
+        {
+            return timezone;
+        }
+
+        String defaultTimezone = RadioResolveConfiguration.getDefaultNodeTimezone();
+
+        if(ZoneId.getAvailableZoneIds().contains(defaultTimezone))
+        {
+            return defaultTimezone;
+        }
+
+        return "UTC";
     }
 
     private IntegerTextField getMaxAgeTextField()

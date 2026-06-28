@@ -29,6 +29,7 @@ import javax.swing.event.ChangeEvent;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.TableColumnModelEvent;
 import javax.swing.event.TableColumnModelListener;
+import javax.swing.table.TableColumn;
 import javax.swing.table.TableColumnModel;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -42,6 +43,7 @@ public class JTableColumnWidthMonitor
     private UserPreferences mUserPreferences;
     private JTable mTable;
     private String mKey;
+    private int[] mMinimumColumnWidths;
     private ColumnResizeListener mColumnResizeListener = new ColumnResizeListener();
     private AtomicBoolean mSaveInProgress = new AtomicBoolean();
 
@@ -54,9 +56,23 @@ public class JTableColumnWidthMonitor
      */
     public JTableColumnWidthMonitor(UserPreferences userPreferences, JTable table, String key)
     {
+        this(userPreferences, table, key, null);
+    }
+
+    /**
+     * Constructs a column width monitor.
+     *
+     * @param userPreferences to store column widths
+     * @param table to monitor for column width changes
+     * @param key that uniquely identifies the table to monitor
+     * @param minimumColumnWidths optional per-column minimums for restored widths
+     */
+    public JTableColumnWidthMonitor(UserPreferences userPreferences, JTable table, String key, int[] minimumColumnWidths)
+    {
         mUserPreferences = userPreferences;
         mTable = table;
         mKey = key;
+        mMinimumColumnWidths = minimumColumnWidths != null ? minimumColumnWidths.clone() : null;
 
         mTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
 
@@ -79,6 +95,7 @@ public class JTableColumnWidthMonitor
 
         mTable = null;
         mUserPreferences = null;
+        mMinimumColumnWidths = null;
     }
 
     /**
@@ -94,9 +111,32 @@ public class JTableColumnWidthMonitor
 
             if(width != Integer.MAX_VALUE)
             {
-                model.getColumn(x).setPreferredWidth(width);
+                TableColumn column = model.getColumn(x);
+                int validWidth = getValidWidth(column, x, width);
+                column.setPreferredWidth(validWidth);
+                column.setWidth(validWidth);
             }
         }
+    }
+
+    private int getValidWidth(TableColumn column, int columnIndex, int width)
+    {
+        int minimum = column.getMinWidth();
+
+        if(mMinimumColumnWidths != null && columnIndex < mMinimumColumnWidths.length)
+        {
+            minimum = Math.max(minimum, mMinimumColumnWidths[columnIndex]);
+        }
+
+        int validWidth = Math.max(minimum, width);
+        int maximum = column.getMaxWidth();
+
+        if(maximum > 0 && maximum < Integer.MAX_VALUE)
+        {
+            validWidth = Math.min(maximum, validWidth);
+        }
+
+        return validWidth;
     }
 
     /**

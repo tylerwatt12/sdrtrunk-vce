@@ -165,6 +165,7 @@ public class SiteActivitySession
         row.setOrigin(ChannelActivityRow.Origin.TRAFFIC_GRANT);
         row.setFrequency(frequency);
         row.setTimeslot(timeslot);
+        row.setLcn(getLcn(channelDescriptor));
 
         return row;
     }

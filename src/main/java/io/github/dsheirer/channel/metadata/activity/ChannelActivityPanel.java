@@ -76,6 +76,8 @@ import net.miginfocom.swing.MigLayout;
 public class ChannelActivityPanel extends JPanel
 {
     private static final String TABLE_COLUMN_WIDTH_PREFERENCE_KEY = "now.playing.activity.table";
+    private static final int[] TABLE_COLUMN_DEFAULT_WIDTHS = {219, 90, 96, 240, 88, 240, 88, 74};
+    private static final int[] TABLE_COLUMN_MINIMUM_WIDTHS = {90, 62, 80, 80, 67, 80, 67, 54};
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ChannelActivityModel mActivityModel;
     private final IconModel mIconModel;
@@ -388,7 +390,7 @@ public class ChannelActivityPanel extends JPanel
             .setCellRenderer(new CenteredCellRenderer());
         configureColumnWidths(table);
         mColumnWidthMonitors.put(table, new JTableColumnWidthMonitor(mUserPreferences, table,
-            TABLE_COLUMN_WIDTH_PREFERENCE_KEY));
+            TABLE_COLUMN_WIDTH_PREFERENCE_KEY, TABLE_COLUMN_MINIMUM_WIDTHS));
         addColumnWidthSync(table);
         return table;
     }
@@ -471,7 +473,7 @@ public class ChannelActivityPanel extends JPanel
             {
                 TableColumn sourceColumn = sourceColumns.getColumn(column);
                 TableColumn targetColumn = targetColumns.getColumn(column);
-                int width = sourceColumn.getWidth();
+                int width = getValidColumnWidth(column, targetColumn, sourceColumn.getWidth());
                 targetColumn.setPreferredWidth(width);
                 targetColumn.setWidth(width);
             }
@@ -485,21 +487,37 @@ public class ChannelActivityPanel extends JPanel
     private void configureColumnWidths(JTable table)
     {
         TableColumnModel columns = table.getColumnModel();
-        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setPreferredWidth(140);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setMinWidth(80);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_STATUS).setMaxWidth(260);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_LCN).setPreferredWidth(52);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_LCN).setMaxWidth(70);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_FREQUENCY).setPreferredWidth(95);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_FREQUENCY).setMaxWidth(120);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_SOURCE).setPreferredWidth(90);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_SOURCE).setMaxWidth(125);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_TARGET).setPreferredWidth(90);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_TARGET).setMaxWidth(125);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_DECODER).setPreferredWidth(70);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_DECODER).setMaxWidth(90);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_SOURCE_ALIAS).setPreferredWidth(260);
-        columns.getColumn(ChannelActivityTableModel.COLUMN_TARGET_ALIAS).setPreferredWidth(260);
+
+        for(int column = 0; column < columns.getColumnCount(); column++)
+        {
+            TableColumn tableColumn = columns.getColumn(column);
+            tableColumn.setMinWidth(getConfiguredColumnMinimumWidth(column, tableColumn.getMinWidth()));
+            tableColumn.setPreferredWidth(getConfiguredColumnDefaultWidth(column, tableColumn.getPreferredWidth()));
+        }
+    }
+
+    private int getValidColumnWidth(int column, TableColumn tableColumn, int width)
+    {
+        int minimum = getConfiguredColumnMinimumWidth(column, tableColumn.getMinWidth());
+        int maximum = tableColumn.getMaxWidth();
+        int validWidth = Math.max(minimum, width);
+
+        if(maximum > 0 && maximum < Integer.MAX_VALUE)
+        {
+            validWidth = Math.min(maximum, validWidth);
+        }
+
+        return validWidth;
+    }
+
+    private int getConfiguredColumnMinimumWidth(int column, int fallback)
+    {
+        return column < TABLE_COLUMN_MINIMUM_WIDTHS.length ? TABLE_COLUMN_MINIMUM_WIDTHS[column] : fallback;
+    }
+
+    private int getConfiguredColumnDefaultWidth(int column, int fallback)
+    {
+        return column < TABLE_COLUMN_DEFAULT_WIDTHS.length ? TABLE_COLUMN_DEFAULT_WIDTHS[column] : fallback;
     }
 
     private void processSelection(ListSelectionEvent event, JTable table)
