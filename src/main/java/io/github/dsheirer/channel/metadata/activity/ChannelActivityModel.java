@@ -415,6 +415,58 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         });
     }
 
+    public void p25TrafficEncryptionDetails(Channel parentChannel, IChannelDescriptor channelDescriptor,
+                                            IdentifierCollection identifiers, DecodeEventType eventType)
+    {
+        if(parentChannel == null || channelDescriptor == null || channelDescriptor.getDownlinkFrequency() <= 0 ||
+            identifiers == null)
+        {
+            return;
+        }
+
+        String encryptionDetails = P25EncryptionDetails.format(identifiers);
+
+        if(encryptionDetails == null)
+        {
+            return;
+        }
+
+        runOnSwing(() -> {
+            SiteActivitySession session = mSiteSessions.get(parentChannel);
+            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+
+            if(table == null)
+            {
+                return;
+            }
+
+            ChannelActivityRow row = session.traffic(channelDescriptor.getDownlinkFrequency(),
+                getTimeslot(channelDescriptor));
+
+            if(row == null || !isTrafficState(row.getState()))
+            {
+                NowPlayingActivityDebugFeed.logMiss("p25-traffic-encryption-miss", table, parentChannel,
+                    channelDescriptor.getDownlinkFrequency(), getTimeslot(channelDescriptor), eventType,
+                    row == null ? "no-row" : "row-state=" + row.getState());
+                return;
+            }
+
+            if(encryptionDetails.equals(row.getEncryptionDetails()) && row.getState() == State.ENCRYPTED)
+            {
+                return;
+            }
+
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
+            row.setEncryptionDetails(encryptionDetails);
+            row.setState(State.ENCRYPTED);
+            table.refresh(row);
+            logP25EncryptionDebug("traffic-encryption", row, parentChannel, identifiers, null, eventType,
+                row.getState());
+            NowPlayingActivityDebugFeed.logRow("p25-traffic-encryption", table, row, before, parentChannel, eventType,
+                null);
+        });
+    }
+
     public void p25SiteIdentifier(Channel parentChannel, P25SiteIdentifier siteIdentifier)
     {
         if(parentChannel == null || siteIdentifier == null)

@@ -36,7 +36,7 @@ Do not use this plan to modify stock builds.
 | Uncalibrated mixer scalar fallback | Present | Keep |
 | Now Playing activity tabs | Present, still being refined | Keep and stabilize |
 | Now Playing hang time/preferences | Present | Keep |
-| Advanced P25 encryption display | Present | Keep and validate |
+| Advanced P25 protection display | Present | Keep and validate |
 | P25 UI/metadata hysteresis | Present | Shared stabilizer now feeds UI facts and RadioResolve metadata |
 | RadioResolve completed-call upload | Present | Validate with redirect-to-file before production upload |
 | RadioResolve stream editor/status | Present | Continue refining test/status UX |
@@ -74,7 +74,7 @@ Inputs:
   - system/site labels when available
   - P25 NAC when available
   - RadioResolve GUID when available
-  - encryption summary when available
+  - protection summary when available
 - Stream runtime settings:
   - maximum recording age
   - queue limit
@@ -464,10 +464,10 @@ Inputs:
 - Channel metadata updates.
 - P25 control-channel facts.
 - P25 traffic grants.
-- P25 encryption identifiers.
+- P25 protection identifiers.
 - User preferences:
   - retain idle call details
-  - advanced P25 encryption status
+  - advanced P25 protection status
   - traffic idle hang milliseconds
 
 Outputs:
@@ -476,8 +476,8 @@ Outputs:
 - One tab per started trunked site/channel instance.
 - Rows sorted by frequency and timeslot.
 - Current control and alternate control color coding.
-- Idle/call/encrypted status.
-- Optional advanced encryption display.
+- Idle/call/protected status.
+- Optional advanced protection display.
 - Selection event for lower detail panes.
 
 Acceptance:
@@ -511,28 +511,28 @@ Acceptance:
 - Voice traffic does not cause rapid clearing/reverting.
 - Idle row selection does not silently show stale data from a different row.
 
-### 16. P25 Encryption Visibility And Debugging
+### 16. P25 protection Visibility And Debugging
 
 Purpose:
 
-- Make encrypted call behavior visible enough to validate Alg/Key information.
+- Make protected call behavior visible enough to validate Alg/Key information.
 
 Inputs:
 
-- P25 encryption identifiers from HDU/LDU/ESS/PTT/control events.
+- P25 protection identifiers from HDU/LDU/ESS/PTT/control events.
 - Talkgroup and radio identifiers.
 - Activity row state.
-- User preference for advanced encryption display.
+- User preference for advanced protection display.
 
 Outputs:
 
-- Sticky encrypted status for the current call.
+- Sticky protected status for the current call.
 - Condensed Alg/Key display when enabled.
 - Temporary debug CSV/log with talkgroup, radio, algorithm, key ID, and event source.
 
 Acceptance:
 
-- Brief decode gaps do not flip encrypted calls back to plain call status.
+- Brief decode gaps do not flip protected calls back to plain call status.
 - Debug logging is removable for release builds.
 
 ## Out Of Scope For Clean Reimplementation

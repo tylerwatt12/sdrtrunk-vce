@@ -433,6 +433,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void broadcast(P25TrafficChannelEventTracker tracker)
     {
         broadcast(tracker.getEvent());
+        notifyActivityEncryptionDetails(tracker);
     }
 
     /**
@@ -1298,6 +1299,18 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
             mChannelActivityModel.p25TrafficGrant(mParentChannel, trafficChannel, channel,
                 identifiers, eventType);
+        }
+    }
+
+    private void notifyActivityEncryptionDetails(P25TrafficChannelEventTracker tracker)
+    {
+        if(mChannelActivityModel != null && tracker != null && tracker.getEvent() != null &&
+            tracker.getEvent().getChannelDescriptor() instanceof APCO25Channel channel &&
+            tracker.getEvent().getIdentifierCollection() != null &&
+            tracker.getEvent().getIdentifierCollection().getEncryptionIdentifier() != null)
+        {
+            mChannelActivityModel.p25TrafficEncryptionDetails(mParentChannel, channel,
+                tracker.getEvent().getIdentifierCollection(), tracker.getEvent().getEventType());
         }
     }
 
