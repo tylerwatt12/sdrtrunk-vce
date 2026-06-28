@@ -97,6 +97,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         mAliasModel = aliasModel;
         mApplicationPreference = applicationPreference;
         mNowPlayingPreference = nowPlayingPreference;
+        NowPlayingActivityDebugFeed.startIfEnabled();
     }
 
     public ChannelActivityTableModel getConventionalTable()
@@ -284,10 +285,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             }
 
             ChannelActivityRow row = session.configuredControl(frequency);
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
             row.setDecoder(getDecoder(parentChannel));
             addChannelRow(parentChannel, row);
             table.refresh(row);
+            NowPlayingActivityDebugFeed.logRow("p25-current-control-configured", table, row, before, parentChannel,
+                null, null);
         });
     }
 
@@ -309,6 +313,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             SiteActivitySession.ControlUpdate update = session.currentControl(channelDescriptor);
             ChannelActivityRow row = update.current();
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
             row.setDecoder(getDecoder(parentChannel));
             addChannelRow(parentChannel, row);
@@ -316,12 +321,17 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             scheduleControlIdle(row, table, parentChannel);
             setControlActive(table, true);
             table.refresh(row);
+            NowPlayingActivityDebugFeed.logRow("p25-current-control", table, row, before, parentChannel, null,
+                "controlIdleMs=" + CONTROL_DECODE_HANG_MILLISECONDS);
 
             for(ChannelActivityRow demoted: update.demoted())
             {
+                NowPlayingActivityDebugFeed.Snapshot demotedBefore = NowPlayingActivityDebugFeed.capture(demoted);
                 cancelPendingControlIdle(demoted);
                 demoted.setDecoder(getDecoder(parentChannel));
                 table.refresh(demoted);
+                NowPlayingActivityDebugFeed.logRow("p25-current-control-demoted", table, demoted, demotedBefore,
+                    parentChannel, null, null);
             }
         });
     }
@@ -343,11 +353,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             }
 
             ChannelActivityRow row = session.alternateControl(channelDescriptor);
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
             cancelPendingControlIdle(row);
             row.setDecoder(getDecoder(parentChannel));
             addChannelRow(parentChannel, row);
             table.refresh(row);
+            NowPlayingActivityDebugFeed.logRow("p25-alternate-control", table, row, before, parentChannel, null, null);
         });
     }
 
@@ -372,6 +384,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             Channel rowChannel = trafficChannel != null ? trafficChannel : parentChannel;
             ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor);
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
             cancelPendingTrafficGrantAgeOut(row);
             boolean newCall = row.getState() == State.IDLE || isTargetChanged(row, identifiers);
@@ -389,7 +402,10 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             addChannelRow(rowChannel, row);
             addChannelRow(parentChannel, row);
             table.refresh(row);
-            scheduleTrafficGrantAgeOut(row, table, parentChannel);
+            long expiresAt = scheduleTrafficGrantAgeOut(row, table, parentChannel);
+            NowPlayingActivityDebugFeed.logRow("p25-traffic-grant", table, row, before, parentChannel, eventType,
+                "newCall=" + newCall + " trafficChannel=" + describeChannel(rowChannel) + " ageOutAt=" + expiresAt +
+                    " ageOutMs=" + TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
         });
     }
 
@@ -415,9 +431,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             if(row == null || !isTrafficState(row.getState()))
             {
+                NowPlayingActivityDebugFeed.logMiss("p25-traffic-details-miss", table, parentChannel,
+                    channelDescriptor.getDownlinkFrequency(), getTimeslot(channelDescriptor), eventType,
+                    row == null ? "no-row" : "row-state=" + row.getState());
                 return;
             }
 
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             Channel rowChannel = trafficChannel != null ? trafficChannel :
                 row.getChannel() != null ? row.getChannel() : parentChannel;
             row.setChannel(rowChannel);
@@ -432,6 +452,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             logP25EncryptionDebug("traffic-details", row, parentChannel, identifiers, null, eventType, row.getState());
             addChannelRow(rowChannel, row);
             table.refresh(row);
+            NowPlayingActivityDebugFeed.logRow("p25-traffic-details", table, row, before, parentChannel, eventType,
+                "trafficChannel=" + describeChannel(rowChannel));
         });
     }
 
@@ -455,11 +477,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             if(row == null)
             {
+                NowPlayingActivityDebugFeed.logMiss("p25-traffic-idle-miss", table, parentChannel, frequency, timeslot,
+                    null, "no-row");
                 return;
             }
 
             cancelPendingTrafficGrantAgeOut(row);
-            applyTrafficGrantAgeOut(row, table, parentChannel);
+            applyTrafficGrantAgeOut(row, table, parentChannel, "p25-traffic-idle");
             flushQueuedRefreshes();
             stopActivitySweeperIfIdle();
         });
@@ -623,22 +647,27 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    private void scheduleTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel)
+    private long scheduleTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel)
     {
         cancelPendingTrafficGrantAgeOut(row);
 
         if(row != null)
         {
-            mPendingTrafficGrantAgeOuts.put(row, new ExpiringRow(table, parentChannel,
-                System.currentTimeMillis() + TRAFFIC_GRANT_AGE_OUT_MILLISECONDS));
+            long expiresAt = System.currentTimeMillis() + TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
+            mPendingTrafficGrantAgeOuts.put(row, new ExpiringRow(table, parentChannel, expiresAt));
             startActivitySweeper();
+            return expiresAt;
         }
+
+        return -1;
     }
 
-    private void applyTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel)
+    private void applyTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel,
+                                         String origin)
     {
         if(row != null)
         {
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             Channel previousChannel = row.getChannel();
             row.setChannel(parentChannel);
             row.setDecoder(getDecoder(parentChannel));
@@ -663,6 +692,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             {
                 queueRefresh(table, row);
             }
+
+            NowPlayingActivityDebugFeed.logRow(origin, table, row, before, parentChannel, null,
+                "previousChannel=" + describeChannel(previousChannel));
         }
     }
 
@@ -736,7 +768,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             if(entry.getValue().expiresAt() <= now)
             {
                 trafficIterator.remove();
-                applyTrafficGrantAgeOut(entry.getKey(), entry.getValue().table(), entry.getValue().parentChannel());
+                applyTrafficGrantAgeOut(entry.getKey(), entry.getValue().table(), entry.getValue().parentChannel(),
+                    "p25-traffic-ageout");
             }
         }
 
@@ -763,6 +796,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         if(row != null && row.getControlRole() == ChannelActivityRow.ControlRole.CURRENT &&
             row.getState() == State.CONTROL)
         {
+            NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             markConfiguredControl(row, parentChannel);
 
             if(table != null)
@@ -770,6 +804,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 setControlActive(table, false);
                 queueRefresh(table, row);
             }
+
+            NowPlayingActivityDebugFeed.logRow("p25-control-idle", table, row, before, parentChannel, null, null);
         }
     }
 
@@ -950,6 +986,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             mMetadataRows.put(metadata, row);
             addChannelRow(channel, row);
             mConventionalTable.refresh(row);
+            NowPlayingActivityDebugFeed.logRow("conventional-metadata-add", mConventionalTable, row, null, channel,
+                null, "action=" + action);
         }
     }
 
@@ -1006,10 +1044,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         ChannelActivityRow row = session.configuredControl(frequency);
+        NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
         rememberRow(table, row);
         row.setDecoder(getDecoder(channel));
         addChannelRow(channel, row);
         table.refresh(row);
+        NowPlayingActivityDebugFeed.logRow("configured-control-row", table, row, before, channel, null,
+            "action=" + action);
         return row;
     }
 
@@ -1064,6 +1105,16 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     private boolean isActiveTraffic(ChannelActivityRow row)
     {
         return row != null && row.getRole() == ChannelActivityRow.Role.TRAFFIC && row.getState() != State.IDLE;
+    }
+
+    private String describeChannel(Channel channel)
+    {
+        if(channel == null)
+        {
+            return null;
+        }
+
+        return "id=" + channel.getChannelID() + " name=" + channel.getName() + " traffic=" + channel.isTrafficChannel();
     }
 
     private SiteActivitySession getOrCreateSiteSession(Channel channel)

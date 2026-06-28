@@ -148,10 +148,13 @@ public class ChannelActivityTableModel extends AbstractTableModel
                 if(mActivityViewVisible)
                 {
                     fireTableRowsInserted(index, index);
+                    NowPlayingActivityDebugFeed.logTableEvent("table-row-inserted", this, row, index, true, null);
                 }
                 else
                 {
                     mPendingFullRefresh = true;
+                    NowPlayingActivityDebugFeed.logTableEvent("table-row-inserted-deferred", this, row, index, false,
+                        "table-hidden");
                 }
             }
         }
@@ -180,10 +183,13 @@ public class ChannelActivityTableModel extends AbstractTableModel
             if(mActivityViewVisible)
             {
                 fireTableRowsDeleted(index, index);
+                NowPlayingActivityDebugFeed.logTableEvent("table-row-deleted", this, row, index, true, null);
             }
             else
             {
                 mPendingFullRefresh = true;
+                NowPlayingActivityDebugFeed.logTableEvent("table-row-deleted-deferred", this, row, index, false,
+                    "table-hidden");
             }
         }
     }
@@ -217,10 +223,13 @@ public class ChannelActivityTableModel extends AbstractTableModel
             if(mActivityViewVisible)
             {
                 fireTableRowsUpdated(index, index);
+                NowPlayingActivityDebugFeed.logTableEvent("table-row-updated", this, row, index, true, null);
             }
             else
             {
                 mPendingFullRefresh = true;
+                NowPlayingActivityDebugFeed.logTableEvent("table-row-updated-deferred", this, row, index, false,
+                    "table-hidden");
             }
         }
     }
@@ -238,6 +247,13 @@ public class ChannelActivityTableModel extends AbstractTableModel
         if(!mActivityViewVisible)
         {
             mPendingFullRefresh = true;
+
+            for(ChannelActivityRow row: rows)
+            {
+                NowPlayingActivityDebugFeed.logTableEvent("table-row-batch-updated-deferred", this, row,
+                    mRows.indexOf(row), false, "table-hidden");
+            }
+
             return;
         }
 
@@ -276,6 +292,12 @@ public class ChannelActivityTableModel extends AbstractTableModel
         }
 
         fireTableRowsUpdated(start, previous);
+
+        for(ChannelActivityRow row: rows)
+        {
+            NowPlayingActivityDebugFeed.logTableEvent("table-row-batch-updated", this, row, mRows.indexOf(row), true,
+                null);
+        }
     }
 
     public void refreshAllRows()
