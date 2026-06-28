@@ -60,10 +60,19 @@ import javax.swing.Timer;
  */
 public class ChannelActivityModel implements IChannelMetadataUpdateListener
 {
-    private static final int P25_CLASSIFICATION_DELAY_MILLISECONDS = 500;
-    private static final int CONTROL_DECODE_HANG_MILLISECONDS = 15000;
-    private static final int TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 1000;
-    private static final int ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS = 250;
+    private static final String P25_CLASSIFICATION_DELAY_PROPERTY =
+        "rr.nowplaying.activity.p25.classification.delay.ms";
+    private static final String CONTROL_DECODE_HANG_PROPERTY = "rr.nowplaying.activity.control.hang.ms";
+    private static final String TRAFFIC_GRANT_AGE_OUT_PROPERTY = "rr.nowplaying.activity.traffic.grant.ageout.ms";
+    private static final String ACTIVITY_SWEEPER_INTERVAL_PROPERTY = "rr.nowplaying.activity.sweeper.interval.ms";
+    private static final int P25_CLASSIFICATION_DELAY_MILLISECONDS =
+        getIntegerProperty(P25_CLASSIFICATION_DELAY_PROPERTY, 500, 0, 10000);
+    private static final int CONTROL_DECODE_HANG_MILLISECONDS =
+        getIntegerProperty(CONTROL_DECODE_HANG_PROPERTY, 15000, 0, 60000);
+    private static final int TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
+        getIntegerProperty(TRAFFIC_GRANT_AGE_OUT_PROPERTY, 1000, 0, 15000);
+    private static final int ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS =
+        getIntegerProperty(ACTIVITY_SWEEPER_INTERVAL_PROPERTY, 250, 25, 5000);
 
     private final AliasModel mAliasModel;
     private final ApplicationPreference mApplicationPreference;
@@ -190,9 +199,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                             table != null && table.getOwnerChannel() != null)
                         {
                             removeTrafficChannelRow(channel, row);
-                            row.setChannel(null);
+                            row.setChannel(table.getOwnerChannel());
                             row.setDecoder(getDecoder(table.getOwnerChannel()));
-                            table.refresh(row);
                         }
                         else
                         {
@@ -383,8 +391,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             ensureConfiguredControlRowIfMissing(table, parentChannel, "p25-traffic-grant-control-seed");
 
-            Channel rowChannel = trafficChannel;
-            Channel aliasChannel = rowChannel != null ? rowChannel : parentChannel;
+            Channel rowChannel = trafficChannel != null ? trafficChannel : parentChannel;
             ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor);
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
@@ -397,8 +404,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 row.clearCallDetails();
             }
 
-            row.setDecoder(getDecoder(aliasChannel));
-            updateCallDetails(row, identifiers, aliasChannel);
+            row.setDecoder(getDecoder(rowChannel));
+            updateCallDetails(row, identifiers, rowChannel);
             row.setState(getStickyTrafficState(row, getState(eventType), wasEncrypted));
             logP25EncryptionDebug("traffic-grant", row, parentChannel, identifiers, null, eventType, row.getState());
             addChannelRow(rowChannel, row);
@@ -440,16 +447,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             }
 
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
-            Channel rowChannel = trafficChannel != null ? trafficChannel : row.getChannel();
-            Channel aliasChannel = rowChannel != null ? rowChannel : parentChannel;
-
-            if(trafficChannel != null)
-            {
-                row.setChannel(trafficChannel);
-            }
-
-            row.setDecoder(getDecoder(aliasChannel));
-            updateCallDetails(row, identifiers, aliasChannel);
+            Channel rowChannel = trafficChannel != null ? trafficChannel :
+                row.getChannel() != null ? row.getChannel() : parentChannel;
+            row.setChannel(rowChannel);
+            row.setDecoder(getDecoder(rowChannel));
+            updateCallDetails(row, identifiers, rowChannel);
 
             if(isEncrypted(eventType) || row.getEncryptionDetails() != null)
             {
@@ -676,7 +678,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         {
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             Channel previousChannel = row.getChannel();
-            row.setChannel(row.getRole() == ChannelActivityRow.Role.TRAFFIC ? null : parentChannel);
+            row.setChannel(parentChannel);
             row.setDecoder(getDecoder(parentChannel));
 
             if(row.getControlRole() == ChannelActivityRow.ControlRole.CURRENT)
@@ -1292,6 +1294,25 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         return 0;
+    }
+
+    private static int getIntegerProperty(String property, int defaultValue, int minimum, int maximum)
+    {
+        String value = System.getProperty(property);
+
+        if(value != null && !value.isBlank())
+        {
+            try
+            {
+                int parsed = Integer.parseInt(value.trim());
+                return Math.max(minimum, Math.min(maximum, parsed));
+            }
+            catch(NumberFormatException ignored)
+            {
+            }
+        }
+
+        return defaultValue;
     }
 
     private State getState(DecodeEventType eventType)
