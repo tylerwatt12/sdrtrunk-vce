@@ -60,19 +60,10 @@ import javax.swing.Timer;
  */
 public class ChannelActivityModel implements IChannelMetadataUpdateListener
 {
-    private static final String P25_CLASSIFICATION_DELAY_PROPERTY =
-        "rr.nowplaying.activity.p25.classification.delay.ms";
-    private static final String CONTROL_DECODE_HANG_PROPERTY = "rr.nowplaying.activity.control.hang.ms";
-    private static final String TRAFFIC_GRANT_AGE_OUT_PROPERTY = "rr.nowplaying.activity.traffic.grant.ageout.ms";
-    private static final String ACTIVITY_SWEEPER_INTERVAL_PROPERTY = "rr.nowplaying.activity.sweeper.interval.ms";
-    private static final int P25_CLASSIFICATION_DELAY_MILLISECONDS =
-        getIntegerProperty(P25_CLASSIFICATION_DELAY_PROPERTY, 500, 0, 10000);
-    private static final int CONTROL_DECODE_HANG_MILLISECONDS =
-        getIntegerProperty(CONTROL_DECODE_HANG_PROPERTY, 15000, 0, 60000);
-    private static final int TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
-        getIntegerProperty(TRAFFIC_GRANT_AGE_OUT_PROPERTY, 1000, 0, 15000);
-    private static final int ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS =
-        getIntegerProperty(ACTIVITY_SWEEPER_INTERVAL_PROPERTY, 250, 25, 5000);
+    private static final int P25_CLASSIFICATION_DELAY_MILLISECONDS = 500;
+    private static final int CONTROL_DECODE_HANG_MILLISECONDS = 15000;
+    private static final int TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 1000;
+    private static final int ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS = 250;
 
     private final AliasModel mAliasModel;
     private final ApplicationPreference mApplicationPreference;
@@ -1294,25 +1285,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         return 0;
-    }
-
-    private static int getIntegerProperty(String property, int defaultValue, int minimum, int maximum)
-    {
-        String value = System.getProperty(property);
-
-        if(value != null && !value.isBlank())
-        {
-            try
-            {
-                int parsed = Integer.parseInt(value.trim());
-                return Math.max(minimum, Math.min(maximum, parsed));
-            }
-            catch(NumberFormatException ignored)
-            {
-            }
-        }
-
-        return defaultValue;
     }
 
     private State getState(DecodeEventType eventType)
