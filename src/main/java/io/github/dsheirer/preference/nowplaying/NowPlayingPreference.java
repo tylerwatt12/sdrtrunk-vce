@@ -31,38 +31,15 @@ public class NowPlayingPreference extends Preference
     private static final String PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS = "retain.idle.call.details";
     private static final String PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS = "advanced.p25.encryption.status";
     private static final String PREFERENCE_KEY_SYMBOL_GRAPH_HANG_MILLISECONDS = "symbol.graph.hang.milliseconds";
-    private static final String PREFERENCE_KEY_P25_CLASSIFICATION_DELAY_MILLISECONDS =
-        "p25.classification.delay.milliseconds";
-    private static final String PREFERENCE_KEY_CONTROL_DECODE_HANG_MILLISECONDS = "control.decode.hang.milliseconds";
-    private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
-        "traffic.grant.age.out.milliseconds";
-    private static final String PREFERENCE_KEY_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS =
-        "activity.sweeper.interval.milliseconds";
 
     public static final int MIN_SYMBOL_GRAPH_HANG_MILLISECONDS = 100;
     public static final int MAX_SYMBOL_GRAPH_HANG_MILLISECONDS = 2000;
     public static final int DEFAULT_SYMBOL_GRAPH_HANG_MILLISECONDS = 1000;
-    public static final int MIN_P25_CLASSIFICATION_DELAY_MILLISECONDS = 0;
-    public static final int MAX_P25_CLASSIFICATION_DELAY_MILLISECONDS = 10000;
-    public static final int DEFAULT_P25_CLASSIFICATION_DELAY_MILLISECONDS = 500;
-    public static final int MIN_CONTROL_DECODE_HANG_MILLISECONDS = 0;
-    public static final int MAX_CONTROL_DECODE_HANG_MILLISECONDS = 60000;
-    public static final int DEFAULT_CONTROL_DECODE_HANG_MILLISECONDS = 15000;
-    public static final int MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 0;
-    public static final int MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15000;
-    public static final int DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 1000;
-    public static final int MIN_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS = 25;
-    public static final int MAX_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS = 5000;
-    public static final int DEFAULT_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS = 250;
 
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
     private Boolean mRetainIdleCallDetails;
     private Boolean mAdvancedP25EncryptionStatus;
     private Integer mSymbolGraphHangMilliseconds;
-    private Integer mP25ClassificationDelayMilliseconds;
-    private Integer mControlDecodeHangMilliseconds;
-    private Integer mTrafficGrantAgeOutMilliseconds;
-    private Integer mActivitySweeperIntervalMilliseconds;
 
     /**
      * Constructs an instance.
@@ -154,93 +131,5 @@ public class NowPlayingPreference extends Preference
     {
         return Math.min(MAX_SYMBOL_GRAPH_HANG_MILLISECONDS,
             Math.max(MIN_SYMBOL_GRAPH_HANG_MILLISECONDS, milliseconds));
-    }
-
-    public int getP25ClassificationDelayMilliseconds()
-    {
-        if(mP25ClassificationDelayMilliseconds == null)
-        {
-            mP25ClassificationDelayMilliseconds = clamp(mPreferences.getInt(
-                PREFERENCE_KEY_P25_CLASSIFICATION_DELAY_MILLISECONDS, DEFAULT_P25_CLASSIFICATION_DELAY_MILLISECONDS),
-                MIN_P25_CLASSIFICATION_DELAY_MILLISECONDS, MAX_P25_CLASSIFICATION_DELAY_MILLISECONDS);
-        }
-
-        return mP25ClassificationDelayMilliseconds;
-    }
-
-    public void setP25ClassificationDelayMilliseconds(int milliseconds)
-    {
-        mP25ClassificationDelayMilliseconds = clamp(milliseconds, MIN_P25_CLASSIFICATION_DELAY_MILLISECONDS,
-            MAX_P25_CLASSIFICATION_DELAY_MILLISECONDS);
-        mPreferences.putInt(PREFERENCE_KEY_P25_CLASSIFICATION_DELAY_MILLISECONDS,
-            mP25ClassificationDelayMilliseconds);
-        notifyPreferenceUpdated();
-    }
-
-    public int getControlDecodeHangMilliseconds()
-    {
-        if(mControlDecodeHangMilliseconds == null)
-        {
-            mControlDecodeHangMilliseconds = clamp(mPreferences.getInt(PREFERENCE_KEY_CONTROL_DECODE_HANG_MILLISECONDS,
-                DEFAULT_CONTROL_DECODE_HANG_MILLISECONDS), MIN_CONTROL_DECODE_HANG_MILLISECONDS,
-                MAX_CONTROL_DECODE_HANG_MILLISECONDS);
-        }
-
-        return mControlDecodeHangMilliseconds;
-    }
-
-    public void setControlDecodeHangMilliseconds(int milliseconds)
-    {
-        mControlDecodeHangMilliseconds = clamp(milliseconds, MIN_CONTROL_DECODE_HANG_MILLISECONDS,
-            MAX_CONTROL_DECODE_HANG_MILLISECONDS);
-        mPreferences.putInt(PREFERENCE_KEY_CONTROL_DECODE_HANG_MILLISECONDS, mControlDecodeHangMilliseconds);
-        notifyPreferenceUpdated();
-    }
-
-    public int getTrafficGrantAgeOutMilliseconds()
-    {
-        if(mTrafficGrantAgeOutMilliseconds == null)
-        {
-            mTrafficGrantAgeOutMilliseconds = clamp(mPreferences.getInt(
-                PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS),
-                MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
-        }
-
-        return mTrafficGrantAgeOutMilliseconds;
-    }
-
-    public void setTrafficGrantAgeOutMilliseconds(int milliseconds)
-    {
-        mTrafficGrantAgeOutMilliseconds = clamp(milliseconds, MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
-            MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
-        mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, mTrafficGrantAgeOutMilliseconds);
-        notifyPreferenceUpdated();
-    }
-
-    public int getActivitySweeperIntervalMilliseconds()
-    {
-        if(mActivitySweeperIntervalMilliseconds == null)
-        {
-            mActivitySweeperIntervalMilliseconds = clamp(mPreferences.getInt(
-                PREFERENCE_KEY_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
-                DEFAULT_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS), MIN_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
-                MAX_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
-        }
-
-        return mActivitySweeperIntervalMilliseconds;
-    }
-
-    public void setActivitySweeperIntervalMilliseconds(int milliseconds)
-    {
-        mActivitySweeperIntervalMilliseconds = clamp(milliseconds, MIN_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
-            MAX_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
-        mPreferences.putInt(PREFERENCE_KEY_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
-            mActivitySweeperIntervalMilliseconds);
-        notifyPreferenceUpdated();
-    }
-
-    private int clamp(int value, int minimum, int maximum)
-    {
-        return Math.min(maximum, Math.max(minimum, value));
     }
 }

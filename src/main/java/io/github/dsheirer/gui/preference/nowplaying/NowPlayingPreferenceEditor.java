@@ -43,10 +43,6 @@ public class NowPlayingPreferenceEditor extends HBox
     private ToggleSwitch mRetainIdleCallDetailsToggle;
     private ToggleSwitch mAdvancedP25EncryptionToggle;
     private Spinner<Integer> mSymbolGraphHangSpinner;
-    private Spinner<Integer> mP25ClassificationDelaySpinner;
-    private Spinner<Integer> mControlDecodeHangSpinner;
-    private Spinner<Integer> mTrafficGrantAgeOutSpinner;
-    private Spinner<Integer> mActivitySweeperIntervalSpinner;
 
     /**
      * Constructs an instance.
@@ -95,28 +91,6 @@ public class NowPlayingPreferenceEditor extends HBox
             mEditorPane.add(getSymbolGraphHangSpinner(), 0, ++row);
             mEditorPane.add(new Label("milliseconds"), 1, row);
 
-            Separator timingSeparator = new Separator(Orientation.HORIZONTAL);
-            GridPane.setHgrow(timingSeparator, Priority.ALWAYS);
-            mEditorPane.add(timingSeparator, 0, ++row, 3, 1);
-
-            mEditorPane.add(new Label("Activity Timing"), 0, ++row, 2, 1);
-
-            GridPane.setHalignment(getP25ClassificationDelaySpinner(), HPos.RIGHT);
-            mEditorPane.add(getP25ClassificationDelaySpinner(), 0, ++row);
-            mEditorPane.add(new Label("P25 Classification Delay ms"), 1, row, 2, 1);
-
-            GridPane.setHalignment(getControlDecodeHangSpinner(), HPos.RIGHT);
-            mEditorPane.add(getControlDecodeHangSpinner(), 0, ++row);
-            mEditorPane.add(new Label("Control Decode Hang ms"), 1, row, 2, 1);
-
-            GridPane.setHalignment(getTrafficGrantAgeOutSpinner(), HPos.RIGHT);
-            mEditorPane.add(getTrafficGrantAgeOutSpinner(), 0, ++row);
-            mEditorPane.add(new Label("Traffic Grant Age-Out ms"), 1, row, 2, 1);
-
-            GridPane.setHalignment(getActivitySweeperIntervalSpinner(), HPos.RIGHT);
-            mEditorPane.add(getActivitySweeperIntervalSpinner(), 0, ++row);
-            mEditorPane.add(new Label("Activity Sweeper Interval ms"), 1, row, 2, 1);
-
             ColumnConstraints c1 = new ColumnConstraints();
             c1.setPercentWidth(30);
             ColumnConstraints c2 = new ColumnConstraints();
@@ -162,99 +136,10 @@ public class NowPlayingPreferenceEditor extends HBox
                 NowPlayingPreference.MAX_SYMBOL_GRAPH_HANG_MILLISECONDS,
                 mNowPlayingPreference.getSymbolGraphHangMilliseconds(),
                 100);
-            mSymbolGraphHangSpinner.setEditable(true);
-            mSymbolGraphHangSpinner.valueProperty().addListener((observable, oldValue, milliseconds) -> {
-                if(milliseconds != null)
-                {
-                    mNowPlayingPreference.setSymbolGraphHangMilliseconds(milliseconds);
-                }
-            });
+            mSymbolGraphHangSpinner.valueProperty().addListener((observable, oldValue, milliseconds) ->
+                mNowPlayingPreference.setSymbolGraphHangMilliseconds(milliseconds));
         }
 
         return mSymbolGraphHangSpinner;
-    }
-
-    private Spinner<Integer> getP25ClassificationDelaySpinner()
-    {
-        if(mP25ClassificationDelaySpinner == null)
-        {
-            mP25ClassificationDelaySpinner = new Spinner<>(
-                NowPlayingPreference.MIN_P25_CLASSIFICATION_DELAY_MILLISECONDS,
-                NowPlayingPreference.MAX_P25_CLASSIFICATION_DELAY_MILLISECONDS,
-                mNowPlayingPreference.getP25ClassificationDelayMilliseconds(),
-                100);
-            mP25ClassificationDelaySpinner.setEditable(true);
-            mP25ClassificationDelaySpinner.valueProperty().addListener((observable, oldValue, milliseconds) -> {
-                if(milliseconds != null)
-                {
-                    mNowPlayingPreference.setP25ClassificationDelayMilliseconds(milliseconds);
-                }
-            });
-        }
-
-        return mP25ClassificationDelaySpinner;
-    }
-
-    private Spinner<Integer> getControlDecodeHangSpinner()
-    {
-        if(mControlDecodeHangSpinner == null)
-        {
-            mControlDecodeHangSpinner = new Spinner<>(
-                NowPlayingPreference.MIN_CONTROL_DECODE_HANG_MILLISECONDS,
-                NowPlayingPreference.MAX_CONTROL_DECODE_HANG_MILLISECONDS,
-                mNowPlayingPreference.getControlDecodeHangMilliseconds(),
-                1000);
-            mControlDecodeHangSpinner.setEditable(true);
-            mControlDecodeHangSpinner.valueProperty().addListener((observable, oldValue, milliseconds) -> {
-                if(milliseconds != null)
-                {
-                    mNowPlayingPreference.setControlDecodeHangMilliseconds(milliseconds);
-                }
-            });
-        }
-
-        return mControlDecodeHangSpinner;
-    }
-
-    private Spinner<Integer> getTrafficGrantAgeOutSpinner()
-    {
-        if(mTrafficGrantAgeOutSpinner == null)
-        {
-            mTrafficGrantAgeOutSpinner = new Spinner<>(
-                NowPlayingPreference.MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
-                NowPlayingPreference.MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
-                mNowPlayingPreference.getTrafficGrantAgeOutMilliseconds(),
-                100);
-            mTrafficGrantAgeOutSpinner.setEditable(true);
-            mTrafficGrantAgeOutSpinner.valueProperty().addListener((observable, oldValue, milliseconds) -> {
-                if(milliseconds != null)
-                {
-                    mNowPlayingPreference.setTrafficGrantAgeOutMilliseconds(milliseconds);
-                }
-            });
-        }
-
-        return mTrafficGrantAgeOutSpinner;
-    }
-
-    private Spinner<Integer> getActivitySweeperIntervalSpinner()
-    {
-        if(mActivitySweeperIntervalSpinner == null)
-        {
-            mActivitySweeperIntervalSpinner = new Spinner<>(
-                NowPlayingPreference.MIN_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
-                NowPlayingPreference.MAX_ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
-                mNowPlayingPreference.getActivitySweeperIntervalMilliseconds(),
-                25);
-            mActivitySweeperIntervalSpinner.setEditable(true);
-            mActivitySweeperIntervalSpinner.valueProperty().addListener((observable, oldValue, milliseconds) -> {
-                if(milliseconds != null)
-                {
-                    mNowPlayingPreference.setActivitySweeperIntervalMilliseconds(milliseconds);
-                }
-            });
-        }
-
-        return mActivitySweeperIntervalSpinner;
     }
 }

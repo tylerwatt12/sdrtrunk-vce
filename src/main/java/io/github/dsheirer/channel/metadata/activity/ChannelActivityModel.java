@@ -331,7 +331,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             setControlActive(table, true);
             table.refresh(row);
             NowPlayingActivityDebugFeed.logRow("p25-current-control", table, row, before, parentChannel, null,
-                "controlIdleMs=" + getControlDecodeHangMilliseconds());
+                "controlIdleMs=" + CONTROL_DECODE_HANG_MILLISECONDS);
 
             for(ChannelActivityRow demoted: update.demoted())
             {
@@ -414,7 +414,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             long expiresAt = scheduleTrafficGrantAgeOut(row, table, parentChannel);
             NowPlayingActivityDebugFeed.logRow("p25-traffic-grant", table, row, before, parentChannel, eventType,
                 "newCall=" + newCall + " trafficChannel=" + describeChannel(rowChannel) + " ageOutAt=" + expiresAt +
-                    " ageOutMs=" + getTrafficGrantAgeOutMilliseconds());
+                    " ageOutMs=" + TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
         });
     }
 
@@ -662,7 +662,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         if(row != null)
         {
-            long expiresAt = System.currentTimeMillis() + getTrafficGrantAgeOutMilliseconds();
+            long expiresAt = System.currentTimeMillis() + TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
             mPendingTrafficGrantAgeOuts.put(row, new ExpiringRow(table, parentChannel, expiresAt));
             startActivitySweeper();
             return expiresAt;
@@ -726,7 +726,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         mPendingControlIdleRows.put(row, new ExpiringRow(table, parentChannel,
-            System.currentTimeMillis() + getControlDecodeHangMilliseconds()));
+            System.currentTimeMillis() + CONTROL_DECODE_HANG_MILLISECONDS));
         startActivitySweeper();
     }
 
@@ -743,15 +743,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     {
         if(mActivitySweeperTimer == null)
         {
-            mActivitySweeperTimer = new Timer(getActivitySweeperIntervalMilliseconds(),
+            mActivitySweeperTimer = new Timer(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
                 event -> sweepActivityExpirations());
             mActivitySweeperTimer.setRepeats(true);
-        }
-        else
-        {
-            int interval = getActivitySweeperIntervalMilliseconds();
-            mActivitySweeperTimer.setDelay(interval);
-            mActivitySweeperTimer.setInitialDelay(interval);
         }
 
         if(!mActivitySweeperTimer.isRunning())
@@ -926,7 +920,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             mPendingP25MetadataChannels.put(metadata, channel);
         }
 
-        Timer timer = new Timer(getP25ClassificationDelayMilliseconds(), event -> {
+        Timer timer = new Timer(P25_CLASSIFICATION_DELAY_MILLISECONDS, event -> {
             mPendingP25ClassificationTimers.remove(channel);
             List<ChannelMetadata> delayed = mPendingP25ClassificationMetadata.remove(channel);
 
@@ -1377,30 +1371,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     private boolean retainIdleCallDetails()
     {
         return mNowPlayingPreference != null && mNowPlayingPreference.isRetainIdleCallDetails();
-    }
-
-    private int getP25ClassificationDelayMilliseconds()
-    {
-        return mNowPlayingPreference != null ? mNowPlayingPreference.getP25ClassificationDelayMilliseconds() :
-            P25_CLASSIFICATION_DELAY_MILLISECONDS;
-    }
-
-    private int getControlDecodeHangMilliseconds()
-    {
-        return mNowPlayingPreference != null ? mNowPlayingPreference.getControlDecodeHangMilliseconds() :
-            CONTROL_DECODE_HANG_MILLISECONDS;
-    }
-
-    private int getTrafficGrantAgeOutMilliseconds()
-    {
-        return mNowPlayingPreference != null ? mNowPlayingPreference.getTrafficGrantAgeOutMilliseconds() :
-            TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
-    }
-
-    private int getActivitySweeperIntervalMilliseconds()
-    {
-        return mNowPlayingPreference != null ? mNowPlayingPreference.getActivitySweeperIntervalMilliseconds() :
-            ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS;
     }
 
     private void runOnSwing(Runnable runnable)
