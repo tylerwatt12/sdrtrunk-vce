@@ -1304,13 +1304,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     private void notifyActivityEncryptionDetails(P25TrafficChannelEventTracker tracker)
     {
-        if(mChannelActivityModel != null && tracker != null && tracker.getEvent() != null &&
-            tracker.getEvent().getChannelDescriptor() instanceof APCO25Channel channel &&
-            tracker.getEvent().getIdentifierCollection() != null &&
-            tracker.getEvent().getIdentifierCollection().getEncryptionIdentifier() != null)
+        P25ChannelGrantEvent event = tracker != null ? tracker.getEvent() : null;
+        IdentifierCollection identifiers = event != null ? event.getIdentifierCollection() : null;
+
+        if(mChannelActivityModel != null && event != null &&
+            event.getChannelDescriptor() instanceof APCO25Channel channel &&
+            identifiers != null && identifiers.getEncryptionIdentifier() != null)
         {
-            mChannelActivityModel.p25TrafficEncryptionDetails(mParentChannel, channel,
-                tracker.getEvent().getIdentifierCollection(), tracker.getEvent().getEventType());
+            mChannelActivityModel.p25TrafficEncryptionDetails(mParentChannel, channel, identifiers, event.getEventType());
         }
     }
 

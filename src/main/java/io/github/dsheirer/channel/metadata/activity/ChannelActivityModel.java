@@ -418,15 +418,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     public void p25TrafficEncryptionDetails(Channel parentChannel, IChannelDescriptor channelDescriptor,
                                             IdentifierCollection identifiers, DecodeEventType eventType)
     {
-        if(parentChannel == null || channelDescriptor == null || channelDescriptor.getDownlinkFrequency() <= 0 ||
-            identifiers == null)
-        {
-            return;
-        }
-
+        long frequency = channelDescriptor != null ? channelDescriptor.getDownlinkFrequency() : 0;
+        Integer timeslot = getTimeslot(channelDescriptor);
         String encryptionDetails = P25EncryptionDetails.format(identifiers);
 
-        if(encryptionDetails == null)
+        if(parentChannel == null || frequency <= 0 || encryptionDetails == null)
         {
             return;
         }
@@ -440,14 +436,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 return;
             }
 
-            ChannelActivityRow row = session.traffic(channelDescriptor.getDownlinkFrequency(),
-                getTimeslot(channelDescriptor));
+            ChannelActivityRow row = session.traffic(frequency, timeslot);
 
             if(row == null || !isTrafficState(row.getState()))
             {
                 NowPlayingActivityDebugFeed.logMiss("p25-traffic-encryption-miss", table, parentChannel,
-                    channelDescriptor.getDownlinkFrequency(), getTimeslot(channelDescriptor), eventType,
-                    row == null ? "no-row" : "row-state=" + row.getState());
+                    frequency, timeslot, eventType, row == null ? "no-row" : "row-state=" + row.getState());
                 return;
             }
 
