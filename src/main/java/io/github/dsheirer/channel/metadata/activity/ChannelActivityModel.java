@@ -276,6 +276,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         runOnSwing(() -> {
+            sweepActivityExpirations();
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
 
@@ -303,6 +304,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         runOnSwing(() -> {
+            sweepActivityExpirations();
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
 
@@ -344,6 +346,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         runOnSwing(() -> {
+            sweepActivityExpirations();
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
 
@@ -372,6 +375,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         runOnSwing(() -> {
+            sweepActivityExpirations();
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
 
