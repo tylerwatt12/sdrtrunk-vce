@@ -150,17 +150,16 @@ public class SiteActivitySession
         long frequency = channelDescriptor.getDownlinkFrequency();
         Integer timeslot = getTimeslot(channelDescriptor);
         String key = trafficKey(frequency, timeslot);
-        Channel rowChannel = trafficChannel != null ? trafficChannel : mParentChannel;
         ChannelActivityRow row = mTrafficRows.get(key);
 
         if(row == null)
         {
-            row = mTableModel.getOrCreate(key, rowChannel, ChannelActivityRow.Role.TRAFFIC, frequency, timeslot);
+            row = mTableModel.getOrCreate(key, trafficChannel, ChannelActivityRow.Role.TRAFFIC, frequency, timeslot);
             row.setOrigin(ChannelActivityRow.Origin.TRAFFIC_GRANT);
             mTrafficRows.put(key, row);
         }
 
-        row.setChannel(rowChannel);
+        row.setChannel(trafficChannel);
         row.setRole(ChannelActivityRow.Role.TRAFFIC);
         row.setOrigin(ChannelActivityRow.Origin.TRAFFIC_GRANT);
         row.setFrequency(frequency);

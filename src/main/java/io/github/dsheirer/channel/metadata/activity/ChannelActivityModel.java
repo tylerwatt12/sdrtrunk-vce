@@ -190,8 +190,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                             table != null && table.getOwnerChannel() != null)
                         {
                             removeTrafficChannelRow(channel, row);
-                            row.setChannel(table.getOwnerChannel());
+                            row.setChannel(null);
                             row.setDecoder(getDecoder(table.getOwnerChannel()));
+                            table.refresh(row);
                         }
                         else
                         {
@@ -382,7 +383,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             ensureConfiguredControlRowIfMissing(table, parentChannel, "p25-traffic-grant-control-seed");
 
-            Channel rowChannel = trafficChannel != null ? trafficChannel : parentChannel;
+            Channel rowChannel = trafficChannel;
+            Channel aliasChannel = rowChannel != null ? rowChannel : parentChannel;
             ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor);
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
@@ -395,8 +397,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 row.clearCallDetails();
             }
 
-            row.setDecoder(getDecoder(rowChannel));
-            updateCallDetails(row, identifiers, rowChannel);
+            row.setDecoder(getDecoder(aliasChannel));
+            updateCallDetails(row, identifiers, aliasChannel);
             row.setState(getStickyTrafficState(row, getState(eventType), wasEncrypted));
             logP25EncryptionDebug("traffic-grant", row, parentChannel, identifiers, null, eventType, row.getState());
             addChannelRow(rowChannel, row);
@@ -438,11 +440,16 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             }
 
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
-            Channel rowChannel = trafficChannel != null ? trafficChannel :
-                row.getChannel() != null ? row.getChannel() : parentChannel;
-            row.setChannel(rowChannel);
-            row.setDecoder(getDecoder(rowChannel));
-            updateCallDetails(row, identifiers, rowChannel);
+            Channel rowChannel = trafficChannel != null ? trafficChannel : row.getChannel();
+            Channel aliasChannel = rowChannel != null ? rowChannel : parentChannel;
+
+            if(trafficChannel != null)
+            {
+                row.setChannel(trafficChannel);
+            }
+
+            row.setDecoder(getDecoder(aliasChannel));
+            updateCallDetails(row, identifiers, aliasChannel);
 
             if(isEncrypted(eventType) || row.getEncryptionDetails() != null)
             {
@@ -669,7 +676,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         {
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             Channel previousChannel = row.getChannel();
-            row.setChannel(parentChannel);
+            row.setChannel(row.getRole() == ChannelActivityRow.Role.TRAFFIC ? null : parentChannel);
             row.setDecoder(getDecoder(parentChannel));
 
             if(row.getControlRole() == ChannelActivityRow.ControlRole.CURRENT)
