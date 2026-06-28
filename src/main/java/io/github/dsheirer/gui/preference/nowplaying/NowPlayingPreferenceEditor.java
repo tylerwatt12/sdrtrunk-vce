@@ -42,7 +42,7 @@ public class NowPlayingPreferenceEditor extends HBox
     private GridPane mEditorPane;
     private ToggleSwitch mRetainIdleCallDetailsToggle;
     private ToggleSwitch mAdvancedP25EncryptionToggle;
-    private Spinner<Integer> mSymbolGraphHangSpinner;
+    private Spinner<Integer> mTrafficGrantAgeOutSpinner;
 
     /**
      * Constructs an instance.
@@ -86,9 +86,9 @@ public class NowPlayingPreferenceEditor extends HBox
             GridPane.setHgrow(separator, Priority.ALWAYS);
             mEditorPane.add(separator, 0, ++row, 3, 1);
 
-            mEditorPane.add(new Label("Symbol Graph Hang Time"), 0, ++row, 2, 1);
-            GridPane.setHalignment(getSymbolGraphHangSpinner(), HPos.RIGHT);
-            mEditorPane.add(getSymbolGraphHangSpinner(), 0, ++row);
+            mEditorPane.add(new Label("P25 Grant Idle Age-Out"), 0, ++row, 2, 1);
+            GridPane.setHalignment(getTrafficGrantAgeOutSpinner(), HPos.RIGHT);
+            mEditorPane.add(getTrafficGrantAgeOutSpinner(), 0, ++row);
             mEditorPane.add(new Label("milliseconds"), 1, row);
 
             ColumnConstraints c1 = new ColumnConstraints();
@@ -127,19 +127,24 @@ public class NowPlayingPreferenceEditor extends HBox
         return mAdvancedP25EncryptionToggle;
     }
 
-    private Spinner<Integer> getSymbolGraphHangSpinner()
+    private Spinner<Integer> getTrafficGrantAgeOutSpinner()
     {
-        if(mSymbolGraphHangSpinner == null)
+        if(mTrafficGrantAgeOutSpinner == null)
         {
-            mSymbolGraphHangSpinner = new Spinner<>(
-                NowPlayingPreference.MIN_SYMBOL_GRAPH_HANG_MILLISECONDS,
-                NowPlayingPreference.MAX_SYMBOL_GRAPH_HANG_MILLISECONDS,
-                mNowPlayingPreference.getSymbolGraphHangMilliseconds(),
+            mTrafficGrantAgeOutSpinner = new Spinner<>(
+                NowPlayingPreference.MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
+                NowPlayingPreference.MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
+                mNowPlayingPreference.getTrafficGrantAgeOutMilliseconds(),
                 100);
-            mSymbolGraphHangSpinner.valueProperty().addListener((observable, oldValue, milliseconds) ->
-                mNowPlayingPreference.setSymbolGraphHangMilliseconds(milliseconds));
+            mTrafficGrantAgeOutSpinner.setEditable(true);
+            mTrafficGrantAgeOutSpinner.valueProperty().addListener((observable, oldValue, milliseconds) -> {
+                if(milliseconds != null)
+                {
+                    mNowPlayingPreference.setTrafficGrantAgeOutMilliseconds(milliseconds);
+                }
+            });
         }
 
-        return mSymbolGraphHangSpinner;
+        return mTrafficGrantAgeOutSpinner;
     }
 }

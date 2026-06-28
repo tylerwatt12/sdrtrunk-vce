@@ -30,16 +30,17 @@ public class NowPlayingPreference extends Preference
 {
     private static final String PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS = "retain.idle.call.details";
     private static final String PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS = "advanced.p25.encryption.status";
-    private static final String PREFERENCE_KEY_SYMBOL_GRAPH_HANG_MILLISECONDS = "symbol.graph.hang.milliseconds";
+    private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
+        "traffic.grant.age.out.milliseconds";
 
-    public static final int MIN_SYMBOL_GRAPH_HANG_MILLISECONDS = 100;
-    public static final int MAX_SYMBOL_GRAPH_HANG_MILLISECONDS = 2000;
-    public static final int DEFAULT_SYMBOL_GRAPH_HANG_MILLISECONDS = 1000;
+    public static final int MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
+    public static final int MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15000;
+    public static final int DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 1000;
 
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
     private Boolean mRetainIdleCallDetails;
     private Boolean mAdvancedP25EncryptionStatus;
-    private Integer mSymbolGraphHangMilliseconds;
+    private Integer mTrafficGrantAgeOutMilliseconds;
 
     /**
      * Constructs an instance.
@@ -103,33 +104,28 @@ public class NowPlayingPreference extends Preference
         notifyPreferenceUpdated();
     }
 
-    /**
-     * Symbol graph hang time in milliseconds.  This prevents short-lived decoder gaps from blanking the graph.
-     */
-    public int getSymbolGraphHangMilliseconds()
+    public int getTrafficGrantAgeOutMilliseconds()
     {
-        if(mSymbolGraphHangMilliseconds == null)
+        if(mTrafficGrantAgeOutMilliseconds == null)
         {
-            mSymbolGraphHangMilliseconds = clampSymbolGraphHang(mPreferences.getInt(
-                PREFERENCE_KEY_SYMBOL_GRAPH_HANG_MILLISECONDS, DEFAULT_SYMBOL_GRAPH_HANG_MILLISECONDS));
+            mTrafficGrantAgeOutMilliseconds = clamp(mPreferences.getInt(
+                PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS),
+                MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
         }
 
-        return mSymbolGraphHangMilliseconds;
+        return mTrafficGrantAgeOutMilliseconds;
     }
 
-    /**
-     * Sets symbol graph hang time in milliseconds.
-     */
-    public void setSymbolGraphHangMilliseconds(int milliseconds)
+    public void setTrafficGrantAgeOutMilliseconds(int milliseconds)
     {
-        mSymbolGraphHangMilliseconds = clampSymbolGraphHang(milliseconds);
-        mPreferences.putInt(PREFERENCE_KEY_SYMBOL_GRAPH_HANG_MILLISECONDS, mSymbolGraphHangMilliseconds);
+        mTrafficGrantAgeOutMilliseconds = clamp(milliseconds, MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
+            MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
+        mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, mTrafficGrantAgeOutMilliseconds);
         notifyPreferenceUpdated();
     }
 
-    private int clampSymbolGraphHang(int milliseconds)
+    private int clamp(int value, int minimum, int maximum)
     {
-        return Math.min(MAX_SYMBOL_GRAPH_HANG_MILLISECONDS,
-            Math.max(MIN_SYMBOL_GRAPH_HANG_MILLISECONDS, milliseconds));
+        return Math.min(maximum, Math.max(minimum, value));
     }
 }

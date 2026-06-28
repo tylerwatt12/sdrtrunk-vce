@@ -56,7 +56,6 @@ import java.awt.event.MouseEvent;
 import java.net.URL;
 import java.text.DecimalFormat;
 import java.util.List;
-import java.util.Objects;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
@@ -72,7 +71,6 @@ import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.Timer;
 import javax.swing.event.MouseInputAdapter;
 
 /**
@@ -114,7 +112,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private JSplitPane mSplitPane;
     private JPanel mRightCardPanel;
     private CardLayout mRightCardLayout;
-    private Timer mSymbolGraphHangTimer;
 
     /**
      * Constructs an instance.
@@ -301,7 +298,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
 
         if(!mPanelVisible)
         {
-            cancelSymbolGraphHang();
             stopRfProbe();
 
             if(mSelectedFrequencyContext != null && mSelectedFrequencyContext.processingChain() == null)
@@ -416,7 +412,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     {
         if(context == null || context.clearRequested())
         {
-            cancelSymbolGraphHang();
             mSelectedFrequencyContext = context;
             disconnectProcessingChain();
             stopRfProbe();
@@ -428,7 +423,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
 
         if(context.processingChain() != null)
         {
-            cancelSymbolGraphHang();
             mSelectedFrequencyContext = context;
             stopRfProbe();
 
@@ -441,17 +435,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         }
         else if(context.hasFrequency())
         {
-            if(shouldHangSymbolGraph(context))
-            {
-                mSelectedFrequencyContext = context;
-                stopRfProbe();
-                updateViewedFrequency(context.frequency());
-                startSymbolGraphHang(context);
-                updateFFTProcessing();
-                return;
-            }
-
-            cancelSymbolGraphHang();
             mSelectedFrequencyContext = context;
             disconnectProcessingChain();
             stopRfProbe();
@@ -465,7 +448,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         }
         else
         {
-            cancelSymbolGraphHang();
             mSelectedFrequencyContext = context;
             disconnectProcessingChain();
             stopRfProbe();
@@ -476,17 +458,8 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         updateFFTProcessing();
     }
 
-    public void receive(ProcessingChain processingChain)
-    {
-        long frequency = processingChain != null && processingChain.getSource() != null ?
-            processingChain.getSource().getFrequency() : 0;
-        receive(new SelectedFrequencyContext(frequency, null, null, null, null, null, null, processingChain,
-            processingChain == null));
-    }
-
     public void dispose()
     {
-        cancelSymbolGraphHang();
         disconnectProcessingChain();
         stopRfProbe();
         mSelectedFrequencyContext = null;
@@ -496,8 +469,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
 
     private void disconnectProcessingChain()
     {
-        cancelSymbolGraphHang();
-
         if(mProcessingChain != null)
         {
             mNoiseSquelchView.setController(null);
@@ -508,73 +479,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             mProcessingChain.removeModule(mSampleStreamTapModule);
             mProcessingChain = null;
         }
-    }
-
-    private boolean shouldHangSymbolGraph(SelectedFrequencyContext context)
-    {
-        return mPanelVisible && context != null && context.hasFrequency() && mSelectedFrequencyContext != null &&
-            isSameSelectedFrequency(mSelectedFrequencyContext, context) && mProcessingChain != null &&
-            mProcessingChain.getPrimaryDecoder() instanceof FeedbackDecoder &&
-            getProcessingChainFrequency(mProcessingChain) == context.frequency();
-    }
-
-    private boolean isSameSelectedFrequency(SelectedFrequencyContext first, SelectedFrequencyContext second)
-    {
-        return first != null && second != null && first.frequency() == second.frequency() &&
-            Objects.equals(first.timeslot(), second.timeslot()) &&
-            Objects.equals(first.sessionId(), second.sessionId());
-    }
-
-    private long getProcessingChainFrequency(ProcessingChain processingChain)
-    {
-        return processingChain != null && processingChain.getSource() != null ? processingChain.getSource().getFrequency() : 0;
-    }
-
-    private void startSymbolGraphHang(SelectedFrequencyContext context)
-    {
-        cancelSymbolGraphHang();
-        mSymbolGraphHangTimer = new Timer(mUserPreferences.getNowPlayingPreference().getSymbolGraphHangMilliseconds(),
-            event -> expireSymbolGraphHang(context));
-        mSymbolGraphHangTimer.setRepeats(false);
-        mSymbolGraphHangTimer.start();
-    }
-
-    private void expireSymbolGraphHang(SelectedFrequencyContext context)
-    {
-        mSymbolGraphHangTimer = null;
-
-        if(context != null && context.equals(mSelectedFrequencyContext) && context.processingChain() == null)
-        {
-            disconnectProcessingChain();
-            stopRfProbe();
-            reset();
-
-            if(context.hasFrequency())
-            {
-                updateViewedFrequency(context.frequency());
-
-                if(mPanelVisible)
-                {
-                    startRfProbe(context.frequency());
-                }
-            }
-            else
-            {
-                mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
-            }
-
-            updateFFTProcessing();
-        }
-    }
-
-    private void cancelSymbolGraphHang()
-    {
-        if(mSymbolGraphHangTimer != null)
-        {
-            mSymbolGraphHangTimer.stop();
-            mSymbolGraphHangTimer = null;
-        }
-
     }
 
     private void attachProcessingChain(ProcessingChain processingChain)

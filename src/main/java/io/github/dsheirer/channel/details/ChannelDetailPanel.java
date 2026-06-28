@@ -46,7 +46,6 @@ public class ChannelDetailPanel extends JPanel implements Listener<SelectedFrequ
     private JTextArea mDetailTextPane;
 
     private ChannelProcessingManager mChannelProcessingManager;
-    private ProcessingChain mProcessingChain;
     private SelectedFrequencyContext mSelectedFrequencyContext;
 
     public ChannelDetailPanel(ChannelProcessingManager channelProcessingManager)
@@ -91,17 +90,8 @@ public class ChannelDetailPanel extends JPanel implements Listener<SelectedFrequ
     public void receive(SelectedFrequencyContext context)
     {
         mSelectedFrequencyContext = context;
-        receive(context != null ? context.processingChain() : null, context);
-    }
-
-    public void receive(ProcessingChain processingChain)
-    {
-        receive(processingChain, null);
-    }
-
-    private void receive(ProcessingChain processingChain, SelectedFrequencyContext context)
-    {
-        mProcessingChain = processingChain;
+        ProcessingChain processingChain = context != null && !context.clearRequested() ?
+            context.processingChain() : null;
 
         Channel channel = processingChain != null ? mChannelProcessingManager.getChannel(processingChain) : null;
 

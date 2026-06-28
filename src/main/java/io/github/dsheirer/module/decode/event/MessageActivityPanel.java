@@ -73,14 +73,6 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
     }
 
     /**
-     * Updates the message activity model with message history from the specified processing chain
-     */
-    public void receive(ProcessingChain processingChain)
-    {
-        updateProcessingChain(processingChain, true, true);
-    }
-
-    /**
      * Updates the message activity model for the selected exact-frequency context.
      */
     @Override

@@ -147,19 +147,10 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
     @Override
     public void receive(final SelectedFrequencyContext context)
     {
-        receive(context != null ? context.processingChain() : null, context);
-    }
-
-    public void receive(final ProcessingChain processingChain)
-    {
-        receive(processingChain, null);
-    }
-
-    private void receive(final ProcessingChain processingChain, final SelectedFrequencyContext context)
-    {
-        final boolean clearRequested = context != null && context.clearRequested();
-        final long selectedFrequency = context != null ? context.frequency() : getSourceFrequency(processingChain);
-        final Integer selectedTimeslot = context != null ? context.timeslot() : null;
+        final ProcessingChain processingChain = context != null ? context.processingChain() : null;
+        final boolean clearRequested = context == null || context.clearRequested();
+        final long selectedFrequency = clearRequested ? 0 : context.frequency();
+        final Integer selectedTimeslot = clearRequested ? null : context.timeslot();
         final boolean selectionChanged = selectionChanged(selectedFrequency, selectedTimeslot);
 
         EventQueue.invokeLater(() -> {
@@ -228,11 +219,6 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         }
 
         return !mSelectedTimeslot.equals(timeslot);
-    }
-
-    private long getSourceFrequency(ProcessingChain processingChain)
-    {
-        return processingChain != null && processingChain.getSource() != null ? processingChain.getSource().getFrequency() : 0;
     }
 
     private boolean matchesSelectedFrequency(IDecodeEvent event)
