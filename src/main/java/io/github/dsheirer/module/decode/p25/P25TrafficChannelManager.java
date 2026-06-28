@@ -362,14 +362,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 for(int x = 0; x < trafficChannelPoolSize; x++)
                 {
-                    Channel trafficChannel = new Channel("T-" + mParentChannel.getName(), ChannelType.TRAFFIC);
-                    trafficChannel.setAliasListName(mParentChannel.getAliasListName());
-                    trafficChannel.setSystem(mParentChannel.getSystem());
-                    trafficChannel.setSite(mParentChannel.getSite());
-                    trafficChannel.setDecodeConfiguration(decodeConfigP25Phase1);
-                    trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
-                    trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
-                    trafficChannelList.add(trafficChannel);
+                    trafficChannelList.add(createTrafficChannel(decodeConfigP25Phase1));
                 }
             }
 
@@ -393,20 +386,31 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 for(int x = 0; x < trafficChannelPoolSize; x++)
                 {
-                    Channel trafficChannel = new Channel("T-" + mParentChannel.getName(), ChannelType.TRAFFIC);
-                    trafficChannel.setAliasListName(mParentChannel.getAliasListName());
-                    trafficChannel.setSystem(mParentChannel.getSystem());
-                    trafficChannel.setSite(mParentChannel.getSite());
-                    trafficChannel.setDecodeConfiguration(decodeConfiguration);
-                    trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
-                    trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
-                    trafficChannelList.add(trafficChannel);
+                    trafficChannelList.add(createTrafficChannel(decodeConfiguration));
                 }
             }
 
             mAvailablePhase2TrafficChannelQueue.addAll(trafficChannelList);
             mManagedPhase2TrafficChannels = Collections.unmodifiableList(trafficChannelList);
         }
+    }
+
+    private Channel createTrafficChannel(DecodeConfiguration decodeConfiguration)
+    {
+        Channel trafficChannel = new Channel("T-" + mParentChannel.getName(), ChannelType.TRAFFIC);
+        trafficChannel.setDecodeConfiguration(decodeConfiguration);
+        syncTrafficChannelIdentity(trafficChannel);
+        return trafficChannel;
+    }
+
+    private void syncTrafficChannelIdentity(Channel trafficChannel)
+    {
+        trafficChannel.setAliasListName(mParentChannel.getAliasListName());
+        trafficChannel.setSystem(mParentChannel.getSystem());
+        trafficChannel.setSite(mParentChannel.getSite());
+        trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
+        trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
+        trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
     }
 
     /**
@@ -1330,6 +1334,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         if(apco25Channel != null && apco25Channel.getDownlinkFrequency() > 0 && getInterModuleEventBus() != null)
         {
+            syncTrafficChannelIdentity(trafficChannel);
+
             if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency parentMulti &&
                 parentMulti.hasFrequencyEnvelope())
             {

@@ -134,7 +134,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
         channel.setSystem(mSystem.get());
         channel.setSite(mSite.get());
         channel.setAliasListName(mAliasListName.get());
-        channel.setRadresGuid(mRadresGuid.get());
         channel.setAutoStart(mAutoStart.get());
         channel.setAutoStartOrder(mAutoStartOrder.get());
 

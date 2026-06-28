@@ -259,6 +259,7 @@ public class ChannelModel implements Listener<ChannelEvent>
         switch(channel.getChannelType())
         {
             case STANDARD:
+                channel.getRadresGuid();
                 mChannels.add(channel);
                 //Make sure the alias model has the alias list referred to by the channel
                 mAliasModel.addAliasList(channel.getAliasListName());
