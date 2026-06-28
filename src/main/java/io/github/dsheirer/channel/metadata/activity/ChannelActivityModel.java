@@ -285,6 +285,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 return;
             }
 
+            expireTrafficRows(session, table, parentChannel);
             ChannelActivityRow row = session.configuredControl(frequency);
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
@@ -313,6 +314,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 return;
             }
 
+            expireTrafficRows(session, table, parentChannel);
             SiteActivitySession.ControlUpdate update = session.currentControl(channelDescriptor);
             ChannelActivityRow row = update.current();
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
@@ -355,6 +357,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 return;
             }
 
+            expireTrafficRows(session, table, parentChannel);
             ChannelActivityRow row = session.alternateControl(channelDescriptor);
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             rememberRow(table, row);
@@ -384,6 +387,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 return;
             }
 
+            expireTrafficRows(session, table, parentChannel);
             ensureConfiguredControlRowIfMissing(table, parentChannel, "p25-traffic-grant-control-seed");
 
             Channel rowChannel = trafficChannel != null ? trafficChannel : parentChannel;
@@ -578,6 +582,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         if(row != null)
         {
             long expiresAt = System.currentTimeMillis() + TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
+            row.setTrafficGrantExpiresAt(expiresAt);
             mPendingTrafficGrantAgeOuts.put(row, new ExpiringRow(table, parentChannel, expiresAt));
             startActivitySweeper();
             return expiresAt;
@@ -591,6 +596,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     {
         if(row != null)
         {
+            row.clearTrafficGrantExpiresAt();
             NowPlayingActivityDebugFeed.Snapshot before = NowPlayingActivityDebugFeed.capture(row);
             Channel previousChannel = row.getChannel();
             row.setChannel(parentChannel);
@@ -626,9 +632,33 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     {
         if(row != null)
         {
+            row.clearTrafficGrantExpiresAt();
             mPendingTrafficGrantAgeOuts.remove(row);
             stopActivitySweeperIfIdle();
         }
+    }
+
+    private void expireTrafficRows(SiteActivitySession session, ChannelActivityTableModel table, Channel parentChannel)
+    {
+        if(session == null || table == null)
+        {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+
+        for(ChannelActivityRow row: session.getTrafficRows())
+        {
+            if(row.getTrafficGrantExpiresAt() > 0 && row.getTrafficGrantExpiresAt() <= now &&
+                isTrafficState(row.getState()))
+            {
+                mPendingTrafficGrantAgeOuts.remove(row);
+                applyTrafficGrantAgeOut(row, table, parentChannel, "p25-traffic-ageout");
+            }
+        }
+
+        flushQueuedRefreshes();
+        stopActivitySweeperIfIdle();
     }
 
     private void scheduleControlIdle(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel)

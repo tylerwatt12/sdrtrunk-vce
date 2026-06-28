@@ -182,6 +182,11 @@ public class SiteActivitySession
         return row;
     }
 
+    public List<ChannelActivityRow> getTrafficRows()
+    {
+        return new ArrayList<>(mTrafficRows.values());
+    }
+
     public List<ChannelActivityRow> removeConfiguredOnlyControlsExcept(long configuredFrequency)
     {
         List<ChannelActivityRow> remove = new ArrayList<>();

@@ -70,6 +70,7 @@ public class ChannelActivityRow
     private List<Alias> mTargetAliases = Collections.emptyList();
     private String mDecoder;
     private String mEncryptionDetails;
+    private long mTrafficGrantExpiresAt;
 
     public ChannelActivityRow(String key, Channel channel, Role role, long frequency, Integer timeslot)
     {
@@ -250,6 +251,21 @@ public class ChannelActivityRow
     public void setEncryptionDetails(String encryptionDetails)
     {
         mEncryptionDetails = encryptionDetails;
+    }
+
+    public long getTrafficGrantExpiresAt()
+    {
+        return mTrafficGrantExpiresAt;
+    }
+
+    public void setTrafficGrantExpiresAt(long expiresAt)
+    {
+        mTrafficGrantExpiresAt = expiresAt;
+    }
+
+    public void clearTrafficGrantExpiresAt()
+    {
+        mTrafficGrantExpiresAt = 0;
     }
 
     public void clearCallDetails()
