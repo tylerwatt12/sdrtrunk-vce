@@ -433,7 +433,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void broadcast(P25TrafficChannelEventTracker tracker)
     {
         broadcast(tracker.getEvent());
-        notifyActivityDetails(tracker);
     }
 
     /**
@@ -583,7 +582,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 completed = true;
                 broadcast(tracker);
-                notifyActivityIdle(frequency, timeslot);
             }
         }
         finally
@@ -619,7 +617,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 completed = true;
                 broadcast(tracker);
-                notifyActivityIdle(frequency, timeslot);
             }
         }
         finally
@@ -1284,7 +1281,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 completed = true;
                 broadcast(tracker);
-                notifyActivityIdle(frequency, TimeslotMessage.TIMESLOT_1);
             }
         }
         finally
@@ -1302,25 +1298,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
             mChannelActivityModel.p25TrafficGrant(mParentChannel, trafficChannel, channel,
                 identifiers, eventType);
-        }
-    }
-
-    private void notifyActivityDetails(P25TrafficChannelEventTracker tracker)
-    {
-        if(mChannelActivityModel != null && tracker != null && tracker.getEvent() != null &&
-            tracker.getEvent().getChannelDescriptor() instanceof APCO25Channel channel)
-        {
-            Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
-            mChannelActivityModel.p25TrafficDetails(mParentChannel, trafficChannel, channel,
-                tracker.getEvent().getIdentifierCollection(), tracker.getEvent().getEventType());
-        }
-    }
-
-    private void notifyActivityIdle(long frequency, int timeslot)
-    {
-        if(mChannelActivityModel != null)
-        {
-            mChannelActivityModel.p25TrafficIdle(mParentChannel, frequency, timeslot);
         }
     }
 
