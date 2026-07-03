@@ -22,8 +22,6 @@
 package io.github.dsheirer.controller.channel.map;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import javafx.beans.Observable;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
@@ -34,7 +32,6 @@ import javafx.util.Callback;
 
 import java.text.DecimalFormat;
 
-@JacksonXmlRootElement(localName = "range")
 public class ChannelRange
 {
     private static final DecimalFormat FREQUENCY_FORMATTER = new DecimalFormat("#.0000");
@@ -179,7 +176,6 @@ public class ChannelRange
         }
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "first")
     public int getFirstChannelNumber()
     {
         return mFirstChannel.get();
@@ -190,7 +186,6 @@ public class ChannelRange
         mFirstChannel.set(first);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "last")
     public void setLastChannelNumber(int last)
     {
         mLastChannel.set(last);
@@ -206,7 +201,6 @@ public class ChannelRange
      *
      * @param baseFrequency frequency in hertz
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "base")
     public void setBaseFrequency(int baseFrequency)
     {
         this.mBaseFrequency.set(baseFrequency);
@@ -222,7 +216,6 @@ public class ChannelRange
      *
      * @param stepSize in hertz
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "size")
     public void setStepSize(int stepSize)
     {
         this.mStepSize.set(stepSize);

@@ -234,7 +234,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     {
         mNoiseSquelch.setNoiseThreshold(open, close);
 
-        //Update the channel configuration and schedule a playlist save.
+        //Update the channel configuration and schedule a configuration save.
         getDecodeConfiguration().setSquelchNoiseOpenThreshold(open);
         getDecodeConfiguration().setSquelchNoiseCloseThreshold(close);
     }

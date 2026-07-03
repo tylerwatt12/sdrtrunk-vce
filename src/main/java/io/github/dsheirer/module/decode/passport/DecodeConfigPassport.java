@@ -16,14 +16,12 @@
 package io.github.dsheirer.module.decode.passport;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 
 public class DecodeConfigPassport extends DecodeConfiguration
 {
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {
         return DecoderType.PASSPORT;

@@ -1,0 +1,170 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.module.decode.p25.telemetry;
+
+import java.util.List;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class P25NetworkConfigurationStabilizerTest
+{
+    @Test
+    public void discoveryPromotesFirstStaticFactsImmediately()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x123, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x123, 2, 1, null, true),
+            List.of(primary(856137500L), secondary(855987500L)),
+            List.of(neighbor(855237500L)),
+            List.of(new P25NetworkConfigurationSnapshot.FrequencyBand(0, false, 851006250L, 12500,
+                6250L, -45000000L, 1)),
+            List.of(), List.of());
+
+        stabilizer.observe(snapshot, 1000L);
+        P25NetworkConfigurationSnapshot stable = stabilizer.getSnapshot();
+
+        assertNotNull(stable.network());
+        assertEquals(0xBEE00, stable.network().wacn());
+        assertNotNull(stable.currentSite());
+        assertEquals(2, stable.channels().size());
+        assertEquals(1, stable.neighborSites().size());
+        assertEquals(1, stable.frequencyBands().size());
+    }
+
+    @Test
+    public void guardedModeRejectsSingleLateSecondaryControlMisdecode()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
+
+        stabilizer.observe(snapshot(secondary(851462500L)), 70000L);
+
+        assertFalse(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+    }
+
+    @Test
+    public void guardedModePromotesSecondaryControlAfterThreeObservationsOverSixtySeconds()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
+
+        stabilizer.observe(snapshot(secondary(851462500L)), 70000L);
+        stabilizer.observe(snapshot(secondary(851462500L)), 100000L);
+        stabilizer.observe(snapshot(secondary(851462500L)), 130000L);
+
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+    }
+
+    @Test
+    public void currentControlPromotesAfterTwoObservationsOverTenSeconds()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
+
+        stabilizer.observe(snapshot(primary(856162500L)), 70000L);
+        stabilizer.observe(snapshot(primary(856162500L)), 80000L);
+
+        P25NetworkConfigurationSnapshot.Channel current = getChannel(stabilizer.getSnapshot(), "primary_control");
+        assertNotNull(current);
+        assertEquals(856162500L, current.downlink());
+        assertEquals(1, stabilizer.getSnapshot().channels().stream()
+            .filter(channel -> "primary_control".equals(channel.role()))
+            .count());
+    }
+
+    @Test
+    public void resetStartsNewDiscoveryWindow()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
+
+        stabilizer.reset();
+        stabilizer.observe(snapshot(secondary(851462500L)), 200000L);
+
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+    }
+
+    @Test
+    public void neighborIsUpdatedInPlaceWhenFrequencyResolvesLater()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot.NeighborSite unresolved = neighbor(0L);
+        P25NetworkConfigurationSnapshot.NeighborSite resolved = neighbor(855237500L);
+
+        stabilizer.observe(snapshot(unresolved), 1000L);
+
+        assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
+        assertEquals(0L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
+
+        stabilizer.observe(snapshot(resolved), 2000L);
+        stabilizer.observe(snapshot(resolved), 17000L);
+        stabilizer.observe(snapshot(resolved), 32000L);
+
+        assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
+        assertEquals(855237500L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
+    }
+
+    private static P25NetworkConfigurationSnapshot snapshot(P25NetworkConfigurationSnapshot.NeighborSite neighbor)
+    {
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(neighbor),
+            List.of(), List.of(), List.of());
+    }
+
+    private static P25NetworkConfigurationSnapshot snapshot(P25NetworkConfigurationSnapshot.Channel channel)
+    {
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(channel), List.of(),
+            List.of(), List.of(), List.of());
+    }
+
+    private static P25NetworkConfigurationSnapshot.NeighborSite neighbor(long downlink)
+    {
+        return new P25NetworkConfigurationSnapshot.NeighborSite(0x348, null, 2, 3, null, "0-493",
+            downlink, 810237500L, "VALID");
+    }
+
+    private static P25NetworkConfigurationSnapshot.Channel primary(long downlink)
+    {
+        return new P25NetworkConfigurationSnapshot.Channel("primary_control", "0-821", downlink, null,
+            false, 1);
+    }
+
+    private static P25NetworkConfigurationSnapshot.Channel secondary(long downlink)
+    {
+        return new P25NetworkConfigurationSnapshot.Channel("secondary_control", "0-797", downlink, null,
+            false, 1);
+    }
+
+    private static P25NetworkConfigurationStabilizer seededStabilizer()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null,
+            List.of(primary(856137500L), secondary(855987500L)), List.of(), List.of(), List.of(), List.of()),
+            1000L);
+        return stabilizer;
+    }
+
+    private static boolean hasChannel(P25NetworkConfigurationSnapshot snapshot, String role, long downlink)
+    {
+        return snapshot.channels().stream().anyMatch(channel -> role.equals(channel.role()) &&
+            channel.downlink() != null && channel.downlink() == downlink);
+    }
+
+    private static P25NetworkConfigurationSnapshot.Channel getChannel(P25NetworkConfigurationSnapshot snapshot,
+                                                                      String role)
+    {
+        return snapshot.channels().stream()
+            .filter(channel -> role.equals(channel.role()))
+            .findFirst()
+            .orElse(null);
+    }
+}

@@ -26,8 +26,9 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.dsp.filter.smoothing.SmoothingFilter.SmoothingType;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.playlist.channel.ViewChannelRequest;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
+import io.github.dsheirer.gui.SplitPaneDividerHelper;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Listener;
@@ -90,6 +91,7 @@ public class SpectralDisplayPanel extends JPanel
     public static final int NO_ZOOM = 0;
     public static final int MAX_ZOOM = 6;
     private static final String DEFAULT_DIVIDER_SUFFIX = ".divider";
+    private static final int DISPLAY_MINIMUM_HEIGHT = 80;
 
     private DFTSize mDFTSize = DFTSize.FFT04096;
     private int mZoom = 0;
@@ -108,6 +110,7 @@ public class SpectralDisplayPanel extends JPanel
     private UserPreferences mUserPreferences;
     private String mSplitPanePreferenceKey;
     private JideSplitPane mSplitPane;
+    private boolean mSplitPaneDividerRestored;
 
     /**
      * Spectral Display Panel provides a frequency component display with a
@@ -121,17 +124,17 @@ public class SpectralDisplayPanel extends JPanel
      * the DFT is translated to decibels for display in the spectrum and
      * waterfall components.
      */
-    public SpectralDisplayPanel(PlaylistManager playlistManager, SettingsManager settingsManager, DiscoveredTunerModel discoveredTunerModel)
+    public SpectralDisplayPanel(ConfigurationManager configurationManager, SettingsManager settingsManager, DiscoveredTunerModel discoveredTunerModel)
     {
-        this(playlistManager, settingsManager, discoveredTunerModel, null, null);
+        this(configurationManager, settingsManager, discoveredTunerModel, null, null);
     }
 
-    public SpectralDisplayPanel(PlaylistManager playlistManager, SettingsManager settingsManager,
+    public SpectralDisplayPanel(ConfigurationManager configurationManager, SettingsManager settingsManager,
                                 DiscoveredTunerModel discoveredTunerModel, UserPreferences userPreferences,
                                 String splitPanePreferenceKey)
     {
-        mChannelModel = playlistManager.getChannelModel();
-        mChannelProcessingManager = playlistManager.getChannelProcessingManager();
+        mChannelModel = configurationManager.getChannelModel();
+        mChannelProcessingManager = configurationManager.getChannelProcessingManager();
         mSettingsManager = settingsManager;
         mDiscoveredTunerModel = discoveredTunerModel;
         mUserPreferences = userPreferences;
@@ -384,20 +387,28 @@ public class SpectralDisplayPanel extends JPanel
 
         layeredPanel.setPreferredSize(
                 new Dimension((int)layeredPanel.getPreferredSize().getWidth(), (int)(totalHeight / 2.0d)));
+        layeredPanel.setMinimumSize(new Dimension(0, DISPLAY_MINIMUM_HEIGHT));
 
         mWaterfallPanel.setPreferredSize(
                 new Dimension((int)mWaterfallPanel.getPreferredSize().getWidth(), (int)(totalHeight / 2.0d)));
+        mWaterfallPanel.setMinimumSize(new Dimension(0, DISPLAY_MINIMUM_HEIGHT));
 
         //Create the split pane to hold the layered pane and the waterfall
         mSplitPane = new JideSplitPane(JSplitPane.VERTICAL_SPLIT);
         mSplitPane.setDividerSize(5);
+        mSplitPane.addComponentListener(new ComponentAdapter()
+        {
+            @Override
+            public void componentResized(ComponentEvent e)
+            {
+                restoreSplitPaneDividerLocation(layeredPanel.getPreferredSize().height);
+            }
+        });
         mSplitPane.add(layeredPanel);
         mSplitPane.add(mWaterfallPanel);
         if(mUserPreferences != null && mSplitPanePreferenceKey != null)
         {
-            EventQueue.invokeLater(() -> mSplitPane.setDividerLocation(0,
-                mUserPreferences.getSwingPreference().getInt(mSplitPanePreferenceKey + DEFAULT_DIVIDER_SUFFIX,
-                    layeredPanel.getPreferredSize().height)));
+            EventQueue.invokeLater(() -> restoreSplitPaneDividerLocation(layeredPanel.getPreferredSize().height));
         }
 
         JScrollPane scrollPane = new JScrollPane(mSplitPane);
@@ -418,7 +429,21 @@ public class SpectralDisplayPanel extends JPanel
 
     public int getSplitPaneDividerLocation()
     {
-        return mSplitPane != null ? mSplitPane.getDividerLocation(0) : 0;
+        int defaultLocation = mUserPreferences != null && mSplitPanePreferenceKey != null ?
+            mUserPreferences.getSwingPreference().getInt(mSplitPanePreferenceKey + DEFAULT_DIVIDER_SUFFIX, 0) : 0;
+        return SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, 0, defaultLocation,
+            DISPLAY_MINIMUM_HEIGHT, true);
+    }
+
+    private void restoreSplitPaneDividerLocation(int defaultLocation)
+    {
+        if(!mSplitPaneDividerRestored && mUserPreferences != null && mSplitPanePreferenceKey != null)
+        {
+            int location = mUserPreferences.getSwingPreference().getInt(mSplitPanePreferenceKey + DEFAULT_DIVIDER_SUFFIX,
+                defaultLocation);
+            mSplitPaneDividerRestored = SplitPaneDividerHelper.restore(mSplitPane, 0, location,
+                DISPLAY_MINIMUM_HEIGHT, true);
+        }
     }
 
     /**

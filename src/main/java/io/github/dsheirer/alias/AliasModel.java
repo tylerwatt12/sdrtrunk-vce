@@ -46,7 +46,7 @@ public class AliasModel
 
     public AliasModel()
     {
-        //Register a listener to detect alias changes and broadcast change events to cause playlist save requests
+        //Register a listener to detect alias changes and broadcast change events to cause configuration save requests
         mAliases.addListener(new AliasListChangeListener());
     }
 

@@ -20,7 +20,6 @@ package io.github.dsheirer.module.decode.p25.phase2;
 
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
@@ -40,7 +39,6 @@ public class DecodeConfigP25Phase2 extends DecodeConfigP25
     private ScrambleParameters mScrambleParameters;
     private boolean mAutoDetectScrambleParameters;
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {
         return DecoderType.P25_PHASE2;
@@ -74,7 +72,6 @@ public class DecodeConfigP25Phase2 extends DecodeConfigP25
     /**
      * Optional user-provided scramble (ie randomizer) parameters to use for the channel.
      */
-    @JacksonXmlProperty(localName = "scramble_parameters")
     public ScrambleParameters getScrambleParameters()
     {
         return mScrambleParameters;
@@ -91,7 +88,6 @@ public class DecodeConfigP25Phase2 extends DecodeConfigP25
     /**
      * Indicates if the decoder will attempt to auto-detect scramble parameters.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "auto_detect_scramble_parameters")
     public boolean isAutoDetectScrambleParameters()
     {
         return mAutoDetectScrambleParameters;

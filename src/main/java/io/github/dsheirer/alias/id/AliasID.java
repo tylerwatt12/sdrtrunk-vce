@@ -21,7 +21,6 @@ package io.github.dsheirer.alias.id;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
@@ -79,7 +78,6 @@ import javafx.util.Callback;
     @JsonSubTypes.Type(value = UnitStatusID.class, name = "unitStatusID"),
     @JsonSubTypes.Type(value = UniqueID.class, name = "uniqueID")
 })
-@JacksonXmlRootElement(localName = "id")
 public abstract class AliasID
 {
     private SimpleStringProperty mValueProperty = new SimpleStringProperty();

@@ -18,7 +18,6 @@
  ******************************************************************************/
 package io.github.dsheirer.audio.broadcast.shoutcast.v1;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
@@ -32,7 +31,7 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     private int mChannels = 1;
     private int mBitRate = 16;
 
-    //No-arg JAXB constructor
+    //No-arg deserialization constructor
     public ShoutcastV1Configuration()
     {
         this(BroadcastFormat.MP3);
@@ -75,7 +74,6 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     /**
      * Stream genre
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "genre")
     public String getGenre()
     {
         return mGenre;
@@ -94,7 +92,6 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     /**
      * Stream description
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "description")
     public String getDescription()
     {
         return mDescription;
@@ -113,7 +110,6 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     /**
      * Public visibility of the broadcastAudio
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "public")
     public boolean isPublic()
     {
         return mPublic;
@@ -132,7 +128,6 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     /**
      * Number of audio channels in the broadcastAudio
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "channels")
     public int getChannels()
     {
         return mChannels;
@@ -149,7 +144,6 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     /**
      * Bit rate in bits per second
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bitrate")
     public int getBitRate()
     {
         return mBitRate;

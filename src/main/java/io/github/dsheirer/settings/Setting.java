@@ -19,8 +19,6 @@ package io.github.dsheirer.settings;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.map.DefaultIcon;
 import io.github.dsheirer.map.MapIcon;
 
@@ -32,7 +30,6 @@ import io.github.dsheirer.map.MapIcon;
     @JsonSubTypes.Type(value=MapIcon.class, name="mapIcon"),
     @JsonSubTypes.Type(value=MapViewSetting.class, name="mapViewSetting"),
 })
-@JacksonXmlRootElement( localName = "setting" )
 public abstract class Setting
 {
     protected String mName;
@@ -46,7 +43,6 @@ public abstract class Setting
         mName = name;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "name")
     public String getName()
     {
         return mName;

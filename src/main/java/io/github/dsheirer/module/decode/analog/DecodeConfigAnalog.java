@@ -19,7 +19,6 @@
 package io.github.dsheirer.module.decode.analog;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import java.util.Collections;
@@ -47,7 +46,6 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
     /**
      * Channel bandwidth
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bandwidth")
     public Bandwidth getBandwidth()
     {
         return mBandwidth;
@@ -78,7 +76,6 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
     /**
      * Talkgroup to associate with audio produced by the NBFM decoder
      */
-    @JacksonXmlProperty(isAttribute =  true, localName = "talkgroup")
     public int getTalkgroup()
     {
         return mTalkgroup;

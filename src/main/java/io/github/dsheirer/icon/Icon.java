@@ -20,8 +20,6 @@
 package io.github.dsheirer.icon;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -37,7 +35,6 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.util.Objects;
 
-@JacksonXmlRootElement(localName = "icon")
 public class Icon implements Comparable<Icon>
 {
     private static final Logger mLog = LoggerFactory.getLogger(Icon.class);
@@ -51,11 +48,11 @@ public class Icon implements Comparable<Icon>
     private boolean mFxImageLoaded = false;
 
     /**
-     * JAXB constructor - do not use
+     * Deserialization constructor - do not use
      */
     public Icon()
     {
-        //No-arg JAXB constructor
+        //No-arg deserialization constructor
     }
 
     /**
@@ -96,7 +93,6 @@ public class Icon implements Comparable<Icon>
     /**
      * Name of the icon
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "name")
     public String getName()
     {
         return mName.get();
@@ -154,7 +150,6 @@ public class Icon implements Comparable<Icon>
     /**
      * Path to the icon
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "path")
     public String getPath()
     {
         return mPath.get();

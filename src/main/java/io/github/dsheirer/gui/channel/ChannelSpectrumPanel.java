@@ -22,6 +22,7 @@ package io.github.dsheirer.gui.channel;
 import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelSource;
+import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.power.SignalPowerView;
 import io.github.dsheirer.gui.squelch.NoiseSquelchView;
 import io.github.dsheirer.gui.symbol.SymbolView;
@@ -30,7 +31,7 @@ import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.PrimaryDecoder;
 import io.github.dsheirer.module.decode.am.AMDecoder;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamplesToNativeBufferModule;
@@ -49,6 +50,7 @@ import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import io.github.dsheirer.spectrum.converter.DFTResultsConverter;
 import java.awt.CardLayout;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -82,13 +84,14 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
     private static final int RF_PROBE_BANDWIDTH = 12500;
     private static final double RF_PROBE_MINIMUM_SAMPLE_RATE = 50000.0;
+    private static final int CHANNEL_SPECTRUM_MINIMUM_WIDTH = 160;
     private static final String GROW_FILL = "[grow,fill]";
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private static final String CARD_NOISE_SQUELCH = "noise_squelch";
     private static final String CARD_SIGNAL_POWER = "signal_power";
     private static final String CARD_SYMBOL = "symbol";
     private static final String CARD_EMPTY = "empty";
-    private final PlaylistManager mPlaylistManager;
+    private final ConfigurationManager mConfigurationManager;
     private final TunerManager mTunerManager;
     private final UserPreferences mUserPreferences;
     private ProcessingChain mProcessingChain;
@@ -112,22 +115,24 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private JSplitPane mSplitPane;
     private JPanel mRightCardPanel;
     private CardLayout mRightCardLayout;
+    private boolean mSplitPaneDividerRestored;
 
     /**
      * Constructs an instance.
      */
-    public ChannelSpectrumPanel(PlaylistManager playlistManager, SettingsManager settingsManager,
+    public ChannelSpectrumPanel(ConfigurationManager configurationManager, SettingsManager settingsManager,
                                 UserPreferences userPreferences)
     {
-        mPlaylistManager = playlistManager;
-        mTunerManager = playlistManager.getTunerManager();
+        mConfigurationManager = configurationManager;
+        mTunerManager = configurationManager.getTunerManager();
         mUserPreferences = userPreferences;
-        mNoiseSquelchView = new NoiseSquelchView(mPlaylistManager);
-        mSignalPowerView = new SignalPowerView(mPlaylistManager);
+        mNoiseSquelchView = new NoiseSquelchView(mConfigurationManager);
+        mSignalPowerView = new SignalPowerView(mConfigurationManager);
         setLayout(new MigLayout("insets 0", GROW_FILL, GROW_FILL));
 
         JPanel fftPanel = new JPanel();
         fftPanel.setLayout(new MigLayout("insets 0", GROW_FILL, "[]" + GROW_FILL));
+        fftPanel.setMinimumSize(new Dimension(CHANNEL_SPECTRUM_MINIMUM_WIDTH, 0));
 
         JPanel labelPanel = new JPanel();
         labelPanel.setLayout(new MigLayout("insets 2", GROW_FILL + "[grow,fill,left][right][right][][]", ""));
@@ -251,16 +256,28 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         mRightCardPanel.add(mSignalPowerView, CARD_SIGNAL_POWER);
         mRightCardPanel.add(mSymbolPanel, CARD_SYMBOL);
         mRightCardPanel.add(new JPanel(), CARD_EMPTY);
+        mRightCardPanel.setMinimumSize(new Dimension(CHANNEL_SPECTRUM_MINIMUM_WIDTH, 0));
         mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
 
         mSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         mSplitPane.add(fftPanel, JSplitPane.LEFT);
         mSplitPane.add(mRightCardPanel, JSplitPane.RIGHT);
-        mSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, event ->
-            mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_DIVIDER_IDENTIFIER, mSplitPane.getDividerLocation()));
+        mSplitPane.addComponentListener(new ComponentAdapter()
+        {
+            @Override
+            public void componentResized(ComponentEvent e)
+            {
+                restoreSplitPaneDividerLocation();
+            }
+        });
+        mSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, event -> {
+            int savedLocation = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 700);
+            mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_DIVIDER_IDENTIFIER,
+                SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, savedLocation,
+                    CHANNEL_SPECTRUM_MINIMUM_WIDTH));
+        });
         add(mSplitPane);
-        EventQueue.invokeLater(() -> mSplitPane.setDividerLocation(
-            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 700)));
+        EventQueue.invokeLater(this::restoreSplitPaneDividerLocation);
 
         mSampleStreamTapModule.setListener(mComplexDftProcessor);
         DFTResultsConverter DFTResultsConverter = new ComplexDecibelConverter();
@@ -325,8 +342,19 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
 
     public int getSplitPaneDividerLocation()
     {
-        return mSplitPane != null ? mSplitPane.getDividerLocation() :
-            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 700);
+        int savedLocation = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 700);
+        return SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, savedLocation,
+            CHANNEL_SPECTRUM_MINIMUM_WIDTH);
+    }
+
+    private void restoreSplitPaneDividerLocation()
+    {
+        if(!mSplitPaneDividerRestored)
+        {
+            mSplitPaneDividerRestored = SplitPaneDividerHelper.restore(mSplitPane,
+                mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 700),
+                CHANNEL_SPECTRUM_MINIMUM_WIDTH);
+        }
     }
 
     /**
@@ -521,7 +549,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
                 updateViewedFrequency(tcs.getFrequency());
             }
 
-            Channel channel = mPlaylistManager.getChannelProcessingManager().getChannel(mProcessingChain);
+            Channel channel = mConfigurationManager.getChannelProcessingManager().getChannel(mProcessingChain);
 
             if(channel != null)
             {

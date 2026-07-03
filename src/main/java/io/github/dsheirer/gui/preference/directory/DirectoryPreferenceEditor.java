@@ -75,11 +75,6 @@ public class DirectoryPreferenceEditor extends HBox
     private Button mResetJmbeButton;
     private Label mJmbePathLabel;
 
-    private Label mPlaylistLabel;
-    private Button mChangePlaylistButton;
-    private Button mResetPlaylistButton;
-    private Label mPlaylistPathLabel;
-
     private Label mRecordingLabel;
     private Button mChangeRecordingButton;
     private Button mResetRecordingButton;
@@ -196,19 +191,6 @@ public class DirectoryPreferenceEditor extends HBox
 
             GridPane.setMargin(getResetJmbeButton(), new Insets(2, 0, 2, 0));
             mEditorPane.add(getResetJmbeButton(), 3, row++);
-
-
-            GridPane.setMargin(getPlaylistLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getPlaylistLabel(), 0, row);
-
-            GridPane.setMargin(getPlaylistPathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getPlaylistPathLabel(), 1, row);
-
-            GridPane.setMargin(getChangePlaylistButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangePlaylistButton(), 2, row);
-
-            GridPane.setMargin(getResetPlaylistButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetPlaylistButton(), 3, row++);
 
 
             GridPane.setMargin(getRecordingLabel(), new Insets(0, 10, 0, 0));
@@ -504,47 +486,6 @@ public class DirectoryPreferenceEditor extends HBox
         return mJmbePathLabel;
     }
 
-    private Label getPlaylistLabel()
-    {
-        if(mPlaylistLabel == null)
-        {
-            mPlaylistLabel = new Label("Playlists");
-        }
-
-        return mPlaylistLabel;
-    }
-
-    private Button getChangePlaylistButton()
-    {
-        if(mChangePlaylistButton == null)
-        {
-            mChangePlaylistButton = createChangeButton("Select Playlist Folder",
-                mDirectoryPreference::getDirectoryPlaylist, mDirectoryPreference::setDirectoryPlaylist);
-        }
-
-        return mChangePlaylistButton;
-    }
-
-    private Button getResetPlaylistButton()
-    {
-        if(mResetPlaylistButton == null)
-        {
-            mResetPlaylistButton = createResetButton(mDirectoryPreference::resetDirectoryPlaylist);
-        }
-
-        return mResetPlaylistButton;
-    }
-
-    private Label getPlaylistPathLabel()
-    {
-        if(mPlaylistPathLabel == null)
-        {
-            mPlaylistPathLabel = new Label(mDirectoryPreference.getDirectoryPlaylist().toString());
-        }
-
-        return mPlaylistPathLabel;
-    }
-
     private Label getRecordingLabel()
     {
         if(mRecordingLabel == null)
@@ -701,7 +642,6 @@ public class DirectoryPreferenceEditor extends HBox
             getApplicationRootPathLabel().setText(mDirectoryPreference.getDirectoryApplicationRoot().toString());
             getApplicationLogsPathLabel().setText(mDirectoryPreference.getDirectoryApplicationLog().toString());
             getEventLogsPathLabel().setText(mDirectoryPreference.getDirectoryEventLog().toString());
-            getPlaylistPathLabel().setText(mDirectoryPreference.getDirectoryPlaylist().toString());
             getRecordingPathLabel().setText(mDirectoryPreference.getDirectoryRecording().toString());
             getScreenCapturePathLabel().setText(mDirectoryPreference.getDirectoryScreenCapture().toString());
             getStreamingPathLabel().setText(mDirectoryPreference.getDirectoryStreaming().toString());

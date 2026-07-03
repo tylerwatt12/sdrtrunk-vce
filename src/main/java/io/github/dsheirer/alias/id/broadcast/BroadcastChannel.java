@@ -21,7 +21,6 @@
  */
 package io.github.dsheirer.alias.id.broadcast;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -31,7 +30,7 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
 
     public BroadcastChannel()
     {
-        //JAXB Constructor
+        //Deserialization constructor
     }
 
     @Override
@@ -91,7 +90,6 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
     /**
      * Name of the broadcastAudio channel configuration
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "channel")
     public String getChannelName()
     {
         return mChannelName;
@@ -106,7 +104,6 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
         updateValueProperty();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {

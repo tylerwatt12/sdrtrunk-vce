@@ -163,30 +163,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         mChannelActivityModel = channelActivityModel;
     }
 
-    public void processCurrentControlChannel(IChannelDescriptor channelDescriptor)
-    {
-        if(mChannelActivityModel != null)
-        {
-            mChannelActivityModel.p25CurrentControl(mParentChannel, channelDescriptor);
-        }
-    }
-
-    public void processSiteIdentifier(P25SiteIdentifier siteIdentifier)
-    {
-        if(mChannelActivityModel != null)
-        {
-            mChannelActivityModel.p25SiteIdentifier(mParentChannel, siteIdentifier);
-        }
-    }
-
-    public void processSecondaryControlChannel(IChannelDescriptor channelDescriptor)
-    {
-        if(mChannelActivityModel != null)
-        {
-            mChannelActivityModel.p25AlternateControl(mParentChannel, channelDescriptor);
-        }
-    }
-
     /**
      * Talker alias manager
      * @return manager

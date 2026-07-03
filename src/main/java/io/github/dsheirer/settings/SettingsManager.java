@@ -18,12 +18,8 @@
  */
 package io.github.dsheirer.settings;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.dataformat.xml.JacksonXmlModule;
-import com.fasterxml.jackson.dataformat.xml.XmlMapper;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.settings.SettingsDatabaseStore;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationEvent;
 import io.github.dsheirer.util.ThreadPool;
@@ -32,11 +28,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.awt.Color;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -48,6 +39,8 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
     private static final Logger mLog = LoggerFactory.getLogger(SettingsManager.class);
 
     private Settings mSettings = new Settings();
+    private SettingsDatabaseStore mSettingsDatabaseStore =
+        new SettingsDatabaseStore(SdrTrunkDatabasePath.getDatabasePath());
     private List<SettingChangeListener> mListeners = new ArrayList<>();
     private boolean mLoadingSettings = false;
     private AtomicBoolean mSettingsSavePending = new AtomicBoolean();
@@ -67,17 +60,7 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
      */
     private void init()
     {
-        SystemProperties props = SystemProperties.getInstance();
-
-        Path settingsFolder = props.getApplicationFolder("settings");
-
-        String defaultSettingsFile =
-            props.get("settings.defaultFilename", "settings.xml");
-
-        String settingsFile =
-            props.get("settings.currentFilename", defaultSettingsFile);
-
-        load(settingsFolder.resolve(settingsFile));
+        load();
     }
 
     @Override
@@ -227,39 +210,35 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
     }
 
     /**
-     * Erases current settings and loads settings from the settingsPath filename,
-     * if it exists.
+     * Loads settings from SQLite.
      */
-    public void load(Path settingsPath)
+    public void load()
     {
         mLoadingSettings = true;
 
-        if(Files.exists(settingsPath))
+        try
         {
-            mLog.info("SettingsManager - loading settings file [" + settingsPath.toString() + "]");
-
-            JacksonXmlModule xmlModule = new JacksonXmlModule();
-            xmlModule.setDefaultUseWrapper(false);
-            ObjectMapper objectMapper = new XmlMapper(xmlModule)
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-
-            try(InputStream in = Files.newInputStream(settingsPath))
+            if(mSettingsDatabaseStore.isInitialized())
             {
-                mSettings = objectMapper.readValue(in, Settings.class);
+                mSettings = mSettingsDatabaseStore.loadSettings();
+                mLog.debug("Loaded settings from SQLite [{}]: settings [{}], tuner configurations [{}]",
+                    mSettingsDatabaseStore.getDatabasePath(), mSettings.getSettings().size(),
+                    mSettings.getTunerConfigurations().size());
             }
-            catch(IOException ioe)
+            else
             {
-                mLog.error("IO error while reading settings file", ioe);
+                mSettings = new Settings();
+                mSettingsDatabaseStore.replaceSettings(mSettings);
+                mLog.debug("Initialized settings in SQLite [{}]: settings [{}], tuner configurations [{}]",
+                    mSettingsDatabaseStore.getDatabasePath(), mSettings.getSettings().size(),
+                    mSettings.getTunerConfigurations().size());
             }
         }
-        else
+        catch(Exception e)
         {
-            mLog.info("SettingsManager - settings does not exist [" +
-                settingsPath.toString() + "]");
-        }
+            mLog.error("Error loading settings from SQLite database [" + mSettingsDatabaseStore.getDatabasePath() +
+                "]", e);
 
-        if(mSettings == null)
-        {
             mSettings = new Settings();
         }
 
@@ -337,34 +316,13 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
         {
             mSettingsSavePending.set(false);
 
-            SystemProperties props = SystemProperties.getInstance();
-
-            Path settingsFolder = props.getApplicationFolder("settings");
-
-            String settingsDefault = props.get("settings.defaultFilename",
-                "settings.xml");
-
-            String settingsCurrent = props.get("settings.currentFilename",
-                settingsDefault);
-
-            Path settingsPath = settingsFolder.resolve(settingsCurrent);
-
-            try(OutputStream out = Files.newOutputStream(settingsPath))
+            try
             {
-                JacksonXmlModule xmlModule = new JacksonXmlModule();
-                xmlModule.setDefaultUseWrapper(false);
-                ObjectMapper objectMapper = new XmlMapper(xmlModule);
-                objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-                objectMapper.writeValue(out, mSettings);
-                out.flush();
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("IO error while writing the settings to a file [" + settingsPath + "]", ioe);
+                mSettingsDatabaseStore.replaceSettings(mSettings);
             }
             catch(Exception e)
             {
-                mLog.error("Error while saving settings file [" + settingsPath + "]", e);
+                mLog.error("Error saving settings to SQLite [" + mSettingsDatabaseStore.getDatabasePath() + "]", e);
             }
         }
     }

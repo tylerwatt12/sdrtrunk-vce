@@ -20,7 +20,6 @@
 package io.github.dsheirer.source.tuner.recording;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 
@@ -56,7 +55,6 @@ public class RecordingTunerConfiguration extends TunerConfiguration
         return TunerType.RECORDING;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "path")
     public String getPath()
     {
         return mPath;

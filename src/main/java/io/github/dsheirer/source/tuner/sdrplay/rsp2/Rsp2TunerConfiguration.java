@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rsp2;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.Rsp2AntennaSelection;
@@ -44,7 +43,7 @@ public class Rsp2TunerConfiguration extends RspTunerConfiguration
     }
 
     /**
-     * JAXB constructor
+     * Deserialization constructor
      */
     public Rsp2TunerConfiguration()
     {
@@ -59,7 +58,6 @@ public class Rsp2TunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if the external reference output is enabled.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "external_reference_output")
     public boolean isExternalReferenceOutput()
     {
         return mExternalReferenceOutput;
@@ -76,7 +74,6 @@ public class Rsp2TunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if the Bias-T is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bias_t")
     public boolean isBiasT()
     {
         return mBiasT;
@@ -93,7 +90,6 @@ public class Rsp2TunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if the RF Notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "rf_notch")
     public boolean isRfNotch()
     {
         return mRfNotch;
@@ -110,7 +106,6 @@ public class Rsp2TunerConfiguration extends RspTunerConfiguration
     /**
      * Antenna selection
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "antenna")
     public Rsp2AntennaSelection getAntennaSelection()
     {
         return mAntennaSelection;

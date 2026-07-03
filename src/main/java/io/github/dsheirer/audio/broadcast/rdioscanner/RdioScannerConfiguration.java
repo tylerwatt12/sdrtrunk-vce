@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.audio.broadcast.rdioscanner;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
@@ -86,7 +85,6 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
     /**
      * API Key
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "api_key")
     public String getApiKey()
     {
         return mApiKey.get();
@@ -104,7 +102,6 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
     /**
      * System ID as provided by RdioScanner.com
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "system_id")
     public int getSystemID()
     {
         return mSystemID.get();
@@ -118,7 +115,6 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
         mSystemID.set(systemID);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public BroadcastServerType getBroadcastServerType()
     {

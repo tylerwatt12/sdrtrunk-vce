@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.alias;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
@@ -379,7 +378,6 @@ public class AliasList
     /**
      * Alias list name
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "name")
     public String getName()
     {
         return mName;

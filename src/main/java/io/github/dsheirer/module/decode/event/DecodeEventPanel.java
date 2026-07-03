@@ -63,6 +63,8 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
 {
     private static final long serialVersionUID = 1L;
     private static final String TABLE_PREFERENCE_KEY = "decode.event.panel";
+    private static final int[] DEFAULT_COLUMN_WIDTHS = {146, 79, 111, 99, 82, 82, 94, 62, 98, 240};
+    private static final int[] MINIMUM_COLUMN_WIDTHS = {146, 79, 111, 99, 82, 82, 94, 62, 98, 100};
 
     private transient JTable mTable;
     private transient JTableColumnWidthMonitor mTableColumnWidthMonitor;
@@ -97,7 +99,8 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         mTableRowSorter = new TableRowSorter<>(mEventModel);
         mTableRowSorter.setRowFilter(new EventRowFilter());
         mTable.setRowSorter(mTableRowSorter);
-        mTableColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY);
+        mTableColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY,
+            MINIMUM_COLUMN_WIDTHS, DEFAULT_COLUMN_WIDTHS, JTable.AUTO_RESIZE_LAST_COLUMN);
         updateCellRenderers();
         mHistoryManagementPanel = new HistoryManagementPanel<>(mEventModel, "Event Filter Editor");
         mHistoryManagementPanel.updateFilterSet(mFilterSet);

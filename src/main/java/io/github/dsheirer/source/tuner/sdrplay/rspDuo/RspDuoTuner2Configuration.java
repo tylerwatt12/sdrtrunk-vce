@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rspDuo;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
 
@@ -43,7 +42,7 @@ public class RspDuoTuner2Configuration extends RspTunerConfiguration
     }
 
     /**
-     * JAXB constructor
+     * Deserialization constructor
      */
     public RspDuoTuner2Configuration()
     {
@@ -59,7 +58,6 @@ public class RspDuoTuner2Configuration extends RspTunerConfiguration
     /**
      * Indicates if the RF Notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "rf_notch")
     public boolean isRfNotch()
     {
         return mRfNotch;
@@ -76,7 +74,6 @@ public class RspDuoTuner2Configuration extends RspTunerConfiguration
     /**
      * Indicates if the RF Digital Audio Broadcast (DAB) notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "dab_notch")
     public boolean isRfDabNotch()
     {
         return mRfDabNotch;
@@ -93,7 +90,6 @@ public class RspDuoTuner2Configuration extends RspTunerConfiguration
     /**
      * Indicates if the external reference output is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "external_reference_output")
     public boolean isExternalReferenceOutput()
     {
         return mExternalReferenceOutput;
@@ -110,7 +106,6 @@ public class RspDuoTuner2Configuration extends RspTunerConfiguration
     /**
      * Indicates if the Bias-T is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bias_t")
     public boolean isBiasT()
     {
         return mBiasT;

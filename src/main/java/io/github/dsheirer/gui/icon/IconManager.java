@@ -19,7 +19,7 @@
 
 package io.github.dsheirer.gui.icon;
 
-import io.github.dsheirer.gui.playlist.Editor;
+import io.github.dsheirer.gui.configuration.Editor;
 import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.icon.IconModel;
 import javafx.beans.binding.Bindings;

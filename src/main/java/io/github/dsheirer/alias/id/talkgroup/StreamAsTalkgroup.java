@@ -35,6 +35,6 @@ public class StreamAsTalkgroup extends Talkgroup
 
     public StreamAsTalkgroup()
     {
-        //No arg JAXB constructor
+        //No-arg deserialization constructor
     }
 }

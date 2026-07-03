@@ -17,9 +17,7 @@
  ******************************************************************************/
 package io.github.dsheirer.controller.config;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 
-@JacksonXmlRootElement(localName = "configuration")
 public abstract class Configuration
 {
     protected Configuration()

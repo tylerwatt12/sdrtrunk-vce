@@ -1,0 +1,95 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.module.decode.p25.telemetry;
+
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+
+/**
+ * Publishes stabilized P25 site metadata from standard/control channels.
+ */
+public class P25SiteMetadataPublisher
+{
+    public static final long DEFAULT_EVENT_INTERVAL_MILLISECONDS = 5000;
+    private final Channel mChannel;
+    private final Supplier<P25NetworkConfigurationSnapshot> mSnapshotSupplier;
+    private final BooleanSupplier mHasInterModuleEventBus;
+    private final Consumer<SiteMetadataEvent> mEventPublisher;
+    private final long mEventIntervalMilliseconds;
+    private int mLastPublishedSiteMetadataHash;
+    private long mLastPublishedSiteMetadataTimestamp;
+
+    public P25SiteMetadataPublisher(Channel channel,
+                                    Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
+                                    BooleanSupplier hasInterModuleEventBus,
+                                    Consumer<SiteMetadataEvent> eventPublisher)
+    {
+        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher, DEFAULT_EVENT_INTERVAL_MILLISECONDS);
+    }
+
+    P25SiteMetadataPublisher(Channel channel, Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
+                             BooleanSupplier hasInterModuleEventBus,
+                             Consumer<SiteMetadataEvent> eventPublisher,
+                             long eventIntervalMilliseconds)
+    {
+        mChannel = channel;
+        mSnapshotSupplier = snapshotSupplier;
+        mHasInterModuleEventBus = hasInterModuleEventBus;
+        mEventPublisher = eventPublisher;
+        mEventIntervalMilliseconds = eventIntervalMilliseconds;
+    }
+
+    public void publish(long timestamp)
+    {
+        if(mChannel == null || mChannel.isTrafficChannel())
+        {
+            return;
+        }
+
+        long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+
+        if(mHasInterModuleEventBus == null || !mHasInterModuleEventBus.getAsBoolean())
+        {
+            return;
+        }
+
+        P25NetworkConfigurationSnapshot snapshot = mSnapshotSupplier != null ? mSnapshotSupplier.get() : null;
+
+        if(snapshot != null && snapshot.isUseful())
+        {
+            int hash = snapshot.hashCode();
+            boolean changed = hash != mLastPublishedSiteMetadataHash;
+            boolean intervalElapsed = eventTimestamp - mLastPublishedSiteMetadataTimestamp >=
+                mEventIntervalMilliseconds;
+
+            if(changed || intervalElapsed)
+            {
+                mLastPublishedSiteMetadataHash = hash;
+                mLastPublishedSiteMetadataTimestamp = eventTimestamp;
+
+                if(mEventPublisher != null)
+                {
+                    mEventPublisher.accept(new SiteMetadataEvent(mChannel, snapshot, eventTimestamp));
+                }
+            }
+        }
+    }
+
+    public void reset()
+    {
+        mLastPublishedSiteMetadataHash = 0;
+        mLastPublishedSiteMetadataTimestamp = 0;
+    }
+}

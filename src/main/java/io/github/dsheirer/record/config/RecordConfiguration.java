@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.record.config;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.record.RecorderType;
 
@@ -46,7 +45,6 @@ public class RecordConfiguration extends Configuration
     /**
      * List of recorder types specified in this configuration
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "recorder")
     public List<RecorderType> getRecorders()
     {
         return mRecorders;

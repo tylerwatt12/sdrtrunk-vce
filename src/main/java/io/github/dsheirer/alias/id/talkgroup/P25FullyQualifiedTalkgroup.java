@@ -20,7 +20,6 @@
 package io.github.dsheirer.alias.id.talkgroup;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
 
@@ -34,7 +33,7 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
 
     public P25FullyQualifiedTalkgroup()
     {
-        //No-arg JAXB constructor
+        //No-arg deserialization constructor
     }
 
     /**
@@ -60,7 +59,6 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
      * WACN for this radio
      * @return wacn
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "wacn")
     public int getWacn()
     {
         return mWacn;
@@ -79,7 +77,6 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
      * System for this radio
      * @return system
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "system")
     public int getSystem()
     {
         return mSystem;

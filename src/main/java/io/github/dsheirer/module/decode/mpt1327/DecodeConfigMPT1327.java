@@ -22,7 +22,6 @@
 package io.github.dsheirer.module.decode.mpt1327;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.config.WithCallTimeout;
@@ -40,13 +39,11 @@ public class DecodeConfigMPT1327 extends DecodeConfiguration implements WithCall
     private int mCallTimeoutSeconds = DEFAULT_CALL_TIMEOUT_DELAY_SECONDS;
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {
         return DecoderType.MPT1327;
     }
 
-    @JacksonXmlProperty(isAttribute = false, localName = "channelMapName")
     public String getChannelMapName()
     {
         return mChannelMapName;
@@ -57,7 +54,6 @@ public class DecodeConfigMPT1327 extends DecodeConfiguration implements WithCall
         mChannelMapName = name;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "sync")
     public Sync getSync()
     {
         return mSync;
@@ -68,7 +64,6 @@ public class DecodeConfigMPT1327 extends DecodeConfiguration implements WithCall
         mSync = sync;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "call_timeout")
     public int getCallTimeoutSeconds()
     {
         return mCallTimeoutSeconds;
@@ -91,7 +86,6 @@ public class DecodeConfigMPT1327 extends DecodeConfiguration implements WithCall
         }
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "traffic_channel_pool_size")
     public int getTrafficChannelPoolSize()
     {
         return mTrafficChannelPoolSize;

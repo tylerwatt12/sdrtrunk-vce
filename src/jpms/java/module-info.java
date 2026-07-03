@@ -4,7 +4,6 @@ open module sdr.trunk {
     requires ch.qos.logback.core;
     requires com.fasterxml.jackson.annotation;
     requires com.fasterxml.jackson.databind;
-    requires com.fasterxml.jackson.dataformat.xml;
     requires com.fazecast.jSerialComm;
     requires com.google.common;
     requires com.google.gson;
@@ -16,6 +15,7 @@ open module sdr.trunk {
     requires java.management;
     requires java.net.http;
     requires java.prefs;
+    requires java.sql;
     requires javafx.base;
     requires javafx.controls;
     requires javafx.graphics;
@@ -37,6 +37,7 @@ open module sdr.trunk {
     requires org.apache.commons.lang3;
     requires org.controlsfx.controls;
     requires org.slf4j;
+    requires org.xerial.sqlitejdbc;
     requires usb.api;
     requires usb4java;
 }

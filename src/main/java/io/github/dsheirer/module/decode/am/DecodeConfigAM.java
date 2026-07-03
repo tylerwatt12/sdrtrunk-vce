@@ -19,7 +19,6 @@
 package io.github.dsheirer.module.decode.am;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.dsp.squelch.ISquelchConfiguration;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog;
@@ -33,7 +32,6 @@ public class DecodeConfigAM extends DecodeConfigAnalog implements ISquelchConfig
     private int mSquelchThreshold = -78;
     private boolean mSquelchAutoTrack = true;
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {
         return DecoderType.AM;
@@ -73,7 +71,6 @@ public class DecodeConfigAM extends DecodeConfigAnalog implements ISquelchConfig
      * Sets squelch threshold
      * @param threshold (dB)
      */
-    @JacksonXmlProperty(isAttribute =  true, localName = "squelch")
     @Override
     public void setSquelchThreshold(int threshold)
     {
@@ -94,7 +91,6 @@ public class DecodeConfigAM extends DecodeConfigAnalog implements ISquelchConfig
      * Enable or disable the squelch noise floor auto-track feature.
      * @param autoTrack true to enable.
      */
-    @JacksonXmlProperty(isAttribute =  true, localName = "autoTrack")
     @Override
     public void setSquelchAutoTrack(boolean autoTrack)
     {

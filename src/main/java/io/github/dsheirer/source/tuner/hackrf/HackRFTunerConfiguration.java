@@ -20,7 +20,6 @@ package io.github.dsheirer.source.tuner.hackrf;
 
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController.HackRFLNAGain;
@@ -35,7 +34,7 @@ public class HackRFTunerConfiguration extends TunerConfiguration
     private boolean mAmplifierEnabled = false;  //Probably should start off disabled
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     public HackRFTunerConfiguration()
     {
@@ -54,7 +53,6 @@ public class HackRFTunerConfiguration extends TunerConfiguration
         return TunerType.HACKRF_ONE;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "amplifier_enabled")
     public boolean getAmplifierEnabled()
     {
         return mAmplifierEnabled;
@@ -65,7 +63,6 @@ public class HackRFTunerConfiguration extends TunerConfiguration
         mAmplifierEnabled = enabled;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_gain")
     public HackRFLNAGain getLNAGain()
     {
         return mLNAGain;
@@ -76,7 +73,6 @@ public class HackRFTunerConfiguration extends TunerConfiguration
         mLNAGain = lnaGain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "vga_gain")
     public HackRFVGAGain getVGAGain()
     {
         return mVGAGain;
@@ -87,7 +83,6 @@ public class HackRFTunerConfiguration extends TunerConfiguration
         mVGAGain = vgaGain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "sample_rate")
     public HackRFSampleRate getSampleRate()
     {
         return mSampleRate;

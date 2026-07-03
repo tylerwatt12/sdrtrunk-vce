@@ -19,8 +19,6 @@
 package io.github.dsheirer.settings;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.map.DefaultIcon;
 import io.github.dsheirer.map.MapIcon;
 import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
@@ -29,14 +27,12 @@ import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import java.util.ArrayList;
 import java.util.List;
 
-@JacksonXmlRootElement(localName = "SDRTrunk_settings")
 public class Settings
 {
     private List<Setting> mSettings = new ArrayList<>();
 
     private List<TunerConfiguration> mTunerConfiguration = new ArrayList<>();
 
-    @JacksonXmlProperty(isAttribute = false, localName = "tuner_configuration")
     public List<TunerConfiguration> getTunerConfigurations()
     {
         return mTunerConfiguration;
@@ -47,7 +43,6 @@ public class Settings
         mTunerConfiguration = configs;
     }
 
-    @JacksonXmlProperty(isAttribute = false, localName = "setting")
     public List<Setting> getSettings()
     {
         return mSettings;

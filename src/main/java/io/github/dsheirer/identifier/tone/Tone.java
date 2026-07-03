@@ -20,7 +20,6 @@
 package io.github.dsheirer.identifier.tone;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import javafx.beans.Observable;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -86,7 +85,6 @@ public class Tone
     /**
      * Ambe tone for this sequence
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "value")
     public AmbeTone getAmbeTone()
     {
         return mAmbeTone;
@@ -107,7 +105,6 @@ public class Tone
     /**
      * Count of 20 millisecond units of duration
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "duration")
     public int getDuration()
     {
         return mDuration;

@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
 import java.util.prefs.Preferences;
 
 /**
- * User preferences for playlists
+ * User preferences for configuration data
  */
 public class RecordPreference extends Preference
 {

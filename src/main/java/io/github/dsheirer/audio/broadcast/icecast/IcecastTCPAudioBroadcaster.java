@@ -69,7 +69,7 @@ public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster<IcecastT
      * Note: use @see IcecastHTTPAudioBroadcaster for Icecast version 2.4.x and newer.
      *
      * This broadcaster uses the Apache Mina library for the streaming socket connection and for metadata updates.  The
-     * ShoutcastV2IOHandler manages all interaction with the Icecast server and manages the overall broadcast state.
+     * IcecastTCPIOHandler manages all interaction with the Icecast server and manages the overall broadcast state.
      *
      * @param configuration for the Icecast stream
      */

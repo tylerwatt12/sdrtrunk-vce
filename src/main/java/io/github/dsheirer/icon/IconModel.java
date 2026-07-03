@@ -18,19 +18,10 @@
  */
 package io.github.dsheirer.icon;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.dataformat.xml.JacksonXmlModule;
-import com.fasterxml.jackson.dataformat.xml.XmlMapper;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.icon.IconDatabaseStore;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.Image;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -52,11 +43,7 @@ public class IconModel
     public static final int DEFAULT_ICON_SIZE = 12;
     public static final String DEFAULT_ICON = "No Icon";
 
-    private Path mIconFolderPath;
-    private Path mIconFilePath;
-    private Path mIconBackupFilePath;
-    private Path mIconLockFilePath;
-
+    private IconDatabaseStore mIconDatabaseStore = new IconDatabaseStore(SdrTrunkDatabasePath.getDatabasePath());
     private AtomicBoolean mSavingIcons = new AtomicBoolean();
     private ObservableList<Icon> mIcons = FXCollections.observableArrayList(Icon.extractor());
     private Map<String,ImageIcon> mResizedIcons = new HashMap<>();
@@ -249,114 +236,32 @@ public class IconModel
     }
 
     /**
-     * Folder where icon, backup and lock files are stored
-     */
-    private Path getIconFolderPath()
-    {
-        if(mIconFolderPath == null)
-        {
-            SystemProperties props = SystemProperties.getInstance();
-
-            mIconFolderPath = props.getApplicationFolder("settings");
-        }
-
-        return mIconFolderPath;
-    }
-
-    /**
-     * Path to current icon file
-     */
-    private Path getIconFilePath()
-    {
-        if(mIconFilePath == null)
-        {
-            mIconFilePath = getIconFolderPath().resolve("icons.xml");
-        }
-
-        return mIconFilePath;
-    }
-
-    /**
-     * Path to most recent playlist backup
-     */
-    private Path getIconBackupFilePath()
-    {
-        if(mIconBackupFilePath == null)
-        {
-            mIconBackupFilePath = getIconFolderPath().resolve("icons.backup");
-        }
-
-        return mIconBackupFilePath;
-    }
-
-    /**
-     * Path to playlist lock file that is created prior to saving a playlist and removed immediately thereafter.
-     * Presence of a lock file indicates an incomplete or corrupt playlist file on startup.
-     */
-    private Path getIconLockFilePath()
-    {
-        if(mIconLockFilePath == null)
-        {
-            mIconLockFilePath = getIconFolderPath().resolve("icons.lock");
-        }
-
-        return mIconLockFilePath;
-    }
-
-    /**
-     * Loads icons from file or creates a default set of icons
+     * Loads icons from SQLite.
      */
     public IconSet load()
     {
-        mLog.info("loading icons file [" + getIconFilePath().toString() + "]");
-
-        IconSet iconSet = null;
-
-        //Check for a lock file that indicates the previous save attempt was incomplete or had an error
-        if(Files.exists(getIconLockFilePath()))
+        try
         {
-            try
+            if(mIconDatabaseStore.isInitialized())
             {
-                //Remove the previous icons file
-                Files.delete(getIconFilePath());
-
-                //Copy the backup file to restore the previous icons file
-                if(Files.exists(getIconBackupFilePath()))
-                {
-                    Files.copy(getIconBackupFilePath(), getIconFilePath());
-                }
-
-                //Remove the lock file
-                Files.delete(getIconLockFilePath());
+                IconSet iconSet = mIconDatabaseStore.loadIcons();
+                mLog.info("Loaded icons from SQLite [{}]: icons [{}], default [{}]",
+                    mIconDatabaseStore.getDatabasePath(), iconSet.getIcons().size(), iconSet.getDefaultIcon());
+                return iconSet;
             }
-            catch(IOException ioe)
-            {
-                mLog.error("Previous icons save attempt was incomplete and there was an error restoring the " +
-                    "icons backup file", ioe);
-            }
+
+            IconSet iconSet = getStandardIconSet();
+            mIconDatabaseStore.replaceIcons(iconSet);
+            mLog.info("Initialized icons in SQLite [{}]: icons [{}], default [{}]",
+                mIconDatabaseStore.getDatabasePath(), iconSet.getIcons().size(), iconSet.getDefaultIcon());
+            return iconSet;
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error loading icons from SQLite database [" + mIconDatabaseStore.getDatabasePath() + "]", e);
         }
 
-        if(Files.exists(getIconFilePath()))
-        {
-            JacksonXmlModule xmlModule = new JacksonXmlModule();
-            xmlModule.setDefaultUseWrapper(false);
-            ObjectMapper objectMapper = new XmlMapper(xmlModule);
-
-            try(InputStream in = Files.newInputStream(getIconFilePath()))
-            {
-                iconSet = objectMapper.readValue(in, IconSet.class);
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("IO error while reading icons file", ioe);
-            }
-        }
-        else
-        {
-            mLog.info("Icons file not found at [" + getIconFilePath().toString() + "]");
-        }
-
-        return iconSet;
+        return getStandardIconSet();
     }
 
     /**
@@ -406,7 +311,7 @@ public class IconModel
     }
 
     /**
-     * Resets the playlist save pending flag to false and proceeds to save the playlist.
+     * Resets the configuration save pending flag to false and proceeds to save configuration state.
      */
     public class IconSaveTask implements Runnable
     {
@@ -417,56 +322,14 @@ public class IconModel
             iconSet.setDefaultIcon(getDefaultIcon().getName());
             iconSet.setIcons(new ArrayList<>(mIcons));
 
-            //Create a backup copy of the current playlist
-            if(Files.exists(getIconFilePath()))
+            try
             {
-                try
-                {
-                    Files.copy(getIconFilePath(), getIconBackupFilePath(), StandardCopyOption.REPLACE_EXISTING);
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error creating backup copy of current icons prior to saving updates [" +
-                        getIconFilePath().toString() + "]", e);
-                }
-            }
-
-            //Create a temporary lock file to signify that we're in the process of updating the playlist
-            if(!Files.exists(getIconLockFilePath()))
-            {
-                try
-                {
-                    Files.createFile(getIconLockFilePath());
-                }
-                catch(IOException e)
-                {
-                    mLog.error("Error creating temporary lock file prior to saving icons [" +
-                        getIconLockFilePath().toString() + "]", e);
-                }
-            }
-
-            try(OutputStream out = Files.newOutputStream(getIconFilePath()))
-            {
-                JacksonXmlModule xmlModule = new JacksonXmlModule();
-                xmlModule.setDefaultUseWrapper(false);
-                ObjectMapper objectMapper = new XmlMapper(xmlModule);
-                objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-                objectMapper.writeValue(out, iconSet);
-                out.flush();
-
-                //Remove the playlist lock file to indicate that we successfully saved the file
-                if(Files.exists(getIconLockFilePath()))
-                {
-                    Files.delete(getIconLockFilePath());
-                }
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("IO error while writing icons to a file [" + getIconFilePath().toString() + "]", ioe);
+                mIconDatabaseStore.replaceIcons(iconSet);
+                mLog.debug("Saved icons to SQLite [{}]", mIconDatabaseStore.getDatabasePath());
             }
             catch(Exception e)
             {
-                mLog.error("Error while saving icons [" + getIconFilePath().toString() + "]", e);
+                mLog.error("Error while saving icons to SQLite [" + mIconDatabaseStore.getDatabasePath() + "]", e);
             }
 
             mSavingIcons.set(false);

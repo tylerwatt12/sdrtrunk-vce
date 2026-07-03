@@ -18,7 +18,6 @@
 package io.github.dsheirer.alias.id.legacy.mobileID;
 
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -35,7 +34,6 @@ public class Min extends AliasID
         return false;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "min")
     public String getMin()
     {
         return mMin;
@@ -75,7 +73,6 @@ public class Min extends AliasID
         return retVal;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {

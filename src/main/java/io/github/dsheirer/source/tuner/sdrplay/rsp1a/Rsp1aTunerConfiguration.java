@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rsp1a;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
 
@@ -42,7 +41,7 @@ public class Rsp1aTunerConfiguration extends RspTunerConfiguration
     }
 
     /**
-     * JAXB constructor
+     * Deserialization constructor
      */
     public Rsp1aTunerConfiguration()
     {
@@ -57,7 +56,6 @@ public class Rsp1aTunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if the RF notch is enabled.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "rf_notch")
     public boolean isRfNotch()
     {
         return mRfNotch;
@@ -75,7 +73,6 @@ public class Rsp1aTunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if the RF Digital Audio Broadcast (DAB) notch is enabled.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "dab_notch")
     public boolean isRfDabNotch()
     {
         return mRfDabNotch;
@@ -93,7 +90,6 @@ public class Rsp1aTunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if the Bias-T is enabled.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bias_t")
     public boolean isBiasT()
     {
         return mBiasT;

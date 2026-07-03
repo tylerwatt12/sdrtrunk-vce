@@ -19,7 +19,6 @@
 
  package io.github.dsheirer.audio.broadcast.openmhz;
 
- import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
  import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
  import io.github.dsheirer.audio.broadcast.BroadcastFormat;
  import io.github.dsheirer.audio.broadcast.BroadcastServerType;
@@ -86,7 +85,6 @@
      /**
       * API Key
       */
-     @JacksonXmlProperty(isAttribute = true, localName = "api_key")
      public String getApiKey()
      {
          return mApiKey.get();
@@ -104,7 +102,6 @@
      /**
       * System name as provided by OpenMHz.com
       */
-     @JacksonXmlProperty(isAttribute = true, localName = "system_name")
      public String getSystemName()
      {
          return mSystemName.get();
@@ -118,7 +115,6 @@
          mSystemName.set(systemName);
      }
 
-     @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
      @Override
      public BroadcastServerType getBroadcastServerType()
      {

@@ -30,6 +30,7 @@ public class NowPlayingPreference extends Preference
 {
     private static final String PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS = "retain.idle.call.details";
     private static final String PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS = "advanced.p25.encryption.status";
+    private static final String PREFERENCE_KEY_RF_METADATA_DEBUG_TAB = "rf.metadata.debug.tab";
     private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
         "traffic.grant.age.out.milliseconds";
 
@@ -40,6 +41,7 @@ public class NowPlayingPreference extends Preference
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
     private Boolean mRetainIdleCallDetails;
     private Boolean mAdvancedP25EncryptionStatus;
+    private Boolean mRfMetadataDebugTab;
     private Integer mTrafficGrantAgeOutMilliseconds;
 
     /**
@@ -101,6 +103,29 @@ public class NowPlayingPreference extends Preference
     {
         mAdvancedP25EncryptionStatus = advanced;
         mPreferences.putBoolean(PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS, advanced);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates if the RF metadata debug tab should be shown in the Now Playing lower panel.
+     */
+    public boolean isRfMetadataDebugTabEnabled()
+    {
+        if(mRfMetadataDebugTab == null)
+        {
+            mRfMetadataDebugTab = mPreferences.getBoolean(PREFERENCE_KEY_RF_METADATA_DEBUG_TAB, false);
+        }
+
+        return mRfMetadataDebugTab;
+    }
+
+    /**
+     * Sets RF metadata debug tab visibility.
+     */
+    public void setRfMetadataDebugTabEnabled(boolean enabled)
+    {
+        mRfMetadataDebugTab = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_RF_METADATA_DEBUG_TAB, enabled);
         notifyPreferenceUpdated();
     }
 

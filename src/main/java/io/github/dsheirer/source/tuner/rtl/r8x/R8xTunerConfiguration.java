@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.source.tuner.rtl.r8x;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerConfiguration;
 
 /**
@@ -32,7 +31,7 @@ public abstract class R8xTunerConfiguration extends RTL2832TunerConfiguration
     private R8xEmbeddedTuner.VGAGain mVGAGain = R8xEmbeddedTuner.VGAGain.GAIN_210;
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     protected R8xTunerConfiguration()
     {
@@ -49,7 +48,6 @@ public abstract class R8xTunerConfiguration extends RTL2832TunerConfiguration
         super(uniqueID);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "master_gain")
     public R8xEmbeddedTuner.MasterGain getMasterGain()
     {
         return mMasterMasterGain;
@@ -60,7 +58,6 @@ public abstract class R8xTunerConfiguration extends RTL2832TunerConfiguration
         mMasterMasterGain = masterGain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "mixer_gain")
     public R8xEmbeddedTuner.MixerGain getMixerGain()
     {
         return mMixerGain;
@@ -71,7 +68,6 @@ public abstract class R8xTunerConfiguration extends RTL2832TunerConfiguration
         mMixerGain = mixerGain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_gain")
     public R8xEmbeddedTuner.LNAGain getLNAGain()
     {
         return mLNAGain;
@@ -82,7 +78,6 @@ public abstract class R8xTunerConfiguration extends RTL2832TunerConfiguration
         mLNAGain = lnaGain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "vga_gain")
     public R8xEmbeddedTuner.VGAGain getVGAGain()
     {
         return mVGAGain;

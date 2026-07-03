@@ -19,7 +19,6 @@
 package io.github.dsheirer.source.tuner.rtl.fc0013;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerConfiguration;
 
@@ -32,7 +31,7 @@ public class FC0013TunerConfiguration extends RTL2832TunerConfiguration
     private boolean mAgc = false;
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     public FC0013TunerConfiguration()
     {
@@ -60,7 +59,6 @@ public class FC0013TunerConfiguration extends RTL2832TunerConfiguration
      * LNA gain value.
      * @return value
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_gain")
     public FC0013EmbeddedTuner.LNAGain getLnaGain()
     {
         return mLnaGain;
@@ -79,7 +77,6 @@ public class FC0013TunerConfiguration extends RTL2832TunerConfiguration
      * Automatic Gain Control (AGC) state
      * @return AGC enabled state
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "agc")
     public boolean getAGC()
     {
         return mAgc;

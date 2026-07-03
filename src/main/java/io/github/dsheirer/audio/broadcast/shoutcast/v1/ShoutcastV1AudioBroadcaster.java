@@ -57,7 +57,7 @@ public class ShoutcastV1AudioBroadcaster extends AudioStreamingBroadcaster<Shout
     /**
      * Creates a Shoutcast v1 compatible broadcaster using TCP protocol.
      *
-     * Note: use @see ShoutcastV2AudioBroadcaster for Shoutcast version 2.x and newer.
+     * Shoutcast version 2 support is not included in this build.
      *
      * This broadcaster uses the Apache Mina library for the streaming socket connection and for metadata updates.  The
      * ShoutcastV1IOHandler manages all interaction with the Shoutcast server and manages the overall broadcast state.

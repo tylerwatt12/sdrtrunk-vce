@@ -21,7 +21,6 @@
  */
 package io.github.dsheirer.audio.broadcast.rdioscanner;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
@@ -38,7 +37,7 @@ public class RdioScannerFeedConfiguration extends IcecastTCPConfiguration
 
     public RdioScannerFeedConfiguration()
     {
-        //No-arg constructor for JAXB
+        //No-arg deserialization constructor
         this(BroadcastFormat.MP3);
     }
 
@@ -106,14 +105,12 @@ public class RdioScannerFeedConfiguration extends IcecastTCPConfiguration
         return copy;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public BroadcastServerType getBroadcastServerType()
     {
         return BroadcastServerType.RDIOSCANNER_CALL;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "feed_id")
     public int getFeedID()
     {
         return mFeedID;

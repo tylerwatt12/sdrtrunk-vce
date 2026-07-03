@@ -122,8 +122,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mChannelMetadataModel = new ChannelMetadataModel();
-        mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getApplicationPreference(),
-            userPreferences.getNowPlayingPreference());
+        mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
         mChannelMetadataModel.addUpdateListener(mChannelActivityModel);
     }
 
@@ -466,7 +465,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         if(source == null)
         {
-            //This has to be done on the FX event thread when the playlist editor is constructed
+            //This has to be done on the FX event thread when the configuration editor is constructed
             if(!GraphicsEnvironment.isHeadless())
             {
                 Platform.runLater(() -> channel.setProcessing(false));
@@ -610,7 +609,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             }
             else
             {
-                //This has to be done on the FX event thread when the playlist editor is constructed
+                //This has to be done on the FX event thread when the configuration editor is constructed
                 Platform.runLater(() -> channel.setProcessing(true));
             }
 
@@ -847,6 +846,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void process(SiteMetadataEvent event)
     {
+        mChannelActivityModel.receiveSiteMetadata(event);
+
         for(SiteMetadataListener listener: mSiteMetadataListeners)
         {
             listener.receiveSiteMetadata(event);

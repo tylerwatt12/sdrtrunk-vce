@@ -31,6 +31,8 @@ import javax.swing.event.TableColumnModelEvent;
 import javax.swing.event.TableColumnModelListener;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableColumnModel;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -40,10 +42,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class JTableColumnWidthMonitor
 {
+    private static final String COLUMN_WIDTH_KEY_TOKEN = ".column.";
+    private static final List<JTableColumnWidthMonitor> MONITORS = new ArrayList<>();
+
     private UserPreferences mUserPreferences;
     private JTable mTable;
     private String mKey;
     private int[] mMinimumColumnWidths;
+    private int[] mDefaultColumnWidths;
     private ColumnResizeListener mColumnResizeListener = new ColumnResizeListener();
     private AtomicBoolean mSaveInProgress = new AtomicBoolean();
 
@@ -69,18 +75,40 @@ public class JTableColumnWidthMonitor
      */
     public JTableColumnWidthMonitor(UserPreferences userPreferences, JTable table, String key, int[] minimumColumnWidths)
     {
+        this(userPreferences, table, key, minimumColumnWidths, null, JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+    }
+
+    /**
+     * Constructs a column width monitor.
+     *
+     * @param userPreferences to store column widths
+     * @param table to monitor for column width changes
+     * @param key that uniquely identifies the table to monitor
+     * @param minimumColumnWidths optional per-column minimums for restored widths
+     * @param defaultColumnWidths optional per-column default widths used when no user preference exists
+     * @param autoResizeMode JTable auto resize mode to apply
+     */
+    public JTableColumnWidthMonitor(UserPreferences userPreferences, JTable table, String key, int[] minimumColumnWidths,
+                                    int[] defaultColumnWidths, int autoResizeMode)
+    {
         mUserPreferences = userPreferences;
         mTable = table;
         mKey = key;
         mMinimumColumnWidths = minimumColumnWidths != null ? minimumColumnWidths.clone() : null;
+        mDefaultColumnWidths = defaultColumnWidths != null ? defaultColumnWidths.clone() : null;
 
-        mTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+        mTable.setAutoResizeMode(autoResizeMode);
 
         // Wait until the UI is realized to set preferred column widths
         EventQueue.invokeLater(this::restoreColumnWidths);
 
         // Keep listening for drag-resizes so you can re-save new widths
         mTable.getColumnModel().addColumnModelListener(mColumnResizeListener);
+
+        synchronized(MONITORS)
+        {
+            MONITORS.add(this);
+        }
     }
 
     /**
@@ -96,6 +124,12 @@ public class JTableColumnWidthMonitor
         mTable = null;
         mUserPreferences = null;
         mMinimumColumnWidths = null;
+        mDefaultColumnWidths = null;
+
+        synchronized(MONITORS)
+        {
+            MONITORS.remove(this);
+        }
     }
 
     /**
@@ -108,6 +142,11 @@ public class JTableColumnWidthMonitor
         for(int x = 0; x < model.getColumnCount(); x++)
         {
             int width = mUserPreferences.getSwingPreference().getInt(getColumnKey(x), Integer.MAX_VALUE);
+
+            if(width == Integer.MAX_VALUE && mDefaultColumnWidths != null && x < mDefaultColumnWidths.length)
+            {
+                width = mDefaultColumnWidths[x];
+            }
 
             if(width != Integer.MAX_VALUE)
             {
@@ -145,6 +184,45 @@ public class JTableColumnWidthMonitor
     private String getColumnKey(int column)
     {
         return mKey + ".column." + column;
+    }
+
+    private void resetColumnWidthsToDefaults()
+    {
+        if(mTable == null || mDefaultColumnWidths == null)
+        {
+            return;
+        }
+
+        TableColumnModel model = mTable.getColumnModel();
+
+        for(int x = 0; x < model.getColumnCount() && x < mDefaultColumnWidths.length; x++)
+        {
+            TableColumn column = model.getColumn(x);
+            int validWidth = getValidWidth(column, x, mDefaultColumnWidths[x]);
+            column.setPreferredWidth(validWidth);
+            column.setWidth(validWidth);
+        }
+    }
+
+    /**
+     * Clears saved column widths and restores defaults for active monitored tables that define defaults.
+     * @param userPreferences preferences containing saved table widths
+     * @return count of removed stored width values
+     */
+    public static int resetSavedColumnWidths(UserPreferences userPreferences)
+    {
+        int removed = userPreferences.getSwingPreference().removeKeysContaining(COLUMN_WIDTH_KEY_TOKEN);
+
+        synchronized(MONITORS)
+        {
+            for(JTableColumnWidthMonitor monitor: MONITORS)
+            {
+                EventQueue.invokeLater(monitor::resetColumnWidthsToDefaults);
+            }
+        }
+
+        userPreferences.getSwingPreference().flush();
+        return removed;
     }
 
     /**

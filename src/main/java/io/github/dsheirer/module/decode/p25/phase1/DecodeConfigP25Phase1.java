@@ -20,7 +20,6 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 
@@ -35,13 +34,11 @@ public class DecodeConfigP25Phase1 extends DecodeConfigP25
 
     private Modulation mModulation = Modulation.C4FM;
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {
         return DecoderType.P25_PHASE1;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "modulation")
     public Modulation getModulation()
     {
         return mModulation;

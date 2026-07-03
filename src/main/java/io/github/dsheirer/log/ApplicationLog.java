@@ -21,15 +21,18 @@ package io.github.dsheirer.log;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.PatternLayout;
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
 import ch.qos.logback.classic.filter.ThresholdFilter;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.rolling.RollingFileAppender;
 import ch.qos.logback.core.rolling.TimeBasedRollingPolicy;
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.util.MemoryUsageLogger;
 import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Path;
@@ -45,6 +48,13 @@ import org.slf4j.LoggerFactory;
  */
 public class ApplicationLog
 {
+    private static final String MEMORY_USAGE_CONVERSION_WORD = "memory_usage";
+
+    static
+    {
+        PatternLayout.DEFAULT_CONVERTER_MAP.put(MEMORY_USAGE_CONVERSION_WORD, MemoryUsageLogger.class.getName());
+    }
+
     private static final Logger mLog = LoggerFactory.getLogger(ApplicationLog.class);
 
     private static final String APPLICATION_LOG_FILENAME = "sdrtrunk_app.log";
@@ -131,6 +141,9 @@ public class ApplicationLog
             rootLogger.setLevel(Level.TRACE);
             rootLogger.addAppender(mRollingFileAppender);
 
+            loggerContext.getLogger("org.apache.mina").setLevel(Level.INFO);
+            loggerContext.getLogger("org.sqlite").setLevel(Level.WARN);
+
             Attributes atts = findManifestAttributes();
             if (atts != null) {
                 mLog.info("SDRTrunk Version  : " + atts.getValue("Implementation-Version"));
@@ -158,7 +171,7 @@ public class ApplicationLog
             mLog.info(" Application Root: " + mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
             mLog.info(" Application Log:  " + mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog());
             mLog.info(" Event Log:        " + mUserPreferences.getDirectoryPreference().getDirectoryEventLog());
-            mLog.info(" Playlist:         " + mUserPreferences.getDirectoryPreference().getDirectoryPlaylist());
+            mLog.info(" Database:         " + SdrTrunkDatabasePath.getDatabasePath(mUserPreferences));
             mLog.info(" Recordings:       " + mUserPreferences.getDirectoryPreference().getDirectoryRecording());
         }
 

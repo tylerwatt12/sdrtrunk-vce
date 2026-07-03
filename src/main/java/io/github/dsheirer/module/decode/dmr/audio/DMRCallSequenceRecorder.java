@@ -22,11 +22,14 @@ package io.github.dsheirer.module.decode.dmr.audio;
 
 import io.github.dsheirer.audio.codec.mbe.MBECallSequence;
 import io.github.dsheirer.audio.codec.mbe.MBECallSequenceRecorder;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionContext;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
+import io.github.dsheirer.module.decode.dmr.message.data.header.PiHeader;
 import io.github.dsheirer.module.decode.dmr.message.data.header.VoiceHeader;
+import io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.FullLCMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.GroupVoiceChannelUser;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.UnitToUnitVoiceChannelUser;
@@ -35,8 +38,14 @@ import io.github.dsheirer.module.decode.dmr.message.data.lc.full.hytera.HyteraUn
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.motorola.CapacityPlusWideAreaVoiceChannelUser;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.motorola.MotorolaGroupVoiceChannelUser;
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
+import io.github.dsheirer.module.decode.dmr.message.type.EncryptionAlgorithm;
+import io.github.dsheirer.module.decode.dmr.message.voice.VoiceEMBMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
+import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
+import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedParameters;
+import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.List;
 
@@ -46,7 +55,7 @@ import java.util.List;
  */
 public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
 {
-    private static final String PROTOCOL = "DMR";
+    public static final String PROTOCOL = "DMR";
     private TimeslotProcessor mTimeslotProcessor1 = new TimeslotProcessor();
     private TimeslotProcessor mTimeslotProcessor2 = new TimeslotProcessor();
 
@@ -105,6 +114,9 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
         private Identifier mToIdentifier;
         private String mCallType;
         private boolean mEncrypted = false;
+        private VoiceEncryptionContext mCurrentEncryptionContext;
+        private VoiceEncryptionContext mPendingEncryptionContext;
+        private boolean mEncryptionContextDirty;
 
         /**
          * Flushes any partial call sequence
@@ -121,6 +133,9 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
             mFromIdentifier = null;
             mCallType = null;
             mEncrypted = false;
+            mCurrentEncryptionContext = null;
+            mPendingEncryptionContext = null;
+            mEncryptionContextDirty = false;
         }
 
         /**
@@ -131,11 +146,17 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
         {
             if(message instanceof VoiceMessage voiceMessage)
             {
+                promotePendingEncryptionContext(voiceMessage);
                 process(voiceMessage);
+                captureEmbeddedEncryptionContext(voiceMessage);
             }
             else if(message instanceof VoiceHeader voiceHeader)
             {
                 process(voiceHeader);
+            }
+            else if(message instanceof PiHeader pi && pi.getLCMessage() instanceof EncryptionParameters ep)
+            {
+                process(ep);
             }
             else if(message instanceof FullLCMessage fullLCMessage)
             {
@@ -185,11 +206,80 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
             for(byte[] frame : voiceFrames)
             {
                 BinaryMessage frameBits = BinaryMessage.from(frame);
-                mCallSequence.addVoiceFrame(baseTimestamp, frameBits.toHexString());
+
+                if(mCurrentEncryptionContext != null && mEncryptionContextDirty)
+                {
+                    mCallSequence.addEncryptedVoiceFrame(baseTimestamp, frameBits.toHexString(),
+                        mCurrentEncryptionContext.getAlgorithmId(), mCurrentEncryptionContext.getKeyId(),
+                        mCurrentEncryptionContext.getMessageIndicator());
+                    mCallSequence.setEncrypted(true);
+                    mEncryptionContextDirty = false;
+                }
+                else
+                {
+                    mCallSequence.addVoiceFrame(baseTimestamp, frameBits.toHexString());
+                }
 
                 //Voice frames are 20 milliseconds each, so we increment the timestamp by 20 for each one
                 baseTimestamp += 20;
             }
+        }
+
+        private void process(EncryptionParameters parameters)
+        {
+            if(parameters.isValid() && parameters.getAlgorithm() != EncryptionAlgorithm.UNKNOWN)
+            {
+                mEncrypted = true;
+                mCurrentEncryptionContext = new VoiceEncryptionContext(VoiceEncryptionProtocol.DMR,
+                    parameters.getAlgorithm().getValue(), parameters.getKeyId(), parameters.getInitializationVector(),
+                    parameters.getTimeslot(), null);
+                mEncryptionContextDirty = true;
+
+                if(mCallSequence != null)
+                {
+                    mCallSequence.setEncrypted(true);
+                }
+            }
+        }
+
+        private void captureEmbeddedEncryptionContext(VoiceMessage voiceMessage)
+        {
+            if(voiceMessage instanceof VoiceEMBMessage voice && voice.hasEmbeddedParameters())
+            {
+                EmbeddedParameters parameters = voice.getEmbeddedParameters();
+
+                if(parameters.getShortBurst() instanceof EmbeddedEncryptionParameters encryption &&
+                    parameters.hasIv() && encryption.getAlgorithm() != EncryptionAlgorithm.UNKNOWN)
+                {
+                    mEncrypted = true;
+                    mPendingEncryptionContext = new VoiceEncryptionContext(VoiceEncryptionProtocol.DMR,
+                        encryption.getAlgorithm().getValue(), encryption.getKey(), parameters.getIv(),
+                        voiceMessage.getTimeslot(), null);
+
+                    if(mCallSequence != null)
+                    {
+                        mCallSequence.setEncrypted(true);
+                    }
+                }
+            }
+        }
+
+        private void promotePendingEncryptionContext(VoiceMessage voiceMessage)
+        {
+            if(mPendingEncryptionContext != null && isVoiceSuperframeStart(voiceMessage))
+            {
+                mCurrentEncryptionContext = mPendingEncryptionContext;
+                mPendingEncryptionContext = null;
+                mEncryptionContextDirty = true;
+            }
+        }
+
+        private boolean isVoiceSuperframeStart(VoiceMessage message)
+        {
+            DMRSyncPattern syncPattern = message.getSyncPattern();
+            return syncPattern == DMRSyncPattern.BASE_STATION_VOICE || syncPattern == DMRSyncPattern.MOBILE_STATION_VOICE ||
+                syncPattern == DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1 ||
+                syncPattern == DMRSyncPattern.DIRECT_VOICE_TIMESLOT_2;
         }
 
         /**

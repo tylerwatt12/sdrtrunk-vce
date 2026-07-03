@@ -19,7 +19,6 @@
 package io.github.dsheirer.source.tuner.airspy.hf;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 
@@ -34,7 +33,7 @@ public class AirspyHfTunerConfiguration extends TunerConfiguration
     private int mAttenuation;
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     public AirspyHfTunerConfiguration()
     {
@@ -51,7 +50,6 @@ public class AirspyHfTunerConfiguration extends TunerConfiguration
     }
 
     @Override
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public TunerType getTunerType()
     {
         return TunerType.AIRSPY_HF_PLUS;
@@ -61,7 +59,6 @@ public class AirspyHfTunerConfiguration extends TunerConfiguration
      * Saved sample rate setting
      * @return sample rate in Hertz
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "sample_rate")
     public int getSampleRate()
     {
         return mSampleRate;
@@ -80,7 +77,6 @@ public class AirspyHfTunerConfiguration extends TunerConfiguration
      * Indicates if the AGC is enabled
      * @return AGC enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "agc")
     public boolean isAgc()
     {
         return mAgc;
@@ -99,7 +95,6 @@ public class AirspyHfTunerConfiguration extends TunerConfiguration
      * Indicates if the LNA is enabled
      * @return LNA enabled state
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "lna")
     public boolean isLna()
     {
         return mLna;
@@ -118,7 +113,6 @@ public class AirspyHfTunerConfiguration extends TunerConfiguration
      * Attenuation setting.
      * @return attenuation setting index value.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "attenuation")
     public int getAttenuationValue()
     {
         return mAttenuation;

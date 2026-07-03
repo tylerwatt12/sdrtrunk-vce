@@ -20,6 +20,11 @@ package io.github.dsheirer.module.decode.dmr.audio;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.codec.mbe.AmbeAudioModule;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionContext;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionKeyResolver;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptionException;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptor;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptorFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
@@ -38,10 +43,14 @@ import io.github.dsheirer.module.decode.dmr.message.data.header.VoiceHeader;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.AbstractVoiceChannelUser;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
+import io.github.dsheirer.module.decode.dmr.message.type.EncryptionAlgorithm;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceEMBMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
+import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedParameters;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
+import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
@@ -64,6 +73,10 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     private boolean mEncryptedCallStateEstablished = false;
     private boolean mEncryptedCall = false;
     private Listener<IMessage> mMessageListener;
+    private VoiceEncryptionKeyResolver mEncryptionKeyResolver;
+    private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory();
+    private VoiceFrameDecryptor mVoiceFrameDecryptor;
+    private VoiceEncryptionContext mPendingEncryptionContext;
 
     /**
      * Constructs an instance
@@ -74,6 +87,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     public DMRAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
     {
         super(userPreferences, aliasList, timeslot);
+        mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
     }
 
     @Override
@@ -91,6 +105,8 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         mEncryptedCall = false;
         mEncryptedCallStateEstablished = false;
         mQueuedAmbeFrames.clear();
+        mVoiceFrameDecryptor = null;
+        mPendingEncryptionContext = null;
     }
 
     @Override
@@ -106,6 +122,31 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     {
         if(hasAudioCodec() && message.getTimeslot() == getTimeslot())
         {
+            if(message instanceof PiHeader pi && pi.getLCMessage() instanceof EncryptionParameters ep &&
+                ep.isValid())
+            {
+                mEncryptedCallStateEstablished = true;
+                mEncryptedCall = true;
+                mPendingEncryptionContext = null;
+                mVoiceFrameDecryptor = createDecryptor(createContext(ep));
+            }
+
+            if(message instanceof VoiceMessage voiceMessage && isVoiceSuperframeStart(voiceMessage) &&
+                mPendingEncryptionContext != null)
+            {
+                mVoiceFrameDecryptor = createDecryptor(mPendingEncryptionContext);
+                mPendingEncryptionContext = null;
+            }
+
+            VoiceEncryptionContext embeddedContext = createEmbeddedContext(message);
+
+            if(embeddedContext != null)
+            {
+                mEncryptedCallStateEstablished = true;
+                mEncryptedCall = true;
+                mPendingEncryptionContext = embeddedContext;
+            }
+
             //Attempt to set the audio encryption state from certain types of messages
             if(!mEncryptedCallStateEstablished)
             {
@@ -137,12 +178,6 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
                     mEncryptedCallStateEstablished = true;
                     mEncryptedCall = vcu.getServiceOptions().isEncrypted();
                 }
-                else if(message instanceof PiHeader pi && pi.getLCMessage() instanceof EncryptionParameters ep &&
-                        ep.isValid())
-                {
-                    mEncryptedCallStateEstablished = true;
-                    mEncryptedCall = true;
-                }
                 //Note: the DMRMessageProcessor extracts Full Link Control messages from Voice Frames B-C and sends them
                 // independent of any DMR Burst messaging.  When encountered, it can be assumed that they are part of
                 // an ongoing call and can be used to establish encryption state when the FLC is a voice channel user.
@@ -162,17 +197,10 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
             //before any audio is generated for the audio segment.
             if(message instanceof VoiceMessage voiceMessage)
             {
-                if(mEncryptedCallStateEstablished && mEncryptedCall)
+                List<byte[]> frames = voiceMessage.getAMBEFrames();
+                for(byte[] frame: frames)
                 {
-                    mQueuedAmbeFrames.clear();
-                }
-                else
-                {
-                    List<byte[]> frames = voiceMessage.getAMBEFrames();
-                    for(byte[] frame: frames)
-                    {
-                        processAudio(frame, message.getTimestamp());
-                    }
+                    processAudio(frame, message.getTimestamp());
                 }
             }
             else if(message instanceof Terminator)
@@ -190,30 +218,49 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     {
         if(mEncryptedCallStateEstablished)
         {
-            if(mEncryptedCall)
+            //Process any ambe frames that were queued awaiting encryption state determination
+            if(!mQueuedAmbeFrames.isEmpty())
             {
+                List<byte[]> queuedFrames = List.copyOf(mQueuedAmbeFrames);
                 mQueuedAmbeFrames.clear();
-            }
-            else
-            {
-                //Process any ambe frames that were queued awaiting encryption state determination
-                if(!mQueuedAmbeFrames.isEmpty())
+
+                for(byte[] queuedFrame: queuedFrames)
                 {
-                    for(byte[] queuedFrame: mQueuedAmbeFrames)
-                    {
-                        produceAudio(queuedFrame, timestamp);
-                    }
-
-                    mQueuedAmbeFrames.clear();
+                    produceAudioFrame(queuedFrame, timestamp);
                 }
-
-                produceAudio(frame, timestamp);
             }
+
+            produceAudioFrame(frame, timestamp);
         }
         else
         {
             mQueuedAmbeFrames.add(frame);
         }
+    }
+
+    private void produceAudioFrame(byte[] frame, long timestamp)
+    {
+        if(mEncryptedCall)
+        {
+            if(mVoiceFrameDecryptor == null || !mVoiceFrameDecryptor.isImplemented())
+            {
+                mQueuedAmbeFrames.clear();
+                return;
+            }
+
+            try
+            {
+                frame = mVoiceFrameDecryptor.decrypt(frame);
+            }
+            catch(VoiceFrameDecryptionException e)
+            {
+                mLog.debug("Error decrypting DMR AMBE audio", e);
+                mQueuedAmbeFrames.clear();
+                return;
+            }
+        }
+
+        produceAudio(frame, timestamp);
     }
 
     private void produceAudio(byte[] frame, long timestamp)
@@ -228,6 +275,60 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         {
             mLog.error("Error synthesizing DMR AMBE audio - continuing [" + e.getMessage() + "]");
         }
+    }
+
+    private VoiceFrameDecryptor createDecryptor(VoiceEncryptionContext context)
+    {
+        if(context == null)
+        {
+            return null;
+        }
+
+        return mEncryptionKeyResolver.resolve(context)
+            .flatMap(key -> mVoiceFrameDecryptorFactory.create(context, key))
+            .filter(VoiceFrameDecryptor::isImplemented)
+            .orElse(null);
+    }
+
+    private VoiceEncryptionContext createContext(EncryptionParameters parameters)
+    {
+        if(parameters == null || parameters.getAlgorithm() == EncryptionAlgorithm.UNKNOWN)
+        {
+            return null;
+        }
+
+        return new VoiceEncryptionContext(VoiceEncryptionProtocol.DMR, parameters.getAlgorithm().getValue(),
+            parameters.getKeyId(), parameters.getInitializationVector(), getTimeslot(), getIdentifierCollection());
+    }
+
+    private VoiceEncryptionContext createEmbeddedContext(IMessage message)
+    {
+        if(message instanceof VoiceEMBMessage voice && voice.hasEmbeddedParameters())
+        {
+            EmbeddedParameters parameters = voice.getEmbeddedParameters();
+
+            if(parameters.getShortBurst() instanceof EmbeddedEncryptionParameters encryptionParameters)
+            {
+                mEncryptedCallStateEstablished = true;
+                mEncryptedCall = true;
+
+                if(parameters.hasIv() && encryptionParameters.getAlgorithm() != EncryptionAlgorithm.UNKNOWN)
+                {
+                    return new VoiceEncryptionContext(VoiceEncryptionProtocol.DMR,
+                        encryptionParameters.getAlgorithm().getValue(), encryptionParameters.getKey(), parameters.getIv(),
+                        getTimeslot(), getIdentifierCollection());
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private boolean isVoiceSuperframeStart(VoiceMessage message)
+    {
+        DMRSyncPattern syncPattern = message.getSyncPattern();
+        return syncPattern == DMRSyncPattern.BASE_STATION_VOICE || syncPattern == DMRSyncPattern.MOBILE_STATION_VOICE ||
+            syncPattern == DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1 || syncPattern == DMRSyncPattern.DIRECT_VOICE_TIMESLOT_2;
     }
 
     /**

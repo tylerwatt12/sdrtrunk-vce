@@ -43,6 +43,8 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
 {
     private static final long serialVersionUID = 1L;
     private static final String TABLE_PREFERENCE_KEY = "message.activity.panel";
+    private static final int[] DEFAULT_COLUMN_WIDTHS = {151, 73, 76, 793};
+    private static final int[] MINIMUM_COLUMN_WIDTHS = {151, 73, 76, 100};
     private transient MessageActivityModel mMessageModel = new MessageActivityModel();
     private transient ProcessingChain mCurrentProcessingChain;
     private transient MessageHistory mCurrentMessageHistory;
@@ -65,7 +67,8 @@ public class MessageActivityPanel extends JPanel implements Listener<SelectedFre
         mTableRowSorter = new TableRowSorter<>(mMessageModel);
         mTableRowSorter.setRowFilter(new MessageRowFilter());
         mTable.setRowSorter(mTableRowSorter);
-        mTableColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY);
+        mTableColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY,
+            MINIMUM_COLUMN_WIDTHS, DEFAULT_COLUMN_WIDTHS, JTable.AUTO_RESIZE_LAST_COLUMN);
         setLayout(new MigLayout("insets 0 0 0 0", "[][grow,fill]", "[]0[grow,fill]"));
         mHistoryManagementPanel = new HistoryManagementPanel<>(mMessageModel, "Message Filter Editor");
         add(mHistoryManagementPanel, "span,growx");

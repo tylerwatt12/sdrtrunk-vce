@@ -22,7 +22,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
@@ -47,7 +46,6 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
     @JsonSubTypes.Type(value = DecodeConfigPassport.class, name = "decodeConfigPassport"),
     @JsonSubTypes.Type(value = DecodeConfigDMR.class, name = "decodeConfigDMR")
 })
-@JacksonXmlRootElement(localName = "decode_configuration")
 public abstract class DecodeConfiguration extends Configuration
 {
     public static final int DEFAULT_CALL_TIMEOUT_DELAY_SECONDS = 45;

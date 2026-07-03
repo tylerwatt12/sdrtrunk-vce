@@ -20,7 +20,6 @@
 
 package io.github.dsheirer.alias.action.script;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.action.AliasActionType;
 import io.github.dsheirer.alias.action.RecurringAction;
@@ -42,7 +41,6 @@ public class ScriptAction extends RecurringAction
         updateValueProperty();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasActionType getType()
     {

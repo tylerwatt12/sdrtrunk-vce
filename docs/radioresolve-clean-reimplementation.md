@@ -1,14 +1,20 @@
-# RadioResolve Clean Reimplementation Plan
+# RadioResolve Optimized Implementation Plan
 
-This document defines the RadioResolve and general workflow features that should be cleanly reimplemented in the
-`SDRTrunk-bazineta-no-sdrconnect` build. The goal is to preserve useful behavior while avoiding accidental migration of
-old branch clutter, debug-only code, or implementation shortcuts.
+This document tracks the remaining clean implementation work for `SDRTrunk RadioResolve Optimized`.
+The source tree is still named `SDRTrunk-bazineta-no-sdrconnect` because that describes the technical ancestry:
+bazineta optimized SDRTrunk with SDRconnect removed.
+
+The goal is no longer to port the old RadioResolve branch. The goal is to keep the useful behavior that has already
+been reimplemented, remove legacy/debug clutter, and keep the remaining code paths simple enough for one developer to
+reason about.
 
 ## Build Target
 
 Primary target:
 
-- `SDRTrunk-bazineta-no-sdrconnect`
+- `SDRTrunk RadioResolve Optimized`
+  - Source tree: `/Users/example/Documents/SDRTrunk-bazineta-no-sdrconnect`
+  - Release/build slug: `radioresolve-optimized`
 
 Secondary target when ready:
 
@@ -16,123 +22,158 @@ Secondary target when ready:
 
 Do not use this plan to modify stock builds.
 
-## Reimplementation Rules
+## Current Baseline
 
-- Treat this file as the product contract. Reuse old RadioResolve code only when it is still the cleanest way to satisfy
-  the contract.
-- Keep RadioResolve call upload behavior inside the standard SDRTrunk broadcast/streaming provider path.
-- Keep node services, RF telemetry, diagnostics, and local workflow helpers separate from the upstreamable streaming
-  provider.
-- Never log, print, screenshot, or document raw API keys.
-- Keep debug-only tools removable and clearly named as debug-only.
-- Prefer typed models over parsing strings from UI tables or activity summaries.
+These features are already present in the primary build and should not be treated as future work:
 
-## Feature Status
-
-| Feature | no-sdrconnect status | Reimplementation action |
-| --- | --- | --- |
-| Remove SDRconnect integration | Present | Keep |
-| P25P1 squeak/beep guard | Present | Keep |
-| Uncalibrated mixer scalar fallback | Present | Keep |
-| Now Playing activity tabs | Present, still being refined | Keep and stabilize |
-| Now Playing hang time/preferences | Present | Keep |
-| Advanced P25 protection display | Present | Keep and validate |
-| P25 UI/metadata hysteresis | Present | Shared stabilizer now feeds UI facts and RadioResolve metadata |
-| RadioResolve completed-call upload | Present | Validate with redirect-to-file before production upload |
-| RadioResolve stream editor/status | Present | Continue refining test/status UX |
-| Bulk alias stream assignment | Missing | Reimplement |
-| Stable RadioResolve GUID identity | Present | Validate clone/copy behavior |
-| RF telemetry upload | Present | Validate P25 site metadata schema with redirect-to-file |
-| Node check-ins/status | Missing | Reimplement |
-| RadioResolve doctor/clock checks | Missing | Reimplement |
-| Safe remote commands | Missing | Reimplement carefully |
-| Production call timing metadata | Partial | Current upload uses completed recording timing; grant/system-time enrichment remains future work |
-| Control-channel discovery persistence | Missing | Reevaluate before reimplementing |
-| Audio mute persistence | Missing or unverified | Verify, then reimplement if absent |
-| RadioResolve diagnostics hooks | Missing | Reimplement only where still useful |
-
-## Feature Contracts
-
-### 1. RadioResolve Completed-Call Upload
-
-Purpose:
-
-- Upload completed SDRTrunk MP3 call recordings to the RadioResolve receiver-call API.
-
-Inputs:
-
-- Enabled RadioResolve stream configuration.
-- Completed recording file path.
-- Recording metadata from SDRTrunk:
-  - start time
-  - end time or duration
-  - source radio ID and source alias
-  - target talkgroup/radio ID and target alias
-  - decoder/protocol
+- SDRconnect integration removed.
+- bazineta optimized SDRTrunk base retained.
+- P25P1 squeak/beep guard.
+- Uncalibrated complex mixer scalar fallback.
+- RadioResolve streaming provider.
+- RadioResolve stream editor with:
+  - server URL
+  - API key
+  - node name
+  - node timezone dropdown
+  - `Calls + Metadata` mode
+  - `Metadata Only` mode
+  - redirect-to-file debug mode
+- Completed-call upload to `POST /api/node/upload-call`.
+- Completed-call payload includes:
+  - call time and duration
+  - target and source IDs
+  - target type
   - frequency
-  - channel name
   - system/site labels when available
+  - RadioResolve GUID
   - P25 NAC when available
-  - RadioResolve GUID when available
-  - protection summary when available
-- Stream runtime settings:
-  - maximum recording age
-  - queue limit
-  - in-flight upload limit
-  - retry policy
+  - logical channel when available
+  - talkgroup label/group
+  - talker alias when available
+  - protection boolean, algorithm ID, and key ID when available
+  - node name/timezone
+  - agent version
+  - original filename
+- Persistent `radres_guid` stored on configured channels.
+- Editable RadioResolve GUID field in the channel editor.
+- Traffic channels inherit the parent/control channel GUID for call uploads.
+- RF/site metadata upload to `POST /api/node/rf-state`.
+- Repeated RF/site metadata upload acts as the node heartbeat.
+- RF metadata status tab for viewing known/sent site metadata.
+- Shared P25 fact stabilizer/hysteresis helper.
+- Now Playing activity tabs and table column persistence.
+- Advanced P25 protected status display.
+- P25 protection CSV debug logger preference.
+- Audio mute persistence.
+- Audio playback queued-call counter.
+- Maximum queued playback calls preference.
+- Learn announced control channels checkbox and persistence.
 
-Outputs:
+## Removed From Scope
 
-- Multipart HTTP request to `POST /api/node/upload-call`.
-- MP3 file streamed from disk, not loaded fully into memory.
-- Structured multipart fields for call metadata.
-- Stream status updates in the SDRTrunk UI.
-- Bounded retry queue.
-- Logs that identify failures without exposing API keys.
+These older ideas should not be implemented unless they are explicitly re-scoped later:
 
-Acceptance:
+- Separate RadioResolve node check-in endpoint from SDRTrunk.
+- Remote command polling through node check-in.
+- Safe remote commands inside SDRTrunk.
+- Doctor/clock check workflow inside SDRTrunk.
 
-- Successful upload returns accepted status from server.
-- Temporary failures retry.
-- Auth failures stop retry noise and show a credential/config problem.
-- Old recordings age out instead of growing an unbounded queue.
+Node liveness is represented by repeated `/api/node/rf-state` uploads from active, decoded site/control-channel
+metadata. If no control channel is being decoded for a GUID, SDRTrunk should not keep sending RF/site heartbeat updates
+for that GUID.
 
-### 2. RadioResolve Stream Configuration And Editor
+## Current RF Metadata Heartbeat
+
+The existing heartbeat path is:
+
+1. P25 decoder state builds a stabilized site metadata snapshot.
+2. The decoder posts a `SiteMetadataEvent` when the snapshot changes or every 5 seconds internally.
+3. `RadioResolveBroadcaster` dedupes by snapshot hash.
+4. The broadcaster uploads changed snapshots, or repeats an unchanged snapshot after 30 seconds per GUID.
+5. That repeated `/api/node/rf-state` upload is the RadioResolve heartbeat.
+
+This path is mostly implemented, but the source boundary still needs cleanup. Current code can still publish incomplete
+traffic-channel fragments and partial snapshots. That is the next important RF metadata fix.
+
+Source-boundary reference:
+
+- `docs/p25-control-vs-traffic-metadata.md`
+
+## Remaining Work
+
+### 1. RF/Site Metadata Source-Boundary Rewrite
 
 Purpose:
 
-- Let the user configure RadioResolve as a normal SDRTrunk stream provider.
+- Make RF/site metadata come from one clean owner: the started standard/control-channel processing path.
+- Keep traffic/voice channels responsible only for per-call metadata.
 
-Inputs:
+Required changes:
 
-- Stream name.
-- Enabled/disabled state.
-- Server URL.
-- API key.
-- Node name.
-- Node timezone.
-- Maximum recording age.
-- User action to test connection or refresh status.
-
-Outputs:
-
-- Playlist XML stream entry.
-- Runtime `RadioResolveConfiguration`.
-- UI test/status result:
-  - connection ok
-  - authenticated node identity when server returns it
-  - auth failure
-  - endpoint/network failure
-- No raw API key in logs or UI output.
-- Optional debug redirect writes call/site payload JSON files locally instead of uploading.
+- Prevent `ChannelType.TRAFFIC` channels from publishing `SiteMetadataEvent`.
+- Keep traffic-channel source, target, frequency, timeslot, talker alias, protection, and recording data in call upload.
+- Do not merge traffic-channel RF-like fragments into the stable site profile.
+- Keep control-channel patch group facts in RF/site metadata.
+- Do not allow neighbor-only, band-only, or partial identity snapshots to upload.
 
 Acceptance:
 
-- Configuration survives restart.
-- Existing SDRTrunk stream selection model can assign aliases to the stream.
-- Manual status refresh does not constantly poll the server.
+- Traffic voice calls no longer reset or pollute RF/site metadata.
+- RF/site metadata contains one coherent profile per GUID.
+- Call uploads still include voice-channel-specific data.
 
-### 3. Bulk Alias Stream Assignment
+### 2. RF Publish-Ready Gate
+
+Purpose:
+
+- Separate "useful internally" from "complete enough to upload to RadioResolve."
+
+Required fields before first upload:
+
+- Channel GUID.
+- WACN.
+- System ID.
+- RFSS.
+- Site ID.
+- At least one frequency band plan.
+- Resolved current/primary control-channel frequency.
+
+Behavior:
+
+- Initial facts may be learned quickly.
+- The first upload waits until the profile is publish-ready.
+- Later unchanged profiles are uploaded every 30 seconds as heartbeat while the control channel remains active.
+- If the current control channel is stale or missing, heartbeat upload stops.
+
+Acceptance:
+
+- RadioResolve does not receive partial site profiles as authoritative data.
+- The server can use `last_updated` on the GUID/site row as a stale marker.
+
+### 3. P25 Stabilizer Simplification
+
+Purpose:
+
+- Keep hysteresis in one place and make it easier to debug.
+
+Required changes:
+
+- Use the stabilizer only on facts from the correct source path.
+- Treat bootstrap and later changes differently:
+  - first coherent values appear quickly
+  - identity changes require repeated observations over time
+- Fix neighbor-site identity so unresolved and later-resolved frequencies update the same neighbor.
+- Neighbor-site keys should use system, RFSS, site, and channel descriptor, not resolved frequency.
+- Keep control, alternate control, traffic, and conventional row identities separate.
+
+Acceptance:
+
+- Bad decode bursts do not overwrite WACN, SysID, RFSS, Site, or control channels.
+- Neighbor sites do not duplicate because a frequency changed from `0` to a resolved value.
+- The stabilizer does not need traffic-channel fallback logic.
+
+### 4. Bulk Alias Stream Assignment
 
 Purpose:
 
@@ -144,47 +185,20 @@ Inputs:
 - Selected stream name from existing broadcast configurations.
 - Action:
   - apply selected stream
-  - clear all stream assignments
+  - clear stream assignments
 
 Outputs:
 
 - `BroadcastChannel` alias IDs added to selected aliases on apply.
 - Existing broadcast-channel IDs removed before applying a replacement stream.
-- All broadcast-channel IDs removed on clear.
-- Playlist marked dirty/updated through SDRTrunk's normal model events.
+- Broadcast-channel IDs removed on clear.
+- Configuration state marked dirty through SDRTrunk's normal model events.
 
 Acceptance:
 
 - User can multi-select talkgroups and set one stream without opening each alias.
 - The normal Streaming tab alias assignment still works.
-- This feature does not require RadioResolve-specific stream code; it should work for any SDRTrunk stream name.
-
-### 4. Stable RadioResolve RF Identity
-
-Purpose:
-
-- Give each configured RF source a stable identity that does not change when the user renames channels or sites.
-
-Inputs:
-
-- Configured channel creation/load.
-- Channel copy/clone.
-- Started processing chain.
-- P25 traffic channel creation from a parent control channel.
-
-Outputs:
-
-- Persistent `radres_guid` on configured channels.
-- Read-only GUID display in channel editor.
-- Traffic channels inherit the parent/control channel GUID.
-- Completed-call uploads include `radres_guid`.
-- RF telemetry includes `radresGuid`.
-
-Acceptance:
-
-- Existing channels missing a GUID get one automatically.
-- Cloned channels get a new GUID instead of duplicating the original.
-- Trunked calls identify the site/control source, not a temporary traffic-channel object.
+- The feature is generic and not RadioResolve-specific.
 
 ### 5. Production Call Timing Metadata
 
@@ -192,21 +206,24 @@ Purpose:
 
 - Improve call ordering, duplicate matching, and ingest timing.
 
-Inputs:
+Current state:
+
+- Completed-call upload uses SDRTrunk recording/call timing.
+- Grant/system-time enrichment is still future work.
+
+Desired inputs:
 
 - P25 control-channel grant receiver timestamp.
 - First audio buffer receiver timestamp.
 - Optional P25 system time sample and quality.
 - Recording start/end flow.
 
-Outputs:
+Desired outputs:
 
-- MP3 metadata/comment fields:
-  - `call_start_ms`
-  - `call_start_source`
-  - `p25_system_time_estimate_ms`
-  - `p25_system_time_quality`
-- Recording filename and ID3 date use the best receiver-local call start time.
+- `call_start_ms`
+- `call_start_source`
+- `p25_system_time_estimate_ms`
+- `p25_system_time_quality`
 
 Acceptance:
 
@@ -214,354 +231,82 @@ Acceptance:
 - P25 system time is informational only.
 - If grant timing is unavailable, first-audio-buffer timing is used as fallback.
 
-### 6. RF Telemetry Upload
+### 6. Now Playing And Detail Pane Cleanup
 
 Purpose:
 
-- Send structured decoded RF/system state to RadioResolve so the server can learn systems, sites, channels, bandplans,
-  neighbors, patches, and talker aliases.
+- Keep the operator UI readable and deterministic while preserving low resource usage.
 
-Inputs:
+Current state:
 
-- Active P25 control-channel processing chain.
-- Stable channel GUID.
-- Stabilized decoded P25 facts:
-  - WACN
-  - SysID
-  - RFSS
-  - Site
-  - NAC
-  - current control channel
-  - secondary control channels
-  - frequency bands/bandplan
-  - neighbor sites
-  - patch groups
-  - talker aliases
-- Enabled RadioResolve stream configuration and API key.
+- Activity tabs, RF metadata tab, selected-frequency behavior, column persistence, and protected status display exist.
+- Some behavior is still being refined.
 
-Outputs:
+Remaining goals:
 
-- JSON request to `POST /api/node/rf-state`.
-- Summary hash for dedupe.
-- Runtime upload status/logs.
-- Optional debug redirect writes the same payload shape locally for inspection before live upload.
+- Rows should not flicker under normal traffic.
+- Selected idle rows should not show stale data from another system/frequency.
+- Details, events, messages, channel, and RF metadata tabs should follow the selected activity context clearly.
+- Bottom/details panels should stay optional so they can be disabled for resource savings.
 
 Acceptance:
 
-- Telemetry is typed JSON, not parsed from UI strings.
-- Identical snapshots are deduped with a summary hash.
-- Slowly-changing RF facts are stabilized before upload.
-- Missing facts may be null; bad decode bursts should not overwrite stable identity.
-
-### 7. P25 RF Fact Stabilization
-
-Purpose:
-
-- Prevent decode errors from rapidly changing key system/site facts in UI or uploads.
-
-Inputs:
-
-- Raw decoded P25 network/status messages.
-- Current stable value.
-- Candidate value and observation count/time.
-
-Outputs:
-
-- Stable values for:
-  - WACN
-  - SysID
-  - RFSS
-  - Site
-  - current control channel
-  - alternate/secondary control channels
-- Rejected or delayed candidate values until they are plausible and repeated.
-
-Acceptance:
-
-- First known valid values appear quickly.
-- Later changes require confirmation.
-- Obviously impossible frequency/system facts are ignored.
-- UI and RF telemetry use the same stabilized source when practical.
-- Current implementation uses a shared P25 stabilizer for both UI-facing facts and RadioResolve metadata snapshots.
-
-### 8. RadioResolve Node Check-In
-
-Purpose:
-
-- Let SDRTrunk periodically tell RadioResolve that the receiver node is alive and what it can do.
-
-Inputs:
-
-- Enabled RadioResolve configuration.
-- Node name/timezone.
-- App version/build label.
-- Capabilities:
-  - call upload
-  - RF telemetry
-  - diagnostics
-  - remote commands enabled/disabled
-- Local clock information.
-
-Outputs:
-
-- JSON request to `POST /api/node/check-in`.
-- Last successful check-in time.
-- Last failed check-in time/message.
-- Optional server command list.
-
-Acceptance:
-
-- Runs on a bounded interval.
-- Does not run without an enabled RadioResolve stream.
-- Auth failures are visible but not noisy.
-
-### 9. RadioResolve Doctor And Clock Checks
-
-Purpose:
-
-- Give a quick health report for node-side integration problems.
-
-Inputs:
-
-- Active RadioResolve stream configuration.
-- Server URL.
-- API key presence.
-- RadioResolve endpoint health.
-- Auth test result.
-- Local clock offset check.
-
-Outputs:
-
-- Human-readable doctor summary.
-- Machine-usable command result when invoked by node service.
-- UI status text.
-
-Acceptance:
-
-- Checks endpoint reachability, auth, and clock sanity.
-- Does not expose secrets.
-- Can run manually from UI and optionally from a safe remote command.
-
-### 10. Safe Remote Commands
-
-Purpose:
-
-- Allow RadioResolve to ask SDRTrunk for safe status actions without giving it broad process control.
-
-Inputs:
-
-- Remote commands enabled preference.
-- Command list from node check-in response.
-- Supported command names.
-
-Outputs:
-
-- Command result JSON to `POST /api/node/command-result`.
-- Action results for safe commands only.
-
-Supported first-pass commands:
-
-- send check-in now
-- run doctor
-- check clock offset
-
-Explicitly not supported inside SDRTrunk:
-
-- reboot host
-- arbitrary shell command
-- arbitrary file read/write
-- playlist modification
-
-Acceptance:
-
-- Disabled by default unless we decide otherwise.
-- Unsupported commands return a clear unsupported result.
-- No command may expose API keys or local secrets.
-
-### 11. RadioResolve Diagnostics Hooks
-
-Purpose:
-
-- Keep targeted diagnostics available for receiver wedge/debug work without polluting normal release behavior.
-
-Inputs:
-
-- Command-line flags or system properties.
-- Optional trigger directory.
-- Runtime processing-chain state.
-- Tuner/control-channel rotation state.
-
-Outputs:
-
-- Processing diagnostic report.
-- Thread dump report.
-- Optional heartbeat file.
-- Extra rotation logs only when enabled.
-
-Acceptance:
-
-- Disabled unless explicitly enabled.
-- Clearly grouped under RadioResolve diagnostics code.
-- Easy to remove later.
-
-### 12. Control-Channel Discovery Persistence
-
-Purpose:
-
-- Optionally learn announced P25 control-channel frequencies and merge them into the configured source list.
-
-Inputs:
-
-- Decoded current and secondary control-channel messages.
-- Existing source frequency configuration.
-- User preference or channel setting enabling discovery.
-
-Outputs:
-
-- Updated multiple-frequency source configuration.
-- Bounded list of learned control frequencies.
-
-Acceptance:
-
-- Disabled by default unless user enables it.
-- Does not feed Now Playing table state directly.
-- Does not add impossible/out-of-range values without validation.
-
-Open question:
-
-- Reevaluate whether this is still needed after the no-sdrconnect activity tabs and RF telemetry are stable.
-
-### 13. Audio Mute Persistence
-
-Purpose:
-
-- Remember the user's audio mute state across restarts.
-
-Inputs:
-
-- Audio output mute toggle.
-- User preferences storage.
-
-Outputs:
-
-- Persisted mute preference.
-- Audio output starts muted/unmuted according to preference.
-
-Acceptance:
-
-- No audio leaks when user expects muted startup.
-- Preference applies to the active audio output manager, not only the UI button.
-
-### 14. Now Playing Activity View
-
-Purpose:
-
-- Provide a stable, readable activity view for conventional channels and P25 trunked sites.
-
-Inputs:
-
-- Started channel events.
-- Channel metadata updates.
-- P25 control-channel facts.
-- P25 traffic grants.
-- P25 protection identifiers.
-- User preferences:
-  - retain idle call details
-  - advanced P25 protection status
-  - traffic idle hang milliseconds
-
-Outputs:
-
-- One Conventional tab for non-trunked channels.
-- One tab per started trunked site/channel instance.
-- Rows sorted by frequency and timeslot.
-- Current control and alternate control color coding.
-- Idle/call/protected status.
-- Optional advanced protection display.
-- Selection event for lower detail panes.
-
-Acceptance:
-
-- Rows do not flicker under normal traffic.
-- Active calls appear immediately.
-- Idle transition is delayed per row by hang time.
-- Selection behavior is predictable for idle and active rows.
-
-### 15. Messages/Events/Details Selection Behavior
-
-Purpose:
-
-- Make the lower detail panes follow user selection in a predictable way.
-
-Inputs:
-
-- Selected activity row.
-- Processing chain associated with the row, if active.
-- Talkgroup/context key.
-- Same-talkgroup continuation versus new-talkgroup selection.
-
-Outputs:
-
-- Messages/events/details for the selected active channel when available.
-- Clear or disabled/empty state when selected idle row has no active processing chain.
-- Messages persist through the same talkgroup and clear on a new talkgroup.
-
-Acceptance:
-
+- Clicking a row gives predictable data for that row or a clear unavailable/blank state.
 - Voice traffic does not cause rapid clearing/reverting.
-- Idle row selection does not silently show stale data from a different row.
 
-### 16. P25 protection Visibility And Debugging
+### 7. Temporary Debug Cleanup
 
 Purpose:
 
-- Make protected call behavior visible enough to validate Alg/Key information.
+- Keep debug tools removable and avoid shipping accidental diagnostics in normal release builds.
 
-Inputs:
+Current debug pieces:
 
-- P25 protection identifiers from HDU/LDU/ESS/PTT/control events.
-- Talkgroup and radio identifiers.
-- Activity row state.
-- User preference for advanced protection display.
+- P25 RF metadata debug harness.
+- P25 protection CSV debug logger option.
+- RF metadata status/debug tab.
 
-Outputs:
+Required cleanup:
 
-- Sticky protected status for the current call.
-- Condensed Alg/Key display when enabled.
-- Temporary debug CSV/log with talkgroup, radio, algorithm, key ID, and event source.
+- Remove the P25 RF metadata debug harness after RF thresholds/source-boundary behavior is proven.
+- Keep the protection CSV logger as a user preference only if it remains useful.
+- Keep the RF metadata status tab only if it remains low-cost and operator-useful.
 
 Acceptance:
 
-- Brief decode gaps do not flip protected calls back to plain call status.
-- Debug logging is removable for release builds.
+- Normal release builds do not create large debug files or network debug services.
+- Debug-only code is easy to find and remove.
 
-## Out Of Scope For Clean Reimplementation
+## Out Of Scope
 
 - Copying old branch code that only supports one debug incident and has no current product contract.
 - Parsing UI text as the source of truth for uploads or telemetry.
 - Creating new stock-build deviations.
-- Server database migrations, except where documented separately for coordination.
+- Separate server database migrations, except where documented separately for RadioResolve coordination.
 - Headless web UI replacement work, except to keep APIs/models clean enough to reuse later.
+- RAM-only recording cache work; track that separately in `docs/ram-recording-cache-design-notes.md`.
 
 ## Suggested Implementation Order
 
-1. Commit current no-sdrconnect UI/debug work into a known baseline.
-2. Add bulk alias stream assignment, because it is small and immediately useful.
-3. Reimplement RadioResolve stream configuration and completed-call upload.
-4. Add production call timing metadata.
-5. Add stable `radres_guid` identity.
-6. Add RF telemetry using stabilized P25 facts.
-7. Add node check-ins, doctor, clock checks, and safe remote commands.
-8. Reevaluate control-channel discovery persistence.
-9. Cleanly separate temporary debug code from release code.
+1. Commit or otherwise preserve the current working baseline.
+2. Rewrite RF/site metadata ownership so only standard/control-channel paths publish site metadata.
+3. Add the RF publish-ready gate and stop heartbeat sends when control decode is stale/missing.
+4. Simplify stabilizer keys and remove traffic-chain fallback behavior.
+5. Remove the temporary P25 RF metadata debug harness after validation.
+6. Add bulk alias stream assignment.
+7. Add production call timing metadata.
+8. Finish Now Playing/detail-pane cleanup as needed.
 
 ## Validation Checklist
 
 - Build compiles without SDRconnect classes.
 - Existing SDRTrunk stream types still work.
-- RadioResolve upload tests cover success, retry, auth failure, and queue limits.
-- Alias bulk stream assignment works for multiple selected talkgroups.
-- Recordings contain expected timing fields.
+- RadioResolve call upload succeeds, retries temporary failures, and handles auth failures clearly.
+- Redirect-to-file writes the same call/site payload shape that live upload would send.
 - Calls include stable GUID when available.
-- RF telemetry does not change stable WACN/SysID/RFSS/Site because of one bad decode.
+- RF/site metadata does not upload until publish-ready.
+- RF/site metadata heartbeat repeats every 30 seconds only while the control channel is actively decoded.
+- RF/site metadata does not change stable WACN/SysID/RFSS/Site because of one bad decode.
+- Traffic-channel RF-like fragments do not alter the stable site profile.
+- Alias bulk stream assignment works for multiple selected talkgroups.
 - No final logs, screenshots, docs, or test fixtures contain real API keys.

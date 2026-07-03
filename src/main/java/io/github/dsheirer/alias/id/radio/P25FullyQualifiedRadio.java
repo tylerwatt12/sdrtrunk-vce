@@ -20,7 +20,6 @@
 package io.github.dsheirer.alias.id.radio;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
 
@@ -34,7 +33,7 @@ public class P25FullyQualifiedRadio extends Radio
 
     public P25FullyQualifiedRadio()
     {
-        //No-arg JAXB constructor
+        //No-arg deserialization constructor
     }
 
     /**
@@ -60,7 +59,6 @@ public class P25FullyQualifiedRadio extends Radio
      * WACN for this radio
      * @return wacn
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "wacn")
     public int getWacn()
     {
         return mWacn;
@@ -79,7 +77,6 @@ public class P25FullyQualifiedRadio extends Radio
      * System for this radio
      * @return system
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "system")
     public int getSystem()
     {
         return mSystem;

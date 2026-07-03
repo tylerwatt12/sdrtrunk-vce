@@ -22,7 +22,7 @@
 
 package io.github.dsheirer.preference.radioreference;
 
-import io.github.dsheirer.gui.playlist.radioreference.Level;
+import io.github.dsheirer.gui.configuration.radioreference.Level;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.rrapi.type.AuthorizationInformation;

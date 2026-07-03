@@ -29,7 +29,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastState;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
-import io.github.dsheirer.gui.playlist.radioreference.RadioReferenceDecoder;
+import io.github.dsheirer.gui.configuration.radioreference.RadioReferenceDecoder;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;

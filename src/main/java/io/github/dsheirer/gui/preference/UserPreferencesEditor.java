@@ -20,7 +20,7 @@
 package io.github.dsheirer.gui.preference;
 
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
+import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.EnumMap;
 import java.util.Map;
@@ -243,9 +243,9 @@ public class UserPreferencesEditor extends BorderPane
             mMenuBar.getMenus().add(fileMenu);
 
             Menu viewMenu = new Menu("View");
-            MenuItem playlistEditorItem = new MenuItem("Playlist Editor");
-            playlistEditorItem.setOnAction(event -> MyEventBus.getGlobalEventBus().post(new ViewPlaylistRequest()));
-            viewMenu.getItems().add(playlistEditorItem);
+            MenuItem configurationEditorItem = new MenuItem("Configuration Editor");
+            configurationEditorItem.setOnAction(event -> MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
+            viewMenu.getItems().add(configurationEditorItem);
             mMenuBar.getMenus().add(viewMenu);
         }
 

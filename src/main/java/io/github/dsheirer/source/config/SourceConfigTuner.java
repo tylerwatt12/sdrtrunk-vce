@@ -23,7 +23,6 @@ package io.github.dsheirer.source.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 
@@ -48,7 +47,6 @@ public class SourceConfigTuner extends SourceConfiguration
         mFrequency = tunerChannel.getFrequency();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "frequency")
     public long getFrequency()
     {
         return mFrequency;
@@ -63,7 +61,6 @@ public class SourceConfigTuner extends SourceConfiguration
      * Preferred tuner to use for this configuration.
      * @return tuner name or null
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "preferred_tuner")
     public String getPreferredTuner()
     {
         return mPreferredTuner;

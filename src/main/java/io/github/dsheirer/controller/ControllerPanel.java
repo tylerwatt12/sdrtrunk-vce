@@ -25,7 +25,7 @@ import io.github.dsheirer.channel.metadata.NowPlayingPanel;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
 import io.github.dsheirer.map.MapService;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -46,16 +46,16 @@ public class ControllerPanel extends JPanel
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
 
-    public ControllerPanel(PlaylistManager playlistManager, AudioPlaybackManager audioPlaybackManager,
+    public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
                            TunerManager tunerManager, UserPreferences userPreferences, boolean detailTabsVisible,
                            Consumer<Boolean> detailTabsVisibilityListener)
     {
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
-            playlistManager.getAliasModel());
-        mNowPlayingPanel = new NowPlayingPanel(playlistManager, iconModel, userPreferences, settingsManager,
+            configurationManager.getAliasModel());
+        mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
             detailTabsVisible, detailTabsVisibilityListener);
-        mMapPanel = new MapPanel(mapService, playlistManager.getAliasModel(), iconModel, settingsManager);
+        mMapPanel = new MapPanel(mapService, configurationManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
 
         init();

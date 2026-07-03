@@ -20,6 +20,7 @@
 package io.github.dsheirer.monitor;
 
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -211,7 +212,7 @@ public class DiagnosticMonitor
         sb.append("\n Application Root: " + mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
         sb.append("\n Application Log:  " + mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog());
         sb.append("\n Event Log:        " + mUserPreferences.getDirectoryPreference().getDirectoryEventLog());
-        sb.append("\n Playlist:         " + mUserPreferences.getDirectoryPreference().getDirectoryPlaylist());
+        sb.append("\n Database:         " + SdrTrunkDatabasePath.getDatabasePath(mUserPreferences));
         sb.append("\n Recordings:       " + mUserPreferences.getDirectoryPreference().getDirectoryRecording());
         sb.append("\n");
         return sb.toString();

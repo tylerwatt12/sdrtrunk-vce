@@ -20,7 +20,6 @@
 package io.github.dsheirer.alias.action;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.util.ThreadPool;
@@ -110,7 +109,6 @@ public abstract class RecurringAction extends AliasAction
         }
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "period")
     public int getPeriod()
     {
         return mPeriod;
@@ -122,7 +120,6 @@ public abstract class RecurringAction extends AliasAction
         updateValueProperty();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "interval")
     public Interval getInterval()
     {
         return mInterval;

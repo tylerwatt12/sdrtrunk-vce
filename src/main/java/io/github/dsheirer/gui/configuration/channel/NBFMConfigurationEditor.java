@@ -1,0 +1,827 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2014-2025 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.gui.configuration.channel;
+
+import io.github.dsheirer.gui.control.HexFormatter;
+import io.github.dsheirer.gui.control.IntegerFormatter;
+import io.github.dsheirer.gui.configuration.decoder.AuxDecoderConfigurationEditor;
+import io.github.dsheirer.gui.configuration.eventlog.EventLogConfigurationEditor;
+import io.github.dsheirer.gui.configuration.source.FrequencyEditor;
+import io.github.dsheirer.gui.configuration.source.SourceConfigurationEditor;
+import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
+import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.log.EventLogType;
+import io.github.dsheirer.module.log.config.EventLogConfiguration;
+import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.identifier.IntegerFormat;
+import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.record.RecorderType;
+import io.github.dsheirer.record.config.RecordConfiguration;
+import io.github.dsheirer.source.config.SourceConfiguration;
+import io.github.dsheirer.source.tuner.manager.TunerManager;
+import java.util.ArrayList;
+import java.util.List;
+import javafx.beans.value.ChangeListener;
+import javafx.beans.value.ObservableValue;
+import javafx.collections.ListChangeListener;
+import javafx.geometry.HPos;
+import javafx.geometry.Insets;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.SpinnerValueFactory;
+import javafx.scene.control.TextField;
+import javafx.scene.control.TextFormatter;
+import javafx.scene.control.TitledPane;
+import javafx.scene.control.Toggle;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.GridPane;
+import javafx.scene.text.TextAlignment;
+import org.controlsfx.control.SegmentedButton;
+import org.controlsfx.control.ToggleSwitch;
+
+/**
+ * Narrow-Band FM channel configuration editor
+ */
+public class NBFMConfigurationEditor extends ChannelConfigurationEditor
+{
+    private TitledPane mAuxDecoderPane;
+    private TitledPane mDecoderPane;
+    private TitledPane mEventLogPane;
+    private TitledPane mRecordPane;
+    private TitledPane mSourcePane;
+    private TextField mTalkgroupField;
+    private ToggleSwitch mAudioFilterEnable;
+    private ComboBox<DecodeConfigNBFM.DeemphasisMode> mDeemphasisModeComboBox;
+    private ToggleSwitch mSquelchTailRemovalEnable;
+    private Spinner<Integer> mTailRemovalSpinner;
+    private Spinner<Integer> mHeadRemovalSpinner;
+    private ToggleSwitch mLowPassEnable;
+    private Spinner<Integer> mLowPassCutoffSpinner;
+    private Spinner<Integer> mVoiceEnhanceAmountSpinner;
+    private Spinner<Double> mBassBoostSpinner;
+    private Spinner<Double> mOutputGainSpinner;
+    private TextFormatter<Integer> mTalkgroupTextFormatter;
+    private ToggleSwitch mBasebandRecordSwitch;
+    private SegmentedButton mBandwidthButton;
+
+    private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
+    private AuxDecoderConfigurationEditor mAuxDecoderConfigurationEditor;
+    private EventLogConfigurationEditor mEventLogConfigurationEditor;
+    private final TalkgroupValueChangeListener mTalkgroupValueChangeListener = new TalkgroupValueChangeListener();
+    private final IntegerFormatter mDecimalFormatter = new IntegerFormatter(1, 65535);
+
+    /**
+     * Constructs an instance
+     * @param configurationManager for configuration data
+     * @param tunerManager for tuners
+     * @param userPreferences for preferences
+     */
+    public NBFMConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
+                                   UserPreferences userPreferences, IFilterProcessor filterProcessor)
+    {
+        super(configurationManager, tunerManager, userPreferences, filterProcessor);
+        getTitledPanesBox().getChildren().add(getSourcePane());
+        getTitledPanesBox().getChildren().add(getDecoderPane());
+        getTitledPanesBox().getChildren().add(getAuxDecoderPane());
+        getTitledPanesBox().getChildren().add(getEventLogPane());
+        getTitledPanesBox().getChildren().add(getRecordPane());
+    }
+
+    @Override
+    public DecoderType getDecoderType()
+    {
+        return DecoderType.NBFM;
+    }
+
+    private TitledPane getSourcePane()
+    {
+        if(mSourcePane == null)
+        {
+            mSourcePane = new TitledPane("Source", getSourceConfigurationEditor());
+            mSourcePane.setExpanded(true);
+        }
+
+        return mSourcePane;
+    }
+
+    private TitledPane getDecoderPane()
+    {
+        if(mDecoderPane == null)
+        {
+            mDecoderPane = new TitledPane();
+            mDecoderPane.setText("Decoder: NBFM");
+            mDecoderPane.setExpanded(true);
+
+            GridPane gridPane = new GridPane();
+            gridPane.setPadding(new Insets(10,10,10,10));
+            gridPane.setHgap(10);
+            gridPane.setVgap(10);
+
+            Label bandwidthLabel = new Label("Channel Bandwidth");
+            GridPane.setHalignment(bandwidthLabel, HPos.RIGHT);
+            GridPane.setConstraints(bandwidthLabel, 0, 0);
+            gridPane.getChildren().add(bandwidthLabel);
+
+            GridPane.setConstraints(getBandwidthButton(), 1, 0);
+            gridPane.getChildren().add(getBandwidthButton());
+
+            Label talkgroupLabel = new Label("Talkgroup To Assign");
+            GridPane.setHalignment(talkgroupLabel, HPos.RIGHT);
+            GridPane.setConstraints(talkgroupLabel, 0, 1);
+            gridPane.getChildren().add(talkgroupLabel);
+
+            GridPane.setConstraints(getTalkgroupField(), 1, 1);
+            gridPane.getChildren().add(getTalkgroupField());
+
+            Label deemphasisLabel = new Label("De-Emphasis");
+            GridPane.setHalignment(deemphasisLabel, HPos.RIGHT);
+            GridPane.setConstraints(deemphasisLabel, 0, 2);
+            gridPane.getChildren().add(deemphasisLabel);
+
+            GridPane.setConstraints(getDeemphasisModeComboBox(), 1, 2);
+            gridPane.getChildren().add(getDeemphasisModeComboBox());
+
+            Label outputGainLabel = new Label("Output Gain");
+            GridPane.setHalignment(outputGainLabel, HPos.RIGHT);
+            GridPane.setConstraints(outputGainLabel, 0, 3);
+            gridPane.getChildren().add(outputGainLabel);
+
+            GridPane.setConstraints(getOutputGainSpinner(), 1, 3);
+            gridPane.getChildren().add(getOutputGainSpinner());
+
+            Label audioFilterLabel = new Label("High-Pass Filter");
+            GridPane.setHalignment(audioFilterLabel, HPos.RIGHT);
+            GridPane.setConstraints(audioFilterLabel, 2, 0);
+            gridPane.getChildren().add(audioFilterLabel);
+
+            GridPane.setConstraints(getAudioFilterEnable(), 3, 0);
+            gridPane.getChildren().add(getAudioFilterEnable());
+
+            Label lowPassFilterLabel = new Label("Low-Pass Filter");
+            GridPane.setHalignment(lowPassFilterLabel, HPos.RIGHT);
+            GridPane.setConstraints(lowPassFilterLabel, 2, 1);
+            gridPane.getChildren().add(lowPassFilterLabel);
+
+            GridPane.setConstraints(getLowPassEnable(), 3, 1);
+            gridPane.getChildren().add(getLowPassEnable());
+
+            Label lowPassCutoffLabel = new Label("LP Cutoff (Hz)");
+            GridPane.setHalignment(lowPassCutoffLabel, HPos.RIGHT);
+            GridPane.setConstraints(lowPassCutoffLabel, 2, 2);
+            gridPane.getChildren().add(lowPassCutoffLabel);
+
+            GridPane.setConstraints(getLowPassCutoffSpinner(), 3, 2);
+            gridPane.getChildren().add(getLowPassCutoffSpinner());
+
+            Label voiceEnhanceAmountLabel = new Label("Voice Enhance (%)");
+            GridPane.setHalignment(voiceEnhanceAmountLabel, HPos.RIGHT);
+            GridPane.setConstraints(voiceEnhanceAmountLabel, 2, 3);
+            gridPane.getChildren().add(voiceEnhanceAmountLabel);
+
+            GridPane.setConstraints(getVoiceEnhanceAmountSpinner(), 3, 3);
+            gridPane.getChildren().add(getVoiceEnhanceAmountSpinner());
+
+            Label squelchTrimLabel = new Label("Squelch Trim");
+            GridPane.setHalignment(squelchTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(squelchTrimLabel, 4, 0);
+            gridPane.getChildren().add(squelchTrimLabel);
+
+            GridPane.setConstraints(getSquelchTailRemovalEnable(), 5, 0);
+            gridPane.getChildren().add(getSquelchTailRemovalEnable());
+
+            Label tailTrimLabel = new Label("Tail Trim (ms)");
+            GridPane.setHalignment(tailTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(tailTrimLabel, 4, 1);
+            gridPane.getChildren().add(tailTrimLabel);
+
+            GridPane.setConstraints(getTailRemovalSpinner(), 5, 1);
+            gridPane.getChildren().add(getTailRemovalSpinner());
+
+            Label headTrimLabel = new Label("Head Trim (ms)");
+            GridPane.setHalignment(headTrimLabel, HPos.RIGHT);
+            GridPane.setConstraints(headTrimLabel, 4, 2);
+            gridPane.getChildren().add(headTrimLabel);
+
+            GridPane.setConstraints(getHeadRemovalSpinner(), 5, 2);
+            gridPane.getChildren().add(getHeadRemovalSpinner());
+
+            Label bassBoostLabel = new Label("Bass Boost (dB)");
+            GridPane.setHalignment(bassBoostLabel, HPos.RIGHT);
+            GridPane.setConstraints(bassBoostLabel, 4, 3);
+            gridPane.getChildren().add(bassBoostLabel);
+
+            GridPane.setConstraints(getBassBoostSpinner(), 5, 3);
+            gridPane.getChildren().add(getBassBoostSpinner());
+
+            mDecoderPane.setContent(gridPane);
+
+            //Special handling - the pill button doesn't like to set a selected state if the pane is not expanded,
+            //so detect when the pane is expanded and refresh the config view
+            mDecoderPane.expandedProperty().addListener((observable, oldValue, newValue) -> {
+                if(newValue)
+                {
+                    //Reset the config so the editor gets updated
+                    setDecoderConfiguration(getItem().getDecodeConfiguration());
+                }
+            });
+        }
+
+        return mDecoderPane;
+    }
+
+    private TitledPane getEventLogPane()
+    {
+        if(mEventLogPane == null)
+        {
+            mEventLogPane = new TitledPane("Logging", getEventLogConfigurationEditor());
+            mEventLogPane.setExpanded(false);
+        }
+
+        return mEventLogPane;
+    }
+
+    private TitledPane getAuxDecoderPane()
+    {
+        if(mAuxDecoderPane == null)
+        {
+            mAuxDecoderPane = new TitledPane("Additional Decoders", getAuxDecoderConfigurationEditor());
+            mAuxDecoderPane.setExpanded(false);
+        }
+
+        return mAuxDecoderPane;
+    }
+
+    private TitledPane getRecordPane()
+    {
+        if(mRecordPane == null)
+        {
+            mRecordPane = new TitledPane();
+            mRecordPane.setText("Recording");
+            mRecordPane.setExpanded(false);
+
+            GridPane gridPane = new GridPane();
+            gridPane.setPadding(new Insets(10,10,10,10));
+            gridPane.setHgap(10);
+            gridPane.setVgap(10);
+
+            GridPane.setConstraints(getBasebandRecordSwitch(), 0, 0);
+            gridPane.getChildren().add(getBasebandRecordSwitch());
+
+            Label recordBasebandLabel = new Label("Channel (Baseband I&Q)");
+            GridPane.setHalignment(recordBasebandLabel, HPos.LEFT);
+            GridPane.setConstraints(recordBasebandLabel, 1, 0);
+            gridPane.getChildren().add(recordBasebandLabel);
+
+            mRecordPane.setContent(gridPane);
+        }
+
+        return mRecordPane;
+    }
+
+    private SourceConfigurationEditor<SourceConfiguration> getSourceConfigurationEditor()
+    {
+        if(mSourceConfigurationEditor == null)
+        {
+            mSourceConfigurationEditor = new FrequencyEditor(mTunerManager);
+
+            //Add a listener so that we can push change notifications up to this editor
+            mSourceConfigurationEditor.modifiedProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mSourceConfigurationEditor;
+    }
+
+    private EventLogConfigurationEditor getEventLogConfigurationEditor()
+    {
+        if(mEventLogConfigurationEditor == null)
+        {
+            List<EventLogType> types = new ArrayList<>();
+            types.add(EventLogType.CALL_EVENT);
+            types.add(EventLogType.DECODED_MESSAGE);
+
+            mEventLogConfigurationEditor = new EventLogConfigurationEditor(types);
+            mEventLogConfigurationEditor.setPadding(new Insets(5,5,5,5));
+            mEventLogConfigurationEditor.modifiedProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mEventLogConfigurationEditor;
+    }
+
+    private AuxDecoderConfigurationEditor getAuxDecoderConfigurationEditor()
+    {
+        if(mAuxDecoderConfigurationEditor == null)
+        {
+            mAuxDecoderConfigurationEditor = new AuxDecoderConfigurationEditor(DecoderType.AUX_DECODERS);
+            mAuxDecoderConfigurationEditor.setPadding(new Insets(5,5,5,5));
+            mAuxDecoderConfigurationEditor.modifiedProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mAuxDecoderConfigurationEditor;
+    }
+
+    /**
+     * Toggle switch for enable/disable the audio filtering in the audio module.
+     * @return toggle switch.
+     */
+    private ToggleSwitch getAudioFilterEnable()
+    {
+        if(mAudioFilterEnable == null)
+        {
+            mAudioFilterEnable = new ToggleSwitch();
+            mAudioFilterEnable.setTooltip(new Tooltip("High-pass filter to remove DC offset and sub-audible signalling"));
+            mAudioFilterEnable.selectedProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mAudioFilterEnable;
+    }
+
+    private SegmentedButton getBandwidthButton()
+    {
+        if(mBandwidthButton == null)
+        {
+            mBandwidthButton = new SegmentedButton();
+            mBandwidthButton.getStyleClass().add(SegmentedButton.STYLE_CLASS_DARK);
+            mBandwidthButton.setDisable(true);
+
+            for(DecodeConfigNBFM.Bandwidth bandwidth : DecodeConfigNBFM.Bandwidth.FM_BANDWIDTHS)
+            {
+                ToggleButton toggleButton = new ToggleButton(bandwidth.toString());
+                toggleButton.setUserData(bandwidth);
+                mBandwidthButton.getButtons().add(toggleButton);
+            }
+
+            mBandwidthButton.getToggleGroup().selectedToggleProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+
+            //Note: there is a weird timing bug with the segmented button where the toggles are not added to
+            //the toggle group until well after the control is rendered.  We attempt to setItem() on the
+            //decode configuration and we're unable to correctly set the bandwidth setting.  As a work
+            //around, we'll listen for the toggles to be added and update them here.  This normally only
+            //happens when we first instantiate the editor and load an item for editing the first time.
+            mBandwidthButton.getToggleGroup().getToggles().addListener((ListChangeListener<Toggle>)c ->
+            {
+                //This change event happens when the toggles are added -- we don't need to inspect the change event
+                if(getItem() != null && getItem().getDecodeConfiguration() instanceof DecodeConfigNBFM)
+                {
+                    //Capture current modified state so that we can reapply after adjusting control states
+                    boolean modified = modifiedProperty().get();
+
+                    DecodeConfigNBFM config = (DecodeConfigNBFM)getItem().getDecodeConfiguration();
+                    DecodeConfigNBFM.Bandwidth bandwidth = config.getBandwidth();
+                    if(bandwidth == null)
+                    {
+                        bandwidth = DecodeConfigNBFM.Bandwidth.BW_12_5;
+                    }
+
+                    for(Toggle toggle: getBandwidthButton().getToggleGroup().getToggles())
+                    {
+                        toggle.setSelected(toggle.getUserData() == bandwidth);
+                    }
+
+                    modifiedProperty().set(modified);
+                }
+            });
+        }
+
+        return mBandwidthButton;
+    }
+
+    private ComboBox<DecodeConfigNBFM.DeemphasisMode> getDeemphasisModeComboBox()
+    {
+        if(mDeemphasisModeComboBox == null)
+        {
+            mDeemphasisModeComboBox = new ComboBox<>();
+            mDeemphasisModeComboBox.getItems().addAll(DecodeConfigNBFM.DeemphasisMode.values());
+            mDeemphasisModeComboBox.getSelectionModel().select(DecodeConfigNBFM.DeemphasisMode.NONE);
+            mDeemphasisModeComboBox.valueProperty()
+                    .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mDeemphasisModeComboBox;
+    }
+
+    private ToggleSwitch getSquelchTailRemovalEnable()
+    {
+        if(mSquelchTailRemovalEnable == null)
+        {
+            mSquelchTailRemovalEnable = new ToggleSwitch();
+            mSquelchTailRemovalEnable.setTooltip(new Tooltip("Trim start/end audio around squelch transitions"));
+            mSquelchTailRemovalEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
+                getTailRemovalSpinner().setDisable(!newValue);
+                getHeadRemovalSpinner().setDisable(!newValue);
+                modifiedProperty().set(true);
+            });
+        }
+
+        return mSquelchTailRemovalEnable;
+    }
+
+    private Spinner<Integer> getTailRemovalSpinner()
+    {
+        if(mTailRemovalSpinner == null)
+        {
+            mTailRemovalSpinner = new Spinner<>();
+            mTailRemovalSpinner.setPrefWidth(100);
+            mTailRemovalSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mTailRemovalSpinner.setTooltip(new Tooltip("Milliseconds to trim from end of transmission"));
+            mTailRemovalSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                    SquelchTailRemover.MINIMUM_REMOVAL_MS, SquelchTailRemover.MAXIMUM_TAIL_REMOVAL_MS,
+                    SquelchTailRemover.DEFAULT_TAIL_REMOVAL_MS, 10));
+            mTailRemovalSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mTailRemovalSpinner;
+    }
+
+    private Spinner<Integer> getHeadRemovalSpinner()
+    {
+        if(mHeadRemovalSpinner == null)
+        {
+            mHeadRemovalSpinner = new Spinner<>();
+            mHeadRemovalSpinner.setPrefWidth(100);
+            mHeadRemovalSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mHeadRemovalSpinner.setTooltip(new Tooltip("Milliseconds to trim from start of transmission"));
+            mHeadRemovalSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                    SquelchTailRemover.MINIMUM_REMOVAL_MS, SquelchTailRemover.MAXIMUM_HEAD_REMOVAL_MS,
+                    SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS, 10));
+            mHeadRemovalSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mHeadRemovalSpinner;
+    }
+
+    private ToggleSwitch getLowPassEnable()
+    {
+        if(mLowPassEnable == null)
+        {
+            mLowPassEnable = new ToggleSwitch();
+            mLowPassEnable.setTooltip(new Tooltip("Reduce high-frequency hiss in NBFM audio"));
+            mLowPassEnable.selectedProperty().addListener((observable, oldValue, newValue) -> {
+                getLowPassCutoffSpinner().setDisable(!newValue);
+                modifiedProperty().set(true);
+            });
+        }
+
+        return mLowPassEnable;
+    }
+
+    private Spinner<Integer> getLowPassCutoffSpinner()
+    {
+        if(mLowPassCutoffSpinner == null)
+        {
+            mLowPassCutoffSpinner = new Spinner<>();
+            mLowPassCutoffSpinner.setPrefWidth(100);
+            mLowPassCutoffSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mLowPassCutoffSpinner.setTooltip(new Tooltip("Low-pass cutoff frequency in Hz"));
+            mLowPassCutoffSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(2000, 4000, 3400,
+                    100));
+            mLowPassCutoffSpinner.valueProperty().addListener((observable, oldValue, newValue) ->
+                    modifiedProperty().set(true));
+        }
+
+        return mLowPassCutoffSpinner;
+    }
+
+    private Spinner<Integer> getVoiceEnhanceAmountSpinner()
+    {
+        if(mVoiceEnhanceAmountSpinner == null)
+        {
+            mVoiceEnhanceAmountSpinner = new Spinner<>();
+            mVoiceEnhanceAmountSpinner.setPrefWidth(100);
+            mVoiceEnhanceAmountSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mVoiceEnhanceAmountSpinner.setTooltip(new Tooltip("Presence boost amount as a percentage of maximum"));
+            mVoiceEnhanceAmountSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 100, 30,
+                    5));
+            mVoiceEnhanceAmountSpinner.valueProperty().addListener((observable, oldValue, newValue) ->
+                    modifiedProperty().set(true));
+        }
+
+        return mVoiceEnhanceAmountSpinner;
+    }
+
+    private Spinner<Double> getBassBoostSpinner()
+    {
+        if(mBassBoostSpinner == null)
+        {
+            mBassBoostSpinner = new Spinner<>();
+            mBassBoostSpinner.setPrefWidth(100);
+            mBassBoostSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mBassBoostSpinner.setTooltip(new Tooltip("Bass boost in dB"));
+            mBassBoostSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(0.0, 12.0, 0.0, 0.5));
+            mBassBoostSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mBassBoostSpinner;
+    }
+
+    private Spinner<Double> getOutputGainSpinner()
+    {
+        if(mOutputGainSpinner == null)
+        {
+            mOutputGainSpinner = new Spinner<>();
+            mOutputGainSpinner.setPrefWidth(100);
+            mOutputGainSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            mOutputGainSpinner.setTooltip(new Tooltip("Final audio gain multiplier"));
+            mOutputGainSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(0.25, 4.0, 1.0, 0.05));
+            mOutputGainSpinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mOutputGainSpinner;
+    }
+
+    private TextField getTalkgroupField()
+    {
+        if(mTalkgroupField == null)
+        {
+            mTalkgroupField = new TextField();
+            mTalkgroupField.setTextFormatter(mTalkgroupTextFormatter);
+        }
+
+        return mTalkgroupField;
+    }
+
+    /**
+     * Updates the talkgroup editor's text formatter.
+     * @param value to set in the control.
+     */
+    private void updateTextFormatter(int value)
+    {
+        if(mTalkgroupTextFormatter != null)
+        {
+            mTalkgroupTextFormatter.valueProperty().removeListener(mTalkgroupValueChangeListener);
+        }
+
+        IntegerFormat format = mUserPreferences.getTalkgroupFormatPreference().getTalkgroupFormat(Protocol.NBFM);
+
+        if(format == null)
+        {
+            format = IntegerFormat.DECIMAL;
+        }
+
+        if(format == IntegerFormat.DECIMAL)
+        {
+            mTalkgroupTextFormatter = mDecimalFormatter;
+            getTalkgroupField().setTooltip(new Tooltip("1 - 65,535"));
+        }
+        else
+        {
+            mTalkgroupTextFormatter = mDecimalFormatter;
+            getTalkgroupField().setTooltip(new Tooltip("1 - FFFF"));
+        }
+
+        mTalkgroupTextFormatter.setValue(value);
+
+        getTalkgroupField().setTextFormatter(mTalkgroupTextFormatter);
+        mTalkgroupTextFormatter.valueProperty().addListener(mTalkgroupValueChangeListener);
+    }
+
+    /**
+     * Change listener to detect when talkgroup value has changed and set modified property to true.
+     */
+    public class TalkgroupValueChangeListener implements ChangeListener<Integer>
+    {
+        @Override
+        public void changed(ObservableValue<? extends Integer> observable, Integer oldValue, Integer newValue)
+        {
+            modifiedProperty().set(true);
+        }
+    }
+
+
+    private ToggleSwitch getBasebandRecordSwitch()
+    {
+        if(mBasebandRecordSwitch == null)
+        {
+            mBasebandRecordSwitch = new ToggleSwitch();
+            mBasebandRecordSwitch.setDisable(true);
+            mBasebandRecordSwitch.setTextAlignment(TextAlignment.RIGHT);
+            mBasebandRecordSwitch.selectedProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mBasebandRecordSwitch;
+    }
+
+    @Override
+    protected void setDecoderConfiguration(DecodeConfiguration config)
+    {
+        if(config instanceof DecodeConfigNBFM)
+        {
+            getBandwidthButton().setDisable(false);
+            DecodeConfigNBFM decodeConfigNBFM = (DecodeConfigNBFM)config;
+            final DecodeConfigNBFM.Bandwidth bandwidth = (decodeConfigNBFM.getBandwidth() != null ?
+                    decodeConfigNBFM.getBandwidth() : DecodeConfigNBFM.Bandwidth.BW_12_5);
+
+            for(Toggle toggle: getBandwidthButton().getToggleGroup().getToggles())
+            {
+                toggle.setSelected(toggle.getUserData() == bandwidth);
+            }
+
+            updateTextFormatter(decodeConfigNBFM.getTalkgroup());
+            getAudioFilterEnable().setDisable(false);
+            getAudioFilterEnable().setSelected(decodeConfigNBFM.isAudioFilter());
+            getDeemphasisModeComboBox().setDisable(false);
+            getDeemphasisModeComboBox().getSelectionModel().select(decodeConfigNBFM.getDeemphasis());
+            getSquelchTailRemovalEnable().setDisable(false);
+            getSquelchTailRemovalEnable().setSelected(decodeConfigNBFM.isSquelchTailRemovalEnabled());
+            getTailRemovalSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchTailRemovalMs());
+            getHeadRemovalSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchHeadRemovalMs());
+            getTailRemovalSpinner().setDisable(!decodeConfigNBFM.isSquelchTailRemovalEnabled());
+            getHeadRemovalSpinner().setDisable(!decodeConfigNBFM.isSquelchTailRemovalEnabled());
+            getLowPassEnable().setDisable(false);
+            getLowPassEnable().setSelected(decodeConfigNBFM.isLowPassEnabled());
+            getLowPassCutoffSpinner().getValueFactory().setValue(decodeConfigNBFM.getLowPassCutoff());
+            getLowPassCutoffSpinner().setDisable(!decodeConfigNBFM.isLowPassEnabled());
+            getVoiceEnhanceAmountSpinner().setDisable(false);
+            getVoiceEnhanceAmountSpinner().getValueFactory().setValue((int)decodeConfigNBFM.getVoiceEnhanceAmount());
+            getBassBoostSpinner().setDisable(false);
+            getBassBoostSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getBassBoostDb());
+            getOutputGainSpinner().setDisable(false);
+            getOutputGainSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getOutputGain());
+        }
+        else
+        {
+            getBandwidthButton().setDisable(true);
+
+            for(Toggle toggle: getBandwidthButton().getToggleGroup().getToggles())
+            {
+                toggle.setSelected(false);
+            }
+
+            updateTextFormatter(0);
+            getTalkgroupField().setDisable(true);
+            getAudioFilterEnable().setDisable(true);
+            getAudioFilterEnable().setSelected(false);
+            getDeemphasisModeComboBox().setDisable(true);
+            getDeemphasisModeComboBox().getSelectionModel().select(DecodeConfigNBFM.DeemphasisMode.NONE);
+            getSquelchTailRemovalEnable().setDisable(true);
+            getSquelchTailRemovalEnable().setSelected(false);
+            getTailRemovalSpinner().setDisable(true);
+            getHeadRemovalSpinner().setDisable(true);
+            getTailRemovalSpinner().getValueFactory().setValue(SquelchTailRemover.DEFAULT_TAIL_REMOVAL_MS);
+            getHeadRemovalSpinner().getValueFactory().setValue(SquelchTailRemover.DEFAULT_HEAD_REMOVAL_MS);
+            getLowPassEnable().setDisable(true);
+            getLowPassEnable().setSelected(false);
+            getLowPassCutoffSpinner().setDisable(true);
+            getLowPassCutoffSpinner().getValueFactory().setValue(3400);
+            getVoiceEnhanceAmountSpinner().setDisable(true);
+            getVoiceEnhanceAmountSpinner().getValueFactory().setValue(30);
+            getBassBoostSpinner().setDisable(true);
+            getBassBoostSpinner().getValueFactory().setValue(0.0);
+            getOutputGainSpinner().setDisable(true);
+            getOutputGainSpinner().getValueFactory().setValue(1.0);
+        }
+    }
+
+    @Override
+    protected void saveDecoderConfiguration()
+    {
+        DecodeConfigNBFM config;
+
+        if(getItem().getDecodeConfiguration() instanceof DecodeConfigNBFM)
+        {
+            config = (DecodeConfigNBFM)getItem().getDecodeConfiguration();
+        }
+        else
+        {
+            config = new DecodeConfigNBFM();
+        }
+
+        DecodeConfigNBFM.Bandwidth bandwidth = DecodeConfigNBFM.Bandwidth.BW_12_5;
+
+        if(getBandwidthButton().getToggleGroup().getSelectedToggle() != null)
+        {
+            bandwidth = (DecodeConfigNBFM.Bandwidth)getBandwidthButton().getToggleGroup().getSelectedToggle().getUserData();
+        }
+
+        config.setBandwidth(bandwidth);
+
+        Integer talkgroup = mTalkgroupTextFormatter.getValue();
+
+        if(talkgroup == null)
+        {
+            talkgroup = 1;
+        }
+
+        config.setTalkgroup(talkgroup);
+        config.setAudioFilter(getAudioFilterEnable().isSelected());
+        config.setDeemphasis(getDeemphasisModeComboBox().getSelectionModel().getSelectedItem());
+        config.setSquelchTailRemovalEnabled(getSquelchTailRemovalEnable().isSelected());
+        config.setSquelchTailRemovalMs(getTailRemovalSpinner().getValue());
+        config.setSquelchHeadRemovalMs(getHeadRemovalSpinner().getValue());
+        config.setLowPassEnabled(getLowPassEnable().isSelected());
+        config.setLowPassCutoff(getLowPassCutoffSpinner().getValue());
+        config.setVoiceEnhanceAmount(getVoiceEnhanceAmountSpinner().getValue());
+        config.setBassBoostDb(getBassBoostSpinner().getValue().floatValue());
+        config.setOutputGain(getOutputGainSpinner().getValue().floatValue());
+        getItem().setDecodeConfiguration(config);
+    }
+
+    @Override
+    protected void setEventLogConfiguration(EventLogConfiguration config)
+    {
+        getEventLogConfigurationEditor().setItem(config);
+    }
+
+    @Override
+    protected void saveEventLogConfiguration()
+    {
+        getEventLogConfigurationEditor().save();
+
+        if(getEventLogConfigurationEditor().getItem().getLoggers().isEmpty())
+        {
+            getItem().setEventLogConfiguration(null);
+        }
+        else
+        {
+            getItem().setEventLogConfiguration(getEventLogConfigurationEditor().getItem());
+        }
+    }
+
+    @Override
+    protected void setAuxDecoderConfiguration(AuxDecodeConfiguration config)
+    {
+        getAuxDecoderConfigurationEditor().setItem(config);
+    }
+
+    @Override
+    protected void saveAuxDecoderConfiguration()
+    {
+        getAuxDecoderConfigurationEditor().save();
+
+        if(getAuxDecoderConfigurationEditor().getItem().getAuxDecoders().isEmpty())
+        {
+            getItem().setAuxDecodeConfiguration(null);
+        }
+        else
+        {
+            getItem().setAuxDecodeConfiguration(getAuxDecoderConfigurationEditor().getItem());
+        }
+    }
+
+    @Override
+    protected void setRecordConfiguration(RecordConfiguration config)
+    {
+        if(config != null)
+        {
+            getBasebandRecordSwitch().setDisable(false);
+            getBasebandRecordSwitch().selectedProperty().set(config.contains(RecorderType.BASEBAND));
+        }
+        else
+        {
+            getBasebandRecordSwitch().selectedProperty().set(false);
+            getBasebandRecordSwitch().setDisable(true);
+        }
+    }
+
+    @Override
+    protected void saveRecordConfiguration()
+    {
+        RecordConfiguration config = new RecordConfiguration();
+
+        if(getBasebandRecordSwitch().selectedProperty().get())
+        {
+            config.addRecorder(RecorderType.BASEBAND);
+        }
+
+        getItem().setRecordConfiguration(config);
+    }
+
+    @Override
+    protected void setSourceConfiguration(SourceConfiguration config)
+    {
+        getSourceConfigurationEditor().setSourceConfiguration(config);
+    }
+
+    @Override
+    protected void saveSourceConfiguration()
+    {
+        getSourceConfigurationEditor().save();
+        SourceConfiguration sourceConfiguration = getSourceConfigurationEditor().getSourceConfiguration();
+        getItem().setSourceConfiguration(sourceConfiguration);
+    }
+}

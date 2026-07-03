@@ -21,15 +21,12 @@ package io.github.dsheirer.audio.broadcast;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.audio.broadcast.openmhz.OpenMHzConfiguration;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastConfiguration;
 import io.github.dsheirer.audio.broadcast.shoutcast.v1.ShoutcastV1Configuration;
-import io.github.dsheirer.audio.broadcast.shoutcast.v2.ShoutcastV2Configuration;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
@@ -53,9 +50,7 @@ import java.net.SocketAddress;
     @JsonSubTypes.Type(value = OpenMHzConfiguration.class, name="OpenMHzConfiguration"),
     @JsonSubTypes.Type(value = IcecastConfiguration.class, name="icecastConfiguration"),
     @JsonSubTypes.Type(value = ShoutcastV1Configuration.class, name="shoutcastV1Configuration"),
-    @JsonSubTypes.Type(value = ShoutcastV2Configuration.class, name="shoutcastV2Configuration"),
 })
-@JacksonXmlRootElement(localName = "stream")
 public abstract class BroadcastConfiguration
 {
     // Static unique channel identifier tracking
@@ -166,7 +161,6 @@ public abstract class BroadcastConfiguration
     /**
      * Broadcast server type
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public abstract BroadcastServerType getBroadcastServerType();
 
     @SuppressWarnings("java:S1172")
@@ -178,7 +172,6 @@ public abstract class BroadcastConfiguration
     /**
      * Name identifying this broadcastAudio configuration.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "name")
     public String getName()
     {
         return mName.get();
@@ -205,7 +198,6 @@ public abstract class BroadcastConfiguration
     /**
      * BROADCAST server host name.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "host")
     public String getHost()
     {
         return mHost.get();
@@ -232,7 +224,6 @@ public abstract class BroadcastConfiguration
     /**
      * BROADCAST server port number;
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "port")
     public int getPort()
     {
         return mPort.get();
@@ -265,7 +256,6 @@ public abstract class BroadcastConfiguration
     /**
      * Password to authenticate with the streaming server.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "password")
     public String getPassword()
     {
         return mPassword.get();
@@ -292,7 +282,6 @@ public abstract class BroadcastConfiguration
     /**
      * Audio broadcastAudio content type (e.g. mp3)
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "format")
     public BroadcastFormat getBroadcastFormat()
     {
         return mBroadcastFormat;
@@ -306,7 +295,6 @@ public abstract class BroadcastConfiguration
     /**
      * Audio broadcastAudio delay from recording start until the audio file is broadcastAudio to the server.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "delay")
     public long getDelay()
     {
         return mDelay.get();
@@ -326,7 +314,6 @@ public abstract class BroadcastConfiguration
      * queue awaiting streaming before it is purged from the queue.  This value is in addition to the delay setting.
      * @return age in milliseconds
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "maximum_recording_age")
     public long getMaximumRecordingAge()
     {
         return mMaximumRecordingAge.get();
@@ -345,7 +332,6 @@ public abstract class BroadcastConfiguration
     /**
      * Indicates if this broadcaster is enable, meaning that it will automatically connect on startup.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "enabled")
     public boolean isEnabled()
     {
         return mEnabled.get();

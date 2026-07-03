@@ -17,7 +17,6 @@
  ******************************************************************************/
 package io.github.dsheirer.alias.id.legacy.uniqueID;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -31,7 +30,6 @@ public class UniqueID extends AliasID
         return false;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "uid")
     public int getUid()
     {
         return mUid;
@@ -68,7 +66,6 @@ public class UniqueID extends AliasID
         return retVal;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {

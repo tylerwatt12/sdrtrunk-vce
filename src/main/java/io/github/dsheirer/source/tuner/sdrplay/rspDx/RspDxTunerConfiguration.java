@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rspDx;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.HdrModeBandwidth;
@@ -47,7 +46,7 @@ public class RspDxTunerConfiguration extends RspTunerConfiguration
     }
 
     /**
-     * JAXB constructor
+     * Deserialization constructor
      */
     public RspDxTunerConfiguration()
     {
@@ -63,7 +62,6 @@ public class RspDxTunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if HDR mode is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "hdr_mode")
     public boolean isHdrMode()
     {
         return mHdrMode;
@@ -80,7 +78,6 @@ public class RspDxTunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if RF notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "rf_notch")
     public boolean isRfNotch()
     {
         return mRfNotch;
@@ -97,7 +94,6 @@ public class RspDxTunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if RF Digital Audio Broadcast (DAB) notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "dab_notch")
     public boolean isRfDabNotch()
     {
         return mRfDabNotch;
@@ -114,7 +110,6 @@ public class RspDxTunerConfiguration extends RspTunerConfiguration
     /**
      * Indicates if Bias-T is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bias_t")
     public boolean isBiasT()
     {
         return mBiasT;
@@ -131,7 +126,6 @@ public class RspDxTunerConfiguration extends RspTunerConfiguration
     /**
      * Antenna setting
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "antenna")
     public RspDxAntenna getAntenna()
     {
         return mAntenna;
@@ -148,7 +142,6 @@ public class RspDxTunerConfiguration extends RspTunerConfiguration
     /**
      * HDR mode bandwidth setting.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "hdr_mode_bandwidth")
     public HdrModeBandwidth getHdrModeBandwidth()
     {
         return mHdrModeBandwidth;

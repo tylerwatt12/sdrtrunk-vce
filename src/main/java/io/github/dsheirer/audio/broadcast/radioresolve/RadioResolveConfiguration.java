@@ -11,14 +11,12 @@
 
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import java.net.InetAddress;
 import java.time.ZoneId;
 import javafx.beans.binding.Bindings;
-import javafx.beans.binding.BooleanBinding;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -37,7 +35,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
     private StringProperty mNodeName = new SimpleStringProperty(getDefaultNodeName());
     private StringProperty mNodeTimezone = new SimpleStringProperty(getDefaultNodeTimezone());
     private BooleanProperty mIgnoreCertificateErrors = new SimpleBooleanProperty(false);
-    private BooleanProperty mRedirectToFile = new SimpleBooleanProperty(false);
     private ObjectProperty<Mode> mMode = new SimpleObjectProperty<>(Mode.CALLS_AND_METADATA);
 
     /**
@@ -82,9 +79,8 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
             setHost(PRODUCTION_ENDPOINT);
         }
 
-        BooleanBinding hasApiKeyOrFileRedirect = Bindings.or(Bindings.isNotEmpty(mApiKey), mRedirectToFile);
         mValid.unbind();
-        mValid.bind(Bindings.and(Bindings.isNotEmpty(mHost), hasApiKeyOrFileRedirect));
+        mValid.bind(Bindings.and(Bindings.isNotEmpty(mHost), Bindings.isNotEmpty(mApiKey)));
     }
 
     public StringProperty apiKeyProperty()
@@ -107,11 +103,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return mIgnoreCertificateErrors;
     }
 
-    public BooleanProperty redirectToFileProperty()
-    {
-        return mRedirectToFile;
-    }
-
     public ObjectProperty<Mode> modeProperty()
     {
         return mMode;
@@ -123,7 +114,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         super.setHost(normalizeHost(host));
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "api_key")
     public String getApiKey()
     {
         return mApiKey.get();
@@ -134,7 +124,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         mApiKey.set(apiKey);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "node_name")
     public String getNodeName()
     {
         return mNodeName.get();
@@ -145,7 +134,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         mNodeName.set(nodeName);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "node_timezone")
     public String getNodeTimezone()
     {
         return mNodeTimezone.get();
@@ -156,7 +144,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         mNodeTimezone.set(nodeTimezone);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "ignore_certificate_errors")
     public boolean getIgnoreCertificateErrors()
     {
         return mIgnoreCertificateErrors.get();
@@ -172,23 +159,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         mIgnoreCertificateErrors.set(ignore);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "redirect_to_file")
-    public boolean getRedirectToFile()
-    {
-        return mRedirectToFile.get();
-    }
-
-    public boolean isRedirectToFile()
-    {
-        return getRedirectToFile();
-    }
-
-    public void setRedirectToFile(boolean redirectToFile)
-    {
-        mRedirectToFile.set(redirectToFile);
-    }
-
-    @JacksonXmlProperty(isAttribute = true, localName = "publish_mode")
     public Mode getMode()
     {
         return mMode.get();
@@ -204,7 +174,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return getMode() == Mode.CALLS_AND_METADATA;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public BroadcastServerType getBroadcastServerType()
     {
@@ -221,7 +190,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         copy.setNodeName(getNodeName());
         copy.setNodeTimezone(getNodeTimezone());
         copy.setIgnoreCertificateErrors(getIgnoreCertificateErrors());
-        copy.setRedirectToFile(getRedirectToFile());
         copy.setMode(getMode());
         copy.setMaximumRecordingAge(getMaximumRecordingAge());
         copy.setEnabled(isEnabled());

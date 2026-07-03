@@ -24,7 +24,8 @@ import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastState;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
-import io.github.dsheirer.gui.playlist.radioreference.RadioReferenceDecoder;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.configuration.radioreference.RadioReferenceDecoder;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -39,7 +40,6 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
-import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.util.ThreadPool;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -82,7 +82,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public static final String TEST_PATH = "/api/node/test";
     public static final String AGENT_VERSION = "sdrtrunk-radioresolve";
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
-    private static final int MAX_QUEUED_RECORDINGS = 500;
     private static final int MAX_IN_FLIGHT_UPLOADS = 4;
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
     private static final long MISSING_GUID_WARNING_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
@@ -115,19 +114,10 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public void start()
     {
         mRunning = true;
-
-        if(getBroadcastConfiguration().isRedirectToFile())
-        {
-            mServerReachable = true;
-            setBroadcastState(BroadcastState.CONNECTED);
-        }
-        else
-        {
-            setBroadcastState(BroadcastState.CONNECTING);
-            mServerReachable = testConnection(getBroadcastConfiguration());
-            setBroadcastState(mServerReachable ? BroadcastState.CONNECTED : BroadcastState.ERROR);
-            mLastConnectionAttempt = System.currentTimeMillis();
-        }
+        setBroadcastState(BroadcastState.CONNECTING);
+        mServerReachable = testConnection(getBroadcastConfiguration());
+        setBroadcastState(mServerReachable ? BroadcastState.CONNECTED : BroadcastState.ERROR);
+        mLastConnectionAttempt = System.currentTimeMillis();
 
         if(mAudioRecordingProcessorFuture == null)
         {
@@ -198,7 +188,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         synchronized(mQueueLock)
         {
             mAudioRecordingQueue.offer(new PendingUpload(audioRecording));
-            ageOffOverflowRecordings();
         }
 
         broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
@@ -222,12 +211,27 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         P25NetworkConfigurationSnapshot snapshot = event.snapshot();
         String hash = hash(snapshot);
         long now = System.currentTimeMillis();
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(guid, snapshot);
+        publishMetadataStatus(event, hash, now, RadioResolveMetadataStatusEvent.Stage.KNOWN, null, null, null);
+
+        if(!readiness.ready())
+        {
+            return;
+        }
+
+        if(!connected())
+        {
+            return;
+        }
 
         synchronized(mMetadataStateByGuid)
         {
             MetadataState state = mMetadataStateByGuid.computeIfAbsent(guid, ignored -> new MetadataState());
+            boolean changed = !hash.equals(state.mLastSuccessfulHash);
+            boolean heartbeatDue = now - state.mLastSuccessfulEpochMilliseconds >=
+                METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS;
 
-            if(hash.equals(state.mLastSuccessfulHash))
+            if(!changed && !heartbeatDue)
             {
                 return;
             }
@@ -248,14 +252,9 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         try
         {
             JsonObject payload = createSiteMetadataPayload(event, hash, getBroadcastConfiguration(), observedAt);
-
-            if(getBroadcastConfiguration().isRedirectToFile())
-            {
-                writeDebugPayload("site", event.channel().getRadresGuid(), payload);
-                markMetadataSent(event.channel().getRadresGuid(), hash);
-                setBroadcastState(BroadcastState.CONNECTED);
-                return;
-            }
+            int payloadBytes = payload.toString().getBytes(StandardCharsets.UTF_8).length;
+            publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.ATTEMPT, null,
+                payloadBytes, null);
 
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(createUri(getBroadcastConfiguration().getHost(), RF_STATE_PATH))
@@ -270,43 +269,78 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             if(response.statusCode() >= 200 && response.statusCode() < 300)
             {
-                markMetadataSent(event.channel().getRadresGuid(), hash);
+                markMetadataSent(event.channel().getRadresGuid(), hash, observedAt);
                 setBroadcastState(BroadcastState.CONNECTED);
+                publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.SUCCESS,
+                    response.statusCode(), payloadBytes, "Accepted");
             }
             else if(response.statusCode() == 401 || response.statusCode() == 403)
             {
                 setBroadcastState(BroadcastState.INVALID_CREDENTIALS);
                 mLog.warn("RadioResolve site metadata rejected: invalid API key or access denied");
+                publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.REJECTED,
+                    response.statusCode(), payloadBytes, "Invalid API key or access denied");
             }
             else
             {
                 setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
                 mLog.warn("RadioResolve site metadata rejected: HTTP {}", response.statusCode());
+                publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.REJECTED,
+                    response.statusCode(), payloadBytes, responseBodySummary(response.body()));
             }
         }
         catch(Exception e)
         {
             setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
             mLog.warn("RadioResolve site metadata failed: {}", safeMessage(e));
+            publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.FAILED, null, null,
+                safeMessage(e));
         }
     }
 
-    private void markMetadataSent(String guid, String hash)
+    private void publishMetadataStatus(SiteMetadataEvent event, String hash, long timestamp,
+                                       RadioResolveMetadataStatusEvent.Stage stage, Integer httpStatus,
+                                       Integer payloadBytes, String resultMessage)
+    {
+        if(event == null)
+        {
+            return;
+        }
+
+        P25NetworkConfigurationSnapshot snapshot = event.snapshot();
+        RadioResolveMetadataReadiness readiness =
+            RadioResolveMetadataReadiness.evaluate(event.channel().getRadresGuid(), snapshot);
+
+        MyEventBus.getGlobalEventBus().post(new RadioResolveMetadataStatusEvent(stage, timestamp,
+            event.channel().getRadresGuid(), event.channel().getName(), event.channel().getAliasListName(),
+            getNodeName(getBroadcastConfiguration()), getNodeTimezone(getBroadcastConfiguration()),
+            getBroadcastConfiguration().getHost(), snapshot, hash, readiness.ready(), readiness.message(),
+            httpStatus, payloadBytes, resultMessage));
+    }
+
+    private static String responseBodySummary(String body)
+    {
+        if(body == null || body.isBlank())
+        {
+            return "";
+        }
+
+        String singleLine = body.replace('\n', ' ').replace('\r', ' ').trim();
+        return singleLine.length() > 180 ? singleLine.substring(0, 180) : singleLine;
+    }
+
+    private void markMetadataSent(String guid, String hash, long observedAt)
     {
         synchronized(mMetadataStateByGuid)
         {
             MetadataState state = mMetadataStateByGuid.computeIfAbsent(guid, ignored -> new MetadataState());
             state.mLastSuccessfulHash = hash;
+            state.mLastSuccessfulEpochMilliseconds = observedAt;
         }
     }
 
     private boolean connected()
     {
-        if(getBroadcastConfiguration().isRedirectToFile())
-        {
-            return true;
-        }
-
         if(getBroadcastState() == BroadcastState.INVALID_CREDENTIALS)
         {
             return false;
@@ -358,26 +392,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             if(!isValid(audioRecording) || audioRecording.getRecordingLength() <= 0)
             {
                 audioRecording.removePendingReplay();
-                continue;
-            }
-
-            if(getBroadcastConfiguration().isRedirectToFile())
-            {
-                try
-                {
-                    writeDebugPayload("call", guid, createCallPayload(getBroadcastConfiguration(), audioRecording,
-                        mAliasModel));
-                    incrementStreamedAudioCount();
-                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
-                    audioRecording.removePendingReplay();
-                }
-                catch(Exception e)
-                {
-                    incrementErrorAudioCount();
-                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-                    retryOrRemove(pendingUpload, safeMessage(e));
-                }
-
                 continue;
             }
 
@@ -533,7 +547,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             synchronized(mQueueLock)
             {
                 mAudioRecordingQueue.offer(pendingUpload);
-                ageOffOverflowRecordings();
             }
 
             broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
@@ -581,21 +594,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         {
             broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
             broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
-        }
-    }
-
-    private void ageOffOverflowRecordings()
-    {
-        while(mAudioRecordingQueue.size() > MAX_QUEUED_RECORDINGS)
-        {
-            PendingUpload pendingUpload = mAudioRecordingQueue.poll();
-
-            if(pendingUpload != null)
-            {
-                pendingUpload.getAudioRecording().removePendingReplay();
-                incrementAgedOffAudioCount();
-                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
-            }
         }
     }
 
@@ -949,20 +947,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         return timezone != null && !timezone.isBlank() ? timezone : RadioResolveConfiguration.getDefaultNodeTimezone();
     }
 
-    private void writeDebugPayload(String kind, String guid, JsonObject payload) throws IOException
-    {
-        Path folder = SystemProperties.getInstance().getApplicationFolder("radioresolve-debug");
-        Files.createDirectories(folder);
-        String filename = String.format(Locale.US, "radioresolve-%s-%d-%s.json", kind, System.currentTimeMillis(),
-            sanitize(guid));
-        Files.writeString(folder.resolve(filename), GSON.toJson(payload), StandardCharsets.UTF_8);
-    }
-
-    private static String sanitize(String value)
-    {
-        return value != null ? value.replaceAll("[^A-Za-z0-9._-]", "_") : "unknown";
-    }
-
     private static String hash(P25NetworkConfigurationSnapshot snapshot)
     {
         try
@@ -1115,6 +1099,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     private static class MetadataState
     {
         private String mLastSuccessfulHash;
+        private long mLastSuccessfulEpochMilliseconds;
         private long mLastAttemptEpochMilliseconds;
     }
 

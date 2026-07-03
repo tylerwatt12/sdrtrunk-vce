@@ -20,7 +20,6 @@
 package io.github.dsheirer.identifier.tone;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.google.common.base.Joiner;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -71,7 +70,6 @@ public class ToneSequence
     /**
      * List of tones
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "tone")
     public List<Tone> getTones()
     {
         return mTones;

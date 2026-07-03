@@ -19,7 +19,6 @@
 package io.github.dsheirer.source.tuner.fcd.proplusV2;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 
@@ -29,7 +28,7 @@ public class FCD2TunerConfiguration extends TunerConfiguration
     private boolean mGainMixer = true;
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     public FCD2TunerConfiguration()
     {
@@ -48,7 +47,6 @@ public class FCD2TunerConfiguration extends TunerConfiguration
         super(uniqueID);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_gain")
     public boolean getGainLNA()
     {
         return mGainLNA;
@@ -59,7 +57,6 @@ public class FCD2TunerConfiguration extends TunerConfiguration
         mGainLNA = gain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "mixer_gain")
     public boolean getGainMixer()
     {
         return mGainMixer;

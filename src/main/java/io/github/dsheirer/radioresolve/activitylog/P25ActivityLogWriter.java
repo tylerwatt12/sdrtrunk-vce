@@ -1,0 +1,440 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.radioresolve.activitylog;
+
+import io.github.dsheirer.controller.NamingThreadFactory;
+import io.github.dsheirer.database.SdrTrunkDatabase;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Single background SQLite writer for P25 activity logging.
+ */
+class P25ActivityLogWriter implements AutoCloseable
+{
+    private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogWriter.class);
+    private static final int DEFAULT_QUEUE_CAPACITY = 10000;
+    private static final int BATCH_SIZE = 250;
+    private static final long POLL_TIMEOUT_MILLISECONDS = 1000;
+    private static final long DATABASE_BUSY_RETRY_MILLISECONDS = 500;
+    private static final long RETENTION_CLEANUP_INTERVAL_MILLISECONDS = TimeUnit.HOURS.toMillis(1);
+
+    private final Path mDatabasePath;
+    private final ArrayBlockingQueue<P25ActivityLogRecord> mQueue;
+    private final AtomicBoolean mRunning = new AtomicBoolean();
+    private final AtomicLong mDroppedRecords = new AtomicLong();
+    private final AtomicLong mWrittenRecords = new AtomicLong();
+    private ExecutorService mExecutorService;
+    private volatile int mRetentionDays;
+    private volatile boolean mActivityLoggingEnabled;
+    private volatile boolean mSiteStatisticsLoggingEnabled;
+    private volatile boolean mStatusLoggingEnabled;
+    private volatile long mLastRetentionCleanup;
+
+    P25ActivityLogWriter(Path databasePath, int retentionDays)
+    {
+        this(databasePath, retentionDays, true, true, true, DEFAULT_QUEUE_CAPACITY);
+    }
+
+    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean activityLoggingEnabled,
+                         boolean siteStatisticsLoggingEnabled, boolean statusLoggingEnabled)
+    {
+        this(databasePath, retentionDays, activityLoggingEnabled, siteStatisticsLoggingEnabled, statusLoggingEnabled,
+            DEFAULT_QUEUE_CAPACITY);
+    }
+
+    P25ActivityLogWriter(Path databasePath, int retentionDays, int queueCapacity)
+    {
+        this(databasePath, retentionDays, true, true, true, queueCapacity);
+    }
+
+    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean activityLoggingEnabled,
+                         boolean siteStatisticsLoggingEnabled, boolean statusLoggingEnabled, int queueCapacity)
+    {
+        mDatabasePath = databasePath;
+        mQueue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
+        setOptions(retentionDays, activityLoggingEnabled, siteStatisticsLoggingEnabled, statusLoggingEnabled);
+    }
+
+    void start()
+    {
+        if(mRunning.compareAndSet(false, true))
+        {
+            mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory("p25 activity log writer"));
+            mExecutorService.execute(this::run);
+        }
+    }
+
+    void setOptions(int retentionDays, boolean activityLoggingEnabled, boolean siteStatisticsLoggingEnabled,
+                    boolean statusLoggingEnabled)
+    {
+        mRetentionDays = Math.max(1, retentionDays);
+        mActivityLoggingEnabled = activityLoggingEnabled;
+        mSiteStatisticsLoggingEnabled = siteStatisticsLoggingEnabled;
+        mStatusLoggingEnabled = statusLoggingEnabled;
+    }
+
+    boolean isActivityLoggingEnabled()
+    {
+        return mActivityLoggingEnabled;
+    }
+
+    boolean isSiteStatisticsLoggingEnabled()
+    {
+        return mSiteStatisticsLoggingEnabled;
+    }
+
+    void enqueue(P25ActivityLogRecord record)
+    {
+        if(record == null || !mRunning.get() || !isRecordTypeEnabled(record))
+        {
+            return;
+        }
+
+        if(!mQueue.offer(record))
+        {
+            mQueue.poll();
+            mDroppedRecords.incrementAndGet();
+
+            if(!mQueue.offer(record))
+            {
+                mDroppedRecords.incrementAndGet();
+            }
+        }
+    }
+
+    long getDroppedRecords()
+    {
+        return mDroppedRecords.get();
+    }
+
+    long getWrittenRecords()
+    {
+        return mWrittenRecords.get();
+    }
+
+    Path getDatabasePath()
+    {
+        return mDatabasePath;
+    }
+
+    @Override
+    public void close()
+    {
+        mRunning.set(false);
+
+        if(mExecutorService != null)
+        {
+            mExecutorService.shutdown();
+
+            try
+            {
+                if(!mExecutorService.awaitTermination(5, TimeUnit.SECONDS))
+                {
+                    mExecutorService.shutdownNow();
+                }
+            }
+            catch(InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                mExecutorService.shutdownNow();
+            }
+            finally
+            {
+                mExecutorService = null;
+            }
+        }
+    }
+
+    private void run()
+    {
+        try(Connection connection = openConnection())
+        {
+            initializeSchema(connection);
+            cleanupRetentionWithRetry(connection);
+
+            if(mStatusLoggingEnabled)
+            {
+                updateStatusWithRetry(connection, "database_path", mDatabasePath.toString());
+            }
+
+            List<P25ActivityLogRecord> batch = new ArrayList<>(BATCH_SIZE);
+
+            while(mRunning.get() || !mQueue.isEmpty())
+            {
+                P25ActivityLogRecord first = mQueue.poll(POLL_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+
+                if(first != null)
+                {
+                    batch.add(first);
+                    mQueue.drainTo(batch, BATCH_SIZE - 1);
+                    writeBatchWithRetry(connection, batch);
+                    batch.clear();
+                }
+
+                if(System.currentTimeMillis() - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS)
+                {
+                    cleanupRetentionWithRetry(connection);
+                }
+            }
+
+            if(!batch.isEmpty())
+            {
+                writeBatchWithRetry(connection, batch);
+            }
+        }
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+        }
+        catch(IOException e)
+        {
+            mLog.warn("P25 activity SQLite writer stopped after database path error", e);
+        }
+        catch(SQLException e)
+        {
+            mLog.warn("P25 activity SQLite writer stopped after database error", e);
+        }
+        finally
+        {
+            mRunning.set(false);
+        }
+    }
+
+    private Connection openConnection() throws IOException, SQLException, InterruptedException
+    {
+        while(true)
+        {
+            try
+            {
+                return SdrTrunkDatabase.open(mDatabasePath);
+            }
+            catch(SQLException e)
+            {
+                if(!isDatabaseBusy(e) || !mRunning.get())
+                {
+                    throw e;
+                }
+
+                Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
+            }
+        }
+    }
+
+    private void initializeSchema(Connection connection) throws SQLException, InterruptedException
+    {
+        while(true)
+        {
+            try
+            {
+                P25ActivityLogSchema.initialize(connection);
+                return;
+            }
+            catch(SQLException e)
+            {
+                if(!isDatabaseBusy(e) || !mRunning.get())
+                {
+                    throw e;
+                }
+
+                Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
+            }
+        }
+    }
+
+    private void writeBatchWithRetry(Connection connection, List<P25ActivityLogRecord> batch)
+        throws SQLException, InterruptedException
+    {
+        while(true)
+        {
+            try
+            {
+                writeBatch(connection, batch);
+                return;
+            }
+            catch(SQLException e)
+            {
+                if(!isDatabaseBusy(e) || !mRunning.get())
+                {
+                    throw e;
+                }
+
+                Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
+            }
+        }
+    }
+
+    private void cleanupRetentionWithRetry(Connection connection) throws SQLException, InterruptedException
+    {
+        while(true)
+        {
+            try
+            {
+                cleanupRetention(connection);
+                return;
+            }
+            catch(SQLException e)
+            {
+                if(!isDatabaseBusy(e) || !mRunning.get())
+                {
+                    throw e;
+                }
+
+                Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
+            }
+        }
+    }
+
+    private void updateStatusWithRetry(Connection connection, String key, String value)
+        throws SQLException, InterruptedException
+    {
+        while(true)
+        {
+            try
+            {
+                P25ActivityLogSchema.updateStatus(connection, key, value);
+                return;
+            }
+            catch(SQLException e)
+            {
+                if(!isDatabaseBusy(e) || !mRunning.get())
+                {
+                    throw e;
+                }
+
+                Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
+            }
+        }
+    }
+
+    private void writeBatch(Connection connection, List<P25ActivityLogRecord> batch) throws SQLException
+    {
+        if(batch.isEmpty())
+        {
+            return;
+        }
+
+        boolean previousAutoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+
+        try
+        {
+            int writtenRecords = 0;
+
+            for(P25ActivityLogRecord record: batch)
+            {
+                if(record instanceof P25ActivityLogRecords.ActivityEvent activityEvent && mActivityLoggingEnabled)
+                {
+                    P25ActivityLogSchema.insertActivity(connection, activityEvent);
+                    writtenRecords++;
+                }
+                else if(record instanceof P25ActivityLogRecords.SiteSnapshot siteSnapshot &&
+                    mSiteStatisticsLoggingEnabled)
+                {
+                    P25ActivityLogSchema.insertSite(connection, siteSnapshot);
+                    writtenRecords++;
+                }
+            }
+
+            mWrittenRecords.addAndGet(writtenRecords);
+
+            if(mStatusLoggingEnabled)
+            {
+                P25ActivityLogSchema.updateStatus(connection, "records_written", Long.toString(mWrittenRecords.get()));
+                P25ActivityLogSchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
+            }
+
+            connection.commit();
+        }
+        catch(SQLException e)
+        {
+            try
+            {
+                connection.rollback();
+            }
+            catch(SQLException rollbackException)
+            {
+                e.addSuppressed(rollbackException);
+            }
+
+            if(!isDatabaseBusy(e) && mStatusLoggingEnabled)
+            {
+                try
+                {
+                    P25ActivityLogSchema.updateStatus(connection, "last_write_error", e.getMessage());
+                }
+                catch(SQLException statusException)
+                {
+                    e.addSuppressed(statusException);
+                }
+            }
+
+            throw e;
+        }
+        finally
+        {
+            connection.setAutoCommit(previousAutoCommit);
+        }
+    }
+
+    private void cleanupRetention(Connection connection) throws SQLException
+    {
+        long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(mRetentionDays);
+        P25ActivityLogSchema.deleteOlderThan(connection, cutoff);
+
+        if(mStatusLoggingEnabled)
+        {
+            P25ActivityLogSchema.updateStatus(connection, "retention_days", Integer.toString(mRetentionDays));
+            P25ActivityLogSchema.updateStatus(connection, "last_retention_cleanup_ms",
+                Long.toString(System.currentTimeMillis()));
+        }
+
+        mLastRetentionCleanup = System.currentTimeMillis();
+    }
+
+    private boolean isRecordTypeEnabled(P25ActivityLogRecord record)
+    {
+        return (record instanceof P25ActivityLogRecords.ActivityEvent && mActivityLoggingEnabled) ||
+            (record instanceof P25ActivityLogRecords.SiteSnapshot && mSiteStatisticsLoggingEnabled);
+    }
+
+    private static boolean isDatabaseBusy(SQLException exception)
+    {
+        Throwable throwable = exception;
+
+        while(throwable != null)
+        {
+            String message = throwable.getMessage();
+
+            if(message != null && (message.contains("SQLITE_BUSY") || message.contains("database is locked")))
+            {
+                return true;
+            }
+
+            throwable = throwable.getCause();
+        }
+
+        return false;
+    }
+}

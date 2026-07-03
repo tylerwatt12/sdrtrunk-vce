@@ -45,7 +45,6 @@ public class DirectoryPreference extends Preference
     private static final String DIRECTORY_CONFIGURATION = "configuration";
     private static final String DIRECTORY_EVENT_LOG = "event_logs";
     private static final String DIRECTORY_JMBE = "jmbe";
-    private static final String DIRECTORY_PLAYLIST = "playlist";
     private static final String DIRECTORY_RECORDING = "recordings";
     private static final String DIRECTORY_SCREEN_CAPTURE = "screen_captures";
     private static final String DIRECTORY_STREAMING = "streaming";
@@ -55,7 +54,6 @@ public class DirectoryPreference extends Preference
     private static final String PREFERENCE_KEY_DIRECTORY_CONFIGURATION = "directory.configuration";
     private static final String PREFERENCE_KEY_DIRECTORY_EVENT_LOGS = "directory.event.logs";
     private static final String PREFERENCE_KEY_DIRECTORY_JMBE = "directory.jmbe";
-    private static final String PREFERENCE_KEY_DIRECTORY_PLAYLIST = "directory.playlist";
     private static final String PREFERENCE_KEY_DIRECTORY_RECORDING = "directory.recording";
     private static final String PREFERENCE_KEY_DIRECTORY_SCREEN_CAPTURE = "directory.screen.capture";
     private static final String PREFERENCE_KEY_DIRECTORY_STREAMING = "directory.streaming";
@@ -67,7 +65,6 @@ public class DirectoryPreference extends Preference
     private Path mDirectoryConfiguration;
     private Path mDirectoryEventLogs;
     private Path mDirectoryJmbe;
-    private Path mDirectoryPlaylist;
     private Path mDirectoryRecording;
     private Path mDirectoryScreenCapture;
     private Path mDirectoryStreaming;
@@ -127,7 +124,6 @@ public class DirectoryPreference extends Preference
         mDirectoryApplicationLogs = null;
         mDirectoryEventLogs = null;
         mDirectoryJmbe = null;
-        mDirectoryPlaylist = null;
         mDirectoryRecording = null;
         mDirectoryScreenCapture = null;
         mDirectoryStreaming = null;
@@ -327,46 +323,12 @@ public class DirectoryPreference extends Preference
     }
 
     /**
-     * Removes a stored playlist directory preference so that the default path can be used again
+     * Removes a stored JMBE directory preference so that the default path can be used again
      */
     public void resetDirectoryJmbe()
     {
         mPreferences.remove(PREFERENCE_KEY_DIRECTORY_JMBE);
         mDirectoryJmbe = null;
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Path to the folder for storing playlist
-     */
-    public Path getDirectoryPlaylist()
-    {
-        if(mDirectoryPlaylist == null)
-        {
-            mDirectoryPlaylist = getPath(PREFERENCE_KEY_DIRECTORY_PLAYLIST, getDefaultPlaylistDirectory());
-            createDirectory(mDirectoryPlaylist);
-        }
-
-        return mDirectoryPlaylist;
-    }
-
-    /**
-     * Sets the path to the playlist folder
-     */
-    public void setDirectoryPlaylist(Path path)
-    {
-        mDirectoryPlaylist = path;
-        mPreferences.put(PREFERENCE_KEY_DIRECTORY_PLAYLIST, path.toString());
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Removes a stored playlist directory preference so that the default path can be used again
-     */
-    public void resetDirectoryPlaylist()
-    {
-        mPreferences.remove(PREFERENCE_KEY_DIRECTORY_PLAYLIST);
-        mDirectoryPlaylist = null;
         notifyPreferenceUpdated();
     }
 
@@ -385,7 +347,7 @@ public class DirectoryPreference extends Preference
     }
 
     /**
-     * Sets the path to the playlist folder
+     * Sets the path to the recordings folder
      */
     public void setDirectoryRecording(Path path)
     {
@@ -513,15 +475,7 @@ public class DirectoryPreference extends Preference
     }
 
     /**
-     * Default playlist directory
-     */
-    public Path getDefaultPlaylistDirectory()
-    {
-        return getDirectoryApplicationRoot().resolve(DIRECTORY_PLAYLIST);
-    }
-
-    /**
-     * Default playlist directory
+     * Default recordings directory
      */
     public Path getDefaultRecordingDirectory()
     {

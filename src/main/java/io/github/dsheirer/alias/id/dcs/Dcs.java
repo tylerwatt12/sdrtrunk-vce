@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.alias.id.dcs;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
@@ -53,7 +52,6 @@ public class Dcs extends AliasID implements Comparable<Dcs>
      * DCS code
      * @return DCS code or null.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "code")
     public DCSCode getDCSCode()
     {
         return mDCSCode;

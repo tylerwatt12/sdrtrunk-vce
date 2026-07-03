@@ -19,7 +19,6 @@
 package io.github.dsheirer.settings;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import java.awt.Color;
 
 public class ColorSetting extends Setting
@@ -43,14 +42,12 @@ public class ColorSetting extends Setting
         setColorSettingName(name);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public SettingType getType()
     {
         return SettingType.COLOR_SETTING;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "colorSettingName")
     public ColorSettingName getColorSettingName()
     {
         return mColorSettingName;
@@ -61,7 +58,6 @@ public class ColorSetting extends Setting
         mColorSettingName = name;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "rgb")
     public String getRgb()
     {
         return mRGB;
@@ -72,7 +68,6 @@ public class ColorSetting extends Setting
         mRGB = value;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "alpha")
     public int getAlpha()
     {
         return mAlpha;

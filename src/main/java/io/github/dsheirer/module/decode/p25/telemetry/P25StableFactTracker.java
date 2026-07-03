@@ -53,6 +53,31 @@ class P25StableFactTracker<T>
         return mStableValue;
     }
 
+    String getStableKey()
+    {
+        return mStableKey;
+    }
+
+    String getCandidateKey()
+    {
+        return mCandidateKey;
+    }
+
+    int getCandidateObservationCount()
+    {
+        return mObservationCount;
+    }
+
+    long getCandidateAgeMilliseconds(long timestamp)
+    {
+        return mCandidateValue != null ? Math.max(0, timestamp - mFirstSeenTimestamp) : 0;
+    }
+
+    long getCandidateLastSeenAgeMilliseconds(long timestamp)
+    {
+        return mCandidateValue != null ? Math.max(0, timestamp - mLastSeenTimestamp) : 0;
+    }
+
     Result observe(T value, long timestamp, int minimumObservations, long minimumAgeMilliseconds,
                    long candidateExpirationMilliseconds, boolean promoteFirstValue, Predicate<T> promotionGuard)
     {

@@ -21,7 +21,6 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 
@@ -40,7 +39,6 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     {
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "ignore_data_calls")
     public boolean getIgnoreDataCalls()
     {
         return mIgnoreDataCalls;
@@ -51,7 +49,6 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
         mIgnoreDataCalls = ignore;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "learn_announced_control_channels")
     public boolean getLearnAnnouncedControlChannels()
     {
         return mLearnAnnouncedControlChannels;
@@ -63,7 +60,6 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     }
 
 
-    @JacksonXmlProperty(isAttribute = true, localName = "traffic_channel_pool_size")
     public int getTrafficChannelPoolSize()
     {
         return mTrafficChannelPoolSize;

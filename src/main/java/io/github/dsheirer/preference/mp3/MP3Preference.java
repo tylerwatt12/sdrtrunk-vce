@@ -29,7 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * User preferences for playlists
+ * User preferences for configuration data
  */
 public class MP3Preference extends Preference
 {

@@ -18,13 +18,10 @@
  ******************************************************************************/
 package io.github.dsheirer.icon;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 
 import java.util.ArrayList;
 import java.util.List;
 
-@JacksonXmlRootElement(localName = "iconset")
 public class IconSet
 {
     private String mDefaultIcon;
@@ -32,7 +29,7 @@ public class IconSet
 
     public IconSet()
     {
-        //No-arg JAXB constructor
+        //No-arg deserialization constructor
     }
 
     public void add(Icon icon)
@@ -45,7 +42,6 @@ public class IconSet
         mIcons.remove(icon);
     }
 
-    @JacksonXmlProperty(isAttribute = false, localName = "icon")
     public List<Icon> getIcons()
     {
         if(mIcons == null)
@@ -61,7 +57,6 @@ public class IconSet
         mIcons = icons;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "default")
     public String getDefaultIcon()
     {
         return mDefaultIcon;

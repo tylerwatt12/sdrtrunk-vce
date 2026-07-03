@@ -18,7 +18,6 @@
 package io.github.dsheirer.module.decode.ltrstandard;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.message.MessageDirection;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -32,14 +31,12 @@ public class DecodeConfigLTRStandard extends DecodeConfiguration
     {
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {
         return DecoderType.LTR;
     }
 
 
-    @JacksonXmlProperty(isAttribute = false, localName = "direction")
     public MessageDirection getMessageDirection()
     {
         return mMessageDirection;

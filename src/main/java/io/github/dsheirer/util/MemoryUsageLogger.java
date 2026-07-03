@@ -25,11 +25,7 @@ import org.apache.commons.io.FileUtils;
 /**
  * Custom logging plugin for logging memory usage with logback
  *
- * Add the following to the logback.xml configuration file to use this custom converter:
- *
- * <conversionRule conversionWord="memory_usage" converterClass="MemoryUsageLogger" />
- *
- * Update the encoder pattern to include %memory_usage within the pattern
+ * Register this converter with logback and add %memory_usage to an encoder pattern.
  */
 public class MemoryUsageLogger extends ClassicConverter
 {

@@ -37,7 +37,7 @@ public class Rsp1TunerConfiguration extends RspTunerConfiguration
     }
 
     /**
-     * JAXB constructor
+     * Deserialization constructor
      */
     public Rsp1TunerConfiguration()
     {

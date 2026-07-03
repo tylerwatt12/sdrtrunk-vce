@@ -20,16 +20,21 @@ package io.github.dsheirer.channel.metadata;
 
 import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.channel.details.ChannelDetailPanel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.decode.event.DecodeEventPanel;
 import io.github.dsheirer.module.decode.event.MessageActivityPanel;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.util.function.Consumer;
@@ -38,6 +43,7 @@ import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 import javax.swing.JToggleButton;
 
 /**
@@ -46,7 +52,9 @@ import javax.swing.JToggleButton;
 public class NowPlayingPanel extends JPanel
 {
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
-    private final PlaylistManager mPlaylistManager;
+    private static final int CHANNEL_ACTIVITY_MINIMUM_HEIGHT = 120;
+    private static final int DETAIL_TABS_MINIMUM_HEIGHT = 120;
+    private final ConfigurationManager mConfigurationManager;
     private final IconModel mIconModel;
     private final SettingsManager mSettingsManager;
     private final ChannelActivityPanel mChannelActivityPanel;
@@ -55,11 +63,13 @@ public class NowPlayingPanel extends JPanel
     private DecodeEventPanel mDecodeEventPanel;
     private MessageActivityPanel mMessageActivityPanel;
     private ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
+    private RadioResolveMetadataPanel mRadioResolveMetadataPanel;
     private JideTabbedPane mTabbedPane;
     private JideSplitPane mSplitPane;
     private boolean mRequestedDetailTabsVisible;
     private boolean mDetailTabsAttached;
     private boolean mSplitPaneDividerRestored;
+    private boolean mRegisteredForPreferences;
     private JToggleButton mDetailTabsToggleButton;
     private final Consumer<Boolean> mDetailTabsVisibilityListener;
 
@@ -67,26 +77,54 @@ public class NowPlayingPanel extends JPanel
      * GUI panel that combines the currently decoding channels metadata table and viewers for channel details,
      * messages, events, and spectral view.
      */
-    public NowPlayingPanel(PlaylistManager playlistManager, IconModel iconModel, UserPreferences userPreferences,
+    public NowPlayingPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences,
                            SettingsManager settingsManager, boolean detailTabsVisible,
                            Consumer<Boolean> detailTabsVisibilityListener)
     {
-        mPlaylistManager = playlistManager;
+        mConfigurationManager = configurationManager;
         mIconModel = iconModel;
         mSettingsManager = settingsManager;
         mUserPreferences = userPreferences;
-        mChannelActivityPanel = new ChannelActivityPanel(playlistManager, iconModel, userPreferences);
+        mChannelActivityPanel = new ChannelActivityPanel(configurationManager, iconModel, userPreferences);
         mRequestedDetailTabsVisible = detailTabsVisible;
         mDetailTabsVisibilityListener = detailTabsVisibilityListener;
 
+        registerForPreferences();
         init();
+    }
+
+    @Override
+    public void addNotify()
+    {
+        super.addNotify();
+        registerForPreferences();
     }
 
     @Override
     public void removeNotify()
     {
         detachDetailTabs(true);
+        unregisterForPreferences();
+
         super.removeNotify();
+    }
+
+    private void registerForPreferences()
+    {
+        if(!mRegisteredForPreferences)
+        {
+            MyEventBus.getGlobalEventBus().register(this);
+            mRegisteredForPreferences = true;
+        }
+    }
+
+    private void unregisterForPreferences()
+    {
+        if(mRegisteredForPreferences)
+        {
+            MyEventBus.getGlobalEventBus().unregister(this);
+            mRegisteredForPreferences = false;
+        }
     }
 
     /**
@@ -108,14 +146,32 @@ public class NowPlayingPanel extends JPanel
             mTabbedPane.addTab("Events", mDecodeEventPanel);
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
+            updateRadioResolveMetadataTab();
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
+            mTabbedPane.setMinimumSize(new Dimension(0, DETAIL_TABS_MINIMUM_HEIGHT));
             //Register state change listener to toggle visibility state for channel tab to turn-on/off FFT processing
             mTabbedPane.addChangeListener(e -> mChannelSpectrumSquelchPanel.setPanelVisible(getTabbedPane().getSelectedIndex() == getTabbedPane()
                     .indexOfComponent(mChannelSpectrumSquelchPanel)));
         }
 
         return mTabbedPane;
+    }
+
+    @Subscribe
+    public void preferenceUpdated(PreferenceType preferenceType)
+    {
+        if(preferenceType == PreferenceType.NOW_PLAYING)
+        {
+            if(SwingUtilities.isEventDispatchThread())
+            {
+                updateRadioResolveMetadataTab();
+            }
+            else
+            {
+                SwingUtilities.invokeLater(this::updateRadioResolveMetadataTab);
+            }
+        }
     }
 
     /**
@@ -126,6 +182,7 @@ public class NowPlayingPanel extends JPanel
         if(mSplitPane == null)
         {
             mSplitPane = new JideSplitPane(JideSplitPane.VERTICAL_SPLIT);
+            mSplitPane.setDividerSize(5);
             mSplitPane.setShowGripper(true);
             mSplitPane.addComponentListener(new ComponentAdapter()
             {
@@ -143,6 +200,7 @@ public class NowPlayingPanel extends JPanel
     private void init()
     {
         setLayout(new MigLayout("insets 0 10 10 10", "[grow,fill]", "[grow,fill]"));
+        mChannelActivityPanel.setMinimumSize(new Dimension(0, CHANNEL_ACTIVITY_MINIMUM_HEIGHT));
         getSplitPane().add(mChannelActivityPanel);
 
         updateDetailTabs();
@@ -225,9 +283,11 @@ public class NowPlayingPanel extends JPanel
             mChannelActivityPanel.addSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
+            mSplitPaneDividerRestored = false;
             getSplitPane().add(getTabbedPane());
             mDetailTabsAttached = true;
             restoreSplitPaneDividerLocation();
+            SwingUtilities.invokeLater(this::restoreSplitPaneDividerLocation);
         }
     }
 
@@ -235,6 +295,7 @@ public class NowPlayingPanel extends JPanel
     {
         if(mDetailTabsAttached)
         {
+            saveSplitPaneDividerLocation();
             mChannelActivityPanel.removeSelectedFrequencyListener(mChannelDetailPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mMessageActivityPanel);
@@ -260,12 +321,12 @@ public class NowPlayingPanel extends JPanel
     {
         if(mChannelDetailPanel == null)
         {
-            mChannelDetailPanel = new ChannelDetailPanel(mPlaylistManager.getChannelProcessingManager());
+            mChannelDetailPanel = new ChannelDetailPanel(mConfigurationManager.getChannelProcessingManager());
         }
 
         if(mDecodeEventPanel == null)
         {
-            mDecodeEventPanel = new DecodeEventPanel(mIconModel, mUserPreferences, mPlaylistManager.getAliasModel());
+            mDecodeEventPanel = new DecodeEventPanel(mIconModel, mUserPreferences, mConfigurationManager.getAliasModel());
         }
 
         if(mMessageActivityPanel == null)
@@ -275,7 +336,41 @@ public class NowPlayingPanel extends JPanel
 
         if(mChannelSpectrumSquelchPanel == null)
         {
-            mChannelSpectrumSquelchPanel = new ChannelSpectrumPanel(mPlaylistManager, mSettingsManager, mUserPreferences);
+            mChannelSpectrumSquelchPanel = new ChannelSpectrumPanel(mConfigurationManager, mSettingsManager, mUserPreferences);
+        }
+    }
+
+    private void updateRadioResolveMetadataTab()
+    {
+        if(mTabbedPane == null)
+        {
+            return;
+        }
+
+        boolean enabled = mUserPreferences.getNowPlayingPreference().isRfMetadataDebugTabEnabled();
+        int existingIndex = mRadioResolveMetadataPanel != null ? mTabbedPane.indexOfComponent(mRadioResolveMetadataPanel) : -1;
+
+        if(enabled && mRadioResolveMetadataPanel == null)
+        {
+            mRadioResolveMetadataPanel = new RadioResolveMetadataPanel();
+            mChannelActivityPanel.addSelectedOwnerChannelListener(mRadioResolveMetadataPanel);
+            mRadioResolveMetadataPanel.receive(mChannelActivityPanel.getSelectedOwnerChannel());
+            mTabbedPane.addTab("RF Metadata", mRadioResolveMetadataPanel);
+        }
+        else if(enabled && existingIndex < 0)
+        {
+            mTabbedPane.addTab("RF Metadata", mRadioResolveMetadataPanel);
+        }
+        else if(!enabled && mRadioResolveMetadataPanel != null)
+        {
+            if(existingIndex >= 0)
+            {
+                mTabbedPane.removeTabAt(existingIndex);
+            }
+
+            mChannelActivityPanel.removeSelectedOwnerChannelListener(mRadioResolveMetadataPanel);
+            mRadioResolveMetadataPanel.dispose();
+            mRadioResolveMetadataPanel = null;
         }
     }
 
@@ -296,11 +391,18 @@ public class NowPlayingPanel extends JPanel
             mChannelSpectrumSquelchPanel.dispose();
         }
 
+        if(mRadioResolveMetadataPanel != null)
+        {
+            mChannelActivityPanel.removeSelectedOwnerChannelListener(mRadioResolveMetadataPanel);
+            mRadioResolveMetadataPanel.dispose();
+        }
+
         mTabbedPane = null;
         mChannelDetailPanel = null;
         mDecodeEventPanel = null;
         mMessageActivityPanel = null;
         mChannelSpectrumSquelchPanel = null;
+        mRadioResolveMetadataPanel = null;
     }
 
     private void restoreSplitPaneDividerLocation()
@@ -310,20 +412,24 @@ public class NowPlayingPanel extends JPanel
             return;
         }
 
-        if(mSplitPane.getWidth() <= 0 || mSplitPane.getHeight() <= 0)
-        {
-            return;
-        }
+        int location = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
+        mSplitPaneDividerRestored = SplitPaneDividerHelper.restore(mSplitPane, 0, location,
+            Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, DETAIL_TABS_MINIMUM_HEIGHT), true);
+    }
 
-        mSplitPaneDividerRestored = true;
-        mSplitPane.setDividerLocation(0,
-            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250));
+    private void saveSplitPaneDividerLocation()
+    {
+        int savedLocation = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
+        mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_DIVIDER_IDENTIFIER,
+            SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, 0, savedLocation,
+                Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, DETAIL_TABS_MINIMUM_HEIGHT), true));
     }
 
     public int getSplitPaneDividerLocation()
     {
-        return mSplitPane != null ? mSplitPane.getDividerLocation(0) :
-            mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
+        int savedLocation = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
+        return SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, 0, savedLocation,
+            Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, DETAIL_TABS_MINIMUM_HEIGHT), true);
     }
 
     public int getChannelSpectrumPanelDividerLocation()

@@ -20,8 +20,6 @@ package io.github.dsheirer.source.tuner.rtl;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KTunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerConfiguration;
@@ -38,7 +36,6 @@ import io.github.dsheirer.source.tuner.rtl.r8x.r828d.R828DTunerConfiguration;
         @JsonSubTypes.Type(value = R820TTunerConfiguration.class, name = "r820TTunerConfiguration"),
         @JsonSubTypes.Type(value = R828DTunerConfiguration.class, name = "r828DTunerConfiguration"),
 })
-@JacksonXmlRootElement(localName = "tuner_configuration")
 public abstract class RTL2832TunerConfiguration extends TunerConfiguration
 {
     private RTL2832TunerController.SampleRate mSampleRate = RTL2832TunerController.SampleRate.RATE_2_400MHZ;
@@ -59,7 +56,6 @@ public abstract class RTL2832TunerConfiguration extends TunerConfiguration
         super(uniqueID);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "sample_rate")
     public RTL2832TunerController.SampleRate getSampleRate()
     {
         return mSampleRate;
@@ -83,7 +79,6 @@ public abstract class RTL2832TunerConfiguration extends TunerConfiguration
      * Indicates if the Bias-T is enabled.
      * @return true if enabled.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bias_t")
     public boolean isBiasT()
     {
         return mBiasTEnabled;

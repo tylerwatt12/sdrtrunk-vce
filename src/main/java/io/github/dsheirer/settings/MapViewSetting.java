@@ -19,7 +19,6 @@ package io.github.dsheirer.settings;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
 
 @JsonSubTypes.Type(value = MapViewSetting.class, name = "mapViewSetting")
@@ -31,7 +30,7 @@ public class MapViewSetting extends Setting
 
     public MapViewSetting()
     {
-        /* Empty constructor for JAXB */
+        /* Empty constructor for deserialization */
     }
 
     public MapViewSetting(String name, double latitude, double longitude, int zoom)
@@ -50,14 +49,12 @@ public class MapViewSetting extends Setting
         mZoom = zoom;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public SettingType getType()
     {
         return SettingType.MAP_VIEW_SETTING;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "latitude")
     public double getLatitude()
     {
         return mLatitude;
@@ -68,7 +65,6 @@ public class MapViewSetting extends Setting
         mLatitude = latitude;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "longitude")
     public double getLongitude()
     {
         return mLongitude;
@@ -79,7 +75,6 @@ public class MapViewSetting extends Setting
         mLongitude = longitude;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "zoom")
     public int getZoom()
     {
         return mZoom;

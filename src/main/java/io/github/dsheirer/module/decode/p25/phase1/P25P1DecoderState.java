@@ -55,10 +55,10 @@ import io.github.dsheirer.module.decode.ip.udp.UDPPacket;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
+import io.github.dsheirer.module.decode.p25.telemetry.P25SiteMetadataPublisher;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
@@ -205,12 +205,10 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final P25P1NetworkConfigurationMonitor mNetworkConfigurationMonitor;
     private final P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer =
         new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+    private final P25SiteMetadataPublisher mSiteMetadataPublisher;
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
     private ServiceOptions mCurrentServiceOptions;
-    private int mLastPublishedSiteMetadataHash;
-    private long mLastPublishedSiteMetadataTimestamp;
-    private static final long SITE_METADATA_EVENT_INTERVAL_MILLISECONDS = 5000;
 
     /**
      * Constructs an APCO-25 decoder state with an optional traffic channel manager.
@@ -223,12 +221,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         mModulation = ((DecodeConfigP25Phase1)channel.getDecodeConfiguration()).getModulation();
         mNetworkConfigurationMonitor = new P25P1NetworkConfigurationMonitor(mModulation,
             mNetworkConfigurationStabilizer);
+        mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mNetworkConfigurationStabilizer::getSnapshot,
+            this::hasInterModuleEventBus,
+            event -> getInterModuleEventBus().post(event));
 
         if(trafficChannelManager != null)
         {
-            mNetworkConfigurationMonitor.setCurrentControlChannelListener(trafficChannelManager::processCurrentControlChannel);
-            mNetworkConfigurationMonitor.setSecondaryControlChannelListener(trafficChannelManager::processSecondaryControlChannel);
-            mNetworkConfigurationMonitor.setSiteIdentifierListener(trafficChannelManager::processSiteIdentifier);
             mTrafficChannelManager = trafficChannelManager;
             mChannelEventListener = trafficChannelManager.getChannelEventListener();
         }
@@ -356,37 +354,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             processLC(lcw, iMessage.getTimestamp(), false);
         }
 
-        publishStableSiteMetadata(iMessage.getTimestamp());
+        mSiteMetadataPublisher.publish(iMessage.getTimestamp());
     }
 
     private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
     {
         mNetworkConfigurationStabilizer.observe(observation, timestamp);
-        publishStableSiteMetadata(timestamp);
-    }
-
-    private void publishStableSiteMetadata(long timestamp)
-    {
-        if(!hasInterModuleEventBus())
-        {
-            return;
-        }
-
-        long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
-        P25NetworkConfigurationSnapshot snapshot = mNetworkConfigurationStabilizer.getSnapshot();
-
-        if(snapshot != null && snapshot.isUseful())
-        {
-            int hash = snapshot.hashCode();
-
-            if(hash != mLastPublishedSiteMetadataHash ||
-                eventTimestamp - mLastPublishedSiteMetadataTimestamp >= SITE_METADATA_EVENT_INTERVAL_MILLISECONDS)
-            {
-                mLastPublishedSiteMetadataHash = hash;
-                mLastPublishedSiteMetadataTimestamp = eventTimestamp;
-                getInterModuleEventBus().post(new SiteMetadataEvent(mChannel, snapshot, eventTimestamp));
-            }
-        }
+        mSiteMetadataPublisher.publish(timestamp);
     }
 
     /**
@@ -2202,8 +2176,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 resetState();
                 mNetworkConfigurationMonitor.reset();
                 mNetworkConfigurationStabilizer.reset();
-                mLastPublishedSiteMetadataHash = 0;
-                mLastPublishedSiteMetadataTimestamp = 0;
+                mSiteMetadataPublisher.reset();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 long frequency = event.getFrequency();

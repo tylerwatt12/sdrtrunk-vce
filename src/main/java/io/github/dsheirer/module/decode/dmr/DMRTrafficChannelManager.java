@@ -92,7 +92,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public static final String CHANNEL_START_REJECTED = " REJECTED - NO TUNER";
     public static final String DATA_CALL_IGNORED = "DATA CALL IGNORED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
-    public static final String NO_FREQUENCY = "NO FREQUENCY - CHECK PLAYLIST CHANNEL CONFIG LSN CHANNEL MAP";
+    public static final String NO_FREQUENCY = "NO FREQUENCY - CHECK CONFIGURATION CHANNEL CONFIG LSN CHANNEL MAP";
     public static final long EVENT_TIME_STALE_THRESHOLD = 5000; //5 seconds
 
     private Queue<Channel> mAvailableTrafficChannels = new ConcurrentLinkedQueue<>();

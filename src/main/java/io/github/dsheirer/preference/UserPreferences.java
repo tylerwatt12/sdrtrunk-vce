@@ -25,13 +25,13 @@ import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
 import io.github.dsheirer.preference.decoder.JmbeLibraryPreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.preference.duplicate.CallManagementPreference;
+import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.event.DecodeEventPreference;
 import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
 import io.github.dsheirer.preference.javafx.JavaFxPreferences;
 import io.github.dsheirer.preference.mp3.MP3Preference;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.playback.PlaybackPreference;
-import io.github.dsheirer.preference.playlist.PlaylistPreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
 import io.github.dsheirer.preference.record.RecordPreference;
 import io.github.dsheirer.preference.source.ChannelMultiFrequencyPreference;
@@ -62,11 +62,11 @@ public class UserPreferences implements Listener<PreferenceType>
     private DecodeEventPreference mDecodeEventPreference;
     private DirectoryPreference mDirectoryPreference;
     private CallManagementPreference mCallManagementPreference;
+    private EncryptionKeyPreference mEncryptionKeyPreference;
     private JmbeLibraryPreference mJmbeLibraryPreference;
     private MP3Preference mMP3Preference;
     private NowPlayingPreference mNowPlayingPreference;
     private PlaybackPreference mPlaybackPreference;
-    private PlaylistPreference mPlaylistPreference;
     private RadioReferencePreference mRadioReferencePreference;
     private RecordPreference mRecordPreference;
     private TalkgroupFormatPreference mTalkgroupFormatPreference;
@@ -127,6 +127,14 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
+     * Voice encryption key preferences.
+     */
+    public EncryptionKeyPreference getEncryptionKeyPreference()
+    {
+        return mEncryptionKeyPreference;
+    }
+
+    /**
      * Directory preferences
      */
     public DirectoryPreference getDirectoryPreference()
@@ -148,14 +156,6 @@ public class UserPreferences implements Listener<PreferenceType>
     public PlaybackPreference getPlaybackPreference()
     {
         return mPlaybackPreference;
-    }
-
-    /**
-     * Playlist preferences
-     */
-    public PlaylistPreference getPlaylistPreference()
-    {
-        return mPlaylistPreference;
     }
 
     /**
@@ -233,11 +233,11 @@ public class UserPreferences implements Listener<PreferenceType>
         mDecodeEventPreference = new DecodeEventPreference(this::receive);
         mDirectoryPreference = new DirectoryPreference(this::receive);
         mCallManagementPreference = new CallManagementPreference(this::receive);
+        mEncryptionKeyPreference = new EncryptionKeyPreference(this::receive);
         mJmbeLibraryPreference = new JmbeLibraryPreference(this::receive);
         mMP3Preference = new MP3Preference(this::receive);
         mNowPlayingPreference = new NowPlayingPreference(this::receive);
         mPlaybackPreference = new PlaybackPreference(this::receive);
-        mPlaylistPreference = new PlaylistPreference(this::receive, mDirectoryPreference);
         mRadioReferencePreference = new RadioReferencePreference(this::receive);
         mRecordPreference = new RecordPreference(this::receive);
         mTalkgroupFormatPreference = new TalkgroupFormatPreference(this::receive);

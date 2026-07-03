@@ -761,18 +761,42 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
          * Cleanup method to remove a temporary recording file from disk.
          *
          * @param recording to remove
+         * @return true when the recording file is gone
          */
-        private void removeRecording(AudioRecording recording)
+        private boolean removeRecording(AudioRecording recording)
         {
-            try
+            IOException lastException = null;
+
+            for(int attempt = 1; attempt <= 5; attempt++)
             {
-                Files.delete(recording.getPath());
+                try
+                {
+                    Files.deleteIfExists(recording.getPath());
+                    return true;
+                }
+                catch(IOException ioe)
+                {
+                    lastException = ioe;
+
+                    try
+                    {
+                        Thread.sleep(200L * attempt);
+                    }
+                    catch(InterruptedException ie)
+                    {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
-            catch(IOException ioe)
+
+            if(lastException != null)
             {
-                mLog.error("Error deleting temporary internet recording file: " + recording.getPath().toString() + " - " +
-                    ioe.getMessage());
+                mLog.warn("Temporary internet recording file is still in use and will be retried: {} - {}",
+                    recording.getPath(), lastException.getMessage());
             }
+
+            return false;
         }
 
         @Override
@@ -800,8 +824,10 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
                 {
                     for(AudioRecording recordingToDelete : recordingsToDelete)
                     {
-                        mRecordingQueue.remove(recordingToDelete);
-                        removeRecording(recordingToDelete);
+                        if(removeRecording(recordingToDelete))
+                        {
+                            mRecordingQueue.remove(recordingToDelete);
+                        }
                     }
                 }
             }

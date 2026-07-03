@@ -11,13 +11,11 @@
 
 package io.github.dsheirer.module.decode.p25.telemetry;
 
-import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentifier;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -35,12 +33,13 @@ import org.slf4j.LoggerFactory;
 public class P25NetworkConfigurationStabilizer
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25NetworkConfigurationStabilizer.class);
-    static final int STATIC_OBSERVATION_THRESHOLD = 3;
-    static final long STATIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
+    static final long DISCOVERY_WINDOW_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
+    static final int GUARDED_STATIC_OBSERVATION_THRESHOLD = 3;
+    static final long GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
+    static final int CURRENT_CONTROL_OBSERVATION_THRESHOLD = 2;
+    static final long CURRENT_CONTROL_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
     static final int DYNAMIC_OBSERVATION_THRESHOLD = 2;
     static final long DYNAMIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
-    static final int UI_OBSERVATION_THRESHOLD = 3;
-    static final long UI_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
     static final long CANDIDATE_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final int MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES = 12;
 
@@ -58,18 +57,8 @@ public class P25NetworkConfigurationStabilizer
         new TreeMap<>();
     private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.TalkerAlias>> mTalkerAliases =
         new TreeMap<>();
-    private final P25StableFactTracker<IChannelDescriptor> mCurrentControlChannel =
-        new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::channelDescriptorKey);
-    private final Map<String,P25StableFactTracker<IChannelDescriptor>> mSecondaryControlChannels = new TreeMap<>();
-    private final P25StableFactTracker<Identifier<?>> mWacn = new P25StableFactTracker<>(
-        P25NetworkConfigurationStabilizer::identifierKey);
-    private final P25StableFactTracker<Identifier<?>> mSystem = new P25StableFactTracker<>(
-        P25NetworkConfigurationStabilizer::identifierKey);
-    private final P25StableFactTracker<Identifier<?>> mRfss = new P25StableFactTracker<>(
-        P25NetworkConfigurationStabilizer::identifierKey);
-    private final P25StableFactTracker<Identifier<?>> mSite = new P25StableFactTracker<>(
-        P25NetworkConfigurationStabilizer::identifierKey);
     private final Set<Long> mRejectedControlChannelFrequencies = new TreeSet<>();
+    private long mDiscoveryStartedAt;
 
     /**
      * Constructs a stabilizer for the decoder.
@@ -92,13 +81,8 @@ public class P25NetworkConfigurationStabilizer
         mFrequencyBands.clear();
         mPatchGroups.clear();
         mTalkerAliases.clear();
-        mCurrentControlChannel.reset();
-        mSecondaryControlChannels.clear();
-        mWacn.reset();
-        mSystem.reset();
-        mRfss.reset();
-        mSite.reset();
         mRejectedControlChannelFrequencies.clear();
+        mDiscoveryStartedAt = 0;
     }
 
     /**
@@ -108,6 +92,7 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void observe(P25NetworkConfigurationSnapshot observation, long timestamp)
     {
+        timestamp = observationTimestamp(timestamp);
         expireCandidates(timestamp);
 
         if(observation == null)
@@ -115,8 +100,8 @@ public class P25NetworkConfigurationStabilizer
             return;
         }
 
-        observeStatic(mNetwork, observation.network(), timestamp);
-        observeStatic(mCurrentSite, observation.currentSite(), timestamp);
+        observeStatic("network", mNetwork, observation.network(), timestamp);
+        observeStatic("current_site", mCurrentSite, observation.currentSite(), timestamp);
 
         for(P25NetworkConfigurationSnapshot.Channel channel: list(observation.channels()))
         {
@@ -125,12 +110,13 @@ public class P25NetworkConfigurationStabilizer
 
         for(P25NetworkConfigurationSnapshot.NeighborSite neighborSite: list(observation.neighborSites()))
         {
-            observeStatic(mNeighborSites, neighborSiteKey(neighborSite), neighborSite, timestamp);
+            observeStatic("neighbor_site", mNeighborSites, neighborSiteKey(neighborSite), neighborSite, timestamp);
         }
 
         for(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand: list(observation.frequencyBands()))
         {
-            observeStatic(mFrequencyBands, frequencyBandKey(frequencyBand), frequencyBand, timestamp);
+            observeStatic("frequency_band", mFrequencyBands, frequencyBandKey(frequencyBand), frequencyBand,
+                timestamp);
         }
 
         observePatchGroups(observation.patchGroups(), timestamp);
@@ -147,11 +133,12 @@ public class P25NetworkConfigurationStabilizer
     public synchronized void observePatchGroups(List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups,
                                                 long timestamp)
     {
+        timestamp = observationTimestamp(timestamp);
         expireCandidates(timestamp);
 
         for(P25NetworkConfigurationSnapshot.PatchGroup patchGroup: list(patchGroups))
         {
-            observeDynamic(mPatchGroups, patchGroupKey(patchGroup), patchGroup, timestamp);
+            observeDynamic("patch_group", mPatchGroups, patchGroupKey(patchGroup), patchGroup, timestamp);
         }
     }
 
@@ -196,7 +183,9 @@ public class P25NetworkConfigurationStabilizer
     {
         if(patchGroupIdentifier != null)
         {
-            mPatchGroups.remove(patchGroupKey(toSnapshot(patchGroupIdentifier)));
+            P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
+            String key = patchGroupKey(snapshot);
+            mPatchGroups.remove(key);
         }
     }
 
@@ -226,72 +215,9 @@ public class P25NetworkConfigurationStabilizer
     {
         if(radio > 0 && alias != null && !alias.isBlank())
         {
+            timestamp = observationTimestamp(timestamp);
             observeTalkerAlias(new P25NetworkConfigurationSnapshot.TalkerAlias(radio, alias), timestamp);
         }
-    }
-
-    /**
-     * Observes a decoded current control channel and returns the stable value for UI/control-channel consumers.
-     */
-    public synchronized IChannelDescriptor observeCurrentControlChannel(IChannelDescriptor channel, long timestamp)
-    {
-        expireCandidates(timestamp);
-        mCurrentControlChannel.observe(channel, timestamp, UI_OBSERVATION_THRESHOLD, UI_MINIMUM_AGE_MILLISECONDS,
-            CANDIDATE_EXPIRATION_MILLISECONDS, true, ignored -> true);
-        return mCurrentControlChannel.getStableValue();
-    }
-
-    /**
-     * Observes a decoded secondary/alternate control channel and returns the stable value for that channel.
-     */
-    public synchronized IChannelDescriptor observeSecondaryControlChannel(IChannelDescriptor channel, long timestamp)
-    {
-        expireCandidates(timestamp);
-        String key = channelDescriptorKey(channel);
-
-        if(key == null)
-        {
-            return null;
-        }
-
-        P25StableFactTracker<IChannelDescriptor> tracker = mSecondaryControlChannels.computeIfAbsent(key,
-            ignored -> new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::channelDescriptorKey));
-        tracker.observe(channel, timestamp, UI_OBSERVATION_THRESHOLD, UI_MINIMUM_AGE_MILLISECONDS,
-            CANDIDATE_EXPIRATION_MILLISECONDS, false, ignored -> true);
-        return tracker.getStableValue();
-    }
-
-    /**
-     * Observes decoded P25 site identifiers and returns the stable combined identifier.
-     */
-    public synchronized P25SiteIdentifier observeSiteIdentifier(P25SiteIdentifier siteIdentifier, long timestamp)
-    {
-        expireCandidates(timestamp);
-
-        if(siteIdentifier != null)
-        {
-            observeUiFact(mWacn, siteIdentifier.getWacn(), timestamp, true);
-            observeUiFact(mSystem, siteIdentifier.getSystem(), timestamp, true);
-            observeUiFact(mRfss, siteIdentifier.getRfss(), timestamp, true);
-            observeUiFact(mSite, siteIdentifier.getSite(), timestamp, true);
-        }
-
-        return getStableSiteIdentifier();
-    }
-
-    /**
-     * Stable P25 site identifiers learned from network/RFSS status messages.
-     */
-    public synchronized P25SiteIdentifier getStableSiteIdentifier()
-    {
-        if(mWacn.getStableValue() != null || mSystem.getStableValue() != null ||
-            mRfss.getStableValue() != null || mSite.getStableValue() != null)
-        {
-            return new P25SiteIdentifier(mWacn.getStableValue(), mSystem.getStableValue(),
-                mRfss.getStableValue(), mSite.getStableValue());
-        }
-
-        return null;
     }
 
     /**
@@ -324,22 +250,29 @@ public class P25NetworkConfigurationStabilizer
             stableValues(mPatchGroups), stableValues(mTalkerAliases));
     }
 
-    private <T> void observeStatic(P25StableFactTracker<T> tracker, T value, long timestamp)
+    private <T> void observeStatic(String factType, P25StableFactTracker<T> tracker, T value, long timestamp)
     {
-        tracker.observe(value, timestamp, STATIC_OBSERVATION_THRESHOLD, STATIC_MINIMUM_AGE_MILLISECONDS,
-            CANDIDATE_EXPIRATION_MILLISECONDS, true, ignored -> true);
+        if(value != null)
+        {
+            boolean discovery = isDiscoveryMode(timestamp);
+            tracker.observe(value, timestamp, discovery ? 1 : GUARDED_STATIC_OBSERVATION_THRESHOLD,
+                discovery ? 0 : GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS,
+                discovery, ignored -> true);
+        }
     }
 
-    private <T> void observeStatic(Map<String,P25StableFactTracker<T>> trackers, String key, T value, long timestamp)
+    private <T> void observeStatic(String factType, Map<String,P25StableFactTracker<T>> trackers, String key, T value,
+                                   long timestamp)
     {
         if(key != null)
         {
-            observeStatic(trackers.computeIfAbsent(key, ignored -> new P25StableFactTracker<>(
+            observeStatic(factType, trackers.computeIfAbsent(key, ignored -> new P25StableFactTracker<>(
                 P25NetworkConfigurationStabilizer::objectKey)), value, timestamp);
         }
     }
 
-    private <T> void observeDynamic(Map<String,P25StableFactTracker<T>> trackers, String key, T value, long timestamp)
+    private <T> void observeDynamic(String factType, Map<String,P25StableFactTracker<T>> trackers, String key, T value,
+                                    long timestamp)
     {
         if(key != null)
         {
@@ -348,12 +281,6 @@ public class P25NetworkConfigurationStabilizer
                 .observe(value, timestamp, DYNAMIC_OBSERVATION_THRESHOLD, DYNAMIC_MINIMUM_AGE_MILLISECONDS,
                     CANDIDATE_EXPIRATION_MILLISECONDS, false, ignored -> true);
         }
-    }
-
-    private <T> void observeUiFact(P25StableFactTracker<T> tracker, T value, long timestamp, boolean promoteFirstValue)
-    {
-        tracker.observe(value, timestamp, UI_OBSERVATION_THRESHOLD, UI_MINIMUM_AGE_MILLISECONDS,
-            CANDIDATE_EXPIRATION_MILLISECONDS, promoteFirstValue, ignored -> true);
     }
 
     private void observeChannel(P25NetworkConfigurationSnapshot.Channel channel, long timestamp)
@@ -369,20 +296,20 @@ public class P25NetworkConfigurationStabilizer
             mChannels.computeIfAbsent(key, ignored -> new P25StableFactTracker<>(
                 P25NetworkConfigurationStabilizer::objectKey));
 
-        P25StableFactTracker.Result result = tracker.observe(channel, timestamp, STATIC_OBSERVATION_THRESHOLD,
-            STATIC_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS, true, this::allowChannelPromotion);
+        boolean discovery = isDiscoveryMode(timestamp);
+        boolean currentControl = isCurrentControlChannel(channel);
+        int observations = discovery ? 1 : currentControl ? CURRENT_CONTROL_OBSERVATION_THRESHOLD :
+            GUARDED_STATIC_OBSERVATION_THRESHOLD;
+        long minimumAge = discovery ? 0 : currentControl ? CURRENT_CONTROL_MINIMUM_AGE_MILLISECONDS :
+            GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS;
 
-        if(result == P25StableFactTracker.Result.PROMOTED && isControlChannel(channel) && channel.downlink() != null &&
-            channel.downlink() > 0)
-        {
-            LOGGER.info("Promoted stable P25 control channel candidate [{}] role [{}]", channel.downlink(),
-                channel.role());
-        }
+        tracker.observe(channel, timestamp, observations, minimumAge, CANDIDATE_EXPIRATION_MILLISECONDS,
+            discovery, this::allowChannelPromotion);
     }
 
     private void observeTalkerAlias(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias, long timestamp)
     {
-        observeDynamic(mTalkerAliases, talkerAliasKey(talkerAlias), talkerAlias, timestamp);
+        observeDynamic("talker_alias", mTalkerAliases, talkerAliasKey(talkerAlias), talkerAlias, timestamp);
     }
 
     private boolean allowChannelPromotion(P25NetworkConfigurationSnapshot.Channel channel)
@@ -395,6 +322,11 @@ public class P25NetworkConfigurationStabilizer
         if(channel.downlink() <= 0)
         {
             return false;
+        }
+
+        if(isCurrentControlChannel(channel))
+        {
+            return true;
         }
 
         if(hasStableControlFrequency(channel.downlink()))
@@ -441,32 +373,18 @@ public class P25NetworkConfigurationStabilizer
     {
         expireCandidate(mNetwork, timestamp);
         expireCandidate(mCurrentSite, timestamp);
-        expireCandidates(mChannels, timestamp, true);
-        expireCandidates(mNeighborSites, timestamp, false);
-        expireCandidates(mFrequencyBands, timestamp, false);
-        expireCandidates(mPatchGroups, timestamp, false);
-        expireCandidates(mTalkerAliases, timestamp, false);
-        expireCandidate(mCurrentControlChannel, timestamp);
-        expireCandidates(mSecondaryControlChannels, timestamp, false);
-        expireCandidate(mWacn, timestamp);
-        expireCandidate(mSystem, timestamp);
-        expireCandidate(mRfss, timestamp);
-        expireCandidate(mSite, timestamp);
+        expireCandidates(mChannels, timestamp);
+        expireCandidates(mNeighborSites, timestamp);
+        expireCandidates(mFrequencyBands, timestamp);
+        expireCandidates(mPatchGroups, timestamp);
+        expireCandidates(mTalkerAliases, timestamp);
     }
 
-    private <T> void expireCandidates(Map<String,P25StableFactTracker<T>> trackers, long timestamp,
-                                      boolean logControlChannels)
+    private <T> void expireCandidates(Map<String,P25StableFactTracker<T>> trackers, long timestamp)
     {
         for(P25StableFactTracker<T> tracker: trackers.values())
         {
-            T expired = expireCandidate(tracker, timestamp);
-
-            if(logControlChannels && expired instanceof P25NetworkConfigurationSnapshot.Channel channel &&
-                isControlChannel(channel) && channel.downlink() != null && channel.downlink() > 0)
-            {
-                LOGGER.info("Expired unconfirmed P25 control channel candidate [{}] role [{}]", channel.downlink(),
-                    channel.role());
-            }
+            expireCandidate(tracker, timestamp);
         }
     }
 
@@ -477,8 +395,18 @@ public class P25NetworkConfigurationStabilizer
 
     private static boolean isControlChannel(P25NetworkConfigurationSnapshot.Channel channel)
     {
+        return isCurrentControlChannel(channel) || isSecondaryControlChannel(channel);
+    }
+
+    private static boolean isCurrentControlChannel(P25NetworkConfigurationSnapshot.Channel channel)
+    {
         return channel != null && ("primary_control".equals(channel.role()) ||
-            "secondary_control".equals(channel.role()));
+            "current_control".equals(channel.role()));
+    }
+
+    private static boolean isSecondaryControlChannel(P25NetworkConfigurationSnapshot.Channel channel)
+    {
+        return channel != null && "secondary_control".equals(channel.role());
     }
 
     private static String channelKey(P25NetworkConfigurationSnapshot.Channel channel)
@@ -486,6 +414,11 @@ public class P25NetworkConfigurationStabilizer
         if(channel == null || channel.role() == null)
         {
             return null;
+        }
+
+        if(isCurrentControlChannel(channel))
+        {
+            return channel.role();
         }
 
         if(channel.downlink() != null)
@@ -496,25 +429,19 @@ public class P25NetworkConfigurationStabilizer
         return channel.role() + ":" + channel.descriptor();
     }
 
-    private static String channelDescriptorKey(IChannelDescriptor channel)
+    private long observationTimestamp(long timestamp)
     {
-        if(channel == null || channel.getDownlinkFrequency() <= 0)
-        {
-            return null;
-        }
-
-        return channel.getDownlinkFrequency() + ":" + channel.getUplinkFrequency() + ":" + channel;
+        return timestamp > 0 ? timestamp : System.currentTimeMillis();
     }
 
-    private static String identifierKey(Identifier<?> identifier)
+    private boolean isDiscoveryMode(long timestamp)
     {
-        if(identifier == null)
+        if(mDiscoveryStartedAt <= 0)
         {
-            return null;
+            mDiscoveryStartedAt = timestamp;
         }
 
-        return identifier.getIdentifierClass() + ":" + identifier.getForm() + ":" +
-            identifier.getRole() + ":" + identifier;
+        return timestamp - mDiscoveryStartedAt <= DISCOVERY_WINDOW_MILLISECONDS;
     }
 
     private static String neighborSiteKey(P25NetworkConfigurationSnapshot.NeighborSite neighborSite)
@@ -524,8 +451,8 @@ public class P25NetworkConfigurationStabilizer
             return null;
         }
 
-        return value(neighborSite.system()) + ":" + value(neighborSite.nac()) + ":" + value(neighborSite.rfss()) +
-            ":" + value(neighborSite.site()) + ":" + value(neighborSite.downlink());
+        return value(neighborSite.system()) + ":" + value(neighborSite.rfss()) + ":" +
+            value(neighborSite.site()) + ":" + value(neighborSite.channel());
     }
 
     private static String frequencyBandKey(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand)

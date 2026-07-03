@@ -23,7 +23,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.dsp.squelch.ISquelchConfiguration;
 import io.github.dsheirer.gui.control.DbPowerMeter;
 import io.github.dsheirer.module.ProcessingChain;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.source.SourceEvent;
 import java.awt.EventQueue;
 import java.text.DecimalFormat;
@@ -54,12 +54,12 @@ public class SignalPowerView extends JPanel
     private final JButton mSquelchDownButton;
     private final JCheckBox mSquelchAutoTrackCheckBox;
     private double mSquelchThreshold;
-    private final PlaylistManager mPlaylistManager;
+    private final ConfigurationManager mConfigurationManager;
     private ProcessingChain mProcessingChain;
 
-    public SignalPowerView(PlaylistManager playlistManager)
+    public SignalPowerView(ConfigurationManager configurationManager)
     {
-        mPlaylistManager = playlistManager;
+        mConfigurationManager = configurationManager;
 
         setLayout(new MigLayout("", "[][][][grow,fill]", "[grow,fill]"));
         mPowerMeter.setPeakVisible(true);
@@ -119,12 +119,12 @@ public class SignalPowerView extends JPanel
     {
         if(mProcessingChain != null)
         {
-            Channel channel = mPlaylistManager.getChannelProcessingManager().getChannel(mProcessingChain);
+            Channel channel = mConfigurationManager.getChannelProcessingManager().getChannel(mProcessingChain);
 
             if(channel != null && channel.getDecodeConfiguration() instanceof ISquelchConfiguration configuration)
             {
                 configuration.setSquelchThreshold(threshold);
-                mPlaylistManager.schedulePlaylistSave();
+                mConfigurationManager.scheduleConfigurationSave();
             }
         }
     }
@@ -135,12 +135,12 @@ public class SignalPowerView extends JPanel
      */
     private void setConfigSquelchAutoTrack(boolean autoTrack)
     {
-        Channel channel = mPlaylistManager.getChannelProcessingManager().getChannel(mProcessingChain);
+        Channel channel = mConfigurationManager.getChannelProcessingManager().getChannel(mProcessingChain);
 
         if(channel != null && channel.getDecodeConfiguration() instanceof ISquelchConfiguration configuration)
         {
             configuration.setSquelchAutoTrack(autoTrack);
-            mPlaylistManager.schedulePlaylistSave();
+            mConfigurationManager.scheduleConfigurationSave();
         }
     }
 

@@ -18,7 +18,6 @@
 package io.github.dsheirer.map;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.settings.Setting;
 import io.github.dsheirer.settings.SettingType;
@@ -37,7 +36,6 @@ public class MapIcon extends Setting implements Comparable<MapIcon>
     private String mPath;
     private ImageIcon mImageIcon;
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public SettingType getType()
     {
@@ -77,7 +75,7 @@ public class MapIcon extends Setting implements Comparable<MapIcon>
     }
 
     /**
-     * Don't use this constructor.  This is used by JAXB to unmarshall saved
+     * Don't use this constructor.  This is used to deserialize saved
      * map icons.
      */
     public MapIcon()
@@ -86,13 +84,11 @@ public class MapIcon extends Setting implements Comparable<MapIcon>
     }
 
 
-    @JacksonXmlProperty(isAttribute = true, localName = "editable")
     public boolean isEditable()
     {
         return mEditable;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "default")
     public boolean isDefaultIcon()
     {
         return mDefaultIcon;
@@ -163,7 +159,6 @@ public class MapIcon extends Setting implements Comparable<MapIcon>
         return mImageIcon;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "path")
     public String getPath()
     {
         return mPath;

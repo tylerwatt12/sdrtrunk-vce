@@ -17,7 +17,6 @@
 package io.github.dsheirer.settings;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 
 import java.io.File;
 
@@ -36,14 +35,12 @@ public class FileSetting extends Setting
         setPath(path);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public SettingType getType()
     {
         return SettingType.FILE_SETTING;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "path")
     public String getPath()
     {
         return mPath;

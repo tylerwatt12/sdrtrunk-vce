@@ -18,8 +18,6 @@
 package io.github.dsheirer.module.log.config;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.log.EventLogType;
 
@@ -27,12 +25,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 @JsonSubTypes.Type(value = EventLogConfiguration.class, name = "eventLogConfiguration")
-@JacksonXmlRootElement(localName = "event_log_configuration")
 public class EventLogConfiguration extends Configuration
 {
     protected List<EventLogType> mLoggers = new ArrayList<>();
 
-    @JacksonXmlProperty(isAttribute = false, localName = "logger")
     public List<EventLogType> getLoggers()
     {
         return mLoggers;

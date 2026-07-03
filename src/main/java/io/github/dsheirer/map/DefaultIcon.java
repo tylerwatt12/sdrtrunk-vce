@@ -16,7 +16,6 @@
  */
 package io.github.dsheirer.map;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.settings.Setting;
 import io.github.dsheirer.settings.SettingType;
 
@@ -31,7 +30,6 @@ public class DefaultIcon extends Setting
     {
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public SettingType getType()
     {

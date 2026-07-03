@@ -20,7 +20,6 @@
 
 package io.github.dsheirer.alias.id.record;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -29,7 +28,6 @@ import io.github.dsheirer.alias.id.AliasIDType;
  */
 public class Record extends AliasID
 {
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {

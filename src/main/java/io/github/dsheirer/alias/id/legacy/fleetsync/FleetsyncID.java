@@ -19,7 +19,6 @@
  */
 package io.github.dsheirer.alias.id.legacy.fleetsync;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -33,7 +32,6 @@ public class FleetsyncID extends AliasID
 		return false;
 	}
 
-	@JacksonXmlProperty(isAttribute = true, localName = "ident")
 	public String getIdent()
 	{
 		return mID;
@@ -73,7 +71,6 @@ public class FleetsyncID extends AliasID
 	    return retVal;
     }
 
-	@JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
 	@Override
     public AliasIDType getType()
     {

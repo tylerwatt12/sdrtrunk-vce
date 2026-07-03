@@ -22,7 +22,6 @@
 package io.github.dsheirer.alias.id.radio;
 
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
@@ -39,7 +38,7 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
 
     public RadioRange()
     {
-        //No arg JAXB constructor
+        //No-arg deserialization constructor
     }
 
     @Override
@@ -61,7 +60,6 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
         mMaxRadio = maxRadio;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "min")
     public int getMinRadio()
     {
         return mMinRadio;
@@ -73,7 +71,6 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
         updateValueProperty();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "max")
     public int getMaxRadio()
     {
         return mMaxRadio;
@@ -85,7 +82,6 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
         updateValueProperty();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "protocol")
     public Protocol getProtocol()
     {
         return mProtocol;
@@ -174,7 +170,6 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
                    getMaxRadio() < radioRange.getMaxRadio());
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {

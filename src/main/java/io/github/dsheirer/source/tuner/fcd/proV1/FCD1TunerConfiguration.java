@@ -19,7 +19,6 @@
 package io.github.dsheirer.source.tuner.fcd.proV1;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerController.LNAEnhance;
@@ -37,7 +36,7 @@ public class FCD1TunerConfiguration extends TunerConfiguration
     private MixerGain mMixerGain = MixerGain.MIXER_GAIN_PLUS_12_0;
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     public FCD1TunerConfiguration()
     {
@@ -56,7 +55,6 @@ public class FCD1TunerConfiguration extends TunerConfiguration
         return TunerType.FUNCUBE_DONGLE_PRO;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_gain")
     public LNAGain getLNAGain()
     {
         return mLNAGain;
@@ -72,13 +70,11 @@ public class FCD1TunerConfiguration extends TunerConfiguration
         return mLNAEnhance;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_enhance")
     public void setLNAEnhance(LNAEnhance enhance)
     {
         mLNAEnhance = enhance;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "mixer_gain")
     public MixerGain getMixerGain()
     {
         return mMixerGain;
@@ -89,7 +85,6 @@ public class FCD1TunerConfiguration extends TunerConfiguration
         mMixerGain = gain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "inphase_dc_correction")
     public double getInphaseDCCorrection()
     {
         return mInphaseDCCorrection;
@@ -100,7 +95,6 @@ public class FCD1TunerConfiguration extends TunerConfiguration
         mInphaseDCCorrection = value;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "quadrature_dc_correction")
     public double getQuadratureDCCorrection()
     {
         return mQuadratureDCCorrection;
@@ -111,7 +105,6 @@ public class FCD1TunerConfiguration extends TunerConfiguration
         mQuadratureDCCorrection = value;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "phase_correction")
     public double getPhaseCorrection()
     {
         return mPhaseCorrection;
@@ -122,7 +115,6 @@ public class FCD1TunerConfiguration extends TunerConfiguration
         mPhaseCorrection = value;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "gain_correction")
     public double getGainCorrection()
     {
         return mGainCorrection;

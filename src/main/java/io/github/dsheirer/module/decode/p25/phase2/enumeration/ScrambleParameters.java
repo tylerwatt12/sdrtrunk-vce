@@ -22,7 +22,6 @@
 
 package io.github.dsheirer.module.decode.p25.phase2.enumeration;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 
 /**
  * APCO25 Linear Feedback Shift Register (LFSR) seed parameters.
@@ -52,7 +51,6 @@ public class ScrambleParameters
      * WACN
      * @return wacn
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "wacn")
     public int getWACN()
     {
         return mWacn;
@@ -67,7 +65,6 @@ public class ScrambleParameters
      * System
      * @return system
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "system")
     public int getSystem()
     {
         return mSystem;
@@ -82,7 +79,6 @@ public class ScrambleParameters
      * NAC
      * @return nac
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "nac")
     public int getNAC()
     {
         return mNac;

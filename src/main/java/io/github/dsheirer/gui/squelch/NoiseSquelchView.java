@@ -23,7 +23,7 @@ import io.github.dsheirer.dsp.squelch.INoiseSquelchController;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
 import io.github.dsheirer.gui.symbol.ChannelView;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.ThreadPool;
 import java.text.DecimalFormat;
@@ -105,7 +105,7 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
     private static final int HISTORY_BUFFER_SIZE = 200; //200 x 10ms = 2,000ms / 2-second history view
 
     private static final String NOT_AVAILABLE = "not available";
-    private final PlaylistManager mPlaylistManager;
+    private final ConfigurationManager mConfigurationManager;
     private final List<NoiseSquelchState> mSquelchStateHistory = new ArrayList<>();
     private INoiseSquelchController mController;
     private ScheduledFuture<?> mTimerFuture;
@@ -134,11 +134,11 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
 
     /**
      * Constructs an instance
-     * @param playlistManager - to trigger channel configuration changes when the user adjusts the noise squelch values.
+     * @param configurationManager - to trigger channel configuration changes when the user adjusts the noise squelch values.
      */
-    public NoiseSquelchView(PlaylistManager playlistManager)
+    public NoiseSquelchView(ConfigurationManager configurationManager)
     {
-        mPlaylistManager = playlistManager;
+        mConfigurationManager = configurationManager;
         init();
     }
 
@@ -625,10 +625,10 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
             close = Math.max(close, NoiseSquelch.MINIMUM_NOISE_THRESHOLD);
             mController.setNoiseThreshold(open, close);
 
-            //The controller updates the channel configuration so schedule a playlist save
-            if(mPlaylistManager != null)
+            //The controller updates the channel configuration so schedule a configuration save
+            if(mConfigurationManager != null)
             {
-                mPlaylistManager.schedulePlaylistSave();
+                mConfigurationManager.scheduleConfigurationSave();
             }
         }
     }
@@ -691,10 +691,10 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
                 mCloseHysteresisShadow = close;
                 mController.setHysteresisThreshold(open, close);
 
-                //The controller updates the channel configuration so schedule a playlist save
-                if(mPlaylistManager != null)
+                //The controller updates the channel configuration so schedule a configuration save
+                if(mConfigurationManager != null)
                 {
-                    mPlaylistManager.schedulePlaylistSave();
+                    mConfigurationManager.scheduleConfigurationSave();
                 }
             }
         }

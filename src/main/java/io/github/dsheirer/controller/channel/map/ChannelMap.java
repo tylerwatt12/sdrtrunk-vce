@@ -22,7 +22,6 @@
 package io.github.dsheirer.controller.channel.map;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -91,7 +90,6 @@ public class ChannelMap
         return mName.get();
     }
 
-    @JacksonXmlProperty(isAttribute = false, localName = "range")
     public List<ChannelRange> getRanges()
     {
         return mRanges;
@@ -102,7 +100,6 @@ public class ChannelMap
         mRanges.setAll(ranges);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "name")
     public String getName()
     {
         return mName.get();

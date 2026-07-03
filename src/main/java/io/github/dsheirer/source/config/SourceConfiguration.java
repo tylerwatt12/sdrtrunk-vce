@@ -19,8 +19,6 @@ package io.github.dsheirer.source.config;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.source.SourceType;
 
@@ -31,7 +29,6 @@ import io.github.dsheirer.source.SourceType;
     @JsonSubTypes.Type(value = SourceConfigRecording.class, name = "sourceConfigRecording"),
     @JsonSubTypes.Type(value = SourceConfigTuner.class, name = "sourceConfigTuner"),
     @JsonSubTypes.Type(value = SourceConfigTunerMultipleFrequency.class, name = "sourceConfigTunerMultipleFrequency")})
-@JacksonXmlRootElement(localName = "source_configuration")
 public class SourceConfiguration extends Configuration
 {
     protected SourceType mSourceType;
@@ -46,7 +43,6 @@ public class SourceConfiguration extends Configuration
         mSourceType = source;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "source_type")
     public SourceType getSourceType()
     {
         return mSourceType;
@@ -57,7 +53,6 @@ public class SourceConfiguration extends Configuration
         mSourceType = source;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     private String getType()
     {
         return null;
@@ -65,7 +60,7 @@ public class SourceConfiguration extends Configuration
 
     private void setType(String type)
     {
-        // Jackson XML type metadata is handled by annotations; no backing field is stored here.
+        // Jackson type metadata is handled by annotations; no backing field is stored here.
     }
 
     public String getDescription()

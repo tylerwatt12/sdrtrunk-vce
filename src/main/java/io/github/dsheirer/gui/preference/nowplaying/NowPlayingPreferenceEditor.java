@@ -42,6 +42,7 @@ public class NowPlayingPreferenceEditor extends HBox
     private GridPane mEditorPane;
     private ToggleSwitch mRetainIdleCallDetailsToggle;
     private ToggleSwitch mAdvancedP25EncryptionToggle;
+    private ToggleSwitch mRfMetadataDebugTabToggle;
     private Spinner<Integer> mTrafficGrantAgeOutSpinner;
 
     /**
@@ -81,6 +82,10 @@ public class NowPlayingPreferenceEditor extends HBox
             GridPane.setHalignment(getAdvancedP25EncryptionToggle(), HPos.RIGHT);
             mEditorPane.add(getAdvancedP25EncryptionToggle(), 0, ++row);
             mEditorPane.add(new Label("Show Advanced P25 Encryption Status"), 1, row, 2, 1);
+
+            GridPane.setHalignment(getRfMetadataDebugTabToggle(), HPos.RIGHT);
+            mEditorPane.add(getRfMetadataDebugTabToggle(), 0, ++row);
+            mEditorPane.add(new Label("Show RF Metadata Debug Tab"), 1, row, 2, 1);
 
             Separator separator = new Separator(Orientation.HORIZONTAL);
             GridPane.setHgrow(separator, Priority.ALWAYS);
@@ -125,6 +130,19 @@ public class NowPlayingPreferenceEditor extends HBox
         }
 
         return mAdvancedP25EncryptionToggle;
+    }
+
+    private ToggleSwitch getRfMetadataDebugTabToggle()
+    {
+        if(mRfMetadataDebugTabToggle == null)
+        {
+            mRfMetadataDebugTabToggle = new ToggleSwitch();
+            mRfMetadataDebugTabToggle.setSelected(mNowPlayingPreference.isRfMetadataDebugTabEnabled());
+            mRfMetadataDebugTabToggle.selectedProperty().addListener((observable, oldValue, enabled) ->
+                mNowPlayingPreference.setRfMetadataDebugTabEnabled(enabled));
+        }
+
+        return mRfMetadataDebugTabToggle;
     }
 
     private Spinner<Integer> getTrafficGrantAgeOutSpinner()

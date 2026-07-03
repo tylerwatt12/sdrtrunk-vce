@@ -20,12 +20,9 @@
 package io.github.dsheirer.source.recording;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 
 import java.io.File;
 
-@JacksonXmlRootElement(localName = "recording_configuration")
 @Deprecated //No longer used -- retained for backward compatibility with existing user configuration files.
 public class RecordingConfiguration
 {
@@ -52,7 +49,6 @@ public class RecordingConfiguration
         return mRecording;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "file_path")
     public String getFilePath()
     {
         return mFilePath;
@@ -63,7 +59,6 @@ public class RecordingConfiguration
         mFilePath = filePath;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "alias")
     public String getAlias()
     {
         return mAlias;
@@ -74,7 +69,6 @@ public class RecordingConfiguration
         mAlias = alias;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "center_frequency")
     public long getCenterFrequency()
     {
         return mCenterFrequency;

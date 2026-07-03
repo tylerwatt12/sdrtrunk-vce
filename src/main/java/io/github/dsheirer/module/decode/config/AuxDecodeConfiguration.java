@@ -22,7 +22,6 @@
 package io.github.dsheirer.module.decode.config;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.decode.DecoderType;
 
@@ -34,7 +33,6 @@ public class AuxDecodeConfiguration extends Configuration
 {
     private List<DecoderType> mAuxDecoders = new ArrayList<>();
 
-    @JacksonXmlProperty(isAttribute = false, localName = "aux_decoder")
     public List<DecoderType> getAuxDecoders()
     {
         return mAuxDecoders;

@@ -19,7 +19,6 @@
 package io.github.dsheirer.audio.broadcast.icecast;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
@@ -30,7 +29,7 @@ public class IcecastHTTPConfiguration extends IcecastConfiguration
 {
     public IcecastHTTPConfiguration()
     {
-        //no-arg JAXB constructor
+        //no-arg deserialization constructor
         this(BroadcastFormat.MP3);
     }
 
@@ -74,7 +73,6 @@ public class IcecastHTTPConfiguration extends IcecastConfiguration
         return copy;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public BroadcastServerType getBroadcastServerType()
     {

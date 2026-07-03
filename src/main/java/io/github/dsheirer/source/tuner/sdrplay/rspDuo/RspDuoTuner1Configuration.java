@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rspDuo;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.tuner.RspDuoAmPort;
@@ -45,7 +44,7 @@ public class RspDuoTuner1Configuration extends RspTunerConfiguration
     }
 
     /**
-     * JAXB constructor
+     * Deserialization constructor
      */
     public RspDuoTuner1Configuration()
     {
@@ -60,7 +59,6 @@ public class RspDuoTuner1Configuration extends RspTunerConfiguration
     /**
      * Indicates if the RF Notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "rf_notch")
     public boolean isRfNotch()
     {
         return mRfNotch;
@@ -77,7 +75,6 @@ public class RspDuoTuner1Configuration extends RspTunerConfiguration
     /**
      * Indicates if the RF Digital Audio Broadcast (DAB) notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "dab_notch")
     public boolean isRfDabNotch()
     {
         return mRfDabNotch;
@@ -94,7 +91,6 @@ public class RspDuoTuner1Configuration extends RspTunerConfiguration
     /**
      * Indicates if the external reference output is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "external_reference_output")
     public boolean isExternalReferenceOutput()
     {
         return mExternalReferenceOutput;
@@ -111,7 +107,6 @@ public class RspDuoTuner1Configuration extends RspTunerConfiguration
     /**
      * Indicates if the AM Notch is enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "am_notch")
     public boolean isAmNotch()
     {
         return mAmNotch;
@@ -128,7 +123,6 @@ public class RspDuoTuner1Configuration extends RspTunerConfiguration
     /**
      * AM port setting
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "am_port")
     public RspDuoAmPort getAmPort()
     {
         return mAmPort;

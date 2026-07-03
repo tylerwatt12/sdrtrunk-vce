@@ -26,15 +26,17 @@ import io.github.dsheirer.controller.channel.map.ChannelRange;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.IconManager;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
-import io.github.dsheirer.gui.playlist.PlaylistEditor;
-import io.github.dsheirer.gui.playlist.PlaylistEditorRequest;
-import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
-import io.github.dsheirer.gui.playlist.channelMap.ChannelMapEditor;
-import io.github.dsheirer.gui.playlist.channelMap.ViewChannelMapEditorRequest;
+import io.github.dsheirer.gui.configuration.ConfigurationEditor;
+import io.github.dsheirer.gui.configuration.ConfigurationEditorRequest;
+import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
+import io.github.dsheirer.gui.configuration.channelMap.ChannelMapEditor;
+import io.github.dsheirer.gui.configuration.channelMap.ViewChannelMapEditorRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.UserPreferencesEditor;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.calibration.CalibrationDialog;
+import io.github.dsheirer.gui.preference.encryption.EncryptionKeyPreferenceEditor;
+import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.viewer.MessageRecordingViewer;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.icon.IconModel;
@@ -43,7 +45,7 @@ import io.github.dsheirer.jmbe.JmbeEditorRequest;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.monitor.StatusBox;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import javafx.application.Application;
@@ -66,31 +68,35 @@ public class JavaFxWindowManager extends Application
 
     public static final String CHANNEL_MAP_EDITOR = "channelmap";
     public static final String ICON_MANAGER = "iconmanager";
-    public static final String PLAYLIST_EDITOR = "playlist";
+    public static final String CONFIGURATION_EDITOR = "configuration";
+    public static final String ENCRYPTION_KEY_EDITOR = "encryptionkeys";
     public static final String USER_PREFERENCES_EDITOR = "preferences";
     public static final String STAGE_MONITOR_KEY_CALIBRATION_DIALOG = "calibration.dialog";
     public static final String STAGE_MONITOR_KEY_CHANNEL_MAP_EDITOR = "channel.map";
     public static final String STAGE_MONITOR_KEY_RECORDING_VIEWER = "recording.viewer";
     public static final String STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR = "icon.manager";
     public static final String STAGE_MONITOR_KEY_JMBE_EDITOR = "jmbe.editor";
-    public static final String STAGE_MONITOR_KEY_PLAYLIST_EDITOR = "playlist";
+    public static final String STAGE_MONITOR_KEY_CONFIGURATION_EDITOR = "configuration";
+    public static final String STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR = "encryption.keys";
     public static final String STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR = "user.preferences";
 
     private static final AtomicBoolean FX_TOOLKIT_STARTED = new AtomicBoolean();
     private ChannelMapEditor mChannelMapEditor;
     private IconManager mIconManager;
     private JmbeEditor mJmbeEditor;
-    private PlaylistEditor mPlaylistEditor;
-    private PlaylistManager mPlaylistManager;
+    private ConfigurationEditor mConfigurationEditor;
+    private ConfigurationManager mConfigurationManager;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
+    private EncryptionKeyPreferenceEditor mEncryptionKeyPreferenceEditor;
     private UserPreferencesEditor mUserPreferencesEditor;
     private MessageRecordingViewer mMessageRecordingViewer;
 
     private Stage mChannelMapStage;
     private Stage mIconManagerStage;
     private Stage mJmbeEditorStage;
-    private Stage mPlaylistStage;
+    private Stage mConfigurationStage;
+    private Stage mEncryptionKeyStage;
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
     private JFXPanel mStatusPanel;
@@ -98,11 +104,11 @@ public class JavaFxWindowManager extends Application
     /**
      * Constructs an instance.  Note: this constructor is used for Swing applications.
      */
-    public JavaFxWindowManager(UserPreferences userPreferences, TunerManager tunerManager, PlaylistManager playlistManager)
+    public JavaFxWindowManager(UserPreferences userPreferences, TunerManager tunerManager, ConfigurationManager configurationManager)
     {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
-        mPlaylistManager = playlistManager;
+        mConfigurationManager = configurationManager;
 
         setup();
     }
@@ -117,8 +123,8 @@ public class JavaFxWindowManager extends Application
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mTunerManager = new TunerManager(mUserPreferences);
         mTunerManager.start();
-        mPlaylistManager = new PlaylistManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, new IconModel());
-        mPlaylistManager.init();
+        mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, new IconModel());
+        mConfigurationManager.init();
         setup();
     }
 
@@ -245,7 +251,7 @@ public class JavaFxWindowManager extends Application
     {
         if(mIconManager == null)
         {
-            mIconManager = new IconManager(mPlaylistManager.getIconModel());
+            mIconManager = new IconManager(mConfigurationManager.getIconModel());
         }
 
         return mIconManager;
@@ -300,51 +306,51 @@ public class JavaFxWindowManager extends Application
     }
 
     /**
-     * Lazy construct and access the playlist editor
+     * Lazy construct and access the configuration editor
      */
-    public PlaylistEditor getPlaylistEditor()
+    public ConfigurationEditor getConfigurationEditor()
     {
-        if(mPlaylistEditor == null)
+        if(mConfigurationEditor == null)
         {
-            mPlaylistEditor = new PlaylistEditor(mPlaylistManager, mTunerManager, mUserPreferences);
+            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mTunerManager, mUserPreferences);
         }
 
-        return mPlaylistEditor;
+        return mConfigurationEditor;
     }
 
     /**
-     * Access the playlist stage.
+     * Access the configuration editor stage.
      */
-    private Stage getPlaylistStage()
+    private Stage getConfigurationStage()
     {
-        if(mPlaylistStage == null)
+        if(mConfigurationStage == null)
         {
-            Scene scene = new Scene(getPlaylistEditor(), 1000, 750);
-            mPlaylistStage = new Stage();
-            mPlaylistStage.setTitle("sdrtrunk - Playlist Editor");
-            mPlaylistStage.setScene(scene);
-            ApplicationIcon.apply(mPlaylistStage);
-            mUserPreferences.getJavaFxPreferences().monitor(mPlaylistStage, STAGE_MONITOR_KEY_PLAYLIST_EDITOR);
+            Scene scene = new Scene(getConfigurationEditor(), 1000, 750);
+            mConfigurationStage = new Stage();
+            mConfigurationStage.setTitle("sdrtrunk - Configuration Editor");
+            mConfigurationStage.setScene(scene);
+            ApplicationIcon.apply(mConfigurationStage);
+            mUserPreferences.getJavaFxPreferences().monitor(mConfigurationStage, STAGE_MONITOR_KEY_CONFIGURATION_EDITOR);
         }
 
-        return mPlaylistStage;
+        return mConfigurationStage;
     }
 
     /**
-     * Processes a playlist editor request and brings the playlist editor into focus
+     * Processes a configuration editor request and brings the configuration editor into focus
      */
     @Subscribe
-    public void process(PlaylistEditorRequest request)
+    public void process(ConfigurationEditorRequest request)
     {
         execute(() -> {
             try
             {
-                restoreStage(getPlaylistStage());
-                getPlaylistEditor().process(request);
+                restoreStage(getConfigurationStage());
+                getConfigurationEditor().process(request);
             }
             catch(Throwable t)
             {
-                mLog.error("Error processing show playlist editor request", t);
+                mLog.error("Error processing show configuration editor request", t);
             }
         });
     }
@@ -393,13 +399,53 @@ public class JavaFxWindowManager extends Application
     }
 
     /**
+     * Voice encryption key editor.
+     */
+    private EncryptionKeyPreferenceEditor getEncryptionKeyPreferenceEditor()
+    {
+        if(mEncryptionKeyPreferenceEditor == null)
+        {
+            mEncryptionKeyPreferenceEditor = new EncryptionKeyPreferenceEditor(mUserPreferences);
+        }
+
+        return mEncryptionKeyPreferenceEditor;
+    }
+
+    /**
+     * Voice encryption key editor stage.
+     */
+    private Stage getEncryptionKeyStage()
+    {
+        if(mEncryptionKeyStage == null)
+        {
+            Scene scene = new Scene(getEncryptionKeyPreferenceEditor(), 900, 500);
+            mEncryptionKeyStage = new Stage();
+            mEncryptionKeyStage.setTitle("sdrtrunk - Encryption Keys");
+            mEncryptionKeyStage.setScene(scene);
+            ApplicationIcon.apply(mEncryptionKeyStage);
+            mUserPreferences.getJavaFxPreferences().monitor(mEncryptionKeyStage, STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR);
+        }
+
+        return mEncryptionKeyStage;
+    }
+
+    /**
+     * Processes a voice encryption key editor request.
+     */
+    @Subscribe
+    public void process(final ViewEncryptionKeyPreferenceEditorRequest request)
+    {
+        execute(() -> restoreStage(getEncryptionKeyStage()));
+    }
+
+    /**
      * Channel Map Editor
      */
     private ChannelMapEditor getChannelMapEditor()
     {
         if(mChannelMapEditor == null)
         {
-            mChannelMapEditor = new ChannelMapEditor(mPlaylistManager.getChannelMapModel());
+            mChannelMapEditor = new ChannelMapEditor(mConfigurationManager.getChannelMapModel());
         }
 
         return mChannelMapEditor;
@@ -486,14 +532,14 @@ public class JavaFxWindowManager extends Application
                         channelMap1.addRange(new ChannelRange(200,299,160000000, 25000));
                         channelMap1.addRange(new ChannelRange(300,399,170000000, 12500));
                         channelMap1.addRange(new ChannelRange(400,499,180000000, 25000));
-                        mPlaylistManager.getChannelMapModel().addChannelMap(channelMap1);
+                        mConfigurationManager.getChannelMapModel().addChannelMap(channelMap1);
 
                         ChannelMap channelMap2 = new ChannelMap("Test Map 2");
                         channelMap2.addRange(new ChannelRange(1,199,450000000, 12500));
                         channelMap2.addRange(new ChannelRange(200,299,460000000, 25000));
                         channelMap2.addRange(new ChannelRange(300,399,470000000, 12500));
                         channelMap2.addRange(new ChannelRange(400,499,480000000, 25000));
-                        mPlaylistManager.getChannelMapModel().addChannelMap(channelMap2);
+                        mConfigurationManager.getChannelMapModel().addChannelMap(channelMap2);
                         valid = true;
                         process(new ViewChannelMapEditorRequest());
                         break;
@@ -501,9 +547,13 @@ public class JavaFxWindowManager extends Application
                         valid = true;
                         process(new ViewIconManagerRequest());
                         break;
-                    case PLAYLIST_EDITOR:
+                    case CONFIGURATION_EDITOR:
                         valid = true;
-                        process(new ViewPlaylistRequest());
+                        process(new ViewConfigurationRequest());
+                        break;
+                    case ENCRYPTION_KEY_EDITOR:
+                        valid = true;
+                        process(new ViewEncryptionKeyPreferenceEditorRequest());
                         break;
                     case USER_PREFERENCES_EDITOR:
                         valid = true;
@@ -519,8 +569,8 @@ public class JavaFxWindowManager extends Application
         {
             StringBuilder sb = new StringBuilder();
             sb.append("An argument is required to launch JavaFX windows from this window manager.  " +
-                "Valid options are:\n\tchannelmap\tChannel Map Editor\n\ticonmanager\tIcon Manager\n\tplaylist\tPlaylist Editor\n" +
-                "\tpreferences\tUser Preferences Editor\n");
+                "Valid options are:\n\tchannelmap\tChannel Map Editor\n\ticonmanager\tIcon Manager\n\tconfiguration\tConfiguration Editor\n" +
+                "\tencryptionkeys\tEncryption Keys\n\tpreferences\tUser Preferences Editor\n");
             sb.append("Supplied Argument(s): ").append(parameters.getRaw());
 
             mLog.error(sb.toString());

@@ -19,7 +19,6 @@ package io.github.dsheirer.source.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.mixer.MixerChannel;
 
@@ -54,7 +53,6 @@ public class SourceConfigMixer extends SourceConfiguration
         return sb.toString();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "mixer")
     public String getMixer()
     {
         return mMixer;
@@ -65,7 +63,6 @@ public class SourceConfigMixer extends SourceConfiguration
         mMixer = mixer;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "channel")
     public MixerChannel getChannel()
     {
         return mChannel;

@@ -21,7 +21,6 @@ package io.github.dsheirer.audio.broadcast.icecast;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import javafx.beans.property.SimpleStringProperty;
@@ -79,7 +78,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
         return "Basic " + base64;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "user_name")
     public String getUserName()
     {
         return mUserName;
@@ -100,7 +98,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
      *
      * @return mount point
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "mount_point")
     public String getMountPoint()
     {
         return mMountPoint.get();
@@ -131,7 +128,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
         return mMountPoint.get() != null;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "description")
     public String getDescription()
     {
         return mDescription;
@@ -150,7 +146,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     /**
      * Stream genre
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "genre")
     public String getGenre()
     {
         return mGenre;
@@ -174,7 +169,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     /**
      * Public visibility of the broadcastAudio
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "public")
     public boolean isPublic()
     {
         return mPublic;
@@ -193,7 +187,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     /**
      * Number of audio channels in the broadcastAudio
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "channels")
     public int getChannels()
     {
         return mChannels;
@@ -215,7 +208,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     /**
      * Bit rate in bits per second
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "bitrate")
     public int getBitRate()
     {
         return mBitRate;
@@ -236,7 +228,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
         return mBitRate > 0;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "sample_rate")
     public int getSampleRate()
     {
         return mSampleRate;
@@ -255,7 +246,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     /**
      * URL associated with the broadcastAudio where users can find additional details.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "url")
     public String getURL()
     {
         return mURL;
@@ -279,7 +269,6 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
     /**
      * Control whether metadata is sent inline or out-of-band.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "inline")
     public boolean getInline()
     {
         return mInline;

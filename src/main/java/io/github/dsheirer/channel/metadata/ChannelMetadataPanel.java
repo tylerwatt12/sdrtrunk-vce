@@ -25,13 +25,13 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.playlist.channel.ViewChannelRequest;
+import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.module.ProcessingChain;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
@@ -75,9 +75,9 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
     /**
      * Table view for currently decoding channel metadata
      */
-    public ChannelMetadataPanel(PlaylistManager playlistManager, IconModel iconModel, UserPreferences userPreferences)
+    public ChannelMetadataPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences)
     {
-        mChannelProcessingManager = playlistManager.getChannelProcessingManager();
+        mChannelProcessingManager = configurationManager.getChannelProcessingManager();
         mIconModel = iconModel;
         mUserPreferences = userPreferences;
         init();

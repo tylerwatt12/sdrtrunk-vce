@@ -20,7 +20,6 @@
 package io.github.dsheirer.alias.id.legacy.talkgroup;
 
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -30,7 +29,7 @@ public class LegacyTalkgroupID extends AliasID
 
     public LegacyTalkgroupID()
     {
-        //No arg JAXB constructor
+        //No-arg deserialization constructor
     }
 
     public LegacyTalkgroupID(String talkgroup)
@@ -44,7 +43,6 @@ public class LegacyTalkgroupID extends AliasID
         return false;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "talkgroup")
     public String getTalkgroup()
     {
         return mTalkgroup;
@@ -88,7 +86,6 @@ public class LegacyTalkgroupID extends AliasID
         return retVal;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {

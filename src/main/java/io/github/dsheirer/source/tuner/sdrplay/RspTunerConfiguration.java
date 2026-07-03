@@ -21,7 +21,6 @@ package io.github.dsheirer.source.tuner.sdrplay;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.api.parameter.control.AgcMode;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1.Rsp1TunerConfiguration;
@@ -56,7 +55,7 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
     private AgcMode mAgcMode = AgcMode.ENABLE;
 
     /**
-     * JAXB Constructor
+     * Deserialization constructor
      */
     protected RspTunerConfiguration()
     {
@@ -75,7 +74,6 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
     /**
      * Sample rate for the tuner
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "sampleRate")
     public RspSampleRate getSampleRate()
     {
         return mRspSampleRate;
@@ -93,7 +91,6 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
      * LNA setting
      * @return LNA setting
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "lna")
     public int getLNA()
     {
         return mLNA;
@@ -112,7 +109,6 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
      * Baseband gain reduction
      * @return gain reduction in range 20-59 dB
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "gr")
     public int getBasebandGainReduction()
     {
         return mBasebandGainReduction;
@@ -131,7 +127,6 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
      * IF AGC mode
      * @return mode
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "agcMode")
     public AgcMode getAgcMode()
     {
         return mAgcMode;

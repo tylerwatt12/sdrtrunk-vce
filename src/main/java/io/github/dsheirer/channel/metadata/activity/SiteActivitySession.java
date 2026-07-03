@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Session-only activity state for one started trunked playlist item.
+ * Session-only activity state for one started trunked configuration item.
  *
  * Control and traffic rows are intentionally stored in separate maps so that a frequency can be both a learned
  * traffic frequency and a learned control frequency during the same session without changing row identity.
@@ -91,7 +91,16 @@ public class SiteActivitySession
             return ControlUpdate.empty();
         }
 
-        long frequency = channelDescriptor.getDownlinkFrequency();
+        return currentControl(channelDescriptor.getDownlinkFrequency(), getLcn(channelDescriptor));
+    }
+
+    public ControlUpdate currentControl(long frequency, String lcn)
+    {
+        if(frequency <= 0)
+        {
+            return ControlUpdate.empty();
+        }
+
         List<ChannelActivityRow> demoted = new ArrayList<>();
 
         if(mCurrentControlFrequency != null && mCurrentControlFrequency != frequency)
@@ -106,7 +115,7 @@ public class SiteActivitySession
         }
 
         ChannelActivityRow current = getOrCreateControlRow(frequency);
-        current.setLcn(getLcn(channelDescriptor));
+        current.setLcn(lcn);
         current.setRole(ChannelActivityRow.Role.CURRENT_CONTROL);
         current.setOrigin(ChannelActivityRow.Origin.DECODED_CURRENT_CONTROL);
         current.setControlRole(ChannelActivityRow.ControlRole.CURRENT);
@@ -124,9 +133,18 @@ public class SiteActivitySession
             return null;
         }
 
-        long frequency = channelDescriptor.getDownlinkFrequency();
+        return alternateControl(channelDescriptor.getDownlinkFrequency(), getLcn(channelDescriptor));
+    }
+
+    public ChannelActivityRow alternateControl(long frequency, String lcn)
+    {
+        if(frequency <= 0)
+        {
+            return null;
+        }
+
         ChannelActivityRow row = getOrCreateControlRow(frequency);
-        row.setLcn(getLcn(channelDescriptor));
+        row.setLcn(lcn);
 
         if(row.getControlRole() != ChannelActivityRow.ControlRole.CURRENT)
         {
@@ -185,6 +203,47 @@ public class SiteActivitySession
     public List<ChannelActivityRow> getTrafficRows()
     {
         return new ArrayList<>(mTrafficRows.values());
+    }
+
+    /**
+     * Rows owned by this session that should be updated when a channel stops.
+     * The parent channel owns the whole session; traffic channels only own the traffic rows currently attached to them.
+     */
+    public List<ChannelActivityRow> getRowsForStoppedChannel(Channel channel)
+    {
+        if(channel == null)
+        {
+            return List.of();
+        }
+
+        if(channel == mParentChannel)
+        {
+            return mTableModel.getRows();
+        }
+
+        List<ChannelActivityRow> rows = new ArrayList<>();
+
+        for(ChannelActivityRow row: mTrafficRows.values())
+        {
+            if(row.getChannel() == channel)
+            {
+                rows.add(row);
+            }
+        }
+
+        return rows;
+    }
+
+    /**
+     * Releases a stopped traffic channel from a persistent traffic row without removing the row from this session.
+     */
+    public void releaseTrafficChannel(Channel trafficChannel, ChannelActivityRow row)
+    {
+        if(trafficChannel != null && trafficChannel.isTrafficChannel() && row != null &&
+            row.getChannel() == trafficChannel)
+        {
+            row.setChannel(mParentChannel);
+        }
     }
 
     public List<ChannelActivityRow> removeConfiguredOnlyControlsExcept(long configuredFrequency)

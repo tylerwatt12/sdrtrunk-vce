@@ -44,7 +44,7 @@ public class ChannelModel implements Listener<ChannelEvent>
     {
         mAliasModel = aliasModel;
 
-        //Register a listener to detect channel changes and broadcast change events to cause playlist save requests
+        //Register a listener to detect channel changes and broadcast change events to cause configuration save requests
         ChannelListChangeListener changeListener = new ChannelListChangeListener();
         mChannels.addListener(changeListener);
         mTrafficChannels.addListener(changeListener);

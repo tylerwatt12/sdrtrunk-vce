@@ -1,0 +1,193 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2014-2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.preference.encryption;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Known voice encryption algorithm IDs used for key entry.
+ */
+public enum VoiceEncryptionAlgorithm
+{
+    APCO25_ACCORDION_3(VoiceEncryptionProtocol.APCO25, 0x00, "ACCORDIAN 3", null, false),
+    APCO25_BATON_AUTO_EVEN(VoiceEncryptionProtocol.APCO25, 0x01, "BATON AUTO EVEN", null, false),
+    APCO25_FIREFLY(VoiceEncryptionProtocol.APCO25, 0x02, "FIREFLY", null, false),
+    APCO25_MAYFLY(VoiceEncryptionProtocol.APCO25, 0x03, "MAYFLY", null, false),
+    APCO25_SAVILLE(VoiceEncryptionProtocol.APCO25, 0x04, "SAVILLE", null, false),
+    APCO25_MOTOROLA_PADSTONE(VoiceEncryptionProtocol.APCO25, 0x05, "MOTOROLA PADSTONE", null, false),
+    APCO25_BATON_AUTO_ODD(VoiceEncryptionProtocol.APCO25, 0x41, "BATON AUTO ODD", null, false),
+    APCO25_DES_OFB(VoiceEncryptionProtocol.APCO25, 0x81, "DES OFB", 8, false),
+    APCO25_TRIPLE_DES_2_KEY(VoiceEncryptionProtocol.APCO25, 0x82, "2-KEY TRIPLE DES", 16, false),
+    APCO25_TRIPLE_DES_3_KEY(VoiceEncryptionProtocol.APCO25, 0x83, "3-KEY TRIPLE DES", 24, false),
+    APCO25_AES_256(VoiceEncryptionProtocol.APCO25, 0x84, "AES-256", 32, false),
+    APCO25_AES_128(VoiceEncryptionProtocol.APCO25, 0x85, "AES-128", 16, false),
+    APCO25_AES_CBC(VoiceEncryptionProtocol.APCO25, 0x88, "AES-CBC", null, false),
+    APCO25_AES_128_OFB(VoiceEncryptionProtocol.APCO25, 0x89, "AES-128-OFB", 16, false),
+    APCO25_DES_XL(VoiceEncryptionProtocol.APCO25, 0x9F, "MOTOROLA DES-XL", 8, false),
+    APCO25_DVI_XL(VoiceEncryptionProtocol.APCO25, 0xA0, "MOTOROLA DVI-XL", null, false),
+    APCO25_DVP_XL(VoiceEncryptionProtocol.APCO25, 0xA1, "MOTOROLA DVP-XL", null, false),
+    APCO25_DVP_SPFL(VoiceEncryptionProtocol.APCO25, 0xA2, "MOTOROLA DVP-SPFL", null, false),
+    APCO25_HAYSTACK(VoiceEncryptionProtocol.APCO25, 0xA3, "MOTOROLA HAYSTACK", null, false),
+    APCO25_MOTOROLA_A4(VoiceEncryptionProtocol.APCO25, 0xA4, "MOTOROLA UNKNOWN A4", null, false),
+    APCO25_MOTOROLA_A5(VoiceEncryptionProtocol.APCO25, 0xA5, "MOTOROLA UNKNOWN A5", null, false),
+    APCO25_MOTOROLA_A6(VoiceEncryptionProtocol.APCO25, 0xA6, "MOTOROLA UNKNOWN A6", null, false),
+    APCO25_MOTOROLA_A7(VoiceEncryptionProtocol.APCO25, 0xA7, "MOTOROLA UNKNOWN A7", null, false),
+    APCO25_MOTOROLA_A8(VoiceEncryptionProtocol.APCO25, 0xA8, "MOTOROLA UNKNOWN A8", null, false),
+    APCO25_MOTOROLA_A9(VoiceEncryptionProtocol.APCO25, 0xA9, "MOTOROLA UNKNOWN A9", null, false),
+    APCO25_ADP(VoiceEncryptionProtocol.APCO25, 0xAA, "Motorola ADP 40-bit RC4", 5, true,
+        "P25 Phase 1 IMBE voice only"),
+    APCO25_MOTOROLA_CFX_256(VoiceEncryptionProtocol.APCO25, 0xAB, "MOTOROLA CFX-256", 32, false),
+    APCO25_MOTOROLA_AC(VoiceEncryptionProtocol.APCO25, 0xAC, "MOTOROLA UNKNOWN AC", null, false),
+    APCO25_MOTOROLA_AD(VoiceEncryptionProtocol.APCO25, 0xAD, "MOTOROLA UNKNOWN AD", null, false),
+    APCO25_MOTOROLA_AE(VoiceEncryptionProtocol.APCO25, 0xAE, "MOTOROLA UNKNOWN AE", null, false),
+    APCO25_AES_256_GCM(VoiceEncryptionProtocol.APCO25, 0xAF, "MOTOROLA AES-256-GCM", 32, false),
+    APCO25_DVP_B0(VoiceEncryptionProtocol.APCO25, 0xB0, "MOTOROLA DVP B0", null, false),
+    DMR_HYTERA_BASIC_PRIVACY(VoiceEncryptionProtocol.DMR, 0x01, "Hytera Basic Privacy", null, false),
+    DMR_HYTERA_ENHANCED_PRIVACY(VoiceEncryptionProtocol.DMR, 0x02, "Hytera Enhanced Privacy", null, false),
+    DMR_DMRA_RC4(VoiceEncryptionProtocol.DMR, 0x21, "DMRA RC4/EP", 5, true),
+    DMR_DMRA_AES_128(VoiceEncryptionProtocol.DMR, 0x24, "DMRA AES-128", 16, true),
+    DMR_DMRA_AES_256(VoiceEncryptionProtocol.DMR, 0x25, "DMRA AES-256", 32, true),
+    DMR_HYTERA_ENHANCED_PRIVACY_2(VoiceEncryptionProtocol.DMR, 0x26, "Hytera Enhanced Privacy 2", null, false),
+    CUSTOM(null, -1, "Custom", null, false);
+
+    private final VoiceEncryptionProtocol mProtocol;
+    private final int mValue;
+    private final String mLabel;
+    private final Integer mExpectedKeyBytes;
+    private final boolean mSupported;
+    private final String mSupportNote;
+
+    VoiceEncryptionAlgorithm(VoiceEncryptionProtocol protocol, int value, String label, Integer expectedKeyBytes,
+                             boolean supported)
+    {
+        this(protocol, value, label, expectedKeyBytes, supported, null);
+    }
+
+    VoiceEncryptionAlgorithm(VoiceEncryptionProtocol protocol, int value, String label, Integer expectedKeyBytes,
+                             boolean supported, String supportNote)
+    {
+        mProtocol = protocol;
+        mValue = value;
+        mLabel = label;
+        mExpectedKeyBytes = expectedKeyBytes;
+        mSupported = supported;
+        mSupportNote = supportNote;
+    }
+
+    public VoiceEncryptionProtocol getProtocol()
+    {
+        return mProtocol;
+    }
+
+    public int getValue()
+    {
+        return mValue;
+    }
+
+    public Integer getExpectedKeyBytes()
+    {
+        return mExpectedKeyBytes;
+    }
+
+    public boolean hasExpectedKeyLength()
+    {
+        return mExpectedKeyBytes != null;
+    }
+
+    public boolean isSupported()
+    {
+        return mSupported;
+    }
+
+    public String getSupportNote()
+    {
+        return mSupportNote;
+    }
+
+    @Override
+    public String toString()
+    {
+        if(this == CUSTOM)
+        {
+            return mLabel;
+        }
+
+        return mLabel + " (0x" + Integer.toHexString(mValue).toUpperCase() + ")";
+    }
+
+    public static List<VoiceEncryptionAlgorithm> getAlgorithms(VoiceEncryptionProtocol protocol)
+    {
+        List<VoiceEncryptionAlgorithm> algorithms = new ArrayList<>();
+
+        for(VoiceEncryptionAlgorithm algorithm: values())
+        {
+            if(algorithm != CUSTOM && algorithm.getProtocol() == protocol)
+            {
+                algorithms.add(algorithm);
+            }
+        }
+
+        return algorithms;
+    }
+
+    public static VoiceEncryptionAlgorithm getFirstSupported(VoiceEncryptionProtocol protocol)
+    {
+        for(VoiceEncryptionAlgorithm algorithm: getAlgorithms(protocol))
+        {
+            if(algorithm.isSupported())
+            {
+                return algorithm;
+            }
+        }
+
+        return null;
+    }
+
+    public static boolean isSupported(VoiceEncryptionProtocol protocol, int value)
+    {
+        return fromValue(protocol, value).isSupported();
+    }
+
+    public static VoiceEncryptionAlgorithm fromValue(VoiceEncryptionProtocol protocol, int value)
+    {
+        for(VoiceEncryptionAlgorithm algorithm: values())
+        {
+            if(algorithm.getProtocol() == protocol && algorithm.getValue() == value)
+            {
+                return algorithm;
+            }
+        }
+
+        return CUSTOM;
+    }
+
+    public static String getLabel(VoiceEncryptionProtocol protocol, int value)
+    {
+        VoiceEncryptionAlgorithm algorithm = fromValue(protocol, value);
+
+        if(algorithm != CUSTOM)
+        {
+            return algorithm.toString();
+        }
+
+        return "0x" + Integer.toHexString(value).toUpperCase();
+    }
+}

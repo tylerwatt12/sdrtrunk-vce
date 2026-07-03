@@ -19,8 +19,6 @@
 package io.github.dsheirer.controller.channel;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -56,7 +54,6 @@ import javafx.util.Callback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@JacksonXmlRootElement(localName = "channel")
 public class Channel extends Configuration implements Listener<SourceEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(Channel.class);
@@ -396,7 +393,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     /**
      * Returns the owning system for this channel.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "system")
     public String getSystem()
     {
         return mSystem.get();
@@ -415,7 +411,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     /**
      * Returns the owning site for this channel.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "site")
     public String getSite()
     {
         return mSite.get();
@@ -434,7 +429,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     /**
      * Returns the name of this channel.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "name")
     public String getName()
     {
         return mName.get();
@@ -451,7 +445,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     /**
      * Stable RadioResolve source GUID for configured RF sources.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "radres_guid")
     public String getRadresGuid()
     {
         if(isStandardChannel() && !hasRadresGuid())
@@ -539,7 +532,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      *
      * @return true if this channel should be auto-started on application startup
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "enabled")
     public boolean getAutoStart()
     {
         return mAutoStart.get();
@@ -570,7 +562,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      *
      * @return auto-start order or null
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "order")
     public Integer getAutoStartOrder()
     {
         return mAutoStartOrder.get();
@@ -608,7 +599,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      * Returns the alias list that is used by this channel for looking up alias
      * values for the various identifiers produced by the decoder(s).
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "alias_list_name")
     public String getAliasListName()
     {
         return mAliasListName.get();
@@ -626,7 +616,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     /**
      * Gets the primary decoder configuration used by this channel
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "decode_configuration")
     public DecodeConfiguration getDecodeConfiguration()
     {
         return mDecodeConfiguration;
@@ -647,7 +636,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      * Gets the aux decoder configuration used by this channel.  Aux decoders
      * operate on demodulated audio
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "aux_decode_configuration")
     public AuxDecodeConfiguration getAuxDecodeConfiguration()
     {
         return mAuxDecodeConfiguration;
@@ -668,7 +656,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      * Returns the source configuration for this channel.  A channel source
      * identifies where the processing chain will get source sample data from.
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "source_configuration")
     public SourceConfiguration getSourceConfiguration()
     {
         return mSourceConfiguration;
@@ -693,7 +680,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     /**
      * Returns the event logger configuration for this channel.
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "event_log_configuration")
     public EventLogConfiguration getEventLogConfiguration()
     {
         return mEventLogConfiguration;
@@ -713,7 +699,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     /**
      * Returns the recorder configuration for this channel.
      */
-    @JacksonXmlProperty(isAttribute = false, localName = "record_configuration")
     public RecordConfiguration getRecordConfiguration()
     {
         return mRecordConfiguration;

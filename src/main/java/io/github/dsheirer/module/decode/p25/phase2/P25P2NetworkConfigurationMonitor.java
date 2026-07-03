@@ -21,7 +21,6 @@ package io.github.dsheirer.module.decode.p25.phase2;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.AdjacentStatusBroadcastExplicit;
@@ -53,7 +52,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.function.Consumer;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,9 +83,6 @@ public class P25P2NetworkConfigurationMonitor
 
     //Current Site Services
     private SystemServiceBroadcast mSystemServiceBroadcast;
-    private Consumer<IChannelDescriptor> mCurrentControlChannelListener;
-    private Consumer<IChannelDescriptor> mSecondaryControlChannelListener;
-    private Consumer<P25SiteIdentifier> mSiteIdentifierListener;
     private P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer;
 
     //Neighbor Sites
@@ -112,53 +107,6 @@ public class P25P2NetworkConfigurationMonitor
     {
         mNetworkConfigurationStabilizer = stabilizer != null ? stabilizer :
             new P25NetworkConfigurationStabilizer("P25_PHASE_2");
-    }
-
-    public void setCurrentControlChannelListener(Consumer<IChannelDescriptor> listener)
-    {
-        mCurrentControlChannelListener = listener;
-    }
-
-    public void setSecondaryControlChannelListener(Consumer<IChannelDescriptor> listener)
-    {
-        mSecondaryControlChannelListener = listener;
-    }
-
-    public void setSiteIdentifierListener(Consumer<P25SiteIdentifier> listener)
-    {
-        mSiteIdentifierListener = listener;
-    }
-
-    private void broadcastCurrentControlChannel(IChannelDescriptor channel, long timestamp)
-    {
-        IChannelDescriptor stable = mNetworkConfigurationStabilizer.observeCurrentControlChannel(channel, timestamp);
-
-        if(mCurrentControlChannelListener != null && stable != null && stable.getDownlinkFrequency() > 0)
-        {
-            mCurrentControlChannelListener.accept(stable);
-        }
-    }
-
-    private void broadcastSecondaryControlChannel(IChannelDescriptor channel, long timestamp)
-    {
-        IChannelDescriptor stable = mNetworkConfigurationStabilizer.observeSecondaryControlChannel(channel, timestamp);
-
-        if(mSecondaryControlChannelListener != null && stable != null && stable.getDownlinkFrequency() > 0)
-        {
-            mSecondaryControlChannelListener.accept(stable);
-        }
-    }
-
-    private void broadcastSiteIdentifier(Identifier<?> wacn, Identifier<?> system, Identifier<?> rfss, Identifier<?> site,
-                                         long timestamp)
-    {
-        P25SiteIdentifier raw = new P25SiteIdentifier(wacn, system, rfss, site);
-        P25SiteIdentifier stable = mNetworkConfigurationStabilizer.observeSiteIdentifier(raw, timestamp);
-
-        if(mSiteIdentifierListener != null && stable != null)
-        {
-            mSiteIdentifierListener.accept(stable);
-        }
     }
 
     /**
@@ -229,7 +177,6 @@ public class P25P2NetworkConfigurationMonitor
                     for(IChannelDescriptor channel: sccba.getChannels())
                     {
                         mSecondaryControlChannels.put(channel.toString(), channel);
-                        broadcastSecondaryControlChannel(channel, message.getTimestamp());
                         channels.add(getChannelSnapshot("secondary_control", channel));
                     }
 
@@ -240,9 +187,6 @@ public class P25P2NetworkConfigurationMonitor
                 if(mac instanceof RfssStatusBroadcastImplicit rsbe)
                 {
                     mRFSSStatusBroadcastImplicit = rsbe;
-                    broadcastCurrentControlChannel(rsbe.getChannel(), message.getTimestamp());
-                    broadcastSiteIdentifier(null, rsbe.getSystem(), rsbe.getRFSS(), rsbe.getSite(),
-                        message.getTimestamp());
                     return observation(null, getCurrentSiteSnapshot(rsbe),
                         List.of(getChannelSnapshot("primary_control", rsbe.getChannel())), Collections.emptyList(),
                         Collections.emptyList());
@@ -252,8 +196,6 @@ public class P25P2NetworkConfigurationMonitor
                 if(mac instanceof NetworkStatusBroadcastImplicit nsbe)
                 {
                     mNetworkStatusBroadcastImplicit = nsbe;
-                    broadcastCurrentControlChannel(nsbe.getChannel(), message.getTimestamp());
-                    broadcastSiteIdentifier(nsbe.getWACN(), nsbe.getSystem(), null, null, message.getTimestamp());
                     return observation(getNetworkSnapshot(nsbe), null, Collections.emptyList(), Collections.emptyList(),
                         Collections.emptyList());
                 }
@@ -290,7 +232,6 @@ public class P25P2NetworkConfigurationMonitor
                     for(IChannelDescriptor channel: sccbe.getChannels())
                     {
                         mSecondaryControlChannels.put(channel.toString(), channel);
-                        broadcastSecondaryControlChannel(channel, message.getTimestamp());
                         channels.add(getChannelSnapshot("secondary_control", channel));
                     }
 
@@ -309,9 +250,6 @@ public class P25P2NetworkConfigurationMonitor
                 if(mac instanceof RfssStatusBroadcastExplicit rsbe)
                 {
                     mRFSSStatusBroadcastExplicit = rsbe;
-                    broadcastCurrentControlChannel(rsbe.getChannel(), message.getTimestamp());
-                    broadcastSiteIdentifier(null, rsbe.getSystem(), rsbe.getRFSS(), rsbe.getSite(),
-                        message.getTimestamp());
                     return observation(null, getCurrentSiteSnapshot(rsbe),
                         List.of(getChannelSnapshot("primary_control", rsbe.getChannel())), Collections.emptyList(),
                         Collections.emptyList());
@@ -321,8 +259,6 @@ public class P25P2NetworkConfigurationMonitor
                 if(mac instanceof NetworkStatusBroadcastExplicit nsbe)
                 {
                     mNetworkStatusBroadcastExplicit = nsbe;
-                    broadcastCurrentControlChannel(nsbe.getChannel(), message.getTimestamp());
-                    broadcastSiteIdentifier(nsbe.getWACN(), nsbe.getSystem(), null, null, message.getTimestamp());
                     return observation(getNetworkSnapshot(nsbe), null, Collections.emptyList(), Collections.emptyList(),
                         Collections.emptyList());
                 }

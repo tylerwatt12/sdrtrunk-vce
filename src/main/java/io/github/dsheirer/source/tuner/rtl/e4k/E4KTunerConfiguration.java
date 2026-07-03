@@ -19,7 +19,6 @@
 package io.github.dsheirer.source.tuner.rtl.e4k;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KEmbeddedTuner.E4KGain;
@@ -38,7 +37,7 @@ public class E4KTunerConfiguration extends RTL2832TunerConfiguration
     private IFGain mIFGain = IFGain.LINEARITY_8;
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     public E4KTunerConfiguration()
     {
@@ -62,7 +61,6 @@ public class E4KTunerConfiguration extends RTL2832TunerConfiguration
         super(uniqueID);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "master_gain")
     public E4KGain getMasterGain()
     {
         return mMasterGain;
@@ -73,7 +71,6 @@ public class E4KTunerConfiguration extends RTL2832TunerConfiguration
         mMasterGain = gain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "mixer_gain")
     public E4KMixerGain getMixerGain()
     {
         return mMixerGain;
@@ -84,7 +81,6 @@ public class E4KTunerConfiguration extends RTL2832TunerConfiguration
         mMixerGain = mixerGain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_gain")
     public E4KLNAGain getLNAGain()
     {
         return mLNAGain;
@@ -95,7 +91,6 @@ public class E4KTunerConfiguration extends RTL2832TunerConfiguration
         mLNAGain = lnaGain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "if_gain")
     public IFGain getIFGain()
     {
         return mIFGain;

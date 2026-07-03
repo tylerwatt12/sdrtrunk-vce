@@ -18,7 +18,6 @@
 package io.github.dsheirer.alias.id.lojack;
 
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.module.decode.lj1200.LJ1200Message;
@@ -34,7 +33,6 @@ public class LoJackFunctionAndID extends AliasID
         return false;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "id")
     public String getID()
     {
         return mID;
@@ -46,7 +44,6 @@ public class LoJackFunctionAndID extends AliasID
         updateValueProperty();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "function")
     public LJ1200Message.Function getFunction()
     {
         return mFunction;
@@ -102,7 +99,6 @@ public class LoJackFunctionAndID extends AliasID
         return retVal;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {

@@ -20,6 +20,7 @@
 package io.github.dsheirer.audio.codec.mbe;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
@@ -38,6 +39,7 @@ import java.util.List;
 @JsonRootName("mbe_call")
 @JsonPropertyOrder({"protocol", "version", "call_type", "from", "to", "encrypted", "system", "site", "frames"})
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class MBECallSequence
 {
     private String mProtocol;

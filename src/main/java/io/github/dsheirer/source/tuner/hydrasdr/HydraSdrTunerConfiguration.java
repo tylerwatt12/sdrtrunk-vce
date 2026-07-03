@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.source.tuner.hydrasdr;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerController.Gain;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
@@ -35,7 +34,7 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
     private boolean mBiasT = false;
 
     /**
-     * Default constructor for JAXB
+     * Default constructor for deserialization
      */
     public HydraSdrTunerConfiguration()
     {
@@ -43,7 +42,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
     }
 
     @Override
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public TunerType getTunerType()
     {
         return TunerType.HYDRASDR_R828D;
@@ -54,7 +52,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         super(uniqueID);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "sample_rate")
     public int getSampleRate()
     {
         return mSampleRate;
@@ -65,7 +62,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         mSampleRate = sampleRate;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "gain")
     public Gain getGain()
     {
         return mGain;
@@ -76,7 +72,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         mGain = gain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "if_gain")
     public int getIFGain()
     {
         return mIFGain;
@@ -87,7 +82,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         mIFGain = gain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "mixer_gain")
     public int getMixerGain()
     {
         return mMixerGain;
@@ -98,7 +92,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         mMixerGain = gain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_gain")
     public int getLNAGain()
     {
         return mLNAGain;
@@ -109,7 +102,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         mLNAGain = gain;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "mixer_agc")
     public boolean isMixerAGC()
     {
         return mMixerAGC;
@@ -120,7 +112,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         mMixerAGC = enabled;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lna_agc")
     public boolean isLNAAGC()
     {
         return mLNAAGC;
@@ -131,7 +122,6 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
         mLNAAGC = enabled;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "bias_t")
     public boolean isBiasT()
     {
         return mBiasT;

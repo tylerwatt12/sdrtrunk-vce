@@ -21,8 +21,6 @@ package io.github.dsheirer.source.tuner.configuration;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerConfiguration;
@@ -55,7 +53,6 @@ import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
         @JsonSubTypes.Type(value = R828DTunerConfiguration.class, name = "r828DTunerConfiguration"),
         @JsonSubTypes.Type(value = RspTunerConfiguration.class, name = "rspTunerConfiguration"),
 })
-@JacksonXmlRootElement(localName = "tuner_configuration")
 public abstract class TunerConfiguration
 {
     public static final long DEFAULT_FREQUENCY = 101_100_000;
@@ -94,7 +91,6 @@ public abstract class TunerConfiguration
         return getTunerType() + " " + getUniqueID();
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "unique_id")
     public String getUniqueID()
     {
         return mUniqueID;
@@ -105,7 +101,6 @@ public abstract class TunerConfiguration
         mUniqueID = id;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "frequency")
     public long getFrequency()
     {
         return mFrequency;
@@ -116,7 +111,6 @@ public abstract class TunerConfiguration
         mFrequency = frequency;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "frequency_correction")
     public double getFrequencyCorrection()
     {
         return mFrequencyCorrection;
@@ -132,7 +126,6 @@ public abstract class TunerConfiguration
      *
      * @return true if autocorrection is enabled.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "auto_ppm_correction_enabled")
     public boolean getAutoPPMCorrectionEnabled()
     {
         return mAutoPPMCorrection;
@@ -152,7 +145,6 @@ public abstract class TunerConfiguration
      * Minimum tunable frequency.
      * @return minimum frequency
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "min_frequency")
     public long getMinimumFrequency()
     {
         return mMinimumFrequency;
@@ -171,7 +163,6 @@ public abstract class TunerConfiguration
      * Maximum tunable frequency.
      * @return maximum frequency
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "max_frequency")
     public long getMaximumFrequency()
     {
         return mMaximumFrequency;

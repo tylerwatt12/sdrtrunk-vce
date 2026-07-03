@@ -19,7 +19,6 @@
 package io.github.dsheirer.module.decode.nbfm;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -73,7 +72,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
     private float mBassBoostDb;
     private float mOutputGain = 1.0f;
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     public DecoderType getDecoderType()
     {
         return DecoderType.NBFM;
@@ -109,7 +107,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
      * Indicates if the user wants the demodulated audio to be high-pass filtered.
      * @return enable status, defaults to true.
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "audioFilter")
     public boolean isAudioFilter()
     {
         return mAudioFilter;
@@ -128,7 +125,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
      * Squelch noise open threshold in the range 0.0 to 1.0 with a default of 0.1
      * @return noise open threshold
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "squelchNoiseOpenThreshold")
     public float getSquelchNoiseOpenThreshold()
     {
         return mSquelchNoiseOpenThreshold;
@@ -138,7 +134,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
      * Squelch noise close threshold in the range 0.0 to 1.0, greater than or equal to open threshold, with a default of 0.2
      * @return noise close threshold
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "squelchNoiseCloseThreshold")
     public float getSquelchNoiseCloseThreshold()
     {
         return mSquelchNoiseCloseThreshold;
@@ -176,7 +171,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
      * Squelch hysteresis open threshold in range 1-10 with a default of 4.
      * @return hysteresis open threshold
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "squelchHysteresisOpenThreshold")
     public int getSquelchHysteresisOpenThreshold()
     {
         return mSquelchHysteresisOpenThreshold;
@@ -200,7 +194,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
      * Squelch hysteresis close threshold in range 1-10 with a default of 4.
      * @return hysteresis close threshold
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "squelchHysteresisCloseThreshold")
     public int getSquelchHysteresisCloseThreshold()
     {
         return mSquelchHysteresisCloseThreshold;
@@ -220,7 +213,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mSquelchHysteresisCloseThreshold = close;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "deemphasis")
     public DeemphasisMode getDeemphasis()
     {
         return mDeemphasis;
@@ -231,7 +223,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mDeemphasis = deemphasis != null ? deemphasis : DeemphasisMode.NONE;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "squelchTailRemovalEnabled")
     public boolean isSquelchTailRemovalEnabled()
     {
         return mSquelchTailRemovalEnabled;
@@ -242,7 +233,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mSquelchTailRemovalEnabled = enabled;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "squelchTailRemovalMs")
     public int getSquelchTailRemovalMs()
     {
         return mSquelchTailRemovalMs;
@@ -254,7 +244,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
                 Math.min(SquelchTailRemover.MAXIMUM_TAIL_REMOVAL_MS, ms));
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "squelchHeadRemovalMs")
     public int getSquelchHeadRemovalMs()
     {
         return mSquelchHeadRemovalMs;
@@ -266,7 +255,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
                 Math.min(SquelchTailRemover.MAXIMUM_HEAD_REMOVAL_MS, ms));
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lowPassEnabled")
     public boolean isLowPassEnabled()
     {
         return mLowPassEnabled;
@@ -277,7 +265,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mLowPassEnabled = enabled;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "lowPassCutoff")
     public int getLowPassCutoff()
     {
         return mLowPassCutoff;
@@ -288,7 +275,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mLowPassCutoff = Math.max(2000, Math.min(4000, cutoff));
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "voiceEnhanceAmount")
     public float getVoiceEnhanceAmount()
     {
         return mVoiceEnhanceAmount;
@@ -299,7 +285,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mVoiceEnhanceAmount = Math.max(0.0f, Math.min(100.0f, amount));
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "bassBoostDb")
     public float getBassBoostDb()
     {
         return mBassBoostDb;
@@ -310,7 +295,6 @@ public class DecodeConfigNBFM extends DecodeConfigAnalog
         mBassBoostDb = Math.max(0.0f, Math.min(12.0f, boostDb));
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "outputGain")
     public float getOutputGain()
     {
         return mOutputGain;

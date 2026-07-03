@@ -28,7 +28,7 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.ProcessingChain;
-import io.github.dsheirer.playlist.PlaylistManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
@@ -84,6 +84,7 @@ public class ChannelActivityPanel extends JPanel
     private final UserPreferences mUserPreferences;
     private final NowPlayingPreference mNowPlayingPreference;
     private final Broadcaster<SelectedFrequencyContext> mSelectedFrequencyBroadcaster = new Broadcaster<>();
+    private final Broadcaster<Channel> mSelectedOwnerChannelBroadcaster = new Broadcaster<>();
     private final Map<State,Color> mBackgroundColors = new EnumMap<>(State.class);
     private final Map<State,Color> mForegroundColors = new EnumMap<>(State.class);
     private final Map<ChannelActivityTableModel,Component> mTabComponents = new HashMap<>();
@@ -92,15 +93,16 @@ public class ChannelActivityPanel extends JPanel
     private final Map<JTable,TableColumnModelListener> mColumnWidthSyncListeners = new HashMap<>();
     private final Map<JTable,String> mSelectedRowKeys = new HashMap<>();
     private SelectedFrequencyContext mLastBroadcastSelectedFrequencyContext;
+    private Channel mLastBroadcastSelectedOwnerChannel;
     private JTable mSelectedTable;
     private boolean mSuppressSelectionEvents;
     private boolean mApplyingColumnWidths;
     private boolean mRegisteredForPreferences;
     private JideTabbedPane mTabbedPane;
 
-    public ChannelActivityPanel(PlaylistManager playlistManager, IconModel iconModel, UserPreferences userPreferences)
+    public ChannelActivityPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences)
     {
-        mChannelProcessingManager = playlistManager.getChannelProcessingManager();
+        mChannelProcessingManager = configurationManager.getChannelProcessingManager();
         mActivityModel = mChannelProcessingManager.getChannelActivityModel();
         mIconModel = iconModel;
         mUserPreferences = userPreferences;
@@ -144,6 +146,21 @@ public class ChannelActivityPanel extends JPanel
     public void removeSelectedFrequencyListener(Listener<SelectedFrequencyContext> listener)
     {
         mSelectedFrequencyBroadcaster.removeListener(listener);
+    }
+
+    public void addSelectedOwnerChannelListener(Listener<Channel> listener)
+    {
+        mSelectedOwnerChannelBroadcaster.addListener(listener);
+    }
+
+    public void removeSelectedOwnerChannelListener(Listener<Channel> listener)
+    {
+        mSelectedOwnerChannelBroadcaster.removeListener(listener);
+    }
+
+    public Channel getSelectedOwnerChannel()
+    {
+        return mLastBroadcastSelectedOwnerChannel;
     }
 
     public void clearSelectedFrequencyContext()
@@ -353,6 +370,9 @@ public class ChannelActivityPanel extends JPanel
         {
             entry.getKey().setActivityViewVisible(entry.getValue() == selectedComponent);
         }
+
+        ChannelActivityTableModel selectedModel = getTableModel(getTabbedPane().getSelectedIndex());
+        broadcastSelectedOwnerChannel(selectedModel != null ? selectedModel.getOwnerChannel() : null);
     }
 
     private void refreshTables()
@@ -649,6 +669,15 @@ public class ChannelActivityPanel extends JPanel
         {
             mLastBroadcastSelectedFrequencyContext = context;
             mSelectedFrequencyBroadcaster.broadcast(context);
+        }
+    }
+
+    private void broadcastSelectedOwnerChannel(Channel channel)
+    {
+        if(channel != mLastBroadcastSelectedOwnerChannel)
+        {
+            mLastBroadcastSelectedOwnerChannel = channel;
+            mSelectedOwnerChannelBroadcaster.broadcast(channel);
         }
     }
 

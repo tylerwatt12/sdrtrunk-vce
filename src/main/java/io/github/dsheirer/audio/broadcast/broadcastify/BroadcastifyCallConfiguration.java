@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.audio.broadcast.broadcastify;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
@@ -93,7 +92,6 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
     /**
      * API Key
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "api_key")
     public String getApiKey()
     {
         return mApiKey.get();
@@ -111,7 +109,6 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
     /**
      * System ID as provided by broadcastify.com
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "system_id")
     public int getSystemID()
     {
         return mSystemID.get();
@@ -125,7 +122,6 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
         mSystemID.set(systemID);
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public BroadcastServerType getBroadcastServerType()
     {
@@ -135,7 +131,6 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
     /**
      * Indicates if this instance should schedule tests after connecting
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "test_enabled")
     public boolean isTestEnabled()
     {
         return mTestEnabled.get();
@@ -149,7 +144,6 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
     /**
      * Indicates the interval at which tests should be performed while enabled
      */
-    @JacksonXmlProperty(isAttribute = true, localName = "test_interval")
     public int getTestInterval()
     {
         return mTestInterval.get();

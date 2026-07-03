@@ -17,7 +17,6 @@
  ******************************************************************************/
 package io.github.dsheirer.alias.id.legacy.siteID;
 
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -31,7 +30,6 @@ public class SiteID extends AliasID
         return false;
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "site")
     public String getSite()
     {
         return mSite;
@@ -60,7 +58,6 @@ public class SiteID extends AliasID
             getSite().contentEquals(siteID.getSite());
     }
 
-    @JacksonXmlProperty(isAttribute = true, localName = "type", namespace = "http://www.w3.org/2001/XMLSchema-instance")
     @Override
     public AliasIDType getType()
     {
