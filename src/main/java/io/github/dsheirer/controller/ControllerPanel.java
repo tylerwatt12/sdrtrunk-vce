@@ -45,12 +45,18 @@ public class ControllerPanel extends JPanel
     private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
+    private JideTabbedPane mTabbedPane;
+    private ConfigurationManager mConfigurationManager;
+    private boolean mSystemsVisible;
 
     public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
-                           TunerManager tunerManager, UserPreferences userPreferences, boolean detailTabsVisible,
+                           TunerManager tunerManager, UserPreferences userPreferences, boolean systemsVisible,
+                           boolean detailTabsVisible,
                            Consumer<Boolean> detailTabsVisibilityListener)
     {
+        mConfigurationManager = configurationManager;
+        mSystemsVisible = systemsVisible;
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
             configurationManager.getAliasModel());
         mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
@@ -69,22 +75,60 @@ public class ControllerPanel extends JPanel
         return mNowPlayingPanel;
     }
 
+    public void setSystemsVisible(boolean visible)
+    {
+        if(mSystemsVisible == visible)
+        {
+            return;
+        }
+
+        if(visible)
+        {
+            mTabbedPane.insertTab("Systems", null, mNowPlayingPanel, null, 0);
+            mNowPlayingPanel.setSystemsActive(true);
+            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled(true);
+            mTabbedPane.setSelectedComponent(mNowPlayingPanel);
+        }
+        else
+        {
+            mNowPlayingPanel.setSystemsActive(false);
+            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled(false);
+            mTabbedPane.remove(mNowPlayingPanel);
+        }
+
+        mSystemsVisible = visible;
+    }
+
+    public void dispose()
+    {
+        mNowPlayingPanel.dispose();
+    }
+
     private void init()
     {
         setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[]0[grow,fill]0[]"));
 
         add(mAudioPanel, "wrap");
 
-        JideTabbedPane tabbedPane = new JideTabbedPane();
-        tabbedPane.setFont(this.getFont());
-        tabbedPane.setForeground(Color.BLACK);
-        tabbedPane.addTab("Now Playing", mNowPlayingPanel);
-        tabbedPane.addTab("Map", mMapPanel);
-        tabbedPane.addTab("Tuners", mTunerManagerPanel);
+        mTabbedPane = new JideTabbedPane();
+        mTabbedPane.setFont(this.getFont());
+        mTabbedPane.setForeground(Color.BLACK);
+        if(mSystemsVisible)
+        {
+            mTabbedPane.addTab("Systems", mNowPlayingPanel);
+        }
+        else
+        {
+            mNowPlayingPanel.setSystemsActive(false);
+            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled(false);
+        }
+
+        mTabbedPane.addTab("Map", mMapPanel);
+        mTabbedPane.addTab("Tuners", mTunerManagerPanel);
 
         //Set preferred size to influence the split between these panels
-        tabbedPane.setPreferredSize(new Dimension(880, 500));
+        mTabbedPane.setPreferredSize(new Dimension(880, 500));
 
-        add(tabbedPane, "wrap");
+        add(mTabbedPane, "wrap");
     }
 }

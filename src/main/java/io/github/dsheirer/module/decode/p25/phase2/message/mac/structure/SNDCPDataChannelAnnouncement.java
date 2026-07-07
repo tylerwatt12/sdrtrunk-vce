@@ -23,6 +23,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
@@ -120,7 +121,7 @@ public class SNDCPDataChannelAnnouncement extends MacStructureDataService implem
      */
     private boolean isExplicitChannel()
     {
-        return getInt(RECEIVE_CHANNEL_NUMBER) != 4095;
+        return P25FrequencyBandValidator.hasChannel(getInt(RECEIVE_FREQUENCY_BAND), getInt(RECEIVE_CHANNEL_NUMBER));
     }
 
     public int getDataAccessControl()

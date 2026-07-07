@@ -85,6 +85,10 @@ public class ChannelActivityPanel extends JPanel
     private final NowPlayingPreference mNowPlayingPreference;
     private final Broadcaster<SelectedFrequencyContext> mSelectedFrequencyBroadcaster = new Broadcaster<>();
     private final Broadcaster<Channel> mSelectedOwnerChannelBroadcaster = new Broadcaster<>();
+    private final Listener<ChannelActivityTableModel> mTableAddListener =
+        tableModel -> SwingUtils.run(() -> addTable(tableModel));
+    private final Listener<ChannelActivityTableModel> mTableChangeListener =
+        tableModel -> SwingUtils.run(() -> updateTable(tableModel));
     private final Map<State,Color> mBackgroundColors = new EnumMap<>(State.class);
     private final Map<State,Color> mForegroundColors = new EnumMap<>(State.class);
     private final Map<ChannelActivityTableModel,Component> mTabComponents = new HashMap<>();
@@ -113,8 +117,7 @@ public class ChannelActivityPanel extends JPanel
         init();
     }
 
-    @Override
-    public void removeNotify()
+    public void dispose()
     {
         if(mRegisteredForPreferences)
         {
@@ -122,6 +125,29 @@ public class ChannelActivityPanel extends JPanel
             mRegisteredForPreferences = false;
         }
 
+        mActivityModel.removeTableAddListener(mTableAddListener);
+        mActivityModel.removeTableChangeListener(mTableChangeListener);
+        disposeTableWiring();
+    }
+
+    public void resetTables()
+    {
+        clearSelectedFrequencyContext();
+        disposeTableWiring();
+        mTabComponents.clear();
+        mTables.clear();
+        mSelectedRowKeys.clear();
+        mSelectedTable = null;
+
+        if(mTabbedPane != null)
+        {
+            mTabbedPane.removeAll();
+            addTable(mActivityModel.getConventionalTable());
+        }
+    }
+
+    private void disposeTableWiring()
+    {
         for(JTableColumnWidthMonitor monitor: mColumnWidthMonitors.values())
         {
             monitor.dispose();
@@ -134,8 +160,6 @@ public class ChannelActivityPanel extends JPanel
 
         mColumnWidthMonitors.clear();
         mColumnWidthSyncListeners.clear();
-
-        super.removeNotify();
     }
 
     public void addSelectedFrequencyListener(Listener<SelectedFrequencyContext> listener)
@@ -190,8 +214,8 @@ public class ChannelActivityPanel extends JPanel
         setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
         add(getTabbedPane(), "grow");
         addTable(mActivityModel.getConventionalTable());
-        mActivityModel.addTableAddListener(tableModel -> SwingUtils.run(() -> addTable(tableModel)));
-        mActivityModel.addTableChangeListener(tableModel -> SwingUtils.run(() -> updateTable(tableModel)));
+        mActivityModel.addTableAddListener(mTableAddListener);
+        mActivityModel.addTableChangeListener(mTableChangeListener);
     }
 
     @Subscribe

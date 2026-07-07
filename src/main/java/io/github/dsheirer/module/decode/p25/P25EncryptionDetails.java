@@ -86,7 +86,12 @@ public final class P25EncryptionDetails
             }
         }
 
-        return algorithm + " K:" + encryptionKey.getKey();
+        return algorithm + " K:" + toHex(encryptionKey.getKey());
+    }
+
+    private static String toHex(int value)
+    {
+        return Integer.toHexString(value).toUpperCase();
     }
 
     private static String toHex(int value, int width)

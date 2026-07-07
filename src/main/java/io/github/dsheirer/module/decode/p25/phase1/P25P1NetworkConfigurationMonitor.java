@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
@@ -144,9 +145,7 @@ public class P25P1NetworkConfigurationMonitor
                 if(tsbk instanceof IFrequencyBand)
                 {
                     IFrequencyBand frequencyBand = (IFrequencyBand)tsbk;
-                    mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
-                    return observation(null, null, Collections.emptyList(), Collections.emptyList(),
-                        List.of(getFrequencyBandSnapshot(frequencyBand)));
+                    return processFrequencyBand(frequencyBand);
                 }
                 break;
             case OSP_NETWORK_STATUS_BROADCAST:
@@ -174,7 +173,7 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     mTSBKRFSSStatusBroadcast = (RFSSStatusBroadcast)tsbk;
                     return observation(null, getCurrentSiteSnapshot(mTSBKRFSSStatusBroadcast),
-                        List.of(getChannelSnapshot("primary_control", mTSBKRFSSStatusBroadcast.getChannel())),
+                        getChannelSnapshots("primary_control", mTSBKRFSSStatusBroadcast.getChannel()),
                         Collections.emptyList(), Collections.emptyList());
                 }
                 break;
@@ -186,8 +185,7 @@ public class P25P1NetworkConfigurationMonitor
 
                     for(IChannelDescriptor secondaryControlChannel : sccb.getChannels())
                     {
-                        mSecondaryControlChannels.put(secondaryControlChannel.toString(), secondaryControlChannel);
-                        channels.add(getChannelSnapshot("secondary_control", secondaryControlChannel));
+                        addSecondaryControlChannel(channels, secondaryControlChannel);
                     }
 
                     return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
@@ -198,8 +196,9 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     SecondaryControlChannelBroadcastExplicit sccbe = (SecondaryControlChannelBroadcastExplicit)tsbk;
                     IChannelDescriptor channel = sccbe.getChannel();
-                    mSecondaryControlChannels.put(channel.toString(), channel);
-                    return observation(null, null, List.of(getChannelSnapshot("secondary_control", channel)),
+                    List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
+                    addSecondaryControlChannel(channels, channel);
+                    return observation(null, null, channels,
                         Collections.emptyList(), Collections.emptyList());
                 }
                 break;
@@ -216,8 +215,8 @@ public class P25P1NetworkConfigurationMonitor
                 if(tsbk instanceof SNDCPDataChannelAnnouncementExplicit)
                 {
                     mSNDCPDataChannel = (SNDCPDataChannelAnnouncementExplicit)tsbk;
-                    return observation(null, null, List.of(getChannelSnapshot("fdma_data",
-                        mSNDCPDataChannel.getChannel())), Collections.emptyList(), Collections.emptyList());
+                    return observation(null, null, getChannelSnapshots("fdma_data", mSNDCPDataChannel.getChannel()),
+                        Collections.emptyList(), Collections.emptyList());
                 }
                 break;
             case MOTOROLA_OSP_BASE_STATION_ID:
@@ -229,8 +228,12 @@ public class P25P1NetworkConfigurationMonitor
             case MOTOROLA_OSP_TDMA_DATA_CHANNEL:
                 if(tsbk instanceof MotorolaExplicitTDMADataChannelAnnouncement tdma && tdma.hasChannel())
                 {
-                    mTDMADataChannelMap.put(tdma.getChannel(), tdma);
-                    return observation(null, null, List.of(getChannelSnapshot("tdma_data", tdma.getChannel())),
+                    if(P25FrequencyBandValidator.isResolvedChannel(tdma.getChannel()))
+                    {
+                        mTDMADataChannelMap.put(tdma.getChannel(), tdma);
+                    }
+
+                    return observation(null, null, getChannelSnapshots("tdma_data", tdma.getChannel()),
                         Collections.emptyList(), Collections.emptyList());
                 }
                 break;
@@ -268,7 +271,7 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     mAMBTCRFSSStatusBroadcast = (AMBTCRFSSStatusBroadcast)ambtc;
                     return observation(null, getCurrentSiteSnapshot(mAMBTCRFSSStatusBroadcast),
-                        List.of(getChannelSnapshot("primary_control", mAMBTCRFSSStatusBroadcast.getChannel())),
+                        getChannelSnapshots("primary_control", mAMBTCRFSSStatusBroadcast.getChannel()),
                         Collections.emptyList(), Collections.emptyList());
                 }
                 break;
@@ -312,9 +315,7 @@ public class P25P1NetworkConfigurationMonitor
                     if(lcw instanceof IFrequencyBand)
                     {
                         IFrequencyBand band = (IFrequencyBand)lcw;
-                        mFrequencyBandMap.put(band.getIdentifier(), band);
-                        return observation(null, null, Collections.emptyList(), Collections.emptyList(),
-                            List.of(getFrequencyBandSnapshot(band)));
+                        return processFrequencyBand(band);
                     }
                     break;
                 case NETWORK_STATUS_BROADCAST:
@@ -338,7 +339,7 @@ public class P25P1NetworkConfigurationMonitor
                     {
                         mLCRFSSStatusBroadcast = (LCRFSSStatusBroadcast)lcw;
                         return observation(null, getCurrentSiteSnapshot(mLCRFSSStatusBroadcast),
-                            List.of(getChannelSnapshot("primary_control", mLCRFSSStatusBroadcast.getChannel())),
+                            getChannelSnapshots("primary_control", mLCRFSSStatusBroadcast.getChannel()),
                             Collections.emptyList(), Collections.emptyList());
                     }
                     break;
@@ -347,7 +348,7 @@ public class P25P1NetworkConfigurationMonitor
                     {
                         mLCRFSSStatusBroadcastExplicit = (LCRFSSStatusBroadcastExplicit)lcw;
                         return observation(null, getCurrentSiteSnapshot(mLCRFSSStatusBroadcastExplicit),
-                            List.of(getChannelSnapshot("primary_control", mLCRFSSStatusBroadcastExplicit.getChannel())),
+                            getChannelSnapshots("primary_control", mLCRFSSStatusBroadcastExplicit.getChannel()),
                             Collections.emptyList(), Collections.emptyList());
                     }
                     break;
@@ -359,8 +360,7 @@ public class P25P1NetworkConfigurationMonitor
 
                         for(IChannelDescriptor channel : sccb.getChannels())
                         {
-                            mSecondaryControlChannels.put(channel.toString(), channel);
-                            channels.add(getChannelSnapshot("secondary_control", channel));
+                            addSecondaryControlChannel(channels, channel);
                         }
 
                         return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
@@ -374,8 +374,7 @@ public class P25P1NetworkConfigurationMonitor
 
                         for(IChannelDescriptor channel : sccb.getChannels())
                         {
-                            mSecondaryControlChannels.put(channel.toString(), channel);
-                            channels.add(getChannelSnapshot("secondary_control", channel));
+                            addSecondaryControlChannel(channels, channel);
                         }
 
                         return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
@@ -450,7 +449,7 @@ public class P25P1NetworkConfigurationMonitor
 
     private void addFrequency(Set<Long> frequencies, IChannelDescriptor channel)
     {
-        if(channel != null && channel.getDownlinkFrequency() > 0)
+        if(P25FrequencyBandValidator.isResolvedChannel(channel))
         {
             frequencies.add(channel.getDownlinkFrequency());
         }
@@ -467,18 +466,18 @@ public class P25P1NetworkConfigurationMonitor
 
         for(IChannelDescriptor secondaryControlChannel: mSecondaryControlChannels.values())
         {
-            channels.add(getChannelSnapshot("secondary_control", secondaryControlChannel));
+            addChannelSnapshot(channels, "secondary_control", secondaryControlChannel);
         }
 
         if(mSNDCPDataChannel != null)
         {
-            channels.add(getChannelSnapshot("fdma_data", mSNDCPDataChannel.getChannel()));
+            addChannelSnapshot(channels, "fdma_data", mSNDCPDataChannel.getChannel());
         }
 
         if(!mTDMADataChannelMap.isEmpty())
         {
             mTDMADataChannelMap.entrySet().stream().sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> channels.add(getChannelSnapshot("tdma_data", entry.getKey())));
+                .forEach(entry -> addChannelSnapshot(channels, "tdma_data", entry.getKey()));
         }
 
         return new P25NetworkConfigurationSnapshot("P25_PHASE_1", network, currentSite, channels,
@@ -548,22 +547,22 @@ public class P25P1NetworkConfigurationMonitor
     {
         if(mTSBKRFSSStatusBroadcast != null)
         {
-            channels.add(getChannelSnapshot("primary_control", mTSBKRFSSStatusBroadcast.getChannel()));
+            addChannelSnapshot(channels, "primary_control", mTSBKRFSSStatusBroadcast.getChannel());
             return getCurrentSiteSnapshot(mTSBKRFSSStatusBroadcast);
         }
         else if(mLCRFSSStatusBroadcast != null)
         {
-            channels.add(getChannelSnapshot("primary_control", mLCRFSSStatusBroadcast.getChannel()));
+            addChannelSnapshot(channels, "primary_control", mLCRFSSStatusBroadcast.getChannel());
             return getCurrentSiteSnapshot(mLCRFSSStatusBroadcast);
         }
         else if(mLCRFSSStatusBroadcastExplicit != null)
         {
-            channels.add(getChannelSnapshot("primary_control", mLCRFSSStatusBroadcastExplicit.getChannel()));
+            addChannelSnapshot(channels, "primary_control", mLCRFSSStatusBroadcastExplicit.getChannel());
             return getCurrentSiteSnapshot(mLCRFSSStatusBroadcastExplicit);
         }
         else if(mAMBTCRFSSStatusBroadcast != null)
         {
-            channels.add(getChannelSnapshot("primary_control", mAMBTCRFSSStatusBroadcast.getChannel()));
+            addChannelSnapshot(channels, "primary_control", mAMBTCRFSSStatusBroadcast.getChannel());
             return getCurrentSiteSnapshot(mAMBTCRFSSStatusBroadcast);
         }
 
@@ -690,8 +689,66 @@ public class P25P1NetworkConfigurationMonitor
 
     private P25NetworkConfigurationSnapshot.Channel getChannelSnapshot(String role, IChannelDescriptor channel)
     {
+        if(!P25FrequencyBandValidator.isResolvedChannel(channel))
+        {
+            return null;
+        }
+
         return new P25NetworkConfigurationSnapshot.Channel(role, channelName(channel), downlink(channel), uplink(channel),
             channel != null ? channel.isTDMAChannel() : null, channel != null ? channel.getTimeslotCount() : null);
+    }
+
+    private List<P25NetworkConfigurationSnapshot.Channel> getChannelSnapshots(String role, IChannelDescriptor channel)
+    {
+        List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
+        addChannelSnapshot(channels, role, channel);
+        return channels;
+    }
+
+    private void addChannelSnapshot(List<P25NetworkConfigurationSnapshot.Channel> channels, String role,
+                                    IChannelDescriptor channel)
+    {
+        P25NetworkConfigurationSnapshot.Channel snapshot = getChannelSnapshot(role, channel);
+
+        if(snapshot != null)
+        {
+            channels.add(snapshot);
+        }
+    }
+
+    private void addSecondaryControlChannel(List<P25NetworkConfigurationSnapshot.Channel> channels,
+                                            IChannelDescriptor channel)
+    {
+        if(P25FrequencyBandValidator.isResolvedChannel(channel))
+        {
+            mSecondaryControlChannels.put(channel.toString(), channel);
+            addChannelSnapshot(channels, "secondary_control", channel);
+        }
+    }
+
+    private P25NetworkConfigurationSnapshot processFrequencyBand(IFrequencyBand frequencyBand)
+    {
+        P25FrequencyBandValidator.RegistrationResult result =
+            P25FrequencyBandValidator.register(mFrequencyBandMap, frequencyBand);
+
+        if(result.replaced())
+        {
+            mLog.warn("P25 P1 network frequency band replacing existing:{} with candidate:{}",
+                P25FrequencyBandValidator.describe(result.existing()),
+                P25FrequencyBandValidator.describe(frequencyBand));
+        }
+        else if(!result.accepted())
+        {
+            mLog.warn("P25 P1 network frequency band rejected {} correctedBits:{} - {}{}",
+                P25FrequencyBandValidator.describe(frequencyBand),
+                P25FrequencyBandValidator.getCorrectedBitCount(frequencyBand),
+                result.rejectReason().getDescription(),
+                result.existing() != null ? " existing:" + P25FrequencyBandValidator.describe(result.existing()) : "");
+            return null;
+        }
+
+        return observation(null, null, Collections.emptyList(), Collections.emptyList(),
+            List.of(getFrequencyBandSnapshot(frequencyBand)));
     }
 
     private String channelName(IChannelDescriptor channel)

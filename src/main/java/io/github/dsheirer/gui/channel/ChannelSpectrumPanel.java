@@ -112,6 +112,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private final SymbolView mSymbolView = new SymbolView();
     private final JFXPanel mNoiseSquelchPanel;
     private final JFXPanel mSymbolPanel;
+    private JButton mInspectRfButton;
     private JSplitPane mSplitPane;
     private JPanel mRightCardPanel;
     private CardLayout mRightCardLayout;
@@ -135,7 +136,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         fftPanel.setMinimumSize(new Dimension(CHANNEL_SPECTRUM_MINIMUM_WIDTH, 0));
 
         JPanel labelPanel = new JPanel();
-        labelPanel.setLayout(new MigLayout("insets 2", GROW_FILL + "[grow,fill,left][right][right][][]", ""));
+        labelPanel.setLayout(new MigLayout("insets 2", GROW_FILL + "[grow,fill,left][right][right][][][]", ""));
         labelPanel.add(new JLabel("Channel Spectrum    "));
 
         mEstimatedCarrierOffsetFrequencyValueLabel = new JLabel(getPaddedCarrierOffsetLabel(0));
@@ -154,6 +155,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         JSpinner noiseFloorSpinner = new JSpinner(mNoiseFloorSpinnerModel);
         labelPanel.add(noiseFloorSpinner);
         labelPanel.add(new JLabel("Noise Floor"));
+        labelPanel.add(getInspectRfButton());
 
         JButton logIndexesButton = new JButton("Log Settings");
         logIndexesButton.addActionListener(e -> {
@@ -299,6 +301,43 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         return "Frequency: " + StringUtils.rightPad(frequencyText, 16);
     }
 
+    private JButton getInspectRfButton()
+    {
+        if(mInspectRfButton == null)
+        {
+            mInspectRfButton = new JButton("Inspect RF");
+            mInspectRfButton.setFocusable(false);
+            mInspectRfButton.setToolTipText("Temporarily inspect the selected frequency with spare tuner capacity");
+            mInspectRfButton.addActionListener(event -> inspectSelectedFrequency());
+            updateInspectRfButton();
+        }
+
+        return mInspectRfButton;
+    }
+
+    private void inspectSelectedFrequency()
+    {
+        if(mSelectedFrequencyContext != null && mSelectedFrequencyContext.hasFrequency() &&
+            mSelectedFrequencyContext.processingChain() == null && mPanelVisible)
+        {
+            stopRfProbe();
+            startRfProbe(mSelectedFrequencyContext.frequency());
+            updateFFTProcessing();
+            updateInspectRfButton();
+        }
+    }
+
+    private void updateInspectRfButton()
+    {
+        if(mInspectRfButton != null)
+        {
+            boolean canInspect = mPanelVisible && mSelectedFrequencyContext != null &&
+                mSelectedFrequencyContext.hasFrequency() && mSelectedFrequencyContext.processingChain() == null &&
+                mRfProbeSource == null;
+            mInspectRfButton.setEnabled(canInspect);
+        }
+    }
+
     /**
      * Signals this panel to indicate if this panel is visible to turn on the FFT processor when the panel is visible
      * and turn off the FFT processor when it's not.
@@ -329,13 +368,10 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             {
                 attachProcessingChain(mSelectedFrequencyContext.processingChain());
             }
-            else if(mSelectedFrequencyContext.hasFrequency())
-            {
-                startRfProbe(mSelectedFrequencyContext.frequency());
-            }
         }
 
         updateFFTProcessing();
+        updateInspectRfButton();
         mNoiseSquelchView.setShowing(visible);
         mSymbolView.setShowing(visible);
     }
@@ -446,6 +482,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             reset();
             mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
             updateFFTProcessing();
+            updateInspectRfButton();
             return;
         }
 
@@ -460,6 +497,8 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
                 reset();
                 attachProcessingChain(context.processingChain());
             }
+
+            updateInspectRfButton();
         }
         else if(context.hasFrequency())
         {
@@ -468,11 +507,8 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             stopRfProbe();
             reset();
             updateViewedFrequency(context.frequency());
-
-            if(mPanelVisible)
-            {
-                startRfProbe(context.frequency());
-            }
+            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+            updateInspectRfButton();
         }
         else
         {
@@ -481,6 +517,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             stopRfProbe();
             reset();
             mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+            updateInspectRfButton();
         }
 
         updateFFTProcessing();
@@ -493,6 +530,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         mSelectedFrequencyContext = null;
         reset();
         updateFFTProcessing();
+        updateInspectRfButton();
     }
 
     private void disconnectProcessingChain()
@@ -588,6 +626,8 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             updateViewedFrequency(frequency);
             mFrequencyOverlayPanel.setChannelBandwidth(RF_PROBE_BANDWIDTH);
         }
+
+        updateInspectRfButton();
     }
 
     private void stopRfProbe()
@@ -598,6 +638,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             mRfProbeSource.removeSourceEventListener();
             mRfProbeSource.stop();
             mRfProbeSource = null;
+            updateInspectRfButton();
         }
     }
 

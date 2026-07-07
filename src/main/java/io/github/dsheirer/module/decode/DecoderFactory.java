@@ -86,7 +86,9 @@ import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P2AudioModule;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderC4FM;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderLSM;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderState;
@@ -195,6 +197,9 @@ public class DecoderFactory
             case PASSPORT:
                 processPassport(channel, modules, aliasList, decodeConfig);
                 break;
+            case P25_CONVENTIONAL:
+                processP25Conventional(channel, userPreferences, modules, aliasList, initialSourceSampleRate);
+                break;
             case P25_PHASE1:
                 processP25Phase1(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor,
                     initialSourceSampleRate, channelActivityModel);
@@ -273,6 +278,21 @@ public class DecoderFactory
     }
 
     /**
+     * Creates decoder modules for APCO-25 conventional Phase 1 decoder.
+     */
+    private static void processP25Conventional(Channel channel, UserPreferences userPreferences, List<Module> modules,
+                                               AliasList aliasList, double initialSourceSampleRate)
+    {
+        if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Conventional conventional)
+        {
+            addP25Phase1Decoder(modules, conventional.getModulation(), initialSourceSampleRate);
+        }
+
+        modules.add(new P25P1DecoderState(channel, null));
+        modules.add(new P25P1AudioModule(userPreferences, aliasList));
+    }
+
+    /**
      * Creates decoder modules for APCO-25 Phase 1 decoder
      * @param channel configuration
      * @param userPreferences reference
@@ -286,17 +306,7 @@ public class DecoderFactory
     {
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 p1)
         {
-            switch(p1.getModulation())
-            {
-                case C4FM:
-                    modules.add(new P25P1DecoderC4FM(initialSourceSampleRate));
-                    break;
-                case CQPSK:
-                    modules.add(new P25P1DecoderLSM(initialSourceSampleRate));
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unrecognized P25 Phase 1 Modulation [" + p1.getModulation() + "]");
-            }
+            addP25Phase1Decoder(modules, p1.getModulation(), initialSourceSampleRate);
         }
 
         if(channel.getChannelType() == ChannelType.STANDARD)
@@ -327,6 +337,21 @@ public class DecoderFactory
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
             modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(), userPreferences));
+        }
+    }
+
+    private static void addP25Phase1Decoder(List<Module> modules, Modulation modulation, double initialSourceSampleRate)
+    {
+        switch(modulation)
+        {
+            case C4FM:
+                modules.add(new P25P1DecoderC4FM(initialSourceSampleRate));
+                break;
+            case CQPSK:
+                modules.add(new P25P1DecoderLSM(initialSourceSampleRate));
+                break;
+            default:
+                throw new IllegalArgumentException("Unrecognized P25 Phase 1 Modulation [" + modulation + "]");
         }
     }
 
@@ -694,6 +719,7 @@ public class DecoderFactory
                 filters.add(new MPT1327MessageFilter());
                 break;
             case P25_PHASE1:
+            case P25_CONVENTIONAL:
                 filters.add(new P25P1MessageFilterSet());
                 break;
             case P25_PHASE2:
@@ -735,6 +761,8 @@ public class DecoderFactory
                 return new DecodeConfigNBFM();
             case PASSPORT:
                 return new DecodeConfigPassport();
+            case P25_CONVENTIONAL:
+                return new DecodeConfigP25Conventional();
             case P25_PHASE1:
                 return new DecodeConfigP25Phase1();
             case P25_PHASE2:
@@ -808,6 +836,11 @@ public class DecoderFactory
                     copyP25.setModulation(originalP25.getModulation());
                     copyP25.setTrafficChannelPoolSize(originalP25.getTrafficChannelPoolSize());
                     return copyP25;
+                case P25_CONVENTIONAL:
+                    DecodeConfigP25Conventional originalConventional = (DecodeConfigP25Conventional)config;
+                    DecodeConfigP25Conventional copyConventional = new DecodeConfigP25Conventional();
+                    copyConventional.setModulation(originalConventional.getModulation());
+                    return copyConventional;
                 case P25_PHASE2:
                     DecodeConfigP25Phase2 originalP25P2 = (DecodeConfigP25Phase2)config;
                     DecodeConfigP25Phase2 copyP25P2 = new DecodeConfigP25Phase2();

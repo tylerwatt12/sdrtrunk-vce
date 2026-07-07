@@ -23,6 +23,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructureVendor;
@@ -91,7 +92,7 @@ public class MotorolaTDMADataChannel extends MacStructureVendor implements IFreq
                 {
                     sb.append(" CHAN3:").append(getChannel3());
 
-                    if(hasChannel1())
+                    if(hasChannel4())
                     {
                         sb.append(" CHAN4:").append(getChannel4());
                     }
@@ -112,7 +113,7 @@ public class MotorolaTDMADataChannel extends MacStructureVendor implements IFreq
      */
     private boolean hasChannel1()
     {
-        return getInt(CHANNEL_NUMBER_1) != 0xF && getInt(FREQUENCY_BAND_1) != 0xFFF;
+        return hasChannel(FREQUENCY_BAND_1, CHANNEL_NUMBER_1);
     }
 
     /**
@@ -133,9 +134,8 @@ public class MotorolaTDMADataChannel extends MacStructureVendor implements IFreq
      */
     private boolean hasChannel2()
     {
-        return getInt(CHANNEL_NUMBER_2) != 0xF && getInt(FREQUENCY_BAND_2) != 0xFFF &&
-                getInt(FREQUENCY_BAND_2) != getInt(FREQUENCY_BAND_1) &&
-                getInt(CHANNEL_NUMBER_2) != getInt(CHANNEL_NUMBER_1);
+        return hasChannel(FREQUENCY_BAND_2, CHANNEL_NUMBER_2) &&
+            !sameChannel(FREQUENCY_BAND_2, CHANNEL_NUMBER_2, FREQUENCY_BAND_1, CHANNEL_NUMBER_1);
     }
 
     /**
@@ -156,9 +156,8 @@ public class MotorolaTDMADataChannel extends MacStructureVendor implements IFreq
      */
     private boolean hasChannel3()
     {
-        return getInt(CHANNEL_NUMBER_3) != 0xF && getInt(FREQUENCY_BAND_3) != 0xFFF &&
-                getInt(FREQUENCY_BAND_3) != getInt(FREQUENCY_BAND_2) &&
-                getInt(CHANNEL_NUMBER_3) != getInt(CHANNEL_NUMBER_2);
+        return hasChannel(FREQUENCY_BAND_3, CHANNEL_NUMBER_3) &&
+            !sameChannel(FREQUENCY_BAND_3, CHANNEL_NUMBER_3, FREQUENCY_BAND_2, CHANNEL_NUMBER_2);
     }
 
     /**
@@ -179,9 +178,18 @@ public class MotorolaTDMADataChannel extends MacStructureVendor implements IFreq
      */
     private boolean hasChannel4()
     {
-        return getInt(CHANNEL_NUMBER_4) != 0xF && getInt(FREQUENCY_BAND_4) != 0xFFF &&
-                getInt(FREQUENCY_BAND_4) != getInt(FREQUENCY_BAND_3) &&
-                getInt(CHANNEL_NUMBER_4) != getInt(CHANNEL_NUMBER_3);
+        return hasChannel(FREQUENCY_BAND_4, CHANNEL_NUMBER_4) &&
+            !sameChannel(FREQUENCY_BAND_4, CHANNEL_NUMBER_4, FREQUENCY_BAND_3, CHANNEL_NUMBER_3);
+    }
+
+    private boolean hasChannel(IntField bandField, IntField channelField)
+    {
+        return P25FrequencyBandValidator.hasChannel(getInt(bandField), getInt(channelField));
+    }
+
+    private boolean sameChannel(IntField bandField1, IntField channelField1, IntField bandField2, IntField channelField2)
+    {
+        return getInt(bandField1) == getInt(bandField2) && getInt(channelField1) == getInt(channelField2);
     }
 
     /**

@@ -37,7 +37,6 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25EncryptionDetails;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
-import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.sample.Listener;
@@ -60,7 +59,6 @@ import javax.swing.Timer;
  */
 public class ChannelActivityModel implements IChannelMetadataUpdateListener
 {
-    private static final int P25_CLASSIFICATION_DELAY_MILLISECONDS = 500;
     private static final int CONTROL_DECODE_HANG_MILLISECONDS = 15000;
     private static final int ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS = 250;
 
@@ -72,16 +70,14 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     private final Map<Channel,SiteActivitySession> mSiteSessions = new IdentityHashMap<>();
     private final Set<Integer> mClosedTrunkedChannelIds = new HashSet<>();
     private final Map<ChannelMetadata,ChannelActivityRow> mMetadataRows = new IdentityHashMap<>();
-    private final Map<ChannelMetadata,Channel> mPendingP25MetadataChannels = new IdentityHashMap<>();
     private final Map<ChannelActivityRow,ChannelActivityTableModel> mRowTables = new IdentityHashMap<>();
     private final Map<ChannelActivityRow,ExpiringRow> mPendingControlIdleRows = new IdentityHashMap<>();
     private final Map<ChannelActivityTableModel,Set<ChannelActivityRow>> mPendingTableRefreshes = new IdentityHashMap<>();
-    private final Map<Channel,Timer> mPendingP25ClassificationTimers = new IdentityHashMap<>();
-    private final Map<Channel,List<ChannelMetadata>> mPendingP25ClassificationMetadata = new IdentityHashMap<>();
     private final Map<Channel,SiteIdentity> mSiteIdentities = new IdentityHashMap<>();
     private final List<Listener<ChannelActivityTableModel>> mTableAddListeners = new ArrayList<>();
     private final List<Listener<ChannelActivityTableModel>> mTableChangeListeners = new ArrayList<>();
     private Timer mActivitySweeperTimer;
+    private volatile boolean mEnabled = true;
 
     private record ExpiringRow(ChannelActivityTableModel table, Channel parentChannel, long expiresAt)
     {
@@ -110,9 +106,28 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return mConventionalTable;
     }
 
+    public boolean isEnabled()
+    {
+        return mEnabled;
+    }
+
+    public void setEnabled(boolean enabled)
+    {
+        if(mEnabled != enabled)
+        {
+            mEnabled = enabled;
+            runOnSwing(this::clear);
+        }
+    }
+
     public void addTableAddListener(Listener<ChannelActivityTableModel> listener)
     {
         mTableAddListeners.add(listener);
+    }
+
+    public void removeTableAddListener(Listener<ChannelActivityTableModel> listener)
+    {
+        mTableAddListeners.remove(listener);
     }
 
     public void addTableChangeListener(Listener<ChannelActivityTableModel> listener)
@@ -120,16 +135,20 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         mTableChangeListeners.add(listener);
     }
 
+    public void removeTableChangeListener(Listener<ChannelActivityTableModel> listener)
+    {
+        mTableChangeListeners.remove(listener);
+    }
+
     public void close(ChannelActivityTableModel tableModel)
     {
-        runOnSwing(() -> {
+        runOnSwingIfEnabled(() -> {
             if(tableModel != null && tableModel.getOwnerChannel() != null)
             {
                 Channel owner = tableModel.getOwnerChannel();
                 mClosedTrunkedChannelIds.add(owner.getChannelID());
                 mTrunkedTables.remove(owner);
                 mSiteSessions.remove(owner);
-                cancelPendingP25Classification(owner);
 
                 for(ChannelActivityRow row: tableModel.getRows())
                 {
@@ -146,21 +165,17 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     public void channelStarted(Channel channel, List<ChannelMetadata> metadataList)
     {
-        if(channel == null || channel.isTrafficChannel())
+        if(!mEnabled || channel == null || channel.isTrafficChannel())
         {
             return;
         }
 
-        runOnSwing(() -> {
+        runOnSwingIfEnabled(() -> {
             mClosedTrunkedChannelIds.remove(channel.getChannelID());
 
             if(isP25TrunkedControlParent(channel))
             {
                 ensureConfiguredControlRow(channel, "channel-started-control");
-            }
-            else if(isP25(channel))
-            {
-                scheduleP25Classification(channel, metadataList);
             }
             else if(metadataList != null)
             {
@@ -171,14 +186,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     public void channelStopped(Channel channel)
     {
-        if(channel == null)
+        if(!mEnabled || channel == null)
         {
             return;
         }
 
-        runOnSwing(() -> {
-            cancelPendingP25Classification(channel);
-
+        runOnSwingIfEnabled(() -> {
             for(RowReference reference: getRowsForStoppedChannel(channel))
             {
                 ChannelActivityRow row = reference.row();
@@ -199,7 +212,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                     clearTrafficGrantAgeOut(row);
                     cancelPendingControlIdle(row);
 
-                    if(row.isControlRow())
+                    if(table == mConventionalTable)
+                    {
+                        removeConventionalRow(row);
+                        continue;
+                    }
+                    else if(row.isControlRow())
                     {
                         markConfiguredControl(row, channel);
                     }
@@ -227,42 +245,30 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     @Override
     public void updated(ChannelMetadata channelMetadata, ChannelMetadataField channelMetadataField)
     {
-        runOnSwing(() -> {
+        if(!mEnabled)
+        {
+            return;
+        }
+
+        runOnSwingIfEnabled(() -> {
             ChannelActivityRow row = mMetadataRows.get(channelMetadata);
 
             if(row != null)
             {
-                if(isP25ControlMetadata(channelMetadata, row.getChannel()))
-                {
-                    removeConventionalMetadataRow(channelMetadata, row);
-                    ensureConfiguredControlRow(row.getChannel(), "metadata-control-state");
-                    return;
-                }
-
                 updateFromMetadata(row, channelMetadata, row.getChannel());
                 mConventionalTable.refresh(row);
-            }
-            else
-            {
-                Channel pendingChannel = mPendingP25MetadataChannels.get(channelMetadata);
-
-                if(isP25ControlMetadata(channelMetadata, pendingChannel))
-                {
-                    cancelPendingP25Classification(pendingChannel);
-                    ensureConfiguredControlRow(pendingChannel, "pending-p25-control-state");
-                }
             }
         });
     }
 
     public void p25CurrentControl(Channel parentChannel, long frequency)
     {
-        if(parentChannel == null || frequency <= 0)
+        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || frequency <= 0)
         {
             return;
         }
 
-        runOnSwing(() -> {
+        runOnSwingIfEnabled(() -> {
             sweepActivityExpirations();
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
@@ -282,7 +288,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(event == null || event.channel() == null || event.snapshot() == null)
+        if(!mEnabled || event == null || event.channel() == null || event.snapshot() == null)
         {
             return;
         }
@@ -295,7 +301,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwing(() -> {
+        runOnSwingIfEnabled(() -> {
             sweepActivityExpirations();
             SiteIdentity identity = getSiteIdentity(snapshot);
 
@@ -356,12 +362,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     public void p25TrafficGrant(Channel parentChannel, Channel trafficChannel, IChannelDescriptor channelDescriptor,
                                 IdentifierCollection identifiers, DecodeEventType eventType)
     {
-        if(parentChannel == null || channelDescriptor == null || channelDescriptor.getDownlinkFrequency() <= 0)
+        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || channelDescriptor == null ||
+            channelDescriptor.getDownlinkFrequency() <= 0)
         {
             return;
         }
 
-        runOnSwing(() -> {
+        runOnSwingIfEnabled(() -> {
             sweepActivityExpirations();
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
@@ -401,12 +408,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         Integer timeslot = getTimeslot(channelDescriptor);
         String encryptionDetails = P25EncryptionDetails.format(identifiers);
 
-        if(parentChannel == null || frequency <= 0 || encryptionDetails == null)
+        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || frequency <= 0 ||
+            encryptionDetails == null)
         {
             return;
         }
 
-        runOnSwing(() -> {
+        runOnSwingIfEnabled(() -> {
             SiteActivitySession session = mSiteSessions.get(parentChannel);
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
 
@@ -435,12 +443,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     public void channelConfigurationChanged(Channel channel)
     {
-        if(channel == null)
+        if(!mEnabled || channel == null)
         {
             return;
         }
 
-        runOnSwing(() -> {
+        runOnSwingIfEnabled(() -> {
             updateTrunkedTitle(channel);
 
             if(isP25TrunkedControlParent(channel))
@@ -800,65 +808,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return references;
     }
 
-    private void scheduleP25Classification(Channel channel, List<ChannelMetadata> metadataList)
+    private void removeConventionalRow(ChannelActivityRow row)
     {
-        cancelPendingP25Classification(channel);
-
-        List<ChannelMetadata> pending = metadataList != null ? new ArrayList<>(metadataList) : Collections.emptyList();
-        mPendingP25ClassificationMetadata.put(channel, pending);
-
-        for(ChannelMetadata metadata: pending)
+        if(row != null)
         {
-            mPendingP25MetadataChannels.put(metadata, channel);
-        }
-
-        Timer timer = new Timer(P25_CLASSIFICATION_DELAY_MILLISECONDS, event -> {
-            mPendingP25ClassificationTimers.remove(channel);
-            List<ChannelMetadata> delayed = mPendingP25ClassificationMetadata.remove(channel);
-
-            if(delayed != null)
-            {
-                for(ChannelMetadata metadata: delayed)
-                {
-                    mPendingP25MetadataChannels.remove(metadata);
-
-                    if(isP25ControlMetadata(metadata, channel))
-                    {
-                        ensureConfiguredControlRow(channel, "p25-classification-control-state");
-                        return;
-                    }
-                }
-
-                addConventionalRows(channel, delayed, "p25-classification-conventional");
-            }
-        });
-        timer.setRepeats(false);
-        mPendingP25ClassificationTimers.put(channel, timer);
-        timer.start();
-    }
-
-    private void cancelPendingP25Classification(Channel channel)
-    {
-        if(channel == null)
-        {
-            return;
-        }
-
-        Timer timer = mPendingP25ClassificationTimers.remove(channel);
-
-        if(timer != null)
-        {
-            timer.stop();
-        }
-
-        List<ChannelMetadata> pending = mPendingP25ClassificationMetadata.remove(channel);
-
-        if(pending != null)
-        {
-            for(ChannelMetadata metadata: pending)
-            {
-                mPendingP25MetadataChannels.remove(metadata);
-            }
+            mConventionalTable.remove(row);
+            mRowTables.remove(row);
+            mMetadataRows.entrySet().removeIf(entry -> entry.getValue() == row);
         }
     }
 
@@ -871,12 +827,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         for(ChannelMetadata metadata: metadataList)
         {
-            if(isP25ControlMetadata(metadata, channel))
-            {
-                ensureConfiguredControlRow(channel, "conventional-row-control-state");
-                continue;
-            }
-
             long frequency = getFrequency(metadata, channel);
             Integer timeslot = metadata.hasTimeslot() ? metadata.getTimeslot() : null;
             ChannelActivityRow row = mConventionalTable.getOrCreate(conventionalKey(channel, frequency, timeslot),
@@ -946,15 +896,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         row.setDecoder(getDecoder(channel));
         table.refresh(row);
         return row;
-    }
-
-    private void removeConventionalMetadataRow(ChannelMetadata metadata, ChannelActivityRow row)
-    {
-        mMetadataRows.remove(metadata);
-        mConventionalTable.remove(row);
-        mRowTables.remove(row);
-        clearTrafficGrantAgeOut(row);
-        cancelPendingControlIdle(row);
     }
 
     private void reconcileConfiguredControlRows(Channel channel)
@@ -1071,23 +1012,36 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    private boolean isP25TrunkedControlParent(Channel channel)
+    private void clear()
     {
-        return isP25(channel) && channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigP25 p25 &&
-            p25.getTrafficChannelPoolSize() > 0;
+        if(mActivitySweeperTimer != null)
+        {
+            mActivitySweeperTimer.stop();
+        }
+
+        mConventionalTable.clear();
+
+        for(ChannelActivityTableModel table: mTrunkedTables.values())
+        {
+            table.clear();
+        }
+
+        mTrunkedTables.clear();
+        mSiteSessions.clear();
+        mClosedTrunkedChannelIds.clear();
+        mMetadataRows.clear();
+        mRowTables.clear();
+        mPendingControlIdleRows.clear();
+        mPendingTableRefreshes.clear();
+        mSiteIdentities.clear();
     }
 
-    private boolean isP25(Channel channel)
+    private boolean isP25TrunkedControlParent(Channel channel)
     {
         DecoderType decoder = channel != null && channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
-        return decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2;
-    }
-
-    private boolean isP25ControlMetadata(ChannelMetadata metadata, Channel channel)
-    {
-        return isP25(channel) && metadata != null && metadata.getChannelStateIdentifier() != null &&
-            metadata.getChannelStateIdentifier().getValue() == State.CONTROL;
+        return channel != null && channel.isStandardChannel() &&
+            (decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2);
     }
 
     private SiteIdentity getSiteIdentity(P25NetworkConfigurationSnapshot snapshot)
@@ -1257,5 +1211,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         {
             EventQueue.invokeLater(runnable);
         }
+    }
+
+    private void runOnSwingIfEnabled(Runnable runnable)
+    {
+        runOnSwing(() -> {
+            if(mEnabled)
+            {
+                runnable.run();
+            }
+        });
     }
 }

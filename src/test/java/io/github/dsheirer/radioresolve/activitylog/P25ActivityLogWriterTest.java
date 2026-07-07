@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -35,6 +36,7 @@ class P25ActivityLogWriterTest
     void writesActivityEvent() throws Exception
     {
         Path database = mTemporaryFolder.resolve("activity.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, 10);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
@@ -60,10 +62,10 @@ class P25ActivityLogWriterTest
     void appliesRetentionCleanup() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retention.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.initialize(connection);
             P25ActivityLogSchema.insertActivity(connection, activity(1000L, P25ActivityLogRecords.Action.CALL));
             P25ActivityLogSchema.insertActivity(connection, activity(100000L, P25ActivityLogRecords.Action.GRANT));
             P25ActivityLogSchema.deleteOlderThan(connection, 50000L);
@@ -78,20 +80,65 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void maintenanceDeletesExpiredRowsAndUpdatesStatus() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("maintenance.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        long now = System.currentTimeMillis();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertActivity(connection, activity(now - TimeUnit.DAYS.toMillis(2),
+                P25ActivityLogRecords.Action.CALL));
+            P25ActivityLogSchema.insertActivity(connection, activity(now, P25ActivityLogRecords.Action.GRANT));
+        }
+
+        P25ActivityLogMaintenance.Result result =
+            P25ActivityLogMaintenance.run(database, 1, P25ActivityLogMaintenance.Operation.MAINTAIN);
+
+        assertEquals(P25ActivityLogMaintenance.Operation.MAINTAIN, result.operation());
+        assertTrue(result.rowsDeleted() > 0);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "activity_event", 1);
+            assertEquals("1", status(connection, "retention_days"));
+            assertEquals(Long.toString(result.rowsDeleted()), status(connection, "last_maintenance_deleted_rows"));
+        }
+    }
+
+    @Test
+    void maintenanceCheckReportsOk() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("check.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+
+        P25ActivityLogMaintenance.Result result =
+            P25ActivityLogMaintenance.run(database, 30, P25ActivityLogMaintenance.Operation.CHECK);
+
+        assertTrue(result.checkOk());
+        assertEquals("ok", result.checkResult());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals("ok", status(connection, "last_integrity_check_result"));
+        }
+    }
+
+    @Test
     void storesSchemaVersionInDatabaseMetadata() throws Exception
     {
         Path database = mTemporaryFolder.resolve("schema-metadata.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            P25ActivityLogSchema.initialize(connection);
-
             try(ResultSet resultSet = statement.executeQuery(
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("5", resultSet.getString(1));
+                assertEquals("8", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA user_version"))
@@ -104,6 +151,16 @@ class P25ActivityLogWriterTest
             assertColumnAbsent(connection, "talkgroup_summary", "last_lcn");
             assertColumnAbsent(connection, "radio_user_summary", "last_frequency_hz");
             assertColumnAbsent(connection, "radio_user_summary", "last_lcn");
+            assertColumnAbsent(connection, "activity_event", "service");
+            assertColumnAbsent(connection, "activity_event", "details");
+            assertColumnAbsent(connection, "activity_event", "wacn");
+            assertColumnAbsent(connection, "activity_event", "system_id");
+            assertColumnAbsent(connection, "activity_event", "nac");
+            assertColumnAbsent(connection, "activity_event", "rfss");
+            assertColumnAbsent(connection, "activity_event", "site");
+            assertColumnAbsent(connection, "activity_event", "channel_name");
+            assertColumnAbsent(connection, "activity_event", "decoder");
+            assertColumnAbsent(connection, "radio_context", "last_snapshot_hash");
         }
     }
 
@@ -111,10 +168,10 @@ class P25ActivityLogWriterTest
     void updatesAggregateSummaries() throws Exception
     {
         Path database = mTemporaryFolder.resolve("summaries.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.initialize(connection);
             P25ActivityLogSchema.insertActivity(connection, activity(1000L, P25ActivityLogRecords.Action.GRANT));
             P25ActivityLogSchema.insertActivity(connection, activity(2000L, P25ActivityLogRecords.Action.CONTINUE));
 
@@ -155,10 +212,10 @@ class P25ActivityLogWriterTest
     void upsertsStableSiteEntities() throws Exception
     {
         Path database = mTemporaryFolder.resolve("site.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.initialize(connection);
             P25ActivityLogRecords.SiteSnapshot snapshot = siteSnapshot(1000L);
             P25ActivityLogSchema.insertSite(connection, snapshot);
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(2000L));
@@ -182,16 +239,17 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void honorsRecordTypeLoggingOptions() throws Exception
+    void writesAllStatsRecordTypes() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("filtered.sqlite");
-        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, true, false, 10);
+        Path database = mTemporaryFolder.resolve("all-stats.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, 10);
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
         writer.enqueue(siteSnapshot(2000L));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
+        while(writer.getWrittenRecords() < 2 && System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
@@ -200,9 +258,9 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertCount(connection, "activity_event", 0);
+            assertCount(connection, "activity_event", 1);
             assertCount(connection, "site_snapshot", 1);
-            assertCount(connection, "logger_status", 0);
+            assertTrue(count(connection, "logger_status") > 0);
         }
     }
 
@@ -210,6 +268,7 @@ class P25ActivityLogWriterTest
     void dropsOldestWhenQueueIsFull() throws Exception
     {
         Path database = mTemporaryFolder.resolve("overflow.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
         P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, 1);
         writer.start();
 
@@ -230,11 +289,27 @@ class P25ActivityLogWriterTest
 
     private static void assertCount(Connection connection, String table, int expected) throws Exception
     {
+        assertEquals(expected, count(connection, table));
+    }
+
+    private static int count(Connection connection, String table) throws Exception
+    {
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM " + table))
         {
             assertTrue(resultSet.next());
-            assertEquals(expected, resultSet.getInt(1));
+            return resultSet.getInt(1);
+        }
+    }
+
+    private static String status(Connection connection, String key) throws Exception
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "SELECT value FROM logger_status WHERE key='" + key + "'"))
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getString(1);
         }
     }
 
@@ -254,10 +329,10 @@ class P25ActivityLogWriterTest
     {
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "123e4567-e89b-12d3-a456-426614174000",
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", action, "CALL_GROUP", "1811524", "56138",
-            "TALKGROUP", 854187500L, "00-0509", "00-0509", 1, "ENCRYPTED", "PHASE 1 CHANNEL GRANT",
-            action == P25ActivityLogRecords.Action.GRANT, action == P25ActivityLogRecords.Action.GRANT ? 0x84 : null,
-            action == P25ActivityLogRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site",
-            "P25-1", null, null, null);
+            "TALKGROUP", 854187500L, "00-0509", 1, action == P25ActivityLogRecords.Action.GRANT,
+            action == P25ActivityLogRecords.Action.GRANT ? 0x84 : null,
+            action == P25ActivityLogRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", null, null);
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp)

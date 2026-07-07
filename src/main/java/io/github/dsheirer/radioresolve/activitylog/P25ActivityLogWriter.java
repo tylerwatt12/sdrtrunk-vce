@@ -39,6 +39,7 @@ class P25ActivityLogWriter implements AutoCloseable
     private static final long POLL_TIMEOUT_MILLISECONDS = 1000;
     private static final long DATABASE_BUSY_RETRY_MILLISECONDS = 500;
     private static final long RETENTION_CLEANUP_INTERVAL_MILLISECONDS = TimeUnit.HOURS.toMillis(1);
+    private static final long MAINTENANCE_INTERVAL_MILLISECONDS = TimeUnit.DAYS.toMillis(1);
 
     private final Path mDatabasePath;
     private final ArrayBlockingQueue<P25ActivityLogRecord> mQueue;
@@ -47,34 +48,19 @@ class P25ActivityLogWriter implements AutoCloseable
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private ExecutorService mExecutorService;
     private volatile int mRetentionDays;
-    private volatile boolean mActivityLoggingEnabled;
-    private volatile boolean mSiteStatisticsLoggingEnabled;
-    private volatile boolean mStatusLoggingEnabled;
     private volatile long mLastRetentionCleanup;
+    private volatile long mLastMaintenance;
 
     P25ActivityLogWriter(Path databasePath, int retentionDays)
     {
-        this(databasePath, retentionDays, true, true, true, DEFAULT_QUEUE_CAPACITY);
-    }
-
-    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean activityLoggingEnabled,
-                         boolean siteStatisticsLoggingEnabled, boolean statusLoggingEnabled)
-    {
-        this(databasePath, retentionDays, activityLoggingEnabled, siteStatisticsLoggingEnabled, statusLoggingEnabled,
-            DEFAULT_QUEUE_CAPACITY);
+        this(databasePath, retentionDays, DEFAULT_QUEUE_CAPACITY);
     }
 
     P25ActivityLogWriter(Path databasePath, int retentionDays, int queueCapacity)
     {
-        this(databasePath, retentionDays, true, true, true, queueCapacity);
-    }
-
-    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean activityLoggingEnabled,
-                         boolean siteStatisticsLoggingEnabled, boolean statusLoggingEnabled, int queueCapacity)
-    {
         mDatabasePath = databasePath;
         mQueue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
-        setOptions(retentionDays, activityLoggingEnabled, siteStatisticsLoggingEnabled, statusLoggingEnabled);
+        setRetentionDays(retentionDays);
     }
 
     void start()
@@ -86,28 +72,14 @@ class P25ActivityLogWriter implements AutoCloseable
         }
     }
 
-    void setOptions(int retentionDays, boolean activityLoggingEnabled, boolean siteStatisticsLoggingEnabled,
-                    boolean statusLoggingEnabled)
+    void setRetentionDays(int retentionDays)
     {
         mRetentionDays = Math.max(1, retentionDays);
-        mActivityLoggingEnabled = activityLoggingEnabled;
-        mSiteStatisticsLoggingEnabled = siteStatisticsLoggingEnabled;
-        mStatusLoggingEnabled = statusLoggingEnabled;
-    }
-
-    boolean isActivityLoggingEnabled()
-    {
-        return mActivityLoggingEnabled;
-    }
-
-    boolean isSiteStatisticsLoggingEnabled()
-    {
-        return mSiteStatisticsLoggingEnabled;
     }
 
     void enqueue(P25ActivityLogRecord record)
     {
-        if(record == null || !mRunning.get() || !isRecordTypeEnabled(record))
+        if(record == null || !mRunning.get())
         {
             return;
         }
@@ -171,13 +143,10 @@ class P25ActivityLogWriter implements AutoCloseable
     {
         try(Connection connection = openConnection())
         {
-            initializeSchema(connection);
-            cleanupRetentionWithRetry(connection);
+            validateSchema(connection);
+            runMaintenanceWithRetry(connection);
 
-            if(mStatusLoggingEnabled)
-            {
-                updateStatusWithRetry(connection, "database_path", mDatabasePath.toString());
-            }
+            updateStatusWithRetry(connection, "database_path", mDatabasePath.toString());
 
             List<P25ActivityLogRecord> batch = new ArrayList<>(BATCH_SIZE);
 
@@ -196,6 +165,11 @@ class P25ActivityLogWriter implements AutoCloseable
                 if(System.currentTimeMillis() - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS)
                 {
                     cleanupRetentionWithRetry(connection);
+                }
+
+                if(System.currentTimeMillis() - mLastMaintenance >= MAINTENANCE_INTERVAL_MILLISECONDS)
+                {
+                    runMaintenanceWithRetry(connection);
                 }
             }
 
@@ -242,13 +216,13 @@ class P25ActivityLogWriter implements AutoCloseable
         }
     }
 
-    private void initializeSchema(Connection connection) throws SQLException, InterruptedException
+    private void validateSchema(Connection connection) throws SQLException, InterruptedException
     {
         while(true)
         {
             try
             {
-                P25ActivityLogSchema.initialize(connection);
+                P25ActivityLogSchema.validate(connection);
                 return;
             }
             catch(SQLException e)
@@ -328,6 +302,29 @@ class P25ActivityLogWriter implements AutoCloseable
         }
     }
 
+    private void runMaintenanceWithRetry(Connection connection) throws SQLException, InterruptedException
+    {
+        while(true)
+        {
+            try
+            {
+                P25ActivityLogMaintenance.runLightMaintenance(connection, mRetentionDays);
+                mLastRetentionCleanup = System.currentTimeMillis();
+                mLastMaintenance = System.currentTimeMillis();
+                return;
+            }
+            catch(SQLException e)
+            {
+                if(!isDatabaseBusy(e) || !mRunning.get())
+                {
+                    throw e;
+                }
+
+                Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
+            }
+        }
+    }
+
     private void writeBatch(Connection connection, List<P25ActivityLogRecord> batch) throws SQLException
     {
         if(batch.isEmpty())
@@ -344,13 +341,12 @@ class P25ActivityLogWriter implements AutoCloseable
 
             for(P25ActivityLogRecord record: batch)
             {
-                if(record instanceof P25ActivityLogRecords.ActivityEvent activityEvent && mActivityLoggingEnabled)
+                if(record instanceof P25ActivityLogRecords.ActivityEvent activityEvent)
                 {
                     P25ActivityLogSchema.insertActivity(connection, activityEvent);
                     writtenRecords++;
                 }
-                else if(record instanceof P25ActivityLogRecords.SiteSnapshot siteSnapshot &&
-                    mSiteStatisticsLoggingEnabled)
+                else if(record instanceof P25ActivityLogRecords.SiteSnapshot siteSnapshot)
                 {
                     P25ActivityLogSchema.insertSite(connection, siteSnapshot);
                     writtenRecords++;
@@ -359,11 +355,8 @@ class P25ActivityLogWriter implements AutoCloseable
 
             mWrittenRecords.addAndGet(writtenRecords);
 
-            if(mStatusLoggingEnabled)
-            {
-                P25ActivityLogSchema.updateStatus(connection, "records_written", Long.toString(mWrittenRecords.get()));
-                P25ActivityLogSchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
-            }
+            P25ActivityLogSchema.updateStatus(connection, "records_written", Long.toString(mWrittenRecords.get()));
+            P25ActivityLogSchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
 
             connection.commit();
         }
@@ -378,7 +371,7 @@ class P25ActivityLogWriter implements AutoCloseable
                 e.addSuppressed(rollbackException);
             }
 
-            if(!isDatabaseBusy(e) && mStatusLoggingEnabled)
+            if(!isDatabaseBusy(e))
             {
                 try
                 {
@@ -400,23 +393,8 @@ class P25ActivityLogWriter implements AutoCloseable
 
     private void cleanupRetention(Connection connection) throws SQLException
     {
-        long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(mRetentionDays);
-        P25ActivityLogSchema.deleteOlderThan(connection, cutoff);
-
-        if(mStatusLoggingEnabled)
-        {
-            P25ActivityLogSchema.updateStatus(connection, "retention_days", Integer.toString(mRetentionDays));
-            P25ActivityLogSchema.updateStatus(connection, "last_retention_cleanup_ms",
-                Long.toString(System.currentTimeMillis()));
-        }
-
+        P25ActivityLogMaintenance.cleanupRetention(connection, mRetentionDays);
         mLastRetentionCleanup = System.currentTimeMillis();
-    }
-
-    private boolean isRecordTypeEnabled(P25ActivityLogRecord record)
-    {
-        return (record instanceof P25ActivityLogRecords.ActivityEvent && mActivityLoggingEnabled) ||
-            (record instanceof P25ActivityLogRecords.SiteSnapshot && mSiteStatisticsLoggingEnabled);
     }
 
     private static boolean isDatabaseBusy(SQLException exception)

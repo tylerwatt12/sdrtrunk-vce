@@ -11,19 +11,21 @@
 
 package io.github.dsheirer.radioresolve.activitylog;
 
-import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 
 /**
  * SQLite schema and writes for P25 activity history.
  */
-class P25ActivityLogSchema
+public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 5;
+    private static final int SCHEMA_VERSION = 8;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     private static final int NULL_TIMESLOT = -1;
 
@@ -31,19 +33,323 @@ class P25ActivityLogSchema
     {
     }
 
-    static void initialize(Connection connection) throws SQLException
+    public static void create(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA journal_mode=WAL");
-            statement.execute("PRAGMA synchronous=NORMAL");
-            statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS radio_context (
+                    guid TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    protocol TEXT,
+                    channel_name TEXT,
+                    alias_list_name TEXT,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    wacn INTEGER,
+                    system_id INTEGER,
+                    nac INTEGER,
+                    rfss INTEGER,
+                    site INTEGER,
+                    primary_frequency_hz INTEGER,
+                    current_control_hz INTEGER
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS activity_event (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guid TEXT NOT NULL,
+                    channel_kind TEXT NOT NULL,
+                    observed_at_ms INTEGER NOT NULL,
+                    protocol TEXT,
+                    action TEXT NOT NULL,
+                    event_type TEXT,
+                    source_radio_id TEXT,
+                    target_id TEXT,
+                    target_kind TEXT,
+                    frequency_hz INTEGER,
+                    lcn TEXT,
+                    timeslot INTEGER,
+                    encrypted INTEGER NOT NULL DEFAULT 0,
+                    encryption_algorithm_id INTEGER,
+                    encryption_key_id INTEGER,
+                    talker_alias TEXT
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS talkgroup_summary (
+                    guid TEXT NOT NULL,
+                    talkgroup_id TEXT NOT NULL,
+                    target_kind TEXT,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    hits INTEGER NOT NULL DEFAULT 0,
+                    grant_count INTEGER NOT NULL DEFAULT 0,
+                    continue_count INTEGER NOT NULL DEFAULT 0,
+                    encrypted_count INTEGER NOT NULL DEFAULT 0,
+                    denial_count INTEGER NOT NULL DEFAULT 0,
+                    busy_count INTEGER NOT NULL DEFAULT 0,
+                    queued_count INTEGER NOT NULL DEFAULT 0,
+                    patch_count INTEGER NOT NULL DEFAULT 0,
+                    last_source_radio_id TEXT,
+                    last_encryption_algorithm_id INTEGER,
+                    last_encryption_key_id INTEGER,
+                    PRIMARY KEY(guid, talkgroup_id)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS radio_user_summary (
+                    guid TEXT NOT NULL,
+                    radio_id TEXT NOT NULL,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    hits INTEGER NOT NULL DEFAULT 0,
+                    join_count INTEGER NOT NULL DEFAULT 0,
+                    logout_count INTEGER NOT NULL DEFAULT 0,
+                    register_count INTEGER NOT NULL DEFAULT 0,
+                    grant_count INTEGER NOT NULL DEFAULT 0,
+                    encrypted_count INTEGER NOT NULL DEFAULT 0,
+                    last_talkgroup_id TEXT,
+                    last_encryption_algorithm_id INTEGER,
+                    last_encryption_key_id INTEGER,
+                    talker_alias TEXT,
+                    PRIMARY KEY(guid, radio_id)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS frequency_summary (
+                    guid TEXT NOT NULL,
+                    frequency_hz INTEGER NOT NULL,
+                    timeslot INTEGER NOT NULL DEFAULT -1,
+                    lcn TEXT,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    hits INTEGER NOT NULL DEFAULT 0,
+                    grant_count INTEGER NOT NULL DEFAULT 0,
+                    continue_count INTEGER NOT NULL DEFAULT 0,
+                    data_count INTEGER NOT NULL DEFAULT 0,
+                    encrypted_count INTEGER NOT NULL DEFAULT 0,
+                    last_target_id TEXT,
+                    last_source_radio_id TEXT,
+                    PRIMARY KEY(guid, frequency_hz, timeslot)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_snapshot (
+                    guid TEXT PRIMARY KEY,
+                    snapshot_hash TEXT,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    protocol TEXT,
+                    channel_name TEXT,
+                    alias_list_name TEXT,
+                    decoder TEXT,
+                    wacn INTEGER,
+                    system_id INTEGER,
+                    nac INTEGER,
+                    rfss INTEGER,
+                    site INTEGER,
+                    primary_frequency_hz INTEGER,
+                    current_control_hz INTEGER
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_channel (
+                    guid TEXT NOT NULL,
+                    channel_key TEXT NOT NULL,
+                    descriptor TEXT,
+                    role TEXT,
+                    downlink_hz INTEGER,
+                    uplink_hz INTEGER,
+                    tdma INTEGER,
+                    timeslots INTEGER,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    primary_control_seen INTEGER NOT NULL DEFAULT 0,
+                    alternate_control_seen INTEGER NOT NULL DEFAULT 0,
+                    traffic_seen INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(guid, channel_key)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_frequency_band (
+                    guid TEXT NOT NULL,
+                    band INTEGER NOT NULL,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    tdma INTEGER,
+                    base_hz INTEGER,
+                    bandwidth INTEGER,
+                    spacing_hz INTEGER,
+                    transmit_offset_hz INTEGER,
+                    timeslots INTEGER,
+                    PRIMARY KEY(guid, band)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_neighbor (
+                    guid TEXT NOT NULL,
+                    neighbor_key TEXT NOT NULL,
+                    system_id INTEGER,
+                    nac INTEGER,
+                    rfss INTEGER,
+                    site INTEGER,
+                    lra INTEGER,
+                    channel_descriptor TEXT,
+                    downlink_hz INTEGER,
+                    uplink_hz INTEGER,
+                    status TEXT,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY(guid, neighbor_key)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_patch_group (
+                    guid TEXT NOT NULL,
+                    patch_group INTEGER NOT NULL,
+                    version INTEGER,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY(guid, patch_group)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_patch_group_talkgroup (
+                    guid TEXT NOT NULL,
+                    patch_group INTEGER NOT NULL,
+                    talkgroup_id INTEGER NOT NULL,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY(guid, patch_group, talkgroup_id)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_patch_group_radio (
+                    guid TEXT NOT NULL,
+                    patch_group INTEGER NOT NULL,
+                    radio_id INTEGER NOT NULL,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY(guid, patch_group, radio_id)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS site_talker_alias (
+                    guid TEXT NOT NULL,
+                    radio_id INTEGER NOT NULL,
+                    alias TEXT,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY(guid, radio_id)
+                )
+                """);
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS logger_status (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at_ms INTEGER NOT NULL
+                )
+                """);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_guid_time ON activity_event(guid, observed_at_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_target_time ON activity_event(target_id, observed_at_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_source_time ON activity_event(source_radio_id, observed_at_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_frequency_time ON activity_event(frequency_hz, observed_at_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_encryption ON activity_event(encrypted, encryption_algorithm_id, encryption_key_id)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_snapshot_identity ON site_snapshot(wacn, system_id, rfss, site)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_channel_guid_frequency ON site_channel(guid, downlink_hz)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_neighbor_guid_site ON site_neighbor(guid, system_id, rfss, site)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_patch_talkgroup ON site_patch_group_talkgroup(talkgroup_id, guid)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_patch_radio ON site_patch_group_radio(radio_id, guid)");
+            statement.executeUpdate("""
+                CREATE VIEW IF NOT EXISTS activity_event_resolved AS
+                SELECT
+                    a.*,
+                    rc.kind AS resolved_context_kind,
+                    rc.channel_name AS resolved_channel_name,
+                    rc.alias_list_name AS resolved_alias_list_name,
+                    rc.wacn AS resolved_wacn,
+                    rc.system_id AS resolved_system_id,
+                    rc.nac AS resolved_nac,
+                    rc.rfss AS resolved_rfss,
+                    rc.site AS resolved_site,
+                    rc.current_control_hz AS resolved_current_control_hz
+                FROM activity_event a
+                LEFT JOIN radio_context rc ON rc.guid = a.guid
+                """);
         }
 
-        createMetadataTable(connection);
-        createTables(connection);
-        setSchemaVersion(connection, SCHEMA_VERSION);
+        SdrTrunkDatabaseStartup.setMetadata(connection, SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION));
     }
+
+    public static void validate(Connection connection) throws SQLException
+    {
+        SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS,
+            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION))));
+    }
+
+    private static final List<SqliteSchemaValidator.Table> TABLES = List.of(
+        new SqliteSchemaValidator.Table("radio_context", "guid", "kind", "protocol", "channel_name",
+            "alias_list_name", "first_seen_ms", "last_seen_ms", "wacn", "system_id", "nac", "rfss", "site",
+            "primary_frequency_hz", "current_control_hz"),
+        new SqliteSchemaValidator.Table("activity_event", "id", "guid", "channel_kind", "observed_at_ms",
+            "protocol", "action", "event_type", "source_radio_id", "target_id", "target_kind", "frequency_hz",
+            "lcn", "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id", "talker_alias"),
+        new SqliteSchemaValidator.Table("talkgroup_summary", "guid", "talkgroup_id", "target_kind",
+            "first_seen_ms", "last_seen_ms", "hits", "grant_count", "continue_count", "encrypted_count",
+            "denial_count", "busy_count", "queued_count", "patch_count", "last_source_radio_id",
+            "last_encryption_algorithm_id", "last_encryption_key_id"),
+        new SqliteSchemaValidator.Table("radio_user_summary", "guid", "radio_id", "first_seen_ms",
+            "last_seen_ms", "hits", "join_count", "logout_count", "register_count", "grant_count",
+            "encrypted_count", "last_talkgroup_id", "last_encryption_algorithm_id", "last_encryption_key_id",
+            "talker_alias"),
+        new SqliteSchemaValidator.Table("frequency_summary", "guid", "frequency_hz", "timeslot", "lcn",
+            "first_seen_ms", "last_seen_ms", "hits", "grant_count", "continue_count", "data_count",
+            "encrypted_count", "last_target_id", "last_source_radio_id"),
+        new SqliteSchemaValidator.Table("site_snapshot", "guid", "snapshot_hash", "first_seen_ms",
+            "last_seen_ms", "seen_count", "protocol", "channel_name", "alias_list_name", "decoder", "wacn",
+            "system_id", "nac", "rfss", "site", "primary_frequency_hz", "current_control_hz"),
+        new SqliteSchemaValidator.Table("site_channel", "guid", "channel_key", "descriptor", "role",
+            "downlink_hz", "uplink_hz", "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "seen_count",
+            "primary_control_seen", "alternate_control_seen", "traffic_seen"),
+        new SqliteSchemaValidator.Table("site_frequency_band", "guid", "band", "first_seen_ms", "last_seen_ms",
+            "seen_count", "tdma", "base_hz", "bandwidth", "spacing_hz", "transmit_offset_hz", "timeslots"),
+        new SqliteSchemaValidator.Table("site_neighbor", "guid", "neighbor_key", "system_id", "nac", "rfss",
+            "site", "lra", "channel_descriptor", "downlink_hz", "uplink_hz", "status", "first_seen_ms",
+            "last_seen_ms", "seen_count"),
+        new SqliteSchemaValidator.Table("site_patch_group", "guid", "patch_group", "version", "first_seen_ms",
+            "last_seen_ms", "seen_count"),
+        new SqliteSchemaValidator.Table("site_patch_group_talkgroup", "guid", "patch_group", "talkgroup_id",
+            "first_seen_ms", "last_seen_ms", "seen_count"),
+        new SqliteSchemaValidator.Table("site_patch_group_radio", "guid", "patch_group", "radio_id",
+            "first_seen_ms", "last_seen_ms", "seen_count"),
+        new SqliteSchemaValidator.Table("site_talker_alias", "guid", "radio_id", "alias", "first_seen_ms",
+            "last_seen_ms", "seen_count"),
+        new SqliteSchemaValidator.Table("logger_status", "key", "value", "updated_at_ms")
+    );
+
+    private static final List<String> INDEXES = List.of(
+        "idx_activity_event_guid_time",
+        "idx_activity_event_target_time",
+        "idx_activity_event_source_time",
+        "idx_activity_event_frequency_time",
+        "idx_activity_event_encryption",
+        "idx_site_snapshot_identity",
+        "idx_site_channel_guid_frequency",
+        "idx_site_neighbor_guid_site",
+        "idx_site_patch_talkgroup",
+        "idx_site_patch_radio"
+    );
+
+    private static final List<String> VIEWS = List.of("activity_event_resolved");
 
     static void insertActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity) throws SQLException
     {
@@ -51,11 +357,9 @@ class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO activity_event (
-                guid, observed_at_ms, protocol, action, event_type, source_radio_id, target_id, target_kind,
-                frequency_hz, lcn, channel_descriptor, timeslot, service, details, encrypted,
-                encryption_algorithm_id, encryption_key_id, wacn, system_id, nac, rfss, site,
-                channel_name, decoder, talker_alias, raw_identifiers
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                guid, channel_kind, observed_at_ms, protocol, action, event_type, source_radio_id, target_id, target_kind,
+                frequency_hz, lcn, timeslot, encrypted, encryption_algorithm_id, encryption_key_id, talker_alias
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """))
         {
             setActivityFields(statement, activity);
@@ -78,21 +382,23 @@ class P25ActivityLogSchema
         upsertSiteTalkerAliases(connection, snapshot);
     }
 
-    static void deleteOlderThan(Connection connection, long cutoffEpochMilliseconds) throws SQLException
+    static int deleteOlderThan(Connection connection, long cutoffEpochMilliseconds) throws SQLException
     {
-        deleteByTime(connection, "activity_event", "observed_at_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "talkgroup_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "radio_user_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "frequency_summary", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_channel", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_frequency_band", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_neighbor", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_patch_group_talkgroup", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_patch_group_radio", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_patch_group", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_talker_alias", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "site_snapshot", "last_seen_ms", cutoffEpochMilliseconds);
-        deleteByTime(connection, "radio_context", "last_seen_ms", cutoffEpochMilliseconds);
+        int deleted = 0;
+        deleted += deleteByTime(connection, "activity_event", "observed_at_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "talkgroup_summary", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "radio_user_summary", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "frequency_summary", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_channel", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_frequency_band", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_neighbor", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_patch_group_talkgroup", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_patch_group_radio", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_patch_group", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_talker_alias", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "site_snapshot", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "radio_context", "last_seen_ms", cutoffEpochMilliseconds);
+        return deleted;
     }
 
     static void updateStatus(Connection connection, String key, String value) throws SQLException
@@ -160,8 +466,8 @@ class P25ActivityLogSchema
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO radio_context (
                 guid, kind, protocol, channel_name, alias_list_name, first_seen_ms, last_seen_ms, wacn, system_id,
-                nac, rfss, site, primary_frequency_hz, current_control_hz, last_snapshot_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                nac, rfss, site, primary_frequency_hz, current_control_hz
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
                 kind = excluded.kind,
                 protocol = coalesce(excluded.protocol, radio_context.protocol),
@@ -174,8 +480,7 @@ class P25ActivityLogSchema
                 rfss = coalesce(excluded.rfss, radio_context.rfss),
                 site = coalesce(excluded.site, radio_context.site),
                 primary_frequency_hz = coalesce(excluded.primary_frequency_hz, radio_context.primary_frequency_hz),
-                current_control_hz = coalesce(excluded.current_control_hz, radio_context.current_control_hz),
-                last_snapshot_hash = coalesce(excluded.last_snapshot_hash, radio_context.last_snapshot_hash)
+                current_control_hz = coalesce(excluded.current_control_hz, radio_context.current_control_hz)
             """))
         {
             statement.setString(1, snapshot.guid());
@@ -192,7 +497,6 @@ class P25ActivityLogSchema
             setInteger(statement, 12, snapshot.site());
             setLong(statement, 13, snapshot.primaryFrequencyHertz());
             setLong(statement, 14, snapshot.currentControlHertz());
-            statement.setString(15, snapshot.snapshotHash());
             statement.executeUpdate();
         }
     }
@@ -683,347 +987,30 @@ class P25ActivityLogSchema
         throws SQLException
     {
         statement.setString(1, activity.guid());
-        statement.setLong(2, activity.observedAtEpochMilliseconds());
-        statement.setString(3, activity.protocol());
-        statement.setString(4, activity.action().name());
-        statement.setString(5, activity.eventType());
-        statement.setString(6, activity.sourceRadioId());
-        statement.setString(7, activity.targetId());
-        statement.setString(8, activity.targetKind());
-        setLong(statement, 9, activity.frequencyHertz());
-        statement.setString(10, activity.lcn());
-        statement.setString(11, activity.channelDescriptor());
+        statement.setString(2, activity.contextKind().name());
+        statement.setLong(3, activity.observedAtEpochMilliseconds());
+        statement.setString(4, activity.protocol());
+        statement.setString(5, activity.action().name());
+        statement.setString(6, activity.eventType());
+        statement.setString(7, activity.sourceRadioId());
+        statement.setString(8, activity.targetId());
+        statement.setString(9, activity.targetKind());
+        setLong(statement, 10, activity.frequencyHertz());
+        statement.setString(11, activity.lcn());
         setInteger(statement, 12, activity.timeslot());
-        statement.setString(13, activity.service());
-        statement.setString(14, activity.details());
-        statement.setInt(15, activity.encrypted() ? 1 : 0);
-        setInteger(statement, 16, activity.encryptionAlgorithmId());
-        setInteger(statement, 17, activity.encryptionKeyId());
-        setInteger(statement, 18, activity.wacn());
-        setInteger(statement, 19, activity.systemId());
-        setInteger(statement, 20, activity.nac());
-        setInteger(statement, 21, activity.rfss());
-        setInteger(statement, 22, activity.site());
-        statement.setString(23, activity.channelName());
-        statement.setString(24, activity.decoder());
-        statement.setString(25, activity.talkerAlias());
-        statement.setString(26, activity.rawIdentifiers());
+        statement.setInt(13, activity.encrypted() ? 1 : 0);
+        setInteger(statement, 14, activity.encryptionAlgorithmId());
+        setInteger(statement, 15, activity.encryptionKeyId());
+        statement.setString(16, activity.talkerAlias());
     }
 
-    private static void createTables(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS radio_context (
-                    guid TEXT PRIMARY KEY,
-                    kind TEXT NOT NULL,
-                    protocol TEXT,
-                    channel_name TEXT,
-                    alias_list_name TEXT,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    wacn INTEGER,
-                    system_id INTEGER,
-                    nac INTEGER,
-                    rfss INTEGER,
-                    site INTEGER,
-                    primary_frequency_hz INTEGER,
-                    current_control_hz INTEGER,
-                    last_snapshot_hash TEXT
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS activity_event (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guid TEXT NOT NULL,
-                    observed_at_ms INTEGER NOT NULL,
-                    protocol TEXT,
-                    action TEXT NOT NULL,
-                    event_type TEXT,
-                    source_radio_id TEXT,
-                    target_id TEXT,
-                    target_kind TEXT,
-                    frequency_hz INTEGER,
-                    lcn TEXT,
-                    channel_descriptor TEXT,
-                    timeslot INTEGER,
-                    service TEXT,
-                    details TEXT,
-                    encrypted INTEGER NOT NULL DEFAULT 0,
-                    encryption_algorithm_id INTEGER,
-                    encryption_key_id INTEGER,
-                    wacn INTEGER,
-                    system_id INTEGER,
-                    nac INTEGER,
-                    rfss INTEGER,
-                    site INTEGER,
-                    channel_name TEXT,
-                    decoder TEXT,
-                    talker_alias TEXT,
-                    raw_identifiers TEXT
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS talkgroup_summary (
-                    guid TEXT NOT NULL,
-                    talkgroup_id TEXT NOT NULL,
-                    target_kind TEXT,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    hits INTEGER NOT NULL DEFAULT 0,
-                    grant_count INTEGER NOT NULL DEFAULT 0,
-                    continue_count INTEGER NOT NULL DEFAULT 0,
-                    encrypted_count INTEGER NOT NULL DEFAULT 0,
-                    denial_count INTEGER NOT NULL DEFAULT 0,
-                    busy_count INTEGER NOT NULL DEFAULT 0,
-                    queued_count INTEGER NOT NULL DEFAULT 0,
-                    patch_count INTEGER NOT NULL DEFAULT 0,
-                    last_source_radio_id TEXT,
-                    last_encryption_algorithm_id INTEGER,
-                    last_encryption_key_id INTEGER,
-                    PRIMARY KEY(guid, talkgroup_id)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS radio_user_summary (
-                    guid TEXT NOT NULL,
-                    radio_id TEXT NOT NULL,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    hits INTEGER NOT NULL DEFAULT 0,
-                    join_count INTEGER NOT NULL DEFAULT 0,
-                    logout_count INTEGER NOT NULL DEFAULT 0,
-                    register_count INTEGER NOT NULL DEFAULT 0,
-                    grant_count INTEGER NOT NULL DEFAULT 0,
-                    encrypted_count INTEGER NOT NULL DEFAULT 0,
-                    last_talkgroup_id TEXT,
-                    last_encryption_algorithm_id INTEGER,
-                    last_encryption_key_id INTEGER,
-                    talker_alias TEXT,
-                    PRIMARY KEY(guid, radio_id)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS frequency_summary (
-                    guid TEXT NOT NULL,
-                    frequency_hz INTEGER NOT NULL,
-                    timeslot INTEGER NOT NULL DEFAULT -1,
-                    lcn TEXT,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    hits INTEGER NOT NULL DEFAULT 0,
-                    grant_count INTEGER NOT NULL DEFAULT 0,
-                    continue_count INTEGER NOT NULL DEFAULT 0,
-                    data_count INTEGER NOT NULL DEFAULT 0,
-                    encrypted_count INTEGER NOT NULL DEFAULT 0,
-                    last_target_id TEXT,
-                    last_source_radio_id TEXT,
-                    PRIMARY KEY(guid, frequency_hz, timeslot)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_snapshot (
-                    guid TEXT PRIMARY KEY,
-                    snapshot_hash TEXT,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    protocol TEXT,
-                    channel_name TEXT,
-                    alias_list_name TEXT,
-                    decoder TEXT,
-                    wacn INTEGER,
-                    system_id INTEGER,
-                    nac INTEGER,
-                    rfss INTEGER,
-                    site INTEGER,
-                    primary_frequency_hz INTEGER,
-                    current_control_hz INTEGER
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_channel (
-                    guid TEXT NOT NULL,
-                    channel_key TEXT NOT NULL,
-                    descriptor TEXT,
-                    role TEXT,
-                    downlink_hz INTEGER,
-                    uplink_hz INTEGER,
-                    tdma INTEGER,
-                    timeslots INTEGER,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    primary_control_seen INTEGER NOT NULL DEFAULT 0,
-                    alternate_control_seen INTEGER NOT NULL DEFAULT 0,
-                    traffic_seen INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY(guid, channel_key)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_frequency_band (
-                    guid TEXT NOT NULL,
-                    band INTEGER NOT NULL,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    tdma INTEGER,
-                    base_hz INTEGER,
-                    bandwidth INTEGER,
-                    spacing_hz INTEGER,
-                    transmit_offset_hz INTEGER,
-                    timeslots INTEGER,
-                    PRIMARY KEY(guid, band)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_neighbor (
-                    guid TEXT NOT NULL,
-                    neighbor_key TEXT NOT NULL,
-                    system_id INTEGER,
-                    nac INTEGER,
-                    rfss INTEGER,
-                    site INTEGER,
-                    lra INTEGER,
-                    channel_descriptor TEXT,
-                    downlink_hz INTEGER,
-                    uplink_hz INTEGER,
-                    status TEXT,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY(guid, neighbor_key)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_patch_group (
-                    guid TEXT NOT NULL,
-                    patch_group INTEGER NOT NULL,
-                    version INTEGER,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY(guid, patch_group)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_patch_group_talkgroup (
-                    guid TEXT NOT NULL,
-                    patch_group INTEGER NOT NULL,
-                    talkgroup_id INTEGER NOT NULL,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY(guid, patch_group, talkgroup_id)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_patch_group_radio (
-                    guid TEXT NOT NULL,
-                    patch_group INTEGER NOT NULL,
-                    radio_id INTEGER NOT NULL,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY(guid, patch_group, radio_id)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS site_talker_alias (
-                    guid TEXT NOT NULL,
-                    radio_id INTEGER NOT NULL,
-                    alias TEXT,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    seen_count INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY(guid, radio_id)
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS logger_status (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    updated_at_ms INTEGER NOT NULL
-                )
-                """);
-            createIndexes(statement);
-            createViews(statement);
-        }
-    }
-
-    private static void createIndexes(Statement statement) throws SQLException
-    {
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_guid_time ON activity_event(guid, observed_at_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_target_time ON activity_event(target_id, observed_at_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_source_time ON activity_event(source_radio_id, observed_at_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_frequency_time ON activity_event(frequency_hz, observed_at_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_activity_event_encryption ON activity_event(encrypted, encryption_algorithm_id, encryption_key_id)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_snapshot_identity ON site_snapshot(wacn, system_id, rfss, site)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_channel_guid_frequency ON site_channel(guid, downlink_hz)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_neighbor_guid_site ON site_neighbor(guid, system_id, rfss, site)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_patch_talkgroup ON site_patch_group_talkgroup(talkgroup_id, guid)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_site_patch_radio ON site_patch_group_radio(radio_id, guid)");
-    }
-
-    private static void createViews(Statement statement) throws SQLException
-    {
-        statement.executeUpdate("""
-            CREATE VIEW IF NOT EXISTS activity_event_resolved AS
-            SELECT
-                a.*,
-                rc.kind AS resolved_context_kind,
-                rc.channel_name AS resolved_channel_name,
-                rc.alias_list_name AS resolved_alias_list_name,
-                coalesce(a.wacn, rc.wacn) AS resolved_wacn,
-                coalesce(a.system_id, rc.system_id) AS resolved_system_id,
-                coalesce(a.nac, rc.nac) AS resolved_nac,
-                coalesce(a.rfss, rc.rfss) AS resolved_rfss,
-                coalesce(a.site, rc.site) AS resolved_site,
-                rc.current_control_hz AS resolved_current_control_hz
-            FROM activity_event a
-            LEFT JOIN radio_context rc ON rc.guid = a.guid
-            """);
-    }
-
-    private static void createMetadataTable(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS database_metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at_ms INTEGER NOT NULL
-                )
-                """);
-        }
-    }
-
-    private static void setSchemaVersion(Connection connection, int version) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO database_metadata (key, value, updated_at_ms)
-            VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                updated_at_ms = excluded.updated_at_ms
-            """))
-        {
-            statement.setString(1, SCHEMA_VERSION_KEY);
-            statement.setString(2, Integer.toString(version));
-            statement.setLong(3, System.currentTimeMillis());
-            statement.executeUpdate();
-        }
-    }
-
-    private static void deleteByTime(Connection connection, String table, String column, long cutoffEpochMilliseconds)
+    private static int deleteByTime(Connection connection, String table, String column, long cutoffEpochMilliseconds)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE " + column + " < ?"))
         {
             statement.setLong(1, cutoffEpochMilliseconds);
-            statement.executeUpdate();
+            return statement.executeUpdate();
         }
     }
 

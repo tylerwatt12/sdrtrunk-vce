@@ -30,6 +30,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
@@ -53,6 +54,7 @@ class AliasDatabaseStoreTest
     void roundTripsAliases() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
         assertFalse(store.hasAliases());
 
@@ -141,6 +143,7 @@ class AliasDatabaseStoreTest
     void treatsExistingAliasRowsAsInitializedForMigration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("legacy-alias.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
 
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -160,6 +163,7 @@ class AliasDatabaseStoreTest
     void keepsIdentifiersAndActionsAttachedToOwningAliasRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("multi-alias.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
 
         Alias gcrcn = new Alias("Example System A Dispatch");
@@ -197,6 +201,7 @@ class AliasDatabaseStoreTest
     void emptyAliasReplacementMarksInitialized() throws Exception
     {
         Path database = mTemporaryFolder.resolve("empty-alias.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
         assertFalse(store.isInitialized());
 

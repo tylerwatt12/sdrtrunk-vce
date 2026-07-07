@@ -506,6 +506,7 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     private boolean isP25P1Channel()
     {
         return getChannel().getDecodeConfiguration() != null &&
-            getChannel().getDecodeConfiguration().getDecoderType() == io.github.dsheirer.module.decode.DecoderType.P25_PHASE1;
+            (getChannel().getDecodeConfiguration().getDecoderType() == io.github.dsheirer.module.decode.DecoderType.P25_PHASE1 ||
+                getChannel().getDecodeConfiguration().getDecoderType() == io.github.dsheirer.module.decode.DecoderType.P25_CONVENTIONAL);
     }
 }

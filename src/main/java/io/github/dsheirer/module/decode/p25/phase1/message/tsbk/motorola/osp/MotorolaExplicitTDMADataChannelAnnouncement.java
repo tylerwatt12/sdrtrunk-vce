@@ -23,6 +23,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
@@ -113,7 +114,7 @@ public class MotorolaExplicitTDMADataChannelAnnouncement extends VendorOSPMessag
      */
     public boolean hasChannel()
     {
-        return getMessage().getInt(DOWNLINK_FREQUENCY_BAND) != 0xF && getMessage().getInt(DOWNLINK_CHANNEL_NUMBER) != 0xFFF;
+        return hasChannel(getInt(DOWNLINK_FREQUENCY_BAND), getInt(DOWNLINK_CHANNEL_NUMBER));
     }
 
     /**
@@ -121,7 +122,12 @@ public class MotorolaExplicitTDMADataChannelAnnouncement extends VendorOSPMessag
      */
     private boolean hasUplink()
     {
-        return getMessage().getInt(UPLINK_FREQUENCY_BAND) != 0xF && getMessage().getInt(UPLINK_CHANNEL_NUMBER) != 0xFFF;
+        return hasChannel(getInt(UPLINK_FREQUENCY_BAND), getInt(UPLINK_CHANNEL_NUMBER));
+    }
+
+    private boolean hasChannel(int bandIdentifier, int channelNumber)
+    {
+        return P25FrequencyBandValidator.hasChannel(bandIdentifier, channelNumber);
     }
 
     @Override

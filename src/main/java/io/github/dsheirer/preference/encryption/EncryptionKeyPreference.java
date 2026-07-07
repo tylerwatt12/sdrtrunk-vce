@@ -21,38 +21,30 @@ package io.github.dsheirer.preference.encryption;
 
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
+import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.prefs.BackingStoreException;
-import java.util.prefs.Preferences;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Preferences-backed voice encryption key list.
- *
- * Keys are intentionally stored in the normal user preferences tree.  This does not provide secure secret storage.
+ * Vault-backed voice encryption key list.
  */
 public class EncryptionKeyPreference extends Preference
 {
     private static final Logger mLog = LoggerFactory.getLogger(EncryptionKeyPreference.class);
-    private static final String NODE_KEYS = "keys";
-    private static final String KEY_LABEL = "label";
-    private static final String KEY_ENABLED = "enabled";
-    private static final String KEY_PROTOCOL = "protocol";
-    private static final String KEY_ALGORITHM_ID = "algorithm_id";
-    private static final String KEY_KEY_ID = "key_id";
-    private static final String KEY_KEY_HEX = "key_hex";
-    private static final String KEY_SCOPE = "scope";
-    private final Preferences mPreferences = Preferences.userNodeForPackage(EncryptionKeyPreference.class);
-    private List<VoiceEncryptionKey> mKeys;
+    private final EncryptionKeyVaultService mVaultService;
 
-    public EncryptionKeyPreference(Listener<PreferenceType> updateListener)
+    public EncryptionKeyPreference(Listener<PreferenceType> updateListener, DirectoryPreference directoryPreference)
     {
         super(updateListener);
+        mVaultService = new EncryptionKeyVaultService(EncryptionKeyVaultPath.getVaultPath(directoryPreference));
     }
 
     @Override
@@ -61,171 +53,72 @@ public class EncryptionKeyPreference extends Preference
         return PreferenceType.ENCRYPTION_KEYS;
     }
 
+    public EncryptionKeyVaultService getVaultService()
+    {
+        return mVaultService;
+    }
+
     public synchronized List<VoiceEncryptionKey> getKeys()
     {
-        if(mKeys == null)
-        {
-            load();
-        }
-
-        return copy(mKeys);
+        return sorted(mVaultService.getKeys());
     }
 
     public synchronized void setKeys(Collection<VoiceEncryptionKey> keys)
     {
-        mKeys = copy(keys);
-        save();
-        notifyPreferenceUpdated();
+        replace(keys);
     }
 
     public synchronized void addKey(VoiceEncryptionKey key)
     {
-        if(mKeys == null)
-        {
-            load();
-        }
-
-        mKeys.add(key.copy());
-        save();
-        notifyPreferenceUpdated();
+        List<VoiceEncryptionKey> keys = new ArrayList<>(mVaultService.getKeys());
+        keys.add(key.copy());
+        replace(keys);
     }
 
     public synchronized void updateKey(VoiceEncryptionKey key)
     {
-        if(mKeys == null)
-        {
-            load();
-        }
+        List<VoiceEncryptionKey> keys = new ArrayList<>(mVaultService.getKeys());
 
-        for(int x = 0; x < mKeys.size(); x++)
+        for(int x = 0; x < keys.size(); x++)
         {
-            if(mKeys.get(x).getId().equals(key.getId()))
+            if(keys.get(x).getId().equals(key.getId()))
             {
-                mKeys.set(x, key.copy());
-                save();
-                notifyPreferenceUpdated();
+                keys.set(x, key.copy());
+                replace(keys);
                 return;
             }
         }
 
-        addKey(key);
+        keys.add(key.copy());
+        replace(keys);
     }
 
     public synchronized void removeKey(VoiceEncryptionKey key)
     {
-        if(mKeys == null)
-        {
-            load();
-        }
+        List<VoiceEncryptionKey> keys = new ArrayList<>(mVaultService.getKeys());
 
-        if(mKeys.removeIf(existing -> existing.getId().equals(key.getId())))
+        if(keys.removeIf(existing -> existing.getId().equals(key.getId())))
         {
-            save();
+            replace(keys);
+        }
+    }
+
+    private void replace(Collection<VoiceEncryptionKey> keys)
+    {
+        try
+        {
+            mVaultService.replaceKeys(keys);
             notifyPreferenceUpdated();
         }
-    }
-
-    private void load()
-    {
-        mKeys = new ArrayList<>();
-        Preferences keysNode = mPreferences.node(NODE_KEYS);
-
-        try
+        catch(EncryptionKeyVaultException e)
         {
-            for(String child: keysNode.childrenNames())
-            {
-                VoiceEncryptionKey key = readKey(child, keysNode.node(child));
-
-                if(key != null)
-                {
-                    mKeys.add(key);
-                }
-            }
-        }
-        catch(BackingStoreException bse)
-        {
-            mLog.warn("Unable to load voice encryption key preferences", bse);
-        }
-
-        mKeys.sort(Comparator.comparing(VoiceEncryptionKey::toString, String.CASE_INSENSITIVE_ORDER));
-    }
-
-    private VoiceEncryptionKey readKey(String id, Preferences node)
-    {
-        try
-        {
-            VoiceEncryptionKey key = new VoiceEncryptionKey(id);
-            key.setLabel(node.get(KEY_LABEL, null));
-            key.setEnabled(node.getBoolean(KEY_ENABLED, true));
-            key.setProtocol(VoiceEncryptionProtocol.valueOf(node.get(KEY_PROTOCOL, VoiceEncryptionProtocol.APCO25.name())));
-            key.setAlgorithmId(node.getInt(KEY_ALGORITHM_ID, 0));
-            key.setKeyId(node.getInt(KEY_KEY_ID, 0));
-            key.setKeyHex(node.get(KEY_KEY_HEX, null));
-            key.setScope(node.get(KEY_SCOPE, null));
-            return key;
-        }
-        catch(Exception e)
-        {
-            mLog.warn("Unable to load voice encryption key preference [" + id + "]", e);
-            return null;
+            mLog.warn("Unable to save voice encryption keys to vault", e);
         }
     }
 
-    private void save()
+    private List<VoiceEncryptionKey> sorted(Collection<VoiceEncryptionKey> keys)
     {
-        Preferences keysNode = mPreferences.node(NODE_KEYS);
-
-        try
-        {
-            for(String child: keysNode.childrenNames())
-            {
-                keysNode.node(child).removeNode();
-            }
-
-            for(VoiceEncryptionKey key: mKeys)
-            {
-                Preferences keyNode = keysNode.node(key.getId());
-                putNullable(keyNode, KEY_LABEL, key.getLabel());
-                keyNode.putBoolean(KEY_ENABLED, key.isEnabled());
-                keyNode.put(KEY_PROTOCOL, key.getProtocol().name());
-                keyNode.putInt(KEY_ALGORITHM_ID, key.getAlgorithmId());
-                keyNode.putInt(KEY_KEY_ID, key.getKeyId());
-                putNullable(keyNode, KEY_KEY_HEX, key.getKeyHex());
-                putNullable(keyNode, KEY_SCOPE, key.getScope());
-            }
-
-            keysNode.flush();
-        }
-        catch(BackingStoreException bse)
-        {
-            mLog.warn("Unable to save voice encryption key preferences", bse);
-        }
-    }
-
-    private void putNullable(Preferences node, String key, String value)
-    {
-        if(value == null)
-        {
-            node.remove(key);
-        }
-        else
-        {
-            node.put(key, value);
-        }
-    }
-
-    private List<VoiceEncryptionKey> copy(Collection<VoiceEncryptionKey> keys)
-    {
-        List<VoiceEncryptionKey> copy = new ArrayList<>();
-
-        if(keys != null)
-        {
-            for(VoiceEncryptionKey key: keys)
-            {
-                copy.add(key.copy());
-            }
-        }
-
-        return copy;
+        return keys.stream().map(VoiceEncryptionKey::copy)
+            .sorted(Comparator.comparing(VoiceEncryptionKey::toString, String.CASE_INSENSITIVE_ORDER)).toList();
     }
 }

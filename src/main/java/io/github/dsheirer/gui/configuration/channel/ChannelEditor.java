@@ -540,9 +540,14 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
 
             for(DecoderType decoderType: DecoderType.PRIMARY_DECODERS)
             {
+                if(decoderType == DecoderType.P25_CONVENTIONAL || decoderType == DecoderType.P25_PHASE1)
+                {
+                    continue;
+                }
+
                 if(decoderType == DecoderType.P25_PHASE2)
                 {
-                    mNewButton.getItems().add(new NewP25P2ChannelMenu());
+                    mNewButton.getItems().add(new NewP25ChannelMenu());
                 }
                 else
                 {
@@ -635,20 +640,20 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
     }
 
     /**
-     * Menu item for creating new P25 Phase 2 channel configurations
+     * Menu item for creating new P25 channel configurations
      */
-    public class NewP25P2ChannelMenu extends Menu
+    public class NewP25ChannelMenu extends Menu
     {
-        public NewP25P2ChannelMenu()
+        public NewP25ChannelMenu()
         {
-            setText(DecoderType.P25_PHASE2.getDisplayString());
+            setText("P25");
+            MenuItem conventional = new MenuItem(DecoderType.P25_CONVENTIONAL.getDisplayString());
+            conventional.setOnAction(event -> createNewChannel(DecoderType.P25_CONVENTIONAL));
             MenuItem trunkedP1 = new MenuItem("Trunked System - FDMA Phase 1 Control Channel");
             trunkedP1.setOnAction(event -> createNewChannel(DecoderType.P25_PHASE1));
             MenuItem trunkedP2 = new MenuItem("Trunked System - TDMA Phase 2 Control Channel");
             trunkedP2.setOnAction(event -> createNewChannel(DecoderType.P25_PHASE2));
-            MenuItem channel = new MenuItem("Individual Phase 2 Channel");
-            channel.setOnAction(event -> createNewChannel(DecoderType.P25_PHASE2));
-            getItems().addAll(trunkedP1, trunkedP2, channel);
+            getItems().addAll(conventional, trunkedP1, trunkedP2);
         }
     }
 

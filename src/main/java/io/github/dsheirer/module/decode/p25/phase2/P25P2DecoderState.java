@@ -47,6 +47,7 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -1105,7 +1106,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void updateCurrentChannel(IChannelDescriptor channelDescriptor)
     {
-        if(getCurrentChannel() == null &&
+        if(P25FrequencyBandValidator.isResolvedChannel(channelDescriptor) &&
+                getCurrentChannel() == null &&
                 getCurrentFrequency() > 0 &&
                 channelDescriptor.getDownlinkFrequency() == getCurrentFrequency() &&
                 channelDescriptor instanceof APCO25Channel p25)
@@ -1392,11 +1394,13 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         // MAC_3_IDLE and MAC_6_HANGTIME on a traffic channel do not mean the call has ended — do not downgrade.
         observeNetworkConfiguration(mNetworkConfigurationMonitor.processMacMessage(message), message.getTimestamp());
 
-        if(mac instanceof NetworkStatusBroadcastImplicit nsbi)
+        if(mac instanceof NetworkStatusBroadcastImplicit nsbi &&
+            P25FrequencyBandValidator.isResolvedChannel(nsbi.getChannel()))
         {
             setCurrentChannel(nsbi.getChannel());
         }
-        else if(mac instanceof RfssStatusBroadcastImplicit rsbi)
+        else if(mac instanceof RfssStatusBroadcastImplicit rsbi &&
+            P25FrequencyBandValidator.isResolvedChannel(rsbi.getChannel()))
         {
             setCurrentChannel(rsbi.getChannel());
         }

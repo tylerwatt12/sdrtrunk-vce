@@ -31,6 +31,7 @@ import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.Font;
+import java.awt.Insets;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import jiconfont.icons.font_awesome.FontAwesome;
@@ -38,6 +39,7 @@ import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
 
 import javax.sound.sampled.FloatControl;
+import javax.swing.AbstractButton;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -46,8 +48,10 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JSlider;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.JToggleButton;
 
 /**
  * Audio playback panel
@@ -63,6 +67,7 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
     private final UserPreferences mUserPreferences;
     private AudioChannelsPanel mAudioChannelsPanel;
     private MuteButton mMuteButton;
+    private PlaybackFilterPanel mPlaybackFilterPanel;
     private QueuedCallCountPanel mQueuedCallCountPanel;
 
     /**
@@ -90,13 +95,14 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
      */
     private void init()
     {
-        setLayout(new MigLayout("insets 0 0 0 0", "[]0[grow,fill][]", "[fill]"));
+        setLayout(new MigLayout("insets 0 0 0 0", "[]0[]0[grow,fill][]", "[fill]"));
         setBackground(Color.BLACK);
         getMuteButton().setBackground(getBackground());
         add(getMuteButton(), "cell 0 0");
+        add(getPlaybackFilterPanel(), "cell 1 0,aligny center,gapleft 3,gapright 4");
         mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel);
-        add(mAudioChannelsPanel, "cell 1 0,grow");
-        add(getQueuedCallCountPanel(), "cell 2 0,gapleft 8,gapright 8");
+        add(mAudioChannelsPanel, "cell 2 0,grow");
+        add(getQueuedCallCountPanel(), "cell 3 0,gapleft 8,gapright 8");
         addMouseListener(new MouseSelectionListener());
     }
 
@@ -115,7 +121,7 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                     remove(mAudioChannelsPanel);
                     mAudioChannelsPanel.dispose();
                     mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel);
-                    add(mAudioChannelsPanel, "cell 1 0,grow");
+                    add(mAudioChannelsPanel, "cell 2 0,grow");
                     getMuteButton().updateMuted(mAudioPlaybackManager.isMuted());
                     mAudioChannelsPanel.repaint();
                     revalidate();
@@ -135,6 +141,16 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
         }
 
         return mMuteButton;
+    }
+
+    private PlaybackFilterPanel getPlaybackFilterPanel()
+    {
+        if(mPlaybackFilterPanel == null)
+        {
+            mPlaybackFilterPanel = new PlaybackFilterPanel();
+        }
+
+        return mPlaybackFilterPanel;
     }
 
     private QueuedCallCountPanel getQueuedCallCountPanel()
@@ -315,6 +331,69 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             setIcon(mMuted ? MUTED_ICON : UNMUTED_ICON);
             getAccessibleContext().setAccessibleName(mMuted ? "Unmute" : "Mute");
             setToolTipText(mMuted ? "Unmute Audio Playback" : "Mute Audio Playback");
+        }
+    }
+
+    public class PlaybackFilterPanel extends JPanel
+    {
+        private final Font mFont = new Font(Font.MONOSPACED, Font.BOLD, 13);
+        private final JToggleButton mHoldButton = new JToggleButton("Hold");
+        private final JButton mAvoidButton = new JButton("Avoid");
+        private final JButton mClearAvoidsButton = new JButton("Clear");
+        private final Timer mUpdateTimer = new Timer(500, event -> update());
+
+        public PlaybackFilterPanel()
+        {
+            setLayout(new MigLayout("insets 0 0 0 0, aligny center", "[]3[]3[]", "[center]"));
+            setBackground(Color.BLACK);
+            configureButton(mHoldButton);
+            configureButton(mAvoidButton);
+            configureButton(mClearAvoidsButton);
+
+            mHoldButton.addActionListener(event -> {
+                mAudioPlaybackManager.toggleHoldOnCurrentCall();
+                update();
+            });
+            mAvoidButton.addActionListener(event -> {
+                mAudioPlaybackManager.avoidCurrentCall();
+                update();
+            });
+            mClearAvoidsButton.addActionListener(event -> {
+                mAudioPlaybackManager.clearAvoids();
+                update();
+            });
+
+            add(mHoldButton, "aligny center");
+            add(mAvoidButton, "aligny center");
+            add(mClearAvoidsButton, "aligny center");
+            update();
+            mUpdateTimer.start();
+        }
+
+        private void configureButton(AbstractButton button)
+        {
+            button.setFont(mFont);
+            button.setFocusable(false);
+            button.setMargin(new Insets(1, 6, 1, 6));
+            button.setVerticalAlignment(SwingConstants.CENTER);
+        }
+
+        private void update()
+        {
+            String currentTarget = mAudioPlaybackManager.getCurrentPlaybackTargetLabel();
+            String holdTarget = mAudioPlaybackManager.getHoldTargetLabel();
+            int avoidCount = mAudioPlaybackManager.getAvoidTargetCount();
+            boolean holdActive = mAudioPlaybackManager.isHoldActive();
+
+            mHoldButton.setSelected(holdActive);
+            mHoldButton.setEnabled(holdActive || currentTarget != null);
+            mHoldButton.setToolTipText(holdActive ? "Release hold: " + holdTarget :
+                currentTarget != null ? "Hold: " + currentTarget : "Hold current call");
+            mAvoidButton.setEnabled(currentTarget != null);
+            mAvoidButton.setToolTipText(currentTarget != null ? "Avoid: " + currentTarget : "Avoid current call");
+            mClearAvoidsButton.setEnabled(avoidCount > 0);
+            mClearAvoidsButton.setToolTipText("Clear temporary avoids" +
+                (avoidCount > 0 ? " (" + avoidCount + ")" : ""));
         }
     }
 

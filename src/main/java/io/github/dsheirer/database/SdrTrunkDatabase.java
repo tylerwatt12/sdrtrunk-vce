@@ -12,7 +12,6 @@
 package io.github.dsheirer.database;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -27,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class SdrTrunkDatabase
 {
     public static final int BUSY_TIMEOUT_MILLISECONDS = 30000;
-    private static final Set<Path> INITIALIZED_DATABASES = ConcurrentHashMap.newKeySet();
+    private static final Set<Path> VALIDATED_DATABASES = ConcurrentHashMap.newKeySet();
 
     private SdrTrunkDatabase()
     {
@@ -35,37 +34,39 @@ public final class SdrTrunkDatabase
 
     public static Connection open(Path databasePath) throws IOException, SQLException
     {
-        Files.createDirectories(databasePath.getParent());
+        if(!java.nio.file.Files.isRegularFile(databasePath))
+        {
+            throw new IOException("SDRTrunk SQLite database schema is missing: " + databasePath +
+                ". Startup schema preparation must run before opening SQLite stores.");
+        }
 
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
 
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA journal_mode=WAL");
-            statement.execute("PRAGMA synchronous=NORMAL");
             statement.execute("PRAGMA busy_timeout=" + BUSY_TIMEOUT_MILLISECONDS);
             statement.execute("PRAGMA foreign_keys=ON");
         }
 
-        ensureSchemaInitialized(databasePath, connection);
+        ensureSchemaValidated(databasePath, connection);
         return connection;
     }
 
-    private static void ensureSchemaInitialized(Path databasePath, Connection connection) throws SQLException
+    private static void ensureSchemaValidated(Path databasePath, Connection connection) throws SQLException
     {
         Path normalizedPath = databasePath.toAbsolutePath().normalize();
 
-        if(INITIALIZED_DATABASES.contains(normalizedPath))
+        if(VALIDATED_DATABASES.contains(normalizedPath))
         {
             return;
         }
 
         synchronized(SdrTrunkDatabase.class)
         {
-            if(!INITIALIZED_DATABASES.contains(normalizedPath))
+            if(!VALIDATED_DATABASES.contains(normalizedPath))
             {
-                SdrTrunkDatabaseSchema.initialize(connection);
-                INITIALIZED_DATABASES.add(normalizedPath);
+                SdrTrunkDatabaseSchema.validate(connection);
+                VALIDATED_DATABASES.add(normalizedPath);
             }
         }
     }

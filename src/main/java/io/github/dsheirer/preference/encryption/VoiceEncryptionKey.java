@@ -157,8 +157,7 @@ public class VoiceEncryptionKey
     public boolean matches(VoiceEncryptionContext context)
     {
         if(context == null || !isEnabled() || getProtocol() != context.getProtocol() ||
-            getAlgorithmId() != context.getAlgorithmId() || getKeyId() != context.getKeyId() ||
-            !VoiceEncryptionAlgorithm.isSupported(getProtocol(), getAlgorithmId()))
+            getAlgorithmId() != context.getAlgorithmId() || getKeyId() != context.getKeyId())
         {
             return false;
         }

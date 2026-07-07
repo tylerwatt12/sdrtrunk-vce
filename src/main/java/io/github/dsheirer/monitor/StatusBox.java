@@ -19,12 +19,20 @@
 
 package io.github.dsheirer.monitor;
 
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultState;
+import jiconfont.icons.font_awesome.FontAwesome;
+import jiconfont.javafx.IconNode;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.HBox;
+import javafx.scene.paint.Color;
 
 /**
  * JavaFX status panel box.
@@ -32,6 +40,9 @@ import javafx.scene.layout.HBox;
 public class StatusBox extends HBox
 {
     private ResourceMonitor mResourceMonitor;
+    private EncryptionKeyVaultService mVaultService;
+    private HBox mVaultStatusBox;
+    private Tooltip mVaultTooltip;
 
     /**
      * Constructs an instance.
@@ -39,7 +50,18 @@ public class StatusBox extends HBox
      */
     public StatusBox(ResourceMonitor resourceMonitor)
     {
+        this(resourceMonitor, null);
+    }
+
+    /**
+     * Constructs an instance.
+     * @param resourceMonitor for accessing resource usage statistics.
+     * @param vaultService for displaying encryption vault status.
+     */
+    public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService)
+    {
         mResourceMonitor = resourceMonitor;
+        mVaultService = vaultService;
         setPadding(new Insets(1, 0, 1, 0));
         setSpacing(6);
         Label cpuLabel = new Label("CPU:");
@@ -105,5 +127,59 @@ public class StatusBox extends HBox
         recordingsSizeLabel.textProperty().bind(mResourceMonitor.fileSizeRecordingsProperty());
         recordingsSizeLabel.setAlignment(Pos.CENTER_RIGHT);
         getChildren().add(recordingsSizeLabel);
+
+        if(mVaultService != null)
+        {
+            Region spacer = new Region();
+            spacer.setMinWidth(12);
+            getChildren().add(spacer);
+            getChildren().add(getVaultStatusBox());
+            mVaultService.stateProperty().addListener((observable, oldValue, newValue) -> updateVaultStatus());
+            mVaultService.statusProperty().addListener((observable, oldValue, newValue) -> updateVaultStatus());
+            mVaultService.savedPasswordPresentProperty()
+                .addListener((observable, oldValue, newValue) -> updateVaultStatus());
+            updateVaultStatus();
+        }
+    }
+
+    private HBox getVaultStatusBox()
+    {
+        if(mVaultStatusBox == null)
+        {
+            mVaultStatusBox = new HBox(4);
+            mVaultStatusBox.setAlignment(Pos.CENTER_RIGHT);
+            mVaultTooltip = new Tooltip();
+            Tooltip.install(mVaultStatusBox, mVaultTooltip);
+            mVaultStatusBox.setOnMouseClicked(event ->
+                MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
+        }
+
+        return mVaultStatusBox;
+    }
+
+    private void updateVaultStatus()
+    {
+        if(mVaultService == null || mVaultStatusBox == null)
+        {
+            return;
+        }
+
+        EncryptionKeyVaultState state = mVaultService.getState();
+        IconNode lockIcon = new IconNode(state == EncryptionKeyVaultState.UNLOCKED ? FontAwesome.UNLOCK : FontAwesome.LOCK);
+        lockIcon.setIconSize(14);
+        lockIcon.setFill(state == EncryptionKeyVaultState.UNLOCKED ? Color.FORESTGREEN : Color.DARKGRAY);
+        Label label = new Label("Encryption");
+        mVaultStatusBox.getChildren().setAll(label, lockIcon);
+
+        if(mVaultService.hasSavedPassword())
+        {
+            IconNode warningIcon = new IconNode(FontAwesome.EXCLAMATION_TRIANGLE);
+            warningIcon.setIconSize(14);
+            warningIcon.setFill(Color.ORANGERED);
+            mVaultStatusBox.getChildren().add(warningIcon);
+        }
+
+        String saved = mVaultService.hasSavedPassword() ? " Saved password enabled: unsafe." : "";
+        mVaultTooltip.setText(mVaultService.statusProperty().get() + "." + saved + " Click to manage encryption keys.");
     }
 }

@@ -31,6 +31,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
@@ -49,6 +50,8 @@ import io.github.dsheirer.monitor.DiagnosticMonitor;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.radioresolve.activitylog.P25ActivityLogService;
@@ -79,6 +82,8 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
@@ -87,6 +92,7 @@ import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -102,19 +108,26 @@ import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JDialog;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.JToggleButton;
+import javax.swing.Timer;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import javax.swing.plaf.metal.MetalLookAndFeel;
@@ -127,6 +140,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
     private static final String PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE = "sdrtrunk.now.playing.details.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
+    private static final String PREFERENCE_SYSTEMS_VISIBLE = "sdrtrunk.systems.visible";
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
     private static final String CONTROLLER_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".control.panel";
     private static final String SPECTRAL_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".spectral.panel";
@@ -163,10 +177,13 @@ public class SDRTrunk implements Listener<TunerEvent>
     private JFXPanel mResourceStatusPanel;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
+    private JToggleButton mSystemsToggleButton;
     private JToggleButton mSpectrumWaterfallToggleButton;
     private boolean mShutdownProcessed;
     private boolean mSpectralPanelVisible;
+    private boolean mSystemsVisible;
     private boolean mMainSplitPaneDividerRestored;
+    private boolean mVaultLaunchPromptProcessed;
 
     private String mTitle;
 
@@ -179,6 +196,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mApplicationLog = new ApplicationLog(mUserPreferences);
         mApplicationLog.start();
+        prepareDatabases();
+        mUserPreferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
 
         //Note: invoke this early in the application lifecycle, before the TunerManager causes the sdrplay classes
         //to be loaded since the jextract auto-generated code attempts to load the library by name and that can fail
@@ -267,11 +286,12 @@ public class SDRTrunk implements Listener<TunerEvent>
         mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mapService);
 
         mNowPlayingDetailsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, true);
+        mSystemsVisible = mPreferences.getBoolean(PREFERENCE_SYSTEMS_VISIBLE, true);
 
         if(!GraphicsEnvironment.isHeadless())
         {
             mControllerPanel = new ControllerPanel(mConfigurationManager, audioPlaybackManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences, mNowPlayingDetailsVisible, visible -> {
+                    mSettingsManager, mTunerManager, mUserPreferences, mSystemsVisible, mNowPlayingDetailsVisible, visible -> {
                         mNowPlayingDetailsVisible = visible;
                         mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, visible);
                     });
@@ -353,6 +373,19 @@ public class SDRTrunk implements Listener<TunerEvent>
         });
     }
 
+    private void prepareDatabases()
+    {
+        try
+        {
+            SdrTrunkDatabaseStartup.prepare(mUserPreferences);
+        }
+        catch(IOException | java.sql.SQLException e)
+        {
+            mLog.error("Unable to prepare SDRTrunk SQLite databases", e);
+            throw new IllegalStateException("Unable to prepare SDRTrunk SQLite databases", e);
+        }
+    }
+
     /**
      * Shows a dialog that lists the channels that have been designated for auto-start, sorted by auto-start order and
      * allows the user to start now, cancel, or allow the timer to expire and then start the channels.  The dialog will
@@ -360,6 +393,7 @@ public class SDRTrunk implements Listener<TunerEvent>
      */
     private void autoStartChannels()
     {
+        processEncryptionVaultLaunchPrompt();
         List<Channel> channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
 
         if(channels.size() > 0)
@@ -383,6 +417,140 @@ public class SDRTrunk implements Listener<TunerEvent>
             {
                 new ChannelAutoStartFrame(mConfigurationManager.getChannelProcessingManager(), channels, mUserPreferences);
             }
+        }
+    }
+
+    private void processEncryptionVaultLaunchPrompt()
+    {
+        if(mVaultLaunchPromptProcessed)
+        {
+            return;
+        }
+
+        mVaultLaunchPromptProcessed = true;
+        EncryptionKeyVaultService vaultService = mUserPreferences.getEncryptionKeyPreference().getVaultService();
+
+        if(!vaultService.hasVault() || vaultService.isUnlocked() || !vaultService.isPromptOnLaunch())
+        {
+            return;
+        }
+
+        if(GraphicsEnvironment.isHeadless())
+        {
+            vaultService.disableForRun();
+            return;
+        }
+
+        showEncryptionVaultLaunchPrompt(vaultService);
+    }
+
+    private void showEncryptionVaultLaunchPrompt(EncryptionKeyVaultService vaultService)
+    {
+        final int timeoutSeconds = 30;
+        final int[] secondsRemaining = {timeoutSeconds};
+        JLabel countdownLabel = new JLabel("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
+        JPasswordField passwordField = new JPasswordField(24);
+        JCheckBox savePasswordCheckBox = new JCheckBox("Save password (Warning! Unsafe!)");
+        JPanel panel = new JPanel(new MigLayout("insets 8", "[right][grow,fill]", "[][][]"));
+        panel.add(new JLabel("Password:"), "cell 0 0");
+        panel.add(passwordField, "cell 1 0,growx");
+        panel.add(savePasswordCheckBox, "cell 1 1");
+        panel.add(countdownLabel, "cell 0 2 2 1");
+
+        JOptionPane pane = new JOptionPane(panel, JOptionPane.QUESTION_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
+        JDialog dialog = pane.createDialog(mMainGui, "Unlock Encryption Key Vault");
+
+        Runnable resetCountdown = () -> {
+            secondsRemaining[0] = timeoutSeconds;
+            countdownLabel.setText("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
+        };
+
+        passwordField.getDocument().addDocumentListener(new DocumentListener()
+        {
+            @Override
+            public void insertUpdate(DocumentEvent e)
+            {
+                resetCountdown.run();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e)
+            {
+                resetCountdown.run();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e)
+            {
+                resetCountdown.run();
+            }
+        });
+
+        savePasswordCheckBox.addActionListener(event -> resetCountdown.run());
+        MouseAdapter interactionReset = new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                resetCountdown.run();
+            }
+
+            @Override
+            public void mouseMoved(MouseEvent e)
+            {
+                resetCountdown.run();
+            }
+        };
+        panel.addMouseListener(interactionReset);
+        panel.addMouseMotionListener(interactionReset);
+        passwordField.addKeyListener(new java.awt.event.KeyAdapter()
+        {
+            @Override
+            public void keyPressed(KeyEvent e)
+            {
+                resetCountdown.run();
+            }
+        });
+
+        Timer timer = new Timer(1000, event -> {
+            secondsRemaining[0]--;
+            countdownLabel.setText("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
+
+            if(secondsRemaining[0] <= 0)
+            {
+                pane.setValue(JOptionPane.CANCEL_OPTION);
+                dialog.dispose();
+            }
+        });
+
+        timer.start();
+        dialog.setVisible(true);
+        timer.stop();
+
+        Object value = pane.getValue();
+
+        if(value instanceof Integer integer && integer == JOptionPane.OK_OPTION)
+        {
+            char[] password = passwordField.getPassword();
+
+            try
+            {
+                vaultService.unlock(password, savePasswordCheckBox.isSelected());
+            }
+            catch(EncryptionKeyVaultException e)
+            {
+                JOptionPane.showMessageDialog(mMainGui, e.getMessage(), "Encryption Vault Unlock Failed",
+                    JOptionPane.ERROR_MESSAGE);
+                vaultService.disableForRun();
+            }
+            finally
+            {
+                Arrays.fill(password, '\0');
+            }
+        }
+        else
+        {
+            vaultService.disableForRun();
         }
     }
 
@@ -687,6 +855,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
         mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
             (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
+        mPreferences.putBoolean(PREFERENCE_SYSTEMS_VISIBLE, mSystemsVisible);
         if(mSpectralPanelVisible)
         {
             mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
@@ -702,6 +871,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
             mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
         mUserPreferences.getSwingPreference().flush();
+        mControllerPanel.dispose();
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
         if(mP25ActivityLogService != null)
@@ -777,8 +947,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
         panel.add(new JPanel(), "grow");
+        panel.add(getSystemsToggleButton());
         panel.add(mControllerPanel.getNowPlayingPanel().getDetailTabsToggleButton());
         panel.add(getSpectrumWaterfallToggleButton());
+        updateSystemsToggleButton();
         return panel;
     }
 
@@ -808,6 +980,48 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         return mUserPreferencesShortcutButton;
+    }
+
+    private JToggleButton getSystemsToggleButton()
+    {
+        if(mSystemsToggleButton == null)
+        {
+            mSystemsToggleButton = new JToggleButton("Systems");
+            mSystemsToggleButton.setFocusable(false);
+            mSystemsToggleButton.addActionListener(event ->
+                EventQueue.invokeLater(() -> setSystemsVisible(!mSystemsVisible)));
+            updateSystemsToggleButton();
+        }
+
+        return mSystemsToggleButton;
+    }
+
+    private void setSystemsVisible(boolean visible)
+    {
+        if(mSystemsVisible != visible)
+        {
+            mSystemsVisible = visible;
+            mControllerPanel.setSystemsVisible(visible);
+            mPreferences.putBoolean(PREFERENCE_SYSTEMS_VISIBLE, visible);
+            mControllerPanel.revalidate();
+            mControllerPanel.repaint();
+            mMainGui.revalidate();
+            mMainGui.repaint();
+        }
+
+        updateSystemsToggleButton();
+    }
+
+    private void updateSystemsToggleButton()
+    {
+        if(mSystemsToggleButton != null)
+        {
+            mSystemsToggleButton.setSelected(mSystemsVisible);
+            mSystemsToggleButton.setIcon(IconFontSwing.buildIcon(mSystemsVisible ?
+                FontAwesome.CHEVRON_DOWN : FontAwesome.CHEVRON_UP, 12));
+            mSystemsToggleButton.setToolTipText(mSystemsVisible ? "Hide Systems" : "Show Systems");
+            mControllerPanel.getNowPlayingPanel().getDetailTabsToggleButton().setEnabled(mSystemsVisible);
+        }
     }
 
     private JToggleButton getSpectrumWaterfallToggleButton()
@@ -936,7 +1150,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         if(mResourceStatusPanel == null)
         {
-            mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor);
+            mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor,
+                mUserPreferences.getEncryptionKeyPreference().getVaultService());
         }
 
         return mResourceStatusPanel;

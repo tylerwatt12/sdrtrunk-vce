@@ -45,6 +45,7 @@ import io.github.dsheirer.jmbe.JmbeEditorRequest;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.monitor.StatusBox;
+import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -133,7 +134,7 @@ public class JavaFxWindowManager extends Application
      * @param resourceMonitor for statistics
      * @return JFXPanel accessible on Swing thread that delegates JavaFX scene creation to the FX event thread.
      */
-    public JFXPanel getStatusPanel(ResourceMonitor resourceMonitor)
+    public JFXPanel getStatusPanel(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService)
     {
         if(mStatusPanel == null)
         {
@@ -141,7 +142,7 @@ public class JavaFxWindowManager extends Application
 
             //JFXPanel has to be populated on the FX event thread
             Platform.runLater(() -> {
-                Scene scene = new Scene(new StatusBox(resourceMonitor));
+                Scene scene = new Scene(new StatusBox(resourceMonitor, vaultService));
                 mStatusPanel.setScene(scene);
             });
         }
@@ -435,7 +436,10 @@ public class JavaFxWindowManager extends Application
     @Subscribe
     public void process(final ViewEncryptionKeyPreferenceEditorRequest request)
     {
-        execute(() -> restoreStage(getEncryptionKeyStage()));
+        execute(() -> {
+            restoreStage(getEncryptionKeyStage());
+            getEncryptionKeyPreferenceEditor().activate();
+        });
     }
 
     /**

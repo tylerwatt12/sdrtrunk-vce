@@ -31,24 +31,18 @@ public class ApplicationPreference extends Preference
 {
     private static final String PREFERENCE_KEY_CHANNEL_AUTO_DIAGNOSTIC_MONITORING = "automatic.diagnostic.monitoring";
     private static final String PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT = "channel.auto.start.timeout";
-    private static final String PREFERENCE_KEY_P25_ACTIVITY_LOGGING_ENABLED = "p25.activity.logging.enabled";
-    private static final String PREFERENCE_KEY_P25_SITE_STATISTICS_LOGGING_ENABLED =
-        "p25.site.statistics.logging.enabled";
-    private static final String PREFERENCE_KEY_DATABASE_LOGGER_STATUS_LOGGING_ENABLED =
-        "database.logger.status.logging.enabled";
-    private static final String PREFERENCE_KEY_P25_ACTIVITY_LOGGING_RETENTION_DAYS =
+    private static final String PREFERENCE_KEY_STATS_LOGGING_ENABLED = "p25.activity.logging.enabled";
+    private static final String PREFERENCE_KEY_STATS_LOGGING_RETENTION_DAYS =
         "p25.activity.logging.retention.days";
-    public static final int MIN_P25_ACTIVITY_LOGGING_RETENTION_DAYS = 1;
-    public static final int MAX_P25_ACTIVITY_LOGGING_RETENTION_DAYS = 365;
-    public static final int DEFAULT_P25_ACTIVITY_LOGGING_RETENTION_DAYS = 30;
+    public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
+    public static final int MAX_STATS_LOGGING_RETENTION_DAYS = 365;
+    public static final int DEFAULT_STATS_LOGGING_RETENTION_DAYS = 30;
 
     private Preferences mPreferences = Preferences.userNodeForPackage(ApplicationPreference.class);
     private Integer mChannelAutoStartTimeout;
     private Boolean mAutomaticDiagnosticMonitoring;
-    private Boolean mP25ActivityLoggingEnabled;
-    private Boolean mP25SiteStatisticsLoggingEnabled;
-    private Boolean mDatabaseLoggerStatusLoggingEnabled;
-    private Integer mP25ActivityLoggingRetentionDays;
+    private Boolean mStatsLoggingEnabled;
+    private Integer mStatsLoggingRetentionDays;
 
     /**
      * Constructs an instance
@@ -117,114 +111,55 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Indicates if P25 activity should be logged to SQLite.
+     * Indicates if SDRTrunk stats should be logged to SQLite.
      */
-    public boolean isP25ActivityLoggingEnabled()
+    public boolean isStatsLoggingEnabled()
     {
-        if(mP25ActivityLoggingEnabled == null)
+        if(mStatsLoggingEnabled == null)
         {
-            mP25ActivityLoggingEnabled =
-                mPreferences.getBoolean(PREFERENCE_KEY_P25_ACTIVITY_LOGGING_ENABLED, false);
+            mStatsLoggingEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_LOGGING_ENABLED, false);
         }
 
-        return mP25ActivityLoggingEnabled;
+        return mStatsLoggingEnabled;
     }
 
     /**
-     * Enables or disables P25 activity logging to SQLite.
+     * Enables or disables SDRTrunk stats logging to SQLite.
      */
-    public void setP25ActivityLoggingEnabled(boolean enabled)
+    public void setStatsLoggingEnabled(boolean enabled)
     {
-        mP25ActivityLoggingEnabled = enabled;
-        mPreferences.putBoolean(PREFERENCE_KEY_P25_ACTIVITY_LOGGING_ENABLED, enabled);
+        mStatsLoggingEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_LOGGING_ENABLED, enabled);
         notifyPreferenceUpdated();
     }
 
     /**
-     * Indicates if P25 site/network statistics snapshots should be logged to SQLite.
+     * Retention period for SDRTrunk stats logging.
      */
-    public boolean isP25SiteStatisticsLoggingEnabled()
+    public int getStatsLoggingRetentionDays()
     {
-        if(mP25SiteStatisticsLoggingEnabled == null)
+        if(mStatsLoggingRetentionDays == null)
         {
-            mP25SiteStatisticsLoggingEnabled = mPreferences.getBoolean(
-                PREFERENCE_KEY_P25_SITE_STATISTICS_LOGGING_ENABLED, isP25ActivityLoggingEnabled());
+            mStatsLoggingRetentionDays = clampRetentionDays(mPreferences.getInt(
+                PREFERENCE_KEY_STATS_LOGGING_RETENTION_DAYS,
+                DEFAULT_STATS_LOGGING_RETENTION_DAYS));
         }
 
-        return mP25SiteStatisticsLoggingEnabled;
+        return mStatsLoggingRetentionDays;
     }
 
     /**
-     * Enables or disables P25 site/network statistics logging to SQLite.
+     * Sets the retention period for SDRTrunk stats logging.
      */
-    public void setP25SiteStatisticsLoggingEnabled(boolean enabled)
+    public void setStatsLoggingRetentionDays(int days)
     {
-        mP25SiteStatisticsLoggingEnabled = enabled;
-        mPreferences.putBoolean(PREFERENCE_KEY_P25_SITE_STATISTICS_LOGGING_ENABLED, enabled);
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Indicates if database writer status and counters should be logged to SQLite.
-     */
-    public boolean isDatabaseLoggerStatusLoggingEnabled()
-    {
-        if(mDatabaseLoggerStatusLoggingEnabled == null)
-        {
-            mDatabaseLoggerStatusLoggingEnabled = mPreferences.getBoolean(
-                PREFERENCE_KEY_DATABASE_LOGGER_STATUS_LOGGING_ENABLED, isP25ActivityLoggingEnabled());
-        }
-
-        return mDatabaseLoggerStatusLoggingEnabled;
-    }
-
-    /**
-     * Enables or disables database writer status and counter logging.
-     */
-    public void setDatabaseLoggerStatusLoggingEnabled(boolean enabled)
-    {
-        mDatabaseLoggerStatusLoggingEnabled = enabled;
-        mPreferences.putBoolean(PREFERENCE_KEY_DATABASE_LOGGER_STATUS_LOGGING_ENABLED, enabled);
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Indicates if any optional P25 database logger is enabled.
-     */
-    public boolean isAnyP25DatabaseLoggingEnabled()
-    {
-        return isP25ActivityLoggingEnabled() || isP25SiteStatisticsLoggingEnabled() ||
-            isDatabaseLoggerStatusLoggingEnabled();
-    }
-
-    /**
-     * Retention period for P25 activity logging.
-     */
-    public int getP25ActivityLoggingRetentionDays()
-    {
-        if(mP25ActivityLoggingRetentionDays == null)
-        {
-            mP25ActivityLoggingRetentionDays = clampRetentionDays(mPreferences.getInt(
-                PREFERENCE_KEY_P25_ACTIVITY_LOGGING_RETENTION_DAYS,
-                DEFAULT_P25_ACTIVITY_LOGGING_RETENTION_DAYS));
-        }
-
-        return mP25ActivityLoggingRetentionDays;
-    }
-
-    /**
-     * Sets the retention period for P25 activity logging.
-     */
-    public void setP25ActivityLoggingRetentionDays(int days)
-    {
-        mP25ActivityLoggingRetentionDays = clampRetentionDays(days);
-        mPreferences.putInt(PREFERENCE_KEY_P25_ACTIVITY_LOGGING_RETENTION_DAYS, mP25ActivityLoggingRetentionDays);
+        mStatsLoggingRetentionDays = clampRetentionDays(days);
+        mPreferences.putInt(PREFERENCE_KEY_STATS_LOGGING_RETENTION_DAYS, mStatsLoggingRetentionDays);
         notifyPreferenceUpdated();
     }
 
     private static int clampRetentionDays(int days)
     {
-        return Math.max(MIN_P25_ACTIVITY_LOGGING_RETENTION_DAYS,
-            Math.min(MAX_P25_ACTIVITY_LOGGING_RETENTION_DAYS, days));
+        return Math.max(MIN_STATS_LOGGING_RETENTION_DAYS, Math.min(MAX_STATS_LOGGING_RETENTION_DAYS, days));
     }
 }

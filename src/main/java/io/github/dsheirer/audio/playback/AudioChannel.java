@@ -28,7 +28,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import java.util.Arrays;
-import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jspecify.annotations.Nullable;
@@ -51,7 +50,6 @@ public class AudioChannel
     private static final long INTER_BURST_STALL_TIMEOUT_MS = 15000;
     private final AudioBuffer mAudioBuffer = new AudioBuffer();
     private final Broadcaster<AudioEvent> mAudioEventBroadcaster = new Broadcaster<>();
-    private final LinkedTransferQueue<PlayableAudioCall> mPlayableCallQueue = new LinkedTransferQueue<>();
     private final UserPreferences mUserPreferences;
     private final String mChannelName;
 
@@ -164,7 +162,7 @@ public class AudioChannel
      */
     public float @Nullable [] getAudio()
     {
-        boolean hadWork = getCurrentAudioCall() != null || !mPlayableCallQueue.isEmpty();
+        boolean hadWork = getCurrentAudioCall() != null;
 
         if(mAudioBuffer.isFull())
         {
@@ -180,11 +178,6 @@ public class AudioChannel
             }
         }
 
-        if(getCurrentAudioCall() == null)
-        {
-            loadNextAudioSegment();
-        }
-
         //Evaluate the current call to see if its status has changed for duplicate or do-not-monitor.
         while(isThrowaway(getCurrentAudioCall()))
         {
@@ -195,7 +188,6 @@ public class AudioChannel
             }
 
             disposeCurrentAudioSegment();
-            loadNextAudioSegment();
         }
 
         if(mCurrentPlaybackBurst != null)
@@ -430,20 +422,12 @@ public class AudioChannel
     }
 
     /**
-     * Indicates if this audio channel is idle with no current call and no queued calls.
+     * Indicates if this audio channel is idle with no current call.
      * @return true if idle
      */
     public boolean isIdle()
     {
-        return getCurrentAudioCall() == null && mPlayableCallQueue.isEmpty();
-    }
-
-    /**
-     * Number of playable calls queued behind the currently playing call.
-     */
-    public int getQueuedCallCount()
-    {
-        return mPlayableCallQueue.size();
+        return getCurrentAudioCall() == null;
     }
 
     /**
@@ -451,7 +435,6 @@ public class AudioChannel
      */
     public void clearPlayback()
     {
-        mPlayableCallQueue.clear();
         mCurrentPlaybackBurst = null;
         mNoAudioFromSegmentIntervalCount = 0;
         mMetadataSent = false;
@@ -461,15 +444,17 @@ public class AudioChannel
     }
 
     /**
-     * Schedules the playable call for playback.
+     * Starts the playable call.
      *
-     * @param audioCall to schedule for playback
+     * @param audioCall to play
      */
     public void play(PlayableAudioCall audioCall)
     {
-        if(audioCall != null && !isDisabled())
+        if(audioCall != null && !isDisabled() && getCurrentAudioCall() == null)
         {
-            mPlayableCallQueue.add(audioCall);
+            broadcast(audioCall.getIdentifierCollection());
+            mMetadataSent = true;
+            mCurrentPlaybackBurst = new AudioPlaybackBurst(audioCall);
         }
     }
 
@@ -485,55 +470,15 @@ public class AudioChannel
             if(!isCurrentBurstAudioDelivered() && currentAudioCall.hasAudio() &&
                 isExpectedAudibleSegment(currentAudioCall))
             {
-                mLog.warn("Audio channel {} released undelivered audio segment:{} bursts:{} burstActive:{} buffers:{} complete:{} noAudioIntervals:{} queueDepth:{}",
+                mLog.warn("Audio channel {} released undelivered audio segment:{} bursts:{} burstActive:{} buffers:{} complete:{} noAudioIntervals:{}",
                     getChannelName(), formatSegment(currentAudioCall),
                     currentAudioCall.getBurstCount(), currentAudioCall.isBurstActive(),
                     currentAudioCall.getAudioBufferCount(),
-                    currentAudioCall.isComplete(), mNoAudioFromSegmentIntervalCount, mPlayableCallQueue.size());
+                    currentAudioCall.isComplete(), mNoAudioFromSegmentIntervalCount);
             }
             mCurrentPlaybackBurst = null;
+            clearMetadata();
         }
-    }
-
-    /**
-     * Loads the next playable call from the queue.
-     */
-    private void loadNextAudioSegment()
-    {
-        PlayableAudioCall audioCall = mPlayableCallQueue.poll();
-
-        boolean verificationInProgress = (audioCall != null);
-
-        while(verificationInProgress)
-        {
-            if(audioCall != null)
-            {
-                //Throw away the call if it has been flagged as do not monitor or duplicate.
-                if(isThrowaway(audioCall))
-                {
-                    audioCall = mPlayableCallQueue.poll();
-                }
-                else
-                {
-                    verificationInProgress = false;
-                }
-            }
-            else
-            {
-                verificationInProgress = false;
-            }
-        }
-
-        if(audioCall != null)
-        {
-            broadcast(audioCall.getIdentifierCollection());
-            mCurrentPlaybackBurst = new AudioPlaybackBurst(audioCall);
-        }
-        else
-        {
-            mCurrentPlaybackBurst = null;
-        }
-
     }
 
     private void handleBurstGenerationChange()
@@ -563,7 +508,7 @@ public class AudioChannel
             !audioCall.isDoNotMonitor();
     }
 
-    private PlayableAudioCall getCurrentAudioCall()
+    public PlayableAudioCall getCurrentAudioCall()
     {
         return mCurrentPlaybackBurst != null ? mCurrentPlaybackBurst.getAudioCall() : null;
     }

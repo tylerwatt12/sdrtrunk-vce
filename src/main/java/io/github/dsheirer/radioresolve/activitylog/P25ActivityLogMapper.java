@@ -15,12 +15,11 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
@@ -50,9 +49,6 @@ class P25ActivityLogMapper
         String channelDescriptor = descriptor != null ? descriptor.toString() : facts.channelDescriptor();
         Integer timeslot = event.hasTimeslot() ? Integer.valueOf(event.getTimeslot()) : facts.timeslot();
         P25ActivityLogRecords.Action action = normalizeAction(event);
-        String details = blankToNull(event.getDetails());
-        String service = event instanceof P25ChannelGrantEvent grant && grant.hasServiceOptions() ?
-            grant.getServiceOptions().toString() : null;
         long observedAt = Math.max(event.getTimeEnd(), event.getTimeStart());
 
         if(observedAt <= 0)
@@ -68,8 +64,7 @@ class P25ActivityLogMapper
             return null;
         }
 
-        P25ActivityLogRecords.ContextKind contextKind = facts.hasTrunkedSiteIdentity() ?
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE : P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25;
+        P25ActivityLogRecords.ContextKind contextKind = contextKind(facts);
 
         String dedupeKey = null;
         if(isHighChurnCallEvent(event.getEventType()) || action == P25ActivityLogRecords.Action.CONTINUE)
@@ -83,17 +78,14 @@ class P25ActivityLogMapper
                 safe(facts.targetId()),
                 safe(facts.targetForm()),
                 safe(facts.encryptionAlgorithmId()),
-                safe(facts.encryptionKeyId()),
-                safe(service),
-                safe(details));
+                safe(facts.encryptionKeyId()));
         }
 
         return new P25ActivityLogRecords.ActivityEvent(observedAt, guid, contextKind, event.getProtocol().name(),
             action, event.getEventType().name(), facts.sourceId(), facts.targetId(), facts.targetForm(),
-            frequency, lcn, channelDescriptor, timeslot, service, details, facts.encrypted(),
-            facts.encryptionAlgorithmId(), facts.encryptionKeyId(), facts.wacn(), facts.systemId(), facts.nac(),
-            facts.rfss(), facts.site(), facts.channelName(), facts.decoder(), facts.talkerAlias(),
-            facts.rawIdentifiers(), dedupeKey);
+            frequency, lcn, timeslot, facts.encrypted(), facts.encryptionAlgorithmId(), facts.encryptionKeyId(),
+            facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.channelName(),
+            facts.talkerAlias(), dedupeKey);
     }
 
     P25ActivityLogRecords.SiteSnapshot map(SiteMetadataEvent event)
@@ -273,6 +265,30 @@ class P25ActivityLogMapper
         return facts.frequencyHertz();
     }
 
+    private static P25ActivityLogRecords.ContextKind contextKind(IdentifierFacts facts)
+    {
+        String decoder = facts != null ? facts.decoder() : null;
+
+        if(isDecoder(decoder, DecoderType.P25_CONVENTIONAL))
+        {
+            return P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25;
+        }
+
+        if(isDecoder(decoder, DecoderType.P25_PHASE1) || isDecoder(decoder, DecoderType.P25_PHASE2))
+        {
+            return P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
+        }
+
+        return facts != null && facts.hasTrunkedSiteIdentity() ?
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE : P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25;
+    }
+
+    private static boolean isDecoder(String value, DecoderType decoderType)
+    {
+        return decoderType != null && (decoderType.toString().equals(value) ||
+            decoderType.getShortDisplayString().equals(value) || decoderType.name().equals(value));
+    }
+
     private static Long currentControl(List<P25NetworkConfigurationSnapshot.Channel> channels)
     {
         if(channels == null)
@@ -315,8 +331,7 @@ class P25ActivityLogMapper
                                    Long frequencyHertz, String channelDescriptor, boolean encrypted,
                                    Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn,
                                    Integer systemId, Integer nac, Integer rfss, Integer site, String radresGuid,
-                                   String channelName, String decoder, String talkerAlias, String rawIdentifiers,
-                                   Integer timeslot)
+                                   String channelName, String decoder, String talkerAlias, Integer timeslot)
     {
         static IdentifierFacts from(IdentifierCollection identifiers)
         {
@@ -338,7 +353,7 @@ class P25ActivityLogMapper
                 intValue(first(identifiers, Form.RF_SUBSYSTEM)), intValue(first(identifiers, Form.SITE)),
                 value(first(identifiers, Form.RADRES_GUID)), value(first(identifiers, Form.CHANNEL_NAME)),
                 value(first(identifiers, Form.DECODER_TYPE)), value(first(identifiers, Form.TALKER_ALIAS)),
-                raw(identifiers), timeslot);
+                timeslot);
         }
 
         boolean hasTrunkedSiteIdentity()
@@ -427,39 +442,5 @@ class P25ActivityLogMapper
             }
         }
 
-        private static String raw(IdentifierCollection identifiers)
-        {
-            if(identifiers == null || identifiers.isEmpty())
-            {
-                return null;
-            }
-
-            StringBuilder sb = new StringBuilder();
-
-            for(Identifier identifier: identifiers.getIdentifiers())
-            {
-                if(identifier != null)
-                {
-                    if(!sb.isEmpty())
-                    {
-                        sb.append('\n');
-                    }
-
-                    IdentifierClass identifierClass = identifier.getIdentifierClass();
-                    Form form = identifier.getForm();
-                    Role role = identifier.getRole();
-                    sb.append(identifier);
-                    sb.append(" {");
-                    sb.append(identifierClass != null ? identifierClass.name() : "");
-                    sb.append('|');
-                    sb.append(form != null ? form.name() : "");
-                    sb.append('|');
-                    sb.append(role != null ? role.name() : "");
-                    sb.append('}');
-                }
-            }
-
-            return sb.toString();
-        }
     }
 }

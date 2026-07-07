@@ -233,7 +233,7 @@ public class UserPreferences implements Listener<PreferenceType>
         mDecodeEventPreference = new DecodeEventPreference(this::receive);
         mDirectoryPreference = new DirectoryPreference(this::receive);
         mCallManagementPreference = new CallManagementPreference(this::receive);
-        mEncryptionKeyPreference = new EncryptionKeyPreference(this::receive);
+        mEncryptionKeyPreference = new EncryptionKeyPreference(this::receive, mDirectoryPreference);
         mJmbeLibraryPreference = new JmbeLibraryPreference(this::receive);
         mMP3Preference = new MP3Preference(this::receive);
         mNowPlayingPreference = new NowPlayingPreference(this::receive);

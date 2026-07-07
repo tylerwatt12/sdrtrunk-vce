@@ -67,6 +67,7 @@ public class NowPlayingPanel extends JPanel
     private JideTabbedPane mTabbedPane;
     private JideSplitPane mSplitPane;
     private boolean mRequestedDetailTabsVisible;
+    private boolean mSystemsActive = true;
     private boolean mDetailTabsAttached;
     private boolean mSplitPaneDividerRestored;
     private boolean mRegisteredForPreferences;
@@ -100,13 +101,11 @@ public class NowPlayingPanel extends JPanel
         registerForPreferences();
     }
 
-    @Override
-    public void removeNotify()
+    public void dispose()
     {
-        detachDetailTabs(true);
+        detachDetailTabs();
         unregisterForPreferences();
-
-        super.removeNotify();
+        mChannelActivityPanel.dispose();
     }
 
     private void registerForPreferences()
@@ -134,6 +133,24 @@ public class NowPlayingPanel extends JPanel
     public void setDetailTabsVisible(boolean visible)
     {
         setDetailTabsVisible(visible, true);
+    }
+
+    public void setSystemsActive(boolean active)
+    {
+        if(mSystemsActive != active)
+        {
+            mSystemsActive = active;
+
+            if(active)
+            {
+                updateDetailTabs();
+            }
+            else
+            {
+                detachDetailTabs();
+                mChannelActivityPanel.resetTables();
+            }
+        }
     }
 
     private JideTabbedPane getTabbedPane()
@@ -242,7 +259,7 @@ public class NowPlayingPanel extends JPanel
 
     private boolean shouldAttachDetailTabs()
     {
-        return mRequestedDetailTabsVisible;
+        return mSystemsActive && mRequestedDetailTabsVisible;
     }
 
     private void updateDetailTabs()
@@ -253,7 +270,7 @@ public class NowPlayingPanel extends JPanel
         }
         else
         {
-            detachDetailTabs(true);
+            detachDetailTabs();
         }
 
         updateDetailTabsToggleButton();
@@ -291,7 +308,7 @@ public class NowPlayingPanel extends JPanel
         }
     }
 
-    private void detachDetailTabs(boolean destroy)
+    private void detachDetailTabs()
     {
         if(mDetailTabsAttached)
         {
@@ -311,10 +328,7 @@ public class NowPlayingPanel extends JPanel
             mDetailTabsAttached = false;
         }
 
-        if(destroy)
-        {
-            disposeDetailPanels();
-        }
+        disposeDetailPanels();
     }
 
     private void ensureDetailPanels()

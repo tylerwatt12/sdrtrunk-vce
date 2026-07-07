@@ -74,16 +74,16 @@ public class VoiceEncryptionKeyResolverTest
     }
 
     @Test
-    void resolverIgnoresUnsupportedAlgorithms()
+    void resolverMatchesConfiguredCustomAlgorithms()
     {
         VoiceEncryptionKey key = configuredKey();
-        key.setAlgorithmId(0x84);
-        VoiceEncryptionContext context = new VoiceEncryptionContext(VoiceEncryptionProtocol.APCO25, 0x84, 7,
+        key.setAlgorithmId(0x85);
+        VoiceEncryptionContext context = new VoiceEncryptionContext(VoiceEncryptionProtocol.APCO25, 0x85, 7,
             "001122334455667788", 0, null);
 
         VoiceEncryptionKeyResolver resolver = new VoiceEncryptionKeyResolver(List.of(key));
 
-        assertFalse(resolver.resolve(context).isPresent());
+        assertTrue(resolver.resolve(context).isPresent());
     }
 
     private VoiceEncryptionKey configuredKey()

@@ -76,33 +76,26 @@ public class P25ActivityLogService implements SiteMetadataListener
     {
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
 
-        boolean activityLoggingEnabled = preference.isP25ActivityLoggingEnabled();
-        boolean siteStatisticsLoggingEnabled = preference.isP25SiteStatisticsLoggingEnabled();
-        boolean statusLoggingEnabled = preference.isDatabaseLoggerStatusLoggingEnabled();
-
-        if(!preference.isAnyP25DatabaseLoggingEnabled())
+        if(!preference.isStatsLoggingEnabled())
         {
             stopWriter();
             return;
         }
 
         Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
-        int retentionDays = preference.getP25ActivityLoggingRetentionDays();
+        int retentionDays = preference.getStatsLoggingRetentionDays();
 
         if(mWriter != null && databasePath.equals(mCurrentDatabasePath))
         {
-            mWriter.setOptions(retentionDays, activityLoggingEnabled, siteStatisticsLoggingEnabled,
-                statusLoggingEnabled);
+            mWriter.setRetentionDays(retentionDays);
             return;
         }
 
         stopWriter();
         mCurrentDatabasePath = databasePath;
-        mWriter = new P25ActivityLogWriter(databasePath, retentionDays, activityLoggingEnabled,
-            siteStatisticsLoggingEnabled, statusLoggingEnabled);
+        mWriter = new P25ActivityLogWriter(databasePath, retentionDays);
         mWriter.start();
-        mLog.info("P25 database logging enabled [{}]: activity [{}], site/statistics [{}], status [{}]",
-            databasePath, activityLoggingEnabled, siteStatisticsLoggingEnabled, statusLoggingEnabled);
+        mLog.info("Stats database logging enabled [{}]", databasePath);
     }
 
     private synchronized void stopWriter()
@@ -126,7 +119,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     {
         P25ActivityLogWriter writer = mWriter;
 
-        if(writer == null || !writer.isActivityLoggingEnabled())
+        if(writer == null)
         {
             return;
         }
@@ -144,7 +137,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     {
         P25ActivityLogWriter writer = mWriter;
 
-        if(writer == null || !writer.isSiteStatisticsLoggingEnabled())
+        if(writer == null)
         {
             return;
         }

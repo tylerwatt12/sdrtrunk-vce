@@ -19,10 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.RadioResolveGuidConfigurationIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
@@ -120,6 +122,22 @@ class P25ActivityLogMapperTest
     }
 
     @Test
+    void mapsContextKindFromDecoderType()
+    {
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+
+        P25ActivityLogRecords.ActivityEvent conventional = mapper.map(event(DecodeEventType.CALL_GROUP, "VOICE",
+            DecoderType.P25_CONVENTIONAL));
+        P25ActivityLogRecords.ActivityEvent trunked = mapper.map(event(DecodeEventType.CALL_GROUP, "VOICE",
+            DecoderType.P25_PHASE1));
+
+        assertNotNull(conventional);
+        assertNotNull(trunked);
+        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, conventional.contextKind());
+        assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, trunked.contextKind());
+    }
+
+    @Test
     void skipsActivityWithoutGuid()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
@@ -173,11 +191,21 @@ class P25ActivityLogMapperTest
 
     private static DecodeEvent event(DecodeEventType eventType, String details)
     {
+        return event(eventType, details, null);
+    }
+
+    private static DecodeEvent event(DecodeEventType eventType, String details, DecoderType decoderType)
+    {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25RadioIdentifier.createFrom(1811524));
         identifiers.update(APCO25Talkgroup.create(56138));
         identifiers.update(FrequencyConfigurationIdentifier.create(854187500L));
         identifiers.update(RadioResolveGuidConfigurationIdentifier.create(GUID));
+
+        if(decoderType != null)
+        {
+            identifiers.update(DecoderTypeConfigurationIdentifier.create(decoderType));
+        }
 
         return P25DecodeEvent.builder(eventType, 1000L)
             .duration(1000L)

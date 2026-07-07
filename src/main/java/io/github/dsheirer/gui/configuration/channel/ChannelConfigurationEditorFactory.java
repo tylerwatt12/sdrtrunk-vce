@@ -69,6 +69,9 @@ public class ChannelConfigurationEditorFactory
                 return new MPT1327ConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case PASSPORT:
                 return new PassportConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
+            case P25_CONVENTIONAL:
+                return new P25ConventionalConfigurationEditor(configurationManager, tunerManager, userPreferences,
+                    filterProcessor);
             case P25_PHASE1:
                 return new P25P1ConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case P25_PHASE2:

@@ -72,7 +72,7 @@ public class NowPlayingPreferenceEditor extends HBox
             mEditorPane.setHgap(3);
             mEditorPane.setPadding(new Insets(10, 10, 10, 10));
 
-            Label nowPlayingLabel = new Label("Now Playing Activity View");
+            Label nowPlayingLabel = new Label("Systems Activity View");
             mEditorPane.add(nowPlayingLabel, 0, row, 2, 1);
 
             GridPane.setHalignment(getRetainIdleCallDetailsToggle(), HPos.RIGHT);

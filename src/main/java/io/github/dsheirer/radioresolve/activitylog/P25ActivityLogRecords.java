@@ -58,11 +58,11 @@ final class P25ActivityLogRecords
 
     record ActivityEvent(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String protocol,
                          Action action, String eventType, String sourceRadioId, String targetId, String targetKind,
-                         Long frequencyHertz, String lcn, String channelDescriptor, Integer timeslot,
-                         String service, String details, boolean encrypted, Integer encryptionAlgorithmId,
-                         Integer encryptionKeyId, Integer wacn, Integer systemId, Integer nac, Integer rfss,
-                         Integer site, String channelName, String decoder, String talkerAlias, String rawIdentifiers,
-                         String dedupeKey) implements P25ActivityLogRecord
+                         Long frequencyHertz, String lcn, Integer timeslot, boolean encrypted,
+                         Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn, Integer systemId,
+                         Integer nac, Integer rfss, Integer site, String channelName, String talkerAlias,
+                         String dedupeKey)
+        implements P25ActivityLogRecord
     {
     }
 

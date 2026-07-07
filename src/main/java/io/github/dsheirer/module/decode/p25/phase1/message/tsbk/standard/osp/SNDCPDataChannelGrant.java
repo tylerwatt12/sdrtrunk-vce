@@ -26,6 +26,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -122,7 +123,8 @@ public class SNDCPDataChannelGrant extends OSPMessage implements IFrequencyBandR
      */
     private boolean isExplicitChannel()
     {
-        return getMessage().getInt(UPLINK_CHANNEL_NUMBER) != 4095;
+        return P25FrequencyBandValidator.hasChannel(getMessage().getInt(UPLINK_FREQUENCY_BAND),
+            getMessage().getInt(UPLINK_CHANNEL_NUMBER));
     }
 
     @Override

@@ -24,18 +24,20 @@ public class VoiceEncryptionAlgorithmTest
     {
         assertTrue(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.APCO25)
             .contains(VoiceEncryptionAlgorithm.APCO25_AES_256));
-        assertFalse(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.APCO25)
-            .contains(VoiceEncryptionAlgorithm.CUSTOM));
+        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0x81));
+        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0x84));
         assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0xAA));
-        assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0x84));
-        assertEquals(VoiceEncryptionAlgorithm.APCO25_ADP,
+        assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0x85));
+        assertEquals(VoiceEncryptionAlgorithm.APCO25_DES_OFB,
             VoiceEncryptionAlgorithm.getFirstSupported(VoiceEncryptionProtocol.APCO25));
+        assertFalse(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.APCO25)
+            .contains(VoiceEncryptionAlgorithm.APCO25_AES_128));
     }
 
     @Test
     void listsKnownDmrAlgorithmsButSupportsOnlyImplementedDecryptors()
     {
-        assertTrue(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.DMR)
+        assertFalse(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.DMR)
             .contains(VoiceEncryptionAlgorithm.DMR_HYTERA_BASIC_PRIVACY));
         assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0x21));
         assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0x24));
@@ -48,6 +50,6 @@ public class VoiceEncryptionAlgorithmTest
     {
         assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0xFE));
         assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0xFE));
-        assertFalse(VoiceEncryptionAlgorithm.CUSTOM.isSupported());
+        assertEquals("0xFE", VoiceEncryptionAlgorithm.getLabel(VoiceEncryptionProtocol.APCO25, 0xFE));
     }
 }

@@ -23,6 +23,9 @@ import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.controller.channel.map.ChannelRange;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.nio.file.Path;
@@ -43,6 +46,7 @@ class ConfigurationDatabaseStoreTest
     void roundTripsConfigurationState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         assertFalse(store.isInitialized());
 
@@ -144,6 +148,38 @@ class ConfigurationDatabaseStoreTest
                 assertEquals("http://198.51.100.10:8080", resultSet.getString("host"));
                 assertEquals(80, resultSet.getInt("port"));
             }
+        }
+    }
+
+    @Test
+    void roundTripsP25ConventionalChannel() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("p25-conventional.sqlite");
+        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+        Channel channel = new Channel("P25 Conventional");
+        channel.setRadresGuid("22222222-3333-4444-5555-666666666666");
+        channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
+
+        SourceConfigTuner sourceConfig = new SourceConfigTuner();
+        sourceConfig.setFrequency(155_250_000L);
+        channel.setSourceConfiguration(sourceConfig);
+
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel));
+
+        store.replaceConfigurationState(state);
+
+        Channel loaded = store.loadConfigurationState().getChannels().get(0);
+        assertInstanceOf(DecodeConfigP25Conventional.class, loaded.getDecodeConfiguration());
+        assertEquals(DecoderType.P25_CONVENTIONAL, loaded.getDecodeConfiguration().getDecoderType());
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("SELECT decoder_type FROM configuration_channel"))
+        {
+            assertTrue(resultSet.next());
+            assertEquals("P25_CONVENTIONAL", resultSet.getString("decoder_type"));
         }
     }
 

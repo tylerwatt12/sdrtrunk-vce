@@ -193,6 +193,19 @@ public class ChannelActivityTableModel extends AbstractTableModel
         return new ArrayList<>(mRows);
     }
 
+    public void clear()
+    {
+        int lastRow = mRows.size() - 1;
+        mRows.clear();
+        mRowsByKey.clear();
+        mPendingFullRefresh = false;
+
+        if(lastRow >= 0 && mActivityViewVisible)
+        {
+            fireTableRowsDeleted(0, lastRow);
+        }
+    }
+
     public ChannelActivityRow getRow(int row)
     {
         if(row >= 0 && row < mRows.size())

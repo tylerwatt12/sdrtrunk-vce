@@ -34,10 +34,10 @@ public enum VoiceEncryptionAlgorithm
     APCO25_SAVILLE(VoiceEncryptionProtocol.APCO25, 0x04, "SAVILLE", null, false),
     APCO25_MOTOROLA_PADSTONE(VoiceEncryptionProtocol.APCO25, 0x05, "MOTOROLA PADSTONE", null, false),
     APCO25_BATON_AUTO_ODD(VoiceEncryptionProtocol.APCO25, 0x41, "BATON AUTO ODD", null, false),
-    APCO25_DES_OFB(VoiceEncryptionProtocol.APCO25, 0x81, "DES OFB", 8, false),
+    APCO25_DES_OFB(VoiceEncryptionProtocol.APCO25, 0x81, "DES OFB", 8, true),
     APCO25_TRIPLE_DES_2_KEY(VoiceEncryptionProtocol.APCO25, 0x82, "2-KEY TRIPLE DES", 16, false),
     APCO25_TRIPLE_DES_3_KEY(VoiceEncryptionProtocol.APCO25, 0x83, "3-KEY TRIPLE DES", 24, false),
-    APCO25_AES_256(VoiceEncryptionProtocol.APCO25, 0x84, "AES-256", 32, false),
+    APCO25_AES_256(VoiceEncryptionProtocol.APCO25, 0x84, "AES-256", 32, true),
     APCO25_AES_128(VoiceEncryptionProtocol.APCO25, 0x85, "AES-128", 16, false),
     APCO25_AES_CBC(VoiceEncryptionProtocol.APCO25, 0x88, "AES-CBC", null, false),
     APCO25_AES_128_OFB(VoiceEncryptionProtocol.APCO25, 0x89, "AES-128-OFB", 16, false),
@@ -52,8 +52,7 @@ public enum VoiceEncryptionAlgorithm
     APCO25_MOTOROLA_A7(VoiceEncryptionProtocol.APCO25, 0xA7, "MOTOROLA UNKNOWN A7", null, false),
     APCO25_MOTOROLA_A8(VoiceEncryptionProtocol.APCO25, 0xA8, "MOTOROLA UNKNOWN A8", null, false),
     APCO25_MOTOROLA_A9(VoiceEncryptionProtocol.APCO25, 0xA9, "MOTOROLA UNKNOWN A9", null, false),
-    APCO25_ADP(VoiceEncryptionProtocol.APCO25, 0xAA, "Motorola ADP 40-bit RC4", 5, true,
-        "P25 Phase 1 IMBE voice only"),
+    APCO25_ADP(VoiceEncryptionProtocol.APCO25, 0xAA, "Motorola ADP 40-bit RC4", 5, true),
     APCO25_MOTOROLA_CFX_256(VoiceEncryptionProtocol.APCO25, 0xAB, "MOTOROLA CFX-256", 32, false),
     APCO25_MOTOROLA_AC(VoiceEncryptionProtocol.APCO25, 0xAC, "MOTOROLA UNKNOWN AC", null, false),
     APCO25_MOTOROLA_AD(VoiceEncryptionProtocol.APCO25, 0xAD, "MOTOROLA UNKNOWN AD", null, false),
@@ -65,31 +64,22 @@ public enum VoiceEncryptionAlgorithm
     DMR_DMRA_RC4(VoiceEncryptionProtocol.DMR, 0x21, "DMRA RC4/EP", 5, true),
     DMR_DMRA_AES_128(VoiceEncryptionProtocol.DMR, 0x24, "DMRA AES-128", 16, true),
     DMR_DMRA_AES_256(VoiceEncryptionProtocol.DMR, 0x25, "DMRA AES-256", 32, true),
-    DMR_HYTERA_ENHANCED_PRIVACY_2(VoiceEncryptionProtocol.DMR, 0x26, "Hytera Enhanced Privacy 2", null, false),
-    CUSTOM(null, -1, "Custom", null, false);
+    DMR_HYTERA_ENHANCED_PRIVACY_2(VoiceEncryptionProtocol.DMR, 0x26, "Hytera Enhanced Privacy 2", null, false);
 
     private final VoiceEncryptionProtocol mProtocol;
     private final int mValue;
     private final String mLabel;
     private final Integer mExpectedKeyBytes;
     private final boolean mSupported;
-    private final String mSupportNote;
 
     VoiceEncryptionAlgorithm(VoiceEncryptionProtocol protocol, int value, String label, Integer expectedKeyBytes,
                              boolean supported)
-    {
-        this(protocol, value, label, expectedKeyBytes, supported, null);
-    }
-
-    VoiceEncryptionAlgorithm(VoiceEncryptionProtocol protocol, int value, String label, Integer expectedKeyBytes,
-                             boolean supported, String supportNote)
     {
         mProtocol = protocol;
         mValue = value;
         mLabel = label;
         mExpectedKeyBytes = expectedKeyBytes;
         mSupported = supported;
-        mSupportNote = supportNote;
     }
 
     public VoiceEncryptionProtocol getProtocol()
@@ -117,19 +107,9 @@ public enum VoiceEncryptionAlgorithm
         return mSupported;
     }
 
-    public String getSupportNote()
-    {
-        return mSupportNote;
-    }
-
     @Override
     public String toString()
     {
-        if(this == CUSTOM)
-        {
-            return mLabel;
-        }
-
         return mLabel + " (0x" + Integer.toHexString(mValue).toUpperCase() + ")";
     }
 
@@ -139,7 +119,7 @@ public enum VoiceEncryptionAlgorithm
 
         for(VoiceEncryptionAlgorithm algorithm: values())
         {
-            if(algorithm != CUSTOM && algorithm.getProtocol() == protocol)
+            if(algorithm.getProtocol() == protocol && algorithm.isSupported())
             {
                 algorithms.add(algorithm);
             }
@@ -163,7 +143,8 @@ public enum VoiceEncryptionAlgorithm
 
     public static boolean isSupported(VoiceEncryptionProtocol protocol, int value)
     {
-        return fromValue(protocol, value).isSupported();
+        VoiceEncryptionAlgorithm algorithm = fromValue(protocol, value);
+        return algorithm != null && algorithm.isSupported();
     }
 
     public static VoiceEncryptionAlgorithm fromValue(VoiceEncryptionProtocol protocol, int value)
@@ -176,14 +157,14 @@ public enum VoiceEncryptionAlgorithm
             }
         }
 
-        return CUSTOM;
+        return null;
     }
 
     public static String getLabel(VoiceEncryptionProtocol protocol, int value)
     {
         VoiceEncryptionAlgorithm algorithm = fromValue(protocol, value);
 
-        if(algorithm != CUSTOM)
+        if(algorithm != null)
         {
             return algorithm.toString();
         }

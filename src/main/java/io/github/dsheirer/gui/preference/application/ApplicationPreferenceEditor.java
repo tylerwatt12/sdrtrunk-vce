@@ -21,10 +21,18 @@ package io.github.dsheirer.gui.preference.application;
 
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.radioresolve.activitylog.P25ActivityLogMaintenance;
 import io.github.dsheirer.radioresolve.activitylog.P25ActivityLogPath;
+import java.nio.file.Path;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import javafx.application.Platform;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
@@ -47,13 +55,15 @@ public class ApplicationPreferenceEditor extends HBox
     private UserPreferences mUserPreferences;
     private GridPane mEditorPane;
     private Label mAutoStartTimeoutLabel;
-    private Label mP25ActivityLoggingPathLabel;
+    private Label mStatsLoggingPathLabel;
+    private Label mStatsMaintenanceStatusLabel;
     private Spinner<Integer> mTimeoutSpinner;
-    private Spinner<Integer> mP25ActivityLoggingRetentionSpinner;
+    private Spinner<Integer> mStatsLoggingRetentionSpinner;
     private ToggleSwitch mAutomaticDiagnosticMonitoringToggle;
-    private CheckBox mP25ActivityLoggingCheckBox;
-    private CheckBox mP25SiteStatisticsLoggingCheckBox;
-    private CheckBox mDatabaseLoggerStatusLoggingCheckBox;
+    private CheckBox mStatsLoggingCheckBox;
+    private Button mStatsMaintenanceButton;
+    private Button mStatsShrinkButton;
+    private Button mStatsCheckButton;
 
     /**
      * Constructs an instance
@@ -99,30 +109,35 @@ public class ApplicationPreferenceEditor extends HBox
             mEditorPane.add(getTimeoutSpinner(), 0, ++row);
             mEditorPane.add(new Label("seconds"), 1, row);
 
-            Separator activitySeparator = new Separator(Orientation.HORIZONTAL);
-            GridPane.setHgrow(activitySeparator, Priority.ALWAYS);
-            mEditorPane.add(activitySeparator, 0, ++row, 3, 1);
+            Separator statsSeparator = new Separator(Orientation.HORIZONTAL);
+            GridPane.setHgrow(statsSeparator, Priority.ALWAYS);
+            mEditorPane.add(statsSeparator, 0, ++row, 3, 1);
 
-            Label activityLabel = new Label("P25 History Database");
-            mEditorPane.add(activityLabel, 0, ++row, 2, 1);
-            mEditorPane.add(getP25ActivityLoggingCheckBox(), 0, ++row, 3, 1);
-            mEditorPane.add(getP25SiteStatisticsLoggingCheckBox(), 0, ++row, 3, 1);
-            mEditorPane.add(getDatabaseLoggerStatusLoggingCheckBox(), 0, ++row, 3, 1);
+            Label statsLabel = new Label("Stats Server");
+            mEditorPane.add(statsLabel, 0, ++row, 2, 1);
+            mEditorPane.add(getStatsLoggingCheckBox(), 0, ++row, 3, 1);
 
             mEditorPane.add(new Label("Keep history for"), 0, ++row);
-            GridPane.setHalignment(getP25ActivityLoggingRetentionSpinner(), HPos.RIGHT);
-            mEditorPane.add(getP25ActivityLoggingRetentionSpinner(), 1, row);
+            GridPane.setHalignment(getStatsLoggingRetentionSpinner(), HPos.RIGHT);
+            mEditorPane.add(getStatsLoggingRetentionSpinner(), 1, row);
             mEditorPane.add(new Label("days"), 2, row);
 
             mEditorPane.add(new Label("Database file"), 0, ++row);
-            mEditorPane.add(getP25ActivityLoggingPathLabel(), 1, row, 2, 1);
+            mEditorPane.add(getStatsLoggingPathLabel(), 1, row, 2, 1);
+
+            HBox maintenanceButtons = new HBox(8, getStatsMaintenanceButton(), getStatsShrinkButton(),
+                getStatsCheckButton());
+            mEditorPane.add(new Label("Database maintenance"), 0, ++row);
+            mEditorPane.add(maintenanceButtons, 1, row, 2, 1);
+
+            mEditorPane.add(getStatsMaintenanceStatusLabel(), 1, ++row, 2, 1);
 
             ColumnConstraints c1 = new ColumnConstraints();
             c1.setPercentWidth(30);
             ColumnConstraints c2 = new ColumnConstraints();
             c2.setHgrow(Priority.ALWAYS);
             mEditorPane.getColumnConstraints().addAll(c1, c2);
-            updateDatabaseLoggingControlState();
+            updateStatsLoggingControlState();
         }
 
         return mEditorPane;
@@ -153,87 +168,114 @@ public class ApplicationPreferenceEditor extends HBox
         return mTimeoutSpinner;
     }
 
-    private CheckBox getP25ActivityLoggingCheckBox()
+    private CheckBox getStatsLoggingCheckBox()
     {
-        if(mP25ActivityLoggingCheckBox == null)
+        if(mStatsLoggingCheckBox == null)
         {
-            mP25ActivityLoggingCheckBox = new CheckBox("Save call and radio activity");
-            mP25ActivityLoggingCheckBox.setTooltip(new Tooltip(
-                "Stores P25 call, radio, talkgroup, and frequency history rows in SQLite."));
-            mP25ActivityLoggingCheckBox.setSelected(mApplicationPreference.isP25ActivityLoggingEnabled());
-            mP25ActivityLoggingCheckBox.setOnAction(event -> {
-                mApplicationPreference.setP25ActivityLoggingEnabled(mP25ActivityLoggingCheckBox.isSelected());
-                updateDatabaseLoggingControlState();
+            mStatsLoggingCheckBox = new CheckBox("Enable Stats Logging");
+            mStatsLoggingCheckBox.setTooltip(new Tooltip(
+                "Stores P25 activity, radio, talkgroup, frequency, site, network, and writer status history in SQLite."));
+            mStatsLoggingCheckBox.setSelected(mApplicationPreference.isStatsLoggingEnabled());
+            mStatsLoggingCheckBox.setOnAction(event -> {
+                mApplicationPreference.setStatsLoggingEnabled(mStatsLoggingCheckBox.isSelected());
+                updateStatsLoggingControlState();
             });
         }
 
-        return mP25ActivityLoggingCheckBox;
-    }
-
-    private CheckBox getP25SiteStatisticsLoggingCheckBox()
-    {
-        if(mP25SiteStatisticsLoggingCheckBox == null)
-        {
-            mP25SiteStatisticsLoggingCheckBox = new CheckBox("Save site and network snapshots");
-            mP25SiteStatisticsLoggingCheckBox.setTooltip(new Tooltip(
-                "Stores P25 site channels, neighbors, frequency bands, patches, and talker aliases in SQLite."));
-            mP25SiteStatisticsLoggingCheckBox.setSelected(mApplicationPreference.isP25SiteStatisticsLoggingEnabled());
-            mP25SiteStatisticsLoggingCheckBox.setOnAction(event -> {
-                mApplicationPreference.setP25SiteStatisticsLoggingEnabled(
-                    mP25SiteStatisticsLoggingCheckBox.isSelected());
-                updateDatabaseLoggingControlState();
-            });
-        }
-
-        return mP25SiteStatisticsLoggingCheckBox;
-    }
-
-    private CheckBox getDatabaseLoggerStatusLoggingCheckBox()
-    {
-        if(mDatabaseLoggerStatusLoggingCheckBox == null)
-        {
-            mDatabaseLoggerStatusLoggingCheckBox = new CheckBox("Save writer health counters");
-            mDatabaseLoggerStatusLoggingCheckBox.setTooltip(new Tooltip(
-                "Stores database writer counters in SQLite for troubleshooting; this does not control console logging."));
-            mDatabaseLoggerStatusLoggingCheckBox.setSelected(
-                mApplicationPreference.isDatabaseLoggerStatusLoggingEnabled());
-            mDatabaseLoggerStatusLoggingCheckBox.setOnAction(event ->
-                mApplicationPreference.setDatabaseLoggerStatusLoggingEnabled(
-                    mDatabaseLoggerStatusLoggingCheckBox.isSelected()));
-        }
-
-        return mDatabaseLoggerStatusLoggingCheckBox;
+        return mStatsLoggingCheckBox;
     }
 
     /**
      * Spinner to select P25 activity retention in days.
      */
-    private Spinner<Integer> getP25ActivityLoggingRetentionSpinner()
+    private Spinner<Integer> getStatsLoggingRetentionSpinner()
     {
-        if(mP25ActivityLoggingRetentionSpinner == null)
+        if(mStatsLoggingRetentionSpinner == null)
         {
-            mP25ActivityLoggingRetentionSpinner = new Spinner<>(
-                ApplicationPreference.MIN_P25_ACTIVITY_LOGGING_RETENTION_DAYS,
-                ApplicationPreference.MAX_P25_ACTIVITY_LOGGING_RETENTION_DAYS,
-                mApplicationPreference.getP25ActivityLoggingRetentionDays(), 1);
-            mP25ActivityLoggingRetentionSpinner.valueProperty().addListener((observable, oldValue, newValue) ->
-                mApplicationPreference.setP25ActivityLoggingRetentionDays(newValue));
-            updateDatabaseLoggingControlState();
+            mStatsLoggingRetentionSpinner = new Spinner<>(
+                ApplicationPreference.MIN_STATS_LOGGING_RETENTION_DAYS,
+                ApplicationPreference.MAX_STATS_LOGGING_RETENTION_DAYS,
+                mApplicationPreference.getStatsLoggingRetentionDays(), 1);
+            mStatsLoggingRetentionSpinner.valueProperty().addListener((observable, oldValue, newValue) ->
+                mApplicationPreference.setStatsLoggingRetentionDays(newValue));
+            updateStatsLoggingControlState();
         }
 
-        return mP25ActivityLoggingRetentionSpinner;
+        return mStatsLoggingRetentionSpinner;
     }
 
-    private Label getP25ActivityLoggingPathLabel()
+    private Label getStatsLoggingPathLabel()
     {
-        if(mP25ActivityLoggingPathLabel == null)
+        if(mStatsLoggingPathLabel == null)
         {
-            mP25ActivityLoggingPathLabel =
+            mStatsLoggingPathLabel =
                 new Label(P25ActivityLogPath.getDatabasePath(mUserPreferences).toString());
-            mP25ActivityLoggingPathLabel.setWrapText(true);
+            mStatsLoggingPathLabel.setWrapText(true);
         }
 
-        return mP25ActivityLoggingPathLabel;
+        return mStatsLoggingPathLabel;
+    }
+
+    private Label getStatsMaintenanceStatusLabel()
+    {
+        if(mStatsMaintenanceStatusLabel == null)
+        {
+            mStatsMaintenanceStatusLabel = new Label("Idle");
+            mStatsMaintenanceStatusLabel.setWrapText(true);
+            mStatsMaintenanceStatusLabel.setMaxWidth(Double.MAX_VALUE);
+        }
+
+        return mStatsMaintenanceStatusLabel;
+    }
+
+    private Button getStatsMaintenanceButton()
+    {
+        if(mStatsMaintenanceButton == null)
+        {
+            mStatsMaintenanceButton = new Button("Run Maintenance");
+            mStatsMaintenanceButton.setTooltip(new Tooltip(
+                "Runs retention cleanup, WAL checkpoint, and SQLite query optimization."));
+            mStatsMaintenanceButton.setOnAction(event -> runStatsMaintenance(P25ActivityLogMaintenance.Operation.MAINTAIN));
+        }
+
+        return mStatsMaintenanceButton;
+    }
+
+    private Button getStatsShrinkButton()
+    {
+        if(mStatsShrinkButton == null)
+        {
+            mStatsShrinkButton = new Button("Shrink Database");
+            mStatsShrinkButton.setTooltip(new Tooltip(
+                "Runs retention cleanup, checkpoint, VACUUM, and optimization. This can take time."));
+            mStatsShrinkButton.setOnAction(event -> {
+                Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
+                    "Shrink rebuilds the SQLite database to reclaim disk space. It can take time and temporarily " +
+                        "needs extra disk space. Continue?",
+                    ButtonType.YES, ButtonType.NO);
+                alert.setHeaderText("Shrink Stats Database");
+                Optional<ButtonType> result = alert.showAndWait();
+
+                if(result.isPresent() && result.get() == ButtonType.YES)
+                {
+                    runStatsMaintenance(P25ActivityLogMaintenance.Operation.SHRINK);
+                }
+            });
+        }
+
+        return mStatsShrinkButton;
+    }
+
+    private Button getStatsCheckButton()
+    {
+        if(mStatsCheckButton == null)
+        {
+            mStatsCheckButton = new Button("Check Database");
+            mStatsCheckButton.setTooltip(new Tooltip("Runs SQLite quick_check and reports the result."));
+            mStatsCheckButton.setOnAction(event -> runStatsMaintenance(P25ActivityLogMaintenance.Operation.CHECK));
+        }
+
+        return mStatsCheckButton;
     }
 
     /**
@@ -252,13 +294,53 @@ public class ApplicationPreferenceEditor extends HBox
         return mAutomaticDiagnosticMonitoringToggle;
     }
 
-    private void updateDatabaseLoggingControlState()
+    private void updateStatsLoggingControlState()
     {
-        if(mP25ActivityLoggingRetentionSpinner != null)
+        if(mStatsLoggingRetentionSpinner != null)
         {
-            boolean p25RecordLoggingEnabled = getP25ActivityLoggingCheckBox().isSelected() ||
-                getP25SiteStatisticsLoggingCheckBox().isSelected();
-            mP25ActivityLoggingRetentionSpinner.setDisable(!p25RecordLoggingEnabled);
+            mStatsLoggingRetentionSpinner.setDisable(!getStatsLoggingCheckBox().isSelected());
+        }
+    }
+
+    private void runStatsMaintenance(P25ActivityLogMaintenance.Operation operation)
+    {
+        Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
+        int retentionDays = mApplicationPreference.getStatsLoggingRetentionDays();
+        setStatsMaintenanceRunning(true, operation);
+
+        CompletableFuture.supplyAsync(() -> {
+            try
+            {
+                return P25ActivityLogMaintenance.run(databasePath, retentionDays, operation);
+            }
+            catch(Exception e)
+            {
+                throw new RuntimeException(e);
+            }
+        }).whenComplete((result, throwable) -> Platform.runLater(() -> {
+            setStatsMaintenanceRunning(false, operation);
+
+            if(throwable != null)
+            {
+                Throwable cause = throwable.getCause() != null ? throwable.getCause() : throwable;
+                getStatsMaintenanceStatusLabel().setText(operation + " failed: " + cause.getMessage());
+            }
+            else
+            {
+                getStatsMaintenanceStatusLabel().setText(result.summary());
+            }
+        }));
+    }
+
+    private void setStatsMaintenanceRunning(boolean running, P25ActivityLogMaintenance.Operation operation)
+    {
+        getStatsMaintenanceButton().setDisable(running);
+        getStatsShrinkButton().setDisable(running);
+        getStatsCheckButton().setDisable(running);
+
+        if(running)
+        {
+            getStatsMaintenanceStatusLabel().setText(operation + " running...");
         }
     }
 

@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.p25.identifier.channel;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Objects;
@@ -110,7 +111,7 @@ public class P25Channel implements IChannelDescriptor
 
     public boolean hasUplinkChannel()
     {
-        return getUplinkChannelNumber() != 4095;
+        return P25FrequencyBandValidator.hasChannel(getUplinkBandIdentifier(), getUplinkChannelNumber());
     }
 
     @Override

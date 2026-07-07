@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.message.AbstractMessage;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
@@ -52,9 +53,6 @@ import org.slf4j.LoggerFactory;
 public class P25P1MessageProcessor implements Listener<IMessage>
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P1MessageProcessor.class);
-    private static final long FREQUENCY_BAND_MIN_HZ = 100_000_000L;
-    private static final long FREQUENCY_BAND_MAX_HZ = 1_000_000_000L;
-    private static final long[] VALID_CHANNEL_SPACINGS_HZ = new long[]{6250L, 12500L, 25000L};
 
     /**
      * Downstream message listener
@@ -309,15 +307,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
 
             for(IChannelDescriptor channel : channels)
             {
-                int[] frequencyBandIdentifiers = channel.getFrequencyBandIdentifiers();
-
-                for(int id : frequencyBandIdentifiers)
-                {
-                    if(mFrequencyBandMap.containsKey(id))
-                    {
-                        channel.setFrequencyBand(mFrequencyBandMap.get(id));
-                    }
-                }
+                P25FrequencyBandValidator.applyFrequencyBands(channel, mFrequencyBandMap);
             }
         }
 
@@ -356,82 +346,23 @@ public class P25P1MessageProcessor implements Listener<IMessage>
 
     private void processFrequencyBand(IFrequencyBand frequencyBand, String source)
     {
-        long base = frequencyBand.getBaseFrequency();
+        P25FrequencyBandValidator.RegistrationResult result =
+            P25FrequencyBandValidator.register(mFrequencyBandMap, frequencyBand);
 
-        if(base < FREQUENCY_BAND_MIN_HZ || base > FREQUENCY_BAND_MAX_HZ)
+        if(result.replaced())
         {
-            mLog.warn("P25 P1 frequency band rejected source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - outside plausible RF range",
-                source, frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base,
-                frequencyBand.getChannelSpacing(), frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(),
-                getCorrectedBitCount(frequencyBand));
-            return;
+            mLog.warn("P25 P1 frequency band replacing existing source:{} existing:{} with candidate:{}",
+                source, P25FrequencyBandValidator.describe(result.existing()),
+                P25FrequencyBandValidator.describe(frequencyBand));
         }
-
-        long spacing = frequencyBand.getChannelSpacing();
-
-        if(!isValidChannelSpacing(spacing))
+        else if(!result.accepted())
         {
-            mLog.warn("P25 P1 frequency band rejected source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - invalid spacing",
-                source, frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
-                frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), getCorrectedBitCount(frequencyBand));
-            return;
+            mLog.warn("P25 P1 frequency band rejected source:{} {} correctedBits:{} - {}{}",
+                source, P25FrequencyBandValidator.describe(frequencyBand),
+                P25FrequencyBandValidator.getCorrectedBitCount(frequencyBand),
+                result.rejectReason().getDescription(),
+                result.existing() != null ? " existing:" + P25FrequencyBandValidator.describe(result.existing()) : "");
         }
-
-        IFrequencyBand existing = mFrequencyBandMap.get(frequencyBand.getIdentifier());
-
-        if(existing != null && !matches(existing, frequencyBand))
-        {
-            if(frequencyBand.isPreferredOver(existing))
-            {
-                mLog.warn("P25 P1 frequency band replacing existing source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} with source:{} class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
-                    source, existing.getClass().getSimpleName(), existing.getIdentifier(), existing.getBaseFrequency(),
-                    existing.getChannelSpacing(), existing.getBandwidth(), existing.getTimeslotCount(), source,
-                    frequencyBand.getClass().getSimpleName(), base, spacing, frequencyBand.getBandwidth(),
-                    frequencyBand.getTimeslotCount());
-            }
-            else
-            {
-                mLog.warn("P25 P1 frequency band rejected source:{} class:{} id:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{} correctedBits:{} - conflicts with existing class:{} base:{}Hz spacing:{}Hz bandwidth:{}Hz slots:{}",
-                    source, frequencyBand.getClass().getSimpleName(), frequencyBand.getIdentifier(), base, spacing,
-                    frequencyBand.getBandwidth(), frequencyBand.getTimeslotCount(), getCorrectedBitCount(frequencyBand),
-                    existing.getClass().getSimpleName(), existing.getBaseFrequency(), existing.getChannelSpacing(), existing.getBandwidth(),
-                    existing.getTimeslotCount());
-                return;
-            }
-        }
-
-        mFrequencyBandMap.put(frequencyBand.getIdentifier(), frequencyBand);
-    }
-
-    private boolean isValidChannelSpacing(long spacing)
-    {
-        for(long validSpacing: VALID_CHANNEL_SPACINGS_HZ)
-        {
-            if(validSpacing == spacing)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private int getCorrectedBitCount(IFrequencyBand frequencyBand)
-    {
-        if(frequencyBand instanceof AbstractMessage message)
-        {
-            return message.getMessage().getCorrectedBitCount();
-        }
-
-        return Integer.MIN_VALUE;
-    }
-
-    private boolean matches(IFrequencyBand existing, IFrequencyBand candidate)
-    {
-        return existing.getBaseFrequency() == candidate.getBaseFrequency() &&
-            existing.getChannelSpacing() == candidate.getChannelSpacing() &&
-            existing.getBandwidth() == candidate.getBandwidth() &&
-            existing.getTimeslotCount() == candidate.getTimeslotCount();
     }
 
 }

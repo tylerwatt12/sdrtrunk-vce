@@ -139,6 +139,48 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         return mChannelActivityModel;
     }
 
+    public void setChannelActivityEnabled(boolean enabled)
+    {
+        if(mChannelActivityModel.isEnabled() == enabled)
+        {
+            return;
+        }
+
+        mChannelActivityModel.setEnabled(enabled);
+
+        if(enabled)
+        {
+            seedChannelActivityModel();
+        }
+    }
+
+    private void seedChannelActivityModel()
+    {
+        Map<Channel,ProcessingChain> processingChains;
+
+        mLock.lock();
+
+        try
+        {
+            processingChains = new HashMap<>(mProcessingChainsMap);
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        for(Map.Entry<Channel,ProcessingChain> entry: processingChains.entrySet())
+        {
+            ProcessingChain processingChain = entry.getValue();
+
+            if(processingChain != null && processingChain.getChannelState() != null)
+            {
+                mChannelActivityModel.channelStarted(entry.getKey(),
+                    processingChain.getChannelState().getChannelMetadata());
+            }
+        }
+    }
+
     /**
      * Indicates if a processing chain is constructed for the channel and that
      * the processing chain is currently processing.
