@@ -21,6 +21,7 @@ package io.github.dsheirer.source.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
@@ -50,6 +51,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     /**
      * List of frequencies for this configuration
      */
+    @JacksonXmlProperty(isAttribute = false, localName = "frequency")
     public List<Long> getFrequencies()
     {
         return mFrequencies;
@@ -154,6 +156,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
      * Preferred tuner to use for this configuration.
      * @return tuner name or null
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "preferred_tuner")
     public String getPreferredTuner()
     {
         return mPreferredTuner;
@@ -199,6 +202,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
      *
      * @return channel rotation delay in milliseconds.
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "frequency_rotation_delay")
     public int getFrequencyRotationDelay()
     {
         return mFrequencyRotationDelay;

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PRG="$0"
+while [ -h "$PRG" ]; do
+    DIR="$(cd -P "$(dirname "$PRG")" >/dev/null 2>&1 && pwd)"
+    PRG="$(readlink "$PRG")"
+    case "$PRG" in
+        /*) ;;
+        *) PRG="$DIR/$PRG" ;;
+    esac
+done
+
+SCRIPT_DIR="$(cd -P "$(dirname "$PRG")" >/dev/null 2>&1 && pwd)"
+APP_HOME="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+
+if [ -x "$APP_HOME/runtime/bin/java" ]; then
+    JAVACMD="$APP_HOME/runtime/bin/java"
+elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVACMD="$JAVA_HOME/bin/java"
+else
+    JAVACMD="java"
+fi
+
+exec "$JAVACMD" -classpath "$APP_HOME/lib/*" \
+    io.github.dsheirer.database.migration.XmlPlaylistToSqliteMigrator "$@"

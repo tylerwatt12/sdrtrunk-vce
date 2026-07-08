@@ -20,6 +20,7 @@
 package io.github.dsheirer.alias.id.talkgroup;
 
 
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
@@ -58,6 +59,7 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
         return false;
     }
 
+    @JacksonXmlProperty(isAttribute = true, localName = "min")
     public int getMinTalkgroup()
     {
         return mMinTalkgroup;
@@ -69,6 +71,7 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
         updateValueProperty();
     }
 
+    @JacksonXmlProperty(isAttribute = true, localName = "max")
     public int getMaxTalkgroup()
     {
         return mMaxTalkgroup;
@@ -80,6 +83,7 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
         updateValueProperty();
     }
 
+    @JacksonXmlProperty(isAttribute = true, localName = "protocol")
     public Protocol getProtocol()
     {
         return mProtocol;

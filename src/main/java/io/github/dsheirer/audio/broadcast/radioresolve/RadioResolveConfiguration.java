@@ -18,8 +18,10 @@ import java.net.InetAddress;
 import java.time.ZoneId;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -30,12 +32,16 @@ import javafx.beans.property.StringProperty;
 public class RadioResolveConfiguration extends BroadcastConfiguration
 {
     public static final String PRODUCTION_ENDPOINT = "https://calls.radioresolve.com";
+    public static final int DEFAULT_CONCURRENT_UPLOADS = 4;
+    public static final int MIN_CONCURRENT_UPLOADS = 1;
+    public static final int MAX_CONCURRENT_UPLOADS = 16;
 
     private StringProperty mApiKey = new SimpleStringProperty();
     private StringProperty mNodeName = new SimpleStringProperty(getDefaultNodeName());
     private StringProperty mNodeTimezone = new SimpleStringProperty(getDefaultNodeTimezone());
     private BooleanProperty mIgnoreCertificateErrors = new SimpleBooleanProperty(false);
     private ObjectProperty<Mode> mMode = new SimpleObjectProperty<>(Mode.CALLS_AND_METADATA);
+    private IntegerProperty mConcurrentUploads = new SimpleIntegerProperty(DEFAULT_CONCURRENT_UPLOADS);
 
     /**
      * RadioResolve publish mode.  Metadata is always required.
@@ -108,6 +114,11 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return mMode;
     }
 
+    public IntegerProperty concurrentUploadsProperty()
+    {
+        return mConcurrentUploads;
+    }
+
     @Override
     public void setHost(String host)
     {
@@ -174,6 +185,16 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return getMode() == Mode.CALLS_AND_METADATA;
     }
 
+    public int getConcurrentUploads()
+    {
+        return clampConcurrentUploads(mConcurrentUploads.get());
+    }
+
+    public void setConcurrentUploads(int concurrentUploads)
+    {
+        mConcurrentUploads.set(clampConcurrentUploads(concurrentUploads));
+    }
+
     @Override
     public BroadcastServerType getBroadcastServerType()
     {
@@ -191,6 +212,7 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         copy.setNodeTimezone(getNodeTimezone());
         copy.setIgnoreCertificateErrors(getIgnoreCertificateErrors());
         copy.setMode(getMode());
+        copy.setConcurrentUploads(getConcurrentUploads());
         copy.setMaximumRecordingAge(getMaximumRecordingAge());
         copy.setEnabled(isEnabled());
         return copy;
@@ -233,5 +255,10 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         }
 
         return trimmed;
+    }
+
+    private static int clampConcurrentUploads(int concurrentUploads)
+    {
+        return Math.min(MAX_CONCURRENT_UPLOADS, Math.max(MIN_CONCURRENT_UPLOADS, concurrentUploads));
     }
 }

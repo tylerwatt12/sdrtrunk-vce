@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.database;
 
+import io.github.dsheirer.database.migration.XmlPlaylistToSqliteMigrator;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
@@ -36,6 +37,7 @@ public final class SdrTrunkDatabaseStartup
 
     public static void prepare(UserPreferences userPreferences) throws IOException, SQLException
     {
+        XmlPlaylistToSqliteMigrator.migrateDefaultIfDatabaseMissing(userPreferences);
         prepareGlobalDatabase(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         prepareVaultDatabase(EncryptionKeyVaultPath.getVaultPath(userPreferences));
     }

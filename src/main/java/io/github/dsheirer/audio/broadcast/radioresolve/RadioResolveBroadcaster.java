@@ -82,7 +82,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public static final String TEST_PATH = "/api/node/test";
     public static final String AGENT_VERSION = "sdrtrunk-radioresolve";
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
-    private static final int MAX_IN_FLIGHT_UPLOADS = 4;
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
     private static final long MISSING_GUID_WARNING_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
     private static final long[] RETRY_BACKOFF_MS = {5000, 15000, 30000, 60000, 120000};
@@ -367,8 +366,9 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     private void processRecordingQueue()
     {
         ageOffInvalidRecordings();
+        int maximumConcurrentUploads = getBroadcastConfiguration().getConcurrentUploads();
 
-        while(connected() && mInFlightUploads.get() < MAX_IN_FLIGHT_UPLOADS)
+        while(connected() && mInFlightUploads.get() < maximumConcurrentUploads)
         {
             PendingUpload pendingUpload = getNextReadyUpload();
 

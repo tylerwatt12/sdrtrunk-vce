@@ -40,6 +40,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
     private TextField mNodeNameTextField;
     private ComboBox<String> mNodeTimezoneComboBox;
     private IntegerTextField mMaxAgeTextField;
+    private IntegerTextField mConcurrentUploadsTextField;
     private ComboBox<RadioResolveConfiguration.Mode> mModeComboBox;
     private CheckBox mIgnoreCertificateErrorsCheckBox;
 
@@ -58,6 +59,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         getNodeNameTextField().setDisable(item == null);
         getNodeTimezoneComboBox().setDisable(item == null);
         getMaxAgeTextField().setDisable(item == null);
+        getConcurrentUploadsTextField().setDisable(item == null);
         getModeComboBox().setDisable(item == null);
         getIgnoreCertificateErrorsCheckBox().setDisable(item == null);
 
@@ -68,6 +70,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             getNodeNameTextField().setText(item.getNodeName());
             getNodeTimezoneComboBox().getSelectionModel().select(getValidTimezone(item.getNodeTimezone()));
             getMaxAgeTextField().set((int)(item.getMaximumRecordingAge() / 1000));
+            getConcurrentUploadsTextField().set(item.getConcurrentUploads());
             getModeComboBox().getSelectionModel().select(item.getMode());
             getIgnoreCertificateErrorsCheckBox().setSelected(item.getIgnoreCertificateErrors());
         }
@@ -78,6 +81,7 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             getNodeNameTextField().setText(null);
             getNodeTimezoneComboBox().getSelectionModel().clearSelection();
             getMaxAgeTextField().set(0);
+            getConcurrentUploadsTextField().set(RadioResolveConfiguration.DEFAULT_CONCURRENT_UPLOADS);
             getModeComboBox().getSelectionModel().select(RadioResolveConfiguration.Mode.CALLS_AND_METADATA);
             getIgnoreCertificateErrorsCheckBox().setSelected(false);
         }
@@ -102,6 +106,9 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             getItem().setNodeTimezone(getValidTimezone(getNodeTimezoneComboBox().getSelectionModel().getSelectedItem()));
             Integer maxAge = getMaxAgeTextField().get();
             getItem().setMaximumRecordingAge((maxAge != null ? maxAge : 0) * 1000L);
+            Integer concurrentUploads = getConcurrentUploadsTextField().get();
+            getItem().setConcurrentUploads(concurrentUploads != null && concurrentUploads > 0 ?
+                concurrentUploads : RadioResolveConfiguration.DEFAULT_CONCURRENT_UPLOADS);
             getItem().setMode(getModeComboBox().getSelectionModel().getSelectedItem());
             getItem().setIgnoreCertificateErrors(getIgnoreCertificateErrorsCheckBox().isSelected());
         }
@@ -164,6 +171,10 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             addLabel("Max Recording Age (seconds)", ++row);
             GridPane.setConstraints(getMaxAgeTextField(), 1, row);
             mEditorPane.getChildren().add(getMaxAgeTextField());
+
+            addLabel("Concurrent Uploads", ++row);
+            GridPane.setConstraints(getConcurrentUploadsTextField(), 1, row);
+            mEditorPane.getChildren().add(getConcurrentUploadsTextField());
 
             addLabel("Ignore Certificate Errors", ++row);
             GridPane.setConstraints(getIgnoreCertificateErrorsCheckBox(), 1, row);
@@ -265,6 +276,18 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         }
 
         return mMaxAgeTextField;
+    }
+
+    private IntegerTextField getConcurrentUploadsTextField()
+    {
+        if(mConcurrentUploadsTextField == null)
+        {
+            mConcurrentUploadsTextField = new IntegerTextField();
+            mConcurrentUploadsTextField.setDisable(true);
+            mConcurrentUploadsTextField.textProperty().addListener(mEditorModificationListener);
+        }
+
+        return mConcurrentUploadsTextField;
     }
 
     private ComboBox<RadioResolveConfiguration.Mode> getModeComboBox()

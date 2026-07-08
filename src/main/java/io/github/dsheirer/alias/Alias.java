@@ -19,6 +19,8 @@
 package io.github.dsheirer.alias;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
@@ -52,6 +54,7 @@ import javafx.util.Callback;
  * Alias provides an aliasing (e.g. name, color, etc) container that is linked to multiple alias identifiers and
  * provides a corresponding set of actions related to the alias.
  */
+@JacksonXmlRootElement(localName = "alias")
 public class Alias
 {
     private BooleanProperty mRecordable = new SimpleBooleanProperty();
@@ -216,6 +219,7 @@ public class Alias
     /**
      * Alias name
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "name")
     public String getName()
     {
         return mName.get();
@@ -229,6 +233,7 @@ public class Alias
     /**
      * Alias name
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "stream_talkgroup_alias")
     public StreamAsTalkgroup getStreamTalkgroupAlias()
     {
         return mStreamTalkgroupAlias.get();
@@ -246,6 +251,7 @@ public class Alias
     /**
      * Alias list name for the alias list that this alias belongs to
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "list")
     public String getAliasListName()
     {
         return mAliasListName.get();
@@ -277,6 +283,7 @@ public class Alias
     /**
      * Grouping tag for this alias.
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "group")
     public String getGroup()
     {
         return mGroup.get();
@@ -298,6 +305,7 @@ public class Alias
     /**
      * Color (RGBA) value to use for this alias
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "color")
     public int getColor()
     {
         return mColor.get();
@@ -326,6 +334,7 @@ public class Alias
     /**
      * Icon name of the icon to use for this alias.
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "iconName")
     public String getIconName()
     {
         return mIconName.get();
@@ -339,6 +348,7 @@ public class Alias
     /**
      * List of alias identifiers for this alias.
      */
+    @JacksonXmlProperty(isAttribute = false, localName = "id")
     public List<AliasID> getAliasIdentifiers()
     {
         return mAliasIDs;
@@ -348,9 +358,12 @@ public class Alias
     {
         mAliasIDs.clear();
 
-        for(AliasID aliasID : id)
+        if(id != null)
         {
-            addAliasID(aliasID);
+            for(AliasID aliasID : id)
+            {
+                addAliasID(aliasID);
+            }
         }
     }
 
@@ -380,6 +393,7 @@ public class Alias
     /**
      * List of alias actions associated with this alias.
      */
+    @JacksonXmlProperty(isAttribute = false, localName = "action")
     public List<AliasAction> getAliasActions()
     {
         return mAliasActions;
@@ -387,7 +401,7 @@ public class Alias
 
     public void setAliasActions(List<AliasAction> actions)
     {
-        mAliasActions.setAll(actions);
+        mAliasActions.setAll(actions != null ? actions : List.of());
     }
 
     /**

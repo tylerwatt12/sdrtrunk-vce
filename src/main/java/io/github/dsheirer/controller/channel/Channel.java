@@ -18,7 +18,9 @@
  */
 package io.github.dsheirer.controller.channel;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.controller.config.Configuration;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -532,6 +534,7 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      *
      * @return true if this channel should be auto-started on application startup
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "enabled")
     public boolean getAutoStart()
     {
         return mAutoStart.get();
@@ -551,6 +554,7 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      *
      * @param autoStart
      */
+    @JsonAlias("enabled")
     public void setAutoStart(boolean autoStart)
     {
         mAutoStart.set(autoStart);
@@ -572,6 +576,8 @@ public class Channel extends Configuration implements Listener<SourceEvent>
      *
      * @param order
      */
+    @JsonAlias("order")
+    @JacksonXmlProperty(isAttribute = true, localName = "order")
     public void setAutoStartOrder(Integer order)
     {
         if(order != null)

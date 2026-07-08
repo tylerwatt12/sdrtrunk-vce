@@ -18,6 +18,7 @@
 package io.github.dsheirer.alias.id.priority;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 
@@ -64,6 +65,7 @@ public class Priority extends AliasID
         return mPriority == DO_NOT_MONITOR;
     }
 
+    @JacksonXmlProperty(isAttribute = true, localName = "priority")
     public int getPriority()
     {
         return mPriority;

@@ -98,10 +98,19 @@ public class BroadcastStatusPanel extends JPanel
             if(value instanceof BroadcastServerType broadcastServerType)
             {
                 component.setText(broadcastServerType.toString());
-                Icon icon = new Icon("empty", broadcastServerType.getIconPath());
-                ImageIcon imageIcon = icon.getIcon();
-                ImageIcon scaledIcon = IconModel.getScaledIcon(imageIcon, 13);
-                component.setIcon(scaledIcon);
+                String iconPath = broadcastServerType.getIconPath();
+
+                if(iconPath != null && !iconPath.isBlank())
+                {
+                    Icon icon = new Icon("empty", iconPath);
+                    ImageIcon imageIcon = icon.getIcon();
+                    ImageIcon scaledIcon = IconModel.getScaledIcon(imageIcon, 13);
+                    component.setIcon(scaledIcon);
+                }
+                else
+                {
+                    component.setIcon(null);
+                }
             }
             else
             {

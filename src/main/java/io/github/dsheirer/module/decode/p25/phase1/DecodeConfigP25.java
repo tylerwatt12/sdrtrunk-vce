@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -54,6 +55,7 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
         return mLearnAnnouncedControlChannels;
     }
 
+    @JsonAlias({"learn_control_channels", "learnControlChannels"})
     public void setLearnAnnouncedControlChannels(boolean learn)
     {
         mLearnAnnouncedControlChannels = learn;
