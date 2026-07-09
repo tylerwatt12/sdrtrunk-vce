@@ -164,7 +164,7 @@ class P25ActivityLogMapperTest
             new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x348, 2, 1, null, true),
             List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821",
                 856137500L, null, false, 1)),
-            List.of(new P25NetworkConfigurationSnapshot.NeighborSite(0x348, 0x348, 2, 2,
+            List.of(new P25NetworkConfigurationSnapshot.NeighborSite(0x348, null, 2, 2,
                 null, "00-0661", 855137500L, null, "ACTIVE")),
             List.of(new P25NetworkConfigurationSnapshot.FrequencyBand(0, false,
                 851006250L, 12500, 6250L, -45000000L, 1)),

@@ -25,7 +25,7 @@ import java.util.List;
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 8;
+    private static final int SCHEMA_VERSION = 9;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     private static final int NULL_TIMESLOT = -1;
 
@@ -194,7 +194,6 @@ public class P25ActivityLogSchema
                     guid TEXT NOT NULL,
                     neighbor_key TEXT NOT NULL,
                     system_id INTEGER,
-                    nac INTEGER,
                     rfss INTEGER,
                     site INTEGER,
                     lra INTEGER,
@@ -322,9 +321,9 @@ public class P25ActivityLogSchema
             "primary_control_seen", "alternate_control_seen", "traffic_seen"),
         new SqliteSchemaValidator.Table("site_frequency_band", "guid", "band", "first_seen_ms", "last_seen_ms",
             "seen_count", "tdma", "base_hz", "bandwidth", "spacing_hz", "transmit_offset_hz", "timeslots"),
-        new SqliteSchemaValidator.Table("site_neighbor", "guid", "neighbor_key", "system_id", "nac", "rfss",
-            "site", "lra", "channel_descriptor", "downlink_hz", "uplink_hz", "status", "first_seen_ms",
-            "last_seen_ms", "seen_count"),
+        new SqliteSchemaValidator.Table("site_neighbor", "guid", "neighbor_key", "system_id", "rfss", "site",
+            "lra", "channel_descriptor", "downlink_hz", "uplink_hz", "status", "first_seen_ms", "last_seen_ms",
+            "seen_count"),
         new SqliteSchemaValidator.Table("site_patch_group", "guid", "patch_group", "version", "first_seen_ms",
             "last_seen_ms", "seen_count"),
         new SqliteSchemaValidator.Table("site_patch_group_talkgroup", "guid", "patch_group", "talkgroup_id",
@@ -665,12 +664,11 @@ public class P25ActivityLogSchema
 
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO site_neighbor (
-                    guid, neighbor_key, system_id, nac, rfss, site, lra, channel_descriptor, downlink_hz,
+                    guid, neighbor_key, system_id, rfss, site, lra, channel_descriptor, downlink_hz,
                     uplink_hz, status, first_seen_ms, last_seen_ms, seen_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(guid, neighbor_key) DO UPDATE SET
                     system_id = coalesce(excluded.system_id, site_neighbor.system_id),
-                    nac = coalesce(excluded.nac, site_neighbor.nac),
                     rfss = coalesce(excluded.rfss, site_neighbor.rfss),
                     site = coalesce(excluded.site, site_neighbor.site),
                     lra = coalesce(excluded.lra, site_neighbor.lra),
@@ -685,16 +683,15 @@ public class P25ActivityLogSchema
                 statement.setString(1, snapshot.guid());
                 statement.setString(2, key);
                 setInteger(statement, 3, neighbor.system());
-                setInteger(statement, 4, neighbor.nac());
-                setInteger(statement, 5, neighbor.rfss());
-                setInteger(statement, 6, neighbor.site());
-                setInteger(statement, 7, neighbor.lra());
-                statement.setString(8, neighbor.channel());
-                setLong(statement, 9, neighbor.downlink());
-                setLong(statement, 10, neighbor.uplink());
-                statement.setString(11, neighbor.status());
+                setInteger(statement, 4, neighbor.rfss());
+                setInteger(statement, 5, neighbor.site());
+                setInteger(statement, 6, neighbor.lra());
+                statement.setString(7, neighbor.channel());
+                setLong(statement, 8, neighbor.downlink());
+                setLong(statement, 9, neighbor.uplink());
+                statement.setString(10, neighbor.status());
+                statement.setLong(11, snapshot.observedAtEpochMilliseconds());
                 statement.setLong(12, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(13, snapshot.observedAtEpochMilliseconds());
                 statement.executeUpdate();
             }
         }

@@ -138,7 +138,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("8", resultSet.getString(1));
+                assertEquals("9", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA user_version"))
@@ -161,6 +161,7 @@ class P25ActivityLogWriterTest
             assertColumnAbsent(connection, "activity_event", "channel_name");
             assertColumnAbsent(connection, "activity_event", "decoder");
             assertColumnAbsent(connection, "radio_context", "last_snapshot_hash");
+            assertColumnAbsent(connection, "site_neighbor", "nac");
         }
     }
 
@@ -216,8 +217,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogRecords.SiteSnapshot snapshot = siteSnapshot(1000L);
-            P25ActivityLogSchema.insertSite(connection, snapshot);
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(2000L));
 
             assertCount(connection, "site_snapshot", 1);
@@ -231,6 +231,13 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("SELECT seen_count FROM site_snapshot"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(2, resultSet.getInt("seen_count"));
+            }
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("SELECT seen_count FROM site_neighbor"))
             {
                 assertTrue(resultSet.next());
                 assertEquals(2, resultSet.getInt("seen_count"));

@@ -640,7 +640,7 @@ public class P25P1NetworkConfigurationMonitor
         AMBTCAdjacentStatusBroadcast adjacentStatusBroadcast)
     {
         return new P25NetworkConfigurationSnapshot.NeighborSite(intValue(adjacentStatusBroadcast.getSystem()),
-            intValue(adjacentStatusBroadcast.getNAC()), intValue(adjacentStatusBroadcast.getRfss()),
+            null, intValue(adjacentStatusBroadcast.getRfss()),
             intValue(adjacentStatusBroadcast.getSite()), intValue(adjacentStatusBroadcast.getLocationRegistrationArea()),
             channelName(adjacentStatusBroadcast.getChannel()), downlink(adjacentStatusBroadcast.getChannel()),
             uplink(adjacentStatusBroadcast.getChannel()), null);
@@ -668,7 +668,7 @@ public class P25P1NetworkConfigurationMonitor
         AdjacentStatusBroadcast adjacentStatusBroadcast)
     {
         return new P25NetworkConfigurationSnapshot.NeighborSite(intValue(adjacentStatusBroadcast.getSystem()),
-            intValue(adjacentStatusBroadcast.getNAC()), intValue(adjacentStatusBroadcast.getRfss()),
+            null, intValue(adjacentStatusBroadcast.getRfss()),
             intValue(adjacentStatusBroadcast.getSite()), intValue(adjacentStatusBroadcast.getLocationRegistrationArea()),
             channelName(adjacentStatusBroadcast.getChannel()), downlink(adjacentStatusBroadcast.getChannel()),
             uplink(adjacentStatusBroadcast.getChannel()), String.valueOf(adjacentStatusBroadcast.getSiteFlags()));
@@ -957,7 +957,6 @@ public class P25P1NetworkConfigurationMonitor
                         {
                             AMBTCAdjacentStatusBroadcast ambtc = mAMBTCNeighborSites.get(site);
                             sb.append("  SYSTEM:").append(format(ambtc.getSystem(), 3));
-                            sb.append(" NAC:").append(format(ambtc.getNAC(), 3));
                             sb.append(" RFSS:").append(format(ambtc.getRfss(), 2));
                             sb.append(" SITE:").append(format(ambtc.getSite(), 2));
                             sb.append(" LRA:").append(format(ambtc.getLocationRegistrationArea(), 2));
@@ -992,7 +991,6 @@ public class P25P1NetworkConfigurationMonitor
                         {
                             AdjacentStatusBroadcast asb = mTSBKNeighborSites.get(site);
                             sb.append("  SYSTEM:").append(format(asb.getSystem(), 3));
-                            sb.append(" NAC:").append(format(asb.getNAC(), 3));
                             sb.append(" RFSS:").append(format(asb.getRfss(), 2));
                             sb.append(" SITE:").append(format(asb.getSite(), 2));
                             sb.append(" LRA:").append(format(asb.getLocationRegistrationArea(), 2));
