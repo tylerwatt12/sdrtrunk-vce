@@ -72,8 +72,13 @@ public class StatusBox extends HBox
         ProgressBar cpuIndicator = new ProgressBar();
         cpuIndicator.progressProperty().bind(mResourceMonitor.cpuPercentageProperty());
         cpuIndicator.disableProperty().bind(mResourceMonitor.cpuAvailableProperty().not());
-        cpuIndicator.setTooltip(new Tooltip("Java process CPU usage. Disabled if the CPU loading is not available from the OS"));
+        cpuIndicator.setTooltip(new Tooltip("Java process CPU usage"));
         getChildren().add(cpuIndicator);
+
+        Label cpuValueLabel = new Label();
+        cpuValueLabel.textProperty().bind(mResourceMonitor.cpuLabelProperty());
+        cpuValueLabel.setAlignment(Pos.CENTER_RIGHT);
+        getChildren().add(cpuValueLabel);
 
         Label memoryLabel = new Label("Allocated Heap:");
         memoryLabel.setAlignment(Pos.CENTER_RIGHT);
@@ -127,6 +132,17 @@ public class StatusBox extends HBox
         recordingsSizeLabel.textProperty().bind(mResourceMonitor.fileSizeRecordingsProperty());
         recordingsSizeLabel.setAlignment(Pos.CENTER_RIGHT);
         getChildren().add(recordingsSizeLabel);
+
+        Label databaseLabel = new Label("Database:");
+        databaseLabel.setPadding(new Insets(0, 0, 0, 10));
+        databaseLabel.setAlignment(Pos.CENTER_RIGHT);
+        getChildren().add(databaseLabel);
+
+        Label databaseSizeLabel = new Label();
+        databaseSizeLabel.textProperty().bind(mResourceMonitor.fileSizeDatabaseProperty());
+        databaseSizeLabel.setAlignment(Pos.CENTER_RIGHT);
+        databaseSizeLabel.setTooltip(new Tooltip("SQLite database size on disk, including WAL and shared-memory side files"));
+        getChildren().add(databaseSizeLabel);
 
         if(mVaultService != null)
         {

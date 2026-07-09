@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.monitor;
 
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.util.ThreadPool;
@@ -65,6 +66,7 @@ public class ResourceMonitor
     private LongProperty mMemoryUsed = new SimpleLongProperty();
     private DoubleProperty mJavaMemoryUsedPercentage = new SimpleDoubleProperty();
     private DoubleProperty mSystemMemoryUsedPercentage = new SimpleDoubleProperty();
+    private StringProperty mCpuLabel = new SimpleStringProperty("n/a");
     private StringProperty mMemoryAllocatedLabel = new SimpleStringProperty();
     private StringProperty mMemoryUsedLabel = new SimpleStringProperty();
     private DoubleProperty mCpuPercentage = new SimpleDoubleProperty();
@@ -73,7 +75,11 @@ public class ResourceMonitor
     private DoubleProperty mDirectoryUsePercentRecordings = new SimpleDoubleProperty();
     private StringProperty mFileSizeEventLogs = new SimpleStringProperty();
     private StringProperty mFileSizeRecordings = new SimpleStringProperty();
+    private StringProperty mFileSizeDatabase = new SimpleStringProperty("0 bytes");
     private OperatingSystemMXBean mOperatingSystemMXBean;
+    private com.sun.management.OperatingSystemMXBean mExtendedOperatingSystemMXBean;
+    private long mLastProcessCpuTimeNanos = -1;
+    private long mLastCpuSampleNanos = -1;
 
     /**
      * Constructs an instance
@@ -85,6 +91,11 @@ public class ResourceMonitor
         try
         {
             mOperatingSystemMXBean = ManagementFactory.getOperatingSystemMXBean();
+
+            if(mOperatingSystemMXBean instanceof com.sun.management.OperatingSystemMXBean extendedOperatingSystemMXBean)
+            {
+                mExtendedOperatingSystemMXBean = extendedOperatingSystemMXBean;
+            }
         }
         catch(Exception e)
         {
@@ -133,15 +144,8 @@ public class ResourceMonitor
      */
     private void updateCpuMemory()
     {
-        double cpuLoadScaled = 0.0;
-
-        if(mOperatingSystemMXBean != null)
-        {
-            double load = mOperatingSystemMXBean.getSystemLoadAverage();
-            cpuLoadScaled = load / mOperatingSystemMXBean.getAvailableProcessors();
-        }
-
-        final double loadFinal = cpuLoadScaled;
+        final double cpuLoad = getProcessCpuLoad();
+        final boolean cpuAvailable = !Double.isNaN(cpuLoad);
 
         Platform.runLater(() -> {
             long memoryAllocated = Runtime.getRuntime().totalMemory();
@@ -155,9 +159,44 @@ public class ResourceMonitor
                     FileUtils.byteCountToDisplaySize(mMemoryTotal.get()));
             mMemoryUsedLabel.set(FileUtils.byteCountToDisplaySize(memoryUsed) + " / " +
                     FileUtils.byteCountToDisplaySize(memoryAllocated));
-            mCpuPercentage.set(loadFinal > 0 ? loadFinal : 0);
-            mCpuAvailable.set(loadFinal >= 0);
+            mCpuPercentage.set(cpuAvailable ? cpuLoad : 0);
+            mCpuAvailable.set(cpuAvailable);
+            mCpuLabel.set(cpuAvailable ? String.format("%.0f%%", cpuLoad * 100.0) : "n/a");
         });
+    }
+
+    private double getProcessCpuLoad()
+    {
+        if(mExtendedOperatingSystemMXBean == null)
+        {
+            return Double.NaN;
+        }
+
+        long processCpuTime = mExtendedOperatingSystemMXBean.getProcessCpuTime();
+        long sampleTime = System.nanoTime();
+        double load = Double.NaN;
+
+        if(processCpuTime >= 0 && mLastProcessCpuTimeNanos >= 0 && mLastCpuSampleNanos >= 0)
+        {
+            long processDelta = processCpuTime - mLastProcessCpuTimeNanos;
+            long sampleDelta = sampleTime - mLastCpuSampleNanos;
+            int processors = Math.max(1, mOperatingSystemMXBean.getAvailableProcessors());
+
+            if(processDelta >= 0 && sampleDelta > 0)
+            {
+                load = (double)processDelta / (double)(sampleDelta * processors);
+            }
+        }
+
+        mLastProcessCpuTimeNanos = processCpuTime;
+        mLastCpuSampleNanos = sampleTime;
+
+        if(Double.isNaN(load))
+        {
+            load = mExtendedOperatingSystemMXBean.getProcessCpuLoad();
+        }
+
+        return load >= 0 ? Math.max(0.0, Math.min(1.0, load)) : Double.NaN;
     }
 
     /**
@@ -170,6 +209,7 @@ public class ResourceMonitor
 
         Path recordingPath = mUserPreferences.getDirectoryPreference().getDirectoryRecording();
         Path eventLogsPath = mUserPreferences.getDirectoryPreference().getDirectoryEventLog();
+        long databaseUsed = getDatabaseSize();
 
         try
         {
@@ -190,11 +230,36 @@ public class ResourceMonitor
                 mDirectoryUsePercentRecordings.set((double)recordingUsed / (double)recordingMax);
                 mFileSizeEventLogs.set(FileUtils.byteCountToDisplaySize(eventLogUsed));
                 mFileSizeRecordings.set(FileUtils.byteCountToDisplaySize(recordingUsed));
+                mFileSizeDatabase.set(FileUtils.byteCountToDisplaySize(databaseUsed));
             });
         }
         catch(IOException ioe)
         {
+            Platform.runLater(() -> mFileSizeDatabase.set(FileUtils.byteCountToDisplaySize(databaseUsed)));
             sLogSuppressor.error("Log Once", 1, "Unable to monitor file system - " + ioe.getMessage());
+        }
+    }
+
+    private long getDatabaseSize()
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
+        return size(database) + size(sidecar(database, "-wal")) + size(sidecar(database, "-shm"));
+    }
+
+    private static Path sidecar(Path database, String suffix)
+    {
+        return Path.of(database.toString() + suffix);
+    }
+
+    private static long size(Path path)
+    {
+        try
+        {
+            return Files.isRegularFile(path) ? Files.size(path) : 0;
+        }
+        catch(IOException e)
+        {
+            return 0;
         }
     }
 
@@ -235,6 +300,14 @@ public class ResourceMonitor
     }
 
     /**
+     * Formatted value property for the global SQLite database size on disk.
+     */
+    public StringProperty fileSizeDatabaseProperty()
+    {
+        return mFileSizeDatabase;
+    }
+
+    /**
      * CPU usage percentage.
      * @return usage in range 0.0 - 1.0
      */
@@ -250,6 +323,14 @@ public class ResourceMonitor
     public BooleanProperty cpuAvailableProperty()
     {
         return mCpuAvailable;
+    }
+
+    /**
+     * Formatted Java process CPU usage.
+     */
+    public StringProperty cpuLabelProperty()
+    {
+        return mCpuLabel;
     }
 
     /**

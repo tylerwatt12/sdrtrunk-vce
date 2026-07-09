@@ -29,9 +29,10 @@ import java.util.prefs.Preferences;
  */
 public class ApplicationPreference extends Preference
 {
-    private static final String PREFERENCE_KEY_CHANNEL_AUTO_DIAGNOSTIC_MONITORING = "automatic.diagnostic.monitoring";
     private static final String PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT = "channel.auto.start.timeout";
     private static final String PREFERENCE_KEY_STATS_LOGGING_ENABLED = "p25.activity.logging.enabled";
+    private static final String PREFERENCE_KEY_STATS_DETAILED_HISTORY_ENABLED =
+        "p25.activity.logging.detailed.history.enabled";
     private static final String PREFERENCE_KEY_STATS_LOGGING_RETENTION_DAYS =
         "p25.activity.logging.retention.days";
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
@@ -40,8 +41,8 @@ public class ApplicationPreference extends Preference
 
     private Preferences mPreferences = Preferences.userNodeForPackage(ApplicationPreference.class);
     private Integer mChannelAutoStartTimeout;
-    private Boolean mAutomaticDiagnosticMonitoring;
     private Boolean mStatsLoggingEnabled;
+    private Boolean mStatsDetailedHistoryEnabled;
     private Integer mStatsLoggingRetentionDays;
 
     /**
@@ -86,31 +87,6 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Indicates if automatic diagnostic monitoring is enabled.
-     * @return enabled.
-     */
-    public boolean isAutomaticDiagnosticMonitoring()
-    {
-        if(mAutomaticDiagnosticMonitoring == null)
-        {
-            mAutomaticDiagnosticMonitoring = mPreferences.getBoolean(PREFERENCE_KEY_CHANNEL_AUTO_DIAGNOSTIC_MONITORING, true);
-        }
-
-        return mAutomaticDiagnosticMonitoring;
-    }
-
-    /**
-     * Sets the enabled state for automatic diagnostic monitoring.
-     * @param enabled true to turn on monitoring.
-     */
-    public void setAutomaticDiagnosticMonitoring(boolean enabled)
-    {
-        mAutomaticDiagnosticMonitoring = enabled;
-        mPreferences.putBoolean(PREFERENCE_KEY_CHANNEL_AUTO_DIAGNOSTIC_MONITORING, enabled);
-        notifyPreferenceUpdated();
-    }
-
-    /**
      * Indicates if SDRTrunk stats should be logged to SQLite.
      */
     public boolean isStatsLoggingEnabled()
@@ -130,6 +106,30 @@ public class ApplicationPreference extends Preference
     {
         mStatsLoggingEnabled = enabled;
         mPreferences.putBoolean(PREFERENCE_KEY_STATS_LOGGING_ENABLED, enabled);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates if compact detailed event history rows should be kept in addition to summaries.
+     */
+    public boolean isStatsDetailedHistoryEnabled()
+    {
+        if(mStatsDetailedHistoryEnabled == null)
+        {
+            mStatsDetailedHistoryEnabled =
+                mPreferences.getBoolean(PREFERENCE_KEY_STATS_DETAILED_HISTORY_ENABLED, false);
+        }
+
+        return mStatsDetailedHistoryEnabled;
+    }
+
+    /**
+     * Enables or disables detailed event history rows for SDRTrunk stats logging.
+     */
+    public void setStatsDetailedHistoryEnabled(boolean enabled)
+    {
+        mStatsDetailedHistoryEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_DETAILED_HISTORY_ENABLED, enabled);
         notifyPreferenceUpdated();
     }
 

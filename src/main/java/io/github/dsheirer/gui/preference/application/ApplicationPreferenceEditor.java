@@ -43,7 +43,6 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import org.controlsfx.control.ToggleSwitch;
 
 
 /**
@@ -59,11 +58,12 @@ public class ApplicationPreferenceEditor extends HBox
     private Label mStatsMaintenanceStatusLabel;
     private Spinner<Integer> mTimeoutSpinner;
     private Spinner<Integer> mStatsLoggingRetentionSpinner;
-    private ToggleSwitch mAutomaticDiagnosticMonitoringToggle;
     private CheckBox mStatsLoggingCheckBox;
+    private CheckBox mStatsDetailedHistoryCheckBox;
     private Button mStatsMaintenanceButton;
     private Button mStatsShrinkButton;
     private Button mStatsCheckButton;
+    private Button mStatsResetButton;
 
     /**
      * Constructs an instance
@@ -94,16 +94,6 @@ public class ApplicationPreferenceEditor extends HBox
             mEditorPane.setHgap(3);
             mEditorPane.setPadding(new Insets(10, 10, 10, 10));
 
-            Label monitoringLabel = new Label("Application Health and Diagnostic Monitoring.");
-            mEditorPane.add(monitoringLabel, 0, row, 2, 1);
-            GridPane.setHalignment(getAutomaticDiagnosticMonitoringToggle(), HPos.RIGHT);
-            mEditorPane.add(getAutomaticDiagnosticMonitoringToggle(), 0, ++row);
-            mEditorPane.add(new Label("Enable Diagnostic Monitoring"), 1, row, 2, 1);
-
-            Separator separator = new Separator(Orientation.HORIZONTAL);
-            GridPane.setHgrow(separator, Priority.ALWAYS);
-            mEditorPane.add(separator, 0, ++row, 3, 1);
-
             mEditorPane.add(getAutoStartTimeoutLabel(), 0, ++row, 2, 1);
             GridPane.setHalignment(getTimeoutSpinner(), HPos.RIGHT);
             mEditorPane.add(getTimeoutSpinner(), 0, ++row);
@@ -116,6 +106,7 @@ public class ApplicationPreferenceEditor extends HBox
             Label statsLabel = new Label("Stats Server");
             mEditorPane.add(statsLabel, 0, ++row, 2, 1);
             mEditorPane.add(getStatsLoggingCheckBox(), 0, ++row, 3, 1);
+            mEditorPane.add(getStatsDetailedHistoryCheckBox(), 0, ++row, 3, 1);
 
             mEditorPane.add(new Label("Keep history for"), 0, ++row);
             GridPane.setHalignment(getStatsLoggingRetentionSpinner(), HPos.RIGHT);
@@ -126,7 +117,7 @@ public class ApplicationPreferenceEditor extends HBox
             mEditorPane.add(getStatsLoggingPathLabel(), 1, row, 2, 1);
 
             HBox maintenanceButtons = new HBox(8, getStatsMaintenanceButton(), getStatsShrinkButton(),
-                getStatsCheckButton());
+                getStatsCheckButton(), getStatsResetButton());
             mEditorPane.add(new Label("Database maintenance"), 0, ++row);
             mEditorPane.add(maintenanceButtons, 1, row, 2, 1);
 
@@ -183,6 +174,21 @@ public class ApplicationPreferenceEditor extends HBox
         }
 
         return mStatsLoggingCheckBox;
+    }
+
+    private CheckBox getStatsDetailedHistoryCheckBox()
+    {
+        if(mStatsDetailedHistoryCheckBox == null)
+        {
+            mStatsDetailedHistoryCheckBox = new CheckBox("Keep Detailed Event History");
+            mStatsDetailedHistoryCheckBox.setTooltip(new Tooltip(
+                "Stores individual compact event rows in addition to lifetime and hourly summaries."));
+            mStatsDetailedHistoryCheckBox.setSelected(mApplicationPreference.isStatsDetailedHistoryEnabled());
+            mStatsDetailedHistoryCheckBox.setOnAction(event ->
+                mApplicationPreference.setStatsDetailedHistoryEnabled(mStatsDetailedHistoryCheckBox.isSelected()));
+        }
+
+        return mStatsDetailedHistoryCheckBox;
     }
 
     /**
@@ -278,27 +284,43 @@ public class ApplicationPreferenceEditor extends HBox
         return mStatsCheckButton;
     }
 
-    /**
-     * Toggle switch to enable/disable automatic diagnostic monitoring.
-     */
-    private ToggleSwitch getAutomaticDiagnosticMonitoringToggle()
+    private Button getStatsResetButton()
     {
-        if(mAutomaticDiagnosticMonitoringToggle == null)
+        if(mStatsResetButton == null)
         {
-            mAutomaticDiagnosticMonitoringToggle = new ToggleSwitch();
-            mAutomaticDiagnosticMonitoringToggle.setSelected(mApplicationPreference.isAutomaticDiagnosticMonitoring());
-            mAutomaticDiagnosticMonitoringToggle.selectedProperty().addListener((observable, oldValue, enabled) ->
-                    mApplicationPreference.setAutomaticDiagnosticMonitoring(enabled));
+            mStatsResetButton = new Button("Reset Lifetime Stats");
+            mStatsResetButton.setTooltip(new Tooltip(
+                "Deletes Stats Server summaries and history. SDRTrunk configuration is not changed."));
+            mStatsResetButton.setOnAction(event -> {
+                Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
+                    "Reset deletes Stats Server summaries, buckets, detailed event rows, and P25 site history. " +
+                        "It does not change SDRTrunk channels, aliases, stream settings, or preferences. Continue?",
+                    ButtonType.YES, ButtonType.NO);
+                alert.setHeaderText("Reset Lifetime Stats");
+                Optional<ButtonType> result = alert.showAndWait();
+
+                if(result.isPresent() && result.get() == ButtonType.YES)
+                {
+                    runStatsMaintenance(P25ActivityLogMaintenance.Operation.RESET_STATS);
+                }
+            });
         }
 
-        return mAutomaticDiagnosticMonitoringToggle;
+        return mStatsResetButton;
     }
 
     private void updateStatsLoggingControlState()
     {
+        boolean loggingEnabled = getStatsLoggingCheckBox().isSelected();
+
+        if(mStatsDetailedHistoryCheckBox != null)
+        {
+            mStatsDetailedHistoryCheckBox.setDisable(!loggingEnabled);
+        }
+
         if(mStatsLoggingRetentionSpinner != null)
         {
-            mStatsLoggingRetentionSpinner.setDisable(!getStatsLoggingCheckBox().isSelected());
+            mStatsLoggingRetentionSpinner.setDisable(!loggingEnabled);
         }
     }
 
@@ -337,6 +359,7 @@ public class ApplicationPreferenceEditor extends HBox
         getStatsMaintenanceButton().setDisable(running);
         getStatsShrinkButton().setDisable(running);
         getStatsCheckButton().setDisable(running);
+        getStatsResetButton().setDisable(running);
 
         if(running)
         {

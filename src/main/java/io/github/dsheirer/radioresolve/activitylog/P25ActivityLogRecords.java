@@ -26,7 +26,8 @@ final class P25ActivityLogRecords
     enum ContextKind
     {
         TRUNKED_SITE,
-        CONVENTIONAL_P25
+        CONVENTIONAL_P25,
+        CONVENTIONAL_ANALOG
     }
 
     enum Action
@@ -56,12 +57,12 @@ final class P25ActivityLogRecords
         UNKNOWN
     }
 
-    record ActivityEvent(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String protocol,
-                         Action action, String eventType, String sourceRadioId, String targetId, String targetKind,
-                         Long frequencyHertz, String lcn, Integer timeslot, boolean encrypted,
+    record ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
+                         String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                         String targetKind, Long frequencyHertz, String lcn, Integer timeslot, boolean encrypted,
                          Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn, Integer systemId,
-                         Integer nac, Integer rfss, Integer site, String channelName, String talkerAlias,
-                         String dedupeKey)
+                         Integer nac, Integer rfss, Integer site, String channelName, String decoder,
+                         String talkerAlias, String dedupeKey)
         implements P25ActivityLogRecord
     {
     }

@@ -38,7 +38,6 @@ These features are already present in the primary build and should not be treate
   - node timezone dropdown
   - `Calls + Metadata` mode
   - `Metadata Only` mode
-  - redirect-to-file debug mode
 - Completed-call upload to `POST /api/node/upload-call`.
 - Completed-call payload includes:
   - call time and duration
@@ -64,7 +63,6 @@ These features are already present in the primary build and should not be treate
 - Shared P25 fact stabilizer/hysteresis helper.
 - Now Playing activity tabs and table column persistence.
 - Advanced P25 protected status display.
-- P25 protection CSV debug logger preference.
 - Audio mute persistence.
 - Audio playback queued-call counter.
 - Maximum queued playback calls preference.
@@ -254,23 +252,22 @@ Acceptance:
 - Clicking a row gives predictable data for that row or a clear unavailable/blank state.
 - Voice traffic does not cause rapid clearing/reverting.
 
-### 7. Temporary Debug Cleanup
+### 7. Debug And Diagnostic Boundaries
 
 Purpose:
 
-- Keep debug tools removable and avoid shipping accidental diagnostics in normal release builds.
+- Keep operator diagnostics intentional and avoid shipping accidental debug-only code paths.
 
-Current debug pieces:
+Current state:
 
-- P25 RF metadata debug harness.
-- P25 protection CSV debug logger option.
-- RF metadata status/debug tab.
+- The temporary Now Playing network debug feed and analyzer have been removed.
+- The P25 RF metadata debug harness and P25 protection CSV debug logger have been removed.
+- The RF metadata status tab remains as an optional operator view, not as a network/file debug harness.
 
-Required cleanup:
+Remaining cleanup:
 
-- Remove the P25 RF metadata debug harness after RF thresholds/source-boundary behavior is proven.
-- Keep the protection CSV logger as a user preference only if it remains useful.
-- Keep the RF metadata status tab only if it remains low-cost and operator-useful.
+- Keep the RF metadata status tab only while it remains low-cost and operator-useful.
+- Prefer short-lived external tools for future live-debug work, and remove them after validation.
 
 Acceptance:
 
@@ -292,17 +289,15 @@ Acceptance:
 2. Rewrite RF/site metadata ownership so only standard/control-channel paths publish site metadata.
 3. Add the RF publish-ready gate and stop heartbeat sends when control decode is stale/missing.
 4. Simplify stabilizer keys and remove traffic-chain fallback behavior.
-5. Remove the temporary P25 RF metadata debug harness after validation.
-6. Add bulk alias stream assignment.
-7. Add production call timing metadata.
-8. Finish Now Playing/detail-pane cleanup as needed.
+5. Add bulk alias stream assignment.
+6. Add production call timing metadata.
+7. Finish Now Playing/detail-pane cleanup as needed.
 
 ## Validation Checklist
 
 - Build compiles without SDRconnect classes.
 - Existing SDRTrunk stream types still work.
 - RadioResolve call upload succeeds, retries temporary failures, and handles auth failures clearly.
-- Redirect-to-file writes the same call/site payload shape that live upload would send.
 - Calls include stable GUID when available.
 - RF/site metadata does not upload until publish-ready.
 - RF/site metadata heartbeat repeats every 30 seconds only while the control channel is actively decoded.

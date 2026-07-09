@@ -35,7 +35,8 @@ public final class P25ActivityLogMaintenance
     {
         MAINTAIN,
         SHRINK,
-        CHECK
+        CHECK,
+        RESET_STATS
     }
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
@@ -55,11 +56,13 @@ public final class P25ActivityLogMaintenance
                 case MAINTAIN -> sb.append("Maintenance complete");
                 case SHRINK -> sb.append("Shrink complete");
                 case CHECK -> sb.append(checkOk() ? "Database check passed" : "Database check failed");
+                case RESET_STATS -> sb.append("Lifetime stats reset");
             }
 
             if(operation != Operation.CHECK)
             {
-                sb.append(". Deleted ").append(rowsDeleted).append(" expired row(s)");
+                sb.append(". Deleted ").append(rowsDeleted).append(operation == Operation.RESET_STATS ?
+                    " stats row(s)" : " expired row(s)");
             }
 
             sb.append(". DB ").append(size(databaseBytesBefore)).append(" -> ").append(size(databaseBytesAfter));
@@ -110,6 +113,13 @@ public final class P25ActivityLogMaintenance
                     P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_ms",
                         Long.toString(System.currentTimeMillis()));
                     P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_result", checkResult);
+                }
+                case RESET_STATS ->
+                {
+                    rowsDeleted = P25ActivityLogSchema.resetStats(connection);
+                    checkpoint(connection);
+                    optimize(connection);
+                    updateStatus(connection, "last_stats_reset_ms");
                 }
             }
         }

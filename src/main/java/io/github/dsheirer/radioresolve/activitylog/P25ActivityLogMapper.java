@@ -32,13 +32,13 @@ import java.util.HexFormat;
 import java.util.List;
 
 /**
- * Converts SDRTrunk P25 events into compact SQLite log records.
+ * Converts SDRTrunk activity events into compact SQLite log records.
  */
 class P25ActivityLogMapper
 {
     P25ActivityLogRecords.ActivityEvent map(IDecodeEvent event)
     {
-        if(event == null || event.getProtocol() != Protocol.APCO25)
+        if(event == null)
         {
             return null;
         }
@@ -46,9 +46,17 @@ class P25ActivityLogMapper
         IdentifierFacts facts = IdentifierFacts.from(event.getIdentifierCollection());
         IChannelDescriptor descriptor = event.getChannelDescriptor();
         Long frequency = frequency(descriptor, facts);
-        String channelDescriptor = descriptor != null ? descriptor.toString() : facts.channelDescriptor();
+        String channelDescriptor = firstNonBlank(descriptor != null ? descriptor.toString() : null,
+            facts.channelDescriptor(), facts.logicalChannelName());
         Integer timeslot = event.hasTimeslot() ? Integer.valueOf(event.getTimeslot()) : facts.timeslot();
         P25ActivityLogRecords.Action action = normalizeAction(event);
+        P25ActivityLogRecords.ContextKind contextKind = contextKind(event.getProtocol(), facts);
+
+        if(contextKind == null)
+        {
+            return null;
+        }
+
         long observedAt = Math.max(event.getTimeEnd(), event.getTimeStart());
 
         if(observedAt <= 0)
@@ -58,19 +66,18 @@ class P25ActivityLogMapper
 
         String lcn = channelDescriptor;
         String guid = blankToNull(facts.radresGuid());
+        String contextKey = contextKey(guid, event.getProtocol(), facts, frequency, contextKind);
 
-        if(guid == null)
+        if(contextKey == null)
         {
             return null;
         }
-
-        P25ActivityLogRecords.ContextKind contextKind = contextKind(facts);
 
         String dedupeKey = null;
         if(isHighChurnCallEvent(event.getEventType()) || action == P25ActivityLogRecords.Action.CONTINUE)
         {
             dedupeKey = String.join("|",
-                safe(guid),
+                safe(contextKey),
                 safe(action),
                 safe(frequency),
                 safe(timeslot),
@@ -81,11 +88,12 @@ class P25ActivityLogMapper
                 safe(facts.encryptionKeyId()));
         }
 
-        return new P25ActivityLogRecords.ActivityEvent(observedAt, guid, contextKind, event.getProtocol().name(),
-            action, event.getEventType().name(), facts.sourceId(), facts.targetId(), facts.targetForm(),
-            frequency, lcn, timeslot, facts.encrypted(), facts.encryptionAlgorithmId(), facts.encryptionKeyId(),
-            facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.channelName(),
-            facts.talkerAlias(), dedupeKey);
+        return new P25ActivityLogRecords.ActivityEvent(observedAt, contextKey, guid, contextKind,
+            event.getProtocol() != null ? event.getProtocol().name() : null, action,
+            event.getEventType() != null ? event.getEventType().name() : null, facts.sourceId(), facts.targetId(),
+            facts.targetForm(), frequency, lcn, timeslot, facts.encrypted(), facts.encryptionAlgorithmId(),
+            facts.encryptionKeyId(), facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(),
+            activityChannelName(contextKind, facts), facts.decoder(), facts.talkerAlias(), dedupeKey);
     }
 
     P25ActivityLogRecords.SiteSnapshot map(SiteMetadataEvent event)
@@ -265,7 +273,55 @@ class P25ActivityLogMapper
         return facts.frequencyHertz();
     }
 
-    private static P25ActivityLogRecords.ContextKind contextKind(IdentifierFacts facts)
+    private static String contextKey(String guid, Protocol protocol, IdentifierFacts facts, Long frequency,
+                                     P25ActivityLogRecords.ContextKind contextKind)
+    {
+        if(guid != null)
+        {
+            return "GUID:" + guid;
+        }
+
+        if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE)
+        {
+            String key = String.join(":",
+                safe(facts != null ? facts.wacn() : null),
+                safe(facts != null ? facts.systemId() : null),
+                safe(facts != null ? facts.rfss() : null),
+                safe(facts != null ? facts.site() : null));
+            return ":::".equals(key) ? null : "P25:" + key;
+        }
+
+        if(frequency != null && frequency > 0)
+        {
+            return contextKind.name() + ":" + protocolName(protocol, facts) + ":" + frequency;
+        }
+
+        String channelName = facts != null ? blankToNull(facts.configuredChannelName()) : null;
+        return channelName != null ? contextKind.name() + ":" + protocolName(protocol, facts) + ":" + channelName :
+            null;
+    }
+
+    private static String activityChannelName(P25ActivityLogRecords.ContextKind contextKind, IdentifierFacts facts)
+    {
+        if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE || facts == null)
+        {
+            return null;
+        }
+
+        return blankToNull(facts.configuredChannelName());
+    }
+
+    private static String protocolName(Protocol protocol, IdentifierFacts facts)
+    {
+        if(protocol != null && protocol != Protocol.UNKNOWN)
+        {
+            return protocol.name();
+        }
+
+        return facts != null && facts.decoder() != null ? facts.decoder() : "UNKNOWN";
+    }
+
+    private static P25ActivityLogRecords.ContextKind contextKind(Protocol protocol, IdentifierFacts facts)
     {
         String decoder = facts != null ? facts.decoder() : null;
 
@@ -279,8 +335,19 @@ class P25ActivityLogMapper
             return P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
         }
 
-        return facts != null && facts.hasTrunkedSiteIdentity() ?
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE : P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25;
+        if(protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2)
+        {
+            return facts != null && facts.hasTrunkedSiteIdentity() ?
+                P25ActivityLogRecords.ContextKind.TRUNKED_SITE : P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25;
+        }
+
+        if(protocol == Protocol.NBFM || protocol == Protocol.AM || isDecoder(decoder, DecoderType.NBFM) ||
+            isDecoder(decoder, DecoderType.AM))
+        {
+            return P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
+        }
+
+        return null;
     }
 
     private static boolean isDecoder(String value, DecoderType decoderType)
@@ -327,11 +394,30 @@ class P25ActivityLogMapper
         return value != null && !value.isBlank() ? value : null;
     }
 
+    private static String firstNonBlank(String... values)
+    {
+        if(values != null)
+        {
+            for(String value: values)
+            {
+                String nonBlank = blankToNull(value);
+
+                if(nonBlank != null)
+                {
+                    return nonBlank;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private record IdentifierFacts(String sourceId, String sourceForm, String targetId, String targetForm,
-                                   Long frequencyHertz, String channelDescriptor, boolean encrypted,
+                                   Long frequencyHertz, String channelDescriptor, String logicalChannelName,
+                                   boolean encrypted,
                                    Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn,
                                    Integer systemId, Integer nac, Integer rfss, Integer site, String radresGuid,
-                                   String channelName, String decoder, String talkerAlias, Integer timeslot)
+                                   String configuredChannelName, String decoder, String talkerAlias, Integer timeslot)
     {
         static IdentifierFacts from(IdentifierCollection identifiers)
         {
@@ -344,14 +430,14 @@ class P25ActivityLogMapper
 
             return new IdentifierFacts(Form.RADIO.name().equals(sourceForm) ? value(source) : null, sourceForm,
                 value(target), form(target), longValue(first(identifiers, Form.CHANNEL_FREQUENCY)),
-                value(first(identifiers, Form.CHANNEL_DESCRIPTOR)),
+                value(first(identifiers, Form.CHANNEL_DESCRIPTOR)), value(first(identifiers, Form.CHANNEL_NAME)),
                 encryptionIdentifier != null && encryptionIdentifier.isEncrypted(),
                 encryptionKey != null && encryptionKey.isEncrypted() ? encryptionKey.getAlgorithm() : null,
                 encryptionKey != null && encryptionKey.isEncrypted() ? encryptionKey.getKey() : null,
                 intValue(first(identifiers, Form.WACN)), intValue(first(identifiers, Form.SYSTEM)),
                 intValue(first(identifiers, Form.NETWORK_ACCESS_CODE)),
                 intValue(first(identifiers, Form.RF_SUBSYSTEM)), intValue(first(identifiers, Form.SITE)),
-                value(first(identifiers, Form.RADRES_GUID)), value(first(identifiers, Form.CHANNEL_NAME)),
+                value(first(identifiers, Form.RADRES_GUID)), value(first(identifiers, Form.CHANNEL)),
                 value(first(identifiers, Form.DECODER_TYPE)), value(first(identifiers, Form.TALKER_ALIAS)),
                 timeslot);
         }

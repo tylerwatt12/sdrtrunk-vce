@@ -48,19 +48,21 @@ class P25ActivityLogWriter implements AutoCloseable
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private ExecutorService mExecutorService;
     private volatile int mRetentionDays;
+    private volatile boolean mDetailedEventHistoryEnabled;
     private volatile long mLastRetentionCleanup;
     private volatile long mLastMaintenance;
 
-    P25ActivityLogWriter(Path databasePath, int retentionDays)
+    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
     {
-        this(databasePath, retentionDays, DEFAULT_QUEUE_CAPACITY);
+        this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY);
     }
 
-    P25ActivityLogWriter(Path databasePath, int retentionDays, int queueCapacity)
+    P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled, int queueCapacity)
     {
         mDatabasePath = databasePath;
         mQueue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         setRetentionDays(retentionDays);
+        setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
     }
 
     void start()
@@ -75,6 +77,11 @@ class P25ActivityLogWriter implements AutoCloseable
     void setRetentionDays(int retentionDays)
     {
         mRetentionDays = Math.max(1, retentionDays);
+    }
+
+    void setDetailedEventHistoryEnabled(boolean detailedEventHistoryEnabled)
+    {
+        mDetailedEventHistoryEnabled = detailedEventHistoryEnabled;
     }
 
     void enqueue(P25ActivityLogRecord record)
@@ -343,7 +350,7 @@ class P25ActivityLogWriter implements AutoCloseable
             {
                 if(record instanceof P25ActivityLogRecords.ActivityEvent activityEvent)
                 {
-                    P25ActivityLogSchema.insertActivity(connection, activityEvent);
+                    P25ActivityLogSchema.recordActivity(connection, activityEvent, mDetailedEventHistoryEnabled);
                     writtenRecords++;
                 }
                 else if(record instanceof P25ActivityLogRecords.SiteSnapshot siteSnapshot)

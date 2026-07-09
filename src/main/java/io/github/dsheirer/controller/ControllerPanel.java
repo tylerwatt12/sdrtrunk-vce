@@ -52,15 +52,15 @@ public class ControllerPanel extends JPanel
     public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
                            TunerManager tunerManager, UserPreferences userPreferences, boolean systemsVisible,
-                           boolean detailTabsVisible,
-                           Consumer<Boolean> detailTabsVisibilityListener)
+                           boolean lowerViewsVisible,
+                           Consumer<Boolean> lowerViewsVisibilityListener)
     {
         mConfigurationManager = configurationManager;
         mSystemsVisible = systemsVisible;
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
             configurationManager.getAliasModel());
         mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
-            detailTabsVisible, detailTabsVisibilityListener);
+            lowerViewsVisible, lowerViewsVisibilityListener);
         mMapPanel = new MapPanel(mapService, configurationManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
 

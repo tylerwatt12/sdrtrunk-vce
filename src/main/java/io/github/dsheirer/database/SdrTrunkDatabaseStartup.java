@@ -55,6 +55,15 @@ public final class SdrTrunkDatabaseStartup
                 SdrTrunkDatabaseSchema.create(connection);
                 P25ActivityLogSchema.create(connection);
             }
+            else
+            {
+                SdrTrunkDatabaseSchema.validate(connection);
+
+                if(!P25ActivityLogSchema.exists(connection))
+                {
+                    P25ActivityLogSchema.create(connection);
+                }
+            }
 
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);

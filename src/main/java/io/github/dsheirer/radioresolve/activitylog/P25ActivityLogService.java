@@ -84,16 +84,18 @@ public class P25ActivityLogService implements SiteMetadataListener
 
         Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
         int retentionDays = preference.getStatsLoggingRetentionDays();
+        boolean detailedEventHistoryEnabled = preference.isStatsDetailedHistoryEnabled();
 
         if(mWriter != null && databasePath.equals(mCurrentDatabasePath))
         {
             mWriter.setRetentionDays(retentionDays);
+            mWriter.setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
             return;
         }
 
         stopWriter();
         mCurrentDatabasePath = databasePath;
-        mWriter = new P25ActivityLogWriter(databasePath, retentionDays);
+        mWriter = new P25ActivityLogWriter(databasePath, retentionDays, detailedEventHistoryEnabled);
         mWriter.start();
         mLog.info("Stats database logging enabled [{}]", databasePath);
     }

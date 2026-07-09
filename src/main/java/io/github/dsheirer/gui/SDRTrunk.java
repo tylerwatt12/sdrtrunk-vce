@@ -46,7 +46,6 @@ import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.map.MapService;
 import io.github.dsheirer.metadata.site.SiteControlChannelLearner;
 import io.github.dsheirer.module.log.EventLogManager;
-import io.github.dsheirer.monitor.DiagnosticMonitor;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -121,7 +120,6 @@ import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
 import javax.swing.KeyStroke;
-import javax.swing.SwingConstants;
 import javax.swing.JToggleButton;
 import javax.swing.Timer;
 import javax.swing.UIManager;
@@ -138,7 +136,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private Preferences mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
 
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
-    private static final String PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE = "sdrtrunk.now.playing.details.visible";
+    private static final String PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE = "sdrtrunk.now.playing.details.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
     private static final String PREFERENCE_SYSTEMS_VISIBLE = "sdrtrunk.systems.visible";
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
@@ -154,14 +152,13 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
-    private boolean mNowPlayingDetailsVisible;
+    private boolean mNowPlayingLowerViewsVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
     private P25ActivityLogService mP25ActivityLogService;
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
     private BroadcastStatusPanel mBroadcastStatusPanel;
     private ControllerPanel mControllerPanel;
-    private DiagnosticMonitor mDiagnosticMonitor;
     private IconModel mIconModel = new IconModel();
     private ConfigurationManager mConfigurationManager;
     private SettingsManager mSettingsManager;
@@ -244,13 +241,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
 
-        boolean headless = GraphicsEnvironment.isHeadless();
-
-        mDiagnosticMonitor = new DiagnosticMonitor(mUserPreferences, mConfigurationManager.getChannelProcessingManager(),
-                mTunerManager, headless);
-        mDiagnosticMonitor.start();
-
-        if(!headless)
+        if(!GraphicsEnvironment.isHeadless())
         {
             mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mConfigurationManager);
         }
@@ -285,15 +276,15 @@ public class SDRTrunk implements Listener<TunerEvent>
         MapService mapService = new MapService(aliasModel);
         mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mapService);
 
-        mNowPlayingDetailsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, true);
+        mNowPlayingLowerViewsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, true);
         mSystemsVisible = mPreferences.getBoolean(PREFERENCE_SYSTEMS_VISIBLE, true);
 
         if(!GraphicsEnvironment.isHeadless())
         {
             mControllerPanel = new ControllerPanel(mConfigurationManager, audioPlaybackManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences, mSystemsVisible, mNowPlayingDetailsVisible, visible -> {
-                        mNowPlayingDetailsVisible = visible;
-                        mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_DETAILS_VISIBLE, visible);
+                    mSettingsManager, mTunerManager, mUserPreferences, mSystemsVisible, mNowPlayingLowerViewsVisible, visible -> {
+                        mNowPlayingLowerViewsVisible = visible;
+                        mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, visible);
                     });
         }
 
@@ -668,46 +659,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         JMenu fileMenu = new JMenu("File");
         menuBar.add(fileMenu);
 
-        JMenuItem processingStatusReportMenuItem = new JMenuItem("Processing Diagnostic Report");
-        processingStatusReportMenuItem.addActionListener(e -> {
-            try
-            {
-                Path path = mDiagnosticMonitor.generateProcessingDiagnosticReport("User initiated diagnostic report");
-
-                JOptionPane.showMessageDialog(mMainGui, "Report created: " +
-                        path.toString(), "Processing Status Report Created", JOptionPane.INFORMATION_MESSAGE);
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("Error creating processing status report file", ioe);
-                JOptionPane.showMessageDialog(mMainGui, "Unable to create report file.  Please " +
-                        "see application log for details.", "Processing Status Report Failed", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        JMenuItem threadDumpReportMenuItem = new JMenuItem("Thread Dump Report");
-        threadDumpReportMenuItem.addActionListener(e -> {
-            try
-            {
-                Path path = mDiagnosticMonitor.generateThreadDumpReport();
-
-                JOptionPane.showMessageDialog(mMainGui, "Report created: " +
-                        path.toString(), "Thread Dump Report Created", JOptionPane.INFORMATION_MESSAGE);
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("Error creating thread dump report file", ioe);
-                JOptionPane.showMessageDialog(mMainGui, "Unable to create report file.  Please " +
-                        "see application log for details.", "Thread Dump Report Failed", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        JMenu diagnosticMenu = new JMenu(("Reports"));
-        diagnosticMenu.add(processingStatusReportMenuItem);
-        diagnosticMenu.add(threadDumpReportMenuItem);
-        fileMenu.add(diagnosticMenu);
-        fileMenu.add(new JSeparator(SwingConstants.HORIZONTAL));
-
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> {
                 processShutdown();
@@ -850,7 +801,6 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mShutdownProcessed = true;
         mLog.info("Application shutdown started ...");
-        mDiagnosticMonitor.stop();
         mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
         mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
         mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
@@ -948,7 +898,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         panel.add(getUserPreferencesShortcutButton());
         panel.add(new JPanel(), "grow");
         panel.add(getSystemsToggleButton());
-        panel.add(mControllerPanel.getNowPlayingPanel().getDetailTabsToggleButton());
+        panel.add(mControllerPanel.getNowPlayingPanel().getLowerViewsToggleButton());
         panel.add(getSpectrumWaterfallToggleButton());
         updateSystemsToggleButton();
         return panel;
@@ -1020,7 +970,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             mSystemsToggleButton.setIcon(IconFontSwing.buildIcon(mSystemsVisible ?
                 FontAwesome.CHEVRON_DOWN : FontAwesome.CHEVRON_UP, 12));
             mSystemsToggleButton.setToolTipText(mSystemsVisible ? "Hide Systems" : "Show Systems");
-            mControllerPanel.getNowPlayingPanel().getDetailTabsToggleButton().setEnabled(mSystemsVisible);
+            mControllerPanel.getNowPlayingPanel().getLowerViewsToggleButton().setEnabled(mSystemsVisible);
         }
     }
 

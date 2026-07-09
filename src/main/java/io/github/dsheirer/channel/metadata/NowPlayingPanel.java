@@ -21,7 +21,6 @@ package io.github.dsheirer.channel.metadata;
 import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
 import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.channel.details.ChannelDetailPanel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
@@ -47,48 +46,47 @@ import javax.swing.SwingUtilities;
 import javax.swing.JToggleButton;
 
 /**
- * Swing panel for Now Playing channels table and channel details tab set.
+ * Swing panel for the Systems table and optional lower activity viewers.
  */
 public class NowPlayingPanel extends JPanel
 {
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
     private static final int CHANNEL_ACTIVITY_MINIMUM_HEIGHT = 120;
-    private static final int DETAIL_TABS_MINIMUM_HEIGHT = 120;
+    private static final int LOWER_TABS_MINIMUM_HEIGHT = 120;
     private final ConfigurationManager mConfigurationManager;
     private final IconModel mIconModel;
     private final SettingsManager mSettingsManager;
     private final ChannelActivityPanel mChannelActivityPanel;
     private final UserPreferences mUserPreferences;
-    private ChannelDetailPanel mChannelDetailPanel;
     private DecodeEventPanel mDecodeEventPanel;
     private MessageActivityPanel mMessageActivityPanel;
     private ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
     private RadioResolveMetadataPanel mRadioResolveMetadataPanel;
     private JideTabbedPane mTabbedPane;
     private JideSplitPane mSplitPane;
-    private boolean mRequestedDetailTabsVisible;
+    private boolean mRequestedLowerTabsVisible;
     private boolean mSystemsActive = true;
-    private boolean mDetailTabsAttached;
+    private boolean mLowerTabsAttached;
     private boolean mSplitPaneDividerRestored;
     private boolean mRegisteredForPreferences;
-    private JToggleButton mDetailTabsToggleButton;
-    private final Consumer<Boolean> mDetailTabsVisibilityListener;
+    private JToggleButton mLowerTabsToggleButton;
+    private final Consumer<Boolean> mLowerTabsVisibilityListener;
 
     /**
-     * GUI panel that combines the currently decoding channels metadata table and viewers for channel details,
-     * messages, events, and spectral view.
+     * GUI panel that combines the Systems activity table and optional messages, events, RF metadata, and spectral
+     * viewers.
      */
     public NowPlayingPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences,
-                           SettingsManager settingsManager, boolean detailTabsVisible,
-                           Consumer<Boolean> detailTabsVisibilityListener)
+                           SettingsManager settingsManager, boolean lowerViewsVisible,
+                           Consumer<Boolean> lowerViewsVisibilityListener)
     {
         mConfigurationManager = configurationManager;
         mIconModel = iconModel;
         mSettingsManager = settingsManager;
         mUserPreferences = userPreferences;
         mChannelActivityPanel = new ChannelActivityPanel(configurationManager, iconModel, userPreferences);
-        mRequestedDetailTabsVisible = detailTabsVisible;
-        mDetailTabsVisibilityListener = detailTabsVisibilityListener;
+        mRequestedLowerTabsVisible = lowerViewsVisible;
+        mLowerTabsVisibilityListener = lowerViewsVisibilityListener;
 
         registerForPreferences();
         init();
@@ -103,7 +101,7 @@ public class NowPlayingPanel extends JPanel
 
     public void dispose()
     {
-        detachDetailTabs();
+        detachLowerTabs();
         unregisterForPreferences();
         mChannelActivityPanel.dispose();
     }
@@ -127,12 +125,12 @@ public class NowPlayingPanel extends JPanel
     }
 
     /**
-     * Change the visibility of the channel details tabs panel.
+     * Change the visibility of the lower activity viewer tabs.
      * @param visible true to show or false to hide.
      */
-    public void setDetailTabsVisible(boolean visible)
+    public void setLowerViewsVisible(boolean visible)
     {
-        setDetailTabsVisible(visible, true);
+        setLowerTabsVisible(visible, true);
     }
 
     public void setSystemsActive(boolean active)
@@ -143,11 +141,11 @@ public class NowPlayingPanel extends JPanel
 
             if(active)
             {
-                updateDetailTabs();
+                updateLowerTabs();
             }
             else
             {
-                detachDetailTabs();
+                detachLowerTabs();
                 mChannelActivityPanel.resetTables();
             }
         }
@@ -158,15 +156,14 @@ public class NowPlayingPanel extends JPanel
         if(mTabbedPane == null)
         {
             mTabbedPane = new JideTabbedPane();
-            ensureDetailPanels();
-            mTabbedPane.addTab("Details", mChannelDetailPanel);
+            ensureLowerPanels();
             mTabbedPane.addTab("Events", mDecodeEventPanel);
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
             updateRadioResolveMetadataTab();
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
-            mTabbedPane.setMinimumSize(new Dimension(0, DETAIL_TABS_MINIMUM_HEIGHT));
+            mTabbedPane.setMinimumSize(new Dimension(0, LOWER_TABS_MINIMUM_HEIGHT));
             //Register state change listener to toggle visibility state for channel tab to turn-on/off FFT processing
             mTabbedPane.addChangeListener(e -> mChannelSpectrumSquelchPanel.setPanelVisible(getTabbedPane().getSelectedIndex() == getTabbedPane()
                     .indexOfComponent(mChannelSpectrumSquelchPanel)));
@@ -192,7 +189,7 @@ public class NowPlayingPanel extends JPanel
     }
 
     /**
-     * Split pane for channels table and channel details tabs.
+     * Split pane for the Systems table and lower activity viewer tabs.
      */
     private JideSplitPane getSplitPane()
     {
@@ -220,124 +217,116 @@ public class NowPlayingPanel extends JPanel
         mChannelActivityPanel.setMinimumSize(new Dimension(0, CHANNEL_ACTIVITY_MINIMUM_HEIGHT));
         getSplitPane().add(mChannelActivityPanel);
 
-        updateDetailTabs();
+        updateLowerTabs();
 
         add(getSplitPane());
     }
 
-    public JToggleButton getDetailTabsToggleButton()
+    public JToggleButton getLowerViewsToggleButton()
     {
-        if(mDetailTabsToggleButton == null)
+        if(mLowerTabsToggleButton == null)
         {
-            mDetailTabsToggleButton = new JToggleButton("Details");
-            mDetailTabsToggleButton.setFocusable(false);
-            mDetailTabsToggleButton.addActionListener(event ->
-                setDetailTabsVisible(mDetailTabsToggleButton.isSelected(), true));
-            updateDetailTabsToggleButton();
+            mLowerTabsToggleButton = new JToggleButton("Views");
+            mLowerTabsToggleButton.setFocusable(false);
+            mLowerTabsToggleButton.addActionListener(event ->
+                setLowerTabsVisible(mLowerTabsToggleButton.isSelected(), true));
+            updateLowerTabsToggleButton();
         }
 
-        return mDetailTabsToggleButton;
+        return mLowerTabsToggleButton;
     }
 
-    private void setDetailTabsVisible(boolean visible, boolean notify)
+    private void setLowerTabsVisible(boolean visible, boolean notify)
     {
-        if(mRequestedDetailTabsVisible != visible)
+        if(mRequestedLowerTabsVisible != visible)
         {
-            mRequestedDetailTabsVisible = visible;
-            updateDetailTabs();
+            mRequestedLowerTabsVisible = visible;
+            updateLowerTabs();
 
-            if(notify && mDetailTabsVisibilityListener != null)
+            if(notify && mLowerTabsVisibilityListener != null)
             {
-                mDetailTabsVisibilityListener.accept(visible);
+                mLowerTabsVisibilityListener.accept(visible);
             }
         }
         else
         {
-            updateDetailTabsToggleButton();
+            updateLowerTabsToggleButton();
         }
     }
 
-    private boolean shouldAttachDetailTabs()
+    private boolean shouldAttachLowerTabs()
     {
-        return mSystemsActive && mRequestedDetailTabsVisible;
+        return mSystemsActive && mRequestedLowerTabsVisible;
     }
 
-    private void updateDetailTabs()
+    private void updateLowerTabs()
     {
-        if(shouldAttachDetailTabs())
+        if(shouldAttachLowerTabs())
         {
-            attachDetailTabs();
+            attachLowerTabs();
         }
         else
         {
-            detachDetailTabs();
+            detachLowerTabs();
         }
 
-        updateDetailTabsToggleButton();
+        updateLowerTabsToggleButton();
         revalidate();
         repaint();
     }
 
-    private void updateDetailTabsToggleButton()
+    private void updateLowerTabsToggleButton()
     {
-        if(mDetailTabsToggleButton != null)
+        if(mLowerTabsToggleButton != null)
         {
-            mDetailTabsToggleButton.setSelected(mRequestedDetailTabsVisible);
-            mDetailTabsToggleButton.setIcon(IconFontSwing.buildIcon(mRequestedDetailTabsVisible ?
+            mLowerTabsToggleButton.setSelected(mRequestedLowerTabsVisible);
+            mLowerTabsToggleButton.setIcon(IconFontSwing.buildIcon(mRequestedLowerTabsVisible ?
                 FontAwesome.CHEVRON_DOWN : FontAwesome.CHEVRON_UP, 12));
-            mDetailTabsToggleButton.setToolTipText(mRequestedDetailTabsVisible ?
-                "Collapse Details, Events, Messages, and Channel tabs" :
-                "Expand Details, Events, Messages, and Channel tabs");
+            mLowerTabsToggleButton.setToolTipText(mRequestedLowerTabsVisible ?
+                "Collapse Events, Messages, and Channel tabs" :
+                "Expand Events, Messages, and Channel tabs");
         }
     }
 
-    private void attachDetailTabs()
+    private void attachLowerTabs()
     {
-        if(!mDetailTabsAttached)
+        if(!mLowerTabsAttached)
         {
-            ensureDetailPanels();
-            mChannelActivityPanel.addSelectedFrequencyListener(mChannelDetailPanel);
+            ensureLowerPanels();
             mChannelActivityPanel.addSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
             mSplitPaneDividerRestored = false;
             getSplitPane().add(getTabbedPane());
-            mDetailTabsAttached = true;
+            mLowerTabsAttached = true;
             restoreSplitPaneDividerLocation();
             SwingUtilities.invokeLater(this::restoreSplitPaneDividerLocation);
         }
     }
 
-    private void detachDetailTabs()
+    private void detachLowerTabs()
     {
-        if(mDetailTabsAttached)
+        if(mLowerTabsAttached)
         {
             saveSplitPaneDividerLocation();
-            mChannelActivityPanel.removeSelectedFrequencyListener(mChannelDetailPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
 
-            mChannelDetailPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mDecodeEventPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mMessageActivityPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mChannelSpectrumSquelchPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mChannelSpectrumSquelchPanel.setPanelVisible(false);
             mChannelActivityPanel.clearSelectedFrequencyContext();
             getSplitPane().remove(getTabbedPane());
-            mDetailTabsAttached = false;
+            mLowerTabsAttached = false;
         }
 
-        disposeDetailPanels();
+        disposeLowerPanels();
     }
 
-    private void ensureDetailPanels()
+    private void ensureLowerPanels()
     {
-        if(mChannelDetailPanel == null)
-        {
-            mChannelDetailPanel = new ChannelDetailPanel(mConfigurationManager.getChannelProcessingManager());
-        }
-
         if(mDecodeEventPanel == null)
         {
             mDecodeEventPanel = new DecodeEventPanel(mIconModel, mUserPreferences, mConfigurationManager.getAliasModel());
@@ -388,7 +377,7 @@ public class NowPlayingPanel extends JPanel
         }
     }
 
-    private void disposeDetailPanels()
+    private void disposeLowerPanels()
     {
         if(mDecodeEventPanel != null)
         {
@@ -412,7 +401,6 @@ public class NowPlayingPanel extends JPanel
         }
 
         mTabbedPane = null;
-        mChannelDetailPanel = null;
         mDecodeEventPanel = null;
         mMessageActivityPanel = null;
         mChannelSpectrumSquelchPanel = null;
@@ -428,7 +416,7 @@ public class NowPlayingPanel extends JPanel
 
         int location = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
         mSplitPaneDividerRestored = SplitPaneDividerHelper.restore(mSplitPane, 0, location,
-            Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, DETAIL_TABS_MINIMUM_HEIGHT), true);
+            Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, LOWER_TABS_MINIMUM_HEIGHT), true);
     }
 
     private void saveSplitPaneDividerLocation()
@@ -436,14 +424,14 @@ public class NowPlayingPanel extends JPanel
         int savedLocation = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
         mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_DIVIDER_IDENTIFIER,
             SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, 0, savedLocation,
-                Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, DETAIL_TABS_MINIMUM_HEIGHT), true));
+                Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, LOWER_TABS_MINIMUM_HEIGHT), true));
     }
 
     public int getSplitPaneDividerLocation()
     {
         int savedLocation = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
         return SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, 0, savedLocation,
-            Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, DETAIL_TABS_MINIMUM_HEIGHT), true);
+            Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, LOWER_TABS_MINIMUM_HEIGHT), true);
     }
 
     public int getChannelSpectrumPanelDividerLocation()
