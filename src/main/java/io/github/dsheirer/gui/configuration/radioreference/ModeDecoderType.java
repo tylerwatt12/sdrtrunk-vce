@@ -35,7 +35,7 @@ public enum ModeDecoderType
     DSTAR("d-star", null),
     FM("fm", DecoderType.NBFM),
     FMN("fmn", DecoderType.NBFM),
-    NXDN("nxdn", null),
+    NXDN("nxdn", DecoderType.NXDN),
     TELM("telm", null),
     USB("usb", null),
     LSB("lsb", null),

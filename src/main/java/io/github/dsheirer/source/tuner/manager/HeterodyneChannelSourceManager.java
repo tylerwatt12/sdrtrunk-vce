@@ -123,7 +123,8 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
                 {
                     //Attempt to create the channel source first, in case we get a filter design exception
                     HalfBandTunerChannelSource tunerChannelSource = new HalfBandTunerChannelSource(mChannelSourceEventProcessor,
-                            tunerChannel, mTunerController.getSampleRate(), channelSpecification, threadName);
+                            tunerChannel, mTunerController.getSampleRate(), channelSpecification, threadName,
+                            mTunerController.getTunerFrequencyErrorManager());
 
                     //Add to the list of channel sources so that it will receive the tuner frequency change
                     mChannelSources.add(tunerChannelSource);
@@ -216,6 +217,7 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
             case NOTIFICATION_SAMPLE_RATE_CHANGE:
             case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED:
             case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_UNLOCKED:
+            case NOTIFICATION_MEASURED_FREQUENCY_ERROR:
                 //no-op
                 break;
             default:
@@ -327,10 +329,6 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
                         }
                         broadcast(SourceEvent.channelCountChange(getTunerChannelCount()));
                     }
-                    break;
-                case NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED:
-                    //Rebroadcast so that the tuner source can process this event
-                    broadcast(sourceEvent);
                     break;
                 case NOTIFICATION_CHANNEL_COUNT_CHANGE:
                     //Lock the tuner controller frequency & sample rate when we're processing channels

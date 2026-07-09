@@ -40,6 +40,14 @@ public record LongField(int start, int end)
     }
 
     /**
+     * Width of the field in bit positions.
+     */
+    public int width()
+    {
+        return end() - start() + 1;
+    }
+
+    /**
      * Utility constructor method.
      * @param start index (inclusive)
      * @param end index (inclusive)
@@ -101,6 +109,16 @@ public record LongField(int start, int end)
     }
 
     /**
+     * Utility constructor method for a field with 23 bits of length.
+     * @param start index (inclusive)
+     * @return constructed bit field.
+     */
+    public static LongField length23(int start)
+    {
+        return new LongField(start, (start + 22));
+    }
+
+    /**
      * Utility constructor method for a field with two octets of length.
      * @param start index (inclusive)
      * @return constructed bit field.
@@ -118,5 +136,25 @@ public record LongField(int start, int end)
     public static LongField length32(int start)
     {
         return new LongField(start, (start + 31));
+    }
+
+    /**
+     * Utility constructor method for a field with seven octets of length.
+     * @param start index (inclusive)
+     * @return constructed bit field.
+     */
+    public static LongField length56(int start)
+    {
+        return new LongField(start, (start + 55));
+    }
+
+    /**
+     * Utility constructor method for a field with eight octets of length.
+     * @param start index (inclusive)
+     * @return constructed bit field.
+     */
+    public static LongField length64(int start)
+    {
+        return new LongField(start, (start + 63));
     }
 }

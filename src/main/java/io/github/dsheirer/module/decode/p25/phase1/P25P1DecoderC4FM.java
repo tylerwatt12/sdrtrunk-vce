@@ -116,6 +116,7 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
         mDecimationFilterQ = DecimationFilterFactory.getRealDecimationFilter(decimation);
 
         float decimatedSampleRate = (float)sampleRate / decimation;
+        setDecimatedSampleRate(decimatedSampleRate);
         int symbolLength = 16;
         float rrcAlpha = 0.2f;
 

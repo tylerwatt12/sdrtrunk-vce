@@ -43,7 +43,6 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
     private Broadcaster<TunerEvent> mTunerEventBroadcaster = new Broadcaster<>();
     private ChannelSourceManager mChannelSourceManager;
     private TunerController mTunerController;
-    private TunerFrequencyErrorMonitor mTunerFrequencyErrorMonitor;
     private ITunerErrorListener mTunerErrorListener;
     private AtomicBoolean mRunning = new AtomicBoolean();
 
@@ -53,8 +52,6 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
         mTunerErrorListener = tunerErrorListener;
         //Register to receive frequency and sample rate change notifications
         mTunerController.addListener(this::process);
-        mTunerFrequencyErrorMonitor = new TunerFrequencyErrorMonitor(this);
-        mTunerFrequencyErrorMonitor.start();
     }
 
     /**
@@ -129,7 +126,6 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
             getTunerController().dispose();
 
             mTunerEventBroadcaster.clear();
-            mTunerFrequencyErrorMonitor = null;
             mTunerErrorListener = null;
         }
     }
@@ -195,15 +191,15 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
             case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                 broadcast(new TunerEvent(Tuner.this, Event.UPDATE_FREQUENCY_ERROR));
                 break;
+            case NOTIFICATION_MEASURED_FREQUENCY_ERROR:
+                broadcast(new TunerEvent(Tuner.this, Event.UPDATE_MEASURED_FREQUENCY_ERROR));
+                break;
             case NOTIFICATION_SAMPLE_RATE_CHANGE:
                 broadcast(new TunerEvent(Tuner.this, Event.UPDATE_SAMPLE_RATE));
                 break;
             case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED:
             case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_UNLOCKED:
                 broadcast(new TunerEvent(Tuner.this, Event.UPDATE_LOCK_STATE));
-                break;
-            case NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED:
-                mTunerFrequencyErrorMonitor.receive(event);
                 break;
             case NOTIFICATION_RECORDING_FILE_LOADED:
                 //ignore

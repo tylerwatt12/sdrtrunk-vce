@@ -56,6 +56,7 @@ public class BinaryRecorder extends Module implements IByteBufferListener
     private BinaryWriter mBinaryWriter = new BinaryWriter();
     private int mBytesRecordedCounter;
     private Protocol mProtocol;
+    private int mBitRate;
     private long mFrequency;
 
     /**
@@ -68,10 +69,26 @@ public class BinaryRecorder extends Module implements IByteBufferListener
      */
     public BinaryRecorder(Path baseRecordingPath, String recordingIdentifier, Protocol protocol, long frequency)
     {
+        this(baseRecordingPath, recordingIdentifier, protocol, protocol.getBitRate(), frequency);
+    }
+
+    /**
+     * Constructs a binary recorder.
+     *
+     * @param baseRecordingPath where the recording should be created
+     * @param recordingIdentifier to include in the recording file name.
+     * @param protocol to include as a values in the recording file name
+     * @param bitRate for the channel configuration
+     * @param frequency in hertz
+     */
+    public BinaryRecorder(Path baseRecordingPath, String recordingIdentifier, Protocol protocol, int bitRate,
+                          long frequency)
+    {
         mBaseRecordingPath = baseRecordingPath;
         mRecordingIdentifier = recordingIdentifier;
         mBufferProcessor.setListener(mBinaryWriter);
         mProtocol = protocol;
+        mBitRate = bitRate;
         mFrequency = frequency;
     }
 
@@ -122,7 +139,7 @@ public class BinaryRecorder extends Module implements IByteBufferListener
         sb.append("_");
         sb.append(mFrequency);
         sb.append("_");
-        sb.append(mProtocol.getBitRate()).append("BPS_");
+        sb.append(mBitRate).append("BPS_");
         sb.append(mProtocol.getFileNameLabel()).append("_");
         sb.append(mRecordingIdentifier.trim());
         sb.append(".bits");

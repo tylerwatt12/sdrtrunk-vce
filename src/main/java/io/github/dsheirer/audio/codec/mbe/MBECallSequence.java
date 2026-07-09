@@ -27,7 +27,6 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.annotation.JsonRootName;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
-import io.github.dsheirer.module.decode.p25.audio.VoiceFrame;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -290,8 +289,16 @@ public class MBECallSequence
         }
         else
         {
-            mVoiceFrames.add(new VoiceFrame(timestamp, frame));
+            add(new VoiceFrame(timestamp, frame));
         }
+    }
+
+    /**
+     * Adds the voice frame to the sequence.
+     */
+    public void add(VoiceFrame voiceFrame)
+    {
+        mVoiceFrames.add(voiceFrame);
     }
 
     /**
@@ -319,6 +326,6 @@ public class MBECallSequence
      */
     public void addEncryptedVoiceFrame(long timestamp, String frame, int algorithm, int keyid, String messageIndicator)
     {
-        mVoiceFrames.add(new VoiceFrame(timestamp, frame, algorithm, keyid, messageIndicator));
+        add(new VoiceFrame(timestamp, frame, algorithm, keyid, messageIndicator));
     }
 }

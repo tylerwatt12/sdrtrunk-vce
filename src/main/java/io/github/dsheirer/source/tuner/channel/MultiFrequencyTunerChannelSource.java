@@ -64,7 +64,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
                                             String preferredTuner, String threadName, Long minimumFrequency,
                                             Long maximumFrequency)
     {
-        super(null, tunerChannelSource.getTunerChannel(), threadName);
+        super(null, tunerChannelSource.getTunerChannel(), threadName, null);
         mTunerManager = tunerManager;
         mTunerChannelSource = tunerChannelSource;
         mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
@@ -300,6 +300,15 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         if(mTunerChannelSource != null)
         {
             mTunerChannelSource.setFrequency(frequency);
+        }
+    }
+
+    @Override
+    public void setFrequencyCorrection(long correction)
+    {
+        if(mTunerChannelSource != null)
+        {
+            mTunerChannelSource.setFrequencyCorrection(correction);
         }
     }
 

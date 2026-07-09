@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.bits;
 
+import java.nio.ByteOrder;
 import java.util.BitSet;
 
 public class CorrectedBinaryMessage extends BinaryMessage
@@ -52,6 +53,38 @@ public class CorrectedBinaryMessage extends BinaryMessage
     {
         this(message.size());
         this.xor(message);
+    }
+
+    /**
+     * Creates a new message loaded from the hexadecimal string.
+     */
+    public static CorrectedBinaryMessage loadHex(String hex)
+    {
+        return new CorrectedBinaryMessage(BinaryMessage.loadHex(hex));
+    }
+
+    /**
+     * Loads a binary string and returns it as a corrected binary message.
+     */
+    public static CorrectedBinaryMessage load(String binary)
+    {
+        return new CorrectedBinaryMessage(BinaryMessage.load(binary));
+    }
+
+    /**
+     * Constructs a binary frame from the byte array with the specified byte order.
+     */
+    public static CorrectedBinaryMessage from(byte[] data, ByteOrder byteOrder)
+    {
+        if(byteOrder == ByteOrder.LITTLE_ENDIAN)
+        {
+            return new CorrectedBinaryMessage(from(data));
+        }
+
+        CorrectedBinaryMessage frame = new CorrectedBinaryMessage(data.length * 8);
+        BitSet bitSet = BitSet.valueOf(data);
+        frame.xor(bitSet);
+        return frame;
     }
 
     @Override

@@ -30,6 +30,7 @@ import io.github.dsheirer.module.decode.ltrnet.DecodeConfigLTRNet;
 import io.github.dsheirer.module.decode.ltrstandard.DecodeConfigLTRStandard;
 import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -45,6 +46,7 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
     @JsonSubTypes.Type(value = DecodeConfigLTRStandard.class, name = "decodeConfigLTRStandard"),
     @JsonSubTypes.Type(value = DecodeConfigMPT1327.class, name = "decodeConfigMPT1327"),
     @JsonSubTypes.Type(value = DecodeConfigNBFM.class, name = "decodeConfigNBFM"),
+    @JsonSubTypes.Type(value = DecodeConfigNXDN.class, name = "decodeConfigNXDN"),
     @JsonSubTypes.Type(value = DecodeConfigP25Conventional.class, name = "decodeConfigP25Conventional"),
     @JsonSubTypes.Type(value = DecodeConfigP25Phase1.class, name = "decodeConfigP25Phase1"),
     @JsonSubTypes.Type(value = DecodeConfigP25Phase2.class, name = "decodeConfigP25Phase2"),
@@ -79,5 +81,11 @@ public abstract class DecodeConfiguration extends Configuration
     public int[] getTimeslots()
     {
         return new int[0];
+    }
+
+    @JsonIgnore
+    public int getBitRate()
+    {
+        return getDecoderType().getProtocol().getBitRate();
     }
 }

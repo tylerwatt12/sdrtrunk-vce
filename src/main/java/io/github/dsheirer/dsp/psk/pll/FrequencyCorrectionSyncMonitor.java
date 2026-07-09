@@ -23,7 +23,7 @@ import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.source.SourceEvent;
 
 /**
- * Monitors decode sync events to adaptively control frequency correction broadcasts.
+ * Monitors decode sync events to adaptively control channel-local frequency correction requests.
  *
  * The original author tested adaptive PLL bandwidth and deliberately removed it (commit b3b2e746, Feb 2020),
  * citing extensive testing, but retained the PLLBandwidth infrastructure (fromSyncCount mapping, MAX_SYNC_COUNT)
@@ -45,7 +45,7 @@ public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFre
      * Constructs an adaptive monitor to monitor the sync state of a decoder
      *
      * @param costasLoop to receive adaptive gain updates.
-     * @param feedbackDecoder to rebroadcast frequency error source events
+     * @param feedbackDecoder to rebroadcast frequency correction source events
      */
     public FrequencyCorrectionSyncMonitor(CostasLoop costasLoop, FeedbackDecoder feedbackDecoder)
     {
@@ -115,12 +115,10 @@ public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFre
     @Override
     public void processFrequencyError(long frequencyError)
     {
-        mFeedbackDecoder.broadcast(SourceEvent.carrierOffsetMeasurement(-frequencyError));
-
-        //Only rebroadcast as a frequency error measurement if the sync count is more than 2
+        //Only request channel correction after sync has been stable for a few detections.
         if(mSyncCount > 2)
         {
-            mFeedbackDecoder.broadcast(SourceEvent.frequencyErrorMeasurement(frequencyError));
+            mFeedbackDecoder.broadcast(SourceEvent.frequencyCorrectionRequest(frequencyError));
         }
     }
 }

@@ -46,7 +46,6 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.wave.ComplexWaveSource;
-import io.github.dsheirer.dsp.symbol.ISyncDetectListener;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -71,7 +70,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     protected P25P2MessageFramer mMessageFramer;
     protected IRealFilter mIBasebandFilter;
     protected IRealFilter mQBasebandFilter;
-    private final AcquisitionMonitor mAcquisitionMonitor = new AcquisitionMonitor();
     private DecodeConfigP25Phase2 mDecodeConfigP25Phase2;
 
     public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2, double initialSampleRate)
@@ -134,7 +132,7 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         }
 
         mFrequencyCorrectionSyncMonitor = new FrequencyCorrectionSyncMonitor(mCostasLoop, this);
-        mMessageFramer.setSyncDetectListener(mAcquisitionMonitor);
+        mMessageFramer.setSyncDetectListener(mFrequencyCorrectionSyncMonitor);
         mMessageFramer.setListener(getMessageProcessor());
         mMessageFramer.setSampleRate(sampleRate);
 
@@ -215,21 +213,6 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     {
         mCostasLoop.reset();
         mFrequencyCorrectionSyncMonitor.reset();
-    }
-
-    private final class AcquisitionMonitor implements ISyncDetectListener
-    {
-        @Override
-        public void syncDetected(int bitErrors)
-        {
-            mFrequencyCorrectionSyncMonitor.syncDetected(bitErrors);
-        }
-
-        @Override
-        public void syncLost(int bitsProcessed)
-        {
-            mFrequencyCorrectionSyncMonitor.syncLost(bitsProcessed);
-        }
     }
 
     @Override

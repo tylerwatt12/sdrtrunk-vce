@@ -532,19 +532,6 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
                     }
 
                     break;
-                case NOTIFICATION_MEASURED_FREQUENCY_ERROR:
-                    //Rebroadcast frequency error measurements to external listener if we're currently
-                    //in an active (ie sync locked) state.
-                    for(int timeslot: mTimeslots)
-                    {
-                        if(State.MULTI_CHANNEL_ACTIVE_STATES.contains(mStateMachineMap.get(timeslot).getState()))
-                        {
-                            broadcast(SourceEvent.frequencyErrorMeasurementSyncLocked(sourceEvent.getValue().longValue(),
-                                getChannel().getChannelType().name()));
-                            return;
-                        }
-                    }
-                    break;
                 default:
                     // Other source events are not relevant to multi-channel state handling.
                     break;

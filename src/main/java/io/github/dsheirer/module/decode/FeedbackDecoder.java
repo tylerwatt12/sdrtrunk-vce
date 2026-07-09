@@ -29,8 +29,19 @@ import io.github.dsheirer.source.SourceEvent;
  */
 public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceEventProvider
 {
+    private static final double TWO_PI = 2 * Math.PI;
     private Listener<SourceEvent> mSourceEventListener;
     private Listener<Float> mSymbolListener;
+    private double mSampleRate;
+
+    /**
+     * Sets the final decimated sample rate used to translate PLL phase error into frequency correction hertz.
+     * @param rate in hertz
+     */
+    protected void setDecimatedSampleRate(double rate)
+    {
+        mSampleRate = rate;
+    }
 
     /**
      * Protocol description suitable for display in the user interface
@@ -68,13 +79,13 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     }
 
     /**
-     * Processes the current phase-locked loop (PLL) measurement and sends to the parent tuner for self correction.
-     * @param pllError as measured in the decoder.
+     * Processes the current phase-locked loop (PLL) measurement and sends a channel-local correction request.
+     * @param pllError as measured in the decoder, in radians.
      */
-    public void processPLLError(float pllError, int baudRate)
+    public void processPLLError(float pllError)
     {
-        long frequencyError = (long)(baudRate / 2.0 * (pllError / Math.PI));
-        broadcast(SourceEvent.frequencyErrorMeasurementSyncLocked(frequencyError, "Decoder measured error sync locked"));
+        long correctionRequestHertz = (long)(mSampleRate / TWO_PI * pllError);
+        broadcast(SourceEvent.frequencyCorrectionRequest(correctionRequestHertz));
     }
 
     /**

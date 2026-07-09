@@ -1065,6 +1065,18 @@ public class BinaryMessage extends BitSet
     }
 
     /**
+     * Returns the long field formatted as a hex value using zero prefixes to pad the hex character count to fully
+     * represent the size (width) of the field.
+     * @param field to parse as hex
+     * @return hex value.
+     */
+    public String getHex(LongField field)
+    {
+        int width = Math.ceilDiv(field.width(), 4);
+        return leftPadHex(Long.toHexString(getLong(field)).toUpperCase(Locale.US), width);
+    }
+
+    /**
      * Returns the integer field formatted as a hex value using zero prefixes to pad the hex character count to fully
      * represent the size (width) of the field.
      * @param field to parse as hex

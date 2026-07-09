@@ -31,7 +31,6 @@ import io.github.dsheirer.dsp.psk.demod.DifferentialDemodulatorFloat;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
-import io.github.dsheirer.module.carrier.CarrierOffsetProcessor;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.dmr.audio.DMRAudioModule;
@@ -98,8 +97,6 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
     private RealFIRFilter mRRCFilterI;
     private RealFIRFilter mRRCFilterQ;
     private final PowerMonitor mPowerMonitor = new PowerMonitor();
-    private final CarrierOffsetProcessor mCarrierOffsetProcessor;
-
     /**
      * Constructs an instance
      * @param config for the DMR decoder
@@ -110,7 +107,6 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         mMessageFramer = new DMRMessageFramer(crcMaskManager);
         mSymbolProcessor = new DMRSoftSymbolProcessor(mMessageFramer, this);
         mMessageProcessor = new DMRMessageProcessor(config, crcMaskManager);
-        mCarrierOffsetProcessor = new CarrierOffsetProcessor(initialSampleRate);
         mMessageProcessor.setMessageListener(getMessageListener());
         setSampleRate(initialSampleRate);
 
@@ -139,7 +135,6 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         }
 
         mPowerMonitor.setSampleRate((int)sampleRate);
-        mCarrierOffsetProcessor.setSampleRate(sampleRate);
 
         mIBasebandFilter = FilterFactory.getRealFilter(getBasebandFilter(sampleRate));
         mQBasebandFilter = FilterFactory.getRealFilter(getBasebandFilter(sampleRate));
@@ -156,6 +151,7 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         mDecimationFilterQ = DecimationFilterFactory.getRealDecimationFilter(decimation);
 
         float decimatedSampleRate = (float)sampleRate / decimation;
+        setDecimatedSampleRate(decimatedSampleRate);
         float rrcAlpha = Math.abs((float)(5760.0 / decimatedSampleRate));
         int symbolLength = (int)Math.floor((-44 * rrcAlpha) + 33);
         symbolLength += symbolLength % 2; //Make the symbol length even
@@ -200,24 +196,6 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         float[] demodulated = mDemodulator.demodulate(i, q);
         mSymbolProcessor.receive(demodulated);
 
-        //Estimate carrier offset and broadcast at each update. This value is used in the channel spectral display,
-        // and it's also processed by the tuner's PPM error monitor to auto-adjust the tuner PPM value.
-        if(mCarrierOffsetProcessor.process(samples))
-        {
-            //Tuner PPM Monitor - negate the value to indicate channel error from tuner's PPM that's causing the offset
-            mPowerMonitor.broadcast(SourceEvent.frequencyErrorMeasurement(-mCarrierOffsetProcessor.getEstimatedOffset()));
-
-            //Channel spectral display - when there's a carrier send the estimate, otherwise send a zero to cause the
-            //display to blank the carrier offset measurement indicator line
-            if(mCarrierOffsetProcessor.hasCarrier())
-            {
-                mPowerMonitor.broadcast(SourceEvent.carrierOffsetMeasurement(mCarrierOffsetProcessor.getEstimatedOffset()));
-            }
-            else
-            {
-                mPowerMonitor.broadcast(SourceEvent.carrierOffsetMeasurement(0));
-            }
-        }
     }
 
     /**
@@ -337,9 +315,6 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
             {
                 case NOTIFICATION_SAMPLE_RATE_CHANGE:
                     setSampleRate(sourceEvent.getValue().doubleValue());
-                    break;
-                case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
-                    mCarrierOffsetProcessor.reset();
                     break;
                 default:
                     break;

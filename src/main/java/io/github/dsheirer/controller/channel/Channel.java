@@ -31,7 +31,6 @@ import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.config.SourceConfigFactory;
 import io.github.dsheirer.source.config.SourceConfigRecording;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -56,7 +55,7 @@ import javafx.util.Callback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class Channel extends Configuration implements Listener<SourceEvent>
+public class Channel extends Configuration
 {
     private static final Logger mLog = LoggerFactory.getLogger(Channel.class);
 
@@ -91,8 +90,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
     private ChannelType mChannelType = ChannelType.STANDARD;
 
     private int mChannelID;
-    private int mChannelFrequencyCorrection = 0;
-
     /**
      * Channel represents a complete set of configurations needed to setup and
      * manage a processing chain and/or manage as a set of business objects that
@@ -783,38 +780,6 @@ public class Channel extends Configuration implements Listener<SourceEvent>
         }
 
         return false;
-    }
-
-    /**
-     * Convenience method to make the current channel frequency correction value
-     * available for use outside of a constructed processing chain while maintaining
-     * linkage to the source channel.  This hack allows the correction value to
-     * be used to visually show in the spectral display.
-     */
-    @Override
-    public void receive(SourceEvent event)
-    {
-        if(event.getEvent() == SourceEvent.Event.NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION_CHANGE)
-        {
-            mChannelFrequencyCorrection = event.getValue().intValue();
-        }
-    }
-
-    /**
-     * Current channel frequency correction value (when this channel is processing)
-     */
-    @JsonIgnore
-    public int getChannelFrequencyCorrection()
-    {
-        return mChannelFrequencyCorrection;
-    }
-
-    /**
-     * Resets frequency correction value to 0
-     */
-    public void resetFrequencyCorrection()
-    {
-        mChannelFrequencyCorrection = 0;
     }
 
     @Override

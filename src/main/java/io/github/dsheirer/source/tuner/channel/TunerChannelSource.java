@@ -25,6 +25,8 @@ import io.github.dsheirer.source.ISourceEventProcessor;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceEventListenerToProcessorAdapter;
 import io.github.dsheirer.source.SourceException;
+import io.github.dsheirer.source.tuner.frequency.ChannelFrequencyErrorManager;
+import io.github.dsheirer.source.tuner.frequency.TunerFrequencyErrorManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +38,7 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
     protected TunerChannel mTunerChannel;
     private Listener<SourceEvent> mProducerSourceEventListener;
     private Listener<SourceEvent> mConsumerSourceEventListener;
+    private ChannelFrequencyErrorManager mChannelFrequencyErrorManager;
     protected String mThreadName;
 
     /**
@@ -47,12 +50,17 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
      * @param threadName for the channel's dispatcher
      */
     protected TunerChannelSource(Listener<SourceEvent> producerSourceEventListener, TunerChannel tunerChannel,
-                              String threadName)
+                                 String threadName, TunerFrequencyErrorManager tunerFrequencyErrorManager)
     {
         mProducerSourceEventListener = producerSourceEventListener;
         mTunerChannel = tunerChannel;
         mConsumerSourceEventListenerAdapter = new SourceEventListenerToProcessorAdapter(this);
         mThreadName = threadName;
+
+        if(tunerFrequencyErrorManager != null)
+        {
+            mChannelFrequencyErrorManager = new ChannelFrequencyErrorManager(this, tunerFrequencyErrorManager);
+        }
     }
 
     @Override
@@ -75,6 +83,12 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
      * @param frequency in hertz
      */
     public abstract void setFrequency(long frequency);
+
+    /**
+     * Sets and applies the decoder requested frequency correction for this channel source.
+     * @param correction in hertz
+     */
+    public abstract void setFrequencyCorrection(long correction);
 
     /**
      * Sets the sample rate of the incoming sample stream from the producer
@@ -101,6 +115,11 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
      */
     public void start()
     {
+        if(mChannelFrequencyErrorManager != null)
+        {
+            mChannelFrequencyErrorManager.start();
+        }
+
         //Broadcast current frequency and sample rate so consumer can configure correctly
         broadcastConsumerSourceEvent(SourceEvent.frequencyChange(this, getFrequency(), "Startup"));
         broadcastProducerSourceEvent(SourceEvent.startSampleStreamRequest(this));
@@ -112,6 +131,11 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
      */
     public void stop()
     {
+        if(mChannelFrequencyErrorManager != null)
+        {
+            mChannelFrequencyErrorManager.stop();
+        }
+
         broadcastProducerSourceEvent(SourceEvent.stopSampleStreamRequest(this));
     }
 
@@ -147,7 +171,6 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
             case NOTIFICATION_FREQUENCY_CHANGE:
             case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED:
             case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_UNLOCKED:
-            case NOTIFICATION_CARRIER_OFFSET_FREQUENCY:
             case NOTIFICATION_STOP_SAMPLE_STREAM:
             case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                 //no-op
@@ -156,14 +179,15 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
                 setSampleRate(sourceEvent.getValue().doubleValue());
                 break;
             case NOTIFICATION_MEASURED_FREQUENCY_ERROR:
-                //Ignore these raw frequency measurement errors.  We're only interested in the measurements
-                //that occur when the channel state indicates that we're sync-locked.
+                //Ignore display-only tuner averages.
                 break;
-            case NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED:
-                //Rebroadcast this measurement event so the producer can process it
-                sourceEvent.setSource(this);
-                broadcastProducerSourceEvent(sourceEvent);
+            case REQUEST_FREQUENCY_CORRECTION:
+                if(mChannelFrequencyErrorManager != null)
+                {
+                    mChannelFrequencyErrorManager.receive(sourceEvent);
+                }
                 break;
+            case NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION_STATUS:
             case NOTIFICATION_FREQUENCY_ROTATION_FAILURE:
             case NOTIFICATION_FREQUENCY_ROTATION_SUCCESS:
             case NOTIFICATION_CHANNEL_POWER:

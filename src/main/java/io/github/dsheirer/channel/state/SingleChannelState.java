@@ -399,15 +399,6 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
                     mIdentifierUpdateNotificationProxy.receive(new IdentifierUpdateNotification(
                         FrequencyConfigurationIdentifier.create(frequency), IdentifierUpdateNotification.Operation.SILENT_ADD, 0));
                     break;
-                case NOTIFICATION_MEASURED_FREQUENCY_ERROR:
-                    //Rebroadcast frequency error measurements to external listener if we're currently
-                    //in an active (ie sync locked) state.
-                    if(State.SINGLE_CHANNEL_ACTIVE_STATES.contains(mStateMachine.getState()))
-                    {
-                        broadcast(SourceEvent.frequencyErrorMeasurementSyncLocked(sourceEvent.getValue().longValue(),
-                            getChannel().getChannelType().name()));
-                    }
-                    break;
                 default:
                     // Other source events are not relevant to single-channel state handling.
                     break;

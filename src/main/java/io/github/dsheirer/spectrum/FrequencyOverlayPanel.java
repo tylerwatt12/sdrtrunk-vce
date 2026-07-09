@@ -311,7 +311,7 @@ public class FrequencyOverlayPanel extends JPanel implements ISourceEventProcess
     }
 
     /**
-     * Draws the estimated carrier offset measured by the CarrierOffsetProcessor
+     * Draws the estimated carrier offset.
      */
     private void drawEstimatedCarrierOffset(Graphics2D graphics)
     {

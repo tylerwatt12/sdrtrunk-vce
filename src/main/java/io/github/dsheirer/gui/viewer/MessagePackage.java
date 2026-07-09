@@ -38,6 +38,8 @@ public class MessagePackage
     private List<DecodeEventSnapshot> mDecodeEvents = new ArrayList<>();
     private ChannelStartProcessingRequest mChannelStartProcessingRequest;
     private AudioCallSnapshot mAudioCallSnapshot;
+    private int mBitCounter;
+    private int mElapsed;
 
     /**
      * Constructs an instance
@@ -45,7 +47,36 @@ public class MessagePackage
      */
     public MessagePackage(IMessage message)
     {
+        this(message, 0, 0);
+    }
+
+    /**
+     * Constructs an instance.
+     * @param message for this instance
+     * @param bitCounter at the time this instance was created
+     * @param elapsed bit count since the last package
+     */
+    public MessagePackage(IMessage message, int bitCounter, int elapsed)
+    {
         mMessage = message;
+        mBitCounter = bitCounter;
+        mElapsed = elapsed;
+    }
+
+    /**
+     * Bit counter value for this package.
+     */
+    public int getBitCounter()
+    {
+        return mBitCounter;
+    }
+
+    /**
+     * Elapsed bit count from the last package.
+     */
+    public int getElapsed()
+    {
+        return mElapsed;
     }
 
     /**

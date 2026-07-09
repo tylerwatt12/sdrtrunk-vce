@@ -22,6 +22,7 @@ package io.github.dsheirer.record;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.decode.dmr.audio.DMRCallSequenceRecorder;
+import io.github.dsheirer.module.decode.nxdn.audio.NXDNCallSequenceRecorder;
 import io.github.dsheirer.module.decode.p25.audio.P25P1CallSequenceRecorder;
 import io.github.dsheirer.module.decode.p25.audio.P25P2CallSequenceRecorder;
 import io.github.dsheirer.preference.UserPreferences;
@@ -77,6 +78,7 @@ public class RecorderFactory
                         recorderModules.add(new BinaryRecorder(getRecordingBasePath(userPreferences),
                                 StringUtils.replaceIllegalCharacters(channel.toString()),
                                 channel.getDecodeConfiguration().getDecoderType().getProtocol(),
+                                channel.getDecodeConfiguration().getBitRate(),
                                 frequency));
                     }
                     break;
@@ -92,6 +94,7 @@ public class RecorderFactory
                         recorderModules.add(new BinaryRecorder(getRecordingBasePath(userPreferences),
                                 StringUtils.replaceIllegalCharacters(channel.toString()),
                                 channel.getDecodeConfiguration().getDecoderType().getProtocol(),
+                                channel.getDecodeConfiguration().getBitRate(),
                                 frequency));
                     }
                     break;
@@ -104,6 +107,10 @@ public class RecorderFactory
                             case DMR:
                                 recorderModules.add(new DMRCallSequenceRecorder(userPreferences, frequency,
                                         channel.getSystem(), channel.getSite()));
+                                break;
+                            case NXDN:
+                                recorderModules.add(new NXDNCallSequenceRecorder(userPreferences, frequency,
+                                    channel.getSystem(), channel.getSite()));
                                 break;
                             case P25_PHASE1:
                                 recorderModules.add(new P25P1CallSequenceRecorder(userPreferences, frequency,
@@ -124,6 +131,10 @@ public class RecorderFactory
                             case DMR:
                                 recorderModules.add(new DMRCallSequenceRecorder(userPreferences, frequency,
                                         channel.getSystem(), channel.getSite()));
+                                break;
+                            case NXDN:
+                                recorderModules.add(new NXDNCallSequenceRecorder(userPreferences, frequency,
+                                    channel.getSystem(), channel.getSite()));
                                 break;
                             case P25_PHASE1:
                                 recorderModules.add(new P25P1CallSequenceRecorder(userPreferences, frequency,

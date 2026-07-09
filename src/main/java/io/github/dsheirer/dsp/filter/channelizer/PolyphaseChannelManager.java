@@ -82,6 +82,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private NativeBufferReceiver mNativeBufferReceiver = new NativeBufferReceiver();
     private Dispatcher<INativeBuffer> mBufferDispatcher;
     private Map<Integer,float[]> mOutputProcessorFilters = new HashMap<>();
+    private TunerController mTunerController;
     private boolean mRunning = true;
 
     /**
@@ -122,6 +123,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     public PolyphaseChannelManager(TunerController tunerController)
     {
         this(tunerController, tunerController.getFrequency(), tunerController.getSampleRate());
+        mTunerController = tunerController;
     }
 
     /**
@@ -201,7 +203,8 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             try
             {
                 channelSource = new PolyphaseChannelSource(tunerChannel, mChannelCalculator, mFilterManager,
-                        mChannelSourceEventListener, threadName);
+                        mChannelSourceEventListener, threadName,
+                        mTunerController != null ? mTunerController.getTunerFrequencyErrorManager() : null);
 
                 mChannelSources.add(channelSource);
             }
@@ -276,6 +279,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 break;
               case NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED,
                   NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_UNLOCKED,
+                  NOTIFICATION_MEASURED_FREQUENCY_ERROR,
                   NOTIFICATION_RECORDING_FILE_LOADED:
                 //no-op
                 break;
@@ -433,10 +437,6 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                         mLog.error("Request to stop sample stream for unrecognized source: {}",
                             (sourceEvent.hasSource() ? sourceEvent.getSource().getClass() : "null source"));
                     }
-                    break;
-                case NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED:
-                    //Rebroadcast so that the tuner source can process this event
-                    mSourceEventBroadcaster.broadcast(sourceEvent);
                     break;
                 default:
                     mLog.error("Received unrecognized source event from polyphase channel source [{}]",

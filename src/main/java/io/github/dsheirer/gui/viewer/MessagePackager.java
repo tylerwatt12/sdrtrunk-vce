@@ -34,6 +34,16 @@ import io.github.dsheirer.module.decode.event.IDecodeEvent;
 public class MessagePackager
 {
     private MessagePackage mMessagePackage;
+    private int mBitCounter;
+    private int mLastBitCount;
+
+    /**
+     * Updates the current bit count.
+     */
+    public void updateBitCount(int bitCount)
+    {
+        mBitCounter = bitCount;
+    }
 
     /**
      * Adds the message and creates a new MessageWithEvents instance, wrapping the message, ready to also receive any
@@ -42,7 +52,9 @@ public class MessagePackager
      */
     public void add(IMessage message)
     {
-        mMessagePackage = new MessagePackage(message);
+        int elapsed = mBitCounter - mLastBitCount;
+        mMessagePackage = new MessagePackage(message, mBitCounter, elapsed);
+        mLastBitCount = mBitCounter;
     }
 
     /**

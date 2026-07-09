@@ -119,6 +119,7 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
         }
 
         float decimatedSampleRate = (float)sampleRate / decimation;
+        setDecimatedSampleRate(decimatedSampleRate);
         int symbolLength = 16;
         float rolloff = 0.2f;
 

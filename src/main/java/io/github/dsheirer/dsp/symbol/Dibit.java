@@ -32,6 +32,7 @@ public enum Dibit
     private int mHighValue;
     private int mValue;
     private float mPhase;
+    private static final float SOFT_SYMBOL_QUADRANT_BOUNDARY = (float)(Math.PI / 2.0);
 
     /**
      * Dibit constructor.
@@ -50,6 +51,38 @@ public enum Dibit
         mHighValue = highValue;
         mValue = value;
         mPhase = phase;
+    }
+
+    /**
+     * Decodes the sample value to determine the correct QPSK quadrant and maps the value to a Dibit symbol.
+     * @param sample in radians.
+     * @return symbol decision.
+     */
+    public static Dibit fromSample(float sample)
+    {
+        if(sample > 0)
+        {
+            return sample > SOFT_SYMBOL_QUADRANT_BOUNDARY ? Dibit.D01_PLUS_3 : Dibit.D00_PLUS_1;
+        }
+
+        return sample < -SOFT_SYMBOL_QUADRANT_BOUNDARY ? Dibit.D11_MINUS_3 : Dibit.D10_MINUS_1;
+    }
+
+    /**
+     * Calculates the error from the sample by first mapping it to a symbol and subtracting from the ideal phase.
+     * @param sample to process
+     * @return error from ideal
+     */
+    public static float getError(float sample)
+    {
+        if(sample > 0)
+        {
+            return sample > SOFT_SYMBOL_QUADRANT_BOUNDARY ? Dibit.D01_PLUS_3.mPhase - sample :
+                Dibit.D00_PLUS_1.mPhase - sample;
+        }
+
+        return sample < -SOFT_SYMBOL_QUADRANT_BOUNDARY ? Dibit.D11_MINUS_3.mPhase - sample :
+            Dibit.D10_MINUS_1.mPhase - sample;
     }
 
     /**

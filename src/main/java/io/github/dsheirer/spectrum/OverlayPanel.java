@@ -54,7 +54,6 @@ import javax.swing.JPanel;
 public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISourceEventProcessor, SettingChangeListener
 {
     private static final long serialVersionUID = 1L;
-    private final DecimalFormat PPM_FORMATTER = new DecimalFormat( "#.0" );
 
     private static final RenderingHints RENDERING_HINTS = new RenderingHints(RenderingHints.KEY_ANTIALIASING,
         RenderingHints.VALUE_ANTIALIAS_ON);
@@ -416,43 +415,6 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
     }
 
     /**
-     * Draws the Automatic Frequency Control (AFC) channel center offset
-     */
-    private void drawAFC(Graphics2D graphics, double errorAxis, double bandwidth, int correction, long frequency)
-    {
-        double height = getSize().getHeight() - mSpectrumInset;
-        double verticalAxisTop = height * 0.88d;
-        double verticalAxisBottom = height * 0.98d;
-
-        double halfBandwidth = bandwidth / 2.0;
-        double errorEdgeStart = errorAxis - halfBandwidth;
-        double errorEdgeStop = errorAxis + halfBandwidth;
-
-        graphics.setColor(Color.YELLOW);
-
-        //Horizontal line connecting frequency and error line
-        graphics.draw(new Line2D.Double(errorEdgeStart, verticalAxisBottom, errorEdgeStop, verticalAxisBottom));
-
-        //Vertical band edge lines
-        graphics.draw(new Line2D.Double(errorEdgeStart, verticalAxisTop, errorEdgeStart, verticalAxisBottom));
-        graphics.draw(new Line2D.Double(errorEdgeStop, verticalAxisTop, errorEdgeStop, verticalAxisBottom));
-
-        double ppm = correction / (frequency / 1E6d);
-
-        String label = "PPM " + PPM_FORMATTER.format(ppm) ;
-
-        FontMetrics fontMetrics = graphics.getFontMetrics(this.getFont());
-
-        Rectangle2D rect = fontMetrics.getStringBounds(label, graphics);
-
-        //Only render the correction value label if the spacing is large enough
-        if(rect.getWidth() <= bandwidth && rect.getHeight() * 5 <= height)
-        {
-            graphics.drawString(label, (float)(errorEdgeStart + 1.0), (float)(verticalAxisBottom - 2.0));
-        }
-    }
-
-    /**
      * Returns the x-axis value corresponding to the frequency
      */
     private double getAxisFromFrequency(long frequency)
@@ -577,14 +539,6 @@ public class OverlayPanel extends JPanel implements Listener<ChannelEvent>, ISou
                         double frequencyAxis = getAxisFromFrequency(frequency);
                         drawChannelCenterLine(graphics, frequencyAxis);
 
-                        /* Draw Automatic Frequency Control line */
-                        int correction = channel.getChannelFrequencyCorrection();
-
-                        if(correction != 0)
-                        {
-                            long error = frequency + correction;
-                            drawAFC(graphics, getAxisFromFrequency(error), width, correction, tunerChannel.getFrequency());
-                        }
                     }
                 }
             }

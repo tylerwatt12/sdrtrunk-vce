@@ -566,7 +566,7 @@ public class DMRSoftSymbolProcessor
         mEqualizerBalance = Math.min(mEqualizerBalance, MAXIMUM_EQUALIZER_BALANCE);
         mEqualizerBalance = Math.max(mEqualizerBalance, -MAXIMUM_EQUALIZER_BALANCE);
 
-        mFeedbackDecoder.processPLLError(mEqualizerBalance, SYMBOL_RATE);
+        mFeedbackDecoder.processPLLError(mEqualizerBalance);
 
         //Constrain gain between 1.0f and 1.35f
         mEqualizerGain = Math.min(mEqualizerGain, MAXIMUM_EQUALIZER_GAIN);

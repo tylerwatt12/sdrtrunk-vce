@@ -25,7 +25,6 @@ package io.github.dsheirer.audio.codec.mbe;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Joiner;
-import io.github.dsheirer.module.decode.p25.audio.VoiceFrame;
 
 import java.io.IOException;
 import java.nio.file.Files;

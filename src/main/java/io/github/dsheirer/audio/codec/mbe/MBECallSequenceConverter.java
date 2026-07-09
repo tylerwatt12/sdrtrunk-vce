@@ -36,7 +36,6 @@ import io.github.dsheirer.module.decode.dmr.audio.DMRAudioModule;
 import io.github.dsheirer.module.decode.dmr.audio.DMRCallSequenceRecorder;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P1CallSequenceRecorder;
-import io.github.dsheirer.module.decode.p25.audio.VoiceFrame;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;

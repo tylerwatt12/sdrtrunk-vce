@@ -36,6 +36,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamplesToNativeBufferModule;
 import io.github.dsheirer.settings.SettingsManager;
+import io.github.dsheirer.source.ChannelFrequencyCorrectionStatusNotification;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.HalfBandTunerChannelSource;
@@ -650,9 +651,10 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         @Override
         public void receive(SourceEvent sourceEvent)
         {
-            if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED)
+            if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION_STATUS &&
+                sourceEvent instanceof ChannelFrequencyCorrectionStatusNotification status)
             {
-                updateEstimatedCarrierOffsetFrequency(sourceEvent.getValue().longValue());
+                updateEstimatedCarrierOffsetFrequency(-status.getDecoderCorrection());
             }
             else if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CHANGE &&
                 sourceEvent.getValue() != null)
@@ -664,13 +666,11 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         }
 
         /**
-         * Updates the CarrierOffsetProcessor's current carrier offset tracking frequency
+         * Updates the current carrier offset tracking frequency.
          * @param carrierOffsetFrequency that is currently measured/estimated.
          */
         private void updateEstimatedCarrierOffsetFrequency(long carrierOffsetFrequency)
         {
-            //Note: we flip the sign on the error measurement because the value represents the amount of offset the PLL
-            //has to apply to move the signal to center/baseband
             EventQueue.invokeLater(() -> {
                 mEstimatedCarrierOffsetFrequencyValueLabel.setText(getPaddedCarrierOffsetLabel(carrierOffsetFrequency));
                 mEstimatedCarrierOffsetFrequencyValueLabel.setEnabled(true);

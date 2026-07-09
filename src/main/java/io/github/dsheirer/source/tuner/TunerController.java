@@ -36,7 +36,7 @@ import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.frequency.FrequencyController;
 import io.github.dsheirer.source.tuner.frequency.FrequencyController.Tunable;
-import io.github.dsheirer.source.tuner.manager.FrequencyErrorCorrectionManager;
+import io.github.dsheirer.source.tuner.frequency.TunerFrequencyErrorManager;
 import java.text.DecimalFormat;
 import java.util.SortedSet;
 import java.util.concurrent.locks.ReentrantLock;
@@ -62,8 +62,8 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     private SourceEventListenerToProcessorAdapter mSourceEventListener;
     private NativeBufferWaveRecorder mRecorder;
     private ITunerErrorListener mTunerErrorListener;
-    private DecimalFormat mFrequencyErrorPPMFormat = new DecimalFormat("0.0");
-    private FrequencyErrorCorrectionManager mFrequencyErrorCorrectionManager;
+    private static final DecimalFormat FREQUENCY_ERROR_PPM_FORMAT = new DecimalFormat("0.000");
+    private TunerFrequencyErrorManager mTunerFrequencyErrorManager;
 
     /**
      * Abstract tuner controller class.  The tuner controller manages frequency bandwidth and currently tuned channels
@@ -75,7 +75,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
         mTunerErrorListener = tunerErrorListener;
         mFrequencyController = new FrequencyController(this);
         mSourceEventListener = new SourceEventListenerToProcessorAdapter(this);
-        mFrequencyErrorCorrectionManager = new FrequencyErrorCorrectionManager(this);
+        mTunerFrequencyErrorManager = new TunerFrequencyErrorManager(this);
     }
 
     /**
@@ -110,16 +110,16 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     }
 
     /**
-     * Frequency correction manager for this tuner controller.
+     * Tuner frequency correction manager for this tuner controller.
      */
-    public FrequencyErrorCorrectionManager getFrequencyErrorCorrectionManager()
+    public TunerFrequencyErrorManager getTunerFrequencyErrorManager()
     {
-        return mFrequencyErrorCorrectionManager;
+        return mTunerFrequencyErrorManager;
     }
 
     protected void dispose()
     {
-        getFrequencyErrorCorrectionManager().dispose();
+        getTunerFrequencyErrorManager().dispose();
         mNativeBufferBroadcaster.clear();
         mFrequencyController.dispose();
         mSourceEventListener.dispose();
@@ -225,7 +225,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
             setMaximumFrequency(config.getMaximumFrequency());
         }
         setFrequencyCorrection(config.getFrequencyCorrection());
-        getFrequencyErrorCorrectionManager().setEnabled(config.getAutoPPMCorrectionEnabled());
+        getTunerFrequencyErrorManager().setEnabled(config.getAutoPPMCorrectionEnabled());
     }
 
     /**
@@ -557,10 +557,10 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
         if(hasMeasuredFrequencyError())
         {
             StringBuilder sb = new StringBuilder();
-            sb.append("Measured Error: ");
+            sb.append("Average Channel Error: ");
             sb.append(getMeasuredFrequencyError());
-            sb.append("Hz (");
-            sb.append(mFrequencyErrorPPMFormat.format(getPPMFrequencyError()));
+            sb.append(" Hz (");
+            sb.append(FREQUENCY_ERROR_PPM_FORMAT.format(getPPMFrequencyError()));
             sb.append("ppm)");
             return sb.toString();
         }
@@ -592,12 +592,20 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
 
     /**
      * Sets the measured frequency error average.
-     * @param measuredFrequencyError in hertz averaged over a 5 second interval.
+     * @param measuredFrequencyError in hertz.
      */
     public void setMeasuredFrequencyError(int measuredFrequencyError)
     {
         mMeasuredFrequencyError = measuredFrequencyError;
-        getFrequencyErrorCorrectionManager().updatePPM(getPPMFrequencyError());
+
+        try
+        {
+            mFrequencyController.broadcast(SourceEvent.frequencyErrorMeasurement(measuredFrequencyError));
+        }
+        catch(SourceException e)
+        {
+            //Ignore display-only update failures.
+        }
     }
 
     /**

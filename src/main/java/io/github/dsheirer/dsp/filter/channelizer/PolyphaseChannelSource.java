@@ -27,6 +27,7 @@ import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
+import io.github.dsheirer.source.tuner.frequency.TunerFrequencyErrorManager;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -47,6 +48,7 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     private List<Integer> mOutputProcessorIndexes = new ArrayList<>();
     private double mTunerSampleRate;
     private double mTunerCenterFrequency;
+    private long mFrequencyCorrection;
     private PendingOutputProcessorUpdate mPendingOutputProcessorUpdate;
 
     /**
@@ -60,10 +62,11 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
      * @throws IllegalArgumentException if a channel low pass filter can't be designed to the channel specification
      */
     public PolyphaseChannelSource(TunerChannel tunerChannel, ChannelCalculator channelCalculator, SynthesisFilterManager filterManager,
-                                  Listener<SourceEvent> producerSourceEventListener, String threadName)
+                                  Listener<SourceEvent> producerSourceEventListener, String threadName,
+                                  TunerFrequencyErrorManager tunerFrequencyErrorManager)
             throws IllegalArgumentException
     {
-        super(producerSourceEventListener, tunerChannel, threadName);
+        super(producerSourceEventListener, tunerChannel, threadName, tunerFrequencyErrorManager);
         mChannelSampleRate = channelCalculator.getChannelSampleRate();
         doUpdateOutputProcessor(channelCalculator, filterManager);
     }
@@ -338,6 +341,17 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
         mIndexCenterFrequency = frequency;
     }
 
+    @Override
+    public void setFrequencyCorrection(long correction)
+    {
+        mFrequencyCorrection = correction;
+
+        if(mPolyphaseChannelOutputProcessor != null)
+        {
+            mPolyphaseChannelOutputProcessor.setFrequencyOffset(getFrequencyOffset());
+        }
+    }
+
     /**
      * Center frequency from the incoming index channel(s).
      * @return frequency in hertz
@@ -353,7 +367,7 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
      */
     public long getFrequencyOffset()
     {
-        return mIndexCenterFrequency - getTunerChannel().getFrequency();
+        return mIndexCenterFrequency - getTunerChannel().getFrequency() + mFrequencyCorrection;
     }
 
     @Override

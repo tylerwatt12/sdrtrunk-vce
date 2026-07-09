@@ -599,6 +599,14 @@ public class FilterFactory
     }
 
     /**
+     * Creates root raised cosine filter coefficients for a symbol-rate oriented caller.
+     */
+    public static float[] getRRC(double samplesPerSymbol, int symbolCount, float alpha)
+    {
+        return getRootRaisedCosine(samplesPerSymbol * 2, symbolCount, alpha);
+    }
+
+    /**
      * Creates root raised cosine filter coefficients with a tap count equal to the symbols x samplesPerSymbol + 1.
      *
      * Symbol count should be an even integer.

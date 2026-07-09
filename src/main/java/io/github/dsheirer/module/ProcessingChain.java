@@ -939,26 +939,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     }
 
     /**
-     * Adds the listener to receive frequency change events from the processing chain
-     *
-     * @param listener to receive events
-     */
-    public void addFrequencyChangeListener(Listener<SourceEvent> listener)
-    {
-        mSourceEventBroadcaster.addListener(listener);
-    }
-
-    /**
-     * Removes the listener from receiving frequency change events
-     *
-     * @param listener to remove
-     */
-    public void removeFrequencyChangeListener(Listener<SourceEvent> listener)
-    {
-        mSourceEventBroadcaster.removeListener(listener);
-    }
-
-    /**
      * Adds the listener to receive call events from all modules.
      */
     public void addSquelchStateListener(Listener<SquelchStateEvent> listener)

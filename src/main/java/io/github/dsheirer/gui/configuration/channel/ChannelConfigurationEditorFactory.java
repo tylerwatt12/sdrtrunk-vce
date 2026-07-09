@@ -61,6 +61,8 @@ public class ChannelConfigurationEditorFactory
                 return new DMRConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case NBFM:
                 return new NBFMConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
+            case NXDN:
+                return new NXDNConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case LTR_NET:
                 return new LTRNetConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case LTR:

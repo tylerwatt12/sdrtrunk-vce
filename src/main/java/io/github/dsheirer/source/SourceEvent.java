@@ -27,8 +27,7 @@ public class SourceEvent
     public enum Event
     {
         NOTIFICATION_CHANNEL_COUNT_CHANGE,
-        NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION,
-        NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION_CHANGE,
+        NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION_STATUS,
         NOTIFICATION_CHANNEL_POWER,
         NOTIFICATION_CHANNEL_SAMPLE_RATE_CHANGE,
         NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED,
@@ -38,8 +37,6 @@ public class SourceEvent
         NOTIFICATION_FREQUENCY_ROTATION_SUCCESS,
         NOTIFICATION_FREQUENCY_ROTATION_FAILURE,
         NOTIFICATION_MEASURED_FREQUENCY_ERROR,
-        NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED,
-        NOTIFICATION_CARRIER_OFFSET_FREQUENCY,
         NOTIFICATION_RECORDING_FILE_LOADED,
         NOTIFICATION_SAMPLE_RATE_CHANGE,
         NOTIFICATION_SQUELCH_THRESHOLD,
@@ -49,6 +46,7 @@ public class SourceEvent
         NOTIFICATION_ERROR_STATE,
 
         REQUEST_FREQUENCY_CHANGE,
+        REQUEST_FREQUENCY_CORRECTION,
         REQUEST_FREQUENCY_ROTATION,
         REQUEST_FREQUENCY_SELECTION,
         REQUEST_CHANGE_SQUELCH_THRESHOLD,
@@ -59,20 +57,20 @@ public class SourceEvent
         REQUEST_STOP_SAMPLE_STREAM;
 
         public static final Set<Event> NOTIFICATION_EVENTS =
-            Set.copyOf(EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_STOP_SAMPLE_STREAM));
+            Set.copyOf(EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_ERROR_STATE));
         public static final Set<Event> REQUEST_EVENTS =
-            Set.copyOf(EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_SAMPLE_RATE_CHANGE));
+            Set.copyOf(EnumSet.range(REQUEST_FREQUENCY_CHANGE, REQUEST_STOP_SAMPLE_STREAM));
     }
 
-    private Event mEvent;
-    private Number mValue;
+    private final Event mEvent;
+    private final Number mValue;
     private Source mSource;
-    private String mEventDescription;
+    private final String mEventDescription;
 
     /**
-     * Private constructor.  Use the static constructor methods to create an event.
+     * Protected constructor for SourceEvent subclasses.  Use the static constructor methods to create standard events.
      */
-    private SourceEvent(Event event, Source source, Number value, String eventDescription)
+    protected SourceEvent(Event event, Source source, Number value, String eventDescription)
     {
         mEvent = event;
         mSource = source;
@@ -243,13 +241,15 @@ public class SourceEvent
     }
 
     /**
-     * Creates a new carrier offset measurement notification event.
+     * Creates a new frequency correction request emitted by a decoder.  The request is handled by the channel source
+     * that owns the decoder's sample stream so the correction can be applied to that channel before tuner-wide PPM is
+     * adjusted.
      *
-     * @param carrierOffset in hertz
+     * @param correction in hertz
      */
-    public static SourceEvent carrierOffsetMeasurement(long carrierOffset)
+    public static SourceEvent frequencyCorrectionRequest(long correction)
     {
-        return new SourceEvent(Event.NOTIFICATION_CARRIER_OFFSET_FREQUENCY, carrierOffset);
+        return new SourceEvent(Event.REQUEST_FREQUENCY_CORRECTION, correction);
     }
 
     /**
@@ -260,18 +260,6 @@ public class SourceEvent
     public static SourceEvent frequencyErrorMeasurement(long frequencyError)
     {
         return new SourceEvent(Event.NOTIFICATION_MEASURED_FREQUENCY_ERROR, frequencyError);
-    }
-
-    /**
-     * Creates a new frequency error measurement notification event.  This event is different from
-     * the raw frequency error measurement and indicates that the current state of the PLL is
-     * locked and tracking the signal.
-     *
-     * @param frequencyError in hertz
-     */
-    public static SourceEvent frequencyErrorMeasurementSyncLocked(long frequencyError, String eventDescription)
-    {
-        return new SourceEvent(Event.NOTIFICATION_MEASURED_FREQUENCY_ERROR_SYNC_LOCKED, frequencyError, eventDescription);
     }
 
     /**

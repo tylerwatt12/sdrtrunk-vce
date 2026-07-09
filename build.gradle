@@ -350,6 +350,7 @@ def runtimeModules = [
         'javafx.media',
         'javafx.swing',
         'jdk.accessibility',
+        'jdk.charsets',
         'jdk.crypto.ec',
         'jdk.incubator.vector',
         'jdk.jfr',
@@ -433,7 +434,9 @@ def configureRuntime = { def task, List<String> jvmArgs ->
     //jdk.incubator.vector - needed for Project Panama foreign function and vector apis
     //jdk.accessibility is used with assistive technologies like screen readers
     //java.management for JVM resource monitoring
-    task.extension.addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management')
+    //jdk.charsets for non-UTF talker alias decoding in bundled runtimes
+    task.extension.addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management',
+            'jdk.charsets')
 
     //Use auto-detected modules and 'add' any specified modules.
     task.extension.additive.set(true)
@@ -458,7 +461,7 @@ runtime {
         unixScriptTemplate = unixScriptTemplateFile
     }
 
-    addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management')
+    addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management', 'jdk.charsets')
     additive.set(true)
     addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
 

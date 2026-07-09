@@ -558,9 +558,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         //the processing chain
         processingChain.addChannelEventListener(this);
 
-        //Register channel to receive frequency correction events to show in the spectral display (hack!)
-        processingChain.addFrequencyChangeListener(channel);
-
         /* Processing Modules */
         List<Module> modules = DecoderFactory.getModules(mChannelMapModel, channel, mAliasModel, mUserPreferences,
             request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
@@ -662,8 +659,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             mLog.warn("Channel [{}] processing chain not added because it already exists", channel.getName());
             processingChain.removeEventLoggingModules();
             processingChain.removeRecordingModules();
-            processingChain.removeFrequencyChangeListener(channel);
-            channel.resetFrequencyCorrection();
             mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_STOP));
             mChannelEventBroadcaster.removeListener(processingChain);
             processingChain.getEventBus().unregister(ChannelProcessingManager.this);
@@ -782,10 +777,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 processingChain.stop();
                 processingChain.removeEventLoggingModules();
                 processingChain.removeRecordingModules();
-
-                //Deregister channel from receive frequency correction events to show in the spectral display (hack!)
-                processingChain.removeFrequencyChangeListener(channel);
-                channel.resetFrequencyCorrection();
 
                 //Notify all processing chains that this channel is shutting down so that if this is a traffic channel,
                 //the owning parent channel's traffic channel manager can cleanup it's accounting.

@@ -82,6 +82,12 @@ import io.github.dsheirer.module.decode.mpt1327.Sync;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoderState;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNDecoder;
+import io.github.dsheirer.module.decode.nxdn.NXDNDecoderState;
+import io.github.dsheirer.module.decode.nxdn.NXDNTrafficChannelManager;
+import io.github.dsheirer.module.decode.nxdn.audio.NXDNAudioModule;
+import io.github.dsheirer.module.decode.nxdn.layer3.filter.NXDNMessageFilterSet;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P2AudioModule;
@@ -183,6 +189,10 @@ public class DecoderFactory
                 break;
             case NBFM:
                 processNBFM(channel, modules, aliasList, decodeConfig);
+                break;
+            case NXDN:
+                processNXDN(channel, userPreferences, modules, aliasList, decodeConfig, trafficChannelManager,
+                    channelDescriptor);
                 break;
             case LTR:
                 processLTRStandard(channel, modules, aliasList, (DecodeConfigLTRStandard) decodeConfig);
@@ -377,6 +387,49 @@ public class DecoderFactory
         if(channel.getSourceConfiguration().getSourceType() == SourceType.TUNER)
         {
             modules.add(new FMDemodulatorModule(FM_CHANNEL_BANDWIDTH));
+        }
+    }
+
+    /**
+     * Creates decoder modules for the NXDN decoder.
+     */
+    private static void processNXDN(Channel channel, UserPreferences userPreferences, List<Module> modules,
+                                    AliasList aliasList, DecodeConfiguration decodeConfig,
+                                    TrafficChannelManager trafficChannelManager, IChannelDescriptor channelDescriptor)
+    {
+        if(decodeConfig instanceof DecodeConfigNXDN configNXDN)
+        {
+            if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
+                sctmf.hasMultipleFrequencies())
+            {
+                List<State> activeStates = new ArrayList<>();
+                activeStates.add(State.CONTROL);
+                modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(), userPreferences));
+            }
+
+            modules.add(new NXDNDecoder(configNXDN));
+            modules.add(new NXDNAudioModule(userPreferences, aliasList));
+
+            if(channel.getChannelType() == ChannelType.STANDARD)
+            {
+                NXDNTrafficChannelManager primaryTCM = new NXDNTrafficChannelManager(channel);
+                modules.add(primaryTCM);
+                modules.add(new NXDNDecoderState(channel, primaryTCM));
+            }
+            else if(trafficChannelManager instanceof NXDNTrafficChannelManager parentTCM)
+            {
+                NXDNDecoderState decoderState = new NXDNDecoderState(channel, parentTCM);
+                decoderState.setCurrentChannel(channelDescriptor);
+                modules.add(decoderState);
+            }
+            else
+            {
+                mLog.warn("Expected non-null NXDN traffic channel manager for channel " + channel.getName());
+            }
+        }
+        else
+        {
+            throw new IllegalArgumentException("Can't create NXDN decoder - unrecognized config: " + decodeConfig);
         }
     }
 
@@ -718,6 +771,9 @@ public class DecoderFactory
             case MPT1327:
                 filters.add(new MPT1327MessageFilter());
                 break;
+            case NXDN:
+                filters.add(new NXDNMessageFilterSet());
+                break;
             case P25_PHASE1:
             case P25_CONVENTIONAL:
                 filters.add(new P25P1MessageFilterSet());
@@ -759,6 +815,8 @@ public class DecoderFactory
                 return new DecodeConfigMPT1327();
             case NBFM:
                 return new DecodeConfigNBFM();
+            case NXDN:
+                return new DecodeConfigNXDN();
             case PASSPORT:
                 return new DecodeConfigPassport();
             case P25_CONVENTIONAL:
@@ -829,6 +887,16 @@ public class DecoderFactory
                     copyNBFM.setOutputGain(origNBFM.getOutputGain());
                     copyNBFM.setTalkgroup(origNBFM.getTalkgroup());
                     return copyNBFM;
+                case NXDN:
+                    DecodeConfigNXDN origNXDN = (DecodeConfigNXDN)config;
+                    DecodeConfigNXDN copyNXDN = new DecodeConfigNXDN();
+                    copyNXDN.setChannelMap(origNXDN.getChannelMap());
+                    copyNXDN.setEncoding(origNXDN.getEncoding());
+                    copyNXDN.setIgnoreDataCalls(origNXDN.isIgnoreDataCalls());
+                    copyNXDN.setIgnoreEncryptedCalls(origNXDN.isIgnoreEncryptedCalls());
+                    copyNXDN.setTrafficChannelPoolSize(origNXDN.getTrafficChannelPoolSize());
+                    copyNXDN.setTransmissionMode(origNXDN.getTransmissionMode());
+                    return copyNXDN;
                 case P25_PHASE1:
                     DecodeConfigP25Phase1 originalP25 = (DecodeConfigP25Phase1)config;
                     DecodeConfigP25Phase1 copyP25 = new DecodeConfigP25Phase1();
