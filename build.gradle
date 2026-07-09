@@ -226,6 +226,12 @@ def jvmArgsLinux = jvmArgsClasspath
 def jvmArgsMac = jvmArgsLinux
 
 /**
+ * JVM arguments for application-plugin launchers.  This must follow the requested JavaFX target platform instead
+ * of the host build OS so cross-built Windows distributions include the Windows/JIDE exports.
+ */
+def applicationJvmArgs = javafxPlatform == "win" ? jvmArgsWindows : (javafxPlatform == "mac" ? jvmArgsMac : jvmArgsLinux)
+
+/**
  * JVM Arguments for running the JPMS application on macOS.
  */
 def jpmsJvmArgsMac =
@@ -236,13 +242,7 @@ def jpmsJvmArgsMac =
 
 application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
-
-    if(os.isWindows()) {
-        applicationDefaultJvmArgs = jvmArgsWindows
-    }
-    else {
-        applicationDefaultJvmArgs = os.isMacOsX() ? jvmArgsMac : jvmArgsLinux
-    }
+    applicationDefaultJvmArgs = applicationJvmArgs
 }
 
 distributions {
@@ -256,12 +256,7 @@ distributions {
 }
 
 test {
-    if(os.isWindows()) {
-        jvmArgs = jvmArgsWindows
-    }
-    else {
-        jvmArgs = os.isMacOsX() ? jvmArgsMac : jvmArgsLinux
-    }
+    jvmArgs = applicationJvmArgs
 }
 
 jar {
@@ -457,7 +452,7 @@ runtime {
     javaHome.set(java25Home)
 
     launcher {
-        jvmArgs = os.isWindows() ? jvmArgsWindows : (os.isMacOsX() ? jvmArgsMac : jvmArgsLinux)
+        jvmArgs = applicationJvmArgs
         unixScriptTemplate = unixScriptTemplateFile
     }
 

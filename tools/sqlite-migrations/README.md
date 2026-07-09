@@ -43,5 +43,19 @@ tools\sqlite-migrations\p25-history\migrate-v8-to-v9-drop-neighbor-nac.ps1 `
   -DatabasePath C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite
 ```
 
-Each wrapper requires the `sqlite3` command-line tool, runs an integrity check, creates a timestamped backup beside the
-database, applies the SQL migration, and verifies the final schema.
+Each wrapper uses Java source-file mode with the SDRTrunk distribution `lib` directory on the classpath. The wrappers run
+an integrity check, create a timestamped backup beside the database, apply the migration, and verify the final schema.
+
+If the wrapper cannot find the installed SDRTrunk application, pass the app home explicitly:
+
+```bash
+tools/sqlite-migrations/p25-history/migrate-v8-to-v9-drop-neighbor-nac.sh \
+  /path/to/sdrtrunk.sqlite /path/to/sdr-trunk
+```
+
+```powershell
+tools\sqlite-migrations\p25-history\migrate-v8-to-v9-drop-neighbor-nac.ps1 `
+  -DatabasePath C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite `
+  -AppHome C:\Users\Example\Desktop\sdr-trunk-windows-x86_64-vradioresolve-6 `
+  -JavaHome C:\Users\Example\Java\jdk-25.0.1-full
+```
