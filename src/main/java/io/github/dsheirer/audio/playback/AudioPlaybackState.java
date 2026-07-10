@@ -8,7 +8,7 @@ package io.github.dsheirer.audio.playback;
 import java.util.List;
 
 /**
- * Immutable shared scheduler state. Local speaker mute is reported separately from browser listening state.
+ * Immutable local playback scheduler state.
  */
 public record AudioPlaybackState(boolean localMuted, List<AudioPlaybackCall> playing, List<AudioPlaybackCall> queued,
                                  String currentTarget, String holdTarget, List<String> avoidedTargets)

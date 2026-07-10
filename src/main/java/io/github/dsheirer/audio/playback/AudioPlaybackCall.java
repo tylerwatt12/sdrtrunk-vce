@@ -16,7 +16,7 @@ import io.github.dsheirer.identifier.Role;
 import java.util.List;
 
 /**
- * Immutable display-safe view of one call in the shared local playback session.
+ * Immutable display-safe view of one call in the local playback session.
  */
 public record AudioPlaybackCall(String callId, String output, String system, String sourceId, String sourceAlias,
                                 String targetId, String targetAlias, long frequencyHz, int timeslot,

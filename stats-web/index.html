@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>sdrtrunk-vce</title>
-  <link rel="stylesheet" href="/assets/app.css?v=6">
+  <link rel="stylesheet" href="/assets/app.css?v=7">
 </head>
 <body>
   <div class="app-shell">
@@ -21,20 +21,24 @@
         </nav>
         <div id="server-status" class="server-status">Loading</div>
       </header>
-      <section class="playback-bar" id="playback-bar" aria-label="Shared audio playback">
-        <audio id="playback-audio" preload="none"></audio>
-        <button type="button" id="playback-mute" class="playback-command">Mute</button>
+      <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
+        <button type="button" id="playback-mute" class="playback-command">Unmute</button>
         <button type="button" id="playback-hold" class="playback-command">Hold</button>
         <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
         <button type="button" id="playback-clear" class="playback-command">Clear</button>
+        <button type="button" id="playback-skip" class="playback-command">Skip</button>
         <div class="playback-now">
           <span class="playback-field">Now</span>
           <strong id="playback-current">Idle</strong>
         </div>
         <details class="playback-queue">
-          <summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong></summary>
+          <summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong>
+            <span class="playback-dropped" id="playback-dropped"></span></summary>
           <div id="playback-queue-list" class="playback-queue-list">No queued calls</div>
         </details>
+        <label class="playback-limit"><span class="playback-field">Max</span>
+          <input id="playback-max-queued" type="number" min="1" max="500" step="1" value="100">
+        </label>
         <div id="playback-status" class="playback-status">Connecting</div>
       </section>
     </div>
@@ -42,6 +46,7 @@
       <div class="loading">Loading</div>
     </main>
   </div>
-  <script src="/assets/app.js?v=6"></script>
+  <script src="/assets/web-call-player.js?v=1"></script>
+  <script src="/assets/app.js?v=7"></script>
 </body>
 </html>

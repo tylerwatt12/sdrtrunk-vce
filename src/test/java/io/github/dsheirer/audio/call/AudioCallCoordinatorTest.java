@@ -48,7 +48,7 @@ class AudioCallCoordinatorTest
     {
         List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
-            playbackCalls::add, null, null);
+            playbackCalls::add, null, null, null);
 
         try
         {
@@ -84,17 +84,21 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void completionFansOutImmutableCallToRecordingAndStreaming() throws Exception
+    void completionFansOutImmutableCallToAllCompletedCallConsumers() throws Exception
     {
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
-        CountDownLatch completionLatch = new CountDownLatch(2);
+        List<CompletedAudioCall> webCalls = new CopyOnWriteArrayList<>();
+        CountDownLatch completionLatch = new CountDownLatch(3);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(false, false),
             null, call -> {
                 recorded.add(call);
                 completionLatch.countDown();
             }, call -> {
                 streamed.add(call);
+                completionLatch.countDown();
+            }, call -> {
+                webCalls.add(call);
                 completionLatch.countDown();
             });
 
@@ -112,6 +116,7 @@ class AudioCallCoordinatorTest
             assertTrue(completionLatch.await(1, TimeUnit.SECONDS), "Expected completed call fanout");
             assertEquals(1, recorded.size());
             assertEquals(1, streamed.size());
+            assertEquals(1, webCalls.size());
 
             CompletedAudioCall recordedCall = recorded.getFirst();
             CompletedAudioCall streamedCall = streamed.getFirst();
@@ -121,6 +126,7 @@ class AudioCallCoordinatorTest
             assertEquals(1, recordedCall.audioBuffers().size());
             assertArrayEquals(audio, recordedCall.audioBuffers().getFirst());
             assertSame(recordedCall, streamedCall);
+            assertSame(recordedCall, webCalls.getFirst());
         }
         finally
         {

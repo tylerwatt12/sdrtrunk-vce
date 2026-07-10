@@ -57,7 +57,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Manages scheduling and playback of playable audio calls to the local user's audio system.
  */
-public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSession
+public class AudioPlaybackManager implements IAudioController
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioPlaybackManager.class);
     private static final String UNKNOWN = "unknown";
@@ -70,7 +70,6 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
     private final Map<PlayableAudioCall, PlaybackCallContext> mCallContexts = new ConcurrentHashMap<>();
     private final Set<PlaybackTarget> mAvoidTargets = ConcurrentHashMap.newKeySet();
     private final List<Listener<AudioPlaybackState>> mPlaybackStateListeners = new CopyOnWriteArrayList<>();
-    private final List<Listener<PlaybackAudioFrame>> mPlaybackAudioListeners = new CopyOnWriteArrayList<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
     private final ScheduledExecutorService mProcessingExecutorService;
@@ -162,7 +161,6 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
         releaseAudioSegments(mIncomingSegments);
         releaseCallContexts();
         mPlaybackStateListeners.clear();
-        mPlaybackAudioListeners.clear();
 
         if(mAudioOutput != null)
         {
@@ -278,8 +276,6 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
                     audioChannel.setIdleStateListener(AUDIO_CHANNEL_IDLE_LISTENER);
                 }
 
-                updatePlaybackAudioListener();
-
                 setMuted(mUserPreferences.getPlaybackPreference().isMuted());
             }
             finally
@@ -358,8 +354,8 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
     }
 
     /**
-     * Toggles hold on the current interactive playback target. Hold affects Java and web playback, but not recording
-     * or streaming providers, and is not persisted.
+     * Toggles hold on the current local playback target. Hold does not affect recording or streaming providers and
+     * is not persisted.
      *
      * @return true when hold is active after toggling
      */
@@ -420,7 +416,6 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
         broadcastPlaybackState();
     }
 
-    @Override
     public AudioPlaybackState getPlaybackState()
     {
         List<AudioPlaybackCall> playing = new ArrayList<>();
@@ -481,7 +476,6 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
             holdTarget != null ? holdTarget.label() : null, avoidedTargets);
     }
 
-    @Override
     public void addPlaybackStateListener(Listener<AudioPlaybackState> listener)
     {
         if(listener != null)
@@ -491,42 +485,14 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
         }
     }
 
-    @Override
     public void removePlaybackStateListener(Listener<AudioPlaybackState> listener)
     {
         mPlaybackStateListeners.remove(listener);
     }
 
-    @Override
-    public void addPlaybackAudioListener(Listener<PlaybackAudioFrame> listener)
-    {
-        if(listener != null && !mPlaybackAudioListeners.contains(listener))
-        {
-            mPlaybackAudioListeners.add(listener);
-            updatePlaybackAudioListener();
-            refreshPlaybackProcessing();
-        }
-    }
-
-    @Override
-    public void removePlaybackAudioListener(Listener<PlaybackAudioFrame> listener)
-    {
-        mPlaybackAudioListeners.remove(listener);
-        updatePlaybackAudioListener();
-        refreshPlaybackProcessing();
-    }
-
-    private void updatePlaybackAudioListener()
-    {
-        if(mAudioOutput != null)
-        {
-            mAudioOutput.setPlaybackAudioListener(mPlaybackAudioListeners.isEmpty() ? null : this::broadcastPlaybackAudio);
-        }
-    }
-
     private boolean shouldProcessPlayback()
     {
-        return !isMuted() || !mPlaybackAudioListeners.isEmpty();
+        return !isMuted();
     }
 
     private synchronized void refreshPlaybackProcessing()
@@ -549,14 +515,6 @@ public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSes
             {
                 mAudioOutput.pauseProcessing();
             }
-        }
-    }
-
-    private void broadcastPlaybackAudio(PlaybackAudioFrame frame)
-    {
-        for(Listener<PlaybackAudioFrame> listener: mPlaybackAudioListeners)
-        {
-            listener.receive(frame);
         }
     }
 

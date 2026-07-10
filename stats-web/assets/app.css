@@ -101,7 +101,7 @@ a:hover {
 .playback-bar {
   min-height: 42px;
   display: grid;
-  grid-template-columns: repeat(4, max-content) minmax(180px, 1fr) max-content max-content;
+  grid-template-columns: repeat(5, max-content) minmax(180px, 1fr) max-content max-content max-content;
   align-items: center;
   gap: 5px;
   padding: 5px 12px;
@@ -192,6 +192,27 @@ a:hover {
   color: #aab3b9;
   text-align: right;
   white-space: nowrap;
+}
+
+.playback-dropped {
+  color: #cf9f65;
+  font-size: 11px;
+}
+
+.playback-limit {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.playback-limit input {
+  width: 58px;
+  height: 26px;
+  padding: 2px 4px;
+  color: #dce4e8;
+  background: #171c20;
+  border: 1px solid #5b666e;
 }
 
 .content {
@@ -825,6 +846,7 @@ th.center {
   }
 
   .playback-queue,
+  .playback-limit,
   .playback-status {
     display: none;
   }

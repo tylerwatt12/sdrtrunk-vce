@@ -460,161 +460,21 @@ window.addEventListener('beforeunload', () => {
 
 function initializePlaybackHeader() {
   if (tableOnly) return;
-  const audio = document.getElementById('playback-audio');
-  const mute = document.getElementById('playback-mute');
-  const hold = document.getElementById('playback-hold');
-  const avoid = document.getElementById('playback-avoid');
-  const clear = document.getElementById('playback-clear');
-  const current = document.getElementById('playback-current');
-  const queued = document.getElementById('playback-queued');
-  const queueList = document.getElementById('playback-queue-list');
-  const status = document.getElementById('playback-status');
-  let state = { local_muted: false, playing: [], queued: [], avoided_targets: [] };
-  let listening = false;
-  let streamStarting = false;
-  let reconnectTimer = null;
-  let timeline = [];
-  let timelineOrigin = null;
-
-  const callLabel = (call) => {
-    const target = call.target_alias || call.target_id || 'Unknown target';
-    const source = call.source_alias || call.source_id;
-    return `${call.output ? `${call.output}: ` : ''}${target}${source ? ` · ${source}` : ''}`;
-  };
-
-  const showCalls = (calls) => {
-    current.textContent = calls?.length ? calls.map(callLabel).join(' | ') : 'Idle';
-  };
-
-  const resetTimeline = () => {
-    timeline = [];
-    timelineOrigin = null;
-  };
-
-  const advanceTimeline = () => {
-    if (!listening || timelineOrigin === null || !Number.isFinite(audio.currentTime)) return;
-    const playbackPosition = timelineOrigin + audio.currentTime * 1000;
-    let calls = null;
-
-    while (timeline.length && number(timeline[0].position_ms) <= playbackPosition + 150) {
-      calls = timeline.shift().playing || [];
-    }
-
-    if (calls !== null) showCalls(calls);
-  };
-
-  const timelineTimer = setInterval(advanceTimeline, 50);
-  window.addEventListener('beforeunload', () => clearInterval(timelineTimer));
-
-  const startStream = () => {
-    if (!listening || streamStarting) return;
-    clearTimeout(reconnectTimer);
-    resetTimeline();
-    current.textContent = 'Buffering';
-    streamStarting = true;
-    audio.src = `/live/playback/audio?stream=${Date.now()}`;
-    audio.play().then(() => {
-      streamStarting = false;
-      status.textContent = 'Buffering audio';
-    }).catch(() => {
-      streamStarting = false;
-      if (listening) {
-        status.textContent = 'Waiting for audio';
-        reconnectTimer = setTimeout(startStream, 1000);
-      }
-    });
-  };
-
-  const stopStream = () => {
-    clearTimeout(reconnectTimer);
-    streamStarting = false;
-    audio.pause();
-    audio.removeAttribute('src');
-    audio.load();
-    resetTimeline();
-    showCalls(state.playing || []);
-    status.textContent = 'Ready';
-  };
-
-  const applyState = (updated) => {
-    state = updated || state;
-    const playing = state.playing || [];
-    if (!listening) showCalls(playing);
-    queued.textContent = number(state.queued_calls || 0);
-    queueList.replaceChildren();
-    (state.queued || []).slice(0, 50).forEach((call, index) =>
-      queueList.append(node('div', 'playback-queue-item', `${index + 1}. ${callLabel(call)}`)));
-    if (!state.queued?.length) queueList.append(node('div', 'muted', 'No queued calls'));
-    const audible = listening;
-    mute.textContent = audible ? 'Mute' : 'Unmute';
-    mute.classList.toggle('active', audible);
-    hold.classList.toggle('active', Boolean(state.hold_target));
-    hold.title = state.hold_target ? `Release hold: ${state.hold_target}` : 'Hold current call';
-    hold.disabled = !state.hold_target && !state.current_target;
-    avoid.disabled = !state.current_target;
-    clear.disabled = !(state.avoided_targets || []).length;
-    clear.title = `${(state.avoided_targets || []).length} temporary avoid(s)`;
-
-    if (listening && audio.paused) {
-      startStream();
-    } else if (!listening) {
-      status.textContent = 'Ready';
-    }
-  };
-
-  const command = async (action) => {
-    const response = await fetch(`/api/playback/control?action=${encodeURIComponent(action)}`, {
-      method: 'POST', cache: 'no-store'
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Playback control failed');
-    applyState(result);
-  };
-
-  mute.addEventListener('click', () => {
-    const enable = !listening;
-    listening = enable;
-
-    if (enable) startStream();
-    else stopStream();
+  window.sdrtrunkWebPlayer = new WebCallPlayer({
+    mute: 'playback-mute',
+    hold: 'playback-hold',
+    avoid: 'playback-avoid',
+    clear: 'playback-clear',
+    skip: 'playback-skip',
+    current: 'playback-current',
+    queued: 'playback-queued',
+    dropped: 'playback-dropped',
+    queueList: 'playback-queue-list',
+    maximumQueued: 'playback-max-queued',
+    status: 'playback-status'
   });
-  hold.addEventListener('click', () => command('hold').catch((error) => { status.textContent = error.message; }));
-  avoid.addEventListener('click', () => command('avoid').catch((error) => { status.textContent = error.message; }));
-  clear.addEventListener('click', () => command('clear').catch((error) => { status.textContent = error.message; }));
-  audio.addEventListener('error', () => {
-    if (listening) {
-      status.textContent = 'Reconnecting';
-      reconnectTimer = setTimeout(startStream, 1000);
-    }
-  });
-  audio.addEventListener('playing', () => {
-    if (listening && timeline.length) {
-      timelineOrigin = number(timeline[0].position_ms) - audio.currentTime * 1000;
-      advanceTimeline();
-    }
-    status.textContent = 'Listening';
-  });
-
-  const source = new EventSource('/live/playback');
+  const source = window.sdrtrunkWebPlayer.connect('/live/web-calls');
   liveConnections.add(source);
-  source.addEventListener('playback', (event) => applyState(JSON.parse(event.data)));
-  source.addEventListener('audio_timeline', (event) => {
-    if (!listening) return;
-    timeline.push(JSON.parse(event.data));
-
-    if (timelineOrigin === null && !audio.paused) {
-      timelineOrigin = number(timeline[0].position_ms) - audio.currentTime * 1000;
-    }
-
-    advanceTimeline();
-  });
-  source.onopen = () => {
-    if (!listening) status.textContent = 'Ready';
-  };
-  source.onerror = () => {
-    status.textContent = 'Controls reconnecting';
-  };
-  applyState(state);
 }
 
 function pageParameters(extra = {}) {

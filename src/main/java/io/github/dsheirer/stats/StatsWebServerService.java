@@ -16,7 +16,7 @@ import com.google.common.eventbus.Subscribe;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import io.github.dsheirer.audio.playback.IAudioPlaybackSession;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.preference.PreferenceType;
@@ -52,6 +52,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
     private final StatsLiveService mLiveService;
+    private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
     private HttpServer mServer;
     private ExecutorService mExecutorService;
@@ -61,16 +62,15 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
-        this(userPreferences, null, null);
+        this(userPreferences, null);
     }
 
-    public StatsWebServerService(UserPreferences userPreferences, IAudioPlaybackSession playbackSession,
-                                 ChannelProcessingManager channelProcessingManager)
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager)
     {
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
         mDatabase = new StatsWebDatabase(userPreferences);
-        mLiveService = new StatsLiveService(mDatabase, playbackSession,
+        mLiveService = new StatsLiveService(mDatabase,
             channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null);
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
@@ -119,6 +119,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             }
 
             mLiveService.start();
+            mWebCallService.start();
 
             Files.createDirectories(assetRoot);
             InetAddress bindAddress = lanEnabled ? InetAddress.getByName("0.0.0.0") : InetAddress.getLoopbackAddress();
@@ -170,10 +171,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mServer.createContext("/api/conventional/detail", exchange -> handleJson(exchange,
                 () -> mDatabase.conventionalDetail(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/live/systems", this::handleSystemsSse);
-            mServer.createContext("/live/playback", this::handlePlaybackSse);
+            mServer.createContext("/live/web-calls", this::handleWebCallsSse);
             mServer.createContext("/live/activity", this::handleActivitySse);
-            mServer.createContext("/live/playback/audio", this::handleAudio);
-            mServer.createContext("/api/playback/control", this::handlePlaybackControl);
+            mServer.createContext("/api/web-player/calls/", this::handleWebCallAudio);
             mServer.createContext("/", this::handleStatic);
             mServer.start();
 
@@ -190,6 +190,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private synchronized void stop()
     {
         mLiveService.stop();
+        mWebCallService.stop();
 
         if(mServer != null)
         {
@@ -225,12 +226,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             "assetsAvailable", mAssetRoot != null && Files.isRegularFile(mAssetRoot.resolve("index.html")),
             "liveChannels", Map.of(
                 "systems", "/live/systems",
-                "playback", "/live/playback",
-                "activity", "/live/activity",
-                "audio", "/live/playback/audio"
+                "webCalls", "/live/web-calls",
+                "activity", "/live/activity"
             )
         ));
         status.put("database", mDatabase.status());
+        status.put("webPlayer", mWebCallService.status());
         return status;
     }
 
@@ -288,14 +289,14 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         streamSse(exchange, subscription, "snapshot", mLiveService.snapshot(), event -> true);
     }
 
-    private void handlePlaybackSse(HttpExchange exchange) throws IOException
+    private void handleWebCallsSse(HttpExchange exchange) throws IOException
     {
         if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
         {
             return;
         }
 
-        StatsLiveEventHub.Subscription subscription = mLiveService.subscribePlayback();
+        StatsLiveEventHub.Subscription subscription = mWebCallService.subscribe();
 
         if(subscription == null)
         {
@@ -303,26 +304,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             return;
         }
 
-        streamSse(exchange, subscription, "playback", mLiveService.playbackState(),
-            event -> "playback".equals(event.name()) || "audio_timeline".equals(event.name()));
-    }
-
-    private void handlePlaybackControl(HttpExchange exchange) throws IOException
-    {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "POST"))
-        {
-            return;
-        }
-
-        try
-        {
-            String action = StatsRequest.from(exchange.getRequestURI()).requiredText("action");
-            sendJson(exchange, 200, mLiveService.controlPlayback(action));
-        }
-        catch(StatsApiException e)
-        {
-            sendJson(exchange, e.status(), Map.of("error", e.getMessage(), "status", e.status()));
-        }
+        streamSse(exchange, subscription, "ready", Map.of("state", "live"),
+            event -> "call".equals(event.name()));
     }
 
     private void handleActivitySse(HttpExchange exchange) throws IOException
@@ -398,57 +381,41 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
-    private void handleAudio(HttpExchange exchange) throws IOException
+    private void handleWebCallAudio(HttpExchange exchange) throws IOException
     {
         if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
         {
             return;
         }
 
-        StatsLiveService.AudioSubscription subscription = mLiveService.subscribeAudio();
+        String prefix = "/api/web-player/calls/";
+        String path = exchange.getRequestURI().getPath();
 
-        if(subscription == null)
+        if(path == null || !path.startsWith(prefix) || !path.endsWith("/audio"))
         {
-            sendText(exchange, 429, "Live audio listener limit reached");
+            sendText(exchange, 404, "Call audio not found");
             return;
         }
 
+        String id = path.substring(prefix.length(), path.length() - "/audio".length());
+        StatsWebCallService.CachedCall call = mWebCallService.get(id);
+
+        if(call == null)
+        {
+            sendText(exchange, 404, "Call audio is no longer available");
+            return;
+        }
+
+        byte[] wave = call.wave();
         Headers headers = exchange.getResponseHeaders();
-        headers.set("Content-Type", "audio/mpeg");
+        headers.set("Content-Type", "audio/wav");
         headers.set("Cache-Control", "no-store, no-transform");
-        headers.set("Connection", "keep-alive");
         headers.set("Accept-Ranges", "none");
-        exchange.sendResponseHeaders(200, 0);
-        HttpServer server = mServer;
+        exchange.sendResponseHeaders(200, wave.length);
 
-        try(subscription; OutputStream outputStream = exchange.getResponseBody())
+        try(OutputStream outputStream = exchange.getResponseBody())
         {
-            while(mServer == server)
-            {
-                byte[] chunk = subscription.poll(15, TimeUnit.SECONDS);
-
-                if(chunk == null)
-                {
-                    continue;
-                }
-                else if(subscription.isEnd(chunk))
-                {
-                    break;
-                }
-                else
-                {
-                    outputStream.write(chunk);
-                    outputStream.flush();
-                }
-            }
-        }
-        catch(InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-        }
-        catch(IOException e)
-        {
-            // Client disconnected.
+            outputStream.write(wave);
         }
     }
 
@@ -504,6 +471,14 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     public void activityCommitted(java.util.List<Long> rowIds)
     {
         mLiveService.activityCommitted(rowIds);
+    }
+
+    /**
+     * Receives completed calls independently from local Java playback.
+     */
+    public void receive(CompletedAudioCall call)
+    {
+        mWebCallService.receive(call);
     }
 
     private void handleStatic(HttpExchange exchange) throws IOException
@@ -713,6 +688,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         MyEventBus.getGlobalEventBus().unregister(this);
         stop();
         mLiveService.close();
+        mWebCallService.close();
     }
 
     private interface JsonSupplier

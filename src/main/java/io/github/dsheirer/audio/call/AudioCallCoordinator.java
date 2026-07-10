@@ -53,26 +53,30 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final Consumer<ManagedPlayableAudioCall> mPlaybackConsumer;
     private final Consumer<CompletedAudioCall> mRecordingConsumer;
     private final Consumer<CompletedAudioCall> mStreamingConsumer;
+    private final Consumer<CompletedAudioCall> mWebConsumer;
 
     public AudioCallCoordinator(UserPreferences userPreferences, AudioPlaybackManager audioPlaybackManager,
                                 AudioRecordingManager audioRecordingManager,
-                                AudioStreamingManager audioStreamingManager)
+                                AudioStreamingManager audioStreamingManager,
+                                Consumer<CompletedAudioCall> webConsumer)
     {
         this(userPreferences.getCallManagementPreference(),
             audioPlaybackManager != null ? audioPlaybackManager::receive : null,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
-            audioStreamingManager != null ? audioStreamingManager::receive : null);
+            audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
                          Consumer<ManagedPlayableAudioCall> playbackConsumer,
                          Consumer<CompletedAudioCall> recordingConsumer,
-                         Consumer<CompletedAudioCall> streamingConsumer)
+                         Consumer<CompletedAudioCall> streamingConsumer,
+                         Consumer<CompletedAudioCall> webConsumer)
     {
         mCallManagementProvider = callManagementProvider;
         mPlaybackConsumer = playbackConsumer;
         mRecordingConsumer = recordingConsumer;
         mStreamingConsumer = streamingConsumer;
+        mWebConsumer = webConsumer;
     }
 
     @Override
@@ -137,6 +141,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             if(mStreamingConsumer != null)
             {
                 mStreamingConsumer.accept(completedAudioCall);
+            }
+
+            if(mWebConsumer != null)
+            {
+                mWebConsumer.accept(completedAudioCall);
             }
 
             mCalls.remove(context.snapshot.callId());

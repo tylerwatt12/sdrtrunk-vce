@@ -24,7 +24,6 @@ import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.preference.playback.PlayTestAudioRequest;
 import io.github.dsheirer.sample.Listener;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -63,7 +62,6 @@ public class AudioOutput implements LineListener
     private boolean mCanProcessAudio = false;
     private boolean mRunning = false;
     private volatile boolean mMuted;
-    private volatile Listener<PlaybackAudioFrame> mPlaybackAudioListener;
 
 
     /**
@@ -237,14 +235,6 @@ public class AudioOutput implements LineListener
     }
 
     /**
-     * Listener for the final mixed PCM that is also sent to the local sound device.
-     */
-    public void setPlaybackAudioListener(Listener<PlaybackAudioFrame> listener)
-    {
-        mPlaybackAudioListener = listener;
-    }
-
-    /**
      * Prepares this audio output for disposal.
      */
     public void dispose()
@@ -276,7 +266,7 @@ public class AudioOutput implements LineListener
     }
 
     /**
-     * Mutes only the local speaker. The provider and final PCM listener remain active for independent web playback.
+     * Mutes the local speaker.
      */
     public void setMuted(boolean muted)
     {
@@ -404,7 +394,6 @@ public class AudioOutput implements LineListener
     public class AudioProcessor implements Runnable
     {
         private final AtomicBoolean mProcessing = new AtomicBoolean();
-        private List<AudioPlaybackCall> mLastPlaybackCalls = List.of();
 
         /**
          * Process audio from the audio provider and writes it to the mixer's source data line. Calls to this method can
@@ -412,68 +401,30 @@ public class AudioOutput implements LineListener
          */
         private void processAudio()
         {
-            Listener<PlaybackAudioFrame> playbackAudioListener = mPlaybackAudioListener;
-
-            if(mSourceDataLine == null && playbackAudioListener == null)
+            if(mSourceDataLine == null)
             {
                 LOGGING_SUPPRESSOR.error("null output", 2,
                     "Audio Output source data line is null - ignoring audio playback request");
                 return;
             }
 
-            List<AudioPlaybackCall> playing = playbackCalls();
             ByteBuffer buffer = mAudioProvider.getAudio();
 
-            if(buffer != null)
+            if(buffer != null && !mMuted)
             {
-                if(playbackAudioListener != null)
-                {
-                    playbackAudioListener.receive(new PlaybackAudioFrame(
-                        Arrays.copyOf(buffer.array(), buffer.array().length),
-                        mAudioProvider.getAudioFormat().getChannels(), playing));
-                    mLastPlaybackCalls = playing;
-                }
+                //This is a blocking method call.
+                int wrote = mSourceDataLine.write(buffer.array(), 0, buffer.array().length);
 
-                if(!mMuted && mSourceDataLine != null)
+                //Around JDK 22 something started causing the source data line to fail to accept audio byte data via
+                //the write() method. Recycle the line when it stops accepting samples.
+                if(wrote <= 0)
                 {
-                    //This is a blocking method call.
-                    int wrote = mSourceDataLine.write(buffer.array(), 0, buffer.array().length);
-
-                    //Around JDK 22 something started causing the source data line to fail to accept audio byte data via
-                    //the write() method. Recycle the line when it stops accepting samples.
-                    if(wrote <= 0)
-                    {
-                        LOGGING_SUPPRESSOR.info("Stalled Data Line", 3,
-                            "Audio playback data line has stopped accepting samples - recycling to clear the error");
-                        mSourceDataLine.close();
-                        openSourceDataLine();
-                    }
+                    LOGGING_SUPPRESSOR.info("Stalled Data Line", 3,
+                        "Audio playback data line has stopped accepting samples - recycling to clear the error");
+                    mSourceDataLine.close();
+                    openSourceDataLine();
                 }
             }
-            else if(playbackAudioListener != null && !playing.equals(mLastPlaybackCalls))
-            {
-                playbackAudioListener.receive(new PlaybackAudioFrame(new byte[0],
-                    mAudioProvider.getAudioFormat().getChannels(), playing));
-                mLastPlaybackCalls = playing;
-            }
-        }
-
-        private List<AudioPlaybackCall> playbackCalls()
-        {
-            List<AudioPlaybackCall> calls = new ArrayList<>();
-
-            for(AudioChannel channel: mAudioProvider.getAudioChannels())
-            {
-                AudioPlaybackCall call = AudioPlaybackCall.from(channel.getChannelName(),
-                    channel.getCurrentAudioCall());
-
-                if(call != null)
-                {
-                    calls.add(call);
-                }
-            }
-
-            return calls;
         }
 
         @Override
