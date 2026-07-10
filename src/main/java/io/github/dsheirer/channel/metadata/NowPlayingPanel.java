@@ -20,16 +20,13 @@ package io.github.dsheirer.channel.metadata;
 
 import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
-import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
-import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.decode.event.DecodeEventPanel;
 import io.github.dsheirer.module.decode.event.MessageActivityPanel;
 import io.github.dsheirer.configuration.ConfigurationManager;
-import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
@@ -61,20 +58,17 @@ public class NowPlayingPanel extends JPanel
     private DecodeEventPanel mDecodeEventPanel;
     private MessageActivityPanel mMessageActivityPanel;
     private ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
-    private RadioResolveMetadataPanel mRadioResolveMetadataPanel;
     private JideTabbedPane mTabbedPane;
     private JideSplitPane mSplitPane;
     private boolean mRequestedLowerTabsVisible;
     private boolean mSystemsActive = true;
     private boolean mLowerTabsAttached;
     private boolean mSplitPaneDividerRestored;
-    private boolean mRegisteredForPreferences;
     private JToggleButton mLowerTabsToggleButton;
     private final Consumer<Boolean> mLowerTabsVisibilityListener;
 
     /**
-     * GUI panel that combines the Systems activity table and optional messages, events, RF metadata, and spectral
-     * viewers.
+     * GUI panel that combines the Systems activity table and optional messages, events, and spectral viewers.
      */
     public NowPlayingPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences,
                            SettingsManager settingsManager, boolean lowerViewsVisible,
@@ -88,40 +82,13 @@ public class NowPlayingPanel extends JPanel
         mRequestedLowerTabsVisible = lowerViewsVisible;
         mLowerTabsVisibilityListener = lowerViewsVisibilityListener;
 
-        registerForPreferences();
         init();
-    }
-
-    @Override
-    public void addNotify()
-    {
-        super.addNotify();
-        registerForPreferences();
     }
 
     public void dispose()
     {
         detachLowerTabs();
-        unregisterForPreferences();
         mChannelActivityPanel.dispose();
-    }
-
-    private void registerForPreferences()
-    {
-        if(!mRegisteredForPreferences)
-        {
-            MyEventBus.getGlobalEventBus().register(this);
-            mRegisteredForPreferences = true;
-        }
-    }
-
-    private void unregisterForPreferences()
-    {
-        if(mRegisteredForPreferences)
-        {
-            MyEventBus.getGlobalEventBus().unregister(this);
-            mRegisteredForPreferences = false;
-        }
     }
 
     /**
@@ -160,7 +127,6 @@ public class NowPlayingPanel extends JPanel
             mTabbedPane.addTab("Events", mDecodeEventPanel);
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
-            updateRadioResolveMetadataTab();
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
             mTabbedPane.setMinimumSize(new Dimension(0, LOWER_TABS_MINIMUM_HEIGHT));
@@ -170,22 +136,6 @@ public class NowPlayingPanel extends JPanel
         }
 
         return mTabbedPane;
-    }
-
-    @Subscribe
-    public void preferenceUpdated(PreferenceType preferenceType)
-    {
-        if(preferenceType == PreferenceType.NOW_PLAYING)
-        {
-            if(SwingUtilities.isEventDispatchThread())
-            {
-                updateRadioResolveMetadataTab();
-            }
-            else
-            {
-                SwingUtilities.invokeLater(this::updateRadioResolveMetadataTab);
-            }
-        }
     }
 
     /**
@@ -343,40 +293,6 @@ public class NowPlayingPanel extends JPanel
         }
     }
 
-    private void updateRadioResolveMetadataTab()
-    {
-        if(mTabbedPane == null)
-        {
-            return;
-        }
-
-        boolean enabled = mUserPreferences.getNowPlayingPreference().isRfMetadataDebugTabEnabled();
-        int existingIndex = mRadioResolveMetadataPanel != null ? mTabbedPane.indexOfComponent(mRadioResolveMetadataPanel) : -1;
-
-        if(enabled && mRadioResolveMetadataPanel == null)
-        {
-            mRadioResolveMetadataPanel = new RadioResolveMetadataPanel();
-            mChannelActivityPanel.addSelectedOwnerChannelListener(mRadioResolveMetadataPanel);
-            mRadioResolveMetadataPanel.receive(mChannelActivityPanel.getSelectedOwnerChannel());
-            mTabbedPane.addTab("RF Metadata", mRadioResolveMetadataPanel);
-        }
-        else if(enabled && existingIndex < 0)
-        {
-            mTabbedPane.addTab("RF Metadata", mRadioResolveMetadataPanel);
-        }
-        else if(!enabled && mRadioResolveMetadataPanel != null)
-        {
-            if(existingIndex >= 0)
-            {
-                mTabbedPane.removeTabAt(existingIndex);
-            }
-
-            mChannelActivityPanel.removeSelectedOwnerChannelListener(mRadioResolveMetadataPanel);
-            mRadioResolveMetadataPanel.dispose();
-            mRadioResolveMetadataPanel = null;
-        }
-    }
-
     private void disposeLowerPanels()
     {
         if(mDecodeEventPanel != null)
@@ -394,17 +310,10 @@ public class NowPlayingPanel extends JPanel
             mChannelSpectrumSquelchPanel.dispose();
         }
 
-        if(mRadioResolveMetadataPanel != null)
-        {
-            mChannelActivityPanel.removeSelectedOwnerChannelListener(mRadioResolveMetadataPanel);
-            mRadioResolveMetadataPanel.dispose();
-        }
-
         mTabbedPane = null;
         mDecodeEventPanel = null;
         mMessageActivityPanel = null;
         mChannelSpectrumSquelchPanel = null;
-        mRadioResolveMetadataPanel = null;
     }
 
     private void restoreSplitPaneDividerLocation()

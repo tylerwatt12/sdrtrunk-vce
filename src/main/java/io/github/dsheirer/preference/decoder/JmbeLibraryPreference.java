@@ -23,22 +23,25 @@
 package io.github.dsheirer.preference.decoder;
 
 import io.github.dsheirer.jmbe.github.Version;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.prefs.Preferences;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Decoder preferences
  */
 public class JmbeLibraryPreference extends Preference
 {
+    private static final Logger mLog = LoggerFactory.getLogger(JmbeLibraryPreference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(JmbeLibraryPreference.class);
 
     private static final String PREFERENCE_KEY_PATH_JMBE_LIBRARY = "path.jmbe.library.1.0.0";
@@ -106,9 +109,17 @@ public class JmbeLibraryPreference extends Preference
      */
     public void setPathJmbeLibrary(Path path)
     {
-        mPathJmbeLibrary = path;
-        mPreferences.put(PREFERENCE_KEY_PATH_JMBE_LIBRARY, path.toString());
-        notifyPreferenceUpdated();
+        try
+        {
+            mPathJmbeLibrary = PortableApplicationPaths.copyIntoDataDirectory(path, "jmbe");
+            mPreferences.put(PREFERENCE_KEY_PATH_JMBE_LIBRARY,
+                PortableApplicationPaths.toPortablePath(mPathJmbeLibrary));
+            notifyPreferenceUpdated();
+        }
+        catch(java.io.IOException e)
+        {
+            mLog.error("Unable to copy JMBE library into the portable data directory", e);
+        }
     }
 
     /**
@@ -161,7 +172,7 @@ public class JmbeLibraryPreference extends Preference
 
         if(stringPath != null && !stringPath.isEmpty())
         {
-            Path temp = Paths.get(stringPath);
+            Path temp = PortableApplicationPaths.resolvePortablePath(stringPath);
 
             if(Files.exists(temp))
             {

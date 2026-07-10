@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class ChannelModelTest
 {
     @Test
-    public void standardChannelGetsRadioResolveGuidWhenAdded()
+    public void standardChannelGetsSiteGuidWhenAdded()
     {
         Channel channel = new Channel("Test");
 
@@ -34,7 +34,7 @@ public class ChannelModelTest
     }
 
     @Test
-    public void copiedChannelGetsNewRadioResolveGuidWhenAdded()
+    public void copiedChannelGetsNewSiteGuidWhenAdded()
     {
         Channel original = new Channel("Test");
         ChannelModel model = new ChannelModel(new AliasModel());

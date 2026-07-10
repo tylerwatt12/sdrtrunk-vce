@@ -46,6 +46,7 @@ import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
+import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
@@ -117,6 +118,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitToU
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitToUnitVoiceChannelGrantUpdateAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitToUnitVoiceChannelGrantUpdateExtendedLCCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitToUnitVoiceChannelGrantUpdateExtendedVCH;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnitDeRegistrationAcknowledge;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisGroupRegroupExplicitEncryptionCommand;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisTalkerAlias;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisTalkerGpsLocation;
@@ -721,9 +723,19 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             case PHASE1_68_GROUP_AFFILIATION_RESPONSE_ABBREVIATED:
             case PHASE1_E8_GROUP_AFFILIATION_RESPONSE_EXTENDED:
-                if(mac instanceof GroupAffiliationResponseAbbreviated || mac instanceof GroupAffiliationResponseExtended)
+                if(mac instanceof GroupAffiliationResponseAbbreviated response)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.RESPONSE, GROUP_AFFILIATION_LABEL);
+                    broadcastAffiliation(message, mac, DecodeEventType.RESPONSE,
+                        response.getResponse() + " " + GROUP_AFFILIATION_LABEL,
+                        P25AffiliationEvent.Outcome.from(response.getResponse()), response.getTargetAddress(),
+                        response.getGroupAddress());
+                }
+                else if(mac instanceof GroupAffiliationResponseExtended response)
+                {
+                    broadcastAffiliation(message, mac, DecodeEventType.RESPONSE,
+                        response.getResponse() + " " + GROUP_AFFILIATION_LABEL,
+                        P25AffiliationEvent.Outcome.from(response.getResponse()), response.getTargetAddress(),
+                        response.getSourceGID());
                 }
                 break;
             case PHASE1_6A_GROUP_AFFILIATION_QUERY_ABBREVIATED:
@@ -1559,7 +1571,10 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         if(mac.getOpcode() == MacOpcode.PHASE1_6B_LOCATION_REGISTRATION_RESPONSE &&
                 mac instanceof LocationRegistrationResponse lrr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, "LOCATION REGISTRATION " + lrr.getResponse());
+            broadcastAffiliation(message, mac, DecodeEventType.REGISTER,
+                "LOCATION REGISTRATION " + lrr.getResponse(),
+                P25AffiliationEvent.Outcome.from(lrr.getResponse()),
+                lrr.getTargetAddress(), lrr.getGroupAddress());
         }
     }
 
@@ -1808,7 +1823,11 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 broadcast(message, mac, getCurrentChannel(), DecodeEventType.COMMAND, "UNIT REGISTER");
                 break;
             case PHASE1_6F_DEREGISTRATION_ACKNOWLEDGE:
-                broadcast(message, mac, getCurrentChannel(), DecodeEventType.ACKNOWLEDGE, "UNIT DEREGISTERED");
+                if(mac instanceof UnitDeRegistrationAcknowledge acknowledge)
+                {
+                    broadcastAffiliation(message, mac, DecodeEventType.DEREGISTER, "UNIT DEREGISTERED",
+                        P25AffiliationEvent.Outcome.CLEARED, acknowledge.getSourceSUID(), null);
+                }
                 break;
         }
     }
@@ -1844,6 +1863,20 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private void broadcast(MacMessage message, MacStructure structure, DecodeEventType eventType, String details)
     {
         broadcast(message, structure, getCurrentChannel(), eventType, details);
+    }
+
+    private void broadcastAffiliation(MacMessage message, MacStructure structure, DecodeEventType eventType,
+                                      String details, P25AffiliationEvent.Outcome outcome, Identifier<?> radio,
+                                      Identifier<?> talkgroup)
+    {
+        MutableIdentifierCollection mic = getUpdatedMutableIdentifierCollection(structure);
+        P25AffiliationEvent event = new P25AffiliationEvent(eventType, message.getTimestamp(), outcome, radio,
+            talkgroup);
+        event.setChannelDescriptor(getCurrentChannel());
+        event.setDetails(details);
+        event.setIdentifierCollection(mic);
+        event.setTimeslot(getTimeslot());
+        broadcast(event);
     }
 
     /**
@@ -1891,18 +1924,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         }
 
         return false;
-    }
-
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append(mNetworkConfigurationMonitor.getActivitySummary());
-        sb.append("\n");
-        sb.append(mPatchGroupManager.getPatchGroupSummary());
-        sb.append("\n");
-        sb.append(mTrafficChannelManager.getTalkerAliasManager().getAliasSummary());
-        return sb.toString();
     }
 
     @Override

@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Session-only activity state for one started trunked configuration item.
@@ -263,6 +264,47 @@ public class SiteActivitySession
         for(ChannelActivityRow row: remove)
         {
             mControlRows.remove(row.getFrequency());
+        }
+
+        return remove;
+    }
+
+    /**
+     * Reconciles decoded control rows to the latest promoted site snapshot while preserving the configured frequency.
+     */
+    public List<ChannelActivityRow> reconcilePromotedControls(Set<Long> promotedFrequencies,
+                                                              long configuredFrequency)
+    {
+        Set<Long> promoted = promotedFrequencies != null ? promotedFrequencies : Set.of();
+        List<ChannelActivityRow> remove = new ArrayList<>();
+
+        for(ChannelActivityRow row: new ArrayList<>(mControlRows.values()))
+        {
+            if(row.getOrigin() == ChannelActivityRow.Origin.CONFIGURED_CONTROL ||
+                promoted.contains(row.getFrequency()))
+            {
+                continue;
+            }
+
+            if(row.getFrequency() == configuredFrequency)
+            {
+                row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
+                row.setOrigin(ChannelActivityRow.Origin.CONFIGURED_CONTROL);
+                row.setControlRole(ChannelActivityRow.ControlRole.NONE);
+                row.setState(State.IDLE);
+                row.clearCallDetails();
+                mTableModel.refresh(row);
+            }
+            else
+            {
+                mControlRows.remove(row.getFrequency());
+                remove.add(row);
+            }
+
+            if(mCurrentControlFrequency != null && mCurrentControlFrequency == row.getFrequency())
+            {
+                mCurrentControlFrequency = null;
+            }
         }
 
         return remove;

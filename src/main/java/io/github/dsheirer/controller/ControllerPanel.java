@@ -57,6 +57,7 @@ public class ControllerPanel extends JPanel
     {
         mConfigurationManager = configurationManager;
         mSystemsVisible = systemsVisible;
+        mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", systemsVisible);
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
             configurationManager.getAliasModel());
         mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
@@ -86,13 +87,13 @@ public class ControllerPanel extends JPanel
         {
             mTabbedPane.insertTab("Systems", null, mNowPlayingPanel, null, 0);
             mNowPlayingPanel.setSystemsActive(true);
-            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled(true);
+            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", true);
             mTabbedPane.setSelectedComponent(mNowPlayingPanel);
         }
         else
         {
             mNowPlayingPanel.setSystemsActive(false);
-            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled(false);
+            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", false);
             mTabbedPane.remove(mNowPlayingPanel);
         }
 
@@ -101,6 +102,7 @@ public class ControllerPanel extends JPanel
 
     public void dispose()
     {
+        mAudioPanel.dispose();
         mNowPlayingPanel.dispose();
     }
 
@@ -120,7 +122,7 @@ public class ControllerPanel extends JPanel
         else
         {
             mNowPlayingPanel.setSystemsActive(false);
-            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled(false);
+            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", false);
         }
 
         mTabbedPane.addTab("Map", mMapPanel);

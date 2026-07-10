@@ -75,6 +75,12 @@ sourceSets {
     test.java.srcDirs 'src/test/java'
 }
 
+processResources {
+    from('LICENSE') {
+        rename 'LICENSE', 'GPL-3.0.txt'
+    }
+}
+
 test {
     useJUnitPlatform()
 }
@@ -136,6 +142,12 @@ dependencies {
     implementation 'pl.edu.icm:JLargeArrays:1.6'
 }
 
+//Release images bundle target-specific Liberica runtimes that already contain JavaFX. Keep OpenJFX on the compile
+//classpath, but do not copy host-classifier JavaFX jars into cross-platform distributions.
+configurations.runtimeClasspath {
+    exclude group: 'org.openjfx'
+}
+
 def usb4javaRuntimeJar = configurations.detachedConfiguration(dependencies.create('io.github.dsheirer:usb4java:1.3.5'))
 usb4javaRuntimeJar.transitive = false
 
@@ -170,16 +182,16 @@ tasks.register('jpmsJavaLame', Jar) {
 }
 
 def os = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem
-def jpmsLibDir = layout.buildDirectory.dir('install/sdr-trunk/lib')
+def jpmsLibDir = layout.buildDirectory.dir('install/sdrtrunk-vce/lib')
 def jpmsGeneratedLibDir = layout.buildDirectory.dir('jpms-libs')
 def jpmsModuleInfoSource = layout.projectDirectory.file('src/jpms/java/module-info.java')
 def jpmsModuleInfoOutputDir = layout.buildDirectory.dir('jpms-module-info')
 def jpmsModuleDir = layout.buildDirectory.dir('jpms-module')
 def jpmsModsDir = layout.buildDirectory.dir('jpms-mods')
 def jpmsClassesDir = layout.buildDirectory.dir('classes/java/main')
-def jpmsAppJar = layout.buildDirectory.file('jpms-module/sdr-trunk-jpms.jar')
+def jpmsAppJar = layout.buildDirectory.file('jpms-module/sdrtrunk-vce-jpms.jar')
 def jpmsMainModule = 'sdr.trunk/io.github.dsheirer.gui.SDRTrunk'
-def jpmsExcludedJarPattern = ~/(sdr-trunk-.*|javafx-.*|java-lame-.*|usb4java-native-libraries-.*|usb4java-1\.3\.[05]\.jar|libusb4java-1\.3\.0-.*)/
+def jpmsExcludedJarPattern = ~/(sdrtrunk-vce-.*|javafx-.*|java-lame-.*|usb4java-native-libraries-.*|usb4java-1\.3\.[05]\.jar|libusb4java-1\.3\.0-.*)/
 def jpmsRuntimeJars = fileTree(jpmsLibDir) {
     include '*.jar'
     exclude { details ->
@@ -194,7 +206,7 @@ def jpmsGeneratedJars = fileTree(jpmsGeneratedLibDir) {
  * The Vector API is still incubating and must be enabled explicitly.
  */
 tasks.withType(JavaCompile) {
-    options.compilerArgs.add("--add-modules=jdk.incubator.vector") //Project Panama Vector API is still in incubator
+    options.compilerArgs.add("--add-modules=jdk.incubator.vector,jdk.httpserver") //Project Panama Vector API is still in incubator
 }
 
 /**
@@ -202,7 +214,7 @@ tasks.withType(JavaCompile) {
  */
 def jvmArgsClasspath =
         ['--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED', //Needed for controls-fx.jar
-         '--add-modules=jdk.incubator.vector',   //Project Panama Vector API is still in incubator
+         '--add-modules=jdk.incubator.vector,jdk.httpserver',   //Project Panama Vector API is still in incubator
          '--enable-native-access=ALL-UNNAMED', //Suppress unsafe warnings for FFM API Foreign Memory calls
          '--enable-native-access=javafx.graphics', //JDK24 - suppress restricted java.lang.System calls
          '-Xmx2g',
@@ -238,7 +250,8 @@ def jpmsJvmArgsMac =
         ['--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls', //Needed for controls-fx.jar
          '-Xmx2g',
          '-XX:+UseCompactObjectHeaders',   //JDK25 - use compact object headers
-         '--enable-native-access=javafx.graphics,usb4java,sdr.trunk']
+         '-Dsdrtrunk.stats.web.root=$APPDIR/stats-web',
+         '--enable-native-access=javafx.graphics,usb4java,sdr.trunk,org.xerial.sqlitejdbc']
 
 application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
@@ -248,9 +261,11 @@ application {
 distributions {
     main {
         contents {
-            from('src/main/scripts') {
-                into 'bin'
+            from('stats-web') {
+                into 'stats-web'
             }
+            from('LICENSE')
+            from('NOTICE')
         }
     }
 }
@@ -262,7 +277,7 @@ test {
 jar {
     manifest {
         attributes (
-                'Implementation-Title'  : 'sdrtrunk project',
+                'Implementation-Title'  : 'sdrtrunk-vce project',
                 'Implementation-Version' : archiveVersion,
                 'Created-By'            : "Gradle ${gradle.gradleVersion}",
                 'Build-Timestamp'       : new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ").format(new Date()),
@@ -271,6 +286,43 @@ jar {
         )
     }
 }
+
+tasks.register('verifyNoBundledVoiceDecryption') {
+    dependsOn jar
+    inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
+    inputs.files(configurations.runtimeClasspath)
+    doLast {
+        def forbiddenEntries = [
+            'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25AdpVoiceFrameDecryptor.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25OfbVoiceFrameDecryptor.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25VoiceFrameDecryptorProvider.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/P25VoiceKeystreamFactory.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/dmr/DmrPrivacyFrameDecryptor.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/dmr/DmrPrivacyFrameDecryptorProvider.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/AesOfb.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/DesOfb.class',
+            'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/Rc4.class',
+            'io/github/dsheirer/voice/decrypt/module/SdrTrunkVoiceDecryptionModule.class'
+        ] as Set
+        def archives = inputs.files.files.findAll {
+            it.isFile() && it.name.endsWith('.jar')
+        }
+
+        archives.each { archive ->
+            def zip = new java.util.zip.ZipFile(archive)
+            try {
+                def bundled = forbiddenEntries.findAll { zip.getEntry(it) != null }
+                if(!bundled.isEmpty()) {
+                    throw new GradleException("Voice decryption implementation bundled in ${archive.name}: ${bundled}")
+                }
+            } finally {
+                zip.close()
+            }
+        }
+    }
+}
+
+check.dependsOn tasks.named('verifyNoBundledVoiceDecryption')
 
 idea {
     module {
@@ -294,7 +346,9 @@ String targetOsxX86_64 = 'osx-x86_64-v' + version
 String targetWindowsX86_64 = 'windows-x86_64-v' + version
 String targetWindowsAarch64 = 'windows-aarch64-v' + version
 String macAppIcon = file('src/main/packaging/macos/sdr-trunk.icns').absolutePath
-String macAppVersion = '1.0.0'
+List<String> macAppVersionParts = version.toString().tokenize('-')[0].tokenize('.')
+String macAppVersion = macAppVersionParts[0] == '0' ?
+        '1.' + macAppVersionParts.drop(1).join('.') : macAppVersionParts.join('.')
 
 /**
  * Optional pre-downloaded Java Development Kit (JDK) for each target OS and CPU.  These locations are hard-coded to the
@@ -347,8 +401,10 @@ def runtimeModules = [
         'jdk.accessibility',
         'jdk.charsets',
         'jdk.crypto.ec',
+        'jdk.httpserver',
         'jdk.incubator.vector',
         'jdk.jfr',
+        'jdk.management',
         'jdk.unsupported',
         'jdk.unsupported.desktop'
 ]
@@ -431,7 +487,8 @@ def configureRuntime = { def task, List<String> jvmArgs ->
     //java.management for JVM resource monitoring
     //jdk.charsets for non-UTF talker alias decoding in bundled runtimes
     task.extension.addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management',
-            'jdk.charsets')
+            'jdk.management',
+            'java.sql.rowset', 'jdk.charsets', 'jdk.httpserver')
 
     //Use auto-detected modules and 'add' any specified modules.
     task.extension.additive.set(true)
@@ -444,11 +501,11 @@ def configure = { org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs ->
     configureRuntime(rt, jvmArgs)
 
     //Runtime images have auto appended version in image zip name.  Override to include version in single target image.
-    rt.extension.imageZip.set(layout.buildDirectory.file('image/sdr-trunk.zip'))
+    rt.extension.imageZip.set(layout.buildDirectory.file('image/sdrtrunk-vce.zip'))
 }
 
 runtime {
-    distDir.set(layout.buildDirectory.dir('install/sdr-trunk'))
+    distDir.set(layout.buildDirectory.dir('install/sdrtrunk-vce'))
     javaHome.set(java25Home)
 
     launcher {
@@ -456,7 +513,8 @@ runtime {
         unixScriptTemplate = unixScriptTemplateFile
     }
 
-    addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management', 'jdk.charsets')
+    addModules('jdk.crypto.ec', 'jdk.incubator.vector', 'jdk.accessibility', 'java.management', 'jdk.management',
+            'jdk.charsets')
     additive.set(true)
     addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
 
@@ -472,10 +530,11 @@ runtime {
 if(os.isMacOsX())
 {
     def macImageOutputDir = layout.buildDirectory.dir('image')
-    def macAppBundle = layout.buildDirectory.dir('image/sdrtrunk.app')
+    def macAppBundle = layout.buildDirectory.dir('image/sdrtrunk-vce.app')
     def macRuntimeImageDir = layout.buildDirectory.dir('jre-current')
-    def macInstallDistDir = layout.buildDirectory.dir('install/sdr-trunk')
-    def macRuntimeZipRootDir = layout.buildDirectory.dir('runtime-current/sdr-trunk')
+    def macInstallDistDir = layout.buildDirectory.dir('install/sdrtrunk-vce')
+    def macRuntimeZipRootDir = layout.buildDirectory.dir('runtime-current/sdrtrunk-vce')
+    def macJpackageInputDir = layout.buildDirectory.dir('jpackage-input')
     def macIconFile = layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns')
 
     tasks.register('jreCurrent', Exec) {
@@ -515,19 +574,27 @@ if(os.isMacOsX())
     tasks.register('runtimeZipCurrent', Zip) {
         dependsOn('runtimeImageCurrent')
 
-        archiveFileName = 'sdr-trunk.zip'
+        archiveFileName = 'sdrtrunk-vce.zip'
         destinationDirectory = layout.buildDirectory.dir('image')
         from(layout.buildDirectory.dir('runtime-current')) {
-            include 'sdr-trunk/**'
+            include 'sdrtrunk-vce/**'
+        }
+    }
+
+    tasks.register('stageMacWebAssets', Sync) {
+        into(macJpackageInputDir)
+        from('stats-web') {
+            into 'stats-web'
         }
     }
 
     tasks.register('image', Exec) {
-        dependsOn('jreCurrent', 'syncJpmsMods')
+        dependsOn('jreCurrent', 'syncJpmsMods', 'stageMacWebAssets')
 
         inputs.dir(jpmsModsDir)
         inputs.file(macIconFile)
         inputs.dir(macRuntimeImageDir)
+        inputs.dir(macJpackageInputDir)
         outputs.dir(macAppBundle)
 
         doFirst {
@@ -536,7 +603,8 @@ if(os.isMacOsX())
             def jpackageArgs = [
                     '--type', 'app-image',
                     '--dest', macImageOutputDir.get().asFile.absolutePath,
-                    '--name', 'sdrtrunk',
+                    '--name', 'sdrtrunk-vce',
+                    '--input', macJpackageInputDir.get().asFile.absolutePath,
                     '--module-path', jpmsModsDir.get().asFile.absolutePath,
                     '--module', jpmsMainModule,
                     '--runtime-image', macRuntimeImageDir.get().asFile.absolutePath,
@@ -551,6 +619,20 @@ if(os.isMacOsX())
 
             executable = "${java25Home.get()}/bin/jpackage"
             args = jpackageArgs
+        }
+    }
+
+    tasks.register('macAppZip', Exec) {
+        dependsOn('image')
+        def archive = layout.buildDirectory.file("image/sdrtrunk-vce-macos-app-aarch64-v${version}.zip")
+        inputs.dir(macAppBundle)
+        outputs.file(archive)
+
+        doFirst {
+            archive.get().asFile.delete()
+            executable = '/usr/bin/ditto'
+            args = ['-c', '-k', '--sequesterRsrc', '--keepParent', macAppBundle.get().asFile.absolutePath,
+                    archive.get().asFile.absolutePath]
         }
     }
 }

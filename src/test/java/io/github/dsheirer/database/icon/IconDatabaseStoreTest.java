@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.icon.IconSet;
 import java.nio.file.Path;
@@ -31,6 +32,7 @@ class IconDatabaseStoreTest
     void roundTripsIconSet() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         IconDatabaseStore store = new IconDatabaseStore(database);
         assertFalse(store.isInitialized());
 

@@ -166,40 +166,4 @@ public class Fleetsync2DecoderState extends DecoderState
         }
     }
 
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("=============================\n");
-        sb.append("Decoder:\tFleetsync II\n\n");
-
-        if(mFromIdentCountsMap.isEmpty() && mToIdentCountsMap.isEmpty())
-        {
-            sb.append("Fleetsync Idents\n");
-            sb.append("  None\n");
-        }
-        else
-        {
-            sb.append("Fleetsync From Idents\n");
-
-            List<FleetsyncIdentifier> fromIdents = new ArrayList<>(mFromIdentCountsMap.keySet());
-            Collections.sort(fromIdents);
-            for(FleetsyncIdentifier from: fromIdents)
-            {
-                sb.append("  ").append(from.formatted()).append(" - Count:").append(mFromIdentCountsMap.get(from)).append("\n");
-            }
-
-            sb.append("\nFleetsync To Idents\n");
-
-            List<FleetsyncIdentifier> toIdents = new ArrayList<>(mToIdentCountsMap.keySet());
-            Collections.sort(toIdents);
-            for(FleetsyncIdentifier to: toIdents)
-            {
-                sb.append("  ").append(to.formatted()).append(" - Count:").append(mToIdentCountsMap.get(to)).append("\n");
-            }
-        }
-
-        return sb.toString();
-    }
 }

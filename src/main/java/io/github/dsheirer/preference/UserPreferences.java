@@ -23,6 +23,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
 import io.github.dsheirer.preference.decoder.JmbeLibraryPreference;
+import io.github.dsheirer.preference.decoder.VoiceDecryptionModulePreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.preference.duplicate.CallManagementPreference;
 import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
@@ -64,6 +65,7 @@ public class UserPreferences implements Listener<PreferenceType>
     private CallManagementPreference mCallManagementPreference;
     private EncryptionKeyPreference mEncryptionKeyPreference;
     private JmbeLibraryPreference mJmbeLibraryPreference;
+    private VoiceDecryptionModulePreference mVoiceDecryptionModulePreference;
     private MP3Preference mMP3Preference;
     private NowPlayingPreference mNowPlayingPreference;
     private PlaybackPreference mPlaybackPreference;
@@ -124,6 +126,14 @@ public class UserPreferences implements Listener<PreferenceType>
     public JmbeLibraryPreference getJmbeLibraryPreference()
     {
         return mJmbeLibraryPreference;
+    }
+
+    /**
+     * Optional voice decryption module preference and runtime manager.
+     */
+    public VoiceDecryptionModulePreference getVoiceDecryptionModulePreference()
+    {
+        return mVoiceDecryptionModulePreference;
     }
 
     /**
@@ -235,6 +245,7 @@ public class UserPreferences implements Listener<PreferenceType>
         mCallManagementPreference = new CallManagementPreference(this::receive);
         mEncryptionKeyPreference = new EncryptionKeyPreference(this::receive, mDirectoryPreference);
         mJmbeLibraryPreference = new JmbeLibraryPreference(this::receive);
+        mVoiceDecryptionModulePreference = new VoiceDecryptionModulePreference(this::receive);
         mMP3Preference = new MP3Preference(this::receive);
         mNowPlayingPreference = new NowPlayingPreference(this::receive);
         mPlaybackPreference = new PlaybackPreference(this::receive);

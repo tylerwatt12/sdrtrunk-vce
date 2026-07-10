@@ -172,6 +172,7 @@ public class UserPreferencesEditor extends BorderPane
 
             TreeItem<Object> decoderItem = new TreeItem<>("Decoder");
             decoderItem.getChildren().add(new TreeItem<>(PreferenceEditorType.JMBE_LIBRARY));
+            decoderItem.getChildren().add(new TreeItem<>(PreferenceEditorType.VOICE_DECRYPTION_MODULE));
             treeRoot.getChildren().add(decoderItem);
             decoderItem.setExpanded(true);
 
@@ -186,6 +187,12 @@ public class UserPreferencesEditor extends BorderPane
             storageItem.getChildren().add(new TreeItem<>(PreferenceEditorType.DIRECTORY));
             treeRoot.getChildren().add(storageItem);
             storageItem.setExpanded(true);
+
+            TreeItem<Object> statsAndWebItem = new TreeItem<>("Stats & Web");
+            statsAndWebItem.getChildren().add(new TreeItem<>(PreferenceEditorType.STATS_SERVER));
+            statsAndWebItem.getChildren().add(new TreeItem<>(PreferenceEditorType.WEB_SERVER));
+            treeRoot.getChildren().add(statsAndWebItem);
+            statsAndWebItem.setExpanded(true);
 
             TreeItem<Object> sourceItem = new TreeItem<>("Source");
             sourceItem.getChildren().add(new TreeItem<>(PreferenceEditorType.SOURCE_TUNERS));

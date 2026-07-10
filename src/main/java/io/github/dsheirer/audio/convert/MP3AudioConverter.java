@@ -83,6 +83,19 @@ public class MP3AudioConverter implements IAudioConverter
      */
     public List<byte[]> convert(List<float[]> audioPackets)
     {
+        List<byte[]> converted = encode(audioPackets);
+        converted.addAll(flush());
+        return converted;
+    }
+
+    /**
+     * Incrementally encodes audio without closing the MP3 stream.  Call {@link #flush()} once when the stream ends.
+     *
+     * @param audioPackets PCM audio sampled at 8 kHz
+     * @return zero or more complete MP3 chunks
+     */
+    public List<byte[]> encode(List<float[]> audioPackets)
+    {
         List<byte[]> converted = new ArrayList<>();
 
         if(mNormalizeAudio)
@@ -131,13 +144,6 @@ public class MP3AudioConverter implements IAudioConverter
             {
                 mLog.error("There was an error converting audio to MP3: " + e.getMessage());
             }
-        }
-
-        int finalChunkSize = mEncoder.encodeFinish(mOutputFramesBuffer);
-
-        if(finalChunkSize > 0)
-        {
-            converted.add(Arrays.copyOf(mOutputFramesBuffer, finalChunkSize));
         }
 
         return converted;

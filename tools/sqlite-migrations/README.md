@@ -1,6 +1,6 @@
 # SQLite Schema Migrations
 
-This folder contains explicit, external SQLite migrations for SDRTrunk RadioResolve Optimized.
+This folder contains explicit, external SQLite migrations for sdrtrunk-vce.
 
 Runtime SDRTrunk code should only create and validate the current schema during startup. It should not repair, alter,
 drop, or migrate existing tables while the application is running. If a deployed database needs to change shape, stop
@@ -15,9 +15,32 @@ The global SDRTrunk database normally lives at:
 
 ## Available Migrations
 
-### Reset Stats Server schema to v11
+### P25 history v11 to v12
 
-Rebuilds only the SDRTrunk Stats Server tables, indexes, and views using the current v11 summary-first schema:
+Rebuilds P25 ownership so radios and talkgroups belong to WACN plus System ID while GUID remains the site identity:
+
+- preserves raw history, site RF facts, frequency summaries, and hourly site buckets
+- combines lifetime radio and talkgroup totals from every GUID observing the same system
+- seeds radio/talkgroup relationships from retained detailed history
+- starts authoritative current affiliation state empty; new accepted affiliation messages populate it
+
+macOS/Linux:
+
+```bash
+tools/sqlite-migrations/p25-history/migrate-v11-to-v12-system-identity.sh
+```
+
+Windows PowerShell:
+
+```powershell
+tools\sqlite-migrations\p25-history\migrate-v11-to-v12-system-identity.ps1 `
+  -AppHome C:\Users\Example\Desktop\sdrtrunk-vce
+```
+
+### Reset Stats Server schema to v13
+
+Rebuilds only the sdrtrunk-vce Stats Server tables, indexes, and views using the current v13 current-state and
+observation-summary schema:
 
 - keeps SDRTrunk configuration, channels, aliases, streams, preferences, and vault data
 - backs up the database beside the original file first
@@ -31,15 +54,27 @@ not migrated.
 macOS/Linux:
 
 ```bash
-tools/sqlite-migrations/p25-history/reset-stats-schema-to-v11.sh /path/to/sdr-trunk /path/to/sdrtrunk.sqlite
+tools/sqlite-migrations/p25-history/reset-stats-schema-to-v13.sh /path/to/sdr-trunk /path/to/sdrtrunk.sqlite
 ```
 
 Windows PowerShell:
 
 ```powershell
-tools\sqlite-migrations\p25-history\reset-stats-schema-to-v11.ps1 `
-  -InstallDir C:\Users\Example\Desktop\sdr-trunk-windows-x86_64-vradioresolve-6 `
+tools\sqlite-migrations\p25-history\reset-stats-schema-to-v13.ps1 `
+  -InstallDir C:\Users\Example\Desktop\sdrtrunk-vce `
   -Database C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite
+```
+
+### Normalize Stats Server hits to grants
+
+Use the external `P25HistoryNormalizeGrantHits.java` tool once when upgrading a database whose `hits` counters
+previously counted every decoded action. Stop SDRTrunk first. The tool backs up the database, sets `hits` equal to the
+existing `grant_count` in every lifetime and hourly summary table, and validates the result. It does not alter the
+schema or SDRTrunk configuration.
+
+```bash
+java --enable-native-access=ALL-UNNAMED -cp "/path/to/sdr-trunk/lib/*" \
+  tools/sqlite-migrations/p25-history/P25HistoryNormalizeGrantHits.java /path/to/sdrtrunk.sqlite
 ```
 
 ### P25 history v9 to v10
@@ -116,6 +151,6 @@ tools/sqlite-migrations/p25-history/migrate-v8-to-v9-drop-neighbor-nac.sh \
 ```powershell
 tools\sqlite-migrations\p25-history\migrate-v8-to-v9-drop-neighbor-nac.ps1 `
   -DatabasePath C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite `
-  -AppHome C:\Users\Example\Desktop\sdr-trunk-windows-x86_64-vradioresolve-6 `
+  -AppHome C:\Users\Example\Desktop\sdrtrunk-vce `
   -JavaHome C:\Users\Example\Java\jdk-25.0.1-full
 ```

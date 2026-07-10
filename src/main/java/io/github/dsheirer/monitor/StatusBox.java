@@ -23,6 +23,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultState;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 import javafx.geometry.Insets;
@@ -41,6 +42,7 @@ public class StatusBox extends HBox
 {
     private ResourceMonitor mResourceMonitor;
     private EncryptionKeyVaultService mVaultService;
+    private VoiceDecryptionModuleManager mModuleManager;
     private HBox mVaultStatusBox;
     private Tooltip mVaultTooltip;
 
@@ -50,7 +52,7 @@ public class StatusBox extends HBox
      */
     public StatusBox(ResourceMonitor resourceMonitor)
     {
-        this(resourceMonitor, null);
+        this(resourceMonitor, null, null);
     }
 
     /**
@@ -60,8 +62,15 @@ public class StatusBox extends HBox
      */
     public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService)
     {
+        this(resourceMonitor, vaultService, null);
+    }
+
+    public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
+                     VoiceDecryptionModuleManager moduleManager)
+    {
         mResourceMonitor = resourceMonitor;
         mVaultService = vaultService;
+        mModuleManager = moduleManager;
         setPadding(new Insets(1, 0, 1, 0));
         setSpacing(6);
         Label cpuLabel = new Label("CPU:");
@@ -150,6 +159,22 @@ public class StatusBox extends HBox
             spacer.setMinWidth(12);
             getChildren().add(spacer);
             getChildren().add(getVaultStatusBox());
+            boolean moduleLoaded = mModuleManager == null || mModuleManager.isLoaded();
+            spacer.setVisible(moduleLoaded);
+            spacer.setManaged(moduleLoaded);
+            mVaultStatusBox.setVisible(moduleLoaded);
+            mVaultStatusBox.setManaged(moduleLoaded);
+
+            if(mModuleManager != null)
+            {
+                mModuleManager.loadedProperty().addListener((observable, oldValue, loaded) -> {
+                    spacer.setVisible(loaded);
+                    spacer.setManaged(loaded);
+                    mVaultStatusBox.setVisible(loaded);
+                    mVaultStatusBox.setManaged(loaded);
+                });
+            }
+
             mVaultService.stateProperty().addListener((observable, oldValue, newValue) -> updateVaultStatus());
             mVaultService.statusProperty().addListener((observable, oldValue, newValue) -> updateVaultStatus());
             mVaultService.savedPasswordPresentProperty()

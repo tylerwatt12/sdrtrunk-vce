@@ -228,7 +228,7 @@ import org.slf4j.LoggerFactory;
          HttpRequest request = HttpRequest.newBuilder()
              .uri(URI.create(uri))
              .header(HttpHeaders.CONTENT_TYPE, APPLICATION_FORM_URLENCODED)
-             .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+             .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
              .POST(HttpRequest.BodyPublishers.ofString("api_key="+configuration.getApiKey()))
              .build();
 
@@ -485,7 +485,7 @@ import org.slf4j.LoggerFactory;
                                  .uri(URI.create(uri))
                                  .header(HttpHeaders.CONTENT_TYPE,
                                      MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-                                 .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+                                 .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
                                  .POST(bodyBuilder.build())
                                  .build();
 

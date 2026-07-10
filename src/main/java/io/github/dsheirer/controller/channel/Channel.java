@@ -290,7 +290,7 @@ public class Channel extends Configuration
     }
 
     /**
-     * RadioResolve stable source GUID property.
+     * Stable source GUID property.
      */
     public StringProperty radresGuidProperty()
     {
@@ -442,7 +442,7 @@ public class Channel extends Configuration
     }
 
     /**
-     * Stable RadioResolve source GUID for configured RF sources.
+     * Stable site GUID for configured RF sources.
      */
     public String getRadresGuid()
     {
@@ -455,7 +455,7 @@ public class Channel extends Configuration
     }
 
     /**
-     * Sets the stable RadioResolve source GUID.
+     * Sets the stable site GUID.
      */
     public void setRadresGuid(String radresGuid)
     {
@@ -477,7 +477,7 @@ public class Channel extends Configuration
     }
 
     /**
-     * Indicates if this channel has a RadioResolve source GUID.
+     * Indicates if this channel has a site GUID.
      */
     @JsonIgnore
     public boolean hasRadresGuid()

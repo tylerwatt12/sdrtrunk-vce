@@ -470,7 +470,6 @@ public class EncryptionKeyVaultService
             statement.execute("PRAGMA foreign_keys=ON");
         }
 
-        EncryptionKeyVaultSchema.validate(connection);
         return connection;
     }
 

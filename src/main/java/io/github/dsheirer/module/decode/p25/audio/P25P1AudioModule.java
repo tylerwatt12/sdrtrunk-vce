@@ -20,7 +20,13 @@ package io.github.dsheirer.module.decode.p25.audio;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
+import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
 import io.github.dsheirer.audio.codec.mbe.ImbeAudioModule;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionContext;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionKeyResolver;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptionException;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptor;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptorFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -29,10 +35,12 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.dsp.gain.NonClippingGain;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.ldu.EncryptionSyncParameters;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU2Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDUMessage;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +52,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     private static final Logger mLog = LoggerFactory.getLogger(P25P1AudioModule.class);
     private static final long LONG_AUDIO_GAP_LOG_THRESHOLD_MS = 1000;
     private P25AudioEncryptionState mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+    private IEncryptionSyncParameters mEncryptionSyncParameters;
     private State mCurrentDecoderState = State.IDLE;
 
     private DecoderStateEventListener mDecoderStateEventListener = new DecoderStateEventListener();
@@ -51,12 +60,18 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     private NonClippingGain mGain = new NonClippingGain(5.0f, 0.95f);
     private List<LDUMessage> mPendingEncryptionLdus = new ArrayList<>();
     private List<LDUMessage> mDeferredClearAudioLdus = new ArrayList<>();
+    private VoiceEncryptionKeyResolver mEncryptionKeyResolver;
+    private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory;
+    private VoiceFrameDecryptor mVoiceFrameDecryptor;
     private long mLastAudioTimestamp = Long.MIN_VALUE;
     private String mLastAudioSegmentId;
 
     public P25P1AudioModule(UserPreferences userPreferences, AliasList aliasList)
     {
         super(userPreferences, aliasList);
+        mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
+        mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
+            .getVoiceDecryptionModulePreference().getModuleManager());
     }
 
     @Override
@@ -91,6 +106,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         }
 
         getIdentifierCollection().clear();
+        resetEncryptionTracking();
     }
 
     @Override
@@ -130,12 +146,16 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             {
                 if(isCallActiveState(mCurrentDecoderState))
                 {
-                    processAudio(ldu);
+                    processEstablishedLDU(ldu);
                 }
-                else
+                else if(mEncryptionState.isClear())
                 {
                     mLog.debug("P25P1 deferring LDU audio state:{}", mCurrentDecoderState);
                     mDeferredClearAudioLdus.add(ldu);
+                }
+                else
+                {
+                    mLog.debug("P25P1 skipping encrypted LDU audio state:{}", mCurrentDecoderState);
                 }
             }
         }
@@ -144,6 +164,10 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             if(message instanceof HDUMessage hdu && hdu.isValid())
             {
                 mEncryptionState = P25AudioEncryptionState.fromEncrypted(hdu.getHeaderData().isEncryptedAudio());
+                mEncryptionSyncParameters = mEncryptionState.isEncrypted() ?
+                    new Phase2EncryptionSyncParameters(hdu.getHeaderData().getEncryptionKey(),
+                        hdu.getHeaderData().getMessageIndicator()) : null;
+                mVoiceFrameDecryptor = null;
 
                 if(mEncryptionState.isClear())
                 {
@@ -158,10 +182,13 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             }
             else if(message instanceof LDU2Message ldu2)
             {
-                if(ldu2.getEncryptionSyncParameters().isValid())
+                EncryptionSyncParameters parameters = ldu2.getEncryptionSyncParameters();
+
+                if(parameters.isValid())
                 {
-                    mEncryptionState = P25AudioEncryptionState.fromEncrypted(ldu2.getEncryptionSyncParameters()
-                        .isEncryptedAudio());
+                    mEncryptionState = P25AudioEncryptionState.fromEncrypted(parameters.isEncryptedAudio());
+                    mEncryptionSyncParameters = null;
+                    mVoiceFrameDecryptor = null;
 
                     if(mEncryptionState.isClear())
                     {
@@ -171,16 +198,27 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
 
                 if(mEncryptionState.isEstablished())
                 {
-                    promotePendingEncryptionLdus();
+                    if(mEncryptionState.isClear())
+                    {
+                        promotePendingEncryptionLdus();
 
-                    if(isCallActiveState(mCurrentDecoderState))
-                    {
-                        tryActivateDeferredAudio();
+                        if(isCallActiveState(mCurrentDecoderState))
+                        {
+                            tryActivateDeferredAudio();
+                        }
+                        else
+                        {
+                            mLog.debug("P25P1 deferring clear audio state:{} deferred:{}", mCurrentDecoderState,
+                                mDeferredClearAudioLdus.size());
+                        }
                     }
-                    else
+                    else if(parameters.isValid())
                     {
-                        mLog.debug("P25P1 deferring clear audio state:{} deferred:{}", mCurrentDecoderState,
-                            mDeferredClearAudioLdus.size());
+                        //The LDU2 ESS seeds the following LDU1/LDU2 pair, not the current late-entry frames.
+                        mPendingEncryptionLdus.clear();
+                        mDeferredClearAudioLdus.clear();
+                        mEncryptionSyncParameters = parameters;
+                        mVoiceFrameDecryptor = null;
                     }
                 }
                 else
@@ -251,6 +289,38 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     }
 
     /**
+     * Processes an LDU after call encryption state has been established.  For encrypted Phase 1 calls, the LDU2 ESS
+     * message indicator applies after the current LDU2 voice frames and initializes the next LDU1/LDU2 pair.
+     */
+    private void processEstablishedLDU(LDUMessage ldu)
+    {
+        processAudio(ldu);
+
+        if(ldu instanceof LDU2Message ldu2)
+        {
+            promoteLDU2EncryptionSync(ldu2);
+        }
+    }
+
+    private void promoteLDU2EncryptionSync(LDU2Message ldu2)
+    {
+        EncryptionSyncParameters parameters = ldu2.getEncryptionSyncParameters();
+
+        if(parameters.isValid())
+        {
+            mEncryptionState = P25AudioEncryptionState.fromEncrypted(parameters.isEncryptedAudio());
+            mEncryptionSyncParameters = mEncryptionState.isEncrypted() ? parameters : null;
+            mVoiceFrameDecryptor = null;
+        }
+        else if(mEncryptionState.isEncrypted())
+        {
+            //Without a valid ESS, the next encrypted LDU1 cannot be decrypted with confidence.
+            mEncryptionSyncParameters = null;
+            mVoiceFrameDecryptor = null;
+        }
+    }
+
+    /**
      * Processes an audio packet by decoding the IMBE audio frames and rebroadcasting them as PCM audio packets.
      */
     private void processAudio(LDUMessage ldu)
@@ -303,8 +373,83 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         }
         else
         {
-            //Encrypted audio processing not implemented
+            processEncryptedAudio(ldu);
         }
+    }
+
+    private void processEncryptedAudio(LDUMessage ldu)
+    {
+        if(!prepareEncryptedAudioDecryptor())
+        {
+            return;
+        }
+
+        for(byte[] frame : ldu.getIMBEFrames())
+        {
+            MutableAudioCallBuilder currentAudioCall = getAudioCall();
+            String currentSegmentId = formatSegment(currentAudioCall);
+
+            if(!currentAudioCall.isBurstActive())
+            {
+                if(currentAudioCall.getAudioBufferCount() > 0)
+                {
+                    mLog.warn("P25P1 decrypted audio resumed on inactive burst segment:{} buffers:{} complete:{} encryptedStateEstablished:{} cachedLdus:{}",
+                        currentSegmentId, currentAudioCall.getAudioBufferCount(), currentAudioCall.isComplete(),
+                        mEncryptionState.isEstablished(), getCachedLduCount());
+                }
+
+                beginCurrentAudioBurst();
+            }
+
+            long timestamp = ldu.getTimestamp();
+
+            if(mLastAudioTimestamp != Long.MIN_VALUE && currentSegmentId.equals(mLastAudioSegmentId))
+            {
+                long gap = timestamp - mLastAudioTimestamp;
+
+                if(gap >= LONG_AUDIO_GAP_LOG_THRESHOLD_MS)
+                {
+                    mLog.warn("P25P1 decrypted audio resumed after long gap segment:{} gapMs:{} buffers:{} burstActive:{} encryptedStateEstablished:{} cachedLdus:{}",
+                        currentSegmentId, gap, currentAudioCall.getAudioBufferCount(), currentAudioCall.isBurstActive(),
+                        mEncryptionState.isEstablished(), getCachedLduCount());
+                }
+            }
+
+            try
+            {
+                byte[] decryptedFrame = mVoiceFrameDecryptor.decrypt(frame);
+                float[] audio = getAudioCodec().getAudio(decryptedFrame);
+                audio = mGain.apply(audio);
+                addAudio(audio);
+                mLastAudioTimestamp = timestamp;
+                mLastAudioSegmentId = currentSegmentId;
+            }
+            catch(VoiceFrameDecryptionException e)
+            {
+                mLog.debug("Error decrypting P25 Phase 1 IMBE audio", e);
+                closeAudioSegment("decrypt error");
+                return;
+            }
+        }
+    }
+
+    private boolean prepareEncryptedAudioDecryptor()
+    {
+        if(mVoiceFrameDecryptor != null)
+        {
+            return mVoiceFrameDecryptor.isImplemented();
+        }
+
+        VoiceEncryptionContext context = VoiceEncryptionContext.create(VoiceEncryptionProtocol.APCO25,
+            mEncryptionSyncParameters != null ? mEncryptionSyncParameters.getEncryptionKey() : null,
+            mEncryptionSyncParameters != null ? mEncryptionSyncParameters.getMessageIndicator() : null,
+            getTimeslot(), getIdentifierCollection());
+
+        mVoiceFrameDecryptor = mEncryptionKeyResolver.resolve(context)
+            .flatMap(key -> mVoiceFrameDecryptorFactory.create(context, key))
+            .orElse(null);
+
+        return mVoiceFrameDecryptor != null && mVoiceFrameDecryptor.isImplemented();
     }
 
     /**
@@ -320,9 +465,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             if(event.getSquelchState() == SquelchState.SQUELCH)
             {
                 closeAudioSegment("squelch");
-                mEncryptionState = P25AudioEncryptionState.UNKNOWN;
-                mPendingEncryptionLdus.clear();
-                mDeferredClearAudioLdus.clear();
+                resetEncryptionTracking();
             }
         }
     }
@@ -412,9 +555,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                 closeAudioSegment(reason);
             }
 
-            mEncryptionState = P25AudioEncryptionState.UNKNOWN;
-            mPendingEncryptionLdus.clear();
-            mDeferredClearAudioLdus.clear();
+            resetEncryptionTracking();
         }
 
         @Override
@@ -454,5 +595,16 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                 default -> { /* no action */ }
             }
         }
+    }
+
+    private void resetEncryptionTracking()
+    {
+        mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+        mEncryptionSyncParameters = null;
+        mVoiceFrameDecryptor = null;
+        mPendingEncryptionLdus.clear();
+        mDeferredClearAudioLdus.clear();
+        mLastAudioTimestamp = Long.MIN_VALUE;
+        mLastAudioSegmentId = null;
     }
 }

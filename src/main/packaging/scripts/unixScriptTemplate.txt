@@ -155,7 +155,7 @@ if [ "\$(uname)" = "Darwin" ] && [ "\$HOME" = "\$PWD" ]; then
 fi
 
 if \$darwin; then
-    exec -a "sdrtrunk" "\$JAVACMD" "\$@"
+    exec -a "sdrtrunk-vce" "\$JAVACMD" "\$@"
 else
     <% if ( System.properties['BADASS_RUN_IN_BIN_DIR'] ) { %>cd "\$APP_HOME/bin" && <% } %>exec "\$JAVACMD" "\$@"
 fi

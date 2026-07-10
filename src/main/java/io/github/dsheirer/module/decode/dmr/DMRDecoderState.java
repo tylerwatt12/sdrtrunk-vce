@@ -1454,36 +1454,6 @@ public class DMRDecoderState extends TimeslotDecoderState
     }
 
     @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        boolean networkAdded = false;
-
-        if(mNetworkConfigurationMonitor != null)
-        {
-            sb.append(mNetworkConfigurationMonitor.getActivitySummary());
-            networkAdded = true;
-        }
-
-        //Only add the talker alias summary to timeslot 1 activity summary since we aggregate across both timeslots.
-        if(getTimeslot() == TimeslotMessage.TIMESLOT_1)
-        {
-            if(networkAdded)
-            {
-                sb.append("\n");
-            }
-
-            if(hasTrafficChannelManager())
-            {
-                sb.append(mTrafficChannelManager.getTalkerAliasManager().getAliasSummary());
-            }
-        }
-
-        return sb.toString();
-    }
-
-    @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
         switch(event.getEvent())

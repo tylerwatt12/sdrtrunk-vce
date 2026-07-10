@@ -66,14 +66,4 @@ public class AMDecoderState extends AnalogDecoderState
         return mTalkgroupIdentifier;
     }
 
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Activity Summary\n");
-        sb.append("\tDecoder: AM");
-        sb.append("\n\n");
-        return sb.toString();
-    }
-
 }

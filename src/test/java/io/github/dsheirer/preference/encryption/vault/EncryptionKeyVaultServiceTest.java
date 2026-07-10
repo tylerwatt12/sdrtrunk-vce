@@ -108,7 +108,7 @@ class EncryptionKeyVaultServiceTest
         };
 
         EncryptionKeyPreference preference = new EncryptionKeyPreference(this::ignore, directoryPreference);
-        SdrTrunkDatabaseStartup.prepareVaultDatabase(preference.getVaultService().getVaultPath());
+        SdrTrunkDatabaseStartup.createVaultDatabase(preference.getVaultService().getVaultPath());
         preference.getVaultService().createVault(password("secret"));
         preference.setKeys(List.of(key()));
         assertEquals(1, preference.getKeys().size());
@@ -123,7 +123,7 @@ class EncryptionKeyVaultServiceTest
     private EncryptionKeyVaultService service(String filename) throws Exception
     {
         Path vaultPath = mTemporaryFolder.resolve(filename);
-        SdrTrunkDatabaseStartup.prepareVaultDatabase(vaultPath);
+        SdrTrunkDatabaseStartup.createVaultDatabase(vaultPath);
         return new EncryptionKeyVaultService(vaultPath);
     }
 

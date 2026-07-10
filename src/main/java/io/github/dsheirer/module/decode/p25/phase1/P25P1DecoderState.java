@@ -53,6 +53,7 @@ import io.github.dsheirer.module.decode.ip.mototrbo.ars.ARSPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.LRRPPacket;
 import io.github.dsheirer.module.decode.ip.udp.UDPPacket;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
+import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
@@ -92,6 +93,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequenceMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCAuthenticationResponse;
+import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCGroupAffiliationRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCIndividualDataServiceRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCLocationRegistrationRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCMessageUpdateRequest;
@@ -131,6 +133,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.motorola.osp.Mot
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.CancelServiceRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.ExtendedFunctionResponse;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.GroupAffiliationQueryResponse;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.GroupAffiliationRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.GroupDataServiceRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.GroupVoiceServiceRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.IndividualDataServiceRequest;
@@ -144,6 +147,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.Sta
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.StatusUpdateRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.TelephoneInterconnectAnswerResponse;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.UnitAcknowledgeResponse;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.UnitDeRegistrationRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.UnitRegistrationRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.UnitToUnitVoiceServiceAnswerResponse;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.isp.UnitToUnitVoiceServiceRequest;
@@ -167,10 +171,12 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.Sta
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TelephoneInterconnectAnswerRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TelephoneInterconnectVoiceChannelGrant;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TelephoneInterconnectVoiceChannelGrantUpdate;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitDeRegistrationAcknowledge;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitRegistrationResponse;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitToUnitVoiceChannelGrant;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitToUnitVoiceChannelGrantUpdate;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
+import io.github.dsheirer.module.decode.p25.reference.Response;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
@@ -548,6 +554,19 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 .build());
     }
 
+    private void broadcastAffiliation(List<Identifier> identifiers, long timestamp, DecodeEventType eventType,
+                                      String details, P25AffiliationEvent.Outcome outcome, Identifier<?> radio,
+                                      Identifier<?> talkgroup)
+    {
+        MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
+        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
+        P25AffiliationEvent event = new P25AffiliationEvent(eventType, timestamp, outcome, radio, talkgroup);
+        event.setChannelDescriptor(getCurrentChannel());
+        event.setDetails(details);
+        event.setIdentifierCollection(mic);
+        broadcast(event);
+    }
+
     /**
      * Creates a copy of the current identifier collection, removes any USER identifiers and adds the argument identifiers
      * passing each identifier through the patch group manager to replace with a patch group if it exists
@@ -591,8 +610,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             CALL_ALERT_LABEL);
                     break;
                 case ISP_GROUP_AFFILIATION_REQUEST:
-                    broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
-                            GROUP_AFFILIATION_LABEL);
+                    if(ambtc instanceof AMBTCGroupAffiliationRequest request)
+                    {
+                        broadcastAffiliation(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
+                            GROUP_AFFILIATION_LABEL, P25AffiliationEvent.Outcome.REQUESTED,
+                            request.getSourceAddress(), request.getGroupId());
+                    }
                     break;
                 case ISP_INDIVIDUAL_DATA_SERVICE_REQUEST:
                     if(ambtc instanceof AMBTCIndividualDataServiceRequest idsr)
@@ -710,8 +733,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case OSP_GROUP_AFFILIATION_RESPONSE:
                     if(ambtc instanceof AMBTCGroupAffiliationResponse gar)
                     {
-                        broadcastEvent(ambtc, DecodeEventType.RESPONSE, "AFFILIATION GROUP:" +
-                                gar.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL + gar.getAnnouncementGroup());
+                        Response response = gar.getAffiliationResponse();
+                        broadcastAffiliation(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.RESPONSE,
+                            response + " AFFILIATION GROUP:" + gar.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL +
+                                gar.getAnnouncementGroup(), P25AffiliationEvent.Outcome.from(response),
+                            gar.getTargetAddress(), gar.getGroupAddress());
                     }
                     break;
                 case OSP_MESSAGE_UPDATE:
@@ -1381,8 +1407,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             "AUTHENTICATE");
                     break;
                 case OSP_UNIT_DEREGISTRATION_ACKNOWLEDGE:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.DEREGISTER,
-                            "ACKNOWLEDGE UNIT DE-REGISTRATION");
+                    if(tsbk instanceof UnitDeRegistrationAcknowledge acknowledge)
+                    {
+                        broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.DEREGISTER,
+                            "ACKNOWLEDGE UNIT DE-REGISTRATION", P25AffiliationEvent.Outcome.CLEARED,
+                            acknowledge.getTargetAddress(), null);
+                    }
                     break;
                 case OSP_ROAMING_ADDRESS_COMMAND:
                     if(tsbk instanceof RoamingAddressCommand rac)
@@ -1518,19 +1548,29 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             "EMERGENCY ALARM");
                     break;
                 case ISP_GROUP_AFFILIATION_REQUEST:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
-                            GROUP_AFFILIATION_LABEL);
+                    if(tsbk instanceof GroupAffiliationRequest request)
+                    {
+                        broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
+                            GROUP_AFFILIATION_LABEL, P25AffiliationEvent.Outcome.REQUESTED,
+                            request.getSourceAddress(), request.getGroupAddress());
+                    }
                     break;
                 case ISP_GROUP_AFFILIATION_QUERY_RESPONSE:
                     if(tsbk instanceof GroupAffiliationQueryResponse gaqr)
                     {
-                        broadcastEvent(tsbk, DecodeEventType.RESPONSE, "AFFILIATION - GROUP:" +
-                            gaqr.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL + gaqr.getAnnouncementGroupAddress());
+                        broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.RESPONSE,
+                            "AFFILIATION - GROUP:" + gaqr.getGroupAddress() + ANNOUNCEMENT_GROUP_LABEL +
+                                gaqr.getAnnouncementGroupAddress(), P25AffiliationEvent.Outcome.CONFIRMED,
+                            gaqr.getSourceAddress(), gaqr.getGroupAddress());
                     }
                     break;
                 case ISP_UNIT_DE_REGISTRATION_REQUEST:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.DEREGISTER,
-                            "UNIT DE-REGISTRATION REQUEST");
+                    if(tsbk instanceof UnitDeRegistrationRequest request)
+                    {
+                        broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.DEREGISTER,
+                            "UNIT DE-REGISTRATION REQUEST", P25AffiliationEvent.Outcome.CLEARED,
+                            request.getSourceAddress(), null);
+                    }
                     break;
                 case ISP_UNIT_REGISTRATION_REQUEST:
                     if(tsbk instanceof UnitRegistrationRequest urr)
@@ -1698,8 +1738,10 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof LocationRegistrationResponse lrr)
         {
-            broadcastEvent(tsbk, DecodeEventType.REGISTER,
- 		lrr.getResponse() + " LOCATION REGISTRATION - GROUP:" + lrr.getGroupAddress());
+            Response response = lrr.getResponse();
+            broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REGISTER,
+                response + " LOCATION REGISTRATION - GROUP:" + lrr.getGroupAddress(),
+                P25AffiliationEvent.Outcome.from(response), lrr.getTargetAddress(), lrr.getGroupAddress());
         }
     }
 
@@ -1707,10 +1749,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof GroupAffiliationResponse gar)
         {
-            broadcastEvent(tsbk, DecodeEventType.RESPONSE, gar.getAffiliationResponse() +
-                    " AFFILIATION GROUP: " + gar.getGroupAddress() +
-                    (gar.isGlobalAffiliation() ? " (GLOBAL)" : " (LOCAL)") +
-                    ANNOUNCEMENT_GROUP_LABEL + gar.getAnnouncementGroupAddress());
+            Response response = gar.getAffiliationResponse();
+            broadcastAffiliation(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.RESPONSE,
+                response + " AFFILIATION GROUP: " + gar.getGroupAddress() +
+                (gar.isGlobalAffiliation() ? " (GLOBAL)" : " (LOCAL)") + ANNOUNCEMENT_GROUP_LABEL +
+                    gar.getAnnouncementGroupAddress(), P25AffiliationEvent.Outcome.from(response),
+                gar.getTargetAddress(), gar.getGroupAddress());
         }
     }
 
@@ -2179,18 +2223,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private boolean isExplicitTerminationLCW(LinkControlWord lcw)
     {
         return lcw instanceof LCCallTermination lcct && lcct.isNetworkCommandedTeardown();
-    }
-
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append(mNetworkConfigurationMonitor.getActivitySummary());
-        sb.append("\n");
-        sb.append(mPatchGroupManager.getPatchGroupSummary());
-        sb.append("\n");
-        sb.append(mTrafficChannelManager.getTalkerAliasManager().getAliasSummary());
-        return sb.toString();
     }
 
     @Override

@@ -23,6 +23,7 @@ class P25StableFactTracker<T>
     private final Function<T,String> mKeyFunction;
     private T mStableValue;
     private String mStableKey;
+    private long mStableLastSeenTimestamp;
     private T mCandidateValue;
     private String mCandidateKey;
     private long mFirstSeenTimestamp;
@@ -45,6 +46,7 @@ class P25StableFactTracker<T>
     {
         mStableValue = null;
         mStableKey = null;
+        mStableLastSeenTimestamp = 0;
         clearCandidate();
     }
 
@@ -99,7 +101,7 @@ class P25StableFactTracker<T>
         {
             if(promotionGuard.test(value))
             {
-                promote(value, key);
+                promote(value, key, timestamp);
                 return Result.PROMOTED;
             }
 
@@ -108,6 +110,8 @@ class P25StableFactTracker<T>
 
         if(Objects.equals(key, mStableKey))
         {
+            mStableValue = value;
+            mStableLastSeenTimestamp = timestamp;
             clearCandidate();
             return Result.NONE;
         }
@@ -135,7 +139,7 @@ class P25StableFactTracker<T>
         {
             if(promotionGuard.test(value))
             {
-                promote(value, key);
+                promote(value, key, timestamp);
                 return Result.PROMOTED;
             }
 
@@ -157,10 +161,24 @@ class P25StableFactTracker<T>
         return null;
     }
 
-    private void promote(T value, String key)
+    boolean expireStable(long timestamp, long expirationMilliseconds)
+    {
+        if(mStableValue != null && timestamp - mStableLastSeenTimestamp > expirationMilliseconds)
+        {
+            mStableValue = null;
+            mStableKey = null;
+            mStableLastSeenTimestamp = 0;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void promote(T value, String key, long timestamp)
     {
         mStableValue = value;
         mStableKey = key;
+        mStableLastSeenTimestamp = timestamp;
         clearCandidate();
     }
 

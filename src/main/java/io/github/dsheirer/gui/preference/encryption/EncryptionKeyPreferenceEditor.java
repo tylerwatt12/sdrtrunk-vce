@@ -64,6 +64,7 @@ import javafx.stage.FileChooser;
  */
 public class EncryptionKeyPreferenceEditor extends BorderPane
 {
+    private final io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager mModuleManager;
     private final EncryptionKeyPreference mPreference;
     private final EncryptionKeyVaultService mVaultService;
     private ObservableList<VoiceEncryptionKey> mKeys;
@@ -81,6 +82,7 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
 
     public EncryptionKeyPreferenceEditor(UserPreferences userPreferences)
     {
+        mModuleManager = userPreferences.getVoiceDecryptionModulePreference().getModuleManager();
         mPreference = userPreferences.getEncryptionKeyPreference();
         mVaultService = mPreference.getVaultService();
         mVaultService.stateProperty().addListener((observable, oldValue, newValue) -> refresh());
@@ -606,8 +608,9 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         TextField scopeField = new TextField();
 
         protocolComboBox.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
-            algorithmComboBox.getItems().setAll(VoiceEncryptionAlgorithm.getAlgorithms(newValue));
-            selectAlgorithm(algorithmComboBox, VoiceEncryptionAlgorithm.getFirstSupported(newValue));
+            algorithmComboBox.getItems().setAll(mModuleManager.getSupportedAlgorithms(newValue));
+            selectAlgorithm(algorithmComboBox, algorithmComboBox.getItems().isEmpty() ? null :
+                algorithmComboBox.getItems().getFirst());
         });
 
         algorithmComboBox.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
@@ -686,7 +689,14 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
     {
         VoiceEncryptionKey key = new VoiceEncryptionKey();
         key.setProtocol(VoiceEncryptionProtocol.APCO25);
-        key.setAlgorithmId(VoiceEncryptionAlgorithm.APCO25_ADP.getValue());
+        java.util.List<VoiceEncryptionAlgorithm> algorithms =
+            mModuleManager.getSupportedAlgorithms(VoiceEncryptionProtocol.APCO25);
+
+        if(!algorithms.isEmpty())
+        {
+            key.setAlgorithmId(algorithms.getFirst().getValue());
+        }
+
         return key;
     }
 

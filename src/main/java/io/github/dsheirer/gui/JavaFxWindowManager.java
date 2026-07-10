@@ -46,6 +46,7 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.monitor.StatusBox;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -134,7 +135,8 @@ public class JavaFxWindowManager extends Application
      * @param resourceMonitor for statistics
      * @return JFXPanel accessible on Swing thread that delegates JavaFX scene creation to the FX event thread.
      */
-    public JFXPanel getStatusPanel(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService)
+    public JFXPanel getStatusPanel(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
+                                   VoiceDecryptionModuleManager moduleManager)
     {
         if(mStatusPanel == null)
         {
@@ -142,7 +144,7 @@ public class JavaFxWindowManager extends Application
 
             //JFXPanel has to be populated on the FX event thread
             Platform.runLater(() -> {
-                Scene scene = new Scene(new StatusBox(resourceMonitor, vaultService));
+                Scene scene = new Scene(new StatusBox(resourceMonitor, vaultService, moduleManager));
                 mStatusPanel.setScene(scene);
             });
         }
@@ -214,7 +216,7 @@ public class JavaFxWindowManager extends Application
         {
             Scene scene = new Scene(getRecordingViewer(), 1100, 800);
             mRecordingViewerStage = new Stage();
-            mRecordingViewerStage.setTitle("sdrtrunk - Message Recording Viewer (.bits)");
+            mRecordingViewerStage.setTitle("sdrtrunk-vce - Message Recording Viewer (.bits)");
             mRecordingViewerStage.setScene(scene);
             ApplicationIcon.apply(mRecordingViewerStage);
             mUserPreferences.getJavaFxPreferences().monitor(mRecordingViewerStage, STAGE_MONITOR_KEY_RECORDING_VIEWER);
@@ -239,7 +241,7 @@ public class JavaFxWindowManager extends Application
         {
             Scene scene = new Scene(getIconManager(), 500, 500);
             mIconManagerStage = new Stage();
-            mIconManagerStage.setTitle("sdrtrunk - Icon Manager");
+            mIconManagerStage.setTitle("sdrtrunk-vce - Icon Manager");
             mIconManagerStage.setScene(scene);
             ApplicationIcon.apply(mIconManagerStage);
             mUserPreferences.getJavaFxPreferences().monitor(mIconManagerStage, STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR);
@@ -287,7 +289,7 @@ public class JavaFxWindowManager extends Application
         {
             Scene scene = new Scene(getJmbeEditor(), 650, 650);
             mJmbeEditorStage = new Stage();
-            mJmbeEditorStage.setTitle("sdrtrunk - JMBE Library Updater");
+            mJmbeEditorStage.setTitle("sdrtrunk-vce - JMBE Library Updater");
             mJmbeEditorStage.setScene(scene);
             ApplicationIcon.apply(mJmbeEditorStage);
             mUserPreferences.getJavaFxPreferences().monitor(mJmbeEditorStage, STAGE_MONITOR_KEY_JMBE_EDITOR);
@@ -328,7 +330,7 @@ public class JavaFxWindowManager extends Application
         {
             Scene scene = new Scene(getConfigurationEditor(), 1000, 750);
             mConfigurationStage = new Stage();
-            mConfigurationStage.setTitle("sdrtrunk - Configuration Editor");
+            mConfigurationStage.setTitle("sdrtrunk-vce - Configuration Editor");
             mConfigurationStage.setScene(scene);
             ApplicationIcon.apply(mConfigurationStage);
             mUserPreferences.getJavaFxPreferences().monitor(mConfigurationStage, STAGE_MONITOR_KEY_CONFIGURATION_EDITOR);
@@ -378,7 +380,7 @@ public class JavaFxWindowManager extends Application
         {
             Scene scene = new Scene(getUserPreferencesEditor(), 900, 500);
             mUserPreferencesStage = new Stage();
-            mUserPreferencesStage.setTitle("sdrtrunk - User Preferences");
+            mUserPreferencesStage.setTitle("sdrtrunk-vce - User Preferences");
             mUserPreferencesStage.setScene(scene);
             ApplicationIcon.apply(mUserPreferencesStage);
             mUserPreferences.getJavaFxPreferences().monitor(mUserPreferencesStage, STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR);
@@ -421,7 +423,7 @@ public class JavaFxWindowManager extends Application
         {
             Scene scene = new Scene(getEncryptionKeyPreferenceEditor(), 900, 500);
             mEncryptionKeyStage = new Stage();
-            mEncryptionKeyStage.setTitle("sdrtrunk - Encryption Keys");
+            mEncryptionKeyStage.setTitle("sdrtrunk-vce - Encryption Keys");
             mEncryptionKeyStage.setScene(scene);
             ApplicationIcon.apply(mEncryptionKeyStage);
             mUserPreferences.getJavaFxPreferences().monitor(mEncryptionKeyStage, STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR);
@@ -436,6 +438,11 @@ public class JavaFxWindowManager extends Application
     @Subscribe
     public void process(final ViewEncryptionKeyPreferenceEditorRequest request)
     {
+        if(!mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
+        {
+            return;
+        }
+
         execute(() -> {
             restoreStage(getEncryptionKeyStage());
             getEncryptionKeyPreferenceEditor().activate();
@@ -464,7 +471,7 @@ public class JavaFxWindowManager extends Application
         {
             Scene scene = new Scene(getChannelMapEditor(), 500, 500);
             mChannelMapStage = new Stage();
-            mChannelMapStage.setTitle("sdrtrunk - Channel Map Editor");
+            mChannelMapStage.setTitle("sdrtrunk-vce - Channel Map Editor");
             mChannelMapStage.setScene(scene);
             ApplicationIcon.apply(mChannelMapStage);
             mUserPreferences.getJavaFxPreferences().monitor(mChannelMapStage, STAGE_MONITOR_KEY_CHANNEL_MAP_EDITOR);

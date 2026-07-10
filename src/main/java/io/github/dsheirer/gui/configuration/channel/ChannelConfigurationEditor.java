@@ -267,7 +267,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     {
         if(modifiedProperty().get())
         {
-            if(!validateRadioResolveGuid())
+            if(!validateSiteGuid())
             {
                 return;
             }
@@ -596,7 +596,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             GridPane.setConstraints(getNewAliasListButton(), 4, row);
             mTextFieldPane.getChildren().add(getNewAliasListButton());
 
-            Label radresGuidLabel = new Label("RadioResolve GUID");
+            Label radresGuidLabel = new Label("Site GUID");
             GridPane.setHalignment(radresGuidLabel, HPos.RIGHT);
             GridPane.setConstraints(radresGuidLabel, 0, ++row);
             mTextFieldPane.getChildren().add(radresGuidLabel);
@@ -661,7 +661,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         return mRadresGuidField;
     }
 
-    private boolean validateRadioResolveGuid()
+    private boolean validateSiteGuid()
     {
         String guid = getRadresGuidField().getText();
 
@@ -678,9 +678,9 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         catch(IllegalArgumentException e)
         {
             Alert alert = new Alert(Alert.AlertType.ERROR,
-                "RadioResolve GUID must be blank or a valid UUID.", ButtonType.OK);
-            alert.setTitle("Invalid RadioResolve GUID");
-            alert.setHeaderText("Invalid RadioResolve GUID");
+                "Site GUID must be blank or a valid UUID.", ButtonType.OK);
+            alert.setTitle("Invalid Site GUID");
+            alert.setHeaderText("Invalid Site GUID");
 
             if(getPlayButton().getScene() != null)
             {

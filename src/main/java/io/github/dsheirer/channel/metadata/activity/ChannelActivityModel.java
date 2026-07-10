@@ -52,6 +52,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import javax.swing.Timer;
 
 /**
@@ -76,8 +77,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     private final Map<Channel,SiteIdentity> mSiteIdentities = new IdentityHashMap<>();
     private final List<Listener<ChannelActivityTableModel>> mTableAddListeners = new ArrayList<>();
     private final List<Listener<ChannelActivityTableModel>> mTableChangeListeners = new ArrayList<>();
+    private final List<Listener<ChannelActivityEvent>> mActivityListeners = new CopyOnWriteArrayList<>();
+    private final Listener<ChannelActivitySnapshot> mTableSnapshotListener = snapshot ->
+        notifyActivityListeners(ChannelActivityEvent.Operation.UPSERT, snapshot);
     private Timer mActivitySweeperTimer;
-    private volatile boolean mEnabled = true;
+    private volatile boolean mEnabled;
 
     private record ExpiringRow(ChannelActivityTableModel table, Channel parentChannel, long expiresAt)
     {
@@ -99,6 +103,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     {
         mAliasModel = aliasModel;
         mNowPlayingPreference = nowPlayingPreference;
+        mConventionalTable.addSnapshotListener(mTableSnapshotListener);
     }
 
     public ChannelActivityTableModel getConventionalTable()
@@ -140,15 +145,52 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         mTableChangeListeners.remove(listener);
     }
 
+    public void addActivityListener(Listener<ChannelActivityEvent> listener)
+    {
+        if(listener != null)
+        {
+            mActivityListeners.add(listener);
+            listener.receive(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
+                ChannelActivitySnapshot.from(mConventionalTable)));
+
+            for(ChannelActivityTableModel table: mTrunkedTables.values())
+            {
+                listener.receive(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
+                    ChannelActivitySnapshot.from(table)));
+            }
+        }
+    }
+
+    public void removeActivityListener(Listener<ChannelActivityEvent> listener)
+    {
+        mActivityListeners.remove(listener);
+    }
+
+    private void notifyActivityListeners(ChannelActivityEvent.Operation operation, ChannelActivitySnapshot snapshot)
+    {
+        if(snapshot != null)
+        {
+            ChannelActivityEvent event = new ChannelActivityEvent(operation, snapshot);
+
+            for(Listener<ChannelActivityEvent> listener: mActivityListeners)
+            {
+                listener.receive(event);
+            }
+        }
+    }
+
     public void close(ChannelActivityTableModel tableModel)
     {
         runOnSwingIfEnabled(() -> {
             if(tableModel != null && tableModel.getOwnerChannel() != null)
             {
                 Channel owner = tableModel.getOwnerChannel();
+                ChannelActivitySnapshot removedSnapshot = ChannelActivitySnapshot.from(tableModel);
                 mClosedTrunkedChannelIds.add(owner.getChannelID());
                 mTrunkedTables.remove(owner);
                 mSiteSessions.remove(owner);
+                tableModel.removeSnapshotListener(mTableSnapshotListener);
+                notifyActivityListeners(ChannelActivityEvent.Operation.REMOVE, removedSnapshot);
 
                 for(ChannelActivityRow row: tableModel.getRows())
                 {
@@ -320,6 +362,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             }
 
             expireTrafficRows(session, table, parentChannel);
+            Set<Long> promotedControlFrequencies = new HashSet<>();
 
             for(P25NetworkConfigurationSnapshot.Channel channel: list(snapshot.channels()))
             {
@@ -330,6 +373,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
                 if(isCurrentControlRole(channel.role()))
                 {
+                    promotedControlFrequencies.add(channel.downlink());
                     SiteActivitySession.ControlUpdate update = session.currentControl(channel.downlink(),
                         channel.descriptor());
                     ChannelActivityRow row = update.current();
@@ -349,12 +393,21 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 }
                 else if(isSecondaryControlRole(channel.role()))
                 {
+                    promotedControlFrequencies.add(channel.downlink());
                     ChannelActivityRow row = session.alternateControl(channel.downlink(), channel.descriptor());
                     rememberRow(table, row);
                     cancelPendingControlIdle(row);
                     row.setDecoder(getDecoder(parentChannel));
                     table.refresh(row);
                 }
+            }
+
+            for(ChannelActivityRow row: session.reconcilePromotedControls(promotedControlFrequencies,
+                getConfiguredFrequency(parentChannel)))
+            {
+                cancelPendingControlIdle(row);
+                table.remove(row);
+                mRowTables.remove(row);
             }
         });
     }
@@ -969,6 +1022,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         if(table == null)
         {
             table = new ChannelActivityTableModel(getTrunkedTitle(channel), channel, true);
+            table.addSnapshotListener(mTableSnapshotListener);
             mTrunkedTables.put(channel, table);
 
             for(Listener<ChannelActivityTableModel> listener: mTableAddListeners)
@@ -1023,7 +1077,10 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         for(ChannelActivityTableModel table: mTrunkedTables.values())
         {
+            ChannelActivitySnapshot removedSnapshot = ChannelActivitySnapshot.from(table);
             table.clear();
+            table.removeSnapshotListener(mTableSnapshotListener);
+            notifyActivityListeners(ChannelActivityEvent.Operation.REMOVE, removedSnapshot);
         }
 
         mTrunkedTables.clear();

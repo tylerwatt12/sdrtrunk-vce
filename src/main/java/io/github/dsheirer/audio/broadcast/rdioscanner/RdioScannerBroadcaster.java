@@ -222,7 +222,7 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(configuration.getHost()))
             .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-            .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+            .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
             .header(HttpHeaders.ACCEPT, "*/*")
             .POST(bodyBuilder.build())
             .build();
@@ -516,7 +516,7 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
                             HttpRequest fileRequest = HttpRequest.newBuilder()
                                 .uri(URI.create(getBroadcastConfiguration().getHost()))
                                 .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-                                .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+                                .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
                                 .POST(bodyBuilder.build())
                                 .build();
 

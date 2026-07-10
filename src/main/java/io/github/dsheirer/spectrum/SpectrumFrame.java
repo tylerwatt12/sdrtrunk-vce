@@ -39,7 +39,7 @@ public class SpectrumFrame extends JFrame
     public SpectrumFrame(ConfigurationManager configurationManager, SettingsManager settingsManager,
                          DiscoveredTunerModel discoveredTunerModel, Tuner tuner)
     {
-        setTitle("SDRTRunk [" + tuner.getPreferredName() + "]");
+        setTitle("sdrtrunk-vce [" + tuner.getPreferredName() + "]");
         setBounds(100, 100, 1280, 600);
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
 

@@ -95,6 +95,30 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
+    public void capsPromotedControlFrequenciesAtEight()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        List<P25NetworkConfigurationSnapshot.Channel> channels = java.util.stream.LongStream.range(0, 9)
+            .mapToObj(index -> secondary(851000000L + index * 12500L))
+            .toList();
+
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
+            List.of(), List.of(), List.of(), List.of()), 1000L);
+
+        assertEquals(8, stabilizer.getStableCurrentSiteControlFrequencies().size());
+    }
+
+    @Test
+    public void retiresBroadcastFactsThatAreNoLongerObserved()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(),
+            List.of(), List.of(), List.of()), 601002L);
+
+        assertTrue(stabilizer.getSnapshot().channels().isEmpty());
+    }
+
+    @Test
     public void neighborIsUpdatedInPlaceWhenFrequencyResolvesLater()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");

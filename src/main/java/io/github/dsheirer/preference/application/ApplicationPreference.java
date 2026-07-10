@@ -35,15 +35,24 @@ public class ApplicationPreference extends Preference
         "p25.activity.logging.detailed.history.enabled";
     private static final String PREFERENCE_KEY_STATS_LOGGING_RETENTION_DAYS =
         "p25.activity.logging.retention.days";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED = "stats.web.server.enabled";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_PORT = "stats.web.server.port";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED = "stats.web.server.lan.enabled";
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
     public static final int MAX_STATS_LOGGING_RETENTION_DAYS = 365;
     public static final int DEFAULT_STATS_LOGGING_RETENTION_DAYS = 30;
+    public static final int MIN_STATS_WEB_SERVER_PORT = 1024;
+    public static final int MAX_STATS_WEB_SERVER_PORT = 65535;
+    public static final int DEFAULT_STATS_WEB_SERVER_PORT = 8090;
 
     private Preferences mPreferences = Preferences.userNodeForPackage(ApplicationPreference.class);
     private Integer mChannelAutoStartTimeout;
     private Boolean mStatsLoggingEnabled;
     private Boolean mStatsDetailedHistoryEnabled;
     private Integer mStatsLoggingRetentionDays;
+    private Boolean mStatsWebServerEnabled;
+    private Integer mStatsWebServerPort;
+    private Boolean mStatsWebServerLanEnabled;
 
     /**
      * Constructs an instance
@@ -87,7 +96,7 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Indicates if SDRTrunk stats should be logged to SQLite.
+     * Indicates if sdrtrunk-vce stats should be logged to SQLite.
      */
     public boolean isStatsLoggingEnabled()
     {
@@ -100,7 +109,7 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Enables or disables SDRTrunk stats logging to SQLite.
+     * Enables or disables sdrtrunk-vce stats logging to SQLite.
      */
     public void setStatsLoggingEnabled(boolean enabled)
     {
@@ -124,7 +133,7 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Enables or disables detailed event history rows for SDRTrunk stats logging.
+     * Enables or disables detailed event history rows for sdrtrunk-vce stats logging.
      */
     public void setStatsDetailedHistoryEnabled(boolean enabled)
     {
@@ -134,7 +143,7 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Retention period for SDRTrunk stats logging.
+     * Retention period for sdrtrunk-vce stats logging.
      */
     public int getStatsLoggingRetentionDays()
     {
@@ -149,7 +158,7 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Sets the retention period for SDRTrunk stats logging.
+     * Sets the retention period for sdrtrunk-vce stats logging.
      */
     public void setStatsLoggingRetentionDays(int days)
     {
@@ -158,8 +167,83 @@ public class ApplicationPreference extends Preference
         notifyPreferenceUpdated();
     }
 
+    /**
+     * Indicates if the embedded stats web server should start.
+     */
+    public boolean isStatsWebServerEnabled()
+    {
+        if(mStatsWebServerEnabled == null)
+        {
+            mStatsWebServerEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED, false);
+        }
+
+        return mStatsWebServerEnabled;
+    }
+
+    /**
+     * Enables or disables the embedded stats web server.
+     */
+    public void setStatsWebServerEnabled(boolean enabled)
+    {
+        mStatsWebServerEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED, enabled);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Port for the embedded stats web server.
+     */
+    public int getStatsWebServerPort()
+    {
+        if(mStatsWebServerPort == null)
+        {
+            mStatsWebServerPort = clampStatsWebServerPort(
+                mPreferences.getInt(PREFERENCE_KEY_STATS_WEB_SERVER_PORT, DEFAULT_STATS_WEB_SERVER_PORT));
+        }
+
+        return mStatsWebServerPort;
+    }
+
+    /**
+     * Sets the port for the embedded stats web server.
+     */
+    public void setStatsWebServerPort(int port)
+    {
+        mStatsWebServerPort = clampStatsWebServerPort(port);
+        mPreferences.putInt(PREFERENCE_KEY_STATS_WEB_SERVER_PORT, mStatsWebServerPort);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates if non-loopback clients can reach the embedded stats web server.
+     */
+    public boolean isStatsWebServerLanEnabled()
+    {
+        if(mStatsWebServerLanEnabled == null)
+        {
+            mStatsWebServerLanEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED, false);
+        }
+
+        return mStatsWebServerLanEnabled;
+    }
+
+    /**
+     * Enables or disables LAN/Tailscale access for the embedded stats web server.
+     */
+    public void setStatsWebServerLanEnabled(boolean enabled)
+    {
+        mStatsWebServerLanEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED, enabled);
+        notifyPreferenceUpdated();
+    }
+
     private static int clampRetentionDays(int days)
     {
         return Math.max(MIN_STATS_LOGGING_RETENTION_DAYS, Math.min(MAX_STATS_LOGGING_RETENTION_DAYS, days));
+    }
+
+    private static int clampStatsWebServerPort(int port)
+    {
+        return Math.max(MIN_STATS_WEB_SERVER_PORT, Math.min(MAX_STATS_WEB_SERVER_PORT, port));
     }
 }

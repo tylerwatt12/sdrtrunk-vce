@@ -36,10 +36,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledExecutorService;
@@ -55,7 +57,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Manages scheduling and playback of playable audio calls to the local user's audio system.
  */
-public class AudioPlaybackManager implements IAudioController
+public class AudioPlaybackManager implements IAudioController, IAudioPlaybackSession
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioPlaybackManager.class);
     private static final String UNKNOWN = "unknown";
@@ -67,6 +69,8 @@ public class AudioPlaybackManager implements IAudioController
     private final LinkedTransferQueue<PlayableAudioCall> mIncomingSegments = new LinkedTransferQueue<>();
     private final Map<PlayableAudioCall, PlaybackCallContext> mCallContexts = new ConcurrentHashMap<>();
     private final Set<PlaybackTarget> mAvoidTargets = ConcurrentHashMap.newKeySet();
+    private final List<Listener<AudioPlaybackState>> mPlaybackStateListeners = new CopyOnWriteArrayList<>();
+    private final List<Listener<PlaybackAudioFrame>> mPlaybackAudioListeners = new CopyOnWriteArrayList<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
     private final ScheduledExecutorService mProcessingExecutorService;
@@ -83,6 +87,7 @@ public class AudioPlaybackManager implements IAudioController
     private ScheduledFuture<?> mNormalProcessingTask;
     private ScheduledFuture<?> mWatchdogTask;
     private volatile PlaybackTarget mHoldTarget;
+    private volatile AudioPlaybackState mLastPlaybackState;
 
     private enum PlaybackCallState
     {
@@ -130,10 +135,7 @@ public class AudioPlaybackManager implements IAudioController
             mLog.warn("No audio output devices available");
         }
 
-        if(!isMuted())
-        {
-            startAudioProcessing();
-        }
+        refreshPlaybackProcessing();
     }
 
     /**
@@ -142,7 +144,7 @@ public class AudioPlaybackManager implements IAudioController
      */
     public void receive(PlayableAudioCall audioCall)
     {
-        if(isMuted())
+        if(!shouldProcessPlayback())
         {
             mQueuedCallCount.set(0);
             return;
@@ -159,6 +161,14 @@ public class AudioPlaybackManager implements IAudioController
 
         releaseAudioSegments(mIncomingSegments);
         releaseCallContexts();
+        mPlaybackStateListeners.clear();
+        mPlaybackAudioListeners.clear();
+
+        if(mAudioOutput != null)
+        {
+            mAudioOutput.dispose();
+            mAudioOutput = null;
+        }
     }
 
     private void releaseAudioSegments(Iterable<PlayableAudioCall> audioSegments)
@@ -268,6 +278,8 @@ public class AudioPlaybackManager implements IAudioController
                     audioChannel.setIdleStateListener(AUDIO_CHANNEL_IDLE_LISTENER);
                 }
 
+                updatePlaybackAudioListener();
+
                 setMuted(mUserPreferences.getPlaybackPreference().isMuted());
             }
             finally
@@ -313,7 +325,7 @@ public class AudioPlaybackManager implements IAudioController
     }
 
     /**
-     * Sets and persists the mute state for the current and future audio output.
+     * Sets and persists the local speaker mute state. Web listeners are independent playback sinks.
      */
     public void setMuted(boolean muted)
     {
@@ -324,15 +336,9 @@ public class AudioPlaybackManager implements IAudioController
             mAudioOutput.setMuted(muted);
         }
 
-        if(muted)
-        {
-            clearPlayback();
-            stopAudioProcessing();
-        }
-        else
-        {
-            startAudioProcessing();
-        }
+        refreshPlaybackProcessing();
+
+        broadcastPlaybackState();
     }
 
     /**
@@ -352,7 +358,8 @@ public class AudioPlaybackManager implements IAudioController
     }
 
     /**
-     * Toggles hold on the current local playback target. Hold is local playback only and is not persisted.
+     * Toggles hold on the current interactive playback target. Hold affects Java and web playback, but not recording
+     * or streaming providers, and is not persisted.
      *
      * @return true when hold is active after toggling
      */
@@ -361,6 +368,7 @@ public class AudioPlaybackManager implements IAudioController
         if(mHoldTarget != null)
         {
             mHoldTarget = null;
+            broadcastPlaybackState();
             return false;
         }
 
@@ -373,6 +381,7 @@ public class AudioPlaybackManager implements IAudioController
 
         mHoldTarget = target;
         pruneFilteredPlayback();
+        broadcastPlaybackState();
         return true;
     }
 
@@ -398,6 +407,7 @@ public class AudioPlaybackManager implements IAudioController
         }
 
         pruneFilteredPlayback();
+        broadcastPlaybackState();
         return true;
     }
 
@@ -407,6 +417,162 @@ public class AudioPlaybackManager implements IAudioController
     public void clearAvoids()
     {
         mAvoidTargets.clear();
+        broadcastPlaybackState();
+    }
+
+    @Override
+    public AudioPlaybackState getPlaybackState()
+    {
+        List<AudioPlaybackCall> playing = new ArrayList<>();
+        Set<PlayableAudioCall> queuedCalls = Collections.newSetFromMap(new IdentityHashMap<>());
+
+        mAudioChannelsLock.lock();
+
+        try
+        {
+            if(mAudioOutput != null)
+            {
+                for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
+                {
+                    AudioPlaybackCall call = AudioPlaybackCall.from(audioChannel.getChannelName(),
+                        audioChannel.getCurrentAudioCall());
+
+                    if(call != null)
+                    {
+                        playing.add(call);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            mAudioChannelsLock.unlock();
+        }
+
+        queuedCalls.addAll(mIncomingSegments);
+
+        for(PlaybackCallContext context: mCallContexts.values())
+        {
+            if(context != null && context.audioCall() != null)
+            {
+                queuedCalls.add(context.audioCall());
+            }
+        }
+
+        List<PlayableAudioCall> sortedQueue = new ArrayList<>(queuedCalls);
+        sortedQueue.sort(mAudioSegmentPrioritySorter);
+        List<AudioPlaybackCall> queued = new ArrayList<>();
+
+        for(PlayableAudioCall audioCall: sortedQueue)
+        {
+            AudioPlaybackCall call = AudioPlaybackCall.from(null, audioCall);
+
+            if(call != null)
+            {
+                queued.add(call);
+            }
+        }
+
+        List<String> avoidedTargets = mAvoidTargets.stream().map(PlaybackTarget::label).sorted().toList();
+        PlaybackTarget currentTarget = getCurrentPlaybackTarget();
+        PlaybackTarget holdTarget = mHoldTarget;
+        return new AudioPlaybackState(isMuted(), playing, queued,
+            currentTarget != null ? currentTarget.label() : null,
+            holdTarget != null ? holdTarget.label() : null, avoidedTargets);
+    }
+
+    @Override
+    public void addPlaybackStateListener(Listener<AudioPlaybackState> listener)
+    {
+        if(listener != null)
+        {
+            mPlaybackStateListeners.add(listener);
+            listener.receive(getPlaybackState());
+        }
+    }
+
+    @Override
+    public void removePlaybackStateListener(Listener<AudioPlaybackState> listener)
+    {
+        mPlaybackStateListeners.remove(listener);
+    }
+
+    @Override
+    public void addPlaybackAudioListener(Listener<PlaybackAudioFrame> listener)
+    {
+        if(listener != null && !mPlaybackAudioListeners.contains(listener))
+        {
+            mPlaybackAudioListeners.add(listener);
+            updatePlaybackAudioListener();
+            refreshPlaybackProcessing();
+        }
+    }
+
+    @Override
+    public void removePlaybackAudioListener(Listener<PlaybackAudioFrame> listener)
+    {
+        mPlaybackAudioListeners.remove(listener);
+        updatePlaybackAudioListener();
+        refreshPlaybackProcessing();
+    }
+
+    private void updatePlaybackAudioListener()
+    {
+        if(mAudioOutput != null)
+        {
+            mAudioOutput.setPlaybackAudioListener(mPlaybackAudioListeners.isEmpty() ? null : this::broadcastPlaybackAudio);
+        }
+    }
+
+    private boolean shouldProcessPlayback()
+    {
+        return !isMuted() || !mPlaybackAudioListeners.isEmpty();
+    }
+
+    private synchronized void refreshPlaybackProcessing()
+    {
+        if(shouldProcessPlayback())
+        {
+            startAudioProcessing();
+
+            if(mAudioOutput != null)
+            {
+                mAudioOutput.resumeProcessing();
+            }
+        }
+        else
+        {
+            clearPlayback();
+            stopAudioProcessing();
+
+            if(mAudioOutput != null)
+            {
+                mAudioOutput.pauseProcessing();
+            }
+        }
+    }
+
+    private void broadcastPlaybackAudio(PlaybackAudioFrame frame)
+    {
+        for(Listener<PlaybackAudioFrame> listener: mPlaybackAudioListeners)
+        {
+            listener.receive(frame);
+        }
+    }
+
+    private void broadcastPlaybackState()
+    {
+        AudioPlaybackState state = getPlaybackState();
+
+        if(!state.equals(mLastPlaybackState))
+        {
+            mLastPlaybackState = state;
+
+            for(Listener<AudioPlaybackState> listener: mPlaybackStateListeners)
+            {
+                listener.receive(state);
+            }
+        }
     }
 
     /**
@@ -513,15 +679,26 @@ public class AudioPlaybackManager implements IAudioController
             mAudioChannelsLock.unlock();
         }
 
+        Set<PlayableAudioCall> queuedCalls = Collections.newSetFromMap(new IdentityHashMap<>());
+
         for(PlaybackCallContext context : mCallContexts.values())
         {
             if(context != null && context.audioCall() != null)
             {
-                return context.audioCall();
+                queuedCalls.add(context.audioCall());
             }
         }
 
-        return mIncomingSegments.peek();
+        queuedCalls.addAll(mIncomingSegments);
+
+        if(queuedCalls.isEmpty())
+        {
+            return null;
+        }
+
+        List<PlayableAudioCall> sortedQueue = new ArrayList<>(queuedCalls);
+        sortedQueue.sort(mAudioSegmentPrioritySorter);
+        return sortedQueue.getFirst();
     }
 
     private boolean isAllowedForLocalPlayback(PlayableAudioCall audioCall)
@@ -1027,7 +1204,7 @@ public class AudioPlaybackManager implements IAudioController
 
         public void run(boolean watchdog)
         {
-            if(isMuted())
+            if(!shouldProcessPlayback())
             {
                 clearPlayback();
                 return;
@@ -1071,6 +1248,7 @@ public class AudioPlaybackManager implements IAudioController
                     }
 
                     updateQueuedCallCount();
+                    broadcastPlaybackState();
                     mProcessing.set(false);
                 }
             }

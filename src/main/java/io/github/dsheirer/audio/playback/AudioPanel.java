@@ -50,7 +50,6 @@ import javax.swing.JPopupMenu;
 import javax.swing.JSlider;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.Timer;
 import javax.swing.JToggleButton;
 
 /**
@@ -69,6 +68,8 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
     private MuteButton mMuteButton;
     private PlaybackFilterPanel mPlaybackFilterPanel;
     private QueuedCallCountPanel mQueuedCallCountPanel;
+    private final Listener<AudioPlaybackState> mPlaybackStateListener = state ->
+        EventQueue.invokeLater(() -> updatePlaybackState(state));
 
     /**
      * Constructs an instance
@@ -88,6 +89,28 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
         mUserPreferences = userPreferences;
         mAudioPlaybackManager.addAudioEventListener(this);
         init();
+        mAudioPlaybackManager.addPlaybackStateListener(mPlaybackStateListener);
+    }
+
+    public void dispose()
+    {
+        mAudioPlaybackManager.removeAudioEventListener(this);
+        mAudioPlaybackManager.removePlaybackStateListener(mPlaybackStateListener);
+
+        if(mAudioChannelsPanel != null)
+        {
+            mAudioChannelsPanel.dispose();
+        }
+    }
+
+    private void updatePlaybackState(AudioPlaybackState state)
+    {
+        if(state != null)
+        {
+            getMuteButton().updateMuted(state.localMuted());
+            getPlaybackFilterPanel().update(state);
+            getQueuedCallCountPanel().update(state.queuedCallCount());
+        }
     }
 
     /**
@@ -311,13 +334,7 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             updateIcon();
             setBorderPainted(false);
             setFocusable(false);
-            addActionListener(e -> {
-                mMuted = !mMuted;
-                mAudioPlaybackManager.setMuted(mMuted);
-                EventQueue.invokeLater(() -> {
-                    updateIcon();
-                });
-            });
+            addActionListener(e -> mAudioPlaybackManager.setMuted(!mMuted));
         }
 
         private void updateMuted(boolean muted)
@@ -340,7 +357,6 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
         private final JToggleButton mHoldButton = new JToggleButton("Hold");
         private final JButton mAvoidButton = new JButton("Avoid");
         private final JButton mClearAvoidsButton = new JButton("Clear");
-        private final Timer mUpdateTimer = new Timer(500, event -> update());
 
         public PlaybackFilterPanel()
         {
@@ -350,24 +366,14 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             configureButton(mAvoidButton);
             configureButton(mClearAvoidsButton);
 
-            mHoldButton.addActionListener(event -> {
-                mAudioPlaybackManager.toggleHoldOnCurrentCall();
-                update();
-            });
-            mAvoidButton.addActionListener(event -> {
-                mAudioPlaybackManager.avoidCurrentCall();
-                update();
-            });
-            mClearAvoidsButton.addActionListener(event -> {
-                mAudioPlaybackManager.clearAvoids();
-                update();
-            });
+            mHoldButton.addActionListener(event -> mAudioPlaybackManager.toggleHoldOnCurrentCall());
+            mAvoidButton.addActionListener(event -> mAudioPlaybackManager.avoidCurrentCall());
+            mClearAvoidsButton.addActionListener(event -> mAudioPlaybackManager.clearAvoids());
 
             add(mHoldButton, "aligny center");
             add(mAvoidButton, "aligny center");
             add(mClearAvoidsButton, "aligny center");
-            update();
-            mUpdateTimer.start();
+            update(mAudioPlaybackManager.getPlaybackState());
         }
 
         private void configureButton(AbstractButton button)
@@ -378,12 +384,12 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             button.setVerticalAlignment(SwingConstants.CENTER);
         }
 
-        private void update()
+        private void update(AudioPlaybackState state)
         {
-            String currentTarget = mAudioPlaybackManager.getCurrentPlaybackTargetLabel();
-            String holdTarget = mAudioPlaybackManager.getHoldTargetLabel();
-            int avoidCount = mAudioPlaybackManager.getAvoidTargetCount();
-            boolean holdActive = mAudioPlaybackManager.isHoldActive();
+            String currentTarget = state != null ? state.currentTarget() : null;
+            String holdTarget = state != null ? state.holdTarget() : null;
+            int avoidCount = state != null ? state.avoidedTargets().size() : 0;
+            boolean holdActive = holdTarget != null;
 
             mHoldButton.setSelected(holdActive);
             mHoldButton.setEnabled(holdActive || currentTarget != null);
@@ -402,7 +408,6 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
         private final Font mFont = new Font(Font.MONOSPACED, Font.PLAIN, 16);
         private final JLabel mLabel = new JLabel("Queued");
         private final JLabel mValue = new JLabel("0");
-        private final Timer mUpdateTimer = new Timer(500, event -> update());
 
         public QueuedCallCountPanel()
         {
@@ -418,12 +423,12 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                 Color.GREEN));
             add(mLabel);
             add(mValue);
-            mUpdateTimer.start();
+            update(mAudioPlaybackManager.getPlaybackState().queuedCallCount());
         }
 
-        private void update()
+        private void update(int queuedCallCount)
         {
-            mValue.setText(String.valueOf(mAudioPlaybackManager.getQueuedCallCount()));
+            mValue.setText(String.valueOf(queuedCallCount));
         }
     }
 }

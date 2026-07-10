@@ -71,36 +71,6 @@ public class DCSDecoderState extends DecoderState
     }
 
     @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("=============================\n");
-        sb.append("Decoder:\tDigital Coded Squelch (DCS)\n\n");
-        if(mDcsCodeCountsMap.isEmpty())
-        {
-            sb.append("   Detected Codes: (none)\n");
-        }
-        else
-        {
-            for(Map.Entry<DCSCode,Integer> entry: mDcsCodeCountsMap.entrySet())
-            {
-                sb.append("   ").append(entry.getKey()).append(" - Count: ").append(entry.getValue());
-
-                if(entry.getKey().equals(mCurrentCode))
-                {
-                    sb.append(" - Current\n");
-                }
-                else
-                {
-                    sb.append("\n");
-                }
-            }
-        }
-
-        return sb.toString();
-    }
-
-    @Override
     public void init()
     {
         /* no action required */

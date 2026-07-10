@@ -17,8 +17,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Opens the global SDRTrunk SQLite database.
@@ -26,8 +24,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class SdrTrunkDatabase
 {
     public static final int BUSY_TIMEOUT_MILLISECONDS = 30000;
-    private static final Set<Path> VALIDATED_DATABASES = ConcurrentHashMap.newKeySet();
-
     private SdrTrunkDatabase()
     {
     }
@@ -48,26 +44,6 @@ public final class SdrTrunkDatabase
             statement.execute("PRAGMA foreign_keys=ON");
         }
 
-        ensureSchemaValidated(databasePath, connection);
         return connection;
-    }
-
-    private static void ensureSchemaValidated(Path databasePath, Connection connection) throws SQLException
-    {
-        Path normalizedPath = databasePath.toAbsolutePath().normalize();
-
-        if(VALIDATED_DATABASES.contains(normalizedPath))
-        {
-            return;
-        }
-
-        synchronized(SdrTrunkDatabase.class)
-        {
-            if(!VALIDATED_DATABASES.contains(normalizedPath))
-            {
-                SdrTrunkDatabaseSchema.validate(connection);
-                VALIDATED_DATABASES.add(normalizedPath);
-            }
-        }
     }
 }

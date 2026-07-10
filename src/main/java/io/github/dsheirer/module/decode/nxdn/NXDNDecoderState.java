@@ -156,21 +156,6 @@ public class NXDNDecoderState extends DecoderState
     }
 
     @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("NXDN Channel Activity Summary\n");
-
-        if(mChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN)
-        {
-            sb.append("Transmission Mode: ").append(configNXDN.getTransmissionMode()).append("\n");
-        }
-        sb.append(mNetworkConfigurationMonitor.getSummary()).append("\n");
-        sb.append(mTrafficChannelManager.getTalkerAliasManager().getAliasSummary()).append("\n");
-        return sb.toString();
-    }
-
-    @Override
     public void receive(IMessage iMessage)
     {
         if(iMessage instanceof NXDNMessage nxdn && nxdn.isValid())

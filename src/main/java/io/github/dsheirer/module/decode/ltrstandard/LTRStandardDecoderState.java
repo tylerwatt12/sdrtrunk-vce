@@ -209,62 +209,6 @@ public class LTRStandardDecoderState extends DecoderState
         }
     }
 
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("Activity Summary\n\n");
-
-        sb.append("Decoder:\tLTR-Standard\n");
-
-        sb.append("Monitored LCN: ");
-
-        if(hasChannelNumber())
-        {
-            sb.append(getChannelNumber());
-        }
-        else
-        {
-            sb.append("*Insufficient Data*");
-        }
-
-        sb.append("\n");
-
-        sb.append("Active LCNs:\t");
-
-        List<Integer> lcns = mLCNTracker.getActiveLCNs();
-
-        if(!lcns.isEmpty())
-        {
-            sb.append(mLCNTracker.getActiveLCNs());
-        }
-        else
-        {
-            sb.append("*Insufficient Data*");
-        }
-        sb.append("\n\n");
-
-        sb.append("Talkgroups\n");
-
-        if(mTalkgroups.isEmpty())
-        {
-            sb.append("  None\n");
-        }
-        else
-        {
-            for(LTRTalkgroup talkgroup : mTalkgroups)
-            {
-                sb.append("  ");
-                sb.append(talkgroup.formatted());
-                sb.append("\n");
-
-            }
-        }
-
-        return sb.toString();
-    }
-
     /**
      * Tracks the set of call and free channels for a system in order to
      * dynamically determine the current LCN and minimize false triggers from

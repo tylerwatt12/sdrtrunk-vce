@@ -31,8 +31,6 @@ import io.github.dsheirer.sample.Listener;
 /**
  * Channel state monitors the stream of decoded messages produced by the
  * decoder and broadcasts call events as they occur within the decoded message activity.
- *
- * Provides access to a textual activity summary of events observed.
  */
 public abstract class DecoderState extends AbstractDecoderState
 {

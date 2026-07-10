@@ -19,6 +19,7 @@
 package io.github.dsheirer.properties;
 
 import io.github.dsheirer.gui.SDRTrunk;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.Color;
 import java.io.FileInputStream;
@@ -29,7 +30,6 @@ import java.io.OutputStream;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,7 +44,6 @@ public class SystemProperties
 {
     private static final Logger mLog = LoggerFactory.getLogger(SystemProperties.class);
 
-    private static String DEFAULT_APP_ROOT = "SDRTrunk";
     private static String PROPERTIES_FILENAME = "SDRTrunk.properties";
     private static String MANIFEST_VERSION = "Implementation-Version";
     private static String BUILD_TIMESTAMP = "Build-Timestamp";
@@ -112,31 +111,18 @@ public class SystemProperties
     }
 
     /**
-     * Application root directory.  Normally returns "SDRTRunk" from the user's
-     * home directory, unless that has been changed to another location on the
-     * file system by the user.
+     * Portable application data root.
      */
     public Path getApplicationRootPath()
     {
-        Path retVal = null;
-
-        String root = get("root.directory", DEFAULT_APP_ROOT);
-
-        if(root.equalsIgnoreCase(DEFAULT_APP_ROOT))
-        {
-            retVal = Paths.get(System.getProperty("user.home"), DEFAULT_APP_ROOT);
-        }
-        else
-        {
-            retVal = Paths.get(root);
-        }
+        Path retVal = PortableApplicationPaths.getDataRoot();
 
         if(!Files.exists(retVal))
         {
             try
             {
                 mLog.info("Creating application root folder: " + retVal);
-                Files.createDirectory(retVal);
+                Files.createDirectories(retVal);
             }
             catch(IOException e)
             {
@@ -208,7 +194,7 @@ public class SystemProperties
         {
             StringBuilder sb = new StringBuilder();
 
-            sb.append("sdrtrunk");
+            sb.append("sdrtrunk-vce");
 
             Manifest manifest = getManifest(SDRTrunk.class);
 

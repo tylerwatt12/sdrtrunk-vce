@@ -11,18 +11,14 @@
 
 package io.github.dsheirer.database;
 
-import io.github.dsheirer.database.migration.XmlPlaylistToSqliteMigrator;
-import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
-import io.github.dsheirer.radioresolve.activitylog.P25ActivityLogSchema;
+import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -35,54 +31,65 @@ public final class SdrTrunkDatabaseStartup
     {
     }
 
-    public static void prepare(UserPreferences userPreferences) throws IOException, SQLException
+    public static void createGlobalDatabase(Path databasePath) throws IOException, SQLException
     {
-        XmlPlaylistToSqliteMigrator.migrateDefaultIfDatabaseMissing(userPreferences);
-        prepareGlobalDatabase(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
-        prepareVaultDatabase(EncryptionKeyVaultPath.getVaultPath(userPreferences));
-    }
+        Path normalized = databasePath.toAbsolutePath().normalize();
 
-    public static void prepareGlobalDatabase(Path databasePath) throws IOException, SQLException
-    {
-        Files.createDirectories(databasePath.toAbsolutePath().normalize().getParent());
+        if(Files.exists(normalized))
+        {
+            throw new IOException("Refusing to overwrite existing SDRTrunk SQLite database: " + normalized);
+        }
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath))
+        Files.createDirectories(normalized.getParent());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
         {
             configure(connection);
-
-            if(isEmpty(connection))
-            {
-                SdrTrunkDatabaseSchema.create(connection);
-                P25ActivityLogSchema.create(connection);
-            }
-            else
-            {
-                SdrTrunkDatabaseSchema.validate(connection);
-
-                if(!P25ActivityLogSchema.exists(connection))
-                {
-                    P25ActivityLogSchema.create(connection);
-                }
-            }
-
+            SdrTrunkDatabaseSchema.create(connection);
+            P25ActivityLogSchema.create(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
         }
     }
 
-    public static void prepareVaultDatabase(Path vaultPath) throws IOException, SQLException
+    public static void validateGlobalDatabase(Path databasePath) throws IOException, SQLException
     {
-        Files.createDirectories(vaultPath.toAbsolutePath().normalize().getParent());
+        Path normalized = requireDatabase(databasePath, "SDRTrunk");
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + vaultPath))
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
         {
             configure(connection);
+            SdrTrunkDatabaseSchema.validate(connection);
+            P25ActivityLogSchema.validate(connection);
+        }
+    }
 
-            if(isEmpty(connection))
-            {
-                EncryptionKeyVaultSchema.create(connection);
-            }
+    public static void createVaultDatabase(Path vaultPath) throws IOException, SQLException
+    {
+        Path normalized = vaultPath.toAbsolutePath().normalize();
 
+        if(Files.exists(normalized))
+        {
+            throw new IOException("Refusing to overwrite existing encryption vault database: " + normalized);
+        }
+
+        Files.createDirectories(normalized.getParent());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
+        {
+            configure(connection);
+            EncryptionKeyVaultSchema.create(connection);
+            EncryptionKeyVaultSchema.validate(connection);
+        }
+    }
+
+    public static void validateVaultDatabase(Path vaultPath) throws IOException, SQLException
+    {
+        Path normalized = requireDatabase(vaultPath, "Encryption vault");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
+        {
+            configure(connection);
             EncryptionKeyVaultSchema.validate(connection);
         }
     }
@@ -115,17 +122,15 @@ public final class SdrTrunkDatabaseStartup
         }
     }
 
-    private static boolean isEmpty(Connection connection) throws SQLException
+    private static Path requireDatabase(Path databasePath, String label) throws IOException
     {
-        try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("""
-                SELECT COUNT(*)
-                FROM sqlite_master
-                WHERE type IN ('table', 'index', 'view')
-                  AND name NOT LIKE 'sqlite_%'
-                """))
+        Path normalized = databasePath.toAbsolutePath().normalize();
+
+        if(!Files.isRegularFile(normalized))
         {
-            return resultSet.next() && resultSet.getInt(1) == 0;
+            throw new IOException(label + " SQLite database does not exist: " + normalized);
         }
+
+        return normalized;
     }
 }

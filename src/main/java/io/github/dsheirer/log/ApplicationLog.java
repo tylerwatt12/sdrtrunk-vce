@@ -146,7 +146,7 @@ public class ApplicationLog
 
             Attributes atts = findManifestAttributes();
             if (atts != null) {
-                mLog.info("SDRTrunk Version  : " + atts.getValue("Implementation-Version"));
+                mLog.info("sdrtrunk-vce Version  : " + atts.getValue("Implementation-Version"));
                 mLog.info("Gradle Version    : " + atts.getValue("Created-By"));
                 mLog.info("Build Timestamp   : " + atts.getValue("Build-Timestamp"));
                 mLog.info("Build-JDK         : " + atts.getValue("Build-JDK"));
@@ -221,7 +221,7 @@ public class ApplicationLog
         try {
             Manifest manifest = new Manifest(url.openStream());
             Attributes atts = manifest.getMainAttributes();
-            return atts.containsValue("sdrtrunk project") ? atts : null;
+            return atts.containsValue("sdrtrunk-vce project") ? atts : null;
         }
         catch(IOException e) {
             return null;

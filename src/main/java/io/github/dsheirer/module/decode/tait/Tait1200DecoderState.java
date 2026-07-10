@@ -108,27 +108,6 @@ public class Tait1200DecoderState extends DecoderState
         }
     }
 
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("=============================\n");
-        sb.append("Decoder:\tTait-1200I\n\n");
-
-        if(!mIdents.isEmpty())
-        {
-            sb.append("Radio Identifiers:\n");
-
-            for(TaitIdentifier taitIdentifier : mIdents)
-            {
-                sb.append("\t").append(taitIdentifier).append("\n");
-            }
-        }
-
-        return sb.toString();
-    }
-
     /**
      * Responds to reset events issued by the channel state
      */

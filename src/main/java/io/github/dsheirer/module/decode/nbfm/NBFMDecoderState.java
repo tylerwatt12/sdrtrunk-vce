@@ -66,13 +66,4 @@ public class NBFMDecoderState extends AnalogDecoderState
         return mTalkgroupIdentifier;
     }
 
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Activity Summary\n");
-        sb.append("\tDecoder: NBFM");
-        sb.append("\n\n");
-        return sb.toString();
-    }
 }

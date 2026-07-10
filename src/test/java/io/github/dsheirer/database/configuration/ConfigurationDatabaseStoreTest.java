@@ -46,7 +46,7 @@ class ConfigurationDatabaseStoreTest
     void roundTripsConfigurationState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         assertFalse(store.isInitialized());
 
@@ -155,7 +155,7 @@ class ConfigurationDatabaseStoreTest
     void roundTripsP25ConventionalChannel() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-conventional.sqlite");
-        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("P25 Conventional");
         channel.setRadresGuid("22222222-3333-4444-5555-666666666666");

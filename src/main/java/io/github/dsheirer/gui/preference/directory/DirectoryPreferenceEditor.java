@@ -50,11 +50,6 @@ public class DirectoryPreferenceEditor extends HBox
     private DirectoryPreference mDirectoryPreference;
     private GridPane mEditorPane;
 
-    private Label mApplicationRootLabel;
-    private Button mChangeApplicationRootButton;
-    private Button mResetApplicationRootButton;
-    private Label mApplicationRootPathLabel;
-
     private Label mApplicationLogsLabel;
     private Button mChangeApplicationLogsButton;
     private Button mResetApplicationLogsButton;
@@ -127,19 +122,6 @@ public class DirectoryPreferenceEditor extends HBox
             mEditorPane.add(directoryLabel, 1, row++);
 
             mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, row++, 4, 1);
-
-            GridPane.setMargin(getApplicationRootLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getApplicationRootLabel(), 0, row);
-
-            GridPane.setMargin(getApplicationRootPathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getApplicationRootPathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeApplicationRootButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeApplicationRootButton(), 2, row);
-
-            GridPane.setMargin(getResetApplicationRootButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetApplicationRootButton(), 3, row++);
-
 
             GridPane.setMargin(getApplicationLogsLabel(), new Insets(0, 10, 0, 0));
             mEditorPane.add(getApplicationLogsLabel(), 0, row);
@@ -279,47 +261,6 @@ public class DirectoryPreferenceEditor extends HBox
         }
 
         return mEventLogSpinner;
-    }
-
-    private Label getApplicationRootLabel()
-    {
-        if(mApplicationRootLabel == null)
-        {
-            mApplicationRootLabel = new Label("Application Root");
-        }
-
-        return mApplicationRootLabel;
-    }
-
-    private Button getChangeApplicationRootButton()
-    {
-        if(mChangeApplicationRootButton == null)
-        {
-            mChangeApplicationRootButton = createChangeButton("Select Application Root Folder",
-                mDirectoryPreference::getDirectoryApplicationRoot, mDirectoryPreference::setDirectoryApplicationRoot);
-        }
-
-        return mChangeApplicationRootButton;
-    }
-
-    private Button getResetApplicationRootButton()
-    {
-        if(mResetApplicationRootButton == null)
-        {
-            mResetApplicationRootButton = createResetButton(mDirectoryPreference::resetDirectoryApplicationRoot);
-        }
-
-        return mResetApplicationRootButton;
-    }
-
-    private Label getApplicationRootPathLabel()
-    {
-        if(mApplicationRootPathLabel == null)
-        {
-            mApplicationRootPathLabel = new Label(mDirectoryPreference.getDirectoryApplicationRoot().toString());
-        }
-
-        return mApplicationRootPathLabel;
     }
 
     private Label getApplicationLogsLabel()
@@ -639,7 +580,6 @@ public class DirectoryPreferenceEditor extends HBox
     {
         if(preferenceType != null && preferenceType == PreferenceType.DIRECTORY)
         {
-            getApplicationRootPathLabel().setText(mDirectoryPreference.getDirectoryApplicationRoot().toString());
             getApplicationLogsPathLabel().setText(mDirectoryPreference.getDirectoryApplicationLog().toString());
             getEventLogsPathLabel().setText(mDirectoryPreference.getDirectoryEventLog().toString());
             getRecordingPathLabel().setText(mDirectoryPreference.getDirectoryRecording().toString());

@@ -63,11 +63,6 @@ public class SiteControlChannelLearner implements SiteMetadataListener
 
         Set<Long> controlFrequencies = getControlChannelFrequencies(event.snapshot());
 
-        if(controlFrequencies.isEmpty())
-        {
-            return;
-        }
-
         boolean changed = false;
         Set<Long> learned = mLearnedFrequenciesByChannel.computeIfAbsent(channel.getChannelID(),
             ignored -> new LinkedHashSet<>());

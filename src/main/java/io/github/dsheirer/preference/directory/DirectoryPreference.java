@@ -21,6 +21,7 @@ package io.github.dsheirer.preference.directory;
 
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.sample.Listener;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,7 +41,6 @@ public class DirectoryPreference extends Preference
     private static final int DEFAULT_USAGE_THRESHOLD_RECORDINGS_MB = 2000;
     private static final int DEFAULT_USAGE_THRESHOLD_EVENT_LOGS_MB = 200;
 
-    private static final String DIRECTORY_APPLICATION_ROOT = "SDRTrunk";
     private static final String DIRECTORY_APPLICATION_LOG = "logs";
     private static final String DIRECTORY_CONFIGURATION = "configuration";
     private static final String DIRECTORY_EVENT_LOG = "event_logs";
@@ -49,7 +49,6 @@ public class DirectoryPreference extends Preference
     private static final String DIRECTORY_SCREEN_CAPTURE = "screen_captures";
     private static final String DIRECTORY_STREAMING = "streaming";
 
-    private static final String PREFERENCE_KEY_DIRECTORY_APPLICATION_ROOT = "directory.application.root";
     private static final String PREFERENCE_KEY_DIRECTORY_APPLICATION_LOGS = "directory.application.logs";
     private static final String PREFERENCE_KEY_DIRECTORY_CONFIGURATION = "directory.configuration";
     private static final String PREFERENCE_KEY_DIRECTORY_EVENT_LOGS = "directory.event.logs";
@@ -60,7 +59,6 @@ public class DirectoryPreference extends Preference
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_RECORDINGS = "directory.max.usage.recordings";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS = "directory.max.usage.event.logs";
 
-    private Path mDirectoryApplicationRoot;
     private Path mDirectoryApplicationLogs;
     private Path mDirectoryConfiguration;
     private Path mDirectoryEventLogs;
@@ -91,42 +89,9 @@ public class DirectoryPreference extends Preference
      */
     public Path getDirectoryApplicationRoot()
     {
-        if(mDirectoryApplicationRoot == null)
-        {
-            mDirectoryApplicationRoot = getPath(PREFERENCE_KEY_DIRECTORY_APPLICATION_ROOT, getDefaultApplicationDirectory());
-            createDirectory(mDirectoryApplicationRoot);
-        }
-
-        return mDirectoryApplicationRoot;
-    }
-
-    /**
-     * Sets the path to the application root directory
-     */
-    public void setDirectoryApplicationRoot(Path path)
-    {
-        mDirectoryApplicationRoot = path;
-        mPreferences.put(PREFERENCE_KEY_DIRECTORY_APPLICATION_ROOT, path.toString());
-
-        //Set the child paths to null so that they'll be recreated on next access.  If the user has explicitly set a
-        //path override for any of these directories, then it will be retained.
-        nullifyApplicationChildDirectories();
-
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Nullifies each of the application root child directories so that they can be re-created from application root
-     * or re-created from a persisted override path.
-     */
-    private void nullifyApplicationChildDirectories()
-    {
-        mDirectoryApplicationLogs = null;
-        mDirectoryEventLogs = null;
-        mDirectoryJmbe = null;
-        mDirectoryRecording = null;
-        mDirectoryScreenCapture = null;
-        mDirectoryStreaming = null;
+        Path applicationRoot = PortableApplicationPaths.getDataRoot();
+        createDirectory(applicationRoot);
+        return applicationRoot;
     }
 
     /**
@@ -178,21 +143,6 @@ public class DirectoryPreference extends Preference
     {
         mPreferences.putInt(PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS, thresholdMB);
         mDirectoryMaxUsageEventLogs = thresholdMB;
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Removes a stored recording directory preference so that the default path can be used again
-     */
-    public void resetDirectoryApplicationRoot()
-    {
-        mDirectoryApplicationRoot = null;
-        mPreferences.remove(PREFERENCE_KEY_DIRECTORY_APPLICATION_ROOT);
-
-        //Set the child paths to null so that they'll be recreated on next access.  If the user has explicitly set a
-        //path override for any of these directories, then it will be retained.
-        nullifyApplicationChildDirectories();
-
         notifyPreferenceUpdated();
     }
 
@@ -432,14 +382,6 @@ public class DirectoryPreference extends Preference
         mPreferences.remove(PREFERENCE_KEY_DIRECTORY_STREAMING);
         mDirectoryStreaming = null;
         notifyPreferenceUpdated();
-    }
-
-    /**
-     * Default application root directory
-     */
-    private Path getDefaultApplicationDirectory()
-    {
-        return Paths.get(System.getProperty("user.home"), DIRECTORY_APPLICATION_ROOT);
     }
 
     /**

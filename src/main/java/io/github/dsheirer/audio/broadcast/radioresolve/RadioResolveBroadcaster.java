@@ -24,7 +24,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastState;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
-import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.radioreference.RadioReferenceDecoder;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -80,7 +79,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public static final String UPLOAD_PATH = "/api/node/upload-call";
     public static final String RF_STATE_PATH = "/api/node/rf-state";
     public static final String TEST_PATH = "/api/node/test";
-    public static final String AGENT_VERSION = "sdrtrunk-radioresolve";
+    public static final String AGENT_VERSION = "sdrtrunk-vce";
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
     private static final long MISSING_GUID_WARNING_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
@@ -211,8 +210,6 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         String hash = hash(snapshot);
         long now = System.currentTimeMillis();
         RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(guid, snapshot);
-        publishMetadataStatus(event, hash, now, RadioResolveMetadataStatusEvent.Stage.KNOWN, null, null, null);
-
         if(!readiness.ready())
         {
             return;
@@ -251,81 +248,38 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         try
         {
             JsonObject payload = createSiteMetadataPayload(event, hash, getBroadcastConfiguration(), observedAt);
-            int payloadBytes = payload.toString().getBytes(StandardCharsets.UTF_8).length;
-            publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.ATTEMPT, null,
-                payloadBytes, null);
-
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(createUri(getBroadcastConfiguration().getHost(), RF_STATE_PATH))
                 .timeout(Duration.ofSeconds(10))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + getBroadcastConfiguration().getApiKey())
                 .header(HttpHeaders.CONTENT_TYPE, "application/json")
-                .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+                .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
                 .POST(HttpRequest.BodyPublishers.ofString(payload.toString(), StandardCharsets.UTF_8))
                 .build();
 
-            HttpResponse<String> response = mHttpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<Void> response = mHttpClient.send(request, HttpResponse.BodyHandlers.discarding());
 
             if(response.statusCode() >= 200 && response.statusCode() < 300)
             {
                 markMetadataSent(event.channel().getRadresGuid(), hash, observedAt);
                 setBroadcastState(BroadcastState.CONNECTED);
-                publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.SUCCESS,
-                    response.statusCode(), payloadBytes, "Accepted");
             }
             else if(response.statusCode() == 401 || response.statusCode() == 403)
             {
                 setBroadcastState(BroadcastState.INVALID_CREDENTIALS);
                 mLog.warn("RadioResolve site metadata rejected: invalid API key or access denied");
-                publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.REJECTED,
-                    response.statusCode(), payloadBytes, "Invalid API key or access denied");
             }
             else
             {
                 setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
                 mLog.warn("RadioResolve site metadata rejected: HTTP {}", response.statusCode());
-                publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.REJECTED,
-                    response.statusCode(), payloadBytes, responseBodySummary(response.body()));
             }
         }
         catch(Exception e)
         {
             setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
             mLog.warn("RadioResolve site metadata failed: {}", safeMessage(e));
-            publishMetadataStatus(event, hash, observedAt, RadioResolveMetadataStatusEvent.Stage.FAILED, null, null,
-                safeMessage(e));
         }
-    }
-
-    private void publishMetadataStatus(SiteMetadataEvent event, String hash, long timestamp,
-                                       RadioResolveMetadataStatusEvent.Stage stage, Integer httpStatus,
-                                       Integer payloadBytes, String resultMessage)
-    {
-        if(event == null)
-        {
-            return;
-        }
-
-        P25NetworkConfigurationSnapshot snapshot = event.snapshot();
-        RadioResolveMetadataReadiness readiness =
-            RadioResolveMetadataReadiness.evaluate(event.channel().getRadresGuid(), snapshot);
-
-        MyEventBus.getGlobalEventBus().post(new RadioResolveMetadataStatusEvent(stage, timestamp,
-            event.channel().getRadresGuid(), event.channel().getName(), event.channel().getAliasListName(),
-            getNodeName(getBroadcastConfiguration()), getNodeTimezone(getBroadcastConfiguration()),
-            getBroadcastConfiguration().getHost(), snapshot, hash, readiness.ready(), readiness.message(),
-            httpStatus, payloadBytes, resultMessage));
-    }
-
-    private static String responseBodySummary(String body)
-    {
-        if(body == null || body.isBlank())
-        {
-            return "";
-        }
-
-        String singleLine = body.replace('\n', ' ').replace('\r', ' ').trim();
-        return singleLine.length() > 180 ? singleLine.substring(0, 180) : singleLine;
     }
 
     private void markMetadataSent(String guid, String hash, long observedAt)
@@ -625,7 +579,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             .version(HttpClient.Version.HTTP_1_1)
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + configuration.getApiKey())
             .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-            .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+            .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
             .POST(bodyBuilder.build())
             .build();
     }
@@ -1049,7 +1003,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                 .uri(createUri(configuration.getHost(), TEST_PATH))
                 .timeout(Duration.ofSeconds(10))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + configuration.getApiKey())
-                .header(HttpHeaders.USER_AGENT, "sdrtrunk")
+                .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
                 .GET()
                 .build();
             HttpResponse<String> response = mHttpClient.send(request, HttpResponse.BodyHandlers.ofString());

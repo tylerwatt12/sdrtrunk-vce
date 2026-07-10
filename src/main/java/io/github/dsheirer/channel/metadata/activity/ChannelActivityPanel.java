@@ -84,7 +84,6 @@ public class ChannelActivityPanel extends JPanel
     private final UserPreferences mUserPreferences;
     private final NowPlayingPreference mNowPlayingPreference;
     private final Broadcaster<SelectedFrequencyContext> mSelectedFrequencyBroadcaster = new Broadcaster<>();
-    private final Broadcaster<Channel> mSelectedOwnerChannelBroadcaster = new Broadcaster<>();
     private final Listener<ChannelActivityTableModel> mTableAddListener =
         tableModel -> SwingUtils.run(() -> addTable(tableModel));
     private final Listener<ChannelActivityTableModel> mTableChangeListener =
@@ -97,7 +96,6 @@ public class ChannelActivityPanel extends JPanel
     private final Map<JTable,TableColumnModelListener> mColumnWidthSyncListeners = new HashMap<>();
     private final Map<JTable,String> mSelectedRowKeys = new HashMap<>();
     private SelectedFrequencyContext mLastBroadcastSelectedFrequencyContext;
-    private Channel mLastBroadcastSelectedOwnerChannel;
     private JTable mSelectedTable;
     private boolean mSuppressSelectionEvents;
     private boolean mApplyingColumnWidths;
@@ -170,21 +168,6 @@ public class ChannelActivityPanel extends JPanel
     public void removeSelectedFrequencyListener(Listener<SelectedFrequencyContext> listener)
     {
         mSelectedFrequencyBroadcaster.removeListener(listener);
-    }
-
-    public void addSelectedOwnerChannelListener(Listener<Channel> listener)
-    {
-        mSelectedOwnerChannelBroadcaster.addListener(listener);
-    }
-
-    public void removeSelectedOwnerChannelListener(Listener<Channel> listener)
-    {
-        mSelectedOwnerChannelBroadcaster.removeListener(listener);
-    }
-
-    public Channel getSelectedOwnerChannel()
-    {
-        return mLastBroadcastSelectedOwnerChannel;
     }
 
     public void clearSelectedFrequencyContext()
@@ -395,8 +378,6 @@ public class ChannelActivityPanel extends JPanel
             entry.getKey().setActivityViewVisible(entry.getValue() == selectedComponent);
         }
 
-        ChannelActivityTableModel selectedModel = getTableModel(getTabbedPane().getSelectedIndex());
-        broadcastSelectedOwnerChannel(selectedModel != null ? selectedModel.getOwnerChannel() : null);
     }
 
     private void refreshTables()
@@ -693,15 +674,6 @@ public class ChannelActivityPanel extends JPanel
         {
             mLastBroadcastSelectedFrequencyContext = context;
             mSelectedFrequencyBroadcaster.broadcast(context);
-        }
-    }
-
-    private void broadcastSelectedOwnerChannel(Channel channel)
-    {
-        if(channel != mLastBroadcastSelectedOwnerChannel)
-        {
-            mLastBroadcastSelectedOwnerChannel = channel;
-            mSelectedOwnerChannelBroadcaster.broadcast(channel);
         }
     }
 

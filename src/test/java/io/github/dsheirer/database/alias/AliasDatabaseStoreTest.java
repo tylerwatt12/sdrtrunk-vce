@@ -54,7 +54,7 @@ class AliasDatabaseStoreTest
     void roundTripsAliases() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
         assertFalse(store.hasAliases());
 
@@ -143,7 +143,7 @@ class AliasDatabaseStoreTest
     void treatsExistingAliasRowsAsInitializedForMigration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("legacy-alias.sqlite");
-        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
 
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -163,7 +163,7 @@ class AliasDatabaseStoreTest
     void keepsIdentifiersAndActionsAttachedToOwningAliasRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("multi-alias.sqlite");
-        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
 
         Alias gcrcn = new Alias("Example System A Dispatch");
@@ -201,7 +201,7 @@ class AliasDatabaseStoreTest
     void emptyAliasReplacementMarksInitialized() throws Exception
     {
         Path database = mTemporaryFolder.resolve("empty-alias.sqlite");
-        SdrTrunkDatabaseStartup.prepareGlobalDatabase(database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
         assertFalse(store.isInitialized());
 

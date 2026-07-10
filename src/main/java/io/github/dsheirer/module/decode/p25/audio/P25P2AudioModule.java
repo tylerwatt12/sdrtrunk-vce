@@ -22,6 +22,12 @@ package io.github.dsheirer.module.decode.p25.audio;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.codec.mbe.AmbeAudioModule;
+import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionContext;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionKeyResolver;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptionException;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptor;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptorFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.bits.BinaryMessage;
@@ -43,6 +49,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStru
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractVoiceTimeslot;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayDeque;
@@ -63,10 +70,18 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     private ToneMetadataProcessor mToneMetadataProcessor = new ToneMetadataProcessor();
     private Queue<AbstractVoiceTimeslot> mQueuedAudioTimeslots = new ArrayDeque<>();
     private P25AudioEncryptionState mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+    private IEncryptionSyncParameters mEncryptionSyncParameters;
+    private VoiceEncryptionKeyResolver mEncryptionKeyResolver;
+    private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory;
+    private VoiceFrameDecryptor mVoiceFrameDecryptor;
     private Listener<IMessage> mMessageListener;
+
     public P25P2AudioModule(UserPreferences userPreferences, int timeslot, AliasList aliasList)
     {
         super(userPreferences, aliasList, timeslot);
+        mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
+        mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
+            .getVoiceDecryptionModulePreference().getModuleManager());
     }
 
     @Override
@@ -98,8 +113,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         mToneMetadataProcessor.reset();
         mQueuedAudioTimeslots.clear();
 
-        //Reset encrypted call handling flags
-        mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+        resetEncryptionTracking();
     }
 
     @Override
@@ -141,6 +155,10 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     {
                         processAudio(abstractVoiceTimeslot.getVoiceFrames(), message.getTimestamp());
                     }
+                    else
+                    {
+                        processEncryptedAudio(abstractVoiceTimeslot);
+                    }
                 }
                 else
                 {
@@ -155,6 +173,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 if(macStructure instanceof PushToTalk pushToTalk)
                 {
                     mEncryptionState = P25AudioEncryptionState.fromEncrypted(pushToTalk.isEncrypted());
+                    mEncryptionSyncParameters = mEncryptionState.isEncrypted() ?
+                        pushToTalk.getEncryptionSyncParameters() : null;
+                    mVoiceFrameDecryptor = null;
 
                     if(mEncryptionState.isClear())
                     {
@@ -175,14 +196,21 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             else if(message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence && message.isValid())
             {
                 mEncryptionState = P25AudioEncryptionState.fromEncrypted(encryptionSynchronizationSequence.isEncrypted());
+                mEncryptionSyncParameters = mEncryptionState.isEncrypted() ?
+                    encryptionSynchronizationSequence : null;
+                mVoiceFrameDecryptor = null;
 
                 if(mEncryptionState.isClear())
                 {
                     beginCurrentAudioSegment();
                     beginCurrentAudioBurst();
+                    processPendingVoiceTimeslots();
                 }
-
-                processPendingVoiceTimeslots();
+                else
+                {
+                    //ESS-A completes after the 2V voice frames and seeds the following TDMA superframe.
+                    clearPendingVoiceTimeslots();
+                }
             }
         }
     }
@@ -225,6 +253,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     {
         endCurrentAudioBurst();
         super.closeAudioSegment();
+    }
+
+    private void resetEncryptionTracking()
+    {
+        //Reset encrypted call handling flags
+        mEncryptionState = P25AudioEncryptionState.UNKNOWN;
+        mEncryptionSyncParameters = null;
+        mVoiceFrameDecryptor = null;
     }
 
     private String formatSegment(MutableAudioCallBuilder audioCall)
@@ -289,6 +325,52 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 }
             }
         }
+    }
+
+    private void processEncryptedAudio(AbstractVoiceTimeslot timeslot)
+    {
+        if(!hasAudioCodec() || !prepareEncryptedAudioDecryptor())
+        {
+            return;
+        }
+
+        List<BinaryMessage> decrypted = new ArrayList<>(timeslot.getVoiceFrames().size());
+
+        for(BinaryMessage voiceFrame: timeslot.getVoiceFrames())
+        {
+            try
+            {
+                decrypted.add(mVoiceFrameDecryptor.decrypt(voiceFrame));
+            }
+            catch(VoiceFrameDecryptionException e)
+            {
+                mLog.debug("Error decrypting P25 Phase 2 AMBE audio", e);
+                closeCurrentAudioSegment();
+                resetEncryptionTracking();
+                return;
+            }
+        }
+
+        processAudio(decrypted, timeslot.getTimestamp());
+    }
+
+    private boolean prepareEncryptedAudioDecryptor()
+    {
+        if(mVoiceFrameDecryptor != null)
+        {
+            return mVoiceFrameDecryptor.isImplemented();
+        }
+
+        VoiceEncryptionContext context = VoiceEncryptionContext.create(VoiceEncryptionProtocol.APCO25,
+            mEncryptionSyncParameters != null ? mEncryptionSyncParameters.getEncryptionKey() : null,
+            mEncryptionSyncParameters != null ? mEncryptionSyncParameters.getMessageIndicator() : null,
+            getTimeslot(), getIdentifierCollection());
+
+        mVoiceFrameDecryptor = mEncryptionKeyResolver.resolve(context)
+            .flatMap(key -> mVoiceFrameDecryptorFactory.create(context, key))
+            .orElse(null);
+
+        return mVoiceFrameDecryptor != null && mVoiceFrameDecryptor.isImplemented();
     }
 
 

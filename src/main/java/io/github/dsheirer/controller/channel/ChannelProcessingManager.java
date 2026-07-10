@@ -61,12 +61,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiConsumer;
 import javafx.application.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,12 +93,14 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private ChannelSourceEventErrorListener mSourceErrorListener = new ChannelSourceEventErrorListener();
     private List<Listener<AudioCallEvent>> mAudioCallListeners = new CopyOnWriteArrayList<>();
     private List<Listener<IDecodeEvent>> mDecodeEventListeners = new CopyOnWriteArrayList<>();
+    private List<BiConsumer<Channel,IDecodeEvent>> mChannelDecodeEventListeners = new CopyOnWriteArrayList<>();
     private List<SiteMetadataListener> mSiteMetadataListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
     private ChannelMapModel mChannelMapModel;
     private ChannelMetadataModel mChannelMetadataModel;
     private ChannelActivityModel mChannelActivityModel;
+    private final Set<String> mChannelActivityConsumers = ConcurrentHashMap.newKeySet();
     private EventLogManager mEventLogManager;
     private TunerManager mTunerManager;
     private AliasModel mAliasModel;
@@ -141,14 +145,38 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     public void setChannelActivityEnabled(boolean enabled)
     {
-        if(mChannelActivityModel.isEnabled() == enabled)
+        setChannelActivityEnabled("java-ui", enabled);
+    }
+
+    /**
+     * Keeps the shared activity model running while at least one renderer is using it.
+     */
+    public synchronized void setChannelActivityEnabled(String consumer, boolean enabled)
+    {
+        if(consumer == null || consumer.isBlank())
         {
             return;
         }
 
-        mChannelActivityModel.setEnabled(enabled);
-
         if(enabled)
+        {
+            mChannelActivityConsumers.add(consumer);
+        }
+        else
+        {
+            mChannelActivityConsumers.remove(consumer);
+        }
+
+        boolean shouldEnable = !mChannelActivityConsumers.isEmpty();
+
+        if(mChannelActivityModel.isEnabled() == shouldEnable)
+        {
+            return;
+        }
+
+        mChannelActivityModel.setEnabled(shouldEnable);
+
+        if(shouldEnable)
         {
             seedChannelActivityModel();
         }
@@ -550,6 +578,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             processingChain.addDecodeEventListener(listener);
         }
 
+        for(BiConsumer<Channel,IDecodeEvent> listener : mChannelDecodeEventListeners)
+        {
+            processingChain.addDecodeEventListener(event -> listener.accept(channel, event));
+        }
+
         //Add a listener to detect source error state that indicates the channel should be shutdown.
         //Note: processing chain will only add this once.
         processingChain.addSourceEventListener(mSourceErrorListener);
@@ -912,6 +945,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeDecodeEventListener(Listener<IDecodeEvent> listener)
     {
         mDecodeEventListeners.remove(listener);
+    }
+
+    /**
+     * Adds a decoded-event listener that also receives the configured channel owning the processing chain.
+     */
+    public void addChannelDecodeEventListener(BiConsumer<Channel,IDecodeEvent> listener)
+    {
+        mChannelDecodeEventListeners.add(listener);
+    }
+
+    public void removeChannelDecodeEventListener(BiConsumer<Channel,IDecodeEvent> listener)
+    {
+        mChannelDecodeEventListeners.remove(listener);
     }
 
     public void addSiteMetadataListener(SiteMetadataListener listener)

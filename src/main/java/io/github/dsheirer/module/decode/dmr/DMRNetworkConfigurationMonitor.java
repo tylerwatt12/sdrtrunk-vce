@@ -41,7 +41,6 @@ import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.TrafficChanne
 import io.github.dsheirer.module.decode.dmr.message.type.Model;
 import io.github.dsheirer.module.decode.dmr.message.type.SystemIdentityCode;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +51,6 @@ import java.util.Map;
 public class DMRNetworkConfigurationMonitor
 {
     private static final String BRAND_MOTOROLA_CONNECT_PLUS = "Motorola Connect+";
-    private static final String BRAND_STANDARD = "Standard";
     private static final String BRAND_TIER_3_TRUNKING = "Tier III Trunking";
     private static final String BRAND_MOTOROLA_CAPACITY_MAX_TIER_3_TRUNKING = "Capacity Max Tier III Trunking";
     private static final String BRAND_HYTERA_TIER_3_TRUNKING = "Hytera Tier III Trunking";
@@ -60,7 +58,6 @@ public class DMRNetworkConfigurationMonitor
     private static final String MODE_CAPACITY_MAX_ADVANTAGE = "Advantage";
     private static final String CHANNEL_TYPE_CONTROL = "Control";
     private static final String CHANNEL_TYPE_TRAFFIC = "Traffic";
-    private static final String UNKNOWN = "Unknown";
 
     private List<SiteIdentifier> mNeighborSites = new ArrayList<>();
     private Map<Integer,AdjacentSiteInformation> mTier3NeighborSites = new HashMap<>();
@@ -312,100 +309,4 @@ public class DMRNetworkConfigurationMonitor
         mObservedChannelMap.put(dmrChannel.getValue(), dmrChannel);
     }
 
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("Activity Summary - Decoder: DMR ");
-
-        sb.append("\n\nBrand: ").append((mBrand == null ? BRAND_STANDARD : mBrand));
-
-        if(mMode != null)
-        {
-            sb.append("\nConfigured Mode: ").append(mMode);
-        }
-
-        sb.append("\nChannel Type: ").append((mChannelType != null) ? mChannelType : UNKNOWN);
-        sb.append("\nColor Code Timeslot 1: ").append(mColorCodeTS1 != null ? mColorCodeTS1 : UNKNOWN);
-        sb.append("\nColor Code Timeslot 2: ").append(mColorCodeTS2 != null ? mColorCodeTS2 : UNKNOWN);
-
-        if(mDMRNetwork != null)
-        {
-            sb.append("\nNetwork: ").append(mDMRNetwork);
-        }
-
-        if(mDMRSite != null)
-        {
-            sb.append("\nSite: ").append(mDMRSite);
-        }
-
-        if(mTier3Model != null)
-        {
-            sb.append("\nNetwork Model: ").append(mTier3Model);
-        }
-
-        //Observed DMR Channels
-        if(!mObservedChannelMap.isEmpty())
-        {
-            sb.append("\nObserved Logical Slot Numbers (LSN):");
-
-            List<Integer> lsns = new ArrayList<>(mObservedChannelMap.keySet());
-            Collections.sort(lsns);
-
-            for(Integer lsn: lsns)
-            {
-                DMRChannel channel = mObservedChannelMap.get(lsn);
-
-                if(channel != null)
-                {
-                    sb.append("\n\t").append(channel);
-
-                    double frequency = channel.getDownlinkFrequency();
-
-                    if(frequency != 0)
-                    {
-                        frequency /= 1E6d;
-                    }
-                    sb.append(" ").append(frequency).append(" MHz");
-                }
-            }
-        }
-
-        if(!mNeighborSites.isEmpty())
-        {
-            sb.append("\nNeighbor Sites\n");
-
-            for(SiteIdentifier neighbor: mNeighborSites)
-            {
-                sb.append("\tNeighbor: ").append(neighbor).append("\n");
-            }
-        }
-
-        if(!mTier3NeighborSites.isEmpty())
-        {
-            sb.append("\nTier III Neighbor Sites\n");
-
-            for(Map.Entry<Integer,AdjacentSiteInformation> neighbor: mTier3NeighborSites.entrySet())
-            {
-                AdjacentSiteInformation site = neighbor.getValue();
-                sb.append("\tNeighbor: ").append("Network:").append(site.getNeighborSystemIdentityCode().getNetwork());
-                sb.append(" Site:").append(site.getNeighborSystemIdentityCode().getSite());
-                sb.append(" ").append(site.getNeighborSystemIdentityCode().getModel());
-
-                DMRChannel channel = site.getNeighborChannel();
-                sb.append(" ").append(channel);
-
-                if(channel.getDownlinkFrequency() > 0)
-                {
-                    sb.append(" ").append(channel.getDownlinkFrequency());
-                }
-
-                sb.append("\n");
-            }
-        }
-
-        sb.append("\n\n");
-
-        return sb.toString();
-    }
 }

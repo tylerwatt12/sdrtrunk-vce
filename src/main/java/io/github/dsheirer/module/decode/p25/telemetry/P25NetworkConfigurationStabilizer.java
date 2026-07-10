@@ -41,7 +41,8 @@ public class P25NetworkConfigurationStabilizer
     static final int DYNAMIC_OBSERVATION_THRESHOLD = 2;
     static final long DYNAMIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
     static final long CANDIDATE_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
-    static final int MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES = 12;
+    static final long STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
+    static final int MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES = 8;
 
     private final String mDecoder;
     private final P25StableFactTracker<P25NetworkConfigurationSnapshot.Network> mNetwork =
@@ -378,6 +379,15 @@ public class P25NetworkConfigurationStabilizer
         expireCandidates(mFrequencyBands, timestamp);
         expireCandidates(mPatchGroups, timestamp);
         expireCandidates(mTalkerAliases, timestamp);
+        expireStableBroadcastFacts(mChannels, timestamp);
+        expireStableBroadcastFacts(mNeighborSites, timestamp);
+        expireStableBroadcastFacts(mFrequencyBands, timestamp);
+    }
+
+    private <T> void expireStableBroadcastFacts(Map<String,P25StableFactTracker<T>> trackers, long timestamp)
+    {
+        trackers.entrySet().removeIf(entry -> entry.getValue().expireStable(timestamp,
+            STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS));
     }
 
     private <T> void expireCandidates(Map<String,P25StableFactTracker<T>> trackers, long timestamp)

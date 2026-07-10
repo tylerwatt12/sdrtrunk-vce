@@ -74,7 +74,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     private boolean mEncryptedCall = false;
     private Listener<IMessage> mMessageListener;
     private VoiceEncryptionKeyResolver mEncryptionKeyResolver;
-    private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory();
+    private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory;
     private VoiceFrameDecryptor mVoiceFrameDecryptor;
     private VoiceEncryptionContext mPendingEncryptionContext;
 
@@ -88,6 +88,8 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     {
         super(userPreferences, aliasList, timeslot);
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
+        mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
+            .getVoiceDecryptionModulePreference().getModuleManager());
     }
 
     @Override

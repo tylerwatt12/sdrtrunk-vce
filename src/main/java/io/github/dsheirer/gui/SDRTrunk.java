@@ -31,7 +31,8 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
@@ -51,9 +52,10 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
+import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.properties.SystemProperties;
-import io.github.dsheirer.radioresolve.activitylog.P25ActivityLogService;
+import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.SettingsManager;
@@ -65,6 +67,7 @@ import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.source.tuner.ui.TunerSpectralDisplayManager;
 import io.github.dsheirer.spectrum.ShowTunerMenuItem;
 import io.github.dsheirer.spectrum.SpectralDisplayPanel;
+import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
@@ -133,7 +136,7 @@ import javax.swing.plaf.metal.MetalLookAndFeel;
 public class SDRTrunk implements Listener<TunerEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(SDRTrunk.class);
-    private Preferences mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
+    private Preferences mPreferences;
 
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
     private static final String PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE = "sdrtrunk.now.playing.details.visible";
@@ -154,12 +157,14 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mResourceStatusVisible;
     private boolean mNowPlayingLowerViewsVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
+    private AudioPlaybackManager mAudioPlaybackManager;
     private P25ActivityLogService mP25ActivityLogService;
+    private StatsWebServerService mStatsWebServerService;
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
     private BroadcastStatusPanel mBroadcastStatusPanel;
     private ControllerPanel mControllerPanel;
-    private IconModel mIconModel = new IconModel();
+    private IconModel mIconModel;
     private ConfigurationManager mConfigurationManager;
     private SettingsManager mSettingsManager;
     private SpectralDisplayPanel mSpectralPanel;
@@ -167,13 +172,14 @@ public class SDRTrunk implements Listener<TunerEvent>
     private JFrame mMainGui;
     private JideSplitPane mSplitPane;
     private JavaFxWindowManager mJavaFxWindowManager;
-    private UserPreferences mUserPreferences = new UserPreferences();
+    private UserPreferences mUserPreferences;
     private TunerManager mTunerManager;
     private ApplicationLog mApplicationLog;
     private ResourceMonitor mResourceMonitor;
     private JFXPanel mResourceStatusPanel;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
+    private JMenuItem mEncryptionKeysItem;
     private JToggleButton mSystemsToggleButton;
     private JToggleButton mSpectrumWaterfallToggleButton;
     private boolean mShutdownProcessed;
@@ -184,8 +190,12 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private String mTitle;
 
-    public SDRTrunk()
+    private SDRTrunk(UserPreferences userPreferences)
     {
+        mUserPreferences = userPreferences;
+        mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
+        mIconModel = new IconModel();
+
         if(!GraphicsEnvironment.isHeadless())
         {
             mMainGui = new JFrame();
@@ -193,8 +203,10 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mApplicationLog = new ApplicationLog(mUserPreferences);
         mApplicationLog.start();
-        prepareDatabases();
-        mUserPreferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
+        if(mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
+        {
+            mUserPreferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
+        }
 
         //Note: invoke this early in the application lifecycle, before the TunerManager causes the sdrplay classes
         //to be loaded since the jextract auto-generated code attempts to load the library by name and that can fail
@@ -252,7 +264,7 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
-        AudioPlaybackManager audioPlaybackManager = new AudioPlaybackManager(mUserPreferences);
+        mAudioPlaybackManager = new AudioPlaybackManager(mUserPreferences);
 
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences);
         mAudioRecordingManager.start();
@@ -261,15 +273,18 @@ public class SDRTrunk implements Listener<TunerEvent>
             mUserPreferences);
         mAudioStreamingManager.start();
 
-        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, audioPlaybackManager,
+        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
             mAudioRecordingManager, mAudioStreamingManager);
 
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
+        mStatsWebServerService = new StatsWebServerService(mUserPreferences, mAudioPlaybackManager,
+            mConfigurationManager.getChannelProcessingManager());
 
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
-        mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(
+        mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(
             mP25ActivityLogService.getDecodeEventListener());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mP25ActivityLogService);
+        mP25ActivityLogService.addActivityCommitListener(mStatsWebServerService);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(new SiteControlChannelLearner(mConfigurationManager));
 
@@ -281,7 +296,7 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         if(!GraphicsEnvironment.isHeadless())
         {
-            mControllerPanel = new ControllerPanel(mConfigurationManager, audioPlaybackManager, mIconModel, mapService,
+            mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
                     mSettingsManager, mTunerManager, mUserPreferences, mSystemsVisible, mNowPlayingLowerViewsVisible, visible -> {
                         mNowPlayingLowerViewsVisible = visible;
                         mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, visible);
@@ -364,19 +379,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         });
     }
 
-    private void prepareDatabases()
-    {
-        try
-        {
-            SdrTrunkDatabaseStartup.prepare(mUserPreferences);
-        }
-        catch(IOException | java.sql.SQLException e)
-        {
-            mLog.error("Unable to prepare SDRTrunk SQLite databases", e);
-            throw new IllegalStateException("Unable to prepare SDRTrunk SQLite databases", e);
-        }
-    }
-
     /**
      * Shows a dialog that lists the channels that have been designated for auto-start, sorted by auto-start order and
      * allows the user to start now, cancel, or allow the timer to expire and then start the channels.  The dialog will
@@ -419,6 +421,12 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         mVaultLaunchPromptProcessed = true;
+
+        if(!mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
+        {
+            return;
+        }
+
         EncryptionKeyVaultService vaultService = mUserPreferences.getEncryptionKeyPreference().getVaultService();
 
         if(!vaultService.hasVault() || vaultService.isUnlocked() || !vaultService.isPromptOnLaunch())
@@ -675,10 +683,20 @@ public class SDRTrunk implements Listener<TunerEvent>
         viewConfigurationItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
         viewMenu.add(viewConfigurationItem);
 
-        JMenuItem encryptionKeysItem = new JMenuItem("Encryption Keys");
-        encryptionKeysItem.setIcon(IconFontSwing.buildIcon(FontAwesome.KEY, 12));
-        encryptionKeysItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
-        viewMenu.add(encryptionKeysItem);
+        mEncryptionKeysItem = new JMenuItem("Encryption Keys");
+        mEncryptionKeysItem.setIcon(IconFontSwing.buildIcon(FontAwesome.KEY, 12));
+        mEncryptionKeysItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
+        mEncryptionKeysItem.setVisible(mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded());
+        mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().loadedProperty()
+            .addListener((observable, oldValue, loaded) -> EventQueue.invokeLater(() -> {
+                mEncryptionKeysItem.setVisible(loaded);
+
+                if(!loaded)
+                {
+                    mUserPreferences.getEncryptionKeyPreference().getVaultService().lock();
+                }
+            }));
+        viewMenu.add(mEncryptionKeysItem);
 
         viewMenu.add(new JSeparator());
 
@@ -771,6 +789,12 @@ public class SDRTrunk implements Listener<TunerEvent>
         });
 
         menuBar.add(screenCaptureItem);
+
+        JMenu helpMenu = new JMenu("Help");
+        JMenuItem creditsItem = new JMenuItem("Credits & Licensing");
+        creditsItem.addActionListener(event -> new CreditsDialog(mMainGui).setVisible(true));
+        helpMenu.add(creditsItem);
+        menuBar.add(helpMenu);
     }
 
     /**
@@ -824,9 +848,18 @@ public class SDRTrunk implements Listener<TunerEvent>
         mControllerPanel.dispose();
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
+        if(mStatsWebServerService != null)
+        {
+            if(mP25ActivityLogService != null)
+            {
+                mP25ActivityLogService.removeActivityCommitListener(mStatsWebServerService);
+            }
+
+            mStatsWebServerService.close();
+        }
         if(mP25ActivityLogService != null)
         {
-            mConfigurationManager.getChannelProcessingManager().removeDecodeEventListener(
+            mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
                 mP25ActivityLogService.getDecodeEventListener());
             mConfigurationManager.getChannelProcessingManager().removeSiteMetadataListener(mP25ActivityLogService);
             mP25ActivityLogService.dispose();
@@ -835,6 +868,11 @@ public class SDRTrunk implements Listener<TunerEvent>
         if(mAudioCallCoordinator != null)
         {
             mAudioCallCoordinator.dispose();
+        }
+        if(mAudioPlaybackManager != null)
+        {
+            mAudioPlaybackManager.dispose();
+            mAudioPlaybackManager = null;
         }
         mAudioRecordingManager.stop();
         mResourceMonitor.stop();
@@ -845,6 +883,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mTunerManager.stop();
         mLog.info("Shutdown complete.");
         mApplicationLog.stop();
+        SqlitePreferencesFactory.shutdown();
     }
 
     private void registerQuitHandler()
@@ -1101,7 +1140,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         if(mResourceStatusPanel == null)
         {
             mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor,
-                mUserPreferences.getEncryptionKeyPreference().getVaultService());
+                mUserPreferences.getEncryptionKeyPreference().getVaultService(),
+                mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager());
         }
 
         return mResourceStatusPanel;
@@ -1284,7 +1324,31 @@ public class SDRTrunk implements Listener<TunerEvent>
      */
     public static void main(String[] args)
     {
-        System.setProperty("apple.awt.application.name", "sdrtrunk");
-        new SDRTrunk();
+        System.setProperty("apple.awt.application.name", "sdrtrunk-vce");
+
+        try
+        {
+            if(!SdrTrunkDatabaseBootstrap.run(args))
+            {
+                return;
+            }
+
+            SqlitePreferencesFactory.install(SdrTrunkDatabasePath.getDatabasePath());
+            new SDRTrunk(new UserPreferences());
+        }
+        catch(Exception e)
+        {
+            String message = "sdrtrunk-vce could not start.\n\n" + e.getMessage();
+            System.err.println(message);
+            e.printStackTrace(System.err);
+
+            if(!GraphicsEnvironment.isHeadless())
+            {
+                JOptionPane.showMessageDialog(null, message, "sdrtrunk-vce Startup Error",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+
+            System.exit(1);
+        }
     }
 }

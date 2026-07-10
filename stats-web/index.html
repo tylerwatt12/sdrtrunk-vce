@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce</title>
+  <link rel="stylesheet" href="/assets/app.css?v=6">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="app-header">
+      <header class="topbar" id="topbar">
+        <a class="brand" href="/?view=dashboard">sdrtrunk-vce</a>
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <a data-view="dashboard" href="/?view=dashboard">Dashboard</a>
+          <a data-view="live" href="/?view=live">Live</a>
+          <a data-view="systems" href="/?view=systems">Systems</a>
+          <a data-view="sites" href="/?view=sites">Sites</a>
+          <a data-view="conventional" href="/?view=conventional">Conventional</a>
+          <a data-view="credits" href="/?view=credits">Credits</a>
+        </nav>
+        <div id="server-status" class="server-status">Loading</div>
+      </header>
+      <section class="playback-bar" id="playback-bar" aria-label="Shared audio playback">
+        <audio id="playback-audio" preload="none"></audio>
+        <button type="button" id="playback-mute" class="playback-command">Mute</button>
+        <button type="button" id="playback-hold" class="playback-command">Hold</button>
+        <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
+        <button type="button" id="playback-clear" class="playback-command">Clear</button>
+        <div class="playback-now">
+          <span class="playback-field">Now</span>
+          <strong id="playback-current">Idle</strong>
+        </div>
+        <details class="playback-queue">
+          <summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong></summary>
+          <div id="playback-queue-list" class="playback-queue-list">No queued calls</div>
+        </details>
+        <div id="playback-status" class="playback-status">Connecting</div>
+      </section>
+    </div>
+    <main id="content" class="content" aria-live="polite">
+      <div class="loading">Loading</div>
+    </main>
+  </div>
+  <script src="/assets/app.js?v=6"></script>
+</body>
+</html>

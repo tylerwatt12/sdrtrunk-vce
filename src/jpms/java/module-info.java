@@ -1,4 +1,12 @@
 open module sdr.trunk {
+    exports io.github.dsheirer.audio.codec.mbe.decrypt;
+    exports io.github.dsheirer.bits;
+    exports io.github.dsheirer.edac;
+    exports io.github.dsheirer.preference.encryption;
+    exports io.github.dsheirer.preference.portable;
+
+    uses io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModule;
+
     requires JTransforms;
     requires ch.qos.logback.classic;
     requires ch.qos.logback.core;
@@ -20,7 +28,9 @@ open module sdr.trunk {
     requires javafx.controls;
     requires javafx.graphics;
     requires javafx.swing;
+    requires jdk.httpserver;
     requires jdk.incubator.vector;
+    requires jdk.management;
     requires jiconfont;
     requires jiconfont.font.awesome;
     requires jiconfont.javafx;

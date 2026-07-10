@@ -22,6 +22,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -29,6 +30,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import javax.swing.table.AbstractTableModel;
 
 /**
@@ -61,6 +63,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
     private boolean mPendingFullRefresh;
     private final List<ChannelActivityRow> mRows = new ArrayList<>();
     private final Map<String,ChannelActivityRow> mRowsByKey = new HashMap<>();
+    private final List<Listener<ChannelActivitySnapshot>> mSnapshotListeners = new CopyOnWriteArrayList<>();
 
     public ChannelActivityTableModel(String title, Channel ownerChannel, boolean closeable)
     {
@@ -77,6 +80,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
     public void setTitle(String title)
     {
         mTitle = title;
+        notifySnapshotListeners();
     }
 
     public Channel getOwnerChannel()
@@ -104,7 +108,39 @@ public class ChannelActivityTableModel extends AbstractTableModel
     {
         boolean changed = mControlActive != controlActive;
         mControlActive = controlActive;
+
+        if(changed)
+        {
+            notifySnapshotListeners();
+        }
+
         return changed;
+    }
+
+    public void addSnapshotListener(Listener<ChannelActivitySnapshot> listener)
+    {
+        if(listener != null)
+        {
+            mSnapshotListeners.add(listener);
+        }
+    }
+
+    public void removeSnapshotListener(Listener<ChannelActivitySnapshot> listener)
+    {
+        mSnapshotListeners.remove(listener);
+    }
+
+    private void notifySnapshotListeners()
+    {
+        if(!mSnapshotListeners.isEmpty())
+        {
+            ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(this);
+
+            for(Listener<ChannelActivitySnapshot> listener: mSnapshotListeners)
+            {
+                listener.receive(snapshot);
+            }
+        }
     }
 
     /**
@@ -185,6 +221,8 @@ public class ChannelActivityTableModel extends AbstractTableModel
             {
                 mPendingFullRefresh = true;
             }
+
+            notifySnapshotListeners();
         }
     }
 
@@ -204,6 +242,8 @@ public class ChannelActivityTableModel extends AbstractTableModel
         {
             fireTableRowsDeleted(0, lastRow);
         }
+
+        notifySnapshotListeners();
     }
 
     public ChannelActivityRow getRow(int row)
@@ -235,6 +275,8 @@ public class ChannelActivityTableModel extends AbstractTableModel
             {
                 mPendingFullRefresh = true;
             }
+
+            notifySnapshotListeners();
         }
     }
 
@@ -251,6 +293,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
         if(!mActivityViewVisible)
         {
             mPendingFullRefresh = true;
+            notifySnapshotListeners();
             return;
         }
 
@@ -289,6 +332,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
         }
 
         fireTableRowsUpdated(start, previous);
+        notifySnapshotListeners();
     }
 
     public void refreshAllRows()

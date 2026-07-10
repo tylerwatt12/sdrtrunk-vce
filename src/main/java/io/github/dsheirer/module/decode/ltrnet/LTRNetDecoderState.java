@@ -58,20 +58,13 @@ import io.github.dsheirer.module.decode.ltrnet.message.osw.SystemIdle;
 import io.github.dsheirer.module.decode.ltrnet.message.osw.TransmitFrequencyHigh;
 import io.github.dsheirer.module.decode.ltrnet.message.osw.TransmitFrequencyLow;
 import io.github.dsheirer.protocol.Protocol;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
 public class LTRNetDecoderState extends DecoderState
 {
-    private static final String UNKNOWN_LABEL = "Unknown";
-
-
     private ChannelMapHigh mChannelMapHigh;
     private ChannelMapLow mChannelMapLow;
     private Map<Integer,LtrNetChannel> mChannelMap = new HashMap<>();
@@ -469,125 +462,6 @@ public class LTRNetDecoderState extends DecoderState
                 .channel(mChannelMap.get(channel))
                 .identifiers(ic)
                 .build();
-    }
-
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("Activity Summary\n");
-        sb.append("Decoder:\tLTR-Net\n\n");
-        sb.append("Site:\t").append(mCurrentSite != null ? mCurrentSite.getSiteID() : UNKNOWN_LABEL).append("\n");
-
-        sb.append("\nLCNs (transmit / receive)\n");
-
-        if(mChannelMapLow != null)
-        {
-            for(int channel: mChannelMapLow.getChannels())
-            {
-                LtrNetChannel ltrNetChannel = mChannelMap.get(channel);
-                sb.append("  ").append(channel).append(": ").append(getChannelDescription(ltrNetChannel))
-                    .append(mCurrentChannelNumber == channel ? " (Current)\n" : "\n");
-            }
-        }
-        else
-        {
-            sb.append("Channel Map 1-10: ").append(UNKNOWN_LABEL).append("\n");
-        }
-
-        if(mChannelMapHigh != null)
-        {
-            for(int channel: mChannelMapHigh.getChannels())
-            {
-                LtrNetChannel ltrNetChannel = mChannelMap.get(channel);
-                sb.append("  ").append(channel).append(": ").append(getChannelDescription(ltrNetChannel))
-                    .append(mCurrentChannelNumber == channel ? " (Current)\n" : "\n");
-            }
-        }
-        else
-        {
-            sb.append("Channel Map 11-20: ").append(UNKNOWN_LABEL).append("\n");
-        }
-
-        sb.append("\nNeighbor Sites (Rank: ID)\n");
-
-        if(mNeighborMap.isEmpty())
-        {
-            appendNone(sb);
-        }
-        else
-        {
-            List<Integer> ranks = new ArrayList<>(mNeighborMap.keySet());
-            Collections.sort(ranks);
-            for(Integer rank: ranks)
-            {
-                sb.append("  ").append(rank).append(": ").append(mNeighborMap.get(rank).getNeighborID()).append("\n");
-            }
-        }
-
-        sb.append("\nActive Talkgroups\n");
-
-        if(mTalkgroups.isEmpty())
-        {
-            appendNone(sb);
-        }
-        else
-        {
-            List<LTRTalkgroup> talkgroups = new ArrayList<>(mTalkgroups);
-            talkgroups.sort(Comparator.comparingInt(Identifier::getValue));
-
-            for(LTRTalkgroup talkgroup: talkgroups)
-            {
-                sb.append("  ").append(talkgroup.formatted()).append("\n");
-            }
-        }
-
-        sb.append("\nActive Radio Unique IDs\n");
-
-        if(mLtrNetRadioIdentifiers.isEmpty())
-        {
-            appendNone(sb);
-        }
-        else
-        {
-            List<LtrNetRadioIdentifier> ltrNetRadioIdentifiers = new ArrayList<>(mLtrNetRadioIdentifiers);
-            ltrNetRadioIdentifiers.sort(Comparator.comparingInt(Identifier::getValue));
-
-            for(LtrNetRadioIdentifier ltrNetRadioIdentifier : ltrNetRadioIdentifiers)
-            {
-                sb.append("  ").append(ltrNetRadioIdentifier).append("\n");
-            }
-        }
-
-        sb.append("\nActive ESNs\n");
-
-        if(mESNIdentifiers.isEmpty())
-        {
-            appendNone(sb);
-        }
-        else
-        {
-            List<ESNIdentifier> esnIdentifiers = new ArrayList<>(mESNIdentifiers);
-            Collections.sort(esnIdentifiers);
-
-            for(ESNIdentifier esnIdentifier: esnIdentifiers)
-            {
-                sb.append("  ").append(esnIdentifier).append("\n");
-            }
-        }
-
-        return sb.toString();
-    }
-
-    private void appendNone(StringBuilder sb)
-    {
-        sb.append("  None\n");
-    }
-
-    private String getChannelDescription(LtrNetChannel ltrNetChannel)
-    {
-        return ltrNetChannel != null ? ltrNetChannel.description() : UNKNOWN_LABEL;
     }
 
     @Override

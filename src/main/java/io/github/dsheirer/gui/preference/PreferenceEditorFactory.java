@@ -23,11 +23,14 @@ import io.github.dsheirer.gui.preference.application.ApplicationPreferenceEditor
 import io.github.dsheirer.gui.preference.calibration.VectorCalibrationPreferenceEditor;
 import io.github.dsheirer.gui.preference.call.CallManagementPreferenceEditor;
 import io.github.dsheirer.gui.preference.decoder.JmbeLibraryPreferenceEditor;
+import io.github.dsheirer.gui.preference.decoder.VoiceDecryptionModulePreferenceEditor;
 import io.github.dsheirer.gui.preference.directory.DirectoryPreferenceEditor;
 import io.github.dsheirer.gui.preference.mp3.MP3PreferenceEditor;
 import io.github.dsheirer.gui.preference.nowplaying.NowPlayingPreferenceEditor;
 import io.github.dsheirer.gui.preference.playback.PlaybackPreferenceEditor;
 import io.github.dsheirer.gui.preference.record.RecordPreferenceEditor;
+import io.github.dsheirer.gui.preference.stats.StatsServerPreferenceEditor;
+import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
 import io.github.dsheirer.gui.preference.tuner.TunerPreferenceEditor;
 import io.github.dsheirer.preference.UserPreferences;
 import javafx.scene.Node;
@@ -61,14 +64,20 @@ public class PreferenceEditorFactory
                 return new DirectoryPreferenceEditor(userPreferences);
             case JMBE_LIBRARY:
                 return new JmbeLibraryPreferenceEditor(userPreferences);
+            case VOICE_DECRYPTION_MODULE:
+                return new VoiceDecryptionModulePreferenceEditor(userPreferences);
             case NOW_PLAYING:
                 return new NowPlayingPreferenceEditor(userPreferences);
             case SOURCE_TUNERS:
                 return new TunerPreferenceEditor(userPreferences);
+            case STATS_SERVER:
+                return new StatsServerPreferenceEditor(userPreferences);
             case TALKGROUP_FORMAT:
                 return new TalkgroupFormatPreferenceEditor(userPreferences);
             case VECTOR_CALIBRATION:
                 return new VectorCalibrationPreferenceEditor(userPreferences);
+            case WEB_SERVER:
+                return new WebServerPreferenceEditor(userPreferences);
         }
 
         return null;

@@ -94,33 +94,6 @@ public class LJ1200DecoderState extends DecoderState
     }
 
     @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("=============================\n");
-        sb.append("Decoder:\tLJ-1200I\n\n");
-
-        if(!mAddresses.isEmpty())
-        {
-            sb.append("Transponder Addresses:\n");
-
-            List<String> addresses = new ArrayList<>(mAddresses);
-
-            Collections.sort(addresses);
-
-            for(String address : addresses)
-            {
-                sb.append("\t");
-                sb.append(address);
-                sb.append("\n");
-            }
-        }
-
-        return sb.toString();
-    }
-
-    @Override
     public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
         if(event.getEvent() == Event.REQUEST_RESET)

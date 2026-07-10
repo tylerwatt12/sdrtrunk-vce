@@ -13,7 +13,7 @@ package io.github.dsheirer.preference.encryption.vault;
 
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import java.nio.file.Path;
 
 /**
@@ -40,6 +40,11 @@ public final class EncryptionKeyVaultPath
 
     public static Path getVaultPath()
     {
-        return SystemProperties.getInstance().getApplicationRootPath().resolve(VAULT_DIRECTORY).resolve(VAULT_FILENAME);
+        return getVaultPath(PortableApplicationPaths.getDataRoot());
+    }
+
+    public static Path getVaultPath(Path applicationRoot)
+    {
+        return applicationRoot.resolve(VAULT_DIRECTORY).resolve(VAULT_FILENAME);
     }
 }

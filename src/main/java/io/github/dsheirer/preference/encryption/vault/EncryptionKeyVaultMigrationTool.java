@@ -71,7 +71,7 @@ public class EncryptionKeyVaultMigrationTool
         try
         {
             Path vaultPath = EncryptionKeyVaultPath.getVaultPath();
-            SdrTrunkDatabaseStartup.prepareVaultDatabase(vaultPath);
+            SdrTrunkDatabaseStartup.createVaultDatabase(vaultPath);
             EncryptionKeyVaultService vaultService = new EncryptionKeyVaultService(vaultPath);
             vaultService.createVault(password);
             vaultService.replaceKeys(keys);

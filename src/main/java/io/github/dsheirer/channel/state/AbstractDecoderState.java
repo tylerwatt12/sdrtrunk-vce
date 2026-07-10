@@ -25,19 +25,16 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageListener;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.decode.DecoderType;
-import io.github.dsheirer.module.decode.event.ActivitySummaryProvider;
 import io.github.dsheirer.module.decode.event.DecodeEventDuplicateDetector;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 
-public abstract class AbstractDecoderState extends Module implements ActivitySummaryProvider,
-    IDecodeEventProvider, IDecoderStateEventListener, IDecoderStateEventProvider, IMessageListener,
-    IdentifierUpdateProvider, IdentifierUpdateListener
+public abstract class AbstractDecoderState extends Module implements IDecodeEventProvider,
+    IDecoderStateEventListener, IDecoderStateEventProvider, IMessageListener,
+    IdentifierUpdateProvider, IdentifierUpdateListener, Listener<IMessage>
 {
-    protected String DIVIDER1 = "======================================================\n";
-    protected String DIVIDER2 = "------------------------------------------------------\n";
     /* This has to be a broadcaster in order for references to persist */
     protected Broadcaster<IDecodeEvent> mDecodeEventBroadcaster = new Broadcaster<>();
     protected Listener<DecoderStateEvent> mDecoderStateListener;

@@ -99,7 +99,8 @@ public class MBECallSequenceConverter
             P25P1AudioModule audioModule = new P25P1AudioModule(userPreferences, new AliasList("mbe generator"));
             VoiceEncryptionKeyResolver keyResolver =
                 new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
-            VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory();
+            VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
+                .getVoiceDecryptionModulePreference().getModuleManager());
             AtomicReference<CompletedAudioCall> completedAudioCall = new AtomicReference<>();
             AtomicReference<AudioCallSnapshot> latestSnapshot = new AtomicReference<>();
             List<float[]> audioBuffers = new ArrayList<>();
@@ -193,7 +194,8 @@ public class MBECallSequenceConverter
             DMRAudioModule audioModule = new DMRAudioModule(userPreferences, new AliasList("mbe generator"), 1);
             VoiceEncryptionKeyResolver keyResolver =
                 new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
-            VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory();
+            VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
+                .getVoiceDecryptionModulePreference().getModuleManager());
             AtomicReference<CompletedAudioCall> completedAudioCall = new AtomicReference<>();
             AtomicReference<AudioCallSnapshot> latestSnapshot = new AtomicReference<>();
             List<float[]> audioBuffers = new ArrayList<>();

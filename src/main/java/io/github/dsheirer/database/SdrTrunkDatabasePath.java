@@ -12,7 +12,7 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import java.nio.file.Path;
 
 /**
@@ -36,7 +36,12 @@ public final class SdrTrunkDatabasePath
 
     public static Path getDatabasePath()
     {
-        return SystemProperties.getInstance().getApplicationRootPath()
+        return getDatabasePath(PortableApplicationPaths.getDataRoot());
+    }
+
+    public static Path getDatabasePath(Path applicationRoot)
+    {
+        return applicationRoot
             .resolve(DATABASE_DIRECTORY)
             .resolve(DATABASE_FILENAME);
     }

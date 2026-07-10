@@ -33,7 +33,7 @@ import java.util.List;
 public class RadioResolveBuilder
 {
     private static final String DASH_DASH = "--";
-    private static final String BOUNDARY = "sdrtrunk-radioresolve-sdrtrunk";
+    private static final String BOUNDARY = "sdrtrunk-vce-boundary";
     private static final String CRLF = "\r\n";
     private List<Part> mParts = new ArrayList<>();
     private Path mAudioPath;

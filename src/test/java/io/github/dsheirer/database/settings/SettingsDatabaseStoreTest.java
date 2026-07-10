@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.settings.ColorSetting;
 import io.github.dsheirer.settings.FileSetting;
 import io.github.dsheirer.settings.MapViewSetting;
@@ -37,6 +38,7 @@ class SettingsDatabaseStoreTest
     void roundTripsSettings() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         SettingsDatabaseStore store = new SettingsDatabaseStore(database);
         assertFalse(store.isInitialized());
 

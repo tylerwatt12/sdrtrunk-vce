@@ -38,5 +38,6 @@ public enum PreferenceType
     RADIO_REFERENCE,
     RECORD,
     TALKGROUP_FORMAT,
-    TUNER;
+    TUNER,
+    VOICE_DECRYPTION_MODULE;
 }

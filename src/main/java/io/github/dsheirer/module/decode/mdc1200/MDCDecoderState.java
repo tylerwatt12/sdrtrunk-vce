@@ -96,49 +96,6 @@ public class MDCDecoderState extends DecoderState
         }
     }
 
-    @Override
-    public String getActivitySummary()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("=============================\n");
-        sb.append("Decoder:\tMDC-1200\n\n");
-        sb.append("MDC-1200 Idents\n");
-
-        if(mIdents.isEmpty())
-        {
-            sb.append("  None\n");
-        }
-        else
-        {
-
-            for (MDC1200Identifier mIdent : mIdents) {
-                sb.append("  ").append(mIdent).append("\n");
-            }
-        }
-
-        sb.append("MDC-1200 Emergency Idents\n");
-
-        if(mEmergencyIdents.isEmpty())
-        {
-            sb.append("  None\n");
-        }
-        else
-        {
-            Iterator<MDC1200Identifier> it = mEmergencyIdents.iterator();
-
-            while(it.hasNext())
-            {
-
-                for (MDC1200Identifier mIdent : mIdents) {
-                    sb.append("  ").append(mIdent).append("\n");
-                }
-            }
-        }
-
-        return sb.toString();
-    }
-
     /**
      * Responds to reset events issued by the channel state
      */

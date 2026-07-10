@@ -14,42 +14,27 @@ package io.github.dsheirer.preference.encryption;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class VoiceEncryptionAlgorithmTest
 {
     @Test
-    void listsKnownP25AlgorithmsButSupportsOnlyImplementedDecryptors()
+    void resolvesKnownP25AlgorithmMetadata()
     {
-        assertTrue(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.APCO25)
-            .contains(VoiceEncryptionAlgorithm.APCO25_AES_256));
-        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0x81));
-        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0x84));
-        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0xAA));
-        assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0x85));
-        assertEquals(VoiceEncryptionAlgorithm.APCO25_DES_OFB,
-            VoiceEncryptionAlgorithm.getFirstSupported(VoiceEncryptionProtocol.APCO25));
-        assertFalse(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.APCO25)
-            .contains(VoiceEncryptionAlgorithm.APCO25_AES_128));
+        assertEquals(VoiceEncryptionAlgorithm.APCO25_AES_256,
+            VoiceEncryptionAlgorithm.fromValue(VoiceEncryptionProtocol.APCO25, 0x84));
+        assertEquals(32, VoiceEncryptionAlgorithm.APCO25_AES_256.getExpectedKeyBytes());
     }
 
     @Test
-    void listsKnownDmrAlgorithmsButSupportsOnlyImplementedDecryptors()
+    void resolvesKnownDmrAlgorithmMetadata()
     {
-        assertFalse(VoiceEncryptionAlgorithm.getAlgorithms(VoiceEncryptionProtocol.DMR)
-            .contains(VoiceEncryptionAlgorithm.DMR_HYTERA_BASIC_PRIVACY));
-        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0x21));
-        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0x24));
-        assertTrue(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0x25));
-        assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0x01));
+        assertEquals(VoiceEncryptionAlgorithm.DMR_DMRA_AES_256,
+            VoiceEncryptionAlgorithm.fromValue(VoiceEncryptionProtocol.DMR, 0x25));
     }
 
     @Test
-    void unknownAlgorithmsAreNotSupported()
+    void unknownAlgorithmsUseHexLabel()
     {
-        assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.APCO25, 0xFE));
-        assertFalse(VoiceEncryptionAlgorithm.isSupported(VoiceEncryptionProtocol.DMR, 0xFE));
         assertEquals("0xFE", VoiceEncryptionAlgorithm.getLabel(VoiceEncryptionProtocol.APCO25, 0xFE));
     }
 }
