@@ -24,10 +24,7 @@ package io.github.dsheirer.audio.codec.mbe;
 
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Joiner;
-
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,21 +54,5 @@ public class MBECallSequenceReader
         }
 
         return Collections.emptyList();
-    }
-
-    public static void main(String[] args)
-    {
-        Path path = Path.of("/home/denny/SDRTrunk/recordings/20190706063149_154250000_7_TS1_65084_6591001.mbe");
-
-        try
-        {
-            List<String> frames = MBECallSequenceReader.getAudioFrames(path);
-
-            Files.writeString(Path.of("/home/denny/SDRTrunk/recordings/mbe_frames.txt"), Joiner.on("\",\n\"").join(frames));
-        }
-        catch(Exception e)
-        {
-            e.printStackTrace();
-        }
     }
 }

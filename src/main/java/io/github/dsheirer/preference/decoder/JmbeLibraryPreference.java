@@ -23,6 +23,7 @@
 package io.github.dsheirer.preference.decoder;
 
 import io.github.dsheirer.jmbe.github.Version;
+import io.github.dsheirer.jmbe.JmbeLibraryMetadata;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
@@ -31,8 +32,6 @@ import io.github.dsheirer.sample.Listener;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.prefs.Preferences;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,7 +45,6 @@ public class JmbeLibraryPreference extends Preference
 
     private static final String PREFERENCE_KEY_PATH_JMBE_LIBRARY = "path.jmbe.library.1.0.0";
     private static final String PREFERENCE_KEY_PATH_ALERT_LIBRARY_REQUIRED = "alert.jmbe.required";
-    private final Pattern VERSION_PATTERN = Pattern.compile(".*jmbe-(\\d{1,5}.\\d{1,5}.\\d{1,5}\\w*)\\.jar");
     private Path mPathJmbeLibrary;
     private Boolean mAlertIfMissingLibraryRequired;
 
@@ -72,12 +70,7 @@ public class JmbeLibraryPreference extends Preference
 
         if(path != null)
         {
-            Matcher m = VERSION_PATTERN.matcher(path.toString());
-
-            if(m.matches())
-            {
-                return Version.fromString(m.group(1));
-            }
+            return JmbeLibraryMetadata.getVersion(path);
         }
 
         return null;

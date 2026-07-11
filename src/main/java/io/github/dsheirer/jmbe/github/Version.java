@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  */
 public class Version implements Comparable<Version>
 {
-    public static final Pattern VERSION_PATTERN = Pattern.compile("v?(\\d{1,5}).(\\d{1,5}).(\\d{1,5})(\\w*)");
+    public static final Pattern VERSION_PATTERN = Pattern.compile("v?(\\d{1,5})\\.(\\d{1,5})\\.(\\d{1,5})([A-Za-z]?)");
 
     private Integer mMajor;
     private Integer mMinor;
@@ -63,44 +63,11 @@ public class Version implements Comparable<Version>
 
             if(m.matches())
             {
-                int major = 0;
-                int minor = 0;
-                int release = 0;
-                Character patch = null;
-
-                try
-                {
-                    major = Integer.parseInt(m.group(1));
-                }
-                catch(Exception e)
-                {
-                    //Do nothing, we couldn't parse the value
-                }
-
-                try
-                {
-                    minor = Integer.parseInt(m.group(2));
-                }
-                catch(Exception e)
-                {
-                    //Do nothing, we couldn't parse the value
-                }
-
-                try
-                {
-                    release = Integer.parseInt(m.group(3));
-                }
-                catch(Exception e)
-                {
-                    //Do nothing, we couldn't parse the value
-                }
-
+                int major = Integer.parseInt(m.group(1));
+                int minor = Integer.parseInt(m.group(2));
+                int release = Integer.parseInt(m.group(3));
                 String rawPatch = m.group(4);
-
-                if(rawPatch != null && !rawPatch.isEmpty())
-                {
-                    patch = rawPatch.charAt(0);
-                }
+                Character patch = rawPatch.isEmpty() ? null : rawPatch.charAt(0);
 
                 return new Version(major, minor, release, patch);
             }
@@ -166,66 +133,36 @@ public class Version implements Comparable<Version>
     @Override
     public int compareTo(Version other)
     {
-        if(hasMajor() && other.hasMajor())
+        Objects.requireNonNull(other, "Version cannot be null");
+        int comparison = Integer.compare(getMajor(), other.getMajor());
+
+        if(comparison == 0)
         {
-            int majorCmp = Integer.compare(getMajor(), other.getMajor());
-            if(majorCmp != 0)
+            comparison = Integer.compare(getMinor(), other.getMinor());
+        }
+
+        if(comparison == 0)
+        {
+            comparison = Integer.compare(getRelease(), other.getRelease());
+        }
+
+        if(comparison == 0)
+        {
+            if(hasPatch() && other.hasPatch())
             {
-                return majorCmp;
+                comparison = Character.compare(getPatch(), other.getPatch());
             }
-            else
+            else if(hasPatch())
             {
-                if(hasMinor() && other.hasMinor())
-                {
-                    int minorCmp = Integer.compare(getMinor(), other.getMinor());
-                    if(minorCmp != 0)
-                    {
-                        return minorCmp;
-                    }
-                    else
-                    {
-                        if(hasRelease() && other.hasRelease())
-                        {
-                            int releaseCmp = Integer.compare(getRelease(), other.getRelease());
-                            if(releaseCmp != 0)
-                            {
-                                return releaseCmp;
-                            }
-                            else
-                            {
-                                if(hasPatch() && other.hasPatch())
-                                {
-                                    if(getPatch() != other.getPatch())
-                                    {
-                                        return Character.compare(getPatch(), other.getPatch());
-                                    }
-                                    else
-                                    {
-                                        return 0;
-                                    }
-                                }
-                                else
-                                {
-                                    return hasPatch() ? 1 : -1;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            return hasRelease() ? -1 : 1;
-                        }
-                    }
-                }
-                else
-                {
-                    return hasMinor() ? -1 : 1;
-                }
+                comparison = 1;
+            }
+            else if(other.hasPatch())
+            {
+                comparison = -1;
             }
         }
-        else
-        {
-            return hasMajor() ? -1 : 1;
-        }
+
+        return comparison;
     }
 
     @Override

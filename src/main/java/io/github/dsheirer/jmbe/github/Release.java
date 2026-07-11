@@ -71,6 +71,14 @@ public class Release
     }
 
     /**
+     * Exact Git tag represented by this release.
+     */
+    public String getTagName()
+    {
+        return getTag("tag_name");
+    }
+
+    /**
      * Assets URL
      */
     public String getAssetsUrl()
@@ -83,7 +91,7 @@ public class Release
         List<Asset> assets = new ArrayList<>();
         JsonArray array = mJsonObject.getAsJsonArray("assets");
 
-        if(!array.isJsonNull())
+        if(array != null && !array.isJsonNull())
         {
             for(JsonElement element: array)
             {
@@ -121,7 +129,7 @@ public class Release
         {
             JsonElement element = mJsonObject.get(tagName);
 
-            if(!element.isJsonNull())
+            if(element != null && !element.isJsonNull())
             {
                 return element.toString().replace("\"", "");
             }

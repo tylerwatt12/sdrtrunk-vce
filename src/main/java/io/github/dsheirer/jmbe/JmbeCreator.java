@@ -30,7 +30,6 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -166,7 +165,15 @@ public class JmbeCreator
                         if(script != null)
                         {
                             ProcessBuilder processBuilder = new ProcessBuilder();
-                            processBuilder.command(script.toString(), mLibraryPath.toString());
+                            String tagName = mRelease.getTagName();
+
+                            if(tagName == null)
+                            {
+                                tagName = "v" + mRelease.getVersion();
+                            }
+
+                            processBuilder.command(script.toString(), mLibraryPath.toString(), tagName);
+                            processBuilder.redirectErrorStream(true);
                             runScript(processBuilder);
                         }
                         else
@@ -174,6 +181,11 @@ public class JmbeCreator
                             terminateWithErrors("Failed: Unable to find JMBE creator launch script for this OS");
                             mLog.error("Script was null.  Unable to find JMBE creator launch script");
                         }
+                    }
+                    else
+                    {
+                        terminateWithErrors("Failed: Unable to download the JMBE creator utility");
+                        mLog.error("Unable to download the JMBE creator utility");
                     }
                 }
                 catch(Throwable t)
@@ -243,8 +255,17 @@ public class JmbeCreator
 
             if(exitCode == 0)
             {
-                printToConsole("Library Created Successfully!");
-                Platform.runLater(() -> completeProperty().set(true));
+                try
+                {
+                    JmbeLibraryMetadata.verify(mLibraryPath, mRelease.getVersion());
+                    printToConsole("Library Created Successfully!");
+                    Platform.runLater(() -> completeProperty().set(true));
+                }
+                catch(IOException e)
+                {
+                    terminateWithErrors("Failed: " + e.getMessage());
+                    mLog.error("Created JMBE library did not pass validation", e);
+                }
             }
             else
             {
@@ -336,14 +357,4 @@ public class JmbeCreator
         return asset.getName() != null && asset.getName().startsWith("jmbe-creator");
     }
 
-    public static void main(String[] args)
-    {
-        Release release = GitHub.getLatestRelease(GITHUB_JMBE_RELEASES_URL);
-        Path library = Paths.get("/home/denny/temp/jmbe.jar");
-        JmbeCreator jmbeCreator = new JmbeCreator(release, library);
-
-        jmbeCreator.execute();
-
-        while(true);
-    }
 }

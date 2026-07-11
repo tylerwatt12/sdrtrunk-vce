@@ -41,20 +41,14 @@ import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.record.AudioCallRecorder;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import jmbe.iface.IAudioCodec;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.filefilter.DirectoryFileFilter;
-import org.apache.commons.io.filefilter.SuffixFileFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -328,44 +322,4 @@ public class MBECallSequenceConverter
         }
     }
 
-    public static void main(String[] args)
-    {
-        boolean all = true;
-
-        String path = "/home/denny/SDRTrunk/recordings";
-        Path input = Paths.get(path);
-
-        if(all)
-        {
-            Collection<File> mbeFiles = FileUtils.listFiles(input.toFile(), new SuffixFileFilter(".mbe"), DirectoryFileFilter.DIRECTORY);
-
-            for(File inputFile: mbeFiles)
-            {
-                Path output = Paths.get(inputFile.getAbsolutePath().replace(".mbe", ".wav"));
-                mLog.info("Converting: " + inputFile);
-                try
-                {
-                    MBECallSequenceConverter.convert(inputFile.toPath(), output);
-                }
-                catch(IOException ioe)
-                {
-                    mLog.error("Error", ioe);
-                }
-            }
-        }
-        else
-        {
-            Path output = Paths.get(path.replace(".mbe", ".wav"));
-            mLog.info("Converting: " + path);
-
-            try
-            {
-                MBECallSequenceConverter.convert(input, output);
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("Error", ioe);
-            }
-        }
-    }
 }

@@ -31,8 +31,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 
 /**
  * Utilities for accessing GitHub repositories and releases
@@ -40,6 +42,8 @@ import java.nio.file.StandardOpenOption;
 public class GitHub
 {
     private static final Logger mLog = LoggerFactory.getLogger(GitHub.class);
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
 
     private GitHub()
     {
@@ -56,21 +60,23 @@ public class GitHub
     {
         HttpClient client = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.ALWAYS)
+            .connectTimeout(CONNECT_TIMEOUT)
             .build();
 
-        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).build();
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(REQUEST_TIMEOUT).build();
 
         try
         {
             HttpResponse<Path> response = client.send(request, HttpResponse.BodyHandlers.ofFileDownload(directory,
                 StandardOpenOption.CREATE, StandardOpenOption.WRITE));
 
-            if(response.statusCode() != 200)
+            if(response.statusCode() >= 200 && response.statusCode() < 300)
             {
-                mLog.error("HTTP Download Status Code: " + response.statusCode());
+                return response.body();
             }
 
-            return response.body();
+            mLog.error("HTTP Download Status Code: {}", response.statusCode());
+            Files.deleteIfExists(response.body());
 
         }
         catch(InterruptedException e)
@@ -93,8 +99,8 @@ public class GitHub
      */
     public static Release getLatestRelease(String repositoryURL)
     {
-        HttpClient httpClient = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(repositoryURL)).build();
+        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(repositoryURL)).timeout(REQUEST_TIMEOUT).build();
 
         try
         {
