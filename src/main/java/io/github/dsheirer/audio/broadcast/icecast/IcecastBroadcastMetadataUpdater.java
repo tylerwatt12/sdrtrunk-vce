@@ -30,7 +30,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.util.ThreadPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,7 +112,7 @@ public class IcecastBroadcastMetadataUpdater implements IBroadcastMetadataUpdate
                     HttpRequest request = HttpRequest.newBuilder()
                         .uri(uri)
                         .header(IcecastHeader.AUTHORIZATION.getValue(), mIcecastConfiguration.getBase64EncodedCredentials())
-                        .header(IcecastHeader.USER_AGENT.getValue(), SystemProperties.getInstance().getApplicationName())
+                        .header(IcecastHeader.USER_AGENT.getValue(), ApplicationInfo.getDisplayName())
                         .GET()
                         .build();
 

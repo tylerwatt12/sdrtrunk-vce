@@ -22,26 +22,12 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.map.DefaultIcon;
 import io.github.dsheirer.map.MapIcon;
 import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
-import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
-
 import java.util.ArrayList;
 import java.util.List;
 
 public class Settings
 {
     private List<Setting> mSettings = new ArrayList<>();
-
-    private List<TunerConfiguration> mTunerConfiguration = new ArrayList<>();
-
-    public List<TunerConfiguration> getTunerConfigurations()
-    {
-        return mTunerConfiguration;
-    }
-
-    public void setTunerConfigurations(List<TunerConfiguration> configs)
-    {
-        mTunerConfiguration = configs;
-    }
 
     public List<Setting> getSettings()
     {

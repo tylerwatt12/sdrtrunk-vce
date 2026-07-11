@@ -19,24 +19,17 @@
 
 package io.github.dsheirer.source.tuner.configuration;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
-import io.github.dsheirer.util.ThreadPool;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
@@ -48,21 +41,18 @@ import org.slf4j.LoggerFactory;
 public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerConfigurationManager.class);
-    private static final String SETTINGS_FILE_NAME = "tuner_configuration.json";
-    private UserPreferences mUserPreferences;
+    private final ApplicationSettingsStore mSettingsStore;
     private List<DisabledTuner> mDisabledTunerList = new ArrayList<>();
     private List<TunerConfiguration> mTunerConfigurations = new ArrayList<>();
-    private AtomicBoolean mSavePending = new AtomicBoolean();
     private Lock mLock = new ReentrantLock();
 
     /**
      * Constructs an instance and loads the save configuration state.
      *
-     * @param userPreferences to determine directories for accessing files
      */
-    public TunerConfigurationManager(UserPreferences userPreferences)
+    public TunerConfigurationManager()
     {
-        mUserPreferences = userPreferences;
+        mSettingsStore = new ApplicationSettingsStore(SdrTrunkDatabasePath.getDatabasePath());
         load();
     }
 
@@ -71,43 +61,42 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
      */
     private void load()
     {
-        Path configPath = getConfigurationFilePath();
-
-        if(Files.exists(configPath))
+        try
         {
-            ObjectMapper objectMapper = new ObjectMapper()
-                    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-
-            try
-            {
-                TunerConfigurationState state = objectMapper.readValue(configPath.toFile(), TunerConfigurationState.class);
-                mDisabledTunerList.addAll(state.getDisabledTuners());
-                mTunerConfigurations.addAll(state.getTunerConfigurations());
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("Error loading tuner configuration file", ioe);
-            }
+            TunerSettings settings = mSettingsStore.load(ApplicationSettingsStore.TUNER_SETTINGS, TunerSettings.class)
+                .orElseGet(TunerSettings::new);
+            mDisabledTunerList.addAll(settings.getDisabledTuners());
+            mTunerConfigurations.addAll(settings.getTunerConfigurations());
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error loading tuner settings from SQLite [{}]", mSettingsStore.getDatabasePath(), e);
         }
     }
 
-    /**
-     * Tuner configuration state file (.json).
-     */
-    private Path getConfigurationFilePath()
-    {
-        return mUserPreferences.getDirectoryPreference().getDirectoryConfiguration().resolve(SETTINGS_FILE_NAME);
-    }
-
-    /**
-     * Schedules a configurations save task.  Subsequent calls to this method will be ignored until the
-     * save event occurs, thus limiting repetitive saving to a minimum.
-     */
     public void saveConfigurations()
     {
-        if(mSavePending.compareAndSet(false, true))
+        TunerSettings settings = new TunerSettings();
+
+        mLock.lock();
+
+        try
         {
-            ThreadPool.SCHEDULED.schedule(new ConfigurationSaveTask(), 2, TimeUnit.SECONDS);
+            settings.setDisabledTuners(new ArrayList<>(mDisabledTunerList));
+            settings.setTunerConfigurations(new ArrayList<>(mTunerConfigurations));
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        try
+        {
+            mSettingsStore.saveLater(ApplicationSettingsStore.TUNER_SETTINGS, settings);
+        }
+        catch(IOException e)
+        {
+            mLog.error("Error serializing tuner settings for SQLite [{}]", mSettingsStore.getDatabasePath(), e);
         }
     }
 
@@ -334,60 +323,4 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
                 .equals(tunerType)).toList();
     }
 
-    /**
-     * Saves the current tuner configuration state and resets the save pending flag
-     */
-    public class ConfigurationSaveTask implements Runnable
-    {
-        /**
-         * Saves the current tuner configuration state to disk.
-         */
-        private void save()
-        {
-            TunerConfigurationState state = new TunerConfigurationState();
-
-            mLock.lock();
-
-            try
-            {
-                state.setDisabledTuners(new ArrayList<>(mDisabledTunerList));
-                state.setTunerConfigurations(new ArrayList<>(mTunerConfigurations));
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error", e);
-            }
-            finally
-            {
-                mLock.unlock();
-            }
-
-            ObjectMapper objectMapper = new ObjectMapper();
-            objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
-
-            try
-            {
-                objectMapper.writeValue(getConfigurationFilePath().toFile(), state);
-            }
-            catch(IOException ioe)
-            {
-                mLog.error("Error writing tuner configuration state to file [" + getConfigurationFilePath() + "]", ioe);
-            }
-        }
-
-        @Override
-        public void run()
-        {
-            try
-            {
-                save();
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error saving tuner configurations", e);
-            }
-
-            mSavePending.set(false);
-        }
-    }
 }

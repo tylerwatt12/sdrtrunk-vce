@@ -11,7 +11,7 @@
 
 package io.github.dsheirer.gui;
 
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.application.ApplicationInfo;
 import java.awt.BorderLayout;
 import java.awt.Desktop;
 import java.awt.Dimension;
@@ -63,7 +63,7 @@ public class CreditsDialog extends JDialog
 
     private JEditorPane createCreditsPane()
     {
-        String applicationName = escape(SystemProperties.getInstance().getApplicationName());
+        String applicationName = escape(ApplicationInfo.getDisplayName());
         JEditorPane pane = new JEditorPane("text/html", """
             <html><body style="font-family:sans-serif;margin:12px;color:#18212a">
             <h1 style="font-size:20px">%s</h1>

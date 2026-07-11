@@ -19,10 +19,7 @@
 package io.github.dsheirer.settings;
 
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.settings.SettingsDatabaseStore;
-import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.source.tuner.configuration.TunerConfigurationEvent;
-import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,19 +28,16 @@ import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-public class SettingsManager implements Listener<TunerConfigurationEvent>
+public class SettingsManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(SettingsManager.class);
 
     private Settings mSettings = new Settings();
-    private SettingsDatabaseStore mSettingsDatabaseStore =
-        new SettingsDatabaseStore(SdrTrunkDatabasePath.getDatabasePath());
+    private ApplicationSettingsStore mSettingsStore =
+        new ApplicationSettingsStore(SdrTrunkDatabasePath.getDatabasePath());
     private List<SettingChangeListener> mListeners = new ArrayList<>();
     private boolean mLoadingSettings = false;
-    private AtomicBoolean mSettingsSavePending = new AtomicBoolean();
 
     public SettingsManager()
     {
@@ -61,15 +55,6 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
     private void init()
     {
         load();
-    }
-
-    @Override
-    public void receive(TunerConfigurationEvent t)
-    {
-        if(!mLoadingSettings)
-        {
-            scheduleSettingsSave();
-        }
     }
 
     public Settings getSettings()
@@ -118,7 +103,7 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
 
         broadcastSettingChange(setting);
 
-        scheduleSettingsSave();
+        saveSettings();
     }
 
     public void resetColorSetting(ColorSetting.ColorSettingName name)
@@ -164,7 +149,7 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
 
         broadcastSettingChange(setting);
 
-        scheduleSettingsSave();
+        saveSettings();
     }
 
     /**
@@ -176,7 +161,7 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
     {
         mSettings.addSetting(setting);
 
-        scheduleSettingsSave();
+        saveSettings();
 
         broadcastSettingChange(setting);
     }
@@ -206,7 +191,7 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
         loc.setGeoPosition(position);
         loc.setZoom(zoom);
 
-        scheduleSettingsSave();
+        saveSettings();
     }
 
     /**
@@ -218,25 +203,23 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
 
         try
         {
-            if(mSettingsDatabaseStore.isInitialized())
+            if(mSettingsStore.contains(ApplicationSettingsStore.UI_SETTINGS))
             {
-                mSettings = mSettingsDatabaseStore.loadSettings();
-                mLog.debug("Loaded settings from SQLite [{}]: settings [{}], tuner configurations [{}]",
-                    mSettingsDatabaseStore.getDatabasePath(), mSettings.getSettings().size(),
-                    mSettings.getTunerConfigurations().size());
+                mSettings = mSettingsStore.load(ApplicationSettingsStore.UI_SETTINGS, Settings.class)
+                    .orElseGet(Settings::new);
+                mLog.debug("Loaded UI settings from SQLite [{}]: settings [{}]",
+                    mSettingsStore.getDatabasePath(), mSettings.getSettings().size());
             }
             else
             {
                 mSettings = new Settings();
-                mSettingsDatabaseStore.replaceSettings(mSettings);
-                mLog.debug("Initialized settings in SQLite [{}]: settings [{}], tuner configurations [{}]",
-                    mSettingsDatabaseStore.getDatabasePath(), mSettings.getSettings().size(),
-                    mSettings.getTunerConfigurations().size());
+                mSettingsStore.save(ApplicationSettingsStore.UI_SETTINGS, mSettings);
+                mLog.debug("Initialized UI settings in SQLite [{}]", mSettingsStore.getDatabasePath());
             }
         }
         catch(Exception e)
         {
-            mLog.error("Error loading settings from SQLite database [" + mSettingsDatabaseStore.getDatabasePath() +
+            mLog.error("Error loading settings from SQLite database [" + mSettingsStore.getDatabasePath() +
                 "]", e);
 
             mSettings = new Settings();
@@ -293,36 +276,17 @@ public class SettingsManager implements Listener<TunerConfigurationEvent>
         mListeners.remove(listener);
     }
 
-    /**
-     * Schedules a settings save task.  Subsequent calls to this method will be ignored until the
-     * save event occurs, thus limiting repetitive saving to a minimum.
-     */
-    private void scheduleSettingsSave()
+    private void saveSettings()
     {
-        if(!mLoadingSettings && mSettingsSavePending.compareAndSet(false, true))
+        if(!mLoadingSettings)
         {
-            ThreadPool.SCHEDULED.schedule(new SettingsSaveTask(), 2, TimeUnit.SECONDS);
-        }
-    }
-
-    /**
-     * Resets the settings save pending flag to false and proceeds to save the
-     * settings.
-     */
-    public class SettingsSaveTask implements Runnable
-    {
-        @Override
-        public void run()
-        {
-            mSettingsSavePending.set(false);
-
             try
             {
-                mSettingsDatabaseStore.replaceSettings(mSettings);
+                mSettingsStore.saveLater(ApplicationSettingsStore.UI_SETTINGS, mSettings);
             }
             catch(Exception e)
             {
-                mLog.error("Error saving settings to SQLite [" + mSettingsDatabaseStore.getDatabasePath() + "]", e);
+                mLog.error("Error serializing UI settings for SQLite [" + mSettingsStore.getDatabasePath() + "]", e);
             }
         }
     }

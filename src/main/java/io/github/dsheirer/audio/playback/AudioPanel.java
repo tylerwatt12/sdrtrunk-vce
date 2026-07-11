@@ -25,7 +25,7 @@ import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
@@ -412,15 +412,12 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
         public QueuedCallCountPanel()
         {
             setLayout(new MigLayout("insets 2 0 0 0", "[]4[]", "[center]"));
-            Color background = SystemProperties.getInstance().get(AudioChannelPanel.PROPERTY_COLOR_BACKGROUND,
-                Color.BLACK);
+            Color background = mSettingsManager.getColorSetting(ColorSettingName.AUDIO_CHANNEL_BACKGROUND).getColor();
             setBackground(background);
             mLabel.setFont(mFont);
-            mLabel.setForeground(SystemProperties.getInstance().get(AudioChannelPanel.PROPERTY_COLOR_LABEL,
-                Color.LIGHT_GRAY));
+            mLabel.setForeground(mSettingsManager.getColorSetting(ColorSettingName.AUDIO_CHANNEL_LABEL).getColor());
             mValue.setFont(mFont);
-            mValue.setForeground(SystemProperties.getInstance().get(AudioChannelPanel.PROPERTY_COLOR_VALUE,
-                Color.GREEN));
+            mValue.setForeground(mSettingsManager.getColorSetting(ColorSettingName.AUDIO_CHANNEL_VALUE).getColor());
             add(mLabel);
             add(mValue);
             update(mAudioPlaybackManager.getPlaybackState().queuedCallCount());

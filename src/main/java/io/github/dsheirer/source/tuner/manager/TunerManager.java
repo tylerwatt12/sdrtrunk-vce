@@ -90,7 +90,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public TunerManager(UserPreferences userPreferences)
     {
         mUserPreferences = userPreferences;
-        mTunerConfigurationManager = new TunerConfigurationManager(userPreferences);
+        mTunerConfigurationManager = new TunerConfigurationManager();
         mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager);
     }
 

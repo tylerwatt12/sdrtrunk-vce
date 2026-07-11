@@ -42,7 +42,6 @@ public class DirectoryPreference extends Preference
     private static final int DEFAULT_USAGE_THRESHOLD_EVENT_LOGS_MB = 200;
 
     private static final String DIRECTORY_APPLICATION_LOG = "logs";
-    private static final String DIRECTORY_CONFIGURATION = "configuration";
     private static final String DIRECTORY_EVENT_LOG = "event_logs";
     private static final String DIRECTORY_JMBE = "jmbe";
     private static final String DIRECTORY_RECORDING = "recordings";
@@ -50,7 +49,6 @@ public class DirectoryPreference extends Preference
     private static final String DIRECTORY_STREAMING = "streaming";
 
     private static final String PREFERENCE_KEY_DIRECTORY_APPLICATION_LOGS = "directory.application.logs";
-    private static final String PREFERENCE_KEY_DIRECTORY_CONFIGURATION = "directory.configuration";
     private static final String PREFERENCE_KEY_DIRECTORY_EVENT_LOGS = "directory.event.logs";
     private static final String PREFERENCE_KEY_DIRECTORY_JMBE = "directory.jmbe";
     private static final String PREFERENCE_KEY_DIRECTORY_RECORDING = "directory.recording";
@@ -58,9 +56,9 @@ public class DirectoryPreference extends Preference
     private static final String PREFERENCE_KEY_DIRECTORY_STREAMING = "directory.streaming";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_RECORDINGS = "directory.max.usage.recordings";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS = "directory.max.usage.event.logs";
+    private static final String PREFERENCE_KEY_LAST_RECORDING_BROWSE = "directory.last.recording.browse";
 
     private Path mDirectoryApplicationLogs;
-    private Path mDirectoryConfiguration;
     private Path mDirectoryEventLogs;
     private Path mDirectoryJmbe;
     private Path mDirectoryRecording;
@@ -92,6 +90,20 @@ public class DirectoryPreference extends Preference
         Path applicationRoot = PortableApplicationPaths.getDataRoot();
         createDirectory(applicationRoot);
         return applicationRoot;
+    }
+
+    public Path getLastRecordingBrowseDirectory()
+    {
+        return getPath(PREFERENCE_KEY_LAST_RECORDING_BROWSE, getDefaultRecordingDirectory());
+    }
+
+    public void setLastRecordingBrowseDirectory(Path path)
+    {
+        if(path != null)
+        {
+            mPreferences.put(PREFERENCE_KEY_LAST_RECORDING_BROWSE, path.toString());
+            notifyPreferenceUpdated();
+        }
     }
 
     /**
@@ -177,40 +189,6 @@ public class DirectoryPreference extends Preference
     {
         mPreferences.remove(PREFERENCE_KEY_DIRECTORY_APPLICATION_LOGS);
         mDirectoryApplicationLogs = null;
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Path to the folder for storing configuration files
-     */
-    public Path getDirectoryConfiguration()
-    {
-        if(mDirectoryConfiguration == null)
-        {
-            mDirectoryConfiguration = getPath(PREFERENCE_KEY_DIRECTORY_CONFIGURATION, getDefaultConfigurationDirectory());
-            createDirectory(mDirectoryConfiguration);
-        }
-
-        return mDirectoryConfiguration;
-    }
-
-    /**
-     * Sets the path to the configuration files folder
-     */
-    public void setDirectoryConfiguration(Path path)
-    {
-        mDirectoryConfiguration = path;
-        mPreferences.put(PREFERENCE_KEY_DIRECTORY_CONFIGURATION, path.toString());
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Removes a stored configuration directory preference so that the default path can be used again
-     */
-    public void resetDirectoryConfiguration()
-    {
-        mPreferences.remove(PREFERENCE_KEY_DIRECTORY_CONFIGURATION);
-        mDirectoryConfiguration = null;
         notifyPreferenceUpdated();
     }
 
@@ -390,14 +368,6 @@ public class DirectoryPreference extends Preference
     public Path getDefaultApplicationLogsDirectory()
     {
         return getDirectoryApplicationRoot().resolve(DIRECTORY_APPLICATION_LOG);
-    }
-
-    /**
-     * Default configuration directory
-     */
-    public Path getDefaultConfigurationDirectory()
-    {
-        return getDirectoryApplicationRoot().resolve(DIRECTORY_CONFIGURATION);
     }
 
     /**

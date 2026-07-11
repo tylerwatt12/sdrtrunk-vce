@@ -24,6 +24,7 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.map.ChannelMap;
+import io.github.dsheirer.database.DatabaseFileInstaller;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
@@ -32,16 +33,9 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.sql.Statement;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -54,7 +48,6 @@ public class LegacyXmlConfigurationImporter
     private static final String PLAYLIST_DIRECTORY = "playlist";
     private static final String DEFAULT_PLAYLIST = "default.xml";
     private static final String LEGACY_PLAYLIST = "playlist_v2.xml";
-    private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     private LegacyXmlConfigurationImporter()
     {
@@ -100,32 +93,18 @@ public class LegacyXmlConfigurationImporter
             throw new IOException("Refusing to overwrite existing SDRTrunk SQLite database: " + normalizedDatabase);
         }
 
-        Files.createDirectories(normalizedDatabase.getParent());
-        Path temporaryDatabase = normalizedDatabase.resolveSibling(normalizedDatabase.getFileName() + ".migrating-" +
-            TIMESTAMP.format(LocalDateTime.now()) + ".tmp");
-        deleteDatabaseFiles(temporaryDatabase);
-
-        try
-        {
-            ConfigurationState state = readConfigurationState(normalizedXml);
-            int p25ConventionalConversions = convertSingleFrequencyP25Channels(state);
-
+        ConfigurationState state = readConfigurationState(normalizedXml);
+        int p25ConventionalConversions = convertSingleFrequencyP25Channels(state);
+        DatabaseFileInstaller.install(normalizedDatabase, temporaryDatabase -> {
             SdrTrunkDatabaseStartup.createGlobalDatabase(temporaryDatabase);
             new AliasDatabaseStore(temporaryDatabase).replaceAliases(state.getAliases());
             new ConfigurationDatabaseStore(temporaryDatabase).replaceConfigurationState(state);
-            checkpoint(temporaryDatabase);
             validateMigration(temporaryDatabase, state);
-            moveDatabase(temporaryDatabase, normalizedDatabase);
+        });
 
-            return new ImportResult(normalizedXml, normalizedDatabase, state.getAliases().size(),
-                state.getBroadcastConfigurations().size(), state.getChannelMaps().size(), state.getChannels().size(),
-                p25ConventionalConversions);
-        }
-        catch(IOException | SQLException | RuntimeException e)
-        {
-            deleteDatabaseFiles(temporaryDatabase);
-            throw e;
-        }
+        return new ImportResult(normalizedXml, normalizedDatabase, state.getAliases().size(),
+            state.getBroadcastConfigurations().size(), state.getChannelMaps().size(), state.getChannels().size(),
+            p25ConventionalConversions);
     }
 
     static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
@@ -209,34 +188,6 @@ public class LegacyXmlConfigurationImporter
     private static int countAliasActions(List<Alias> aliases)
     {
         return aliases.stream().mapToInt(alias -> alias.getAliasActions().size()).sum();
-    }
-
-    private static void checkpoint(Path databasePath) throws SQLException
-    {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
-            Statement statement = connection.createStatement())
-        {
-            statement.execute("PRAGMA wal_checkpoint(TRUNCATE)");
-        }
-    }
-
-    private static void moveDatabase(Path source, Path target) throws IOException
-    {
-        try
-        {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-        }
-        catch(AtomicMoveNotSupportedException e)
-        {
-            Files.move(source, target);
-        }
-    }
-
-    private static void deleteDatabaseFiles(Path databasePath) throws IOException
-    {
-        Files.deleteIfExists(databasePath);
-        Files.deleteIfExists(databasePath.resolveSibling(databasePath.getFileName() + "-wal"));
-        Files.deleteIfExists(databasePath.resolveSibling(databasePath.getFileName() + "-shm"));
     }
 
     public record ImportResult(Path sourceXml, Path database, int aliasCount, int streamCount, int channelMapCount,

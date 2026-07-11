@@ -20,7 +20,6 @@
 package io.github.dsheirer.source.tuner.recording;
 
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
@@ -51,7 +50,6 @@ public class AddRecordingTunerDialog extends JFrame
 {
     private static final Logger mLog = LoggerFactory.getLogger(AddRecordingTunerDialog.class);
     private static final String SELECT_A_FILE = "Please select a recording file";
-    private static final String LAST_FILE_BROWSE_LOCATION_KEY = "AddRecordingTunerDialog.lastBrowseLocation";
     private UserPreferences mUserPreferences;
     private DiscoveredTunerModel mDiscoveredTunerModel;
     private TunerConfigurationManager mTunerConfigurationManager;
@@ -85,20 +83,8 @@ public class AddRecordingTunerDialog extends JFrame
         mSelectFileButton = new JButton("Select ...");
         mSelectFileButton.addActionListener(e -> {
             JFileChooser fileChooser = new JFileChooser();
-            String lastBrowsedDirectory = SystemProperties.getInstance().get(LAST_FILE_BROWSE_LOCATION_KEY, "");
-
-            File browseDirectory;
-
-            if(lastBrowsedDirectory != null && !lastBrowsedDirectory.isEmpty())
-            {
-                browseDirectory = new File(lastBrowsedDirectory);
-            }
-            else
-            {
-                browseDirectory = mUserPreferences.getDirectoryPreference().getDefaultRecordingDirectory().toFile();
-            }
-
-            fileChooser.setCurrentDirectory(browseDirectory);
+            fileChooser.setCurrentDirectory(
+                mUserPreferences.getDirectoryPreference().getLastRecordingBrowseDirectory().toFile());
             fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
             fileChooser.setFileFilter(new FileFilter()
             {
@@ -121,7 +107,7 @@ public class AddRecordingTunerDialog extends JFrame
 
             if(lastDirectory != null)
             {
-                SystemProperties.getInstance().set(LAST_FILE_BROWSE_LOCATION_KEY, lastDirectory.getAbsolutePath());
+                mUserPreferences.getDirectoryPreference().setLastRecordingBrowseDirectory(lastDirectory.toPath());
             }
 
             if(returnVal == JFileChooser.APPROVE_OPTION)

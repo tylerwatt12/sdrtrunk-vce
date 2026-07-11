@@ -37,6 +37,7 @@ public enum PreferenceType
     PLAYBACK,
     RADIO_REFERENCE,
     RECORD,
+    SPECTRUM,
     TALKGROUP_FORMAT,
     TUNER,
     VOICE_DECRYPTION_MODULE;

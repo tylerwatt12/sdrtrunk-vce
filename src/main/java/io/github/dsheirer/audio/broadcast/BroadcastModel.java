@@ -24,7 +24,6 @@ import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.ThreadPool;
@@ -54,7 +53,6 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
 {
     private static final Logger mLog = LoggerFactory.getLogger(BroadcastModel.class);
 
-    public static final String TEMPORARY_STREAM_DIRECTORY = "streaming";
     public static final String TEMPORARY_STREAM_FILE_SUFFIX = "temporary_streaming_file_";
 
     private static final String UNIQUE_NAME_REGEX = "(.*)\\((\\d*)\\)";
@@ -693,7 +691,7 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
         {
             try
             {
-                Path path = SystemProperties.getInstance().getApplicationFolder(BroadcastModel.TEMPORARY_STREAM_DIRECTORY);
+                Path path = mUserPreferences.getDirectoryPreference().getDirectoryStreaming();
 
                 if(path != null && Files.isDirectory(path))
                 {

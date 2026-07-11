@@ -34,7 +34,7 @@ import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentif
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.application.ApplicationInfo;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
@@ -80,7 +80,7 @@ public class AudioMetadataUtils
     {
         Map<AudioMetadata, String> audioMetadata = new EnumMap<>(AudioMetadata.class);
         StringBuilder comments = new StringBuilder();
-        audioMetadata.put(AudioMetadata.COMPOSER, SystemProperties.getInstance().getApplicationName());
+        audioMetadata.put(AudioMetadata.COMPOSER, ApplicationInfo.getDisplayName());
         LocalDateTime now = LocalDateTime.now();
         String dateCreated = SDF.format(now);
         audioMetadata.put(AudioMetadata.DATE_CREATED, dateCreated);

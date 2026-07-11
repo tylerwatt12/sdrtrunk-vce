@@ -24,7 +24,7 @@ import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3AudioConverter;
 import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.util.ThreadPool;
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
@@ -280,7 +280,7 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
                 mHTTPHeaders = new HashMap<>();
                 mHTTPHeaders.put(IcecastHeader.ACCEPT.getValue(), "*/*");
                 mHTTPHeaders.put(IcecastHeader.CONTENT_TYPE.getValue(), getConfiguration().getBroadcastFormat().getValue());
-                mHTTPHeaders.put(IcecastHeader.USER_AGENT.getValue(), SystemProperties.getInstance().getApplicationName());
+                mHTTPHeaders.put(IcecastHeader.USER_AGENT.getValue(), ApplicationInfo.getDisplayName());
                 mHTTPHeaders.put(IcecastHeader.AUTHORIZATION.getValue(), getConfiguration().getBase64EncodedCredentials());
                 mHTTPHeaders.put(IcecastHeader.PUBLIC.getValue(), getConfiguration().isPublic() ? "1" : "0");
 

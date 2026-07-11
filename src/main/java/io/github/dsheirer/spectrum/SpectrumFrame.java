@@ -19,6 +19,7 @@
 package io.github.dsheirer.spectrum;
 
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
@@ -37,7 +38,7 @@ public class SpectrumFrame extends JFrame
     private SpectralDisplayPanel mSpectralDisplayPanel;
 
     public SpectrumFrame(ConfigurationManager configurationManager, SettingsManager settingsManager,
-                         DiscoveredTunerModel discoveredTunerModel, Tuner tuner)
+                         DiscoveredTunerModel discoveredTunerModel, Tuner tuner, UserPreferences userPreferences)
     {
         setTitle("sdrtrunk-vce [" + tuner.getPreferredName() + "]");
         setBounds(100, 100, 1280, 600);
@@ -45,7 +46,8 @@ public class SpectrumFrame extends JFrame
 
         setLayout(new MigLayout("insets 0 0 0 0", "[grow]", "[grow]"));
 
-        mSpectralDisplayPanel = new SpectralDisplayPanel(configurationManager, settingsManager, discoveredTunerModel);
+        mSpectralDisplayPanel = new SpectralDisplayPanel(configurationManager, settingsManager, discoveredTunerModel,
+            userPreferences, null);
 
         mSpectralDisplayPanel.showTuner(tuner);
         add(mSpectralDisplayPanel, "grow");

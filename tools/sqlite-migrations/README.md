@@ -15,6 +15,18 @@ The global SDRTrunk database normally lives at:
 
 ## Available Migrations
 
+### Legacy properties and tuner settings
+
+After stopping SDRTrunk, this one-off tool moves the old `application_settings/default` UI payload,
+`SDRTrunk.properties`, and `tuner_configuration.json` into the new keyed SQLite settings. It backs up the database,
+verifies the result, and leaves both source files unchanged. Runtime SDRTrunk does not read or migrate these files.
+
+```bash
+java --enable-native-access=ALL-UNNAMED -cp "/path/to/sdrtrunk-vce/lib/*" \
+  tools/settings-migrations/LegacySettingsToSqlite.java \
+  /path/to/sdrtrunk.sqlite /path/to/SDRTrunk.properties /path/to/tuner_configuration.json
+```
+
 ### P25 history v11 to v12
 
 Rebuilds P25 ownership so radios and talkgroups belong to WACN plus System ID while GUID remains the site identity:

@@ -26,7 +26,7 @@ import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3AudioConverter;
 import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.util.ThreadPool;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -317,7 +317,7 @@ public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster<IcecastT
 
             sb.append("Authorization: ").append(getConfiguration().getBase64EncodedCredentials()).append(TERMINATOR);
             sb.append(IcecastHeader.USER_AGENT.getValue()).append(SEPARATOR)
-                .append(SystemProperties.getInstance().getApplicationName()).append(TERMINATOR);
+                .append(ApplicationInfo.getDisplayName()).append(TERMINATOR);
             sb.append(IcecastHeader.CONTENT_TYPE.getValue()).append(SEPARATOR)
                 .append(getConfiguration().getBroadcastFormat().getValue()).append(TERMINATOR);
             sb.append(IcecastHeader.PUBLIC.getValue()).append(SEPARATOR)

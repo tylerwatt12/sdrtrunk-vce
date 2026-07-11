@@ -99,7 +99,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private SelectedFrequencyContext mSelectedFrequencyContext;
     private TunerChannelSource mRfProbeSource;
     private final ComplexSamplesToNativeBufferModule mSampleStreamTapModule = new ComplexSamplesToNativeBufferModule();
-    private final ComplexDftProcessor mComplexDftProcessor = new ComplexDftProcessor();
+    private final ComplexDftProcessor mComplexDftProcessor;
     private SpectrumPanel mSpectrumPanel;
     private final FrequencyOverlayPanel mFrequencyOverlayPanel;
     private final transient SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
@@ -128,6 +128,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         mConfigurationManager = configurationManager;
         mTunerManager = configurationManager.getTunerManager();
         mUserPreferences = userPreferences;
+        mComplexDftProcessor = new ComplexDftProcessor(mUserPreferences.getSpectrumPreference());
         mNoiseSquelchView = new NoiseSquelchView(mConfigurationManager);
         mSignalPowerView = new SignalPowerView(mConfigurationManager);
         setLayout(new MigLayout("insets 0", GROW_FILL, GROW_FILL));

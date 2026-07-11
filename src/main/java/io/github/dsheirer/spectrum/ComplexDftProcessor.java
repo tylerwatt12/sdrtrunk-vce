@@ -22,7 +22,7 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.dsp.window.WindowType;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.preference.spectrum.SpectrumPreference;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.spectrum.converter.DFTResultsConverter;
 import java.io.IOException;
@@ -43,8 +43,6 @@ import org.slf4j.LoggerFactory;
 public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthChangeProcessor
 {
     private static final Logger mLog = LoggerFactory.getLogger(ComplexDftProcessor.class);
-    private static final String FRAME_RATE_PROPERTY = "spectral.display.frame.rate";
-
     //The Cosine and Hann windows seem to offer the best spectral display with minimal bin leakage/smearing
     private WindowType mWindowType = WindowType.BLACKMAN_HARRIS_7;
     private float[] mWindow;
@@ -52,6 +50,7 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     private DFTSize mNewDFTSize = DFTSize.FFT04096;
     private FloatFFT_1D mFFT = new FloatFFT_1D(mDFTSize.getSize());
     private int mFrameRate;
+    private final SpectrumPreference mSpectrumPreference;
     private AtomicBoolean mRunning = new AtomicBoolean();
     private ScheduledFuture<?> mProcessorTaskHandle;
     private ScheduledExecutorService mExecutorService = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk dft processor"));
@@ -62,7 +61,13 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
 
     public ComplexDftProcessor()
     {
-        mFrameRate = SystemProperties.getInstance().get(FRAME_RATE_PROPERTY, 20);
+        this(null);
+    }
+
+    public ComplexDftProcessor(SpectrumPreference spectrumPreference)
+    {
+        mSpectrumPreference = spectrumPreference;
+        mFrameRate = spectrumPreference != null ? spectrumPreference.getFrameRate() : 20;
         setWindowType(mWindowType);
         start();
     }
@@ -119,7 +124,10 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
         }
 
         mFrameRate = framesPerSecond;
-        SystemProperties.getInstance().set(FRAME_RATE_PROPERTY, mFrameRate);
+        if(mSpectrumPreference != null)
+        {
+            mSpectrumPreference.setFrameRate(mFrameRate);
+        }
         restart();
     }
 

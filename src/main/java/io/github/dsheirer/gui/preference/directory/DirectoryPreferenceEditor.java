@@ -55,11 +55,6 @@ public class DirectoryPreferenceEditor extends HBox
     private Button mResetApplicationLogsButton;
     private Label mApplicationLogsPathLabel;
 
-    private Label mConfigurationLabel;
-    private Button mChangeConfigurationButton;
-    private Button mResetConfigurationButton;
-    private Label mConfigurationPathLabel;
-
     private Label mEventLogsLabel;
     private Button mChangeEventLogsButton;
     private Button mResetEventLogsButton;
@@ -134,19 +129,6 @@ public class DirectoryPreferenceEditor extends HBox
 
             GridPane.setMargin(getResetApplicationLogsButton(), new Insets(2, 0, 2, 0));
             mEditorPane.add(getResetApplicationLogsButton(), 3, row++);
-
-
-            GridPane.setMargin(getConfigurationLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getConfigurationLabel(), 0, row);
-
-            GridPane.setMargin(getConfigurationPathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getConfigurationPathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeConfigurationButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeConfigurationButton(), 2, row);
-
-            GridPane.setMargin(getResetConfigurationButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetConfigurationButton(), 3, row++);
 
 
             GridPane.setMargin(getEventLogsLabel(), new Insets(0, 10, 0, 0));
@@ -302,47 +284,6 @@ public class DirectoryPreferenceEditor extends HBox
         }
 
         return mApplicationLogsPathLabel;
-    }
-
-    private Label getConfigurationLabel()
-    {
-        if(mConfigurationLabel == null)
-        {
-            mConfigurationLabel = new Label("Configuration");
-        }
-
-        return mConfigurationLabel;
-    }
-
-    private Button getChangeConfigurationButton()
-    {
-        if(mChangeConfigurationButton == null)
-        {
-            mChangeConfigurationButton = createChangeButton("Select Configuration Folder",
-                mDirectoryPreference::getDirectoryConfiguration, mDirectoryPreference::setDirectoryConfiguration);
-        }
-
-        return mChangeConfigurationButton;
-    }
-
-    private Button getResetConfigurationButton()
-    {
-        if(mResetConfigurationButton == null)
-        {
-            mResetConfigurationButton = createResetButton(mDirectoryPreference::resetDirectoryConfiguration);
-        }
-
-        return mResetConfigurationButton;
-    }
-
-    private Label getConfigurationPathLabel()
-    {
-        if(mConfigurationPathLabel == null)
-        {
-            mConfigurationPathLabel = new Label(mDirectoryPreference.getDirectoryConfiguration().toString());
-        }
-
-        return mConfigurationPathLabel;
     }
 
     private Label getEventLogsLabel()

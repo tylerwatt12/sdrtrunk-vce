@@ -21,6 +21,7 @@ package io.github.dsheirer.gui;
 import com.jidesoft.plaf.LookAndFeelFactory;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
@@ -54,7 +55,6 @@ import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultExceptio
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
-import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
@@ -235,12 +235,6 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         ThreadPool.logSettings();
 
-        //Load properties file
-        loadProperties();
-
-        //Log current properties setting
-        SystemProperties.getInstance().logCurrentSettings();
-
         //Register FontAwesome so we can use the fonts in Swing windows
         IconFontSwing.register(FontAwesome.getIconFont());
 
@@ -306,7 +300,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             mTunerManager.getDiscoveredTunerModel(), mUserPreferences, SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER);
 
         mTunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
-            mConfigurationManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel());
+            mConfigurationManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel(), mUserPreferences);
         mTunerManager.getDiscoveredTunerModel().addListener(mTunerSpectralDisplayManager);
         mTunerManager.getDiscoveredTunerModel().addListener(this);
 
@@ -563,7 +557,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         /**
          * Setup main JFrame window
          */
-        mTitle = SystemProperties.getInstance().getApplicationName();
+        mTitle = ApplicationInfo.getDisplayName();
         mMainGui.setTitle(mTitle);
 
         Point location = mUserPreferences.getSwingPreference().getLocation(WINDOW_FRAME_IDENTIFIER);
@@ -626,7 +620,7 @@ public class SDRTrunk implements Listener<TunerEvent>
                 }
             }
         });
-        mSpectralPanelVisible = SystemProperties.getInstance().get(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
+        mSpectralPanelVisible = mUserPreferences.getSpectrumPreference().isDisplayEnabled();
 
         if(mSpectralPanelVisible)
         {
@@ -1049,7 +1043,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mSplitPane.add(mSpectralPanel, 0);
             mSpectralPanelVisible = true;
-            SystemProperties.getInstance().set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
+            mUserPreferences.getSpectrumPreference().setDisplayEnabled(true);
             mMainSplitPaneDividerRestored = false;
             restoreMainSplitPaneDividerLocation();
             EventQueue.invokeLater(this::restoreMainSplitPaneDividerLocation);
@@ -1079,7 +1073,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             mSpectralPanel.clearTuner();
             mSplitPane.remove(mSpectralPanel);
             mSpectralPanelVisible = false;
-            SystemProperties.getInstance().set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, false);
+            mUserPreferences.getSpectrumPreference().setDisplayEnabled(false);
             updateTitle(null);
         }
 
@@ -1145,38 +1139,6 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         return mResourceStatusPanel;
     }
-
-    /**
-     * Loads the application properties file from the user's home directory,
-     * creating the properties file for the first-time, if necessary
-     */
-    private void loadProperties()
-    {
-        Path propertiesPath = mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot().resolve("SDRTrunk.properties");
-
-        if(!Files.exists(propertiesPath))
-        {
-            try
-            {
-                mLog.info("SDRTrunk - creating application properties file [" + propertiesPath.toAbsolutePath() + "]");
-                Files.createFile(propertiesPath);
-            }
-            catch(IOException e)
-            {
-                mLog.error("SDRTrunk - couldn't create application properties file [" + propertiesPath.toAbsolutePath(), e);
-            }
-        }
-
-        if(Files.exists(propertiesPath))
-        {
-            SystemProperties.getInstance().load(propertiesPath);
-        }
-        else
-        {
-            mLog.error("SDRTrunk - couldn't find or recreate the SDRTrunk application properties file");
-        }
-    }
-
 
     @Override
     public void receive(TunerEvent event)
@@ -1305,7 +1267,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
                     for(DiscoveredTuner discoveredTuner: mTunerManager.getAvailableTuners())
                     {
-                        add(new ShowTunerMenuItem(mTunerManager.getDiscoveredTunerModel(), discoveredTuner.getTuner()));
+                        add(new ShowTunerMenuItem(mTunerManager.getDiscoveredTunerModel(), discoveredTuner.getTuner(),
+                            mUserPreferences.getSpectrumPreference()));
                     }
                 }
 

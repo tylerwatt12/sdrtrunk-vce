@@ -33,7 +33,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
-import io.github.dsheirer.properties.SystemProperties;
+import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.ColorSetting;
 import io.github.dsheirer.settings.Setting;
@@ -58,12 +58,6 @@ import javax.swing.JPanel;
 public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, SettingChangeListener
 {
     private static final long serialVersionUID = 1L;
-
-    public static final String PROPERTY_PREFIX = "audio.channel.panel.color.";
-    public static final String PROPERTY_COLOR_BACKGROUND = PROPERTY_PREFIX + "background";
-    public static final String PROPERTY_COLOR_LABEL = PROPERTY_PREFIX + "label";
-    public static final String PROPERTY_COLOR_MUTED = PROPERTY_PREFIX + "muted";
-    public static final String PROPERTY_COLOR_VALUE = PROPERTY_PREFIX + "value";
 
     private final transient AudioChannel mAudioChannel;
     private final transient AliasModel mAliasModel;
@@ -109,10 +103,10 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
             mAudioChannel.setIdentifierCollectionListener(new AudioMetadataProcessor());
         }
 
-        mBackgroundColor = SystemProperties.getInstance().get(PROPERTY_COLOR_BACKGROUND, Color.BLACK);
-        mLabelColor = SystemProperties.getInstance().get(PROPERTY_COLOR_LABEL, Color.LIGHT_GRAY);
-        mMutedColor = SystemProperties.getInstance().get(PROPERTY_COLOR_MUTED, Color.RED);
-        mValueColor = SystemProperties.getInstance().get(PROPERTY_COLOR_VALUE, Color.GREEN);
+        mBackgroundColor = mSettingsManager.getColorSetting(ColorSettingName.AUDIO_CHANNEL_BACKGROUND).getColor();
+        mLabelColor = mSettingsManager.getColorSetting(ColorSettingName.AUDIO_CHANNEL_LABEL).getColor();
+        mMutedColor = mSettingsManager.getColorSetting(ColorSettingName.AUDIO_CHANNEL_MUTED).getColor();
+        mValueColor = mSettingsManager.getColorSetting(ColorSettingName.AUDIO_CHANNEL_VALUE).getColor();
 
         init();
     }

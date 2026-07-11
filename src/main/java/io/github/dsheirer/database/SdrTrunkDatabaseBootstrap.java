@@ -16,10 +16,8 @@ import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import java.awt.GraphicsEnvironment;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.sql.SQLException;
 import java.util.Optional;
 import javax.swing.JFileChooser;
@@ -68,7 +66,6 @@ public final class SdrTrunkDatabaseBootstrap
             return false;
         }
 
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(databasePath);
         prepareVault(dataRoot);
         return true;
     }
@@ -166,21 +163,7 @@ public final class SdrTrunkDatabaseBootstrap
 
     private static void createFresh(Path databasePath) throws IOException, SQLException
     {
-        Files.createDirectories(databasePath.toAbsolutePath().normalize().getParent());
-        Path temporary = databasePath.resolveSibling(databasePath.getFileName() + ".creating");
-        deleteDatabaseFiles(temporary);
-
-        try
-        {
-            SdrTrunkDatabaseStartup.createGlobalDatabase(temporary);
-            SdrTrunkDatabaseStartup.validateGlobalDatabase(temporary);
-            move(temporary, databasePath);
-        }
-        catch(IOException | SQLException | RuntimeException e)
-        {
-            deleteDatabaseFiles(temporary);
-            throw e;
-        }
+        DatabaseFileInstaller.install(databasePath, SdrTrunkDatabaseStartup::createGlobalDatabase);
     }
 
     private static void prepareVault(Path dataRoot) throws IOException, SQLException
@@ -193,40 +176,8 @@ public final class SdrTrunkDatabaseBootstrap
         }
         else
         {
-            Path temporary = vault.resolveSibling(vault.getFileName() + ".creating");
-            deleteDatabaseFiles(temporary);
-
-            try
-            {
-                SdrTrunkDatabaseStartup.createVaultDatabase(temporary);
-                SdrTrunkDatabaseStartup.validateVaultDatabase(temporary);
-                move(temporary, vault);
-            }
-            catch(IOException | SQLException | RuntimeException e)
-            {
-                deleteDatabaseFiles(temporary);
-                throw e;
-            }
+            DatabaseFileInstaller.install(vault, SdrTrunkDatabaseStartup::createVaultDatabase);
         }
-    }
-
-    private static void move(Path source, Path target) throws IOException
-    {
-        try
-        {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-        }
-        catch(AtomicMoveNotSupportedException e)
-        {
-            Files.move(source, target);
-        }
-    }
-
-    private static void deleteDatabaseFiles(Path database) throws IOException
-    {
-        Files.deleteIfExists(database);
-        Files.deleteIfExists(database.resolveSibling(database.getFileName() + "-wal"));
-        Files.deleteIfExists(database.resolveSibling(database.getFileName() + "-shm"));
     }
 
     private enum Action { FRESH, IMPORT, BROWSE, QUIT }

@@ -30,7 +30,6 @@ import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
 import io.github.dsheirer.settings.ColorSettingMenuItem;
@@ -86,8 +85,6 @@ public class SpectralDisplayPanel extends JPanel
     private static final long serialVersionUID = 1L;
 
 
-    public static final String FFT_SIZE_PROPERTY = "spectral.display.dft.size";
-    public static final String SPECTRAL_DISPLAY_ENABLED = "spectral.display.enabled";
     public static final int NO_ZOOM = 0;
     public static final int MAX_ZOOM = 6;
     private static final String DEFAULT_DIVIDER_SUFFIX = ".divider";
@@ -151,30 +148,8 @@ public class SpectralDisplayPanel extends JPanel
 
     private void loadSettings()
     {
-        SystemProperties properties = SystemProperties.getInstance();
-
-        String rawSize = properties.get(FFT_SIZE_PROPERTY, DFTSize.FFT04096.name());
-
-        DFTSize size = null;
-
-        if(rawSize != null)
-        {
-            try
-            {
-                size = DFTSize.valueOf(rawSize);
-            }
-            catch(Exception e)
-            {
-                //Do nothing
-            }
-        }
-
-        if(size == null)
-        {
-            size = DFTSize.FFT04096;
-        }
-
-        setDFTSize(size, false);
+        setDFTSize(mUserPreferences != null ? mUserPreferences.getSpectrumPreference().getDftSize() :
+            DFTSize.FFT04096, false);
     }
 
     public void dispose()
@@ -214,7 +189,10 @@ public class SpectralDisplayPanel extends JPanel
 
         if(save)
         {
-            SystemProperties.getInstance().set(FFT_SIZE_PROPERTY, size.name());
+            if(mUserPreferences != null)
+            {
+                mUserPreferences.getSpectrumPreference().setDftSize(size);
+            }
         }
 
         setZoom(0, 0, 0);
@@ -419,7 +397,8 @@ public class SpectralDisplayPanel extends JPanel
          * Setup DFTProcessor to process samples and register the waterfall and
          * spectrum panel to receive the processed dft results
          */
-        mComplexDftProcessor = new ComplexDftProcessor();
+        mComplexDftProcessor = new ComplexDftProcessor(
+            mUserPreferences != null ? mUserPreferences.getSpectrumPreference() : null);
         mDFTConverter = new ComplexDecibelConverter();
         mComplexDftProcessor.addConverter(mDFTConverter);
 
@@ -793,7 +772,8 @@ public class SpectralDisplayPanel extends JPanel
                 if(mTuner != null)
                 {
                     contextMenu.add(new JSeparator());
-                    contextMenu.add(new DisableSpectrumWaterfallMenuItem(SpectralDisplayPanel.this));
+                    contextMenu.add(new DisableSpectrumWaterfallMenuItem(SpectralDisplayPanel.this,
+                        mUserPreferences != null ? mUserPreferences.getSpectrumPreference() : null));
                 }
 
                 boolean separatorAdded = false;
@@ -808,7 +788,8 @@ public class SpectralDisplayPanel extends JPanel
                             separatorAdded = true;
                         }
 
-                        contextMenu.add(new ShowTunerMenuItem(mDiscoveredTunerModel, discoveredTuner.getTuner()));
+                        contextMenu.add(new ShowTunerMenuItem(mDiscoveredTunerModel, discoveredTuner.getTuner(),
+                            mUserPreferences != null ? mUserPreferences.getSpectrumPreference() : null));
                     }
                 }
 
