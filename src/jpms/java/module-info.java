@@ -18,7 +18,6 @@ open module sdr.trunk {
     requires com.miglayout.swing;
     requires commons.math3;
     requires io.github.dsheirer.rrapi;
-    requires jarchivelib;
     requires java.desktop;
     requires java.management;
     requires java.net.http;

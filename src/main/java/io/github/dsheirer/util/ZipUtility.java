@@ -1,18 +1,17 @@
 package io.github.dsheirer.util;
 
-import org.rauschig.jarchivelib.ArchiveFormat;
-import org.rauschig.jarchivelib.Archiver;
-import org.rauschig.jarchivelib.ArchiverFactory;
-
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 /**
@@ -144,9 +143,47 @@ public class ZipUtility
      */
     public static Path unzip(Path zipFile) throws IOException
     {
-        Path parent = zipFile.getParent();
-        Archiver archiver = ArchiverFactory.createArchiver(ArchiveFormat.ZIP);
-        archiver.extract(zipFile.toFile(), parent.toFile());
+        Path parent = zipFile.toAbsolutePath().normalize().getParent();
+
+        if(parent == null)
+        {
+            throw new IOException("ZIP file has no parent directory: " + zipFile);
+        }
+
+        try(ZipInputStream zipInputStream = new ZipInputStream(
+            new BufferedInputStream(Files.newInputStream(zipFile))))
+        {
+            ZipEntry entry;
+
+            while((entry = zipInputStream.getNextEntry()) != null)
+            {
+                Path target = parent.resolve(entry.getName()).normalize();
+
+                if(!target.startsWith(parent))
+                {
+                    throw new IOException("ZIP entry is outside the destination directory: " + entry.getName());
+                }
+
+                if(entry.isDirectory())
+                {
+                    Files.createDirectories(target);
+                }
+                else
+                {
+                    Path targetParent = target.getParent();
+
+                    if(targetParent != null)
+                    {
+                        Files.createDirectories(targetParent);
+                    }
+
+                    Files.copy(zipInputStream, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+
+                zipInputStream.closeEntry();
+            }
+        }
+
         return parent;
     }
 }

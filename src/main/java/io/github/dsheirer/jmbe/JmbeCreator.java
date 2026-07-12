@@ -25,6 +25,7 @@ import io.github.dsheirer.jmbe.github.Release;
 import io.github.dsheirer.util.FileUtil;
 import io.github.dsheirer.util.OSType;
 import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.util.ZipUtility;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -36,9 +37,6 @@ import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import org.apache.commons.io.FileUtils;
-import org.rauschig.jarchivelib.ArchiveFormat;
-import org.rauschig.jarchivelib.Archiver;
-import org.rauschig.jarchivelib.ArchiverFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -143,9 +141,7 @@ public class JmbeCreator
                     if(creator != null)
                     {
                         printToConsole("Downloaded: JMBE Creator [" + creator.toString() + "]");
-                        Path unzipped = creator.getParent();
-                        Archiver archiver = ArchiverFactory.createArchiver(ArchiveFormat.ZIP);
-                        archiver.extract(creator.toFile(), unzipped.toFile());
+                        Path unzipped = ZipUtility.unzip(creator);
                         printToConsole("Unzipped: [" + unzipped.toString() + "]");
 
                         Path script = null;
@@ -172,7 +168,14 @@ public class JmbeCreator
                                 tagName = "v" + mRelease.getVersion();
                             }
 
-                            processBuilder.command(script.toString(), mLibraryPath.toString(), tagName);
+                            if(osType.isLinux() || osType.isOsx())
+                            {
+                                processBuilder.command("sh", script.toString(), mLibraryPath.toString(), tagName);
+                            }
+                            else
+                            {
+                                processBuilder.command(script.toString(), mLibraryPath.toString(), tagName);
+                            }
                             processBuilder.redirectErrorStream(true);
                             runScript(processBuilder);
                         }
