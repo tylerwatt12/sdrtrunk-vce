@@ -693,7 +693,7 @@ public class NxdnViewer extends VBox
 
     static void main() throws IOException
     {
-        Path directory = Paths.get("/home/denny/SDRTrunk/recordings");
+        Path directory = Paths.get(System.getProperty("user.home"), "SDRTrunk", "recordings");
         int target = 0;
         Path output = directory.resolve(target == 0 ? "GPS.txt" : "GPS_" + target + ".txt");
         A a = new A(output, target);

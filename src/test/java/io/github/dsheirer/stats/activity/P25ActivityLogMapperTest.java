@@ -214,7 +214,7 @@ class P25ActivityLogMapperTest
     void mapsSiteSnapshot()
     {
         Channel channel = new Channel("Example Site", ChannelType.STANDARD);
-        channel.setAliasListName("Example System A");
+        channel.setAliasListName("Example System");
         channel.setRadresGuid(GUID);
 
         P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25-1",

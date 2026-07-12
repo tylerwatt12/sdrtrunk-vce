@@ -7,6 +7,68 @@ portable storage, expanded playback controls, and substantial DSP and runtime op
 
 This project is currently an **alpha release**. Back up important receiver data before testing a new build.
 
+## Highlights
+
+1. **Systems-based activity screen**
+
+   The old Now Playing list is replaced with stable tabs for conventional channels and individual trunked sites.
+   Frequencies remain in fixed rows instead of constantly appearing, disappearing, and moving around.
+
+2. **Built-in web interface**
+
+   SDRTrunk can host its own website without Apache, PHP, or XAMPP. From a browser, you can inspect systems, sites,
+   channels, talkgroups, radios, affiliations, neighbors, band plans, patches, and activity.
+
+3. **Browser-based scanner audio**
+
+   The website has an independent scanner-style audio player. Calls automatically enter a queue and play in order,
+   with browser-local mute, hold, avoid, clear, skip, and queue-limit controls.
+
+4. **Portable SQLite configuration**
+
+   Channels, aliases, streaming settings, tuner settings, preferences, and statistics stay inside the installation.
+   Extracted copies are self-contained and do not overwrite another SDRTrunk installation.
+
+5. **Automatic XML upgrade**
+
+   On first launch, the application can locate an older SDRTrunk XML playlist and import it into the portable SQLite
+   database. The original XML remains unchanged.
+
+6. **Long-term radio statistics**
+
+   Optional SQLite logging tracks talkgroups, radios, affiliations, frequencies, sites, patches, band plans, and
+   activity counts. It supports compact summaries or detailed history with configurable retention.
+
+7. **More reliable P25 site information**
+
+   P25 system facts are learned quickly at startup and then require repeated confirmation before later changes are
+   accepted. This helps prevent bad decodes from creating bogus frequencies, neighbors, controls, or identities.
+
+8. **Clear conventional and trunked separation**
+
+   P25 Conventional is a dedicated channel type. It cannot accidentally appear as a trunked system or feed trunked-site
+   metadata.
+
+9. **Improved local audio playback**
+
+   Desktop playback includes Hold, Avoid, Clear, persistent mute, a queue counter, and a configurable backlog. Cleaner
+   call ownership also reduces dropped, duplicated, and stuck calls.
+
+10. **Major performance improvements**
+
+    Frequently used DSP buffers are reused, short-lived traffic channels share worker threads, and frequency correction
+    uses one timer per tuner. These changes reduce memory allocation, garbage collection, and thread overhead.
+
+11. **Stable control-channel learning**
+
+    SDRTrunk can automatically learn announced control channels, while later discoveries must pass stabilization checks.
+    This reduces false frequencies caused by occasional decoding errors.
+
+12. **Self-contained releases**
+
+    Windows, macOS, and Linux packages include Java. Users do not need a separate Java installation, and website files
+    can be edited without recompiling the application.
+
 ## Relationship To Mainline
 
 The common ancestor with official sdrtrunk is commit `a0533156` from February 19, 2026. The comparison in this document

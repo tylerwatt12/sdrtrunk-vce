@@ -116,7 +116,7 @@ class LegacyXmlConfigurationImporterTest
                 <id type="priority" priority="50"/>
                 <id type="talkgroupRange" protocol="APCO25" min="2000" max="2005"/>
               </alias>
-              <stream type="RADIORESOLVE" broadcast_format="MP3" name="RadioResolve" host="http://198.51.100.10:8080"
+              <stream type="RADIORESOLVE" broadcast_format="MP3" name="RadioResolve" host="https://example.invalid/upload"
                   api_key="test-api-key" node_name="TEST-NODE" node_timezone="America/New_York" enabled="true"
                   maximum_recording_age="600000" mode="CALLS_AND_METADATA" concurrent_uploads="4"/>
               <channel_map name="County Map">

@@ -46,7 +46,7 @@ Windows PowerShell:
 
 ```powershell
 tools\sqlite-migrations\p25-history\migrate-v11-to-v12-system-identity.ps1 `
-  -AppHome C:\Users\Example\Desktop\sdrtrunk-vce
+  -AppHome C:\path\to\sdrtrunk-vce
 ```
 
 ### Reset Stats Server schema to v13
@@ -73,8 +73,8 @@ Windows PowerShell:
 
 ```powershell
 tools\sqlite-migrations\p25-history\reset-stats-schema-to-v13.ps1 `
-  -InstallDir C:\Users\Example\Desktop\sdrtrunk-vce `
-  -Database C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite
+  -InstallDir C:\path\to\sdrtrunk-vce `
+  -Database C:\path\to\sdrtrunk.sqlite
 ```
 
 ### Normalize Stats Server hits to grants
@@ -118,7 +118,7 @@ tools/sqlite-migrations/p25-history/migrate-v9-to-v10-compact-activity.sh /path/
 
 ```powershell
 tools\sqlite-migrations\p25-history\migrate-v9-to-v10-compact-activity.ps1 `
-  -DatabasePath C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite
+  -DatabasePath C:\path\to\sdrtrunk.sqlite
 ```
 
 ### P25 history v8 to v9
@@ -146,7 +146,7 @@ tools/sqlite-migrations/p25-history/migrate-v8-to-v9-drop-neighbor-nac.sh /path/
 
 ```powershell
 tools\sqlite-migrations\p25-history\migrate-v8-to-v9-drop-neighbor-nac.ps1 `
-  -DatabasePath C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite
+  -DatabasePath C:\path\to\sdrtrunk.sqlite
 ```
 
 Each wrapper uses Java source-file mode with the SDRTrunk distribution `lib` directory on the classpath. The wrappers run
@@ -162,7 +162,7 @@ tools/sqlite-migrations/p25-history/migrate-v8-to-v9-drop-neighbor-nac.sh \
 
 ```powershell
 tools\sqlite-migrations\p25-history\migrate-v8-to-v9-drop-neighbor-nac.ps1 `
-  -DatabasePath C:\Users\Example\SDRTrunk\database\sdrtrunk.sqlite `
-  -AppHome C:\Users\Example\Desktop\sdrtrunk-vce `
-  -JavaHome C:\Users\Example\Java\jdk-25.0.1-full
+  -DatabasePath C:\path\to\sdrtrunk.sqlite `
+  -AppHome C:\path\to\sdrtrunk-vce `
+  -JavaHome C:\path\to\jdk-25
 ```

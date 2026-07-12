@@ -69,7 +69,7 @@ class ConfigurationDatabaseStoreTest
 
         RadioResolveConfiguration stream = new RadioResolveConfiguration();
         stream.setName("RadioResolve");
-        stream.setHost("http://198.51.100.10:8080");
+        stream.setHost("https://example.invalid/upload");
         stream.setApiKey("test-api-key");
         stream.setNodeName("TEST-NODE");
         stream.setEnabled(true);
@@ -110,7 +110,7 @@ class ConfigurationDatabaseStoreTest
         assertInstanceOf(RadioResolveConfiguration.class, loadedStream);
         RadioResolveConfiguration loadedRadioResolve = (RadioResolveConfiguration)loadedStream;
         assertEquals("RadioResolve", loadedRadioResolve.getName());
-        assertEquals("http://198.51.100.10:8080", loadedRadioResolve.getHost());
+        assertEquals("https://example.invalid/upload", loadedRadioResolve.getHost());
         assertEquals("test-api-key", loadedRadioResolve.getApiKey());
         assertEquals("TEST-NODE", loadedRadioResolve.getNodeName());
         assertTrue(loadedRadioResolve.isEnabled());
@@ -145,7 +145,7 @@ class ConfigurationDatabaseStoreTest
                 assertTrue(resultSet.next());
                 assertEquals("RADIORESOLVE", resultSet.getString("server_type"));
                 assertEquals(1, resultSet.getInt("enabled"));
-                assertEquals("http://198.51.100.10:8080", resultSet.getString("host"));
+                assertEquals("https://example.invalid/upload", resultSet.getString("host"));
                 assertEquals(80, resultSet.getInt("port"));
             }
         }

@@ -403,7 +403,7 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
             P25ActivityLogRecords.SiteSnapshot empty = new P25ActivityLogRecords.SiteSnapshot(2000L,
                 "123e4567-e89b-12d3-a456-426614174000", P25ActivityLogRecords.ContextKind.TRUNKED_SITE,
-                "changed", "APCO25", "Example Site", "Example System A", "P25-1", 0xBEE00, 0x348, 0x348, 2, 1,
+                "changed", "APCO25", "Example Site", "Example System", "P25-1", 0xBEE00, 0x348, 0x348, 2, 1,
                 856137500L, null, List.of(), List.of(), List.of(), List.of(), List.of());
             P25ActivityLogSchema.insertSite(connection, empty);
 
@@ -659,7 +659,7 @@ class P25ActivityLogWriterTest
             new P25NetworkConfigurationSnapshot.TalkerAlias(1811524, "WPFF205"));
 
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, "123e4567-e89b-12d3-a456-426614174000",
-            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System A", "P25-1",
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
             0xBEE00, 0x348, 0x348, 2, 1, 856137500L, 856137500L, channels, neighbors, bands, patches, aliases);
     }
 }

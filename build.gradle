@@ -387,10 +387,11 @@ String macAppVersion = macAppVersionParts[0] == '0' ?
         '1.' + macAppVersionParts.drop(1).join('.') : macAppVersionParts.join('.')
 
 /**
- * Optional pre-downloaded Java Development Kit (JDK) for each target OS and CPU.  These locations are hard-coded to the
- * author's development environment, but can be changed to your environment if you want to use this build pattern.
+ * Optional pre-downloaded Java Development Kit (JDK) for each target OS and CPU. Set SDRTRUNK_JDK_BASE to override the
+ * default Gradle-user-home cache location.
  */
-String jdk_base = '/home/denny/java_jdks/'
+String jdk_base = (System.getenv('SDRTRUNK_JDK_BASE') ?:
+        new File(gradle.gradleUserHomeDir, 'sdrtrunk-vce-jdks').absolutePath) + File.separator
 String jdk_linux_aarch64 = jdk_base + 'linux-arm64/jdk-25.0.1-full'
 String jdk_linux_x86_64 = jdk_base + 'linux-x64/jdk-25.0.1-full'
 String jdk_osx_x86_64 = jdk_base + 'osx-x64/jdk-25.0.1-full.jdk'

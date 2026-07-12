@@ -48,9 +48,6 @@ public class SLMapServerInfo extends TileFactoryInfo
 		// super(0, pyramid_top-1, pyramid_top,
 		// 675,
 		// true, false, "http://maps.joshy.net/bmng_tiles_2", "", "", "");
-		// super(0, pyramid_top-1, pyramid_top,
-		// normal_tile_size,
-		// true, false, "file:/Users/joshy/projects/java.net/ImageTileCutter/tiles", "", "", "");
 		super(0, pyramid_top - 1, pyramid_top, normal_tile_size, true, false, baseURL, "", "", "");
 		setDefaultZoomLevel(0);
 	}

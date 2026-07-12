@@ -166,35 +166,35 @@ class AliasDatabaseStoreTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
 
-        Alias gcrcn = new Alias("Example System A Dispatch");
-        gcrcn.setAliasListName("Example System A");
-        gcrcn.addAliasID(new Talkgroup(Protocol.APCO25, 1001));
-        ClipAction gcrcnClip = new ClipAction();
-        gcrcnClip.setPath("/tmp/gcrcn.wav");
-        gcrcn.addAliasAction(gcrcnClip);
+        Alias systemA = new Alias("System A Dispatch");
+        systemA.setAliasListName("System A");
+        systemA.addAliasID(new Talkgroup(Protocol.APCO25, 1001));
+        ClipAction systemAClip = new ClipAction();
+        systemAClip.setPath("/tmp/system-a.wav");
+        systemA.addAliasAction(systemAClip);
 
-        Alias marcs = new Alias("Example System B Dispatch");
-        marcs.setAliasListName("Example System B");
-        marcs.addAliasID(new Talkgroup(Protocol.APCO25, 2002));
-        ClipAction marcsClip = new ClipAction();
-        marcsClip.setPath("/tmp/marcs.wav");
-        marcs.addAliasAction(marcsClip);
+        Alias systemB = new Alias("System B Dispatch");
+        systemB.setAliasListName("System B");
+        systemB.addAliasID(new Talkgroup(Protocol.APCO25, 2002));
+        ClipAction systemBClip = new ClipAction();
+        systemBClip.setPath("/tmp/system-b.wav");
+        systemB.addAliasAction(systemBClip);
 
-        store.replaceAliases(List.of(gcrcn, marcs));
+        store.replaceAliases(List.of(systemA, systemB));
 
         List<Alias> aliases = store.loadAliases();
-        Alias loadedGcrcn = getAlias(aliases, "Example System A Dispatch");
-        Alias loadedMarcs = getAlias(aliases, "Example System B Dispatch");
+        Alias loadedSystemA = getAlias(aliases, "System A Dispatch");
+        Alias loadedSystemB = getAlias(aliases, "System B Dispatch");
 
-        assertTrue(hasTalkgroup(loadedGcrcn, Protocol.APCO25, 1001));
-        assertFalse(hasTalkgroup(loadedGcrcn, Protocol.APCO25, 2002));
-        assertTrue(hasTalkgroup(loadedMarcs, Protocol.APCO25, 2002));
-        assertFalse(hasTalkgroup(loadedMarcs, Protocol.APCO25, 1001));
+        assertTrue(hasTalkgroup(loadedSystemA, Protocol.APCO25, 1001));
+        assertFalse(hasTalkgroup(loadedSystemA, Protocol.APCO25, 2002));
+        assertTrue(hasTalkgroup(loadedSystemB, Protocol.APCO25, 2002));
+        assertFalse(hasTalkgroup(loadedSystemB, Protocol.APCO25, 1001));
 
-        assertEquals(1, loadedGcrcn.getAliasActions().size());
-        assertEquals("/tmp/gcrcn.wav", ((ClipAction)loadedGcrcn.getAliasActions().get(0)).getPath());
-        assertEquals(1, loadedMarcs.getAliasActions().size());
-        assertEquals("/tmp/marcs.wav", ((ClipAction)loadedMarcs.getAliasActions().get(0)).getPath());
+        assertEquals(1, loadedSystemA.getAliasActions().size());
+        assertEquals("/tmp/system-a.wav", ((ClipAction)loadedSystemA.getAliasActions().get(0)).getPath());
+        assertEquals(1, loadedSystemB.getAliasActions().size());
+        assertEquals("/tmp/system-b.wav", ((ClipAction)loadedSystemB.getAliasActions().get(0)).getPath());
     }
 
     @Test

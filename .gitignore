@@ -33,3 +33,6 @@ gradle-app.setting
 
 # Cache of project
 .gradletasknamecache
+
+# Local development and deployment instructions
+AGENTS.md
