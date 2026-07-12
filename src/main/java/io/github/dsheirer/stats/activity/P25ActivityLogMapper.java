@@ -24,6 +24,9 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +42,37 @@ class P25ActivityLogMapper
 {
     P25ActivityLogRecords.ActivityEvent map(Channel channel, IDecodeEvent event)
     {
+        return map(channel, event, null);
+    }
+
+    P25ActivityLogRecords.ActivityEvent map(P25CallStartEvent callStart)
+    {
+        if(callStart == null)
+        {
+            return null;
+        }
+
+        return map(callStart.channel(), callStart.event(), P25ActivityLogRecords.Action.CALL);
+    }
+
+    P25ActivityLogRecords.ActivityEvent map(P25GrantObservationEvent observation)
+    {
+        if(observation == null)
+        {
+            return null;
+        }
+
+        IDecodeEvent event = P25DecodeEvent.builder(observation.eventType(), observation.timestamp())
+            .channel(observation.channelDescriptor())
+            .identifiers(observation.identifiers())
+            .build();
+        return map(observation.channel(), event, observation.continuation() ?
+            P25ActivityLogRecords.Action.CONTINUE : P25ActivityLogRecords.Action.GRANT);
+    }
+
+    private P25ActivityLogRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
+                                                     P25ActivityLogRecords.Action actionOverride)
+    {
         if(channel == null || event == null || channel.getDecodeConfiguration() == null)
         {
             return null;
@@ -50,7 +84,7 @@ class P25ActivityLogMapper
         String channelDescriptor = firstNonBlank(descriptor != null ? descriptor.toString() : null,
             facts.channelDescriptor(), facts.logicalChannelName());
         Integer timeslot = event.hasTimeslot() ? Integer.valueOf(event.getTimeslot()) : facts.timeslot();
-        P25ActivityLogRecords.Action action = normalizeAction(event);
+        P25ActivityLogRecords.Action action = actionOverride != null ? actionOverride : normalizeAction(event);
         DecoderType decoderType = channel.getDecodeConfiguration().getDecoderType();
         P25ActivityLogRecords.ContextKind contextKind = contextKind(decoderType);
 
@@ -85,7 +119,8 @@ class P25ActivityLogMapper
         P25ActivityLogRecords.RadioAffiliationUpdate affiliationUpdate = affiliationUpdate(affiliationEvent);
 
         String dedupeKey = null;
-        if(isHighChurnCallEvent(event.getEventType()) || action == P25ActivityLogRecords.Action.CONTINUE)
+        if(actionOverride == null &&
+            (isHighChurnCallEvent(event.getEventType()) || action == P25ActivityLogRecords.Action.CONTINUE))
         {
             dedupeKey = String.join("|",
                 safe(contextKey),
@@ -104,7 +139,9 @@ class P25ActivityLogMapper
             event.getEventType() != null ? event.getEventType().name() : null, sourceRadioId, targetId,
             targetKind, frequency, lcn, timeslot, facts.encrypted(), facts.encryptionAlgorithmId(),
             facts.encryptionKeyId(), facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(),
-            activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(), dedupeKey,
+            activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(),
+            action == P25ActivityLogRecords.Action.CALL &&
+                (contextKind != P25ActivityLogRecords.ContextKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
             affiliationUpdate);
     }
 
@@ -255,20 +292,7 @@ class P25ActivityLogMapper
         }
         if(event instanceof P25ChannelGrantEvent)
         {
-            if(details.contains("CONTINUE") || details.contains("UPDATE"))
-            {
-                return P25ActivityLogRecords.Action.CONTINUE;
-            }
-            if(details.contains("GRANT"))
-            {
-                return P25ActivityLogRecords.Action.GRANT;
-            }
-            if(details.contains("ACTIVE"))
-            {
-                return P25ActivityLogRecords.Action.ACTIVE;
-            }
-
-            return P25ActivityLogRecords.Action.CALL;
+            return P25ActivityLogRecords.Action.ACTIVE;
         }
         if(eventType != null && eventType.isVoiceCallEvent())
         {

@@ -193,7 +193,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("13", resultSet.getString(1));
+                assertEquals("14", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA user_version"))
@@ -208,6 +208,7 @@ class P25ActivityLogWriterTest
             assertColumnAbsent(connection, "p25_radio_summary", "last_lcn");
             assertColumnAbsent(connection, "p25_activity_event", "service");
             assertColumnAbsent(connection, "p25_activity_event", "details");
+            assertColumnAbsent(connection, "p25_talkgroup_summary", "hits");
             assertColumnAbsent(connection, "p25_activity_event", "wacn");
             assertColumnAbsent(connection, "p25_activity_event", "system_id");
             assertColumnAbsent(connection, "p25_activity_event", "nac");
@@ -269,13 +270,14 @@ class P25ActivityLogWriterTest
         {
             P25ActivityLogSchema.recordActivity(connection, activity(1000L, P25ActivityLogRecords.Action.GRANT), true);
             P25ActivityLogSchema.recordActivity(connection, activity(2000L, P25ActivityLogRecords.Action.CONTINUE), true);
+            P25ActivityLogSchema.recordActivity(connection, activity(3000L, P25ActivityLogRecords.Action.CALL), true);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
-                    "SELECT hits, grant_count, continue_count, encrypted_count FROM p25_talkgroup_summary"))
+                    "SELECT call_count, grant_count, continue_count, encrypted_count FROM p25_talkgroup_summary"))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("hits"));
+                assertEquals(1, resultSet.getInt("call_count"));
                 assertEquals(1, resultSet.getInt("grant_count"));
                 assertEquals(1, resultSet.getInt("continue_count"));
                 assertEquals(1, resultSet.getInt("encrypted_count"));
@@ -283,34 +285,33 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
-                    "SELECT hits, grant_count, encrypted_count FROM p25_radio_summary"))
+                    "SELECT call_count, grant_count, encrypted_count FROM p25_radio_summary"))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("hits"));
+                assertEquals(1, resultSet.getInt("call_count"));
                 assertEquals(1, resultSet.getInt("grant_count"));
                 assertEquals(1, resultSet.getInt("encrypted_count"));
             }
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
-                    "SELECT hits, grant_count, continue_count FROM p25_site_frequency_summary"))
+                    "SELECT call_count, grant_count, continue_count FROM p25_site_frequency_summary"))
             {
                 assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("hits"));
+                assertEquals(1, resultSet.getInt("call_count"));
                 assertEquals(1, resultSet.getInt("grant_count"));
                 assertEquals(1, resultSet.getInt("continue_count"));
             }
 
             assertCount(connection, "p25_radio_talkgroup_summary", 1);
-            assertHits(connection, "p25_radio_talkgroup_summary", 1);
-            assertHits(connection, "p25_site_talkgroup_bucket", 1);
-            assertHits(connection, "p25_site_radio_bucket", 1);
-            assertHits(connection, "p25_site_frequency_bucket", 1);
+            assertActionCount(connection, "p25_radio_talkgroup_summary", "call_count", 1);
+            assertActionCount(connection, "p25_site_talkgroup_bucket", "call_count", 1);
+            assertActionCount(connection, "p25_site_activity_bucket", "call_count", 1);
         }
     }
 
     @Test
-    void conventionalHitCountersAlsoCountOnlyGrants() throws Exception
+    void conventionalCallCountersCountCalls() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-hits.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -322,8 +323,9 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.recordActivity(connection,
                 conventionalActivity(2000L, P25ActivityLogRecords.Action.CALL), false);
 
-            assertHits(connection, "conventional_activity_summary", 1);
-            assertHits(connection, "conventional_activity_bucket", 1);
+            assertActionCount(connection, "conventional_activity_summary", "call_count", 1);
+            assertActionCount(connection, "conventional_activity_bucket", "call_count", 1);
+            assertActionCount(connection, "conventional_activity_summary", "grant_count", 1);
         }
     }
 
@@ -437,15 +439,15 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_radio_summary", 1);
             assertCount(connection, "p25_radio_talkgroup_summary", 1);
             assertCount(connection, "p25_site_talkgroup_bucket", 2);
-            assertCount(connection, "p25_site_radio_bucket", 2);
+            assertCount(connection, "p25_site_activity_bucket", 2);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
-                    SELECT hits FROM p25_talkgroup_summary
+                    SELECT grant_count FROM p25_talkgroup_summary
                     """))
             {
                 assertTrue(resultSet.next());
-                assertEquals(2, resultSet.getInt("hits"));
+                assertEquals(2, resultSet.getInt("grant_count"));
             }
         }
     }
@@ -543,13 +545,14 @@ class P25ActivityLogWriterTest
         }
     }
 
-    private static void assertHits(Connection connection, String table, int expected) throws Exception
+    private static void assertActionCount(Connection connection, String table, String column, int expected)
+        throws Exception
     {
         try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("SELECT hits FROM " + table))
+            ResultSet resultSet = statement.executeQuery("SELECT " + column + " FROM " + table))
         {
             assertTrue(resultSet.next());
-            assertEquals(expected, resultSet.getInt("hits"));
+            assertEquals(expected, resultSet.getInt(column));
         }
     }
 
@@ -600,7 +603,7 @@ class P25ActivityLogWriterTest
             action == P25ActivityLogRecords.Action.GRANT,
             action == P25ActivityLogRecords.Action.GRANT ? 0x84 : null,
             action == P25ActivityLogRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
-            "Example Site", null, null, null, null);
+            "Example Site", null, null, action == P25ActivityLogRecords.Action.CALL, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent activityWithChannelName(long timestamp, String channelName)
@@ -609,7 +612,7 @@ class P25ActivityLogWriterTest
             "123e4567-e89b-12d3-a456-426614174000", P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
             P25ActivityLogRecords.Action.GRANT, "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854187500L,
             "00-0509", 1, true, 0x84, 101, 0xBEE00, 0x348, 0x348, 2, 1, channelName, null, null,
-            null, null);
+            false, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent conventionalActivity(long timestamp,
@@ -618,7 +621,7 @@ class P25ActivityLogWriterTest
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONVENTIONAL_ANALOG:NBFM:154310000", null,
             P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", action, "CALL", null, null, null,
             154310000L, null, null, false, null, null, null, null, null, null, null, "County Fire", "NBFM",
-            null, null, null);
+            null, action == P25ActivityLogRecords.Action.CALL, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent affiliation(long timestamp, int radioId, Integer talkgroupId)
@@ -631,7 +634,7 @@ class P25ActivityLogWriterTest
             talkgroupId != null ? "AFFILIATE" : "DEREGISTER", Integer.toString(radioId),
             talkgroupId != null ? talkgroupId.toString() : null, talkgroupId != null ? "TALKGROUP" : null,
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null,
-            null, new P25ActivityLogRecords.RadioAffiliationUpdate(radioId, talkgroupId));
+            false, null, new P25ActivityLogRecords.RadioAffiliationUpdate(radioId, talkgroupId));
     }
 
     private static P25ActivityLogRecords.ActivityEvent activityWithoutSystemIdentity(long timestamp)
@@ -640,7 +643,7 @@ class P25ActivityLogWriterTest
             "GUID:123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174000",
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", 854187500L, "00-0509", 1, false,
-            null, null, null, null, null, null, null, "Example Site", null, null, null, null);
+            null, null, null, null, null, null, null, "Example Site", null, null, false, null, null);
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp)

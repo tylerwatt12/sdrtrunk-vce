@@ -17,6 +17,8 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -134,6 +136,42 @@ public class P25ActivityLogService implements SiteMetadataListener
         P25ActivityLogRecords.ActivityEvent record = mMapper.map(channel, event);
 
         if(record != null && shouldLog(record))
+        {
+            writer.enqueue(record);
+        }
+    }
+
+    @Subscribe
+    public void receiveCallStart(P25CallStartEvent event)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.ActivityEvent record = mMapper.map(event);
+
+        if(record != null)
+        {
+            writer.enqueue(record);
+        }
+    }
+
+    @Subscribe
+    public void receiveGrantObservation(P25GrantObservationEvent event)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.ActivityEvent record = mMapper.map(event);
+
+        if(record != null)
         {
             writer.enqueue(record);
         }

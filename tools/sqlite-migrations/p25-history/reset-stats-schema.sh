@@ -17,4 +17,4 @@ else
 fi
 
 "$JAVA" --enable-native-access=ALL-UNNAMED -cp "$INSTALL_DIR/lib/*" \
-  "$SCRIPT_DIR/P25HistoryResetToV13StatsSchema.java" "$DATABASE"
+  "$SCRIPT_DIR/P25HistoryResetStatsSchema.java" "$DATABASE"

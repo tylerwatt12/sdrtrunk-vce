@@ -69,7 +69,8 @@ final class P25ActivityLogRecords
                          String targetKind, Long frequencyHertz, String lcn, Integer timeslot, boolean encrypted,
                          Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn, Integer systemId,
                          Integer nac, Integer rfss, Integer site, String channelName, String decoder,
-                         String talkerAlias, String dedupeKey, RadioAffiliationUpdate affiliationUpdate)
+                         String talkerAlias, boolean countedCall, String dedupeKey,
+                         RadioAffiliationUpdate affiliationUpdate)
         implements P25ActivityLogRecord
     {
     }

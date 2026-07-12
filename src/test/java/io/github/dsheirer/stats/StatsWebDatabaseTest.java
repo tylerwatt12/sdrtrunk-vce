@@ -165,7 +165,7 @@ class StatsWebDatabaseTest
                 ", 1000, 2000)");
             statement.executeUpdate("""
                 INSERT INTO p25_talkgroup_summary (system_key, talkgroup_id, target_kind_code, first_seen_ms,
-                    last_seen_ms, hits, grant_count)
+                    last_seen_ms, call_count, grant_count)
                 VALUES (2, 56132, 1, 1000, 2000, 1, 1)
                 """);
         }
@@ -177,7 +177,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void dashboardProvidesZeroFilledGrantHitsPerHour() throws Exception
+    void dashboardProvidesZeroFilledCallsAndGrantsPerHour() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
 
@@ -185,22 +185,23 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO p25_site_talkgroup_bucket
-                    (context_id, talkgroup_id, bucket_start_ms, hits, grant_count)
-                VALUES (1, 56132, %d, 7, 7)
+                INSERT INTO p25_site_activity_bucket
+                    (context_id, bucket_start_ms, call_count, grant_count)
+                VALUES (1, %d, 7, 9)
                 """.formatted(currentHour));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_bucket
-                    (context_id, frequency_hz, timeslot, bucket_start_ms, hits, grant_count)
-                VALUES (2, 154310000, -1, %d, 3, 3)
+                    (context_id, frequency_hz, timeslot, bucket_start_ms, call_count)
+                VALUES (2, 154310000, -1, %d, 3)
                 """.formatted(currentHour));
         }
 
-        List<Map<String,Object>> hours = rowsFrom(mDatabase.dashboard(), "hitsPerHour");
+        List<Map<String,Object>> hours = rowsFrom(mDatabase.dashboard(), "activityPerHour");
         assertEquals(24, hours.size());
         assertEquals(currentHour, number(hours.getLast().get("hour_ms")));
-        assertEquals(10, number(hours.getLast().get("hits")));
-        assertTrue(hours.stream().limit(23).allMatch(row -> number(row.get("hits")) == 0));
+        assertEquals(10, number(hours.getLast().get("call_count")));
+        assertEquals(9, number(hours.getLast().get("grant_count")));
+        assertTrue(hours.stream().limit(23).allMatch(row -> number(row.get("call_count")) == 0));
     }
 
     private static StatsRequest request(String uri)
@@ -316,17 +317,17 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_talkgroup_summary (system_key, talkgroup_id, target_kind_code, first_seen_ms,
-                    last_seen_ms, hits, grant_count, encrypted_count, last_source_radio_id)
+                    last_seen_ms, call_count, grant_count, encrypted_count, last_source_radio_id)
                 VALUES (1, 56132, 1, 1000, 2000, 12, 12, 2, 1811332)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_radio_summary (system_key, radio_id, first_seen_ms, last_seen_ms, hits,
+                INSERT INTO p25_radio_summary (system_key, radio_id, first_seen_ms, last_seen_ms, call_count,
                     grant_count, encrypted_count, last_talkgroup_id, last_talker_alias, last_talker_alias_seen_ms)
                 VALUES (1, 1811332, 1000, 2000, 8, 8, 1, 56132, 'CAR 201', 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_radio_talkgroup_summary (system_key, radio_id, talkgroup_id, target_kind_code,
-                    first_seen_ms, last_seen_ms, hits, grant_count, encrypted_count)
+                    first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count)
                 VALUES (1, 1811332, 56132, 1, 1000, 2000, 8, 8, 1)
                 """);
             statement.executeUpdate("INSERT INTO p25_radio_affiliation VALUES (1, 1811332, 56132, 2000)");
@@ -362,7 +363,7 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
-                    last_seen_ms, hits, call_count) VALUES (2, 154310000, -1, 1000, 2000, 4, 4)
+                    last_seen_ms, call_count) VALUES (2, 154310000, -1, 1000, 2000, 4)
                 """);
         }
     }
@@ -390,17 +391,17 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_talkgroup_summary (system_key, talkgroup_id, target_kind_code, first_seen_ms,
-                    last_seen_ms, hits, grant_count, encrypted_count, last_source_radio_id)
+                    last_seen_ms, call_count, grant_count, encrypted_count, last_source_radio_id)
                 VALUES (2, 56132, 1, 1000, 3000, 100, 100, 0, 1811332)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_radio_summary (system_key, radio_id, first_seen_ms, last_seen_ms, hits,
+                INSERT INTO p25_radio_summary (system_key, radio_id, first_seen_ms, last_seen_ms, call_count,
                     grant_count, encrypted_count, last_talkgroup_id)
                 VALUES (2, 1811332, 1000, 3000, 100, 100, 0, 56132)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_radio_talkgroup_summary (system_key, radio_id, talkgroup_id, target_kind_code,
-                    first_seen_ms, last_seen_ms, hits, grant_count, encrypted_count)
+                    first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count)
                 VALUES (2, 1811332, 56132, 1, 1000, 3000, 100, 100, 0)
                 """);
             statement.executeUpdate("""

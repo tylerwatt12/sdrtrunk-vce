@@ -103,36 +103,33 @@ class StatsWebDatabase
                 """));
 
             List<Map<String,Object>> talkgroups = queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id, summary.hits,
+                SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id, summary.call_count,
+                    summary.grant_count, summary.continue_count,
                     summary.encrypted_count, summary.last_source_radio_id, summary.last_seen_ms
                 FROM p25_talkgroup_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
-                ORDER BY summary.hits DESC, summary.last_seen_ms DESC
+                ORDER BY summary.call_count DESC, summary.last_seen_ms DESC
                 LIMIT 20
                 """);
             mAliasResolver.enrichTalkgroups(connection, talkgroups);
             dashboard.put("topTalkgroups", talkgroups);
 
             List<Map<String,Object>> radios = queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, summary.radio_id, summary.hits,
+                SELECT system.system_key, system.wacn, system.system_id, summary.radio_id, summary.call_count,
+                    summary.grant_count, summary.continue_count,
                     summary.encrypted_count, summary.last_talkgroup_id, summary.last_talker_alias,
                     summary.last_talker_alias_seen_ms, summary.last_seen_ms
                 FROM p25_radio_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
-                ORDER BY summary.hits DESC, summary.last_seen_ms DESC
+                ORDER BY summary.call_count DESC, summary.last_seen_ms DESC
                 LIMIT 20
                 """);
             mAliasResolver.enrichRadios(connection, radios);
             dashboard.put("topRadios", radios);
             dashboard.put("recentSites", queryRows(connection, siteSelect() + " ORDER BY site.last_seen_ms DESC LIMIT 12"));
-            dashboard.put("actionMix", queryRows(connection, """
-                SELECT action, COUNT(*) AS hits
-                FROM p25_activity_event_resolved
-                WHERE observed_at_ms >= ?
-                GROUP BY action
-                ORDER BY hits DESC, action
-                """, System.currentTimeMillis() - 86_400_000L));
-            dashboard.put("hitsPerHour", hourlyHits(connection));
+            List<Map<String,Object>> hourlyActivity = hourlyActivity(connection);
+            dashboard.put("actionMix", actionMix(hourlyActivity));
+            dashboard.put("activityPerHour", hourlyActivity);
             return dashboard;
         });
     }
@@ -228,17 +225,12 @@ class StatsWebDatabase
                         WHERE radio.system_key = system.system_key) AS radios,
                     (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
                         WHERE affiliation.system_key = system.system_key) AS affiliations,
-                    (SELECT SUM(hits) FROM p25_talkgroup_summary talkgroup
-                        WHERE talkgroup.system_key = system.system_key) AS activity_hits
+                    (SELECT SUM(call_count) FROM p25_talkgroup_summary talkgroup
+                        WHERE talkgroup.system_key = system.system_key) AS activity_calls
                 FROM p25_system system
                 WHERE system.wacn = ? AND system.system_id = ?
                 """, wacn, systemId), "System not found"));
-            response.put("actionCounts", queryRows(connection, """
-                SELECT action, COUNT(*) AS hits
-                FROM p25_activity_event_resolved
-                WHERE resolved_wacn = ? AND resolved_system_id = ?
-                GROUP BY action ORDER BY hits DESC, action
-                """, wacn, systemId));
+            response.put("actionCounts", systemActionCounts(connection, wacn, systemId));
             return response;
         });
     }
@@ -265,8 +257,9 @@ class StatsWebDatabase
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
             addIdentifierSearch(sql, parameters, request.search(), "summary.talkgroup_id");
             sql.append(" ORDER BY ").append(order(request, Map.of(
-                "id", "summary.talkgroup_id", "hits", "summary.hits", "encrypted", "summary.encrypted_count",
-                "first_seen", "summary.first_seen_ms", "last_seen", "summary.last_seen_ms"), "hits"))
+                "id", "summary.talkgroup_id", "calls", "summary.call_count", "grants", "summary.grant_count",
+                "encrypted", "summary.encrypted_count", "first_seen", "summary.first_seen_ms",
+                "last_seen", "summary.last_seen_ms"), "calls"))
                 .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
@@ -294,8 +287,9 @@ class StatsWebDatabase
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
             addIdentifierSearch(sql, parameters, request.search(), "summary.radio_id");
             sql.append(" ORDER BY ").append(order(request, Map.of(
-                "id", "summary.radio_id", "hits", "summary.hits", "encrypted", "summary.encrypted_count",
-                "first_seen", "summary.first_seen_ms", "last_seen", "summary.last_seen_ms"), "hits"))
+                "id", "summary.radio_id", "calls", "summary.call_count", "grants", "summary.grant_count",
+                "encrypted", "summary.encrypted_count", "first_seen", "summary.first_seen_ms",
+                "last_seen", "summary.last_seen_ms"), "calls"))
                 .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
@@ -429,7 +423,8 @@ class StatsWebDatabase
             }
 
             sql.append(" ORDER BY ").append(order(request, Map.of(
-                "hits", "relationship.hits", "first_seen", "relationship.first_seen_ms",
+                "calls", "relationship.call_count", "grants", "relationship.grant_count",
+                "first_seen", "relationship.first_seen_ms",
                 "last_seen", "relationship.last_seen_ms", "radio", "relationship.radio_id",
                 "talkgroup", "relationship.talkgroup_id"), "last_seen")).append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
@@ -628,7 +623,7 @@ class StatsWebDatabase
                 SELECT context.id AS context_id, context.context_key, context.guid, context.kind_code,
                     context.protocol_code, context.channel_name, context.alias_list_name, context.decoder,
                     context.nac, context.primary_frequency_hz, summary.frequency_hz, summary.timeslot,
-                    summary.first_seen_ms, summary.last_seen_ms, summary.hits, summary.last_event_type_code
+                    summary.first_seen_ms, summary.last_seen_ms, summary.call_count, summary.last_event_type_code
                 FROM conventional_activity_summary summary
                 JOIN receiver_context context ON context.id = summary.context_id
                 WHERE context.kind_code <> 1
@@ -644,7 +639,8 @@ class StatsWebDatabase
             }
 
             sql.append(" ORDER BY ").append(order(request, Map.of(
-                "name", "context.channel_name", "frequency", "summary.frequency_hz", "hits", "summary.hits",
+                "name", "context.channel_name", "frequency", "summary.frequency_hz",
+                "calls", "summary.call_count",
                 "last_seen", "summary.last_seen_ms"), "frequency")).append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             return page(queryRows(connection, sql.toString(), parameters.toArray()), request);
@@ -723,30 +719,36 @@ class StatsWebDatabase
         return queryRows(connection, "SELECT key, value, updated_at_ms FROM logger_status ORDER BY key");
     }
 
-    private static List<Map<String,Object>> hourlyHits(Connection connection) throws SQLException
+    private static List<Map<String,Object>> hourlyActivity(Connection connection) throws SQLException
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
         long firstHour = currentHour - (DASHBOARD_HOURS - 1L) * HOUR_MILLISECONDS;
         List<Map<String,Object>> stored = queryRows(connection, """
-            SELECT bucket_start_ms, SUM(hits) AS hits
+            SELECT bucket_start_ms, SUM(call_count) AS call_count, SUM(grant_count) AS grant_count,
+                SUM(continue_count) AS continue_count, SUM(join_count) AS join_count,
+                SUM(register_count) AS register_count, SUM(denial_count) AS denial_count,
+                SUM(busy_count) AS busy_count, SUM(queued_count) AS queued_count,
+                SUM(encrypted_count) AS encrypted_count
             FROM (
-                SELECT bucket_start_ms, hits FROM p25_site_talkgroup_bucket WHERE bucket_start_ms >= ?
+                SELECT bucket_start_ms, call_count, grant_count, continue_count, join_count, register_count,
+                    denial_count, busy_count, queued_count, encrypted_count
+                FROM p25_site_activity_bucket WHERE bucket_start_ms >= ?
                 UNION ALL
-                SELECT bucket_start_ms, hits FROM conventional_activity_bucket WHERE bucket_start_ms >= ?
+                SELECT bucket_start_ms, call_count, 0, 0, 0, 0, 0, 0, 0, 0
+                FROM conventional_activity_bucket WHERE bucket_start_ms >= ?
             )
             GROUP BY bucket_start_ms
             ORDER BY bucket_start_ms
             """, firstHour, firstHour);
-        Map<Long,Long> totals = new LinkedHashMap<>();
+        Map<Long,Map<String,Object>> totals = new LinkedHashMap<>();
 
         for(Map<String,Object> row: stored)
         {
             Object hour = row.get("bucket_start_ms");
-            Object hits = row.get("hits");
 
-            if(hour instanceof Number hourNumber && hits instanceof Number hitNumber)
+            if(hour instanceof Number hourNumber)
             {
-                totals.put(hourNumber.longValue(), hitNumber.longValue());
+                totals.put(hourNumber.longValue(), row);
             }
         }
 
@@ -754,10 +756,85 @@ class StatsWebDatabase
 
         for(long hour = firstHour; hour <= currentHour; hour += HOUR_MILLISECONDS)
         {
-            result.add(Map.of("hour_ms", hour, "hits", totals.getOrDefault(hour, 0L)));
+            Map<String,Object> values = totals.get(hour);
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("hour_ms", hour);
+
+            for(String field: List.of("call_count", "grant_count", "continue_count", "join_count",
+                "register_count", "denial_count", "busy_count", "queued_count", "encrypted_count"))
+            {
+                row.put(field, values != null && values.get(field) instanceof Number number ? number.longValue() : 0L);
+            }
+
+            result.add(row);
         }
 
         return result;
+    }
+
+    private static List<Map<String,Object>> actionMix(List<Map<String,Object>> hourlyActivity)
+    {
+        Map<String,Long> totals = new LinkedHashMap<>();
+
+        for(String action: List.of("call", "grant", "continue", "join", "register", "denial", "busy", "queued"))
+        {
+            totals.put(action, 0L);
+        }
+
+        for(Map<String,Object> hour: hourlyActivity)
+        {
+            totals.replaceAll((action, total) -> total + number(hour.get(action + "_count")));
+        }
+
+        return totals.entrySet().stream()
+            .filter(entry -> entry.getValue() > 0)
+            .sorted(Map.Entry.<String,Long>comparingByValue().reversed())
+            .map(entry -> Map.<String,Object>of("action", entry.getKey().toUpperCase(), "count", entry.getValue()))
+            .toList();
+    }
+
+    private static List<Map<String,Object>> systemActionCounts(Connection connection, int wacn, int systemId)
+        throws SQLException
+    {
+        List<Map<String,Object>> totals = queryRows(connection, """
+            SELECT SUM(bucket.call_count) AS call_count, SUM(bucket.grant_count) AS grant_count,
+                SUM(bucket.continue_count) AS continue_count, SUM(bucket.join_count) AS join_count,
+                SUM(bucket.register_count) AS register_count, SUM(bucket.logout_count) AS logout_count,
+                SUM(bucket.denial_count) AS denial_count, SUM(bucket.busy_count) AS busy_count,
+                SUM(bucket.queued_count) AS queued_count, SUM(bucket.emergency_count) AS emergency_count,
+                SUM(bucket.encrypted_count) AS encrypted_count
+            FROM p25_site_activity_bucket bucket
+            JOIN receiver_context context ON context.id = bucket.context_id
+            JOIN p25_system system ON system.system_key = context.system_key
+            WHERE system.wacn = ? AND system.system_id = ?
+            """, wacn, systemId);
+
+        if(totals.isEmpty())
+        {
+            return List.of();
+        }
+
+        Map<String,Object> row = totals.getFirst();
+        List<Map<String,Object>> result = new ArrayList<>();
+
+        for(String action: List.of("call", "grant", "continue", "join", "register", "logout", "denial", "busy",
+            "queued", "emergency", "encrypted"))
+        {
+            long count = number(row.get(action + "_count"));
+
+            if(count > 0)
+            {
+                result.add(Map.of("action", action.toUpperCase(), "count", count));
+            }
+        }
+
+        result.sort((left, right) -> Long.compare(number(right.get("count")), number(left.get("count"))));
+        return result;
+    }
+
+    private static long number(Object value)
+    {
+        return value instanceof Number number ? number.longValue() : 0L;
     }
 
     private <T> T read(Query<T> query)

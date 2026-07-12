@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -28,8 +29,10 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
@@ -75,7 +78,7 @@ class P25ActivityLogMapperTest
             event);
 
         assertNotNull(record);
-        assertEquals(P25ActivityLogRecords.Action.GRANT, record.action());
+        assertEquals(P25ActivityLogRecords.Action.ACTIVE, record.action());
         assertEquals("1811524", record.sourceRadioId());
         assertEquals("56138", record.targetId());
         assertEquals("TALKGROUP", record.targetKind());
@@ -89,6 +92,21 @@ class P25ActivityLogMapperTest
         assertEquals(1, record.site());
         assertEquals(GUID, record.guid());
         assertNotNull(record.dedupeKey());
+        assertFalse(record.countedCall());
+
+        P25ActivityLogRecords.ActivityEvent callStart = new P25ActivityLogMapper().map(
+            new P25CallStartEvent(channel(DecoderType.P25_PHASE1), event));
+        assertNotNull(callStart);
+        assertEquals(P25ActivityLogRecords.Action.CALL, callStart.action());
+        assertTrue(callStart.countedCall());
+        assertNull(callStart.dedupeKey());
+
+        P25ActivityLogRecords.ActivityEvent grant = new P25ActivityLogMapper().map(new P25GrantObservationEvent(
+            channel(DecoderType.P25_PHASE1), null, identifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 1000L, false));
+        assertNotNull(grant);
+        assertEquals(P25ActivityLogRecords.Action.GRANT, grant.action());
+        assertFalse(grant.countedCall());
+        assertNull(grant.dedupeKey());
     }
 
     @Test
@@ -175,6 +193,7 @@ class P25ActivityLogMapperTest
         assertEquals("56138", record.targetId());
         assertEquals(854187500L, record.frequencyHertz());
         assertTrue(record.dedupeKey() != null && !record.dedupeKey().isBlank());
+        assertFalse(record.countedCall());
     }
 
     @Test

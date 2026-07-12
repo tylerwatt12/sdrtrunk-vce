@@ -359,14 +359,14 @@ a:hover {
   white-space: nowrap;
 }
 
-.hits-line-chart {
+.activity-line-chart {
   width: 100%;
   min-height: 270px;
   padding: 8px 10px 2px;
   overflow-x: auto;
 }
 
-.hits-line-svg {
+.activity-line-svg {
   display: block;
   width: 100%;
   min-width: 680px;
@@ -383,7 +383,7 @@ a:hover {
   font-size: 11px;
 }
 
-.hits-line-path {
+.activity-line-path {
   fill: none;
   stroke: var(--accent);
   stroke-width: 2.5;
@@ -391,10 +391,36 @@ a:hover {
   stroke-linecap: round;
 }
 
-.hits-line-point {
+.activity-line-point {
   fill: #fff;
   stroke: var(--accent);
   stroke-width: 2;
+}
+
+.activity-line-path.grants,
+.activity-line-point.grants {
+  stroke: #cc7a00;
+}
+
+.activity-line-legend {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.activity-line-legend span::before {
+  content: '';
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  margin: 0 6px 3px 0;
+  background: var(--accent);
+}
+
+.activity-line-legend .grants::before {
+  background: #cc7a00;
 }
 
 .live-connection {

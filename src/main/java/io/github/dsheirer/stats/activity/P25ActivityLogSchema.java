@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 13;
+    private static final int SCHEMA_VERSION = 14;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final int NULL_TIMESLOT = -1;
@@ -218,9 +218,8 @@ public class P25ActivityLogSchema
         int deleted = 0;
         deleted += deleteByTime(connection, "p25_activity_event", "observed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_talkgroup_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_radio_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "p25_site_activity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_radio_affiliation", "updated_at_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_site_frequency_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "conventional_activity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_frequency_band", "confirmed_at_ms", cutoffEpochMilliseconds);
@@ -243,8 +242,7 @@ public class P25ActivityLogSchema
         int deleted = 0;
         deleted += deleteAll(connection, "p25_activity_event");
         deleted += deleteAll(connection, "p25_site_talkgroup_bucket");
-        deleted += deleteAll(connection, "p25_site_radio_bucket");
-        deleted += deleteAll(connection, "p25_site_frequency_bucket");
+        deleted += deleteAll(connection, "p25_site_activity_bucket");
         deleted += deleteAll(connection, "p25_talkgroup_summary");
         deleted += deleteAll(connection, "p25_radio_summary");
         deleted += deleteAll(connection, "p25_radio_talkgroup_summary");
@@ -297,7 +295,6 @@ public class P25ActivityLogSchema
                 target_kind_code INTEGER,
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
                 last_source_radio_id INTEGER,
@@ -312,7 +309,6 @@ public class P25ActivityLogSchema
                 radio_id INTEGER NOT NULL,
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
                 last_talkgroup_id INTEGER,
@@ -340,7 +336,6 @@ public class P25ActivityLogSchema
                 target_kind_code INTEGER,
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(system_key, radio_id, talkgroup_id)
@@ -355,7 +350,6 @@ public class P25ActivityLogSchema
                 lcn_number INTEGER,
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
                 last_source_radio_id INTEGER,
@@ -370,33 +364,18 @@ public class P25ActivityLogSchema
                 context_id INTEGER NOT NULL,
                 talkgroup_id INTEGER NOT NULL,
                 bucket_start_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(context_id, talkgroup_id, bucket_start_ms)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
         statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS p25_site_radio_bucket (
+            CREATE TABLE IF NOT EXISTS p25_site_activity_bucket (
                 context_id INTEGER NOT NULL,
-                radio_id INTEGER NOT NULL,
                 bucket_start_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY(context_id, radio_id, bucket_start_ms)
-            )
-            """.formatted(ACTION_COUNT_DEFINITIONS));
-        statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS p25_site_frequency_bucket (
-                context_id INTEGER NOT NULL,
-                frequency_hz INTEGER NOT NULL,
-                timeslot INTEGER NOT NULL DEFAULT -1,
-                bucket_start_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
-                %s,
-                encrypted_count INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY(context_id, frequency_hz, timeslot, bucket_start_ms)
+                PRIMARY KEY(context_id, bucket_start_ms)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
     }
@@ -410,7 +389,6 @@ public class P25ActivityLogSchema
                 timeslot INTEGER NOT NULL DEFAULT -1,
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 last_event_type_code INTEGER,
                 PRIMARY KEY(context_id, frequency_hz, timeslot)
@@ -422,7 +400,6 @@ public class P25ActivityLogSchema
                 frequency_hz INTEGER NOT NULL,
                 timeslot INTEGER NOT NULL DEFAULT -1,
                 bucket_start_ms INTEGER NOT NULL,
-                hits INTEGER NOT NULL DEFAULT 0,
                 %s,
                 PRIMARY KEY(context_id, frequency_hz, timeslot, bucket_start_ms)
             )
@@ -619,10 +596,9 @@ public class P25ActivityLogSchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_activity_event_encryption ON p25_activity_event(encryption_algorithm_id, encryption_key_id, observed_at_ms) WHERE encrypted = 1");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_talkgroup_bucket_time ON p25_site_talkgroup_bucket(context_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_talkgroup_bucket_talkgroup_time ON p25_site_talkgroup_bucket(talkgroup_id, bucket_start_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_radio_bucket_time ON p25_site_radio_bucket(context_id, bucket_start_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_activity_bucket_time ON p25_site_activity_bucket(bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_radio_affiliation_talkgroup ON p25_radio_affiliation(system_key, talkgroup_id, updated_at_ms DESC, radio_id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_radio_talkgroup_talkgroup ON p25_radio_talkgroup_summary(system_key, talkgroup_id, last_seen_ms DESC, radio_id)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_frequency_bucket_time ON p25_site_frequency_bucket(context_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_conventional_bucket_time ON conventional_activity_bucket(context_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_snapshot_identity ON p25_site_snapshot(system_key, rfss, site)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_guid_frequency ON p25_site_channel(guid, downlink_hz)");
@@ -643,27 +619,24 @@ public class P25ActivityLogSchema
             "source_radio_id", "target_id", "target_kind_code", "frequency_hz", "lcn_band", "lcn_number",
             "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id"),
         tableWithActions("p25_talkgroup_summary", "system_key", "talkgroup_id", "target_kind_code",
-            "first_seen_ms", "last_seen_ms", "hits", "encrypted_count", "last_source_radio_id",
+            "first_seen_ms", "last_seen_ms", "encrypted_count", "last_source_radio_id",
             "last_encryption_algorithm_id", "last_encryption_key_id"),
-        tableWithActions("p25_radio_summary", "system_key", "radio_id", "first_seen_ms", "last_seen_ms", "hits",
+        tableWithActions("p25_radio_summary", "system_key", "radio_id", "first_seen_ms", "last_seen_ms",
             "encrypted_count", "last_talkgroup_id", "last_talker_alias", "last_talker_alias_seen_ms",
             "last_encryption_algorithm_id", "last_encryption_key_id"),
         table("p25_radio_affiliation", "system_key", "radio_id", "talkgroup_id", "updated_at_ms"),
         tableWithActions("p25_radio_talkgroup_summary", "system_key", "radio_id", "talkgroup_id",
-            "target_kind_code", "first_seen_ms", "last_seen_ms", "hits", "encrypted_count"),
+            "target_kind_code", "first_seen_ms", "last_seen_ms", "encrypted_count"),
         tableWithActions("p25_site_frequency_summary", "context_id", "frequency_hz", "timeslot", "lcn_band",
-            "lcn_number", "first_seen_ms", "last_seen_ms", "hits", "encrypted_count", "last_source_radio_id",
+            "lcn_number", "first_seen_ms", "last_seen_ms", "encrypted_count", "last_source_radio_id",
             "last_target_id", "last_encryption_algorithm_id", "last_encryption_key_id"),
-        tableWithActions("p25_site_talkgroup_bucket", "context_id", "talkgroup_id", "bucket_start_ms", "hits",
+        tableWithActions("p25_site_talkgroup_bucket", "context_id", "talkgroup_id", "bucket_start_ms",
             "encrypted_count"),
-        tableWithActions("p25_site_radio_bucket", "context_id", "radio_id", "bucket_start_ms", "hits",
-            "encrypted_count"),
-        tableWithActions("p25_site_frequency_bucket", "context_id", "frequency_hz", "timeslot",
-            "bucket_start_ms", "hits", "encrypted_count"),
+        tableWithActions("p25_site_activity_bucket", "context_id", "bucket_start_ms", "encrypted_count"),
         tableWithActions("conventional_activity_summary", "context_id", "frequency_hz", "timeslot",
-            "first_seen_ms", "last_seen_ms", "hits", "last_event_type_code"),
+            "first_seen_ms", "last_seen_ms", "last_event_type_code"),
         tableWithActions("conventional_activity_bucket", "context_id", "frequency_hz", "timeslot",
-            "bucket_start_ms", "hits"),
+            "bucket_start_ms"),
         table("p25_site_snapshot", "guid", "snapshot_hash", "first_seen_ms", "last_seen_ms", "observation_count",
             "protocol", "channel_name", "alias_list_name", "decoder", "system_key", "nac", "rfss", "site",
             "primary_frequency_hz", "current_control_hz"),
@@ -703,10 +676,9 @@ public class P25ActivityLogSchema
         "idx_p25_activity_event_encryption",
         "idx_p25_site_talkgroup_bucket_time",
         "idx_p25_site_talkgroup_bucket_talkgroup_time",
-        "idx_p25_site_radio_bucket_time",
+        "idx_p25_site_activity_bucket_time",
         "idx_p25_radio_affiliation_talkgroup",
         "idx_p25_radio_talkgroup_talkgroup",
-        "idx_p25_site_frequency_bucket_time",
         "idx_conventional_bucket_time",
         "idx_p25_site_snapshot_identity",
         "idx_p25_site_channel_guid_frequency",
@@ -752,15 +724,11 @@ public class P25ActivityLogSchema
             upsertP25TalkgroupBucket(connection, activity, contextId, target);
         }
 
-        if(sourceRadio != null)
-        {
-            upsertP25RadioBucket(connection, activity, contextId, sourceRadio);
-        }
+        upsertP25SiteActivityBucket(connection, activity, contextId);
 
         if(activity.frequencyHertz() != null && activity.frequencyHertz() > 0)
         {
             upsertP25FrequencySummary(connection, activity, contextId, sourceRadio, target);
-            upsertP25FrequencyBucket(connection, activity, contextId);
         }
     }
 
@@ -853,13 +821,12 @@ public class P25ActivityLogSchema
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_talkgroup_summary (
-                system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, hits, %s,
+                system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, %s,
                 encrypted_count, last_source_radio_id, last_encryption_algorithm_id, last_encryption_key_id
-            ) VALUES (?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, %s, ?, ?, ?, ?)
             ON CONFLICT(system_key, talkgroup_id) DO UPDATE SET
                 target_kind_code = coalesce(excluded.target_kind_code, p25_talkgroup_summary.target_kind_code),
                 last_seen_ms = max(p25_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
-                hits = p25_talkgroup_summary.hits + excluded.hits,
                 %s,
                 encrypted_count = p25_talkgroup_summary.encrypted_count + excluded.encrypted_count,
                 last_source_radio_id = coalesce(excluded.last_source_radio_id, p25_talkgroup_summary.last_source_radio_id),
@@ -873,7 +840,6 @@ public class P25ActivityLogSchema
             setInteger(statement, index++, targetKindCode(activity.targetKind()));
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
-            statement.setInt(index++, grantHit(activity));
             index = setActionCounts(statement, index, activity);
             statement.setInt(index++, activity.encrypted() ? 1 : 0);
             setInteger(statement, index++, sourceRadio);
@@ -888,10 +854,9 @@ public class P25ActivityLogSchema
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_talkgroup_bucket (
-                context_id, talkgroup_id, bucket_start_ms, hits, %s, encrypted_count
-            ) VALUES (?, ?, ?, ?, %s, ?)
+                context_id, talkgroup_id, bucket_start_ms, %s, encrypted_count
+            ) VALUES (?, ?, ?, %s, ?)
             ON CONFLICT(context_id, talkgroup_id, bucket_start_ms) DO UPDATE SET
-                hits = p25_site_talkgroup_bucket.hits + excluded.hits,
                 %s,
                 encrypted_count = p25_site_talkgroup_bucket.encrypted_count + excluded.encrypted_count
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
@@ -901,7 +866,6 @@ public class P25ActivityLogSchema
             statement.setInt(index++, contextId);
             statement.setInt(index++, talkgroup);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
-            statement.setInt(index++, grantHit(activity));
             index = setActionCounts(statement, index, activity);
             statement.setInt(index, activity.encrypted() ? 1 : 0);
             statement.executeUpdate();
@@ -913,12 +877,11 @@ public class P25ActivityLogSchema
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_radio_summary (
-                system_key, radio_id, first_seen_ms, last_seen_ms, hits, %s, encrypted_count, last_talkgroup_id,
+                system_key, radio_id, first_seen_ms, last_seen_ms, %s, encrypted_count, last_talkgroup_id,
                 last_talker_alias, last_talker_alias_seen_ms, last_encryption_algorithm_id, last_encryption_key_id
-            ) VALUES (?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(system_key, radio_id) DO UPDATE SET
                 last_seen_ms = max(p25_radio_summary.last_seen_ms, excluded.last_seen_ms),
-                hits = p25_radio_summary.hits + excluded.hits,
                 %s,
                 encrypted_count = p25_radio_summary.encrypted_count + excluded.encrypted_count,
                 last_talkgroup_id = coalesce(excluded.last_talkgroup_id, p25_radio_summary.last_talkgroup_id),
@@ -938,7 +901,6 @@ public class P25ActivityLogSchema
             statement.setInt(index++, radio);
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
-            statement.setInt(index++, grantHit(activity));
             index = setActionCounts(statement, index, activity);
             statement.setInt(index++, activity.encrypted() ? 1 : 0);
             setInteger(statement, index++, isTalkgroup(activity.targetKind()) ? target : null);
@@ -956,14 +918,13 @@ public class P25ActivityLogSchema
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_radio_talkgroup_summary (
-                system_key, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, hits, %s,
+                system_key, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, %s,
                 encrypted_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, %s, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, %s, ?)
             ON CONFLICT(system_key, radio_id, talkgroup_id) DO UPDATE SET
                 target_kind_code = coalesce(excluded.target_kind_code,
                     p25_radio_talkgroup_summary.target_kind_code),
                 last_seen_ms = max(p25_radio_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
-                hits = p25_radio_talkgroup_summary.hits + excluded.hits,
                 %s,
                 encrypted_count = p25_radio_talkgroup_summary.encrypted_count + excluded.encrypted_count
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
@@ -976,32 +937,29 @@ public class P25ActivityLogSchema
             setInteger(statement, index++, targetKindCode(activity.targetKind()));
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
-            statement.setInt(index++, grantHit(activity));
             index = setActionCounts(statement, index, activity);
             statement.setInt(index, activity.encrypted() ? 1 : 0);
             statement.executeUpdate();
         }
     }
 
-    private static void upsertP25RadioBucket(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
-                                             int contextId, int radio) throws SQLException
+    private static void upsertP25SiteActivityBucket(Connection connection,
+                                                    P25ActivityLogRecords.ActivityEvent activity,
+                                                    int contextId) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO p25_site_radio_bucket (
-                context_id, radio_id, bucket_start_ms, hits, %s, encrypted_count
-            ) VALUES (?, ?, ?, ?, %s, ?)
-            ON CONFLICT(context_id, radio_id, bucket_start_ms) DO UPDATE SET
-                hits = p25_site_radio_bucket.hits + excluded.hits,
+            INSERT INTO p25_site_activity_bucket (
+                context_id, bucket_start_ms, %s, encrypted_count
+            ) VALUES (?, ?, %s, ?)
+            ON CONFLICT(context_id, bucket_start_ms) DO UPDATE SET
                 %s,
-                encrypted_count = p25_site_radio_bucket.encrypted_count + excluded.encrypted_count
+                encrypted_count = p25_site_activity_bucket.encrypted_count + excluded.encrypted_count
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
-            actionUpdateSql("p25_site_radio_bucket"))))
+            actionUpdateSql("p25_site_activity_bucket"))))
         {
             int index = 1;
             statement.setInt(index++, contextId);
-            statement.setInt(index++, radio);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
-            statement.setInt(index++, grantHit(activity));
             index = setActionCounts(statement, index, activity);
             statement.setInt(index, activity.encrypted() ? 1 : 0);
             statement.executeUpdate();
@@ -1017,15 +975,14 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_frequency_summary (
-                context_id, frequency_hz, timeslot, lcn_band, lcn_number, first_seen_ms, last_seen_ms, hits, %s,
+                context_id, frequency_hz, timeslot, lcn_band, lcn_number, first_seen_ms, last_seen_ms, %s,
                 encrypted_count, last_source_radio_id, last_target_id, last_encryption_algorithm_id,
                 last_encryption_key_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?)
             ON CONFLICT(context_id, frequency_hz, timeslot) DO UPDATE SET
                 lcn_band = coalesce(excluded.lcn_band, p25_site_frequency_summary.lcn_band),
                 lcn_number = coalesce(excluded.lcn_number, p25_site_frequency_summary.lcn_number),
                 last_seen_ms = max(p25_site_frequency_summary.last_seen_ms, excluded.last_seen_ms),
-                hits = p25_site_frequency_summary.hits + excluded.hits,
                 %s,
                 encrypted_count = p25_site_frequency_summary.encrypted_count + excluded.encrypted_count,
                 last_source_radio_id = coalesce(excluded.last_source_radio_id, p25_site_frequency_summary.last_source_radio_id),
@@ -1043,41 +1000,12 @@ public class P25ActivityLogSchema
             setInteger(statement, index++, lcn.number());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
-            statement.setInt(index++, grantHit(activity));
             index = setActionCounts(statement, index, activity);
             statement.setInt(index++, activity.encrypted() ? 1 : 0);
             setInteger(statement, index++, sourceRadio);
             setInteger(statement, index++, target);
             setInteger(statement, index++, activity.encryptionAlgorithmId());
             setInteger(statement, index, activity.encryptionKeyId());
-            statement.executeUpdate();
-        }
-    }
-
-    private static void upsertP25FrequencyBucket(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
-                                                 int contextId) throws SQLException
-    {
-        int timeslot = summaryTimeslot(activity.timeslot());
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO p25_site_frequency_bucket (
-                context_id, frequency_hz, timeslot, bucket_start_ms, hits, %s, encrypted_count
-            ) VALUES (?, ?, ?, ?, ?, %s, ?)
-            ON CONFLICT(context_id, frequency_hz, timeslot, bucket_start_ms) DO UPDATE SET
-                hits = p25_site_frequency_bucket.hits + excluded.hits,
-                %s,
-                encrypted_count = p25_site_frequency_bucket.encrypted_count + excluded.encrypted_count
-            """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
-            actionUpdateSql("p25_site_frequency_bucket"))))
-        {
-            int index = 1;
-            statement.setInt(index++, contextId);
-            statement.setLong(index++, activity.frequencyHertz());
-            statement.setInt(index++, timeslot);
-            statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
-            statement.setInt(index++, grantHit(activity));
-            index = setActionCounts(statement, index, activity);
-            statement.setInt(index, activity.encrypted() ? 1 : 0);
             statement.executeUpdate();
         }
     }
@@ -1094,11 +1022,10 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO conventional_activity_summary (
-                context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, hits, %s, last_event_type_code
-            ) VALUES (?, ?, ?, ?, ?, ?, %s, ?)
+                context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, %s, last_event_type_code
+            ) VALUES (?, ?, ?, ?, ?, %s, ?)
             ON CONFLICT(context_id, frequency_hz, timeslot) DO UPDATE SET
                 last_seen_ms = max(conventional_activity_summary.last_seen_ms, excluded.last_seen_ms),
-                hits = conventional_activity_summary.hits + excluded.hits,
                 %s,
                 last_event_type_code = coalesce(excluded.last_event_type_code, conventional_activity_summary.last_event_type_code)
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
@@ -1110,7 +1037,6 @@ public class P25ActivityLogSchema
             statement.setInt(index++, timeslot);
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
-            statement.setInt(index++, grantHit(activity));
             index = setActionCounts(statement, index, activity);
             setInteger(statement, index, eventTypeCode(activity.eventType()));
             statement.executeUpdate();
@@ -1118,10 +1044,9 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO conventional_activity_bucket (
-                context_id, frequency_hz, timeslot, bucket_start_ms, hits, %s
-            ) VALUES (?, ?, ?, ?, ?, %s)
+                context_id, frequency_hz, timeslot, bucket_start_ms, %s
+            ) VALUES (?, ?, ?, ?, %s)
             ON CONFLICT(context_id, frequency_hz, timeslot, bucket_start_ms) DO UPDATE SET
-                hits = conventional_activity_bucket.hits + excluded.hits,
                 %s
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
             actionUpdateSql("conventional_activity_bucket"))))
@@ -1131,7 +1056,6 @@ public class P25ActivityLogSchema
             statement.setLong(index++, activity.frequencyHertz());
             statement.setInt(index++, timeslot);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
-            statement.setInt(index++, grantHit(activity));
             setActionCounts(statement, index, activity);
             statement.executeUpdate();
         }
@@ -1933,15 +1857,17 @@ public class P25ActivityLogSchema
     {
         for(P25ActivityLogRecords.Action action: ACTIONS)
         {
-            statement.setInt(index++, activity.action() == action ? 1 : 0);
+            boolean counted = activity.action() == action;
+
+            if(action == P25ActivityLogRecords.Action.CALL)
+            {
+                counted = activity.countedCall();
+            }
+
+            statement.setInt(index++, counted ? 1 : 0);
         }
 
         return index;
-    }
-
-    private static int grantHit(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        return activity.action() == P25ActivityLogRecords.Action.GRANT ? 1 : 0;
     }
 
     private static boolean isVoiceGrant(P25ActivityLogRecords.ActivityEvent activity)

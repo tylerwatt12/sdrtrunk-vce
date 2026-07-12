@@ -328,13 +328,13 @@ const actionColors = [
 ];
 
 function actionPie(rows) {
-  const actions = rows.filter((row) => Number(row.hits) > 0);
-  const total = actions.reduce((sum, row) => sum + Number(row.hits), 0);
+  const actions = rows.filter((row) => Number(row.count) > 0);
+  const total = actions.reduce((sum, row) => sum + Number(row.count), 0);
   if (!total) return node('div', 'empty', 'No actions recorded in the last 24 hours');
 
   let start = 0;
   const segments = actions.map((row, index) => {
-    const end = start + (Number(row.hits) / total * 100);
+    const end = start + (Number(row.count) / total * 100);
     const segment = `${actionColors[index % actionColors.length]} ${start}% ${end}%`;
     start = end;
     return segment;
@@ -351,8 +351,8 @@ function actionPie(rows) {
     const swatch = node('span', 'action-swatch');
     swatch.style.backgroundColor = actionColors[index % actionColors.length];
     const label = node('span', 'action-label', String(row.action).replaceAll('_', ' '));
-    const percentage = Number(row.hits) / total * 100;
-    item.append(swatch, label, node('span', 'action-value', `${number(row.hits)} · ${percentage.toFixed(1)}%`));
+    const percentage = Number(row.count) / total * 100;
+    item.append(swatch, label, node('span', 'action-value', `${number(row.count)} · ${percentage.toFixed(1)}%`));
     legend.append(item);
   });
 
@@ -362,23 +362,24 @@ function actionPie(rows) {
 function hourlyLineGraph(rows) {
   const values = (rows || []).map((row) => ({
     hour: Number(row.hour_ms),
-    hits: Number(row.hits || 0)
+    calls: Number(row.call_count || 0),
+    grants: Number(row.grant_count || 0)
   }));
-  if (!values.length) return node('div', 'empty', 'No hourly hit data');
+  if (!values.length) return node('div', 'empty', 'No hourly activity data');
 
   const width = 960;
   const height = 270;
   const margin = { top: 18, right: 20, bottom: 42, left: 55 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const maximum = Math.max(1, ...values.map((value) => value.hits));
+  const maximum = Math.max(1, ...values.flatMap((value) => [value.calls, value.grants]));
   const roundedMaximum = Math.max(4, Math.ceil(maximum / 4) * 4);
   const svgNamespace = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNamespace, 'svg');
-  svg.setAttribute('class', 'hits-line-svg');
+  svg.setAttribute('class', 'activity-line-svg');
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Total grant hits per hour for the last 24 hours');
+  svg.setAttribute('aria-label', 'Calls and grants per hour for the last 24 hours');
 
   const svgNode = (tag, attributes = {}, textValue) => {
     const element = document.createElementNS(svgNamespace, tag);
@@ -396,27 +397,32 @@ function hourlyLineGraph(rows) {
       'text-anchor': 'end' }, number(value)));
   }
 
-  const points = values.map((value, index) => {
-    const x = margin.left + (values.length === 1 ? plotWidth / 2 : plotWidth * index / (values.length - 1));
-    const y = margin.top + plotHeight - (plotHeight * value.hits / roundedMaximum);
-    return { ...value, x, y };
+  const xFor = (index) => margin.left + (values.length === 1 ? plotWidth / 2 :
+    plotWidth * index / (values.length - 1));
+  [['calls', 'Calls'], ['grants', 'Grants']].forEach(([field, label]) => {
+    const points = values.map((value, index) => ({ ...value, x: xFor(index),
+      y: margin.top + plotHeight - (plotHeight * value[field] / roundedMaximum) }));
+    const path = points.map((point, index) =>
+      `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+    svg.append(svgNode('path', { d: path, class: `activity-line-path ${field}` }));
+    points.forEach((point) => {
+      const circle = svgNode('circle', { cx: point.x, cy: point.y, r: 3,
+        class: `activity-line-point ${field}` });
+      circle.append(svgNode('title', {},
+        `${new Date(point.hour).toLocaleString()}: ${number(point[field])} ${label.toLowerCase()}`));
+      svg.append(circle);
+    });
   });
-  const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
-  svg.append(svgNode('path', { d: path, class: 'hits-line-path' }));
-
-  points.forEach((point, index) => {
-    const circle = svgNode('circle', { cx: point.x, cy: point.y, r: 3.5, class: 'hits-line-point' });
-    circle.append(svgNode('title', {}, `${new Date(point.hour).toLocaleString()}: ${number(point.hits)} hits`));
-    svg.append(circle);
-
-    if (index % 4 === 0 || index === points.length - 1) {
-      svg.append(svgNode('text', { x: point.x, y: height - 15, class: 'chart-axis-label',
-        'text-anchor': 'middle' }, new Date(point.hour).toLocaleTimeString([], { hour: 'numeric' })));
-    }
+  values.forEach((value, index) => {
+    if (index % 4 === 0 || index === values.length - 1) svg.append(svgNode('text', {
+      x: xFor(index), y: height - 15, class: 'chart-axis-label', 'text-anchor': 'middle'
+    }, new Date(value.hour).toLocaleTimeString([], { hour: 'numeric' })));
   });
 
-  const wrapper = node('div', 'hits-line-chart');
-  wrapper.append(svg);
+  const legend = node('div', 'activity-line-legend');
+  legend.append(node('span', 'calls', 'Calls'), node('span', 'grants', 'Grants'));
+  const wrapper = node('div', 'activity-line-chart');
+  wrapper.append(svg, legend);
   return wrapper;
 }
 
@@ -551,7 +557,8 @@ const siteColumns = [
 const talkgroupColumns = [
   { label: 'Talkgroup', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'id' },
   { label: 'Group', key: 'alias_group', className: 'alias-cell' },
-  { label: 'Hits', render: (row) => number(row.hits), className: 'numeric', sort: 'hits' },
+  { label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls' },
+  { label: 'Grants', render: (row) => number(row.grant_count), className: 'numeric', sort: 'grants' },
   { label: 'Encrypted Events', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted' },
   { label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen' }
 ];
@@ -560,7 +567,8 @@ const radioColumns = [
   { label: 'ID', render: (row) => radioLink(row), className: 'numeric', sort: 'id' },
   { label: 'Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell' },
   { label: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell' },
-  { label: 'Hits', render: (row) => number(row.hits), className: 'numeric', sort: 'hits' },
+  { label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls' },
+  { label: 'Grants', render: (row) => number(row.grant_count), className: 'numeric', sort: 'grants' },
   { label: 'Encrypted Events', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted' },
   { label: 'Affiliated TG', render: (row) => talkgroupAliasLink(row, row.affiliated_talkgroup_id,
     'affiliated_talkgroup_alias_'), className: 'alias-cell' },
@@ -575,7 +583,7 @@ async function renderDashboard() {
     ['Systems', counts.systems], ['Sites', counts.sites], ['Talkgroups', counts.talkgroups],
     ['Radios', counts.radios], ['Frequencies', counts.frequencies], ['Conventional', counts.conventional]
   ]));
-  content.append(section('Total Hits Per Hour', hourlyLineGraph(dashboard.hitsPerHour || [])));
+  content.append(section('Calls and Grants Per Hour', hourlyLineGraph(dashboard.activityPerHour || [])));
   const sites = section('Recent Sites', table(dashboard.recentSites || [], siteColumns));
   const actions = section('24 Hour Actions', node('div', 'action-chart'));
   actions.lastChild.append(actionPie(dashboard.actionMix || []));
@@ -795,14 +803,14 @@ async function renderSystem() {
   } else {
     content.append(metrics([
       ['Sites', system.sites], ['Talkgroups', system.talkgroups], ['Radios', system.radios],
-      ['Affiliated', system.affiliations], ['Activity Hits', system.activity_hits]
+      ['Affiliated', system.affiliations], ['Calls', system.activity_calls]
     ]));
     content.append(section('System Info', keyValues([
       ['System', systemLabel(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
     ])));
     content.append(section('Observed Actions', table(response.actionCounts || [], [
-      { label: 'Action', key: 'action' }, { label: 'Count', render: (row) => number(row.hits), className: 'numeric' }
+      { label: 'Action', key: 'action' }, { label: 'Count', render: (row) => number(row.count), className: 'numeric' }
     ])));
   }
 }
@@ -828,7 +836,8 @@ async function renderTalkgroup() {
       { label: 'Alias', render: (row) => row.radio_alias_name ? radioLink(row, row.radio_id, row.radio_alias_name) : '', className: 'alias-cell' },
       { label: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell' },
       { label: 'Affiliated', render: (row) => checkbox(affiliated.has(Number(row.radio_id))), className: 'center' },
-      { label: 'Hits', render: (row) => number(row.hits), className: 'numeric', sort: 'hits' },
+      { label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls' },
+      { label: 'Grants', render: (row) => number(row.grant_count), className: 'numeric', sort: 'grants' },
       { label: 'Encrypted Events', render: (row) => number(row.encrypted_count), className: 'numeric encrypted' },
       { label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen' }
     ];
@@ -841,15 +850,16 @@ async function renderTalkgroup() {
     content.append(section('Talkgroup Info', keyValues([
       ['System', systemLink(talkgroup)], ['Talkgroup ID', id], ['Alias', aliasLabel(talkgroup)],
       ['Group', talkgroup.alias_group], ['First Seen', dateTime(talkgroup.first_seen_ms)],
-      ['Last Seen', dateTime(talkgroup.last_seen_ms)], ['Hits', number(talkgroup.hits)],
+      ['Last Seen', dateTime(talkgroup.last_seen_ms)], ['Calls', number(talkgroup.call_count)],
+      ['Grants', number(talkgroup.grant_count)],
       ['Radios', number(talkgroup.radios)], ['Currently Affiliated', affiliationLink],
       ['Encrypted Events', number(talkgroup.encrypted_count)],
       ['Last Source', radioLink(talkgroup, talkgroup.last_source_radio_id)],
       ['Last Alg ID', hexDecimal(talkgroup.last_encryption_algorithm_id, 2)],
       ['Last Key ID', hexDecimal(talkgroup.last_encryption_key_id)]
     ])));
-    content.append(section('Action Counts', table(actionCounts(talkgroup).map(([action, hits]) => ({ action, hits })), [
-      { label: 'Action', key: 'action' }, { label: 'Count', key: 'hits', className: 'numeric' }
+    content.append(section('Action Counts', table(actionCounts(talkgroup).map(([action, count]) => ({ action, count })), [
+      { label: 'Action', key: 'action' }, { label: 'Count', key: 'count', className: 'numeric' }
     ])));
   }
 }
@@ -869,7 +879,8 @@ async function renderRadio() {
       pageParameters({ ...systemScope, radio_id: id }));
     const columns = [
       { label: 'Talkgroup', render: (row) => talkgroupAliasLink(row, row.talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'talkgroup' },
-      { label: 'Hits', render: (row) => number(row.hits), className: 'numeric', sort: 'hits' },
+      { label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls' },
+      { label: 'Grants', render: (row) => number(row.grant_count), className: 'numeric', sort: 'grants' },
       { label: 'Encrypted Events', render: (row) => number(row.encrypted_count), className: 'numeric encrypted' },
       { label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen' }
     ];
@@ -884,13 +895,14 @@ async function renderRadio() {
         'affiliated_talkgroup_alias_')],
       ['Affiliation Updated', dateTime(radio.affiliation_updated_at_ms)],
       ['First Seen', dateTime(radio.first_seen_ms)], ['Last Seen', dateTime(radio.last_seen_ms)],
-      ['Hits', number(radio.hits)], ['Talkgroups', number(radio.talkgroups)],
+      ['Calls', number(radio.call_count)], ['Grants', number(radio.grant_count)],
+      ['Talkgroups', number(radio.talkgroups)],
       ['Encrypted Events', number(radio.encrypted_count)],
       ['Last Alg ID', hexDecimal(radio.last_encryption_algorithm_id, 2)],
       ['Last Key ID', hexDecimal(radio.last_encryption_key_id)]
     ])));
-    content.append(section('Action Counts', table(actionCounts(radio).map(([action, hits]) => ({ action, hits })), [
-      { label: 'Action', key: 'action' }, { label: 'Count', key: 'hits', className: 'numeric' }
+    content.append(section('Action Counts', table(actionCounts(radio).map(([action, count]) => ({ action, count })), [
+      { label: 'Action', key: 'action' }, { label: 'Count', key: 'count', className: 'numeric' }
     ])));
   }
 }
@@ -1059,7 +1071,7 @@ async function renderConventional() {
     { label: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency' },
     { label: 'Slot', key: 'timeslot', className: 'numeric' },
     { label: 'NAC', render: (row) => hexDecimal(row.nac, 3) },
-    { label: 'Hits', render: (row) => number(row.hits), className: 'numeric', sort: 'hits' },
+    { label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls' },
     { label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen' }
   ];
   content.append(pagedSection('Conventional Channels', page, columns, 'Search name or frequency'));
@@ -1089,7 +1101,7 @@ async function renderConventionalDetail() {
     content.append(section('Frequency Summaries', table(data.summaries || [], [
       { label: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric' },
       { label: 'Slot', key: 'timeslot', className: 'numeric' },
-      { label: 'Hits', render: (row) => number(row.hits), className: 'numeric' },
+      { label: 'Calls', render: (row) => number(row.call_count), className: 'numeric' },
       { label: 'First Seen', render: (row) => dateTime(row.first_seen_ms) },
       { label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
     ])));

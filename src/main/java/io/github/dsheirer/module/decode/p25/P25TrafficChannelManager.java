@@ -28,6 +28,7 @@ import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -409,6 +410,33 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
+     * Creates and registers a tracker.
+     */
+    private P25TrafficChannelEventTracker createTracker(P25ChannelGrantEvent event, long frequency, int timeslot)
+    {
+        P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event);
+        addTracker(tracker, frequency, timeslot);
+        return tracker;
+    }
+
+    /**
+     * Creates a control-channel tracker and announces a new voice call exactly once.  Tuner allocation and traffic
+     * decoding are intentionally not prerequisites for this notification.
+     */
+    private P25TrafficChannelEventTracker createControlTracker(P25ChannelGrantEvent event, long frequency,
+                                                                int timeslot)
+    {
+        P25TrafficChannelEventTracker tracker = createTracker(event, frequency, timeslot);
+
+        if(event.getEventType() != null && event.getEventType().isVoiceCallEvent())
+        {
+            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event));
+        }
+
+        return tracker;
+    }
+
+    /**
      * Removes the tracker from the correct channel grant map.
      * @param frequency for the map lookup
      * @param timeslot to identify the correct map.
@@ -455,7 +483,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
                 else
                 {
-                    notifyActivityGrant(channel, ic, getEventType(macOpcode, serviceOptions, null));
+                    notifyActivityGrant(channel, ic, getEventType(macOpcode, serviceOptions, null), timestamp, true);
                 }
             }
             finally
@@ -615,8 +643,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .timeslot(TimeslotMessage.TIMESLOT_1)
                         .build();
 
-                trackerTS1 = new P25TrafficChannelEventTracker(continuationGrantEvent);
-                addTracker(trackerTS1, frequency, TimeslotMessage.TIMESLOT_1);
+                trackerTS1 = createTracker(continuationGrantEvent, frequency, TimeslotMessage.TIMESLOT_1);
             }
 
             //update the ending timestamp so that the duration value is correctly calculated
@@ -659,8 +686,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .timeslot(TimeslotMessage.TIMESLOT_2)
                         .build();
 
-                trackerTS2 = new P25TrafficChannelEventTracker(continuationGrantEvent);
-                addTracker(trackerTS2, frequency, TimeslotMessage.TIMESLOT_2);
+                trackerTS2 = createTracker(continuationGrantEvent, frequency, TimeslotMessage.TIMESLOT_2);
             }
 
             //update the ending timestamp so that the duration value is correctly calculated
@@ -755,8 +781,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .identifiers(ic)
                     .build();
 
-            tracker = new P25TrafficChannelEventTracker(callEvent);
-            addTracker(tracker, frequency, timeslot);
+            tracker = createTracker(callEvent, frequency, timeslot);
             broadcast(tracker);
             return null;
         }
@@ -901,8 +926,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .identifiers(mic)
                         .build();
 
-                tracker = new P25TrafficChannelEventTracker(callEvent);
-                addTracker(tracker, frequency, TimeslotMessage.TIMESLOT_1);
+                tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
             }
 
             broadcast(tracker);
@@ -1047,8 +1071,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                             .identifiers(mic)
                             .build();
 
-                    tracker = new P25TrafficChannelEventTracker(callEvent);
-                    addTracker(tracker, frequency, TimeslotMessage.TIMESLOT_1);
+                    tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
                     broadcast(tracker);
                 }
             }
@@ -1106,8 +1129,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .identifiers(ic)
                     .build();
 
-            tracker = new P25TrafficChannelEventTracker(callEvent);
-            addTracker(tracker, frequency, TimeslotMessage.TIMESLOT_1);
+            tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
             broadcast(tracker);
         }
         finally
@@ -1142,7 +1164,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //If we have a tracked event, update it.  Otherwise, make sure we have the traffic channel allocated
             if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
             {
-                notifyActivityGrant(channel, ic, getEventType(opcode, serviceOptions, null));
+                notifyActivityGrant(channel, ic, getEventType(opcode, serviceOptions, null), timestamp, true);
 
                 //Only rebroadcast the tracked event if the timestamp was updated from this control channel timestamp
                 //Once the traffic channel takes over updating the tracked event time/duration, further control channel
@@ -1196,8 +1218,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         return completed;
     }
 
-    private void notifyActivityGrant(APCO25Channel channel, IdentifierCollection identifiers, DecodeEventType eventType)
+    private void notifyActivityGrant(APCO25Channel channel, IdentifierCollection identifiers, DecodeEventType eventType,
+                                     long timestamp, boolean continuation)
     {
+        if(channel != null)
+        {
+            MyEventBus.getGlobalEventBus().post(new P25GrantObservationEvent(mParentChannel, channel, identifiers,
+                eventType, timestamp, continuation));
+        }
+
         if(mChannelActivityModel != null && channel != null)
         {
             Channel trafficChannel = mAllocatedTrafficChannelMap.get(channel.getDownlinkFrequency());
@@ -1354,15 +1383,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                                   boolean isDataChannelGrant, long timestamp)
     {
         long frequency = apco25Channel.getDownlinkFrequency();
-        notifyActivityGrant(apco25Channel, ic, decodeEventType);
-
         P25TrafficChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, TimeslotMessage.TIMESLOT_1, timestamp);
+        Identifier from = ic.getFromIdentifier();
+        boolean sameCall = tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp);
+        boolean differentTalker = sameCall && from != null && tracker.isDifferentTalker(from);
+        notifyActivityGrant(apco25Channel, ic, decodeEventType, timestamp, sameCall && !differentTalker);
 
-        if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
+        if(sameCall)
         {
-            Identifier from = ic.getFromIdentifier();
-
-            if(from != null && tracker.isDifferentTalker(from))
+            if(differentTalker)
             {
                 P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                     .channelDescriptor(apco25Channel)
@@ -1370,8 +1399,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .identifiers(ic)
                     .build();
 
-                tracker = new P25TrafficChannelEventTracker(event);
-                addTracker(tracker, frequency, TimeslotMessage.TIMESLOT_1);
+                tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
             }
 
             //The tracked event can have an empty FROM identifier at start of call ... update here
@@ -1421,8 +1449,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .details("IGNORED: PHASE 1 DATA CALL " + (serviceOptions != null ? serviceOptions : ""))
                         .identifiers(ic)
                         .build();
-                tracker = new P25TrafficChannelEventTracker(event);
-                addTracker(tracker, frequency, TimeslotMessage.TIMESLOT_1);
+                tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
                 broadcast(tracker);
             }
 
@@ -1437,8 +1464,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             .details(details)
             .identifiers(ic)
             .build();
-        tracker = new P25TrafficChannelEventTracker(event);
-        addTracker(tracker, frequency, TimeslotMessage.TIMESLOT_1);
+        tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
         if(!mAllocatedTrafficChannelMap.containsKey(frequency))
@@ -1482,15 +1508,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         int timeslot = apco25Channel.getTimeslot();
         long frequency = apco25Channel.getDownlinkFrequency();
         ic.setTimeslot(timeslot);
-        notifyActivityGrant(apco25Channel, ic, decodeEventType);
-
         P25TrafficChannelEventTracker tracker = getTrackerRemoveIfStale(apco25Channel, timestamp);
+        Identifier from = ic.getFromIdentifier();
+        boolean sameCall = tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp);
+        boolean differentTalker = sameCall && from != null && tracker.isDifferentTalker(from);
+        notifyActivityGrant(apco25Channel, ic, decodeEventType, timestamp, sameCall && !differentTalker);
 
-        if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
+        if(sameCall)
         {
-            Identifier from = ic.getFromIdentifier();
-
-            if(from != null && tracker.isDifferentTalker(from))
+            if(differentTalker)
             {
                 P25ChannelGrantEvent continuationGrantEvent = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                     .channelDescriptor(apco25Channel)
@@ -1499,8 +1525,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .timeslot(apco25Channel.getTimeslot())
                     .build();
 
-                tracker = new P25TrafficChannelEventTracker(continuationGrantEvent);
-                addTracker(tracker, frequency, timeslot);
+                tracker = createControlTracker(continuationGrantEvent, frequency, timeslot);
                 broadcast(tracker);
             }
 
@@ -1540,8 +1565,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 .timeslot(apco25Channel.getTimeslot())
                 .build();
 
-            tracker = new P25TrafficChannelEventTracker(event);
-            addTracker(tracker, frequency, TimeslotMessage.TIMESLOT_1);
+            tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
             broadcast(tracker);
             return;
         }
@@ -1553,8 +1577,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             .timeslot(apco25Channel.getTimeslot())
             .build();
 
-        tracker = new P25TrafficChannelEventTracker(event);
-        addTracker(tracker, frequency, timeslot);
+        tracker = createControlTracker(event, frequency, timeslot);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
         if(!mAllocatedTrafficChannelMap.containsKey(frequency) && frequency != getCurrentControlFrequency())

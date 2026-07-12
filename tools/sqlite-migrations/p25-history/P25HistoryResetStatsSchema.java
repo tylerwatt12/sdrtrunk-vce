@@ -12,10 +12,10 @@ import java.time.format.DateTimeFormatter;
 /**
  * External one-off reset for the sdrtrunk-vce Stats Server schema.
  *
- * This intentionally drops only activity/history tables, views, and indexes, then recreates the current v13 schema.
+ * This intentionally drops only activity/history tables, views, and indexes, then recreates the current schema.
  * It does not touch SDRTrunk configuration, channels, aliases, streams, preferences, or vault data.
  */
-public class P25HistoryResetToV13StatsSchema
+public class P25HistoryResetStatsSchema
 {
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
@@ -52,6 +52,7 @@ public class P25HistoryResetToV13StatsSchema
         "idx_p25_site_talkgroup_bucket_talkgroup_time",
         "idx_p25_site_radio_bucket_time",
         "idx_p25_site_frequency_bucket_time",
+        "idx_p25_site_activity_bucket_time",
         "idx_conventional_bucket_time",
         "idx_p25_site_snapshot_identity",
         "idx_p25_site_channel_guid_frequency",
@@ -85,6 +86,7 @@ public class P25HistoryResetToV13StatsSchema
         "p25_site_talkgroup_bucket",
         "p25_site_radio_bucket",
         "p25_site_frequency_bucket",
+        "p25_site_activity_bucket",
         "p25_talkgroup_summary",
         "p25_radio_summary",
         "p25_radio_talkgroup_summary",
@@ -114,7 +116,7 @@ public class P25HistoryResetToV13StatsSchema
     {
         if(args.length != 1 || "--help".equals(args[0]) || "-h".equals(args[0]))
         {
-            System.out.println("Usage: java -cp \"<sdrtrunk-app>/lib/*\" P25HistoryResetToV13StatsSchema.java <database>");
+            System.out.println("Usage: java -cp \"<sdrtrunk-app>/lib/*\" P25HistoryResetStatsSchema.java <database>");
             return;
         }
 
@@ -143,12 +145,12 @@ public class P25HistoryResetToV13StatsSchema
             optimize(connection);
         }
 
-        System.out.println("Stats Server schema reset complete: v13 current-state and observation-summary logging.");
+        System.out.println("Stats Server schema reset complete.");
     }
 
     private static Path backup(Path database) throws IOException
     {
-        Path backup = database.resolveSibling(database.getFileName() + ".backup-stats-v13-reset-" +
+        Path backup = database.resolveSibling(database.getFileName() + ".backup-stats-reset-" +
             TIMESTAMP.format(LocalDateTime.now()));
         Files.copy(database, backup);
         return backup;
