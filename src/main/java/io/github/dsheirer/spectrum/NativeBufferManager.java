@@ -24,6 +24,7 @@ import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
@@ -152,5 +153,11 @@ public class NativeBufferManager<T extends INativeBuffer>
         }
 
         mConsumerQueue.clear();
+
+        if(samplesPointer < requestedSamples * 2)
+        {
+            Arrays.fill(destination, 0.0f);
+            throw new IOException("Native buffers supplied fewer samples than reported");
+        }
     }
 }

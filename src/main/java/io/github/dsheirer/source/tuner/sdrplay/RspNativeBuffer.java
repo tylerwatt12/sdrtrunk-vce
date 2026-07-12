@@ -70,7 +70,7 @@ public class RspNativeBuffer extends AbstractNativeBuffer
     @Override
     public int sampleCount()
     {
-        return mISamples.length * 2;
+        return mISamples.length;
     }
 
     /**
