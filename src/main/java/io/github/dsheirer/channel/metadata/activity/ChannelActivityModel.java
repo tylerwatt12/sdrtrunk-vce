@@ -111,6 +111,17 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return mConventionalTable;
     }
 
+    /**
+     * Current activity tables in display order for a renderer that is attaching after the model was populated.
+     */
+    public List<ChannelActivityTableModel> getTables()
+    {
+        List<ChannelActivityTableModel> tables = new ArrayList<>(mTrunkedTables.size() + 1);
+        tables.add(mConventionalTable);
+        tables.addAll(mTrunkedTables.values());
+        return List.copyOf(tables);
+    }
+
     public boolean isEnabled()
     {
         return mEnabled;

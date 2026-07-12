@@ -99,6 +99,7 @@ public class ChannelActivityPanel extends JPanel
     private JTable mSelectedTable;
     private boolean mSuppressSelectionEvents;
     private boolean mApplyingColumnWidths;
+    private boolean mActive;
     private boolean mRegisteredForPreferences;
     private JideTabbedPane mTabbedPane;
 
@@ -109,28 +110,68 @@ public class ChannelActivityPanel extends JPanel
         mIconModel = iconModel;
         mUserPreferences = userPreferences;
         mNowPlayingPreference = userPreferences.getNowPlayingPreference();
-        MyEventBus.getGlobalEventBus().register(this);
-        mRegisteredForPreferences = true;
         setColors();
         init();
+        setActive(true);
     }
 
     public void dispose()
     {
-        if(mRegisteredForPreferences)
-        {
-            MyEventBus.getGlobalEventBus().unregister(this);
-            mRegisteredForPreferences = false;
-        }
-
-        mActivityModel.removeTableAddListener(mTableAddListener);
-        mActivityModel.removeTableChangeListener(mTableChangeListener);
-        disposeTableWiring();
+        setActive(false);
     }
 
-    public void resetTables()
+    /**
+     * Attaches or detaches this renderer from the shared activity model. The model may remain active for another
+     * renderer, such as the web console, while this panel is hidden.
+     */
+    public void setActive(boolean active)
+    {
+        if(mActive == active)
+        {
+            return;
+        }
+
+        mActive = active;
+
+        if(active)
+        {
+            if(!mRegisteredForPreferences)
+            {
+                MyEventBus.getGlobalEventBus().register(this);
+                mRegisteredForPreferences = true;
+            }
+
+            mActivityModel.addTableAddListener(mTableAddListener);
+            mActivityModel.addTableChangeListener(mTableChangeListener);
+
+            for(ChannelActivityTableModel tableModel: mActivityModel.getTables())
+            {
+                addTable(tableModel);
+            }
+        }
+        else
+        {
+            if(mRegisteredForPreferences)
+            {
+                MyEventBus.getGlobalEventBus().unregister(this);
+                mRegisteredForPreferences = false;
+            }
+
+            mActivityModel.removeTableAddListener(mTableAddListener);
+            mActivityModel.removeTableChangeListener(mTableChangeListener);
+            clearTables();
+        }
+    }
+
+    private void clearTables()
     {
         clearSelectedFrequencyContext();
+
+        for(ChannelActivityTableModel tableModel: mTabComponents.keySet())
+        {
+            tableModel.setActivityViewVisible(false);
+        }
+
         disposeTableWiring();
         mTabComponents.clear();
         mTables.clear();
@@ -140,7 +181,6 @@ public class ChannelActivityPanel extends JPanel
         if(mTabbedPane != null)
         {
             mTabbedPane.removeAll();
-            addTable(mActivityModel.getConventionalTable());
         }
     }
 
@@ -196,9 +236,6 @@ public class ChannelActivityPanel extends JPanel
     {
         setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]", "[grow,fill]"));
         add(getTabbedPane(), "grow");
-        addTable(mActivityModel.getConventionalTable());
-        mActivityModel.addTableAddListener(mTableAddListener);
-        mActivityModel.addTableChangeListener(mTableChangeListener);
     }
 
     @Subscribe

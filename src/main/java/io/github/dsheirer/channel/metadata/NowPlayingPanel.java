@@ -108,12 +108,13 @@ public class NowPlayingPanel extends JPanel
 
             if(active)
             {
+                mChannelActivityPanel.setActive(true);
                 updateLowerTabs();
             }
             else
             {
                 detachLowerTabs();
-                mChannelActivityPanel.resetTables();
+                mChannelActivityPanel.setActive(false);
             }
         }
     }
