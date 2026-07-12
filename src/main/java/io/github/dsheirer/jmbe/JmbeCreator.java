@@ -31,6 +31,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
+import java.util.stream.Stream;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -150,6 +153,7 @@ public class JmbeCreator
 
                         if(osType.isLinux() || osType.isOsx())
                         {
+                            restoreCreatorExecutables(unzipped);
                             script = FileUtil.findFile(unzipped, CREATOR_SCRIPT_LINUX);
                         }
                         else if(osType.isWindows())
@@ -168,14 +172,7 @@ public class JmbeCreator
                                 tagName = "v" + mRelease.getVersion();
                             }
 
-                            if(osType.isLinux() || osType.isOsx())
-                            {
-                                processBuilder.command("sh", script.toString(), mLibraryPath.toString(), tagName);
-                            }
-                            else
-                            {
-                                processBuilder.command(script.toString(), mLibraryPath.toString(), tagName);
-                            }
+                            processBuilder.command(script.toString(), mLibraryPath.toString(), tagName);
                             processBuilder.redirectErrorStream(true);
                             runScript(processBuilder);
                         }
@@ -222,6 +219,32 @@ public class JmbeCreator
         }
 
 
+    }
+
+    /**
+     * Java's ZIP reader does not restore Unix execute bits. Creator distributions need their bin launchers and the
+     * JDK process helper to be executable.
+     */
+    static void restoreCreatorExecutables(Path root) throws IOException
+    {
+        try(Stream<Path> paths = Files.walk(root))
+        {
+            for(Path path: paths.filter(Files::isRegularFile).filter(JmbeCreator::isCreatorExecutable).toList())
+            {
+                Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(path);
+                permissions.add(PosixFilePermission.OWNER_EXECUTE);
+                permissions.add(PosixFilePermission.GROUP_EXECUTE);
+                permissions.add(PosixFilePermission.OTHERS_EXECUTE);
+                Files.setPosixFilePermissions(path, permissions);
+            }
+        }
+    }
+
+    private static boolean isCreatorExecutable(Path path)
+    {
+        Path parent = path.getParent();
+        return "jspawnhelper".equals(path.getFileName().toString()) ||
+            parent != null && parent.getFileName() != null && "bin".equals(parent.getFileName().toString());
     }
 
 
