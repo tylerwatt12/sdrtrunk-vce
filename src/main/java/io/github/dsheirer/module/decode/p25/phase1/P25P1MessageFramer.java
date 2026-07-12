@@ -376,7 +376,8 @@ public class P25P1MessageFramer
      */
     private void dispatchTSBK()
     {
-        int slot = getTSBKSlot(mMessageAssembler.getDataUnitID());
+        P25P1MessageAssembler assembler = mMessageAssembler;
+        int slot = getTSBKSlot(assembler.getDataUnitID());
 
         if(slot < 0)
         {
@@ -399,6 +400,12 @@ public class P25P1MessageFramer
             if(tsbk != null)
             {
                 broadcast(tsbk);
+
+                //A listener can synchronously reset or replace the assembler while handling the message.
+                if(mMessageAssembler != assembler)
+                {
+                    return;
+                }
             }
 
             if(isTerminalTSBKSlot(slot, tsbk))
