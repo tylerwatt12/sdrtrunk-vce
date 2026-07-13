@@ -50,13 +50,28 @@ class P25FrequencyBandValidatorTest
     }
 
     @Test
-    void rejectsInvalidSpacing()
+    void acceptsProtocolEncodedSpacing()
     {
-        P25FrequencyBandValidator.RegistrationResult result =
-            P25FrequencyBandValidator.register(new HashMap<>(), band(0, 851_006_250L, 6375L, 1));
+        for(long spacing: new long[]{2500L, 6375L})
+        {
+            P25FrequencyBandValidator.RegistrationResult result =
+                P25FrequencyBandValidator.register(new HashMap<>(), band(0, 851_006_250L, spacing, 1));
 
-        assertFalse(result.accepted());
-        assertEquals(P25FrequencyBandValidator.RejectReason.INVALID_CHANNEL_SPACING, result.rejectReason());
+            assertTrue(result.accepted(), "Expected spacing to be accepted: " + spacing);
+        }
+    }
+
+    @Test
+    void rejectsSpacingOutsideProtocolEncoding()
+    {
+        for(long spacing: new long[]{0L, 6376L, 128000L})
+        {
+            P25FrequencyBandValidator.RegistrationResult result =
+                P25FrequencyBandValidator.register(new HashMap<>(), band(0, 851_006_250L, spacing, 1));
+
+            assertFalse(result.accepted(), "Expected spacing to be rejected: " + spacing);
+            assertEquals(P25FrequencyBandValidator.RejectReason.INVALID_CHANNEL_SPACING, result.rejectReason());
+        }
     }
 
     @Test

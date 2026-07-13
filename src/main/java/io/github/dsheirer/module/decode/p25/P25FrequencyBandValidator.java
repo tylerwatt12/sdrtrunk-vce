@@ -17,7 +17,6 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Shared P25 bandplan and logical-channel sanity rules.
@@ -32,7 +31,8 @@ public final class P25FrequencyBandValidator
     public static final int MAXIMUM_CHANNEL_NUMBER = 4095;
     public static final int NO_CHANNEL_BAND_IDENTIFIER = 15;
     public static final int NO_CHANNEL_NUMBER = 4095;
-    private static final Set<Long> VALID_CHANNEL_SPACING_HZ = Set.of(6250L, 12500L, 25000L);
+    private static final long CHANNEL_SPACING_STEP_HZ = 125L;
+    private static final long MAXIMUM_CHANNEL_SPACING_HZ = 1023L * CHANNEL_SPACING_STEP_HZ;
 
     private P25FrequencyBandValidator()
     {
@@ -90,7 +90,10 @@ public final class P25FrequencyBandValidator
             return RejectReason.BASE_OUTSIDE_RF_RANGE;
         }
 
-        if(!VALID_CHANNEL_SPACING_HZ.contains(band.getChannelSpacing()))
+        long channelSpacing = band.getChannelSpacing();
+
+        if(channelSpacing <= 0 || channelSpacing > MAXIMUM_CHANNEL_SPACING_HZ ||
+            channelSpacing % CHANNEL_SPACING_STEP_HZ != 0)
         {
             return RejectReason.INVALID_CHANNEL_SPACING;
         }
