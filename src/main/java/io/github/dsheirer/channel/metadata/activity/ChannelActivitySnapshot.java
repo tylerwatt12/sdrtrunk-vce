@@ -35,15 +35,17 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
     }
 
     public record Row(String key, String status, String role, String controlRole, String lcn, long frequencyHz,
-                      Integer timeslot, String sourceId, String sourceAlias, String targetId, String targetAlias,
-                      String decoder, String encryptionDetails)
+                      Integer timeslot, String sourceId, String sourceAlias, String talkerAlias,
+                      String sourceAliasDisplay, String targetId, String targetAlias, String decoder,
+                      String encryptionDetails)
     {
         private static Row from(ChannelActivityRow row)
         {
             return new Row(row.getKey(), row.getState().name(), row.getRole().name(),
                 row.getControlRole().name(), row.getLcn(), row.getFrequency(), row.getTimeslot(),
-                value(row.getSource()), aliases(row.getSourceAliases()), value(row.getTarget()),
-                aliases(row.getTargetAliases()), row.getDecoder(), row.getEncryptionDetails());
+                value(row.getSource()), aliases(row.getSourceAliases()), value(row.getTalkerAlias()),
+                row.getSourceAliasDisplay(), value(row.getTarget()), aliases(row.getTargetAliases()),
+                row.getDecoder(), row.getEncryptionDetails());
         }
 
         private static String value(Identifier<?> identifier)

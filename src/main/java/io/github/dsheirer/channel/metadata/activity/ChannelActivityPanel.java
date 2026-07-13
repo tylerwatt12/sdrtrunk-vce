@@ -988,6 +988,15 @@ public class ChannelActivityPanel extends JPanel
                 label.setForeground(table.getForeground());
             }
 
+            int modelColumn = table.convertColumnIndexToModel(column);
+
+            if(modelColumn == ChannelActivityTableModel.COLUMN_SOURCE_ALIAS &&
+                table.getModel() instanceof ChannelActivityTableModel activityTableModel)
+            {
+                ChannelActivityRow activityRow = activityTableModel.getRow(table.convertRowIndexToModel(row));
+                label.setText(activityRow != null ? activityRow.getSourceAliasDisplay() : null);
+            }
+
             applySelectionBorder(table, label, isSelected, column);
             return label;
         }

@@ -27,8 +27,11 @@ import io.github.dsheirer.channel.metadata.ChannelMetadataField;
 import io.github.dsheirer.channel.metadata.IChannelMetadataUpdateListener;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
@@ -505,6 +508,42 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         });
     }
 
+    /**
+     * Applies a talker alias decoded after the initial traffic grant to the active Systems row.
+     */
+    public void p25TrafficTalkerAlias(Channel parentChannel, IChannelDescriptor channelDescriptor,
+                                      Identifier<?> talkerAlias)
+    {
+        long frequency = channelDescriptor != null ? channelDescriptor.getDownlinkFrequency() : 0;
+        Integer timeslot = getTimeslot(channelDescriptor);
+
+        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || frequency <= 0 ||
+            talkerAlias == null || talkerAlias.getForm() != Form.TALKER_ALIAS)
+        {
+            return;
+        }
+
+        runOnSwingIfEnabled(() -> {
+            SiteActivitySession session = mSiteSessions.get(parentChannel);
+            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+
+            if(table == null)
+            {
+                return;
+            }
+
+            ChannelActivityRow row = session.traffic(frequency, timeslot);
+
+            if(row == null || !isTrafficState(row.getState()) || talkerAlias.equals(row.getTalkerAlias()))
+            {
+                return;
+            }
+
+            row.setTalkerAlias(talkerAlias);
+            table.refresh(row);
+        });
+    }
+
     public void channelConfigurationChanged(Channel channel)
     {
         if(!mEnabled || channel == null)
@@ -548,6 +587,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         row.setSource(metadata.getFromIdentifier());
         row.setSourceAliases(metadata.getFromIdentifierAliases());
+        row.setTalkerAlias(metadata.getTalkerAliasIdentifier());
         row.setTarget(metadata.getToIdentifier());
         row.setTargetAliases(metadata.getToIdentifierAliases());
         row.setEncryptionDetails(P25EncryptionDetails.format(metadata.getEncryptionIdentifier()));
@@ -576,6 +616,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         {
             Identifier<?> source = identifiers.getFromIdentifier();
             Identifier<?> target = identifiers.getToIdentifier();
+            Identifier<?> talkerAlias = identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
             boolean targetChanged = target != null && row.getTarget() != null && !target.equals(row.getTarget());
 
             if(target != null)
@@ -588,6 +629,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             {
                 row.setSource(source);
                 row.setSourceAliases(getAliases(source, identifiers, channel));
+            }
+
+            if(talkerAlias != null)
+            {
+                row.setTalkerAlias(talkerAlias);
             }
 
             String encryptionDetails = P25EncryptionDetails.format(identifiers);

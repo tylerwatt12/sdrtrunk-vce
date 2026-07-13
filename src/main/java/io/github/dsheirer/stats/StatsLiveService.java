@@ -163,6 +163,8 @@ final class StatsLiveService implements AutoCloseable
         put(row, "timeslot", snapshot.timeslot());
         put(row, "source_id", snapshot.sourceId());
         put(row, "source_alias", snapshot.sourceAlias());
+        put(row, "talker_alias", snapshot.talkerAlias());
+        put(row, "source_alias_display", snapshot.sourceAliasDisplay());
         put(row, "target_id", snapshot.targetId());
         put(row, "target_alias", snapshot.targetAlias());
         put(row, "decoder", snapshot.decoder());

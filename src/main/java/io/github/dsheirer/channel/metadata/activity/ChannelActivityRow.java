@@ -22,8 +22,10 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Session-only row for the Now Playing activity tables.
@@ -66,6 +68,7 @@ public class ChannelActivityRow
     private Integer mTimeslot;
     private Identifier<?> mSource;
     private List<Alias> mSourceAliases = Collections.emptyList();
+    private Identifier<?> mTalkerAlias;
     private Identifier<?> mTarget;
     private List<Alias> mTargetAliases = Collections.emptyList();
     private String mDecoder;
@@ -213,6 +216,69 @@ public class ChannelActivityRow
         mSourceAliases = sourceAliases != null ? sourceAliases : Collections.emptyList();
     }
 
+    public Identifier<?> getTalkerAlias()
+    {
+        return mTalkerAlias;
+    }
+
+    public void setTalkerAlias(Identifier<?> talkerAlias)
+    {
+        mTalkerAlias = talkerAlias;
+    }
+
+    /**
+     * Source alias text for activity renderers.  Configured aliases remain primary and an over-the-air talker alias
+     * is appended when it provides a distinct value.
+     */
+    public String getSourceAliasDisplay()
+    {
+        List<String> configuredAliases = new ArrayList<>();
+
+        for(Alias alias: mSourceAliases)
+        {
+            String name = clean(alias != null ? alias.getName() : null);
+
+            if(name != null)
+            {
+                configuredAliases.add(name);
+            }
+        }
+
+        String configured = configuredAliases.isEmpty() ? null : String.join(", ", configuredAliases);
+        String talker = clean(mTalkerAlias != null && mTalkerAlias.getValue() != null ?
+            mTalkerAlias.getValue().toString() : null);
+
+        if(talker == null)
+        {
+            return configured;
+        }
+
+        String normalizedTalker = normalize(talker);
+
+        if(configuredAliases.stream().anyMatch(alias -> normalize(alias).equals(normalizedTalker)))
+        {
+            return configured;
+        }
+
+        return configured != null ? configured + " · TA: " + talker : "TA: " + talker;
+    }
+
+    private static String clean(String value)
+    {
+        if(value == null)
+        {
+            return null;
+        }
+
+        String cleaned = value.trim();
+        return cleaned.isEmpty() ? null : cleaned;
+    }
+
+    private static String normalize(String value)
+    {
+        return value.trim().toLowerCase(Locale.ROOT);
+    }
+
     public Identifier<?> getTarget()
     {
         return mTarget;
@@ -272,6 +338,7 @@ public class ChannelActivityRow
     {
         mSource = null;
         mSourceAliases = Collections.emptyList();
+        mTalkerAlias = null;
         mTarget = null;
         mTargetAliases = Collections.emptyList();
         mEncryptionDetails = null;

@@ -29,9 +29,12 @@ import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
@@ -339,6 +342,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         broadcast(tracker.getEvent());
         notifyActivityEncryptionDetails(tracker);
+        notifyActivityTalkerAlias(tracker);
     }
 
     /**
@@ -1245,6 +1249,20 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             identifiers != null && identifiers.getEncryptionIdentifier() != null)
         {
             mChannelActivityModel.p25TrafficEncryptionDetails(mParentChannel, channel, identifiers, event.getEventType());
+        }
+    }
+
+    private void notifyActivityTalkerAlias(P25TrafficChannelEventTracker tracker)
+    {
+        P25ChannelGrantEvent event = tracker != null ? tracker.getEvent() : null;
+        IdentifierCollection identifiers = event != null ? event.getIdentifierCollection() : null;
+        Identifier talkerAlias = identifiers != null ?
+            identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM) : null;
+
+        if(mChannelActivityModel != null && event != null &&
+            event.getChannelDescriptor() instanceof APCO25Channel channel && talkerAlias != null)
+        {
+            mChannelActivityModel.p25TrafficTalkerAlias(mParentChannel, channel, talkerAlias);
         }
     }
 

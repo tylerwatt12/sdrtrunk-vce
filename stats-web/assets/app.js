@@ -629,7 +629,8 @@ function liveSystemsSection() {
     cellText(cells[0], statusText);
     cellText(cells[1], row.lcn);
     cellText(cells[2], frequency(row.frequency_hz));
-    cellText(cells[3], row.source_alias);
+    cellText(cells[3], row.source_alias_display || row.source_alias ||
+      (row.talker_alias ? `TA: ${row.talker_alias}` : ''));
     cellText(cells[4], row.source_id);
     cellText(cells[5], row.target_alias);
     cellText(cells[6], row.target_id);

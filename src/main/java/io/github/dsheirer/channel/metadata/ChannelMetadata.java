@@ -447,7 +447,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
                 {
                     if(identifier.getForm() == Form.TALKER_ALIAS)
                     {
-                        mTalkerAliasIdentifier = identifier;
+                        mTalkerAliasIdentifier = (update.isAdd() || update.isSilentAdd()) ? identifier : null;
                     }
                     else
                     {
