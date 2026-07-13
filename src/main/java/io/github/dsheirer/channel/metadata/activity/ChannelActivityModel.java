@@ -618,6 +618,16 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 ensureConfiguredControlRow(channel, "channel-configuration-control-seed");
                 reconcileConfiguredControlRows(channel);
             }
+            else
+            {
+                for(ChannelActivityRow row: mConventionalTable.getRows())
+                {
+                    if(row.getChannel() == channel)
+                    {
+                        mConventionalTable.refresh(row);
+                    }
+                }
+            }
         });
     }
 

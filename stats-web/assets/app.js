@@ -1002,7 +1002,8 @@ function liveSystemsSection() {
   const columns = [
     { id: 'status', label: 'Status', width: 145, sortValue: (row) => row.status || '' },
     { id: 'tags', label: 'Tags', width: 180, sortValue: channelTagText },
-    { id: 'lcn', label: 'LCN', width: 85, sortValue: (row) => row.lcn || '' },
+    { id: 'channel-lcn', label: 'LCN', width: 130, sortValue: (row) =>
+      channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || '') },
     { id: 'frequency', label: 'Frequency', width: 100, sortValue: (row) => Number(row.frequency_hz || 0) },
     { id: 'signal', label: 'Signal', width: 90, sortValue: (row) => Number(row.signal_dbfs ?? -999) },
     { id: 'decode-health', label: 'Decode', width: 80, sortValue: (row) => Number(row.decode_health_pct ?? -1) },
@@ -1062,10 +1063,11 @@ function liveSystemsSection() {
 
   const updateRow = (element, row) => {
     const cells = element.children;
+    const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
     const statusText = row.status === 'ENCRYPTED' && row.encryption_details ? row.encryption_details : row.status;
     cellText(cells[0], statusText);
     cellText(cells[1], channelTagText(row));
-    cellText(cells[2], row.lcn);
+    cellText(cells[2], conventional ? row.channel_name : row.lcn);
     cellText(cells[3], frequency(row.frequency_hz));
     cellText(cells[4], row.signal_dbfs == null ? '' : `${Number(row.signal_dbfs).toFixed(1)} dBFS`);
     cellText(cells[5], row.decode_health_pct == null ? '' : `${Number(row.decode_health_pct).toFixed(1)}%`);
@@ -1076,6 +1078,7 @@ function liveSystemsSection() {
     cellText(cells[9], row.target_id);
     cellText(cells[10], row.decoder);
     cells[1].title = channelTagTitle(row);
+    cells[2].title = conventional ? (row.channel_name || '') : '';
     cells[0].className = `activity-status state-${String(row.status || 'idle').toLowerCase()}`;
     cells[1].className = '';
     const tags = channelTagSet(row.tags);
@@ -1120,6 +1123,8 @@ function liveSystemsSection() {
     selectedRowKey = null;
     rowNodes.clear();
     body.replaceChildren();
+    headers[2].querySelector('.table-sort-control').textContent =
+      tableId === 'conventional' ? 'Channel' : 'LCN';
     orderedLiveRows(value.rows || []).forEach((row) => {
       const element = createRow(row);
       rowNodes.set(row.key, element);
@@ -1128,7 +1133,7 @@ function liveSystemsSection() {
     if (!value.rows?.length) {
       const empty = node('tr', 'empty');
       const message = node('td', '', 'No channels observed');
-      message.colSpan = 10;
+      message.colSpan = columns.length;
       empty.append(message);
       body.append(empty);
     }
@@ -1159,7 +1164,7 @@ function liveSystemsSection() {
     if (!rowNodes.size) {
       const empty = node('tr', 'empty');
       const message = node('td', '', 'No channels observed');
-      message.colSpan = 8;
+      message.colSpan = columns.length;
       empty.append(message);
       body.append(empty);
     }

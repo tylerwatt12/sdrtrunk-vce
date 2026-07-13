@@ -94,6 +94,11 @@ public class ChannelActivityRow
         return mChannel;
     }
 
+    public String getChannelName()
+    {
+        return mChannel != null ? mChannel.getName() : null;
+    }
+
     public void setChannel(Channel channel)
     {
         mChannel = channel;
