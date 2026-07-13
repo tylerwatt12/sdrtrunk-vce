@@ -115,15 +115,62 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
-                    SELECT channel_key, role, downlink_hz, traffic_observations
-                    FROM p25_site_channel_summary
+                    SELECT channel.channel_key, channel.downlink_hz, tag.tag, tag.observation_count
+                    FROM p25_site_channel_summary channel
+                    JOIN p25_site_channel_tag_summary tag
+                      ON tag.guid = channel.guid AND tag.channel_key = channel.channel_key
                     """))
             {
                 assertTrue(resultSet.next());
                 assertEquals("0-509", resultSet.getString("channel_key"));
-                assertEquals("traffic", resultSet.getString("role"));
                 assertEquals(854187500L, resultSet.getLong("downlink_hz"));
-                assertEquals(1, resultSet.getInt("traffic_observations"));
+                assertEquals("VOICE", resultSet.getString("tag"));
+                assertEquals(1, resultSet.getInt("observation_count"));
+            }
+        }
+    }
+
+    @Test
+    void accumulatesVoiceAndDataEvidenceWithoutChangingEncryptedDataStatus() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("mixed-service-channel.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection,
+                serviceActivity(1000L, "CALL_GROUP", false, 854_187_500L, "00-0509"), true);
+            P25ActivityLogSchema.recordActivity(connection,
+                serviceActivity(2000L, "DATA_CALL", false, 854_187_500L, "0-509"), true);
+            P25ActivityLogSchema.recordActivity(connection,
+                serviceActivity(3000L, "DATA_CALL_ENCRYPTED", true, 854_187_500L, "0-509"), true);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT tag, observation_count
+                    FROM p25_site_channel_tag_summary
+                    ORDER BY tag
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("DATA", resultSet.getString("tag"));
+                assertEquals(2, resultSet.getInt("observation_count"));
+                assertTrue(resultSet.next());
+                assertEquals("VOICE", resultSet.getString("tag"));
+                assertEquals(1, resultSet.getInt("observation_count"));
+                assertFalse(resultSet.next());
+            }
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT event_type, encrypted
+                    FROM p25_activity_event_resolved
+                    WHERE observed_at_ms = 3000
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("DATA_CALL_ENCRYPTED", resultSet.getString("event_type"));
+                assertEquals(1, resultSet.getInt("encrypted"));
             }
         }
     }
@@ -164,6 +211,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
             P25ActivityLogSchema.recordActivity(connection, activity(1000L, P25ActivityLogRecords.Action.CALL), true);
             P25ActivityLogSchema.recordActivity(connection, activity(100000L, P25ActivityLogRecords.Action.GRANT), true);
             P25ActivityLogSchema.deleteOlderThan(connection, 50000L);
@@ -174,6 +222,45 @@ class P25ActivityLogWriterTest
                 assertTrue(resultSet.next());
                 assertEquals(P25ActivityLogRecords.Action.GRANT.name(), resultSet.getString(1));
             }
+
+            assertCount(connection, "p25_site_channel_tag", 0);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("SELECT tag FROM p25_site_channel_tag_summary"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("VOICE", resultSet.getString("tag"));
+                assertFalse(resultSet.next());
+            }
+        }
+    }
+
+    @Test
+    void storesBucketsAndDeletesExpiredControlChannelQuality() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("quality-retention.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(1_000L, -25.0));
+            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(2_000L, -20.0));
+            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(100_000L, -15.0));
+
+            assertEquals(2, count(connection, "p25_control_channel_quality"));
+
+            try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery("""
+                SELECT observed_at_ms, signal_dbfs FROM p25_control_channel_quality
+                WHERE bucket_start_ms = 0
+                """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(2_000L, resultSet.getLong("observed_at_ms"));
+                assertEquals(-20.0, resultSet.getDouble("signal_dbfs"));
+            }
+
+            P25ActivityLogSchema.deleteOlderThan(connection, 50_000L);
+            assertEquals(1, count(connection, "p25_control_channel_quality"));
         }
     }
 
@@ -189,6 +276,9 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.recordActivity(connection, activity(now - TimeUnit.DAYS.toMillis(2),
                 P25ActivityLogRecords.Action.CALL), true);
             P25ActivityLogSchema.recordActivity(connection, activity(now, P25ActivityLogRecords.Action.GRANT), true);
+            P25ActivityLogSchema.insertControlChannelQuality(connection,
+                quality(now - TimeUnit.DAYS.toMillis(2), -25.0));
+            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(now, -20.0));
         }
 
         P25ActivityLogMaintenance.Result result =
@@ -200,6 +290,7 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "p25_control_channel_quality", 1);
             assertEquals("1", status(connection, "retention_days"));
             assertEquals(Long.toString(result.rowsDeleted()), status(connection, "last_maintenance_deleted_rows"));
         }
@@ -236,7 +327,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("14", resultSet.getString(1));
+                assertEquals("16", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA user_version"))
@@ -350,6 +441,7 @@ class P25ActivityLogWriterTest
             assertActionCount(connection, "p25_radio_talkgroup_summary", "call_count", 1);
             assertActionCount(connection, "p25_site_talkgroup_bucket", "call_count", 1);
             assertActionCount(connection, "p25_site_activity_bucket", "call_count", 1);
+            assertCount(connection, "p25_activity_event", 2);
         }
     }
 
@@ -467,7 +559,7 @@ class P25ActivityLogWriterTest
                     "SELECT observation_count FROM p25_site_neighbor_summary"))
             {
                 assertTrue(resultSet.next());
-                assertEquals(2, resultSet.getInt("observation_count"));
+                assertEquals(1, resultSet.getInt("observation_count"));
             }
         }
     }
@@ -496,15 +588,27 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT role, downlink_hz, uplink_hz, timeslots
+                SELECT downlink_hz, uplink_hz, timeslots
                 FROM p25_site_channel
                 """))
         {
             assertTrue(resultSet.next());
-            assertEquals("primary_control", resultSet.getString("role"));
             assertEquals(856137500L, resultSet.getLong("downlink_hz"));
             assertEquals(811137500L, resultSet.getLong("uplink_hz"));
             assertEquals(1, resultSet.getInt("timeslots"));
+            assertFalse(resultSet.next());
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("SELECT tag FROM p25_site_channel_tag ORDER BY tag"))
+        {
+            assertTrue(resultSet.next());
+            assertEquals("ALTERNATE_CONTROL", resultSet.getString("tag"));
+            assertTrue(resultSet.next());
+            assertEquals("CURRENT_CONTROL", resultSet.getString("tag"));
+            assertTrue(resultSet.next());
+            assertEquals("DATA_ANNOUNCED", resultSet.getString("tag"));
             assertFalse(resultSet.next());
         }
 
@@ -517,6 +621,28 @@ class P25ActivityLogWriterTest
             assertTrue(resultSet.next());
             assertEquals(1, resultSet.getInt("observation_count"));
             assertFalse(resultSet.next());
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection,
+                serviceActivity(2000L, "CALL_GROUP", false, 856_137_500L, "0-821"), false);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT tag FROM p25_site_channel_tag_summary ORDER BY tag
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("ALTERNATE_CONTROL", resultSet.getString("tag"));
+                assertTrue(resultSet.next());
+                assertEquals("CONTROL", resultSet.getString("tag"));
+                assertTrue(resultSet.next());
+                assertEquals("DATA_ANNOUNCED", resultSet.getString("tag"));
+                assertTrue(resultSet.next());
+                assertEquals("VOICE", resultSet.getString("tag"));
+                assertFalse(resultSet.next());
+            }
         }
     }
 
@@ -721,6 +847,13 @@ class P25ActivityLogWriterTest
         return activity(timestamp, action, "123e4567-e89b-12d3-a456-426614174000");
     }
 
+    private static P25ActivityLogRecords.ControlChannelQuality quality(long timestamp, double signalDbfs)
+    {
+        return new P25ActivityLogRecords.ControlChannelQuality(timestamp,
+            "123e4567-e89b-12d3-a456-426614174000", 856_137_500L, signalDbfs, signalDbfs,
+            signalDbfs - 1.0, signalDbfs + 1.0, 98.5, 10, 1, 3, 0, 0, timestamp);
+    }
+
     private static P25ActivityLogRecords.ActivityEvent activity(long timestamp, P25ActivityLogRecords.Action action,
                                                                 String guid)
     {
@@ -731,6 +864,18 @@ class P25ActivityLogWriterTest
             action == P25ActivityLogRecords.Action.GRANT ? 0x84 : null,
             action == P25ActivityLogRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", null, null, action == P25ActivityLogRecords.Action.CALL, null, null);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent serviceActivity(long timestamp, String eventType,
+                                                                        boolean encrypted, long frequency,
+                                                                        String lcn)
+    {
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.GRANT,
+            eventType, "1811524", "56138", "TALKGROUP", frequency, lcn, 1, encrypted,
+            encrypted ? 0x84 : null, encrypted ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", "P25-1", null, false, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent activityWithChannelName(long timestamp, String channelName)

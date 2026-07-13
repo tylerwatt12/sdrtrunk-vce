@@ -14,6 +14,7 @@ package io.github.dsheirer.stats.activity;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
@@ -22,9 +23,10 @@ import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.sample.Listener;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.List;
@@ -43,7 +45,8 @@ public class P25ActivityLogService implements SiteMetadataListener
     private final UserPreferences mUserPreferences;
     private final P25ActivityLogMapper mMapper = new P25ActivityLogMapper();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receiveDecodeEvent;
-    private final Map<String,Long> mRecentDedupeKeys = new HashMap<>();
+    private final Listener<ControlChannelQualitySnapshot> mQualityListener = this::receiveControlChannelQuality;
+    private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
     private final List<P25ActivityCommitListener> mCommitListeners = new CopyOnWriteArrayList<>();
     private volatile P25ActivityLogWriter mWriter;
     private Path mCurrentDatabasePath;
@@ -62,6 +65,26 @@ public class P25ActivityLogService implements SiteMetadataListener
     public BiConsumer<Channel,IDecodeEvent> getDecodeEventListener()
     {
         return mDecodeEventListener;
+    }
+
+    public Listener<ControlChannelQualitySnapshot> getControlChannelQualityListener()
+    {
+        return mQualityListener;
+    }
+
+    private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer != null && snapshot != null && snapshot.active() && snapshot.guid() != null &&
+            !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
+        {
+            writer.enqueue(new P25ActivityLogRecords.ControlChannelQuality(snapshot.observedAtMs(), snapshot.guid(),
+                snapshot.frequencyHz(), snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
+                snapshot.minimumSignalDbfs(), snapshot.maximumSignalDbfs(), snapshot.decodeHealthPercent(),
+                snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(),
+                snapshot.droppedBits(), snapshot.lastValidDecodeMs()));
+        }
     }
 
     public void dispose()
@@ -255,6 +278,10 @@ public class P25ActivityLogService implements SiteMetadataListener
             if(now - entry.getValue() > DEDUPE_RETENTION_MILLISECONDS)
             {
                 iterator.remove();
+            }
+            else
+            {
+                break;
             }
         }
     }

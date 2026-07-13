@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -22,23 +23,28 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v13 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
+ * The v16 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
  * Detailed event rows are optional, while lifetime and hourly summaries are always updated when stats logging is
  * enabled. Table names are split by protocol family so DMR/NXDN can be added without folding unrelated records into
  * the P25 tables.
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 14;
+    private static final int SCHEMA_VERSION = 16;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     private static final long HOUR_MILLISECONDS = 3_600_000L;
+    private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int NULL_TIMESLOT = -1;
 
     private static final int CONTEXT_TRUNKED_SITE = 1;
@@ -130,6 +136,7 @@ public class P25ActivityLogSchema
             createP25SummaryTables(statement);
             createConventionalTables(statement);
             createP25SiteTables(statement);
+            createControlChannelQualityTable(statement);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS logger_status (
                     key TEXT PRIMARY KEY,
@@ -159,16 +166,16 @@ public class P25ActivityLogSchema
 
         if(activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE)
         {
-            if(detailedEventHistoryEnabled)
+            if(detailedEventHistoryEnabled && activity.action() != P25ActivityLogRecords.Action.CONTINUE)
             {
                 activityId = insertP25ActivityEvent(connection, activity, contextId);
             }
 
             upsertP25SiteMetrics(connection, activity, contextId);
 
-            if(isVoiceGrant(activity))
+            if(isServiceGrant(activity))
             {
-                upsertTrafficChannelSummary(connection, activity);
+                upsertGrantedChannelSummary(connection, activity);
             }
 
             if(systemKey != null)
@@ -180,7 +187,7 @@ public class P25ActivityLogSchema
         else if(isConventional(activity.contextKind()))
         {
             if(activity.contextKind() == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 &&
-                detailedEventHistoryEnabled)
+                detailedEventHistoryEnabled && activity.action() != P25ActivityLogRecords.Action.CONTINUE)
             {
                 activityId = insertP25ActivityEvent(connection, activity, contextId);
             }
@@ -207,24 +214,68 @@ public class P25ActivityLogSchema
     static void insertSite(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot) throws SQLException
     {
         boolean changed = siteSnapshotChanged(connection, snapshot);
-        java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> channels = mergeSiteChannels(snapshot);
+        Map<String,SiteChannelEvidence> channels = mergeSiteChannels(snapshot);
         Integer systemKey = upsertP25System(connection, snapshot.wacn(), snapshot.systemId(),
             snapshot.observedAtEpochMilliseconds());
         upsertReceiverContext(connection, snapshot, systemKey);
         upsertSiteSnapshot(connection, snapshot, systemKey);
-        upsertSiteChannelSummaries(connection, snapshot, channels);
-        upsertSiteFrequencyBandSummaries(connection, snapshot);
-        upsertSiteNeighborSummaries(connection, snapshot);
-        upsertSitePatchSummaries(connection, snapshot);
         upsertSiteTalkerAliases(connection, snapshot, systemKey);
 
         if(changed)
         {
+            upsertSiteChannelSummaries(connection, snapshot, channels);
+            upsertSiteFrequencyBandSummaries(connection, snapshot);
+            upsertSiteNeighborSummaries(connection, snapshot);
+            upsertSitePatchSummaries(connection, snapshot);
             replaceCurrentSiteFacts(connection, snapshot, channels);
         }
         else
         {
             confirmCurrentSiteFacts(connection, snapshot);
+        }
+    }
+
+    static void insertControlChannelQuality(Connection connection,
+                                            P25ActivityLogRecords.ControlChannelQuality quality) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_control_channel_quality (
+                guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs, average_signal_dbfs,
+                minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct, valid_frames, invalid_frames,
+                corrected_bits, sync_loss_bits, dropped_bits, last_valid_decode_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guid, frequency_hz, bucket_start_ms) DO UPDATE SET
+                observed_at_ms = excluded.observed_at_ms,
+                signal_dbfs = excluded.signal_dbfs,
+                average_signal_dbfs = excluded.average_signal_dbfs,
+                minimum_signal_dbfs = excluded.minimum_signal_dbfs,
+                maximum_signal_dbfs = excluded.maximum_signal_dbfs,
+                decode_health_pct = excluded.decode_health_pct,
+                valid_frames = excluded.valid_frames,
+                invalid_frames = excluded.invalid_frames,
+                corrected_bits = excluded.corrected_bits,
+                sync_loss_bits = excluded.sync_loss_bits,
+                dropped_bits = excluded.dropped_bits,
+                last_valid_decode_ms = excluded.last_valid_decode_ms
+            WHERE excluded.observed_at_ms >= p25_control_channel_quality.observed_at_ms
+            """))
+        {
+            statement.setString(1, quality.guid());
+            statement.setLong(2, quality.frequencyHertz());
+            statement.setLong(3, qualityBucketStart(quality.observedAtEpochMilliseconds()));
+            statement.setLong(4, quality.observedAtEpochMilliseconds());
+            setDouble(statement, 5, quality.signalDbfs());
+            setDouble(statement, 6, quality.averageSignalDbfs());
+            setDouble(statement, 7, quality.minimumSignalDbfs());
+            setDouble(statement, 8, quality.maximumSignalDbfs());
+            setDouble(statement, 9, quality.decodeHealthPercent());
+            statement.setLong(10, quality.validFrames());
+            statement.setLong(11, quality.invalidFrames());
+            statement.setLong(12, quality.correctedBits());
+            statement.setLong(13, quality.syncLossBits());
+            statement.setLong(14, quality.droppedBits());
+            statement.setLong(15, quality.lastValidDecodeMs());
+            statement.executeUpdate();
         }
     }
 
@@ -237,18 +288,21 @@ public class P25ActivityLogSchema
         deleted += deleteByTime(connection, "p25_radio_affiliation", "updated_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "conventional_activity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel", "confirmed_at_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "p25_site_channel_tag", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_frequency_band", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_neighbor", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_talkgroup", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_radio", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel_summary", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "p25_site_channel_tag_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_frequency_band_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_neighbor_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_talkgroup_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_radio_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_snapshot", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "p25_control_channel_quality", "observed_at_ms", cutoffEpochMilliseconds);
         return deleted;
     }
 
@@ -270,14 +324,17 @@ public class P25ActivityLogSchema
         deleted += deleteAll(connection, "p25_site_patch_group_summary");
         deleted += deleteAll(connection, "p25_site_neighbor_summary");
         deleted += deleteAll(connection, "p25_site_frequency_band_summary");
+        deleted += deleteAll(connection, "p25_site_channel_tag_summary");
         deleted += deleteAll(connection, "p25_site_channel_summary");
         deleted += deleteAll(connection, "p25_site_patch_group_radio");
         deleted += deleteAll(connection, "p25_site_patch_group_talkgroup");
         deleted += deleteAll(connection, "p25_site_patch_group");
         deleted += deleteAll(connection, "p25_site_neighbor");
         deleted += deleteAll(connection, "p25_site_frequency_band");
+        deleted += deleteAll(connection, "p25_site_channel_tag");
         deleted += deleteAll(connection, "p25_site_channel");
         deleted += deleteAll(connection, "p25_site_snapshot");
+        deleted += deleteAll(connection, "p25_control_channel_quality");
         deleted += deleteAll(connection, "receiver_context");
         deleted += deleteAll(connection, "p25_system");
         deleted += deleteAll(connection, "logger_status");
@@ -473,7 +530,6 @@ public class P25ActivityLogSchema
                 guid TEXT NOT NULL,
                 channel_key TEXT NOT NULL,
                 descriptor TEXT,
-                role TEXT,
                 downlink_hz INTEGER,
                 uplink_hz INTEGER,
                 tdma INTEGER,
@@ -487,7 +543,6 @@ public class P25ActivityLogSchema
                 guid TEXT NOT NULL,
                 channel_key TEXT NOT NULL,
                 descriptor TEXT,
-                role TEXT,
                 downlink_hz INTEGER,
                 uplink_hz INTEGER,
                 tdma INTEGER,
@@ -495,10 +550,27 @@ public class P25ActivityLogSchema
                 first_seen_ms INTEGER NOT NULL,
                 last_seen_ms INTEGER NOT NULL,
                 observation_count INTEGER NOT NULL DEFAULT 1,
-                primary_control_observations INTEGER NOT NULL DEFAULT 0,
-                alternate_control_observations INTEGER NOT NULL DEFAULT 0,
-                traffic_observations INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(guid, channel_key)
+            )
+            """);
+        statement.executeUpdate("""
+            CREATE TABLE IF NOT EXISTS p25_site_channel_tag (
+                guid TEXT NOT NULL,
+                channel_key TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                confirmed_at_ms INTEGER NOT NULL,
+                PRIMARY KEY(guid, channel_key, tag)
+            )
+            """);
+        statement.executeUpdate("""
+            CREATE TABLE IF NOT EXISTS p25_site_channel_tag_summary (
+                guid TEXT NOT NULL,
+                channel_key TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                first_seen_ms INTEGER NOT NULL,
+                last_seen_ms INTEGER NOT NULL,
+                observation_count INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY(guid, channel_key, tag)
             )
             """);
         statement.executeUpdate("""
@@ -627,6 +699,30 @@ public class P25ActivityLogSchema
             """);
     }
 
+    private static void createControlChannelQualityTable(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE TABLE IF NOT EXISTS p25_control_channel_quality (
+                guid TEXT NOT NULL,
+                frequency_hz INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL,
+                observed_at_ms INTEGER NOT NULL,
+                signal_dbfs REAL,
+                average_signal_dbfs REAL,
+                minimum_signal_dbfs REAL,
+                maximum_signal_dbfs REAL,
+                decode_health_pct REAL,
+                valid_frames INTEGER NOT NULL DEFAULT 0,
+                invalid_frames INTEGER NOT NULL DEFAULT 0,
+                corrected_bits INTEGER NOT NULL DEFAULT 0,
+                sync_loss_bits INTEGER NOT NULL DEFAULT 0,
+                dropped_bits INTEGER NOT NULL DEFAULT 0,
+                last_valid_decode_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(guid, frequency_hz, bucket_start_ms)
+            ) WITHOUT ROWID
+            """);
+    }
+
     private static void createIndexesAndViews(Statement statement) throws SQLException
     {
         statement.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_receiver_context_guid ON receiver_context(guid) WHERE guid IS NOT NULL");
@@ -643,11 +739,13 @@ public class P25ActivityLogSchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_conventional_bucket_time ON conventional_activity_bucket(context_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_snapshot_identity ON p25_site_snapshot(system_key, rfss, site)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_guid_frequency ON p25_site_channel(guid, downlink_hz)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_tag_summary_guid_tag ON p25_site_channel_tag_summary(guid, tag, last_seen_ms DESC)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_guid_site ON p25_site_neighbor(guid, system_id, rfss, site)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_talkgroup ON p25_site_patch_group_talkgroup(talkgroup_id, guid)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_patch_radio ON p25_site_patch_group_radio(radio_id, guid)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_summary_guid_frequency ON p25_site_channel_summary(guid, downlink_hz)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_summary_guid_site ON p25_site_neighbor_summary(guid, system_id, rfss, site)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_control_quality_guid_time ON p25_control_channel_quality(guid, observed_at_ms DESC)");
         statement.executeUpdate(createResolvedViewSql());
     }
 
@@ -681,11 +779,13 @@ public class P25ActivityLogSchema
         table("p25_site_snapshot", "guid", "snapshot_hash", "first_seen_ms", "last_seen_ms", "observation_count",
             "protocol", "channel_name", "alias_list_name", "decoder", "system_key", "nac", "rfss", "site",
             "primary_frequency_hz", "current_control_hz"),
-        table("p25_site_channel", "guid", "channel_key", "descriptor", "role", "downlink_hz", "uplink_hz",
+        table("p25_site_channel", "guid", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
             "tdma", "timeslots", "confirmed_at_ms"),
-        table("p25_site_channel_summary", "guid", "channel_key", "descriptor", "role", "downlink_hz",
-            "uplink_hz", "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "observation_count",
-            "primary_control_observations", "alternate_control_observations", "traffic_observations"),
+        table("p25_site_channel_summary", "guid", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
+            "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "observation_count"),
+        table("p25_site_channel_tag", "guid", "channel_key", "tag", "confirmed_at_ms"),
+        table("p25_site_channel_tag_summary", "guid", "channel_key", "tag", "first_seen_ms", "last_seen_ms",
+            "observation_count"),
         table("p25_site_frequency_band", "guid", "band", "tdma", "base_hz", "bandwidth", "spacing_hz",
             "transmit_offset_hz", "timeslots", "confirmed_at_ms"),
         table("p25_site_frequency_band_summary", "guid", "band", "tdma", "base_hz", "bandwidth",
@@ -705,6 +805,10 @@ public class P25ActivityLogSchema
         table("p25_site_patch_group_radio", "guid", "patch_group", "radio_id", "confirmed_at_ms"),
         table("p25_site_patch_group_radio_summary", "guid", "patch_group", "radio_id", "first_seen_ms",
             "last_seen_ms", "observation_count"),
+        table("p25_control_channel_quality", "guid", "frequency_hz", "bucket_start_ms", "observed_at_ms",
+            "signal_dbfs", "average_signal_dbfs", "minimum_signal_dbfs", "maximum_signal_dbfs",
+            "decode_health_pct", "valid_frames", "invalid_frames", "corrected_bits", "sync_loss_bits",
+            "dropped_bits", "last_valid_decode_ms"),
         table("logger_status", "key", "value", "updated_at_ms")
     );
 
@@ -723,11 +827,13 @@ public class P25ActivityLogSchema
         "idx_conventional_bucket_time",
         "idx_p25_site_snapshot_identity",
         "idx_p25_site_channel_guid_frequency",
+        "idx_p25_site_channel_tag_summary_guid_tag",
         "idx_p25_site_neighbor_guid_site",
         "idx_p25_site_patch_talkgroup",
         "idx_p25_site_patch_radio",
         "idx_p25_site_channel_summary_guid_frequency",
-        "idx_p25_site_neighbor_summary_guid_site"
+        "idx_p25_site_neighbor_summary_guid_site",
+        "idx_p25_control_quality_guid_time"
     );
 
     private static final List<String> VIEWS = List.of("p25_activity_event_resolved");
@@ -1372,64 +1478,62 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertSiteChannelSummaries(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
-                                                   java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> channels)
+                                                   Map<String,SiteChannelEvidence> channels)
         throws SQLException
     {
-        for(java.util.Map.Entry<String,P25NetworkConfigurationSnapshot.Channel> entry: channels.entrySet())
+        for(Map.Entry<String,SiteChannelEvidence> entry: channels.entrySet())
         {
             String key = entry.getKey();
-            P25NetworkConfigurationSnapshot.Channel channel = entry.getValue();
+            SiteChannelEvidence channel = entry.getValue();
 
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO p25_site_channel_summary (
-                    guid, channel_key, descriptor, role, downlink_hz, uplink_hz, tdma, timeslots,
-                    first_seen_ms, last_seen_ms, observation_count, primary_control_observations,
-                    alternate_control_observations, traffic_observations
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots,
+                    first_seen_ms, last_seen_ms, observation_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(guid, channel_key) DO UPDATE SET
                     descriptor = coalesce(excluded.descriptor, p25_site_channel_summary.descriptor),
-                    role = coalesce(excluded.role, p25_site_channel_summary.role),
                     downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel_summary.downlink_hz),
                     uplink_hz = coalesce(excluded.uplink_hz, p25_site_channel_summary.uplink_hz),
                     tdma = coalesce(excluded.tdma, p25_site_channel_summary.tdma),
                     timeslots = coalesce(excluded.timeslots, p25_site_channel_summary.timeslots),
-                    last_seen_ms = excluded.last_seen_ms,
-                    observation_count = p25_site_channel_summary.observation_count + 1,
-                    primary_control_observations = p25_site_channel_summary.primary_control_observations + excluded.primary_control_observations,
-                    alternate_control_observations = p25_site_channel_summary.alternate_control_observations + excluded.alternate_control_observations,
-                    traffic_observations = p25_site_channel_summary.traffic_observations + excluded.traffic_observations
+                    last_seen_ms = max(p25_site_channel_summary.last_seen_ms, excluded.last_seen_ms),
+                    observation_count = p25_site_channel_summary.observation_count + 1
                 """))
             {
                 statement.setString(1, snapshot.guid());
                 statement.setString(2, key);
                 statement.setString(3, channel.descriptor());
-                statement.setString(4, channel.role());
-                setLong(statement, 5, channel.downlink());
-                setLong(statement, 6, channel.uplink());
-                setBoolean(statement, 7, channel.tdma());
-                setInteger(statement, 8, channel.timeslots());
+                setLong(statement, 4, channel.downlink());
+                setLong(statement, 5, channel.uplink());
+                setBoolean(statement, 6, channel.tdma());
+                setInteger(statement, 7, channel.timeslots());
+                statement.setLong(8, snapshot.observedAtEpochMilliseconds());
                 statement.setLong(9, snapshot.observedAtEpochMilliseconds());
-                statement.setLong(10, snapshot.observedAtEpochMilliseconds());
-                statement.setInt(11, "primary_control".equals(channel.role()) ? 1 : 0);
-                statement.setInt(12, isAlternateControl(channel.role()) ? 1 : 0);
-                statement.setInt(13, "traffic".equals(channel.role()) ? 1 : 0);
                 statement.executeUpdate();
+            }
+
+            for(ChannelTag tag: channel.summaryTags())
+            {
+                upsertChannelTagSummary(connection, snapshot.guid(), key, tag,
+                    snapshot.observedAtEpochMilliseconds(), 1);
             }
         }
     }
 
     /**
-     * Adds voice channels learned from control-channel grants to the site's durable channel inventory. RF/site
-     * snapshots intentionally contain only stable network facts, so grant observations are projected here without
-     * feeding dynamic traffic back into the network stabilizer.
+     * Adds voice and data service evidence learned from control-channel grants to the site's durable channel inventory.
+     * RF/site snapshots intentionally contain only stable network facts, so grant observations are projected here
+     * without feeding dynamic traffic back into the network stabilizer.
      */
-    private static void upsertTrafficChannelSummary(Connection connection,
+    private static void upsertGrantedChannelSummary(Connection connection,
                                                     P25ActivityLogRecords.ActivityEvent activity) throws SQLException
     {
         Lcn lcn = Lcn.parse(activity.lcn());
+        ChannelTag serviceTag = serviceTag(activity);
 
         if(activity.guid() == null || activity.guid().isBlank() || activity.frequencyHertz() == null ||
-            activity.frequencyHertz() <= 0 || lcn.band() == null || lcn.number() == null)
+            activity.frequencyHertz() <= 0 || lcn.band() == null || lcn.number() == null || serviceTag == null)
         {
             return;
         }
@@ -1439,24 +1543,16 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_channel_summary (
-                guid, channel_key, descriptor, role, downlink_hz, uplink_hz, tdma, timeslots,
-                first_seen_ms, last_seen_ms, observation_count, primary_control_observations,
-                alternate_control_observations, traffic_observations
-            ) VALUES (?, ?, ?, 'traffic', ?, NULL, ?, ?, ?, ?, 1, 0, 0, 1)
+                guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots,
+                first_seen_ms, last_seen_ms, observation_count
+            ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, 1)
             ON CONFLICT(guid, channel_key) DO UPDATE SET
                 descriptor = coalesce(p25_site_channel_summary.descriptor, excluded.descriptor),
-                role = CASE
-                    WHEN p25_site_channel_summary.role IN
-                        ('primary_control', 'secondary_control', 'fdma_data', 'tdma_data')
-                    THEN p25_site_channel_summary.role
-                    ELSE 'traffic'
-                END,
                 downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel_summary.downlink_hz),
                 tdma = max(coalesce(p25_site_channel_summary.tdma, 0), excluded.tdma),
                 timeslots = max(coalesce(p25_site_channel_summary.timeslots, 1), excluded.timeslots),
                 last_seen_ms = max(p25_site_channel_summary.last_seen_ms, excluded.last_seen_ms),
-                observation_count = p25_site_channel_summary.observation_count + 1,
-                traffic_observations = p25_site_channel_summary.traffic_observations + 1
+                observation_count = p25_site_channel_summary.observation_count + 1
             """))
         {
             statement.setString(1, activity.guid());
@@ -1467,6 +1563,32 @@ public class P25ActivityLogSchema
             statement.setInt(6, tdma ? 2 : 1);
             statement.setLong(7, activity.observedAtEpochMilliseconds());
             statement.setLong(8, activity.observedAtEpochMilliseconds());
+            statement.executeUpdate();
+        }
+
+        upsertChannelTagSummary(connection, activity.guid(), channelKey, serviceTag,
+            activity.observedAtEpochMilliseconds(), 1);
+    }
+
+    private static void upsertChannelTagSummary(Connection connection, String guid, String channelKey,
+                                                ChannelTag tag, long timestamp, int observations)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_site_channel_tag_summary
+                (guid, channel_key, tag, first_seen_ms, last_seen_ms, observation_count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guid, channel_key, tag) DO UPDATE SET
+                last_seen_ms = max(p25_site_channel_tag_summary.last_seen_ms, excluded.last_seen_ms),
+                observation_count = p25_site_channel_tag_summary.observation_count + excluded.observation_count
+            """))
+        {
+            statement.setString(1, guid);
+            statement.setString(2, channelKey);
+            statement.setString(3, tag.name());
+            statement.setLong(4, timestamp);
+            statement.setLong(5, timestamp);
+            statement.setInt(6, Math.max(1, observations));
             statement.executeUpdate();
         }
     }
@@ -1694,7 +1816,7 @@ public class P25ActivityLogSchema
     }
 
     private static void replaceCurrentSiteFacts(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
-                                                java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> channels)
+                                                Map<String,SiteChannelEvidence> channels)
         throws SQLException
     {
         clearCurrentSiteFacts(connection, snapshot.guid());
@@ -1702,11 +1824,10 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_channel
-                (guid, channel_key, descriptor, role, downlink_hz, uplink_hz, tdma, timeslots, confirmed_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots, confirmed_at_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid, channel_key) DO UPDATE SET
                 descriptor = coalesce(excluded.descriptor, p25_site_channel.descriptor),
-                role = coalesce(excluded.role, p25_site_channel.role),
                 downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel.downlink_hz),
                 uplink_hz = coalesce(excluded.uplink_hz, p25_site_channel.uplink_hz),
                 tdma = coalesce(excluded.tdma, p25_site_channel.tdma),
@@ -1714,19 +1835,38 @@ public class P25ActivityLogSchema
                 confirmed_at_ms = max(excluded.confirmed_at_ms, p25_site_channel.confirmed_at_ms)
             """))
         {
-            for(java.util.Map.Entry<String,P25NetworkConfigurationSnapshot.Channel> entry: channels.entrySet())
+            for(Map.Entry<String,SiteChannelEvidence> entry: channels.entrySet())
             {
-                P25NetworkConfigurationSnapshot.Channel channel = entry.getValue();
+                SiteChannelEvidence channel = entry.getValue();
                 statement.setString(1, snapshot.guid());
                 statement.setString(2, entry.getKey());
                 statement.setString(3, channel.descriptor());
-                statement.setString(4, channel.role());
-                setLong(statement, 5, channel.downlink());
-                setLong(statement, 6, channel.uplink());
-                setBoolean(statement, 7, channel.tdma());
-                setInteger(statement, 8, channel.timeslots());
-                statement.setLong(9, timestamp);
+                setLong(statement, 4, channel.downlink());
+                setLong(statement, 5, channel.uplink());
+                setBoolean(statement, 6, channel.tdma());
+                setInteger(statement, 7, channel.timeslots());
+                statement.setLong(8, timestamp);
                 statement.addBatch();
+            }
+
+            statement.executeBatch();
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_site_channel_tag (guid, channel_key, tag, confirmed_at_ms)
+            VALUES (?, ?, ?, ?)
+            """))
+        {
+            for(Map.Entry<String,SiteChannelEvidence> entry: channels.entrySet())
+            {
+                for(ChannelTag tag: entry.getValue().currentTags())
+                {
+                    statement.setString(1, snapshot.guid());
+                    statement.setString(2, entry.getKey());
+                    statement.setString(3, tag.name());
+                    statement.setLong(4, timestamp);
+                    statement.addBatch();
+                }
             }
 
             statement.executeBatch();
@@ -1848,7 +1988,8 @@ public class P25ActivityLogSchema
     private static void clearCurrentSiteFacts(Connection connection, String guid) throws SQLException
     {
         for(String table: List.of("p25_site_patch_group_radio", "p25_site_patch_group_talkgroup",
-            "p25_site_patch_group", "p25_site_neighbor", "p25_site_frequency_band", "p25_site_channel"))
+            "p25_site_patch_group", "p25_site_neighbor", "p25_site_frequency_band", "p25_site_channel_tag",
+            "p25_site_channel"))
         {
             try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE guid = ?"))
             {
@@ -1862,7 +2003,8 @@ public class P25ActivityLogSchema
         throws SQLException
     {
         for(String table: List.of("p25_site_patch_group_radio", "p25_site_patch_group_talkgroup",
-            "p25_site_patch_group", "p25_site_neighbor", "p25_site_frequency_band", "p25_site_channel"))
+            "p25_site_patch_group", "p25_site_neighbor", "p25_site_frequency_band", "p25_site_channel_tag",
+            "p25_site_channel"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
                 "UPDATE " + table + " SET confirmed_at_ms = ? WHERE guid = ?"))
@@ -1966,20 +2108,27 @@ public class P25ActivityLogSchema
         return index;
     }
 
-    private static boolean isVoiceGrant(P25ActivityLogRecords.ActivityEvent activity)
+    private static boolean isServiceGrant(P25ActivityLogRecords.ActivityEvent activity)
     {
-        if(activity.action() != P25ActivityLogRecords.Action.GRANT || activity.eventType() == null)
+        return activity.action() == P25ActivityLogRecords.Action.GRANT && serviceTag(activity) != null;
+    }
+
+    private static ChannelTag serviceTag(P25ActivityLogRecords.ActivityEvent activity)
+    {
+        if(activity == null || activity.eventType() == null)
         {
-            return false;
+            return null;
         }
 
         try
         {
-            return DecodeEventType.valueOf(activity.eventType()).isVoiceCallEvent();
+            DecodeEventType eventType = DecodeEventType.valueOf(activity.eventType());
+
+            return ChannelTag.fromService(eventType);
         }
         catch(IllegalArgumentException e)
         {
-            return false;
+            return null;
         }
     }
 
@@ -2009,6 +2158,11 @@ public class P25ActivityLogSchema
     private static long bucketStart(long observedAtEpochMilliseconds)
     {
         return observedAtEpochMilliseconds - Math.floorMod(observedAtEpochMilliseconds, HOUR_MILLISECONDS);
+    }
+
+    private static long qualityBucketStart(long observedAtEpochMilliseconds)
+    {
+        return observedAtEpochMilliseconds - Math.floorMod(observedAtEpochMilliseconds, QUALITY_BUCKET_MILLISECONDS);
     }
 
     private static String guidContextKey(String guid)
@@ -2132,10 +2286,9 @@ public class P25ActivityLogSchema
         return null;
     }
 
-    private static java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> mergeSiteChannels(
-        P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static Map<String,SiteChannelEvidence> mergeSiteChannels(P25ActivityLogRecords.SiteSnapshot snapshot)
     {
-        java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> merged = new java.util.LinkedHashMap<>();
+        Map<String,SiteChannelEvidence> merged = new LinkedHashMap<>();
 
         for(P25NetworkConfigurationSnapshot.Channel channel: list(snapshot.channels()))
         {
@@ -2143,12 +2296,13 @@ public class P25ActivityLogSchema
 
             if(key != null)
             {
-                P25NetworkConfigurationSnapshot.Channel existing = merged.putIfAbsent(key, channel);
+                SiteChannelEvidence incoming = SiteChannelEvidence.from(channel);
+                SiteChannelEvidence existing = merged.putIfAbsent(key, incoming);
 
                 if(existing != null)
                 {
-                    merged.put(key, mergeSiteChannel(existing, channel));
-                    warnSiteChannelCollision(snapshot.guid(), key, existing, channel);
+                    merged.put(key, existing.merge(incoming));
+                    warnSiteChannelCollision(snapshot.guid(), key, existing, incoming);
                 }
             }
         }
@@ -2156,33 +2310,59 @@ public class P25ActivityLogSchema
         return merged;
     }
 
-    private static P25NetworkConfigurationSnapshot.Channel mergeSiteChannel(
-        P25NetworkConfigurationSnapshot.Channel first, P25NetworkConfigurationSnapshot.Channel second)
+    private record SiteChannelEvidence(String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots,
+                                       Set<ChannelTag> tags)
     {
-        P25NetworkConfigurationSnapshot.Channel preferred = channelRolePriority(second.role()) >
-            channelRolePriority(first.role()) ? second : first;
-        P25NetworkConfigurationSnapshot.Channel fallback = preferred == first ? second : first;
-
-        return new P25NetworkConfigurationSnapshot.Channel(
-            firstNonBlank(preferred.role(), fallback.role()),
-            firstNonBlank(preferred.descriptor(), fallback.descriptor()),
-            firstNonNull(preferred.downlink(), fallback.downlink()),
-            firstNonNull(preferred.uplink(), fallback.uplink()),
-            firstNonNull(preferred.tdma(), fallback.tdma()),
-            firstNonNull(preferred.timeslots(), fallback.timeslots()));
-    }
-
-    private static int channelRolePriority(String role)
-    {
-        return switch(role != null ? role : "")
+        private SiteChannelEvidence
         {
-            case "current_control" -> 5;
-            case "primary_control" -> 4;
-            case "secondary_control" -> 3;
-            case "tdma_data" -> 2;
-            case "fdma_data" -> 1;
-            default -> 0;
-        };
+            tags = tags != null && !tags.isEmpty() ? Set.copyOf(tags) : Set.of();
+        }
+
+        private static SiteChannelEvidence from(P25NetworkConfigurationSnapshot.Channel channel)
+        {
+            EnumSet<ChannelTag> tags = EnumSet.noneOf(ChannelTag.class);
+            ChannelTag tag = ChannelTag.fromNetworkRole(channel != null ? channel.role() : null);
+
+            if(tag != null)
+            {
+                tags.add(tag);
+            }
+
+            return new SiteChannelEvidence(channel != null ? channel.descriptor() : null,
+                channel != null ? channel.downlink() : null, channel != null ? channel.uplink() : null,
+                channel != null ? channel.tdma() : null, channel != null ? channel.timeslots() : null, tags);
+        }
+
+        private SiteChannelEvidence merge(SiteChannelEvidence other)
+        {
+            EnumSet<ChannelTag> mergedTags = EnumSet.noneOf(ChannelTag.class);
+            mergedTags.addAll(tags);
+            mergedTags.addAll(other.tags);
+            Boolean mergedTdma = Boolean.TRUE.equals(tdma) || Boolean.TRUE.equals(other.tdma) ? Boolean.TRUE :
+                firstNonNull(tdma, other.tdma);
+            Integer mergedTimeslots = timeslots != null && other.timeslots != null ?
+                Math.max(timeslots, other.timeslots) : firstNonNull(timeslots, other.timeslots);
+            return new SiteChannelEvidence(firstNonBlank(descriptor, other.descriptor),
+                firstNonNull(downlink, other.downlink), firstNonNull(uplink, other.uplink), mergedTdma,
+                mergedTimeslots, mergedTags);
+        }
+
+        private Set<ChannelTag> currentTags()
+        {
+            return tags;
+        }
+
+        private Set<ChannelTag> summaryTags()
+        {
+            EnumSet<ChannelTag> summary = EnumSet.noneOf(ChannelTag.class);
+
+            for(ChannelTag tag: tags)
+            {
+                summary.add(tag.asHistoricalEvidence());
+            }
+
+            return summary;
+        }
     }
 
     private static <T> T firstNonNull(T preferred, T fallback)
@@ -2201,8 +2381,7 @@ public class P25ActivityLogSchema
         new java.util.concurrent.ConcurrentHashMap<>();
 
     private static void warnSiteChannelCollision(String guid, String key,
-                                                 P25NetworkConfigurationSnapshot.Channel existing,
-                                                 P25NetworkConfigurationSnapshot.Channel incoming)
+                                                 SiteChannelEvidence existing, SiteChannelEvidence incoming)
     {
         String warningKey = guid + ':' + key;
         long now = System.currentTimeMillis();
@@ -2211,8 +2390,8 @@ public class P25ActivityLogSchema
         if(previous == null || now - previous >= 300_000L)
         {
             mSiteChannelCollisionWarnings.put(warningKey, now);
-            mLog.warn("Merging duplicate P25 site channel [{}] for site [{}]: roles [{}] and [{}]",
-                key, guid, existing.role(), incoming.role());
+            mLog.warn("Merging duplicate P25 site channel [{}] for site [{}]: tags [{}] and [{}]",
+                key, guid, existing.tags(), incoming.tags());
         }
     }
 
@@ -2232,11 +2411,6 @@ public class P25ActivityLogSchema
         }
 
         return neighbor.downlink() != null && neighbor.downlink() > 0 ? Long.toString(neighbor.downlink()) : null;
-    }
-
-    private static boolean isAlternateControl(String role)
-    {
-        return role != null && (role.contains("alternate") || role.contains("secondary"));
     }
 
     private static String createResolvedViewSql()
@@ -2435,6 +2609,18 @@ public class P25ActivityLogSchema
         else
         {
             statement.setNull(index, java.sql.Types.INTEGER);
+        }
+    }
+
+    private static void setDouble(PreparedStatement statement, int index, Double value) throws SQLException
+    {
+        if(value != null && Double.isFinite(value))
+        {
+            statement.setDouble(index, value);
+        }
+        else
+        {
+            statement.setNull(index, java.sql.Types.REAL);
         }
     }
 }

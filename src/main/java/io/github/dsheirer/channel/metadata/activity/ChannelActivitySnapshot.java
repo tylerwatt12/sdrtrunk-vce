@@ -34,15 +34,19 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
             table != null && table.isControlActive(), rows);
     }
 
-    public record Row(String key, String status, String role, String controlRole, String lcn, long frequencyHz,
+    public record Row(String key, String status, List<String> tags, String lcn,
+                      long frequencyHz,
+                      Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
                       Integer timeslot, String sourceId, String sourceAlias, String talkerAlias,
                       String sourceAliasDisplay, String targetId, String targetAlias, String decoder,
                       String encryptionDetails)
     {
         private static Row from(ChannelActivityRow row)
         {
-            return new Row(row.getKey(), row.getState().name(), row.getRole().name(),
-                row.getControlRole().name(), row.getLcn(), row.getFrequency(), row.getTimeslot(),
+            return new Row(row.getKey(), row.getState().name(), row.getTags().stream().map(Enum::name).toList(),
+                row.getLcn(),
+                row.getFrequency(), row.getSignalDbfs(),
+                row.getDecodeHealthPercent(), row.getQualityObservedAt(), row.getTimeslot(),
                 value(row.getSource()), aliases(row.getSourceAliases()), value(row.getTalkerAlias()),
                 row.getSourceAliasDisplay(), value(row.getTarget()), aliases(row.getTargetAliases()),
                 row.getDecoder(), row.getEncryptionDetails());

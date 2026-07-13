@@ -577,23 +577,75 @@ class StatsWebDatabase
     {
         String guid = request.requiredText("guid");
         return read(connection -> Map.of("rows", queryRows(connection, """
-            SELECT summary.channel_key, coalesce(current.descriptor, summary.descriptor) AS descriptor,
-                coalesce(current.role, summary.role) AS role,
-                coalesce(current.downlink_hz, summary.downlink_hz) AS downlink_hz,
-                coalesce(current.uplink_hz, summary.uplink_hz) AS uplink_hz,
-                coalesce(current.tdma, summary.tdma) AS tdma,
-                coalesce(current.timeslots, summary.timeslots) AS timeslots, current.confirmed_at_ms,
-                summary.first_seen_ms, summary.last_seen_ms, summary.observation_count,
-                summary.primary_control_observations, summary.alternate_control_observations,
-                summary.traffic_observations,
-                CASE WHEN max(coalesce(current.confirmed_at_ms, 0), summary.last_seen_ms) >= ?
+            WITH tag_summary AS (
+                SELECT guid, channel_key, group_concat(tag) AS tags,
+                    max(CASE WHEN tag = 'CONTROL' THEN observation_count ELSE 0 END) AS control_observations,
+                    max(CASE WHEN tag = 'ALTERNATE_CONTROL' THEN observation_count ELSE 0 END) AS alternate_control_observations,
+                    max(CASE WHEN tag = 'DATA_ANNOUNCED' THEN observation_count ELSE 0 END) AS data_announcement_observations,
+                    max(CASE WHEN tag = 'VOICE' THEN observation_count ELSE 0 END) AS voice_grant_observations,
+                    max(CASE WHEN tag = 'DATA' THEN observation_count ELSE 0 END) AS data_grant_observations
+                FROM p25_site_channel_tag_summary
+                WHERE guid = ?
+                GROUP BY guid, channel_key
+            ), current_tags AS (
+                SELECT guid, channel_key, group_concat(tag) AS current_tags
+                FROM p25_site_channel_tag
+                WHERE guid = ?
+                GROUP BY guid, channel_key
+            ), logical AS (
+                SELECT summary.guid, summary.channel_key,
+                    coalesce(current.descriptor, summary.descriptor) AS descriptor,
+                    coalesce(current.downlink_hz, summary.downlink_hz) AS downlink_hz,
+                    coalesce(current.uplink_hz, summary.uplink_hz) AS uplink_hz,
+                    coalesce(current.tdma, summary.tdma) AS tdma,
+                    coalesce(current.timeslots, summary.timeslots) AS timeslots,
+                    current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
+                    summary.observation_count, tags.tags, tags.control_observations,
+                    tags.alternate_control_observations, tags.data_announcement_observations,
+                    tags.voice_grant_observations, tags.data_grant_observations, active.current_tags,
+                    site.last_seen_ms AS site_last_seen_ms
+                FROM p25_site_channel_summary summary
+                LEFT JOIN p25_site_channel current
+                  ON current.guid = summary.guid AND current.channel_key = summary.channel_key
+                LEFT JOIN tag_summary tags
+                  ON tags.guid = summary.guid AND tags.channel_key = summary.channel_key
+                LEFT JOIN current_tags active
+                  ON active.guid = summary.guid AND active.channel_key = summary.channel_key
+                JOIN p25_site_snapshot site ON site.guid = summary.guid
+                WHERE summary.guid = ?
+            )
+            SELECT group_concat(DISTINCT channel_key) AS channel_key,
+                group_concat(DISTINCT descriptor) AS descriptor,
+                downlink_hz, max(uplink_hz) AS uplink_hz, max(tdma) AS tdma, max(timeslots) AS timeslots,
+                max(confirmed_at_ms) AS confirmed_at_ms, min(first_seen_ms) AS first_seen_ms,
+                max(last_seen_ms) AS last_seen_ms, sum(observation_count) AS observation_count,
+                group_concat(DISTINCT tags) AS tags, group_concat(DISTINCT current_tags) AS current_tags,
+                sum(coalesce(control_observations, 0)) AS control_observations,
+                sum(coalesce(alternate_control_observations, 0)) AS alternate_control_observations,
+                sum(coalesce(data_announcement_observations, 0)) AS data_announcement_observations,
+                sum(coalesce(voice_grant_observations, 0)) AS voice_grant_observations,
+                sum(coalesce(data_grant_observations, 0)) AS data_grant_observations,
+                CASE WHEN max(confirmed_at_ms) IS NOT NULL AND
+                    max(max(coalesce(confirmed_at_ms, 0), site_last_seen_ms)) >= ?
                     THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
-            FROM p25_site_channel_summary summary
-            LEFT JOIN p25_site_channel current
-              ON current.guid = summary.guid AND current.channel_key = summary.channel_key
-            WHERE summary.guid = ?
-            ORDER BY coalesce(current.downlink_hz, summary.downlink_hz, 9223372036854775807), summary.channel_key
-            """, System.currentTimeMillis() - 15_000L, guid)));
+            FROM logical
+            GROUP BY guid, coalesce(CAST(downlink_hz AS TEXT), channel_key)
+            ORDER BY coalesce(downlink_hz, 9223372036854775807), channel_key
+            """, guid, guid, guid, System.currentTimeMillis() - 15_000L)));
+    }
+
+    Map<String,Object> siteQuality(StatsRequest request)
+    {
+        String guid = request.requiredText("guid");
+        return read(connection -> Map.of("rows", queryRows(connection, """
+            SELECT frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs, average_signal_dbfs,
+                minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct, valid_frames, invalid_frames,
+                corrected_bits, sync_loss_bits, dropped_bits, last_valid_decode_ms
+            FROM p25_control_channel_quality
+            WHERE guid = ?
+            ORDER BY observed_at_ms DESC
+            LIMIT ?
+            """, guid, request.limit())));
     }
 
     Map<String,Object> siteBands(StatsRequest request)

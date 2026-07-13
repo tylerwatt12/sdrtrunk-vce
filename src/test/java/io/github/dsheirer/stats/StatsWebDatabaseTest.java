@@ -88,7 +88,12 @@ class StatsWebDatabaseTest
 
         List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=" + GUID)));
-        assertEquals("traffic", channels.get(0).get("role"));
+        assertTrue(channels.get(0).get("tags").toString().contains("VOICE"));
+        assertTrue(channels.get(0).get("tags").toString().contains("DATA"));
+        assertTrue(channels.get(0).get("channel_key").toString().contains("0-509"));
+        assertTrue(channels.get(0).get("channel_key").toString().contains("0-510"));
+        assertEquals(4L, number(channels.get(0).get("voice_grant_observations")));
+        assertEquals(2L, number(channels.get(0).get("data_grant_observations")));
         assertEquals(854_187_500L, number(channels.get(0).get("downlink_hz")));
         assertEquals("0-821", channels.get(1).get("descriptor"));
         assertEquals("CURRENT", channels.get(1).get("state"));
@@ -102,6 +107,11 @@ class StatsWebDatabaseTest
         assertEquals("Dispatch", rowsFrom(patches, "groups").get(0).get("patch_alias_name"));
         assertEquals("Dispatch", rowsFrom(patches, "talkgroups").get(0).get("alias_name"));
         assertEquals("Engine 1", rowsFrom(patches, "radios").get(0).get("alias_name"));
+
+        List<Map<String,Object>> quality = rows(mDatabase.siteQuality(request(
+            "/api/site/quality?guid=" + GUID)));
+        assertEquals(856_137_500L, number(quality.getFirst().get("frequency_hz")));
+        assertEquals(98.5, ((Number)quality.getFirst().get("decode_health_pct")).doubleValue());
 
         Map<String,Object> activity = mDatabase.activity(request(
             "/api/activity?wacn=BEE00&system_id=0x348&talkgroup_id=56132"));
@@ -345,23 +355,42 @@ class StatsWebDatabaseTest
                     'P25-1', 1, 0x49F, 1, 1, 856137500, 856137500)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_channel (guid, channel_key, descriptor, role, downlink_hz, uplink_hz, tdma,
-                    timeslots, confirmed_at_ms) VALUES ('test-site-guid', '0-821', '0-821', 'primary_control',
+                INSERT INTO p25_control_channel_quality (guid, frequency_hz, bucket_start_ms, observed_at_ms,
+                    signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
+                    decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
+                    dropped_bits, last_valid_decode_ms)
+                VALUES ('test-site-guid', 856137500, 0, 2000, -20.0, -21.0, -25.0, -18.0,
+                    98.5, 100, 1, 4, 0, 0, 1999)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel (guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma,
+                    timeslots, confirmed_at_ms) VALUES ('test-site-guid', '0-821', '0-821',
                     856137500, 811137500, 0, 1, %d)
                 """.formatted(now));
             statement.executeUpdate("""
-                INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, role, downlink_hz, uplink_hz,
-                    tdma, timeslots, first_seen_ms, last_seen_ms, observation_count,
-                    primary_control_observations, alternate_control_observations, traffic_observations)
-                VALUES ('test-site-guid', '0-821', '0-821', 'primary_control', 856137500, 811137500,
-                    0, 1, 1000, 2000, 10, 10, 0, 0)
+                INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,
+                    tdma, timeslots, first_seen_ms, last_seen_ms, observation_count)
+                VALUES ('test-site-guid', '0-821', '0-821', 856137500, 811137500,
+                    0, 1, 1000, 2000, 10)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, role, downlink_hz, uplink_hz,
-                    tdma, timeslots, first_seen_ms, last_seen_ms, observation_count,
-                    primary_control_observations, alternate_control_observations, traffic_observations)
-                VALUES ('test-site-guid', '0-509', '0-509', 'traffic', 854187500, NULL,
-                    0, 1, 1000, 2000, 4, 0, 0, 4)
+                INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,
+                    tdma, timeslots, first_seen_ms, last_seen_ms, observation_count)
+                VALUES ('test-site-guid', '0-509', '0-509', 854187500, NULL,
+                    0, 1, 1000, 2000, 4),
+                    ('test-site-guid', '0-510', '0-510', 854187500, NULL,
+                    0, 1, 1000, 2000, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_tag (guid, channel_key, tag, confirmed_at_ms)
+                VALUES ('test-site-guid', '0-821', 'CURRENT_CONTROL', %d)
+                """.formatted(now));
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_tag_summary
+                    (guid, channel_key, tag, first_seen_ms, last_seen_ms, observation_count)
+                VALUES ('test-site-guid', '0-821', 'CONTROL', 1000, 2000, 10),
+                    ('test-site-guid', '0-509', 'VOICE', 1000, 2000, 4),
+                    ('test-site-guid', '0-510', 'DATA', 1000, 2000, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_neighbor (guid, neighbor_key, system_id, rfss, site, channel_descriptor,

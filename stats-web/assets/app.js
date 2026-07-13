@@ -25,6 +25,8 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'radio': 82,
   'radio-alias': 165,
   'rfss': 66,
+  'signal': 82,
+  'decode-health': 72,
   'site': 66,
   'source': 82,
   'source-alias': 165,
@@ -224,27 +226,42 @@ function talkgroupAliasLink(row, id, prefix = 'alias_') {
   return name ? talkgroupLink(row, id, name) : '';
 }
 
-function channelRole(role) {
-  const values = {
-    primary_control: ['Primary', 'role-primary'],
-    current_control: ['Primary', 'role-primary'],
-    secondary_control: ['Secondary', 'role-secondary'],
-    traffic: ['Voice', 'role-voice'],
-    voice: ['Voice', 'role-voice'],
-    fdma_data: ['Data', 'role-data'],
-    tdma_data: ['Data', 'role-data']
-  };
-  const value = values[role] || [String(role || '').replaceAll('_', ' '), ''];
-  return value[0] ? badge(value[0], value[1]) : '';
+function channelTagSet(...values) {
+  const tags = new Set();
+  values.flat().forEach((value) => String(value || '').split(',').forEach((tag) => {
+    const normalized = tag.trim().toUpperCase();
+    if (normalized) tags.add(normalized);
+  }));
+  return tags;
 }
 
-function channelRoles(row) {
-  const roles = [];
-  if (number(row.primary_control_observations) > 0) roles.push(badge('Primary', 'role-primary'));
-  if (number(row.alternate_control_observations) > 0) roles.push(badge('Secondary', 'role-secondary'));
-  if (number(row.traffic_observations) > 0) roles.push(badge('Voice', 'role-voice'));
-  if (String(row.role || '').endsWith('_data')) roles.push(badge('Data', 'role-data'));
-  return roles.length ? fragment(...roles) : channelRole(row.role);
+function channelTags(row) {
+  const observed = channelTagSet(row.tags);
+  const current = channelTagSet(row.current_tags);
+  const tags = [];
+  if (current.has('CURRENT_CONTROL')) tags.push(badge('Current Control', 'role-primary'));
+  else if (observed.has('CONTROL')) tags.push(badge('Control', 'role-primary'));
+  if (observed.has('ALTERNATE_CONTROL') || current.has('ALTERNATE_CONTROL')) {
+    tags.push(badge('Alternate Control', 'role-secondary'));
+  }
+  if (observed.has('VOICE')) tags.push(badge('Voice', 'role-voice'));
+  if (observed.has('DATA')) tags.push(badge('Data', 'role-data'));
+  if (observed.has('DATA_ANNOUNCED') && !observed.has('DATA')) {
+    tags.push(badge('Data Announced', 'role-data-announced'));
+  }
+  return tags.length ? fragment(...tags) : badge('Unknown', 'state-historical');
+}
+
+function channelTagText(row) {
+  const tags = channelTagSet(row.tags);
+  const values = [];
+  if (tags.has('CURRENT_CONTROL')) values.push('Current Control');
+  if (tags.has('ALTERNATE_CONTROL')) values.push('Alternate Control');
+  if (tags.has('VOICE')) values.push('Voice');
+  if (tags.has('DATA')) values.push('Data');
+  if (tags.has('CONFIGURED') && values.length === 0) values.push('Configured');
+  if (tags.has('CONVENTIONAL') && values.length === 0) values.push('Conventional');
+  return values.join(' + ');
 }
 
 function pageHeader(title, subtitle) {
@@ -896,6 +913,7 @@ function siteTabs(site, active) {
   return tabs([
     { id: 'info', label: 'Info', href: href('site', { ...values, tab: 'info' }) },
     { id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) },
+    { id: 'quality', label: 'Quality', href: href('site', { ...values, tab: 'quality' }) },
     { id: 'neighbors', label: 'Neighbors', href: href('site', { ...values, tab: 'neighbors' }) },
     { id: 'band-plan', label: 'Band Plan', href: href('site', { ...values, tab: 'band-plan' }) },
     { id: 'patches', label: 'Patches', href: href('site', { ...values, tab: 'patches' }) },
@@ -963,8 +981,11 @@ function liveSystemsSection() {
   const rowNodes = new Map();
   const columns = [
     { id: 'status', label: 'Status', width: 145, sortValue: (row) => row.status || '' },
+    { id: 'tags', label: 'Tags', width: 180, sortValue: channelTagText },
     { id: 'lcn', label: 'LCN', width: 85, sortValue: (row) => row.lcn || '' },
     { id: 'frequency', label: 'Frequency', width: 100, sortValue: (row) => Number(row.frequency_hz || 0) },
+    { id: 'signal', label: 'Signal', width: 90, sortValue: (row) => Number(row.signal_dbfs ?? -999) },
+    { id: 'decode-health', label: 'Decode', width: 80, sortValue: (row) => Number(row.decode_health_pct ?? -1) },
     { id: 'source-alias', label: 'Source Alias', width: 220, sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '' },
     { id: 'source', label: 'Source', width: 105, sortValue: (row) => Number(row.source_id || 0) },
     { id: 'target-alias', label: 'Target Alias', width: 220, sortValue: (row) => row.target_alias || '' },
@@ -1023,25 +1044,34 @@ function liveSystemsSection() {
     const cells = element.children;
     const statusText = row.status === 'ENCRYPTED' && row.encryption_details ? row.encryption_details : row.status;
     cellText(cells[0], statusText);
-    cellText(cells[1], row.lcn);
-    cellText(cells[2], frequency(row.frequency_hz));
-    cellText(cells[3], row.source_alias_display || row.source_alias ||
+    cellText(cells[1], channelTagText(row));
+    cellText(cells[2], row.lcn);
+    cellText(cells[3], frequency(row.frequency_hz));
+    cellText(cells[4], row.signal_dbfs == null ? '' : `${Number(row.signal_dbfs).toFixed(1)} dBFS`);
+    cellText(cells[5], row.decode_health_pct == null ? '' : `${Number(row.decode_health_pct).toFixed(1)}%`);
+    cellText(cells[6], row.source_alias_display || row.source_alias ||
       (row.talker_alias ? `TA: ${row.talker_alias}` : ''));
-    cellText(cells[4], row.source_id);
-    cellText(cells[5], row.target_alias);
-    cellText(cells[6], row.target_id);
-    cellText(cells[7], row.decoder);
+    cellText(cells[7], row.source_id);
+    cellText(cells[8], row.target_alias);
+    cellText(cells[9], row.target_id);
+    cellText(cells[10], row.decoder);
     cells[0].className = `activity-status state-${String(row.status || 'idle').toLowerCase()}`;
-    cells[1].className = row.control_role === 'CURRENT' ? 'control-current' :
-      (row.control_role === 'ALTERNATE' ? 'control-alternate' : '');
-    cells[2].className = cells[1].className;
+    cells[1].className = '';
+    const tags = channelTagSet(row.tags);
+    cells[2].className = tags.has('CURRENT_CONTROL') ? 'control-current' :
+      (tags.has('ALTERNATE_CONTROL') ? 'control-alternate' : '');
+    cells[3].className = cells[2].className;
+    cells[4].className = cells[2].className;
+    cells[5].className = row.decode_health_pct == null ? '' :
+      (Number(row.decode_health_pct) >= 95 ? 'quality-good' :
+        (Number(row.decode_health_pct) >= 80 ? 'quality-warn' : 'quality-bad'));
     element.classList.toggle('selected', selectedRowKey === row.key);
   };
 
   const createRow = (row) => {
     const element = node('tr');
     element.dataset.key = row.key;
-    for (let index = 0; index < 8; index += 1) element.append(node('td'));
+    for (let index = 0; index < 11; index += 1) element.append(node('td'));
     element.addEventListener('click', () => {
       selectedRowKey = row.key;
       rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
@@ -1077,7 +1107,7 @@ function liveSystemsSection() {
     if (!value.rows?.length) {
       const empty = node('tr', 'empty');
       const message = node('td', '', 'No channels observed');
-      message.colSpan = 8;
+      message.colSpan = 10;
       empty.append(message);
       body.append(empty);
     }
@@ -1343,17 +1373,32 @@ async function renderSite() {
   content.append(pageHeader(siteLabel(site), `${systemLabel(site)} · ${hexDecimal(site.rfss, 2)}-${hexDecimal(site.site, 2)}`),
     siteTabs(site, tab));
 
-  if (tab === 'channels') {
+  if (tab === 'quality') {
+    const data = await api('/api/site/quality', { guid, limit: 500 });
+    content.append(section('Control Channel Quality', table(data.rows || [], [
+      { id: 'time', label: 'Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
+      { id: 'frequency', label: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
+      { id: 'signal', label: 'Signal dBFS', render: (row) => row.signal_dbfs == null ? '' : Number(row.signal_dbfs).toFixed(1), className: 'numeric', sortValue: (row) => Number(row.signal_dbfs ?? -999) },
+      { id: 'average-signal', label: '30s Avg dBFS', render: (row) => row.average_signal_dbfs == null ? '' : Number(row.average_signal_dbfs).toFixed(1), className: 'numeric', sortValue: (row) => Number(row.average_signal_dbfs ?? -999) },
+      { id: 'decode-health', label: 'Decode Health', render: (row) => row.decode_health_pct == null ? '' : `${Number(row.decode_health_pct).toFixed(1)}%`, className: 'numeric', sortValue: (row) => Number(row.decode_health_pct ?? -1) },
+      { label: 'Valid', key: 'valid_frames', className: 'numeric' },
+      { label: 'Invalid', key: 'invalid_frames', className: 'numeric' },
+      { label: 'Corrected Bits', key: 'corrected_bits', className: 'numeric' },
+      { label: 'Sync Loss Bits', key: 'sync_loss_bits', className: 'numeric' },
+      { label: 'Dropped Bits', key: 'dropped_bits', className: 'numeric' }
+    ], 'No retained control-channel quality metrics', { type: 'site-quality' })));
+  } else if (tab === 'channels') {
     const data = await api('/api/site/channels', { guid });
     const columns = [
-      { label: 'LCN', key: 'descriptor' },
-      { label: 'Role', key: 'role', render: channelRoles },
+      { label: 'LCN / Modes', key: 'descriptor' },
+      { label: 'Tags', key: 'tags', render: channelTags },
       { id: 'downlink', label: 'Downlink MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
       { id: 'uplink', label: 'Uplink MHz', render: (row) => frequency(row.uplink_hz), className: 'numeric', sortValue: (row) => Number(row.uplink_hz || 0) },
       { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
       { label: 'Slots', key: 'timeslots', className: 'numeric' },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { label: 'Observations', key: 'observation_count', className: 'numeric' },
+      { label: 'Voice Grants', key: 'voice_grant_observations', className: 'numeric' },
+      { label: 'Data Grants', key: 'data_grant_observations', className: 'numeric' },
       { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     const rows = data.rows || [];

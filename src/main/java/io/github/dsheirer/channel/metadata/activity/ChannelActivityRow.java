@@ -24,8 +24,11 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Session-only row for the Now Playing activity tables.
@@ -41,27 +44,21 @@ public class ChannelActivityRow
         TRAFFIC
     }
 
-    public enum ControlRole
-    {
-        NONE,
-        CURRENT,
-        ALTERNATE
-    }
-
     public enum Origin
     {
         CONVENTIONAL_METADATA,
         CONFIGURED_CONTROL,
         DECODED_CURRENT_CONTROL,
         DECODED_ALTERNATE_CONTROL,
+        DECODED_DATA_ANNOUNCEMENT,
         TRAFFIC_GRANT
     }
 
     private final String mKey;
     private Channel mChannel;
     private Role mRole;
+    private final EnumSet<ChannelTag> mTags = EnumSet.noneOf(ChannelTag.class);
     private Origin mOrigin;
-    private ControlRole mControlRole = ControlRole.NONE;
     private State mState = State.IDLE;
     private String mLcn;
     private long mFrequency;
@@ -73,6 +70,9 @@ public class ChannelActivityRow
     private List<Alias> mTargetAliases = Collections.emptyList();
     private String mDecoder;
     private String mEncryptionDetails;
+    private Double mSignalDbfs;
+    private Double mDecodeHealthPercent;
+    private long mQualityObservedAt;
     private long mTrafficGrantExpiresAt;
 
     public ChannelActivityRow(String key, Channel channel, Role role, long frequency, Integer timeslot)
@@ -107,38 +107,53 @@ public class ChannelActivityRow
     public void setRole(Role role)
     {
         mRole = role != null ? role : Role.CONVENTIONAL;
+        addTag(switch(mRole)
+        {
+            case CONVENTIONAL -> ChannelTag.CONVENTIONAL;
+            case CONFIGURED_CONTROL -> ChannelTag.CONFIGURED;
+            case CURRENT_CONTROL -> ChannelTag.CURRENT_CONTROL;
+            case ALTERNATE_CONTROL -> ChannelTag.ALTERNATE_CONTROL;
+            case TRAFFIC -> null;
+        });
+    }
 
-        if(mRole == Role.CURRENT_CONTROL)
+    public Set<ChannelTag> getTags()
+    {
+        return Collections.unmodifiableSet(mTags);
+    }
+
+    public void addTag(ChannelTag tag)
+    {
+        if(tag != null)
         {
-            setControlRole(ControlRole.CURRENT);
-        }
-        else if(mRole == Role.ALTERNATE_CONTROL)
-        {
-            setControlRole(ControlRole.ALTERNATE);
-        }
-        else if(mRole == Role.CONVENTIONAL)
-        {
-            setControlRole(ControlRole.NONE);
-        }
-        else if(mRole == Role.CONFIGURED_CONTROL)
-        {
-            setControlRole(ControlRole.NONE);
+            mTags.add(tag);
         }
     }
 
-    public ControlRole getControlRole()
+    public void addTags(Set<ChannelTag> tags)
     {
-        return mControlRole;
+        if(tags != null)
+        {
+            mTags.addAll(tags);
+        }
     }
 
-    public void setControlRole(ControlRole controlRole)
+    public void removeTag(ChannelTag tag)
     {
-        mControlRole = controlRole != null ? controlRole : ControlRole.NONE;
+        if(tag != null)
+        {
+            mTags.remove(tag);
+        }
     }
 
-    public boolean hasControlRole()
+    public boolean hasTag(ChannelTag tag)
     {
-        return mControlRole != ControlRole.NONE;
+        return tag != null && mTags.contains(tag);
+    }
+
+    public String getTagsDisplay()
+    {
+        return mTags.stream().map(ChannelTag::getLabel).collect(Collectors.joining(" + "));
     }
 
     public boolean isControlRow()
@@ -317,6 +332,35 @@ public class ChannelActivityRow
     public void setEncryptionDetails(String encryptionDetails)
     {
         mEncryptionDetails = encryptionDetails;
+    }
+
+    public Double getSignalDbfs()
+    {
+        return mSignalDbfs;
+    }
+
+    public Double getDecodeHealthPercent()
+    {
+        return mDecodeHealthPercent;
+    }
+
+    public long getQualityObservedAt()
+    {
+        return mQualityObservedAt;
+    }
+
+    public void setQuality(Double signalDbfs, Double decodeHealthPercent, long observedAt)
+    {
+        mSignalDbfs = signalDbfs;
+        mDecodeHealthPercent = decodeHealthPercent;
+        mQualityObservedAt = observedAt;
+    }
+
+    public void clearQuality()
+    {
+        mSignalDbfs = null;
+        mDecodeHealthPercent = null;
+        mQualityObservedAt = 0;
     }
 
     public long getTrafficGrantExpiresAt()

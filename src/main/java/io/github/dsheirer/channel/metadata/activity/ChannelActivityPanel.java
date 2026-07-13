@@ -75,9 +75,9 @@ import net.miginfocom.swing.MigLayout;
  */
 public class ChannelActivityPanel extends JPanel
 {
-    private static final String TABLE_COLUMN_WIDTH_PREFERENCE_KEY = "now.playing.activity.table";
-    private static final int[] TABLE_COLUMN_DEFAULT_WIDTHS = {219, 90, 96, 240, 88, 240, 88, 74};
-    private static final int[] TABLE_COLUMN_MINIMUM_WIDTHS = {90, 62, 80, 80, 67, 80, 67, 54};
+    private static final String TABLE_COLUMN_WIDTH_PREFERENCE_KEY = "now.playing.activity.table.v3";
+    private static final int[] TABLE_COLUMN_DEFAULT_WIDTHS = {150, 180, 80, 96, 82, 72, 210, 88, 210, 88, 74};
+    private static final int[] TABLE_COLUMN_MINIMUM_WIDTHS = {90, 90, 62, 80, 70, 62, 80, 67, 80, 67, 54};
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ChannelActivityModel mActivityModel;
     private final IconModel mIconModel;
@@ -436,10 +436,16 @@ public class ChannelActivityPanel extends JPanel
         table.getSelectionModel().addListSelectionListener(event -> processSelection(event, table));
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_STATUS)
             .setCellRenderer(new StateCellRenderer());
+        table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_TAGS)
+            .setCellRenderer(new CenteredCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_LCN)
             .setCellRenderer(new LcnCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_FREQUENCY)
             .setCellRenderer(new FrequencyCellRenderer());
+        table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_SIGNAL)
+            .setCellRenderer(new QualityCellRenderer(false));
+        table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_DECODE_HEALTH)
+            .setCellRenderer(new QualityCellRenderer(true));
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_SOURCE_ALIAS)
             .setCellRenderer(new AliasCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_TARGET_ALIAS)
@@ -868,12 +874,12 @@ public class ChannelActivityPanel extends JPanel
 
         if(activityRow != null)
         {
-            if(activityRow.getControlRole() == ChannelActivityRow.ControlRole.CURRENT)
+            if(activityRow.hasTag(ChannelTag.CURRENT_CONTROL))
             {
                 label.setForeground(Color.RED);
                 return;
             }
-            else if(activityRow.getControlRole() == ChannelActivityRow.ControlRole.ALTERNATE)
+            else if(activityRow.hasTag(ChannelTag.ALTERNATE_CONTROL))
             {
                 label.setForeground(new Color(180, 130, 0));
                 return;
@@ -995,6 +1001,48 @@ public class ChannelActivityPanel extends JPanel
             {
                 ChannelActivityRow activityRow = activityTableModel.getRow(table.convertRowIndexToModel(row));
                 label.setText(activityRow != null ? activityRow.getSourceAliasDisplay() : null);
+            }
+
+            applySelectionBorder(table, label, isSelected, column);
+            return label;
+        }
+    }
+
+    public class QualityCellRenderer extends DefaultTableCellRenderer
+    {
+        private final DecimalFormat mFormatter = new DecimalFormat("0.0");
+        private final boolean mHealth;
+
+        public QualityCellRenderer(boolean health)
+        {
+            mHealth = health;
+            setHorizontalAlignment(SwingConstants.CENTER);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+
+            if(value instanceof Double measurement && Double.isFinite(measurement))
+            {
+                label.setText(mFormatter.format(measurement) + (mHealth ? "%" : " dBFS"));
+
+                if(mHealth)
+                {
+                    label.setForeground(measurement >= 95.0 ? new Color(0, 128, 0) :
+                        measurement >= 80.0 ? new Color(180, 130, 0) : Color.RED);
+                }
+                else
+                {
+                    applyControlChannelForeground(table, label, row);
+                }
+            }
+            else
+            {
+                label.setText(null);
+                label.setForeground(table.getForeground());
             }
 
             applySelectionBorder(table, label, isSelected, column);

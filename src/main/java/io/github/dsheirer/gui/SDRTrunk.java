@@ -276,6 +276,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
         mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(
             mP25ActivityLogService.getDecodeEventListener());
+        mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
+            mP25ActivityLogService.getControlChannelQualityListener());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mP25ActivityLogService);
         mP25ActivityLogService.addActivityCommitListener(mStatsWebServerService);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
@@ -854,6 +856,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
                 mP25ActivityLogService.getDecodeEventListener());
+            mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
+                mP25ActivityLogService.getControlChannelQualityListener());
             mConfigurationManager.getChannelProcessingManager().removeSiteMetadataListener(mP25ActivityLogService);
             mP25ActivityLogService.dispose();
         }

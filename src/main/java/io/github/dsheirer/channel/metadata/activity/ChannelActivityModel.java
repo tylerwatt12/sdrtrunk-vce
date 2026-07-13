@@ -25,6 +25,7 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataField;
 import io.github.dsheirer.channel.metadata.IChannelMetadataUpdateListener;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Form;
@@ -267,6 +268,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 {
                     clearTrafficGrantAgeOut(row);
                     cancelPendingControlIdle(row);
+                    row.clearQuality();
 
                     if(table == mConventionalTable)
                     {
@@ -294,6 +296,47 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 {
                     setControlActive(trunked, false);
                 }
+            }
+        });
+    }
+
+    public void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
+    {
+        if(!mEnabled || snapshot == null || snapshot.channel() == null || snapshot.frequencyHz() <= 0)
+        {
+            return;
+        }
+
+        runOnSwingIfEnabled(() -> {
+            SiteActivitySession session = getOrCreateSiteSession(snapshot.channel());
+            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+
+            if(table == null)
+            {
+                return;
+            }
+
+            ChannelActivityRow row = table.get(session.controlKey(snapshot.frequencyHz()));
+
+            if(row == null && snapshot.active())
+            {
+                row = session.configuredControl(snapshot.frequencyHz());
+                rememberRow(table, row);
+                row.setDecoder(getDecoder(snapshot.channel()));
+            }
+
+            if(row != null)
+            {
+                if(snapshot.active())
+                {
+                    row.setQuality(snapshot.signalDbfs(), snapshot.decodeHealthPercent(), snapshot.observedAtMs());
+                }
+                else
+                {
+                    row.clearQuality();
+                }
+
+                table.refresh(row);
             }
         });
     }
@@ -385,7 +428,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                     continue;
                 }
 
-                if(isCurrentControlRole(channel.role()))
+                ChannelTag networkTag = ChannelTag.fromNetworkRole(channel.role());
+
+                if(networkTag == ChannelTag.CURRENT_CONTROL)
                 {
                     promotedControlFrequencies.add(channel.downlink());
                     SiteActivitySession.ControlUpdate update = session.currentControl(channel.downlink(),
@@ -405,12 +450,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                         table.refresh(demoted);
                     }
                 }
-                else if(isSecondaryControlRole(channel.role()))
+                else if(networkTag == ChannelTag.ALTERNATE_CONTROL)
                 {
                     promotedControlFrequencies.add(channel.downlink());
                     ChannelActivityRow row = session.alternateControl(channel.downlink(), channel.descriptor());
                     rememberRow(table, row);
                     cancelPendingControlIdle(row);
+                    row.setDecoder(getDecoder(parentChannel));
+                    table.refresh(row);
+                }
+                else if(networkTag == ChannelTag.DATA_ANNOUNCED)
+                {
+                    ChannelActivityRow row = session.announcedData(channel.downlink(), channel.descriptor());
+                    rememberRow(table, row);
                     row.setDecoder(getDecoder(parentChannel));
                     table.refresh(row);
                 }
@@ -462,6 +514,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             row.setDecoder(getDecoder(rowChannel));
             updateCallDetails(row, identifiers, rowChannel);
+            ChannelTag serviceTag = ChannelTag.fromService(eventType);
+
+            if(serviceTag != null)
+            {
+                session.addTag(channelDescriptor.getDownlinkFrequency(), serviceTag);
+            }
+
             row.setState(getStickyTrafficState(row, getState(eventType), wasEncrypted));
             table.refresh(row);
             scheduleTrafficGrantAgeOut(row);
@@ -591,6 +650,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         row.setTarget(metadata.getToIdentifier());
         row.setTargetAliases(metadata.getToIdentifierAliases());
         row.setEncryptionDetails(P25EncryptionDetails.format(metadata.getEncryptionIdentifier()));
+        ChannelTag serviceTag = ChannelTag.fromService(state);
+
+        if(serviceTag != null)
+        {
+            row.addTag(serviceTag);
+        }
+
         row.setState(getStickyTrafficState(row, state, wasEncrypted));
 
         if(row.getState() == State.IDLE && !retainIdleCallDetails())
@@ -707,8 +773,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return -1;
     }
 
-    private void applyTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel,
-                                         String origin)
+    private void applyTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableModel table,
+                                         Channel parentChannel)
     {
         if(row != null)
         {
@@ -716,19 +782,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             row.setChannel(parentChannel);
             row.setDecoder(getDecoder(parentChannel));
 
-            if(row.getControlRole() == ChannelActivityRow.ControlRole.CURRENT)
-            {
-                markConfiguredControl(row, parentChannel);
-            }
-            else if(row.getControlRole() == ChannelActivityRow.ControlRole.ALTERNATE)
-            {
-                row.setRole(ChannelActivityRow.Role.ALTERNATE_CONTROL);
-                setIdle(row);
-            }
-            else
-            {
-                setIdle(row);
-            }
+            setIdle(row);
 
             if(table != null)
             {
@@ -759,7 +813,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             if(row.getTrafficGrantExpiresAt() > 0 && row.getTrafficGrantExpiresAt() <= now &&
                 isTrafficState(row.getState()))
             {
-                applyTrafficGrantAgeOut(row, table, parentChannel, "p25-traffic-ageout");
+                applyTrafficGrantAgeOut(row, table, parentChannel);
             }
         }
 
@@ -838,7 +892,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     private void applyControlIdle(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel)
     {
-        if(row != null && row.getControlRole() == ChannelActivityRow.ControlRole.CURRENT &&
+        if(row != null && row.hasTag(ChannelTag.CURRENT_CONTROL) &&
             row.getState() == State.CONTROL)
         {
             markConfiguredControl(row, parentChannel);
@@ -1034,8 +1088,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         if(row != null)
         {
             cancelPendingControlIdle(row);
-            row.setControlRole(ChannelActivityRow.ControlRole.NONE);
-
             if(!isActiveTraffic(row))
             {
                 row.setChannel(parentChannel);
@@ -1174,16 +1226,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         Integer site = currentSite != null ? currentSite.site() : null;
 
         return new SiteIdentity(wacn, system, rfss, site);
-    }
-
-    private boolean isCurrentControlRole(String role)
-    {
-        return "primary_control".equals(role) || "current_control".equals(role);
-    }
-
-    private boolean isSecondaryControlRole(String role)
-    {
-        return "secondary_control".equals(role);
     }
 
     private String getTrunkedTitle(Channel channel)
