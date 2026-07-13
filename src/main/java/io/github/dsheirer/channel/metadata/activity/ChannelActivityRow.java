@@ -153,7 +153,20 @@ public class ChannelActivityRow
 
     public String getTagsDisplay()
     {
-        return mTags.stream().map(ChannelTag::getLabel).collect(Collectors.joining(" + "));
+        return displayedTags()
+            .map(ChannelTag::getLabel).collect(Collectors.joining(" + "));
+    }
+
+    public String getTagsDescription()
+    {
+        return displayedTags()
+            .map(ChannelTag::getDescription).collect(Collectors.joining(" + "));
+    }
+
+    private java.util.stream.Stream<ChannelTag> displayedTags()
+    {
+        return mTags.stream().filter(tag -> tag != ChannelTag.CONFIGURED || mTags.size() == 1)
+            .filter(tag -> tag != ChannelTag.DATA_ANNOUNCED || !mTags.contains(ChannelTag.DATA));
     }
 
     public boolean isControlRow()

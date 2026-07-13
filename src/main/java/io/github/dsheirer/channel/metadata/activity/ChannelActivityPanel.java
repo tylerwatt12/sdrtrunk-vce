@@ -437,7 +437,7 @@ public class ChannelActivityPanel extends JPanel
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_STATUS)
             .setCellRenderer(new StateCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_TAGS)
-            .setCellRenderer(new CenteredCellRenderer());
+            .setCellRenderer(new TagCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_LCN)
             .setCellRenderer(new LcnCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_FREQUENCY)
@@ -1065,6 +1065,20 @@ public class ChannelActivityPanel extends JPanel
             label.setForeground(table.getForeground());
             label.setBackground(table.getBackground());
             applySelectionBorder(table, label, isSelected, column);
+            return label;
+        }
+    }
+
+    public class TagCellRenderer extends CenteredCellRenderer
+    {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row,
+                column);
+            ChannelActivityRow activityRow = getActivityRow(table, row);
+            label.setToolTipText(activityRow != null ? activityRow.getTagsDescription() : null);
             return label;
         }
     }
