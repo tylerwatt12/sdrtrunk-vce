@@ -350,6 +350,36 @@ publishing a numbered alpha release on GitHub.
 
 ## Changelog
 
+### 0.6.2-alpha-2 - 2026-07-13
+
+#### Added
+
+- Retained control-channel signal and decode-quality history.
+- Non-exclusive channel usage tags for control, alternate, data, and traffic activity.
+- Talker aliases, conventional channel names, and richer channel details in Systems and web views.
+- Expanded Stats Server history, logging status, database health, and activity summaries.
+- A documented release checklist and explicit SQLite migration tooling.
+
+#### Changed
+
+- Accepted protocol-valid P25 channel spacing and wider announced control-channel rotations.
+- Separated P25 call and grant metrics so data grants do not inflate completed-call totals.
+- Improved channel usage labels and retained exact data-grant counts during schema migration.
+- Validated receiver performance changes with repeatable A/B collection and analysis tooling.
+
+#### Fixed
+
+- Prevented duplicate normalized P25 site-channel keys from stopping SQLite summary logging.
+- Cleared stale P25 frequency-band plans when a control channel switches.
+- Corrected RSP waterfall FFT sample framing.
+
+#### Upgrade Notes
+
+- This release uses P25 history schema v16. Stop SDRTrunk and back up the portable database before upgrading.
+- Existing v14 or v15 databases can use the external `migrate-v14-or-v15-to-v16-channel-tags` tool.
+- Alpha 1 used schema v13; use the external Stats Server reset tool when upgrading from Alpha 1. The reset preserves
+  configuration, channels, aliases, streams, preferences, and vault data, but starts Stats Server history fresh.
+
 ### 0.6.2-alpha-1 - 2026-07-11
 
 #### Added
