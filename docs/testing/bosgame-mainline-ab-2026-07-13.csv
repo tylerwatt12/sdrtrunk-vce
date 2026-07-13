@@ -1,0 +1,7 @@
+control,frequency_hz,run,start_ms,end_ms,avg_signal_dbfs,avg_rolling_health_pct,frame_weighted_health_pct,count_basis,valid_frames,invalid_frames,sync_loss_bits,dropped_bits
+MARCS-CuyCoSimul,773831250,B1,1783960382000,1783960982000,-52.101,97.821,97.818,independent_1s_intervals,21891,234,49678,170
+MARCS-CuyCoSimul,773831250,A,1783961110435,1783961711000,-51.746,98.897,98.891,10s_samples_of_30s_rolling_window,65229,169,109324,972
+MARCS-CuyCoSimul,773831250,B2,1783961791000,1783962391000,-51.701,96.018,95.974,independent_1s_intervals,21348,390,98924,162
+Medina,771506250,B1,1783960382000,1783960982000,-63.628,8.016,8.585,independent_1s_intervals,1715,5071,2578910,6304
+Medina,771506250,A,1783961110435,1783961711000,-63.307,11.310,12.216,10s_samples_of_30s_rolling_window,1975,3025,2183862,5014
+Medina,771506250,B2,1783961791000,1783962391000,-63.507,7.179,7.450,independent_1s_intervals,1552,5210,2751256,6684

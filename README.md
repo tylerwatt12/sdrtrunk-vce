@@ -7,6 +7,11 @@ portable storage, expanded playback controls, and substantial DSP and runtime op
 
 This project is currently an **alpha release**. Back up important receiver data before testing a new build.
 
+> **More features, less overhead.**
+>
+> SDRTrunk VCE used 8.5% less CPU and triggered 25% fewer Java cleanup pauses than the latest tested mainline
+> build—all while providing enhanced signal, decode-health, web, portability, and optional optional processing features.
+
 ## Highlights
 
 1. **Systems-based activity screen**
