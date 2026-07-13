@@ -39,6 +39,103 @@ class StatsWebDatabase
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebDatabase.class);
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final int DASHBOARD_HOURS = 24;
+    private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("wacn", "system.wacn"),
+        Map.entry("system_id", "system.system_id"),
+        Map.entry("site_names", "lower(site_names)"),
+        Map.entry("sites", "sites"),
+        Map.entry("talkgroups", "talkgroups"),
+        Map.entry("radios", "radios"),
+        Map.entry("affiliations", "affiliations"),
+        Map.entry("first_seen", "system.first_seen_ms"),
+        Map.entry("last_seen", "system.last_seen_ms")
+    );
+    private static final Map<String,String> SITE_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("system", "system.wacn * 4096 + system.system_id"),
+        Map.entry("wacn", "system.wacn"),
+        Map.entry("system_id", "system.system_id"),
+        Map.entry("rfss", "site.rfss"),
+        Map.entry("site", "site.site"),
+        Map.entry("name", "lower(site.channel_name)"),
+        Map.entry("protocol", "lower(site.protocol)"),
+        Map.entry("decoder", "lower(site.decoder)"),
+        Map.entry("control", "site.current_control_hz"),
+        Map.entry("control_frequency", "site.current_control_hz"),
+        Map.entry("channels", "channels"),
+        Map.entry("neighbors", "neighbors"),
+        Map.entry("bands", "bands"),
+        Map.entry("observations", "site.observation_count"),
+        Map.entry("first_seen", "site.first_seen_ms"),
+        Map.entry("last_seen", "site.last_seen_ms")
+    );
+    private static final Map<String,String> TALKGROUP_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("id", "summary.talkgroup_id"),
+        Map.entry("talkgroup", "summary.talkgroup_id"),
+        Map.entry("alias", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "name")),
+        Map.entry("name", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "name")),
+        Map.entry("group", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "group_name")),
+        Map.entry("calls", "summary.call_count"),
+        Map.entry("grants", "summary.grant_count"),
+        Map.entry("encrypted", "summary.encrypted_count"),
+        Map.entry("last_source", "summary.last_source_radio_id"),
+        Map.entry("first_seen", "summary.first_seen_ms"),
+        Map.entry("last_seen", "summary.last_seen_ms")
+    );
+    private static final Map<String,String> RADIO_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("id", "summary.radio_id"),
+        Map.entry("radio", "summary.radio_id"),
+        Map.entry("alias", aliasSortExpression("alias_radio", "summary.radio_id", "name")),
+        Map.entry("name", aliasSortExpression("alias_radio", "summary.radio_id", "name")),
+        Map.entry("talker_alias", "lower(summary.last_talker_alias)"),
+        Map.entry("talker_alias_seen", "summary.last_talker_alias_seen_ms"),
+        Map.entry("last_talkgroup", "summary.last_talkgroup_id"),
+        Map.entry("last_talkgroup_name", aliasSortExpression("alias_talkgroup", "summary.last_talkgroup_id", "name")),
+        Map.entry("calls", "summary.call_count"),
+        Map.entry("grants", "summary.grant_count"),
+        Map.entry("encrypted", "summary.encrypted_count"),
+        Map.entry("affiliated_talkgroup", aliasSortExpression("alias_talkgroup",
+            "affiliation.talkgroup_id", "name")),
+        Map.entry("affiliation_updated", "affiliation.updated_at_ms"),
+        Map.entry("first_seen", "summary.first_seen_ms"),
+        Map.entry("last_seen", "summary.last_seen_ms")
+    );
+    private static final Map<String,String> AFFILIATION_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("radio", "affiliation.radio_id"),
+        Map.entry("radio_alias", aliasSortExpression("alias_radio", "affiliation.radio_id", "name")),
+        Map.entry("talker_alias", "lower(summary.last_talker_alias)"),
+        Map.entry("talkgroup", "affiliation.talkgroup_id"),
+        Map.entry("talkgroup_alias", aliasSortExpression("alias_talkgroup", "affiliation.talkgroup_id", "name")),
+        Map.entry("updated", "affiliation.updated_at_ms"),
+        Map.entry("last_seen", "affiliation.updated_at_ms")
+    );
+    private static final Map<String,String> RELATIONSHIP_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("radio", "relationship.radio_id"),
+        Map.entry("radio_alias", aliasSortExpression("alias_radio", "relationship.radio_id", "name")),
+        Map.entry("talker_alias", "lower(radio.last_talker_alias)"),
+        Map.entry("talkgroup", "relationship.talkgroup_id"),
+        Map.entry("talkgroup_alias", aliasSortExpression("alias_talkgroup", "relationship.talkgroup_id", "name")),
+        Map.entry("calls", "relationship.call_count"),
+        Map.entry("grants", "relationship.grant_count"),
+        Map.entry("encrypted", "relationship.encrypted_count"),
+        Map.entry("affiliated", "EXISTS (SELECT 1 FROM p25_radio_affiliation current_affiliation " +
+            "WHERE current_affiliation.system_key = relationship.system_key " +
+            "AND current_affiliation.radio_id = relationship.radio_id " +
+            "AND current_affiliation.talkgroup_id = relationship.talkgroup_id)"),
+        Map.entry("first_seen", "relationship.first_seen_ms"),
+        Map.entry("last_seen", "relationship.last_seen_ms")
+    );
+    private static final Map<String,String> CONVENTIONAL_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("name", "lower(context.channel_name)"),
+        Map.entry("protocol", "context.protocol_code"),
+        Map.entry("decoder", "lower(context.decoder)"),
+        Map.entry("frequency", "summary.frequency_hz"),
+        Map.entry("slot", "summary.timeslot"),
+        Map.entry("nac", "context.nac"),
+        Map.entry("calls", "summary.call_count"),
+        Map.entry("event", "summary.last_event_type_code"),
+        Map.entry("first_seen", "summary.first_seen_ms"),
+        Map.entry("last_seen", "summary.last_seen_ms")
+    );
 
     private final UserPreferences mUserPreferences;
     private final Path mDatabasePath;
@@ -70,11 +167,22 @@ class StatsWebDatabase
 
         try
         {
-            status.put("logger", read(this::loggerStatus));
+            status.putAll(read(connection -> {
+                Map<String,Object> details = new LinkedHashMap<>();
+                long lastDetailedHistoryMs = scalarLong(connection, """
+                    SELECT COALESCE((SELECT observed_at_ms FROM p25_activity_event ORDER BY id DESC LIMIT 1), 0)
+                    """);
+                details.put("logger", loggerStatus(connection));
+                details.put("detailedHistoryAvailable", lastDetailedHistoryMs > 0);
+                details.put("lastDetailedHistoryMs", lastDetailedHistoryMs);
+                return details;
+            }));
         }
         catch(StatsApiException e)
         {
             status.put("logger", List.of());
+            status.put("detailedHistoryAvailable", false);
+            status.put("lastDetailedHistoryMs", 0);
         }
 
         return status;
@@ -192,10 +300,7 @@ class StatsWebDatabase
             }
 
             sql.append(" GROUP BY system.system_key ORDER BY ")
-                .append(order(request, Map.of(
-                    "wacn", "system.wacn", "system_id", "system.system_id", "sites", "sites",
-                    "talkgroups", "talkgroups", "radios", "radios", "last_seen", "system.last_seen_ms"),
-                    "last_seen"))
+                .append(order(request, SYSTEM_SORT_COLUMNS, "last_seen"))
                 .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             return page(queryRows(connection, sql.toString(), parameters.toArray()), request);
@@ -256,10 +361,7 @@ class StatsWebDatabase
                 """);
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
             addIdentifierSearch(sql, parameters, request.search(), "summary.talkgroup_id");
-            sql.append(" ORDER BY ").append(order(request, Map.of(
-                "id", "summary.talkgroup_id", "calls", "summary.call_count", "grants", "summary.grant_count",
-                "encrypted", "summary.encrypted_count", "first_seen", "summary.first_seen_ms",
-                "last_seen", "summary.last_seen_ms"), "calls"))
+            sql.append(" ORDER BY ").append(order(request, TALKGROUP_SORT_COLUMNS, "calls"))
                 .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
@@ -286,16 +388,48 @@ class StatsWebDatabase
                 """);
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
             addIdentifierSearch(sql, parameters, request.search(), "summary.radio_id");
-            sql.append(" ORDER BY ").append(order(request, Map.of(
-                "id", "summary.radio_id", "calls", "summary.call_count", "grants", "summary.grant_count",
-                "encrypted", "summary.encrypted_count", "first_seen", "summary.first_seen_ms",
-                "last_seen", "summary.last_seen_ms"), "calls"))
+            sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "calls"))
                 .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             mAliasResolver.enrichRadios(connection, rows);
             mAliasResolver.enrichTalkgroups(connection, rows, "affiliated_talkgroup_id",
                 "affiliated_talkgroup_alias_");
+            return page(rows, request);
+        });
+    }
+
+    Map<String,Object> systemTalkerAliases(StatsRequest request)
+    {
+        int wacn = request.requiredIdentifier("wacn");
+        int systemId = request.requiredIdentifier("system_id");
+
+        return read(connection -> {
+            StringBuilder sql = new StringBuilder("""
+                SELECT system.system_key, system.wacn, system.system_id, summary.*
+                FROM p25_radio_summary summary
+                JOIN p25_system system ON system.system_key = summary.system_key
+                WHERE system.wacn = ? AND system.system_id = ?
+                  AND summary.last_talker_alias IS NOT NULL
+                  AND trim(summary.last_talker_alias) <> ''
+                """);
+            List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
+
+            if(request.search() != null)
+            {
+                sql.append(" AND (CAST(summary.radio_id AS TEXT) LIKE ? " +
+                    "OR lower(summary.last_talker_alias) LIKE ?)");
+                String like = like(request.search());
+                parameters.add(like);
+                parameters.add(like);
+            }
+
+            sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "talker_alias"))
+                .append(" LIMIT ? OFFSET ?");
+            addPageParameters(parameters, request);
+            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+            mAliasResolver.enrichRadios(connection, rows);
+            mAliasResolver.enrichTalkgroups(connection, rows, "last_talkgroup_id", "talkgroup_alias_");
             return page(rows, request);
         });
     }
@@ -382,7 +516,8 @@ class StatsWebDatabase
                 parameters.add(radio);
             }
 
-            sql.append(" ORDER BY affiliation.updated_at_ms DESC LIMIT ? OFFSET ?");
+            sql.append(" ORDER BY ").append(order(request, AFFILIATION_SORT_COLUMNS, "updated"))
+                .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             mAliasResolver.enrichRadios(connection, rows);
@@ -422,11 +557,8 @@ class StatsWebDatabase
                 parameters.add(radio);
             }
 
-            sql.append(" ORDER BY ").append(order(request, Map.of(
-                "calls", "relationship.call_count", "grants", "relationship.grant_count",
-                "first_seen", "relationship.first_seen_ms",
-                "last_seen", "relationship.last_seen_ms", "radio", "relationship.radio_id",
-                "talkgroup", "relationship.talkgroup_id"), "last_seen")).append(" LIMIT ? OFFSET ?");
+            sql.append(" ORDER BY ").append(order(request, RELATIONSHIP_SORT_COLUMNS, "last_seen"))
+                .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             mAliasResolver.enrichRelationships(connection, rows);
@@ -576,6 +708,11 @@ class StatsWebDatabase
             String guid = request.text("guid");
             String context = request.text("context");
 
+            if("true".equalsIgnoreCase(request.text("hide_grants")))
+            {
+                sql.append(" AND action <> 'GRANT'");
+            }
+
             if(wacn != null)
             {
                 sql.append(" AND resolved_wacn = ?");
@@ -638,10 +775,8 @@ class StatsWebDatabase
                 parameters.add(like);
             }
 
-            sql.append(" ORDER BY ").append(order(request, Map.of(
-                "name", "context.channel_name", "frequency", "summary.frequency_hz",
-                "calls", "summary.call_count",
-                "last_seen", "summary.last_seen_ms"), "frequency")).append(" LIMIT ? OFFSET ?");
+            sql.append(" ORDER BY ").append(order(request, CONVENTIONAL_SORT_COLUMNS, "frequency"))
+                .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             return page(queryRows(connection, sql.toString(), parameters.toArray()), request);
         });
@@ -690,9 +825,7 @@ class StatsWebDatabase
             parameters.add(like);
         }
 
-        sql.append(" ORDER BY ").append(order(request, Map.of(
-            "name", "site.channel_name", "wacn", "system.wacn", "system_id", "system.system_id",
-            "rfss", "site.rfss", "site", "site.site", "last_seen", "site.last_seen_ms"), "last_seen"))
+        sql.append(" ORDER BY ").append(order(request, SITE_SORT_COLUMNS, "last_seen"))
             .append(" LIMIT ? OFFSET ?");
         addPageParameters(parameters, request);
         return queryRows(connection, sql.toString(), parameters.toArray());
@@ -724,17 +857,17 @@ class StatsWebDatabase
         long currentHour = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
         long firstHour = currentHour - (DASHBOARD_HOURS - 1L) * HOUR_MILLISECONDS;
         List<Map<String,Object>> stored = queryRows(connection, """
-            SELECT bucket_start_ms, SUM(call_count) AS call_count, SUM(grant_count) AS grant_count,
-                SUM(continue_count) AS continue_count, SUM(join_count) AS join_count,
+            SELECT bucket_start_ms, SUM(call_count) AS call_count, SUM(continue_count) AS continue_count,
+                SUM(join_count) AS join_count,
                 SUM(register_count) AS register_count, SUM(denial_count) AS denial_count,
                 SUM(busy_count) AS busy_count, SUM(queued_count) AS queued_count,
                 SUM(encrypted_count) AS encrypted_count
             FROM (
-                SELECT bucket_start_ms, call_count, grant_count, continue_count, join_count, register_count,
+                SELECT bucket_start_ms, call_count, continue_count, join_count, register_count,
                     denial_count, busy_count, queued_count, encrypted_count
                 FROM p25_site_activity_bucket WHERE bucket_start_ms >= ?
                 UNION ALL
-                SELECT bucket_start_ms, call_count, 0, 0, 0, 0, 0, 0, 0, 0
+                SELECT bucket_start_ms, call_count, 0, 0, 0, 0, 0, 0, 0
                 FROM conventional_activity_bucket WHERE bucket_start_ms >= ?
             )
             GROUP BY bucket_start_ms
@@ -760,7 +893,7 @@ class StatsWebDatabase
             Map<String,Object> row = new LinkedHashMap<>();
             row.put("hour_ms", hour);
 
-            for(String field: List.of("call_count", "grant_count", "continue_count", "join_count",
+            for(String field: List.of("call_count", "continue_count", "join_count",
                 "register_count", "denial_count", "busy_count", "queued_count", "encrypted_count"))
             {
                 row.put(field, values != null && values.get(field) instanceof Number number ? number.longValue() : 0L);
@@ -776,7 +909,7 @@ class StatsWebDatabase
     {
         Map<String,Long> totals = new LinkedHashMap<>();
 
-        for(String action: List.of("call", "grant", "continue", "join", "register", "denial", "busy", "queued"))
+        for(String action: List.of("call", "continue", "join", "register", "denial", "busy", "queued"))
         {
             totals.put(action, 0L);
         }
@@ -797,8 +930,8 @@ class StatsWebDatabase
         throws SQLException
     {
         List<Map<String,Object>> totals = queryRows(connection, """
-            SELECT SUM(bucket.call_count) AS call_count, SUM(bucket.grant_count) AS grant_count,
-                SUM(bucket.continue_count) AS continue_count, SUM(bucket.join_count) AS join_count,
+            SELECT SUM(bucket.call_count) AS call_count, SUM(bucket.continue_count) AS continue_count,
+                SUM(bucket.join_count) AS join_count,
                 SUM(bucket.register_count) AS register_count, SUM(bucket.logout_count) AS logout_count,
                 SUM(bucket.denial_count) AS denial_count, SUM(bucket.busy_count) AS busy_count,
                 SUM(bucket.queued_count) AS queued_count, SUM(bucket.emergency_count) AS emergency_count,
@@ -817,7 +950,7 @@ class StatsWebDatabase
         Map<String,Object> row = totals.getFirst();
         List<Map<String,Object>> result = new ArrayList<>();
 
-        for(String action: List.of("call", "grant", "continue", "join", "register", "logout", "denial", "busy",
+        for(String action: List.of("call", "continue", "join", "register", "logout", "denial", "busy",
             "queued", "emergency", "encrypted"))
         {
             long count = number(row.get(action + "_count"));
@@ -889,6 +1022,48 @@ class StatsWebDatabase
         {
             return 0;
         }
+    }
+
+    /**
+     * Produces a correlated, allowlisted alias expression that follows the same system alias-list and rule
+     * specificity rules as {@link StatsAliasResolver}.  All arguments are class-owned constants; validating them
+     * here keeps future sort additions from accidentally turning an ORDER BY expression into SQL input.
+     */
+    private static String aliasSortExpression(String identifierTable, String identifierColumn, String aliasColumn)
+    {
+        if(!"alias_talkgroup".equals(identifierTable) && !"alias_radio".equals(identifierTable) ||
+            !identifierColumn.matches("(?:summary|affiliation|relationship)\\.(?:talkgroup_id|last_talkgroup_id|radio_id)") ||
+            !"name".equals(aliasColumn) && !"group_name".equals(aliasColumn))
+        {
+            throw new IllegalArgumentException("Unsupported alias sort expression");
+        }
+
+        return """
+            (SELECT lower(alias.%s)
+             FROM %s identifier
+             JOIN alias ON alias.id = identifier.alias_id
+             WHERE identifier.protocol IN ('APCO25', 'APCO25_PHASE2')
+               AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
+                 OR (identifier.ranged = 0 AND identifier.value = %s))
+               AND (identifier.fully_qualified = 0 OR
+                 (identifier.wacn = system.wacn AND identifier.system_id = system.system_id))
+               AND (EXISTS (SELECT 1 FROM p25_site_snapshot assigned
+                     WHERE assigned.system_key = system.system_key
+                       AND assigned.alias_list_name = alias.alias_list_name
+                       AND trim(assigned.alias_list_name) <> '')
+                 OR (identifier.fully_qualified <> 0 AND NOT EXISTS
+                     (SELECT 1 FROM p25_site_snapshot assigned
+                      WHERE assigned.system_key = system.system_key
+                        AND assigned.alias_list_name IS NOT NULL
+                        AND trim(assigned.alias_list_name) <> '')))
+             ORDER BY CASE
+                 WHEN identifier.fully_qualified <> 0 AND identifier.ranged = 0 THEN 3
+                 WHEN identifier.ranged = 0 THEN 2
+                 WHEN identifier.fully_qualified <> 0 THEN 1
+                 ELSE 0 END DESC,
+                 alias.sort_order, alias.id
+             LIMIT 1)
+            """.formatted(aliasColumn, identifierTable, identifierColumn, identifierColumn).strip();
     }
 
     private static String order(StatsRequest request, Map<String,String> columns, String defaultSort)

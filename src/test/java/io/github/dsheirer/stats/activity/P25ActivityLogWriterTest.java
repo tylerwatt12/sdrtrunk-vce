@@ -48,7 +48,13 @@ class P25ActivityLogWriterTest
             Thread.sleep(25);
         }
 
+        P25ActivityLogWriter.WriterStatus runningStatus = writer.getStatus();
+        assertEquals(P25ActivityLogStatus.State.RUNNING, runningStatus.state());
+        assertTrue(runningStatus.detailedHistoryEnabled());
+        assertTrue(runningStatus.lastSuccessfulWriteMs() > 0);
+        assertEquals(1, runningStatus.recordsWritten());
         writer.close();
+        assertEquals(P25ActivityLogStatus.State.STOPPED, writer.getStatus().state());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
@@ -57,6 +63,43 @@ class P25ActivityLogWriterTest
             assertTrue(resultSet.next());
             assertEquals(1, resultSet.getInt(1));
         }
+
+        P25ActivityLogWriter restarted = new P25ActivityLogWriter(database, 30, false, 10);
+        restarted.start();
+        deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(restarted.getStatus().state() != P25ActivityLogStatus.State.RUNNING &&
+            System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        P25ActivityLogWriter.WriterStatus restoredStatus = restarted.getStatus();
+        assertEquals(P25ActivityLogStatus.State.RUNNING, restoredStatus.state());
+        assertEquals(1, restoredStatus.recordsWritten());
+        assertTrue(restoredStatus.lastSuccessfulWriteMs() > 0);
+        restarted.close();
+    }
+
+    @Test
+    void reportsWriterFailure() throws Exception
+    {
+        Path missingDatabase = mTemporaryFolder.resolve("missing.sqlite");
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(missingDatabase, 30, false, 10);
+        writer.start();
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(writer.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+            System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        P25ActivityLogWriter.WriterStatus status = writer.getStatus();
+        assertEquals(P25ActivityLogStatus.State.FAILED, status.state());
+        assertFalse(status.detailedHistoryEnabled());
+        assertEquals(0, status.lastSuccessfulWriteMs());
+        assertTrue(status.lastError().contains("IOException"));
+        writer.close();
     }
 
     @Test
@@ -311,6 +354,41 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void lateTalkerAliasUpdateDoesNotInflateActivityCounters() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("talker-alias.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(1000L, P25ActivityLogRecords.Action.CALL), true);
+            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+                2000L, "GUID:123e4567-e89b-12d3-a456-426614174000",
+                "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "CAR 201"));
+            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+                1500L, "GUID:123e4567-e89b-12d3-a456-426614174000",
+                "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "OLDER"));
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT call_count, grant_count, encrypted_count, last_talker_alias,
+                        last_talker_alias_seen_ms, last_seen_ms
+                    FROM p25_radio_summary
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(1, resultSet.getInt("call_count"));
+                assertEquals(0, resultSet.getInt("grant_count"));
+                assertEquals(0, resultSet.getInt("encrypted_count"));
+                assertEquals("CAR 201", resultSet.getString("last_talker_alias"));
+                assertEquals(2000L, resultSet.getLong("last_talker_alias_seen_ms"));
+                assertEquals(2000L, resultSet.getLong("last_seen_ms"));
+            }
+        }
+    }
+
+    @Test
     void conventionalCallCountersCountCalls() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-hits.sqlite");
@@ -493,6 +571,7 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_activity_event", 1);
             assertCount(connection, "p25_site_snapshot", 1);
             assertTrue(count(connection, "logger_status") > 0);
+            assertTrue(Long.parseLong(status(connection, "last_successful_write_ms")) > 0);
         }
     }
 

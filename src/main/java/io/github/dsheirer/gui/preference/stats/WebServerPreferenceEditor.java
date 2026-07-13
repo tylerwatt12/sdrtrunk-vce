@@ -95,7 +95,8 @@ public class WebServerPreferenceEditor extends HBox
         {
             mServerCheckBox = new CheckBox("Run Embedded Web Server");
             mServerCheckBox.setTooltip(new Tooltip(
-                "Serves editable folder assets and read-only stats APIs from this SDRTrunk instance."));
+                "Runs independently of statistics collection. Live Systems and web audio remain available when " +
+                    "summary collection is off."));
             mServerCheckBox.setSelected(mApplicationPreference.isStatsWebServerEnabled());
             mServerCheckBox.setOnAction(event -> setServerEnabled(mServerCheckBox.isSelected()));
         }

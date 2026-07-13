@@ -66,6 +66,14 @@ class StatsWebDatabaseTest
         assertEquals(56132L, number(radio.get("affiliated_talkgroup_id")));
         assertEquals("Dispatch", radio.get("affiliated_talkgroup_alias_name"));
 
+        Map<String,Object> talkerAliases = mDatabase.systemTalkerAliases(request(
+            "/api/system/talker-aliases?wacn=BEE00&system_id=0x348"));
+        Map<String,Object> talkerAlias = rows(talkerAliases).get(0);
+        assertEquals(1811332L, number(talkerAlias.get("radio_id")));
+        assertEquals("CAR 201", talkerAlias.get("last_talker_alias"));
+        assertEquals("Engine 1", talkerAlias.get("alias_name"));
+        assertEquals("Dispatch", talkerAlias.get("talkgroup_alias_name"));
+
         Map<String,Object> relationships = mDatabase.radioTalkgroupRelationships(request(
             "/api/radio-talkgroups?wacn=BEE00&system_id=0x348&radio_id=1811332"));
         assertEquals("Dispatch", rows(relationships).get(0).get("talkgroup_alias_name"));
@@ -126,6 +134,33 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void statusReportsRetainedDetailedHistory()
+    {
+        Map<String,Object> status = mDatabase.status();
+        assertTrue((Boolean)status.get("detailedHistoryAvailable"));
+        assertEquals(2001L, number(status.get("lastDetailedHistoryMs")));
+    }
+
+    @Test
+    void canHideGrantRowsBeforeActivityPagination() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code)
+                VALUES (1, 3000, 11, 0)
+                """);
+        }
+
+        Map<String,Object> activity = mDatabase.activity(request(
+            "/api/activity?hide_grants=true&limit=1"));
+        assertEquals(1, rows(activity).size());
+        assertFalse("GRANT".equals(rows(activity).getFirst().get("action")));
+        assertTrue((Boolean)activity.get("hasMore"));
+    }
+
+    @Test
     void scopesAliasesToEachSystemsAssignedAliasList() throws Exception
     {
         seedSecondSystem(mDatabasePath);
@@ -177,7 +212,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void dashboardProvidesZeroFilledCallsAndGrantsPerHour() throws Exception
+    void dashboardProvidesZeroFilledCallsPerHourWithoutDoubleCountingGrants() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
 
@@ -196,12 +231,66 @@ class StatsWebDatabaseTest
                 """.formatted(currentHour));
         }
 
-        List<Map<String,Object>> hours = rowsFrom(mDatabase.dashboard(), "activityPerHour");
+        Map<String,Object> dashboard = mDatabase.dashboard();
+        List<Map<String,Object>> hours = rowsFrom(dashboard, "activityPerHour");
         assertEquals(24, hours.size());
         assertEquals(currentHour, number(hours.getLast().get("hour_ms")));
         assertEquals(10, number(hours.getLast().get("call_count")));
-        assertEquals(9, number(hours.getLast().get("grant_count")));
+        assertFalse(hours.getLast().containsKey("grant_count"));
         assertTrue(hours.stream().limit(23).allMatch(row -> number(row.get("call_count")) == 0));
+        assertEquals(10, rowsFrom(dashboard, "actionMix").stream()
+            .filter(row -> "CALL".equals(row.get("action")))
+            .mapToLong(row -> number(row.get("count")))
+            .findFirst().orElseThrow());
+        assertTrue(rowsFrom(dashboard, "actionMix").stream()
+            .noneMatch(row -> "GRANT".equals(row.get("action"))));
+        assertTrue(rowsFrom(mDatabase.system(request(
+            "/api/system?wacn=BEE00&system_id=0x348")), "actionCounts").stream()
+            .noneMatch(row -> "GRANT".equals(row.get("action"))));
+    }
+
+    @Test
+    void sortsDisplayedDirectoryColumnsBeforePagination() throws Exception
+    {
+        seedSecondSystem(mDatabasePath);
+        seedSortingRows(mDatabasePath);
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+
+        assertEquals(SYSTEM, number(rows(mDatabase.systems(request(
+            "/api/systems?sort=site_names&direction=asc"))).getFirst().get("system_id")));
+        assertEquals(SYSTEM, number(rows(mDatabase.systems(request(
+            "/api/systems?sort=affiliations&direction=desc"))).getFirst().get("system_id")));
+
+        assertEquals(GUID, rows(mDatabase.sites(request(
+            "/api/sites?sort=system&direction=asc"))).getFirst().get("guid"));
+        assertEquals(GUID, rows(mDatabase.sites(request(
+            "/api/sites?sort=channels&direction=desc"))).getFirst().get("guid"));
+        assertEquals(GUID, rows(mDatabase.sites(request(
+            "/api/sites?sort=control&direction=desc"))).getFirst().get("guid"));
+
+        Map<String,Object> talkgroup = rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=alias&direction=asc&limit=1"))).getFirst();
+        assertEquals("Dispatch", talkgroup.get("alias_name"));
+        assertEquals("Dispatch", rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=group&direction=asc&limit=1")))
+            .getFirst().get("alias_name"));
+
+        assertEquals("Engine 1", rows(mDatabase.systemRadios(request(
+            "/api/system/radios?wacn=BEE00&system_id=0x348&sort=alias&direction=asc&limit=1")))
+            .getFirst().get("alias_name"));
+        assertEquals("Engine 1", rows(mDatabase.systemRadios(request(
+            "/api/system/radios?wacn=BEE00&system_id=0x348&sort=talker_alias&direction=desc&limit=1")))
+            .getFirst().get("alias_name"));
+
+        assertEquals("Engine 1", rows(mDatabase.radioTalkgroupRelationships(request(
+            "/api/radio-talkgroups?wacn=BEE00&system_id=0x348&talkgroup_id=56132" +
+                "&sort=radio_alias&direction=asc&limit=1"))).getFirst().get("radio_alias_name"));
+        assertEquals("Dispatch", rows(mDatabase.radioTalkgroupRelationships(request(
+            "/api/radio-talkgroups?wacn=BEE00&system_id=0x348&radio_id=1811332" +
+                "&sort=talkgroup_alias&direction=asc&limit=1"))).getFirst().get("talkgroup_alias_name"));
+
+        assertEquals("Alpha Channel", rows(mDatabase.conventional(request(
+            "/api/conventional?sort=name&direction=asc&limit=1"))).getFirst().get("channel_name"));
     }
 
     private static StatsRequest request(String uri)
@@ -421,6 +510,54 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO alias_radio (alias_id, sort_order, protocol, value, fully_qualified, ranged)
                 VALUES (4, 0, 'APCO25', 1811332, 0, 0)
+                """);
+        }
+    }
+
+    private static void seedSortingRows(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_talkgroup_summary (system_key, talkgroup_id, target_kind_code, first_seen_ms,
+                    last_seen_ms, call_count, grant_count, encrypted_count, last_source_radio_id)
+                VALUES (1, 100, 1, 1000, 3000, 100, 100, 0, 100)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_summary (system_key, radio_id, first_seen_ms, last_seen_ms, call_count,
+                    grant_count, encrypted_count, last_talkgroup_id, last_talker_alias, last_talker_alias_seen_ms)
+                VALUES (1, 100, 1000, 3000, 100, 100, 0, 56132, 'AAA', 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_talkgroup_summary (system_key, radio_id, talkgroup_id, target_kind_code,
+                    first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count)
+                VALUES (1, 100, 56132, 1, 1000, 3000, 100, 100, 0),
+                       (1, 1811332, 100, 1, 1000, 3000, 100, 100, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (id, sort_order, name, alias_list_name, group_name, color)
+                VALUES (5, 0, 'Zulu Dispatch', 'County', 'Zulu Law', 255),
+                       (6, 0, 'Zulu Unit', 'County', 'Zulu Fire', 65280)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_talkgroup (alias_id, sort_order, protocol, value, fully_qualified, ranged)
+                VALUES (5, 0, 'APCO25', 100, 0, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_radio (alias_id, sort_order, protocol, value, fully_qualified, ranged)
+                VALUES (6, 0, 'APCO25', 100, 0, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (id, context_key, kind_code, protocol_code, channel_name,
+                    alias_list_name, decoder, nac, first_seen_ms, last_seen_ms, primary_frequency_hz)
+                VALUES (4, 'conventional-alpha', 10, 20, 'Alpha Channel', 'County', 'P25-1', 0x123,
+                    1000, 3000, 800000000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
+                    last_seen_ms, call_count, last_event_type_code)
+                VALUES (4, 800000000, 1, 1000, 3000, 100, 1)
                 """);
         }
     }

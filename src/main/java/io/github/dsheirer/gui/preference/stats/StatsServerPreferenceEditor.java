@@ -72,10 +72,15 @@ public class StatsServerPreferenceEditor extends HBox
             mEditorPane.setVgap(10);
             mEditorPane.setHgap(8);
             mEditorPane.setPadding(new Insets(10));
-            mEditorPane.add(new Label("Stats Server"), 0, row++, 3, 1);
+            mEditorPane.add(new Label("Statistics Collection"), 0, row++, 3, 1);
             mEditorPane.add(getLoggingCheckBox(), 0, row++, 3, 1);
-            mEditorPane.add(getDetailedHistoryCheckBox(), 0, row++, 3, 1);
-            mEditorPane.add(new Label("Keep detailed history for"), 0, row);
+            Label featureExplanation = new Label(
+                "Summary statistics power Dashboard and directory pages. Detailed history additionally powers " +
+                    "Activity pages. The web server, Live Systems, and web audio operate independently.");
+            featureExplanation.setWrapText(true);
+            mEditorPane.add(featureExplanation, 0, row++, 3, 1);
+            mEditorPane.add(getDetailedHistoryCheckBox(), 1, row++, 2, 1);
+            mEditorPane.add(new Label("Retain time-based data for"), 0, row);
             GridPane.setHalignment(getRetentionSpinner(), HPos.RIGHT);
             mEditorPane.add(getRetentionSpinner(), 1, row);
             mEditorPane.add(new Label("days"), 2, row++);
@@ -103,9 +108,9 @@ public class StatsServerPreferenceEditor extends HBox
     {
         if(mLoggingCheckBox == null)
         {
-            mLoggingCheckBox = new CheckBox("Enable Stats Logging");
+            mLoggingCheckBox = new CheckBox("Collect Summary Statistics");
             mLoggingCheckBox.setTooltip(new Tooltip(
-                "Stores compact lifetime summaries and optional detailed P25 event history in SQLite."));
+                "Stores compact lifetime and hourly summaries in SQLite for Dashboard and directory pages."));
             mLoggingCheckBox.setSelected(mApplicationPreference.isStatsLoggingEnabled());
             mLoggingCheckBox.setOnAction(event -> {
                 mApplicationPreference.setStatsLoggingEnabled(mLoggingCheckBox.isSelected());
@@ -120,9 +125,9 @@ public class StatsServerPreferenceEditor extends HBox
     {
         if(mDetailedHistoryCheckBox == null)
         {
-            mDetailedHistoryCheckBox = new CheckBox("Keep Detailed Event History");
+            mDetailedHistoryCheckBox = new CheckBox("Store Detailed Event History");
             mDetailedHistoryCheckBox.setTooltip(new Tooltip(
-                "Stores individual compact event rows in addition to lifetime and hourly summaries."));
+                "Additionally stores individual compact P25 event rows for Activity pages."));
             mDetailedHistoryCheckBox.setSelected(mApplicationPreference.isStatsDetailedHistoryEnabled());
             mDetailedHistoryCheckBox.setOnAction(event ->
                 mApplicationPreference.setStatsDetailedHistoryEnabled(mDetailedHistoryCheckBox.isSelected()));

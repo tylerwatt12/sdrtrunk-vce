@@ -46,12 +46,15 @@ class P25ActivityLogWriter implements AutoCloseable
     private final AtomicBoolean mRunning = new AtomicBoolean();
     private final AtomicLong mDroppedRecords = new AtomicLong();
     private final AtomicLong mWrittenRecords = new AtomicLong();
+    private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
     private final P25ActivityCommitListener mCommitListener;
     private ExecutorService mExecutorService;
     private volatile int mRetentionDays;
     private volatile boolean mDetailedEventHistoryEnabled;
     private volatile long mLastRetentionCleanup;
     private volatile long mLastMaintenance;
+    private volatile P25ActivityLogStatus.State mState = P25ActivityLogStatus.State.STOPPED;
+    private volatile String mLastError;
 
     P25ActivityLogWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
     {
@@ -83,6 +86,8 @@ class P25ActivityLogWriter implements AutoCloseable
     {
         if(mRunning.compareAndSet(false, true))
         {
+            mLastError = null;
+            mState = P25ActivityLogStatus.State.STARTING;
             mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory("p25 activity log writer"));
             mExecutorService.execute(this::run);
         }
@@ -132,6 +137,12 @@ class P25ActivityLogWriter implements AutoCloseable
         return mDatabasePath;
     }
 
+    WriterStatus getStatus()
+    {
+        return new WriterStatus(mState, mDetailedEventHistoryEnabled, mLastSuccessfulWriteMs.get(),
+            mWrittenRecords.get(), mDroppedRecords.get(), mLastError);
+    }
+
     @Override
     public void close()
     {
@@ -158,15 +169,26 @@ class P25ActivityLogWriter implements AutoCloseable
                 mExecutorService = null;
             }
         }
+
+        if(mState != P25ActivityLogStatus.State.FAILED)
+        {
+            mState = P25ActivityLogStatus.State.STOPPED;
+        }
     }
 
     private void run()
     {
         try(Connection connection = openConnection())
         {
+            restoreStatus(connection);
             runMaintenanceWithRetry(connection);
 
             updateStatusWithRetry(connection, "database_path", mDatabasePath.toString());
+
+            if(mRunning.get())
+            {
+                mState = P25ActivityLogStatus.State.RUNNING;
+            }
 
             List<P25ActivityLogRecord> batch = new ArrayList<>(BATCH_SIZE);
 
@@ -204,15 +226,22 @@ class P25ActivityLogWriter implements AutoCloseable
         }
         catch(IOException e)
         {
+            fail(e);
             mLog.warn("P25 activity SQLite writer stopped after database path error", e);
         }
         catch(SQLException e)
         {
+            fail(e);
             mLog.warn("P25 activity SQLite writer stopped after database error", e);
         }
         finally
         {
             mRunning.set(false);
+
+            if(mState != P25ActivityLogStatus.State.FAILED)
+            {
+                mState = P25ActivityLogStatus.State.STOPPED;
+            }
         }
     }
 
@@ -234,6 +263,14 @@ class P25ActivityLogWriter implements AutoCloseable
                 Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
             }
         }
+    }
+
+    private void restoreStatus(Connection connection) throws SQLException
+    {
+        mWrittenRecords.set(P25ActivityLogSchema.readStatusLong(connection, "records_written"));
+        mDroppedRecords.addAndGet(P25ActivityLogSchema.readStatusLong(connection, "records_dropped"));
+        long lastSuccessfulWriteMs = P25ActivityLogSchema.readStatusLong(connection, "last_successful_write_ms");
+        mLastSuccessfulWriteMs.updateAndGet(current -> Math.max(current, lastSuccessfulWriteMs));
     }
 
     private void writeBatchWithRetry(Connection connection, List<P25ActivityLogRecord> batch)
@@ -359,15 +396,24 @@ class P25ActivityLogWriter implements AutoCloseable
                     P25ActivityLogSchema.insertSite(connection, siteSnapshot);
                     writtenRecords++;
                 }
+                else if(record instanceof P25ActivityLogRecords.TalkerAliasUpdate talkerAliasUpdate)
+                {
+                    P25ActivityLogSchema.updateTalkerAlias(connection, talkerAliasUpdate);
+                    writtenRecords++;
+                }
             }
 
-            mWrittenRecords.addAndGet(writtenRecords);
-
-            P25ActivityLogSchema.updateStatus(connection, "records_written", Long.toString(mWrittenRecords.get()));
+            long writtenTotal = mWrittenRecords.get() + writtenRecords;
+            long successfulWrite = System.currentTimeMillis();
+            P25ActivityLogSchema.updateStatus(connection, "records_written", Long.toString(writtenTotal));
             P25ActivityLogSchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
+            P25ActivityLogSchema.updateStatus(connection, "last_successful_write_ms",
+                Long.toString(successfulWrite));
 
             connection.commit();
             committed = true;
+            mWrittenRecords.addAndGet(writtenRecords);
+            mLastSuccessfulWriteMs.set(successfulWrite);
         }
         catch(SQLException e)
         {
@@ -435,5 +481,19 @@ class P25ActivityLogWriter implements AutoCloseable
         }
 
         return false;
+    }
+
+    private void fail(Exception exception)
+    {
+        String message = exception.getMessage();
+        String error = exception.getClass().getSimpleName() +
+            (message == null || message.isBlank() ? "" : ": " + message);
+        mLastError = error.substring(0, Math.min(500, error.length()));
+        mState = P25ActivityLogStatus.State.FAILED;
+    }
+
+    record WriterStatus(P25ActivityLogStatus.State state, boolean detailedHistoryEnabled,
+                        long lastSuccessfulWriteMs, long recordsWritten, long recordsDropped, String lastError)
+    {
     }
 }

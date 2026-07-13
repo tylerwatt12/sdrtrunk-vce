@@ -36,8 +36,9 @@ This project is currently an **alpha release**. Back up important receiver data 
 
 6. **Long-term radio statistics**
 
-   Optional SQLite logging tracks talkgroups, radios, affiliations, frequencies, sites, patches, band plans, and
-   activity counts. It supports compact summaries or detailed history with configurable retention.
+   SQLite summary collection tracks talkgroups, radios, affiliations, frequencies, sites, patches, band plans, and
+   activity counts. Summaries are enabled by default for new profiles; detailed event history is optional with
+   configurable retention.
 
 7. **More reliable P25 site information**
 
@@ -174,6 +175,13 @@ code cleanup are summarized by area instead of listing every changed source file
 - Keeps live table rows stable instead of rebuilding and reordering the page on every update.
 - Includes dashboard action and hourly-hit charts.
 
+| Web feature | Summary statistics | Detailed event history |
+| --- | --- | --- |
+| Live Systems and browser call playback | Not required | Not required |
+| Dashboard and directory pages | Required for current data | Not required |
+| Activity pages and live activity updates | Required | Required |
+| Credits and static assets | Not required | Not required |
+
 ### Independent Browser Scanner
 
 - Keeps a scanner-style audio player in a persistent website header while the user browses other pages.
@@ -201,8 +209,9 @@ code cleanup are summarized by area instead of listing every changed source file
 
 ### SQLite Stats Server
 
-- Adds optional P25-focused activity logging and conventional summaries to the portable SQLite database.
-- Logging is disabled by default and is independent from the embedded web server.
+- Adds P25-focused activity logging and conventional summaries to the portable SQLite database.
+- Summary collection is enabled by default for new profiles, detailed event history is disabled by default, and both
+  remain independent from the embedded web server.
 - Offers two storage modes:
   - compact lifetime and hourly summaries only
   - summaries plus detailed event history
@@ -330,6 +339,9 @@ Cross-platform package tasks:
 ```
 
 Build output is written under `build/image`.
+
+See [RELEASING.md](RELEASING.md) for the complete checklist for testing, packaging, checksumming, tagging, and
+publishing a numbered alpha release on GitHub.
 
 ## Changelog
 

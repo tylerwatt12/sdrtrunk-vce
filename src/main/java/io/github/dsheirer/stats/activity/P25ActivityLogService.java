@@ -47,6 +47,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     private final List<P25ActivityCommitListener> mCommitListeners = new CopyOnWriteArrayList<>();
     private volatile P25ActivityLogWriter mWriter;
     private Path mCurrentDatabasePath;
+    private P25ActivityLogWriter.WriterStatus mLastWriterStatus;
 
     public P25ActivityLogService(UserPreferences userPreferences)
     {
@@ -92,7 +93,9 @@ public class P25ActivityLogService implements SiteMetadataListener
         int retentionDays = preference.getStatsLoggingRetentionDays();
         boolean detailedEventHistoryEnabled = preference.isStatsDetailedHistoryEnabled();
 
-        if(mWriter != null && databasePath.equals(mCurrentDatabasePath))
+        if(mWriter != null && databasePath.equals(mCurrentDatabasePath) &&
+            mWriter.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+            mWriter.getStatus().state() != P25ActivityLogStatus.State.STOPPED)
         {
             mWriter.setRetentionDays(retentionDays);
             mWriter.setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
@@ -112,6 +115,7 @@ public class P25ActivityLogService implements SiteMetadataListener
         if(mWriter != null)
         {
             mWriter.close();
+            mLastWriterStatus = mWriter.getStatus();
             mWriter = null;
             mCurrentDatabasePath = null;
 
@@ -135,9 +139,23 @@ public class P25ActivityLogService implements SiteMetadataListener
 
         P25ActivityLogRecords.ActivityEvent record = mMapper.map(channel, event);
 
-        if(record != null && shouldLog(record))
+        if(record != null)
         {
-            writer.enqueue(record);
+            boolean logActivity = shouldLog(record);
+
+            if(logActivity)
+            {
+                writer.enqueue(record);
+            }
+            else
+            {
+                P25ActivityLogRecords.TalkerAliasUpdate talkerAlias = mMapper.mapTalkerAliasUpdate(record);
+
+                if(talkerAlias != null && shouldLogTalkerAlias(talkerAlias))
+                {
+                    writer.enqueue(talkerAlias);
+                }
+            }
         }
     }
 
@@ -212,6 +230,20 @@ public class P25ActivityLogService implements SiteMetadataListener
         }
     }
 
+    private boolean shouldLogTalkerAlias(P25ActivityLogRecords.TalkerAliasUpdate update)
+    {
+        long now = System.currentTimeMillis();
+        String key = String.join("|", "talker-alias", update.contextKey(), Integer.toString(update.radioId()),
+            update.talkerAlias());
+
+        synchronized(mRecentDedupeKeys)
+        {
+            cleanupDedupeKeys(now);
+            Long previous = mRecentDedupeKeys.put(key, now);
+            return previous == null;
+        }
+    }
+
     private void cleanupDedupeKeys(long now)
     {
         Iterator<Map.Entry<String,Long>> iterator = mRecentDedupeKeys.entrySet().iterator();
@@ -238,6 +270,45 @@ public class P25ActivityLogService implements SiteMetadataListener
     public void removeActivityCommitListener(P25ActivityCommitListener listener)
     {
         mCommitListeners.remove(listener);
+    }
+
+    /**
+     * Configured preferences and current effective writer health for the web status API and desktop diagnostics.
+     */
+    public synchronized P25ActivityLogStatus getStatus()
+    {
+        ApplicationPreference preference = mUserPreferences.getApplicationPreference();
+        boolean summaryConfigured = preference.isStatsLoggingEnabled();
+        boolean historyConfigured = preference.isStatsDetailedHistoryEnabled();
+        P25ActivityLogWriter.WriterStatus writerStatus = mWriter != null ? mWriter.getStatus() : mLastWriterStatus;
+        P25ActivityLogStatus.State state = summaryConfigured ? P25ActivityLogStatus.State.STOPPED :
+            P25ActivityLogStatus.State.DISABLED;
+        long lastSuccessfulWriteMs = 0;
+        long recordsWritten = 0;
+        long recordsDropped = 0;
+        String lastError = null;
+        boolean historyWriterEnabled = false;
+
+        if(writerStatus != null)
+        {
+            if(summaryConfigured)
+            {
+                state = writerStatus.state();
+            }
+
+            lastSuccessfulWriteMs = writerStatus.lastSuccessfulWriteMs();
+            recordsWritten = writerStatus.recordsWritten();
+            recordsDropped = writerStatus.recordsDropped();
+            lastError = writerStatus.lastError();
+            historyWriterEnabled = writerStatus.detailedHistoryEnabled();
+        }
+
+        boolean summaryActive = summaryConfigured && state == P25ActivityLogStatus.State.RUNNING;
+        boolean historyActive = summaryActive && historyConfigured && historyWriterEnabled;
+        return new P25ActivityLogStatus(summaryConfigured, historyConfigured, summaryActive, historyActive,
+            preference.getStatsLoggingRetentionDays(), state,
+            P25ActivityLogPath.getDatabasePath(mUserPreferences).toString(), lastSuccessfulWriteMs,
+            recordsWritten, recordsDropped, lastError);
     }
 
     private void notifyActivityCommitted(List<Long> rowIds)

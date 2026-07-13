@@ -38,6 +38,8 @@ public class ApplicationPreference extends Preference
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED = "stats.web.server.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_PORT = "stats.web.server.port";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED = "stats.web.server.lan.enabled";
+    public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
+    public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
     public static final int MAX_STATS_LOGGING_RETENTION_DAYS = 365;
     public static final int DEFAULT_STATS_LOGGING_RETENTION_DAYS = 30;
@@ -102,7 +104,8 @@ public class ApplicationPreference extends Preference
     {
         if(mStatsLoggingEnabled == null)
         {
-            mStatsLoggingEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_LOGGING_ENABLED, false);
+            mStatsLoggingEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_LOGGING_ENABLED,
+                DEFAULT_STATS_LOGGING_ENABLED);
         }
 
         return mStatsLoggingEnabled;
@@ -126,7 +129,8 @@ public class ApplicationPreference extends Preference
         if(mStatsDetailedHistoryEnabled == null)
         {
             mStatsDetailedHistoryEnabled =
-                mPreferences.getBoolean(PREFERENCE_KEY_STATS_DETAILED_HISTORY_ENABLED, false);
+                mPreferences.getBoolean(PREFERENCE_KEY_STATS_DETAILED_HISTORY_ENABLED,
+                    DEFAULT_STATS_DETAILED_HISTORY_ENABLED);
         }
 
         return mStatsDetailedHistoryEnabled;
