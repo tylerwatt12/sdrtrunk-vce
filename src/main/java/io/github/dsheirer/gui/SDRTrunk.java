@@ -269,7 +269,7 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
-            mConfigurationManager.getChannelProcessingManager());
+            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
         mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
             mAudioRecordingManager, mAudioStreamingManager, mStatsWebServerService::receive);
 
@@ -1290,13 +1290,23 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         try
         {
+            Path databasePath = SdrTrunkDatabasePath.getDatabasePath();
+            boolean newProfile = !Files.isRegularFile(databasePath);
+
             if(!SdrTrunkDatabaseBootstrap.run(args))
             {
                 return;
             }
 
-            SqlitePreferencesFactory.install(SdrTrunkDatabasePath.getDatabasePath());
-            new SDRTrunk(new UserPreferences());
+            SqlitePreferencesFactory.install(databasePath);
+            UserPreferences userPreferences = new UserPreferences();
+
+            if(newProfile)
+            {
+                userPreferences.getApplicationPreference().setStatsLoggingEnabled(true);
+            }
+
+            new SDRTrunk(userPreferences);
         }
         catch(Exception e)
         {

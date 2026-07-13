@@ -75,6 +75,15 @@ final class P25ActivityLogRecords
     {
     }
 
+    /**
+     * Late over-the-air talker alias update for an already-counted call.
+     */
+    record TalkerAliasUpdate(long observedAtEpochMilliseconds, String contextKey, String guid, Integer wacn,
+                             Integer systemId, int radioId, String talkerAlias)
+        implements P25ActivityLogRecord
+    {
+    }
+
     record SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,
                         String protocol, String channelName, String aliasListName, String decoder,
                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,

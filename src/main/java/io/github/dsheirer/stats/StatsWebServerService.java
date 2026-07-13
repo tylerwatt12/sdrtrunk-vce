@@ -23,6 +23,9 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
+import io.github.dsheirer.stats.activity.P25ActivityLogPath;
+import io.github.dsheirer.stats.activity.P25ActivityLogService;
+import io.github.dsheirer.stats.activity.P25ActivityLogStatus;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -54,6 +57,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final StatsLiveService mLiveService;
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
+    private final P25ActivityLogService mActivityLogService;
     private HttpServer mServer;
     private ExecutorService mExecutorService;
     private Path mAssetRoot;
@@ -62,13 +66,20 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
-        this(userPreferences, null);
+        this(userPreferences, null, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager)
     {
+        this(userPreferences, channelProcessingManager, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 P25ActivityLogService activityLogService)
+    {
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
+        mActivityLogService = activityLogService;
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase,
             channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null);
@@ -144,6 +155,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.systemTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/system/radios", exchange -> handleJson(exchange,
                 () -> mDatabase.systemRadios(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/system/talker-aliases", exchange -> handleJson(exchange,
+                () -> mDatabase.systemTalkerAliases(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/talkgroup", exchange -> handleJson(exchange,
                 () -> mDatabase.talkgroup(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/radio", exchange -> handleJson(exchange,
@@ -231,8 +244,24 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             )
         ));
         status.put("database", mDatabase.status());
+        status.put("statsLogging", statsLoggingStatus());
         status.put("webPlayer", mWebCallService.status());
         return status;
+    }
+
+    private P25ActivityLogStatus statsLoggingStatus()
+    {
+        if(mActivityLogService != null)
+        {
+            return mActivityLogService.getStatus();
+        }
+
+        ApplicationPreference preference = mUserPreferences.getApplicationPreference();
+        boolean summaryConfigured = preference.isStatsLoggingEnabled();
+        return new P25ActivityLogStatus(summaryConfigured, preference.isStatsDetailedHistoryEnabled(), false, false,
+            preference.getStatsLoggingRetentionDays(), summaryConfigured ? P25ActivityLogStatus.State.STOPPED :
+            P25ActivityLogStatus.State.DISABLED, P25ActivityLogPath.getDatabasePath(mUserPreferences).toString(),
+            0, 0, 0, null);
     }
 
     private void handleJson(HttpExchange exchange, JsonSupplier supplier) throws IOException

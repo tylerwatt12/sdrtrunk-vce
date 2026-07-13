@@ -40,6 +40,7 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -66,6 +67,7 @@ class P25ActivityLogMapperTest
         identifiers.update(APCO25Site.create(1));
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
         identifiers.update(EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 101)));
+        identifiers.update(P25TalkerAliasIdentifier.create("CAR 201"));
 
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED,
                 1000L, VoiceServiceOptions.createEncrypted())
@@ -93,6 +95,13 @@ class P25ActivityLogMapperTest
         assertEquals(GUID, record.guid());
         assertNotNull(record.dedupeKey());
         assertFalse(record.countedCall());
+        assertEquals("CAR 201", record.talkerAlias());
+
+        P25ActivityLogRecords.TalkerAliasUpdate talkerAlias =
+            new P25ActivityLogMapper().mapTalkerAliasUpdate(record);
+        assertNotNull(talkerAlias);
+        assertEquals(1811524, talkerAlias.radioId());
+        assertEquals("CAR 201", talkerAlias.talkerAlias());
 
         P25ActivityLogRecords.ActivityEvent callStart = new P25ActivityLogMapper().map(
             new P25CallStartEvent(channel(DecoderType.P25_PHASE1), event));

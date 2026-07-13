@@ -191,6 +191,19 @@ public class P25ActivityLogSchema
         return activityId;
     }
 
+    static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
+        throws SQLException
+    {
+        Integer systemKey = resolveP25SystemKey(connection, update.wacn(), update.systemId(),
+            update.observedAtEpochMilliseconds(), update.contextKey(), update.guid());
+
+        if(systemKey != null)
+        {
+            upsertP25TalkerAlias(connection, systemKey, update.radioId(), update.talkerAlias(),
+                update.observedAtEpochMilliseconds());
+        }
+    }
+
     static void insertSite(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot) throws SQLException
     {
         boolean changed = siteSnapshotChanged(connection, snapshot);
@@ -202,6 +215,7 @@ public class P25ActivityLogSchema
         upsertSiteFrequencyBandSummaries(connection, snapshot);
         upsertSiteNeighborSummaries(connection, snapshot);
         upsertSitePatchSummaries(connection, snapshot);
+        upsertSiteTalkerAliases(connection, snapshot, systemKey);
 
         if(changed)
         {
@@ -284,6 +298,32 @@ public class P25ActivityLogSchema
             statement.setLong(3, System.currentTimeMillis());
             statement.executeUpdate();
         }
+    }
+
+    static long readStatusLong(Connection connection, String key) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT value FROM logger_status WHERE key = ?"))
+        {
+            statement.setString(1, key);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                if(resultSet.next())
+                {
+                    try
+                    {
+                        return Long.parseLong(resultSet.getString(1));
+                    }
+                    catch(NumberFormatException e)
+                    {
+                        return 0;
+                    }
+                }
+            }
+        }
+
+        return 0;
     }
 
     private static void createP25SummaryTables(Statement statement) throws SQLException
@@ -1100,8 +1140,14 @@ public class P25ActivityLogSchema
     private static Integer resolveP25SystemKey(Connection connection, P25ActivityLogRecords.ActivityEvent activity)
         throws SQLException
     {
-        Integer systemKey = upsertP25System(connection, activity.wacn(), activity.systemId(),
-            activity.observedAtEpochMilliseconds());
+        return resolveP25SystemKey(connection, activity.wacn(), activity.systemId(),
+            activity.observedAtEpochMilliseconds(), activity.contextKey(), activity.guid());
+    }
+
+    private static Integer resolveP25SystemKey(Connection connection, Integer wacn, Integer systemId,
+                                               long observedAt, String contextKey, String guid) throws SQLException
+    {
+        Integer systemKey = upsertP25System(connection, wacn, systemId, observedAt);
 
         if(systemKey == null)
         {
@@ -1116,8 +1162,8 @@ public class P25ActivityLogSchema
                 LIMIT 1
                 """))
             {
-                statement.setString(1, activity.contextKey());
-                statement.setString(2, activity.guid());
+                statement.setString(1, contextKey);
+                statement.setString(2, guid);
 
                 try(ResultSet resultSet = statement.executeQuery())
                 {
@@ -1131,7 +1177,7 @@ public class P25ActivityLogSchema
                     UPDATE p25_system SET last_seen_ms = max(last_seen_ms, ?) WHERE system_key = ?
                     """))
                 {
-                    statement.setLong(1, activity.observedAtEpochMilliseconds());
+                    statement.setLong(1, observedAt);
                     statement.setInt(2, systemKey);
                     statement.executeUpdate();
                 }
@@ -1139,6 +1185,58 @@ public class P25ActivityLogSchema
         }
 
         return systemKey;
+    }
+
+    private static void upsertP25TalkerAlias(Connection connection, int systemKey, int radio, String talkerAlias,
+                                             long observedAt) throws SQLException
+    {
+        if(radio <= 0 || talkerAlias == null || talkerAlias.isBlank())
+        {
+            return;
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_radio_summary (
+                system_key, radio_id, first_seen_ms, last_seen_ms, last_talker_alias, last_talker_alias_seen_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(system_key, radio_id) DO UPDATE SET
+                last_seen_ms = max(p25_radio_summary.last_seen_ms, excluded.last_seen_ms),
+                last_talker_alias = CASE
+                    WHEN excluded.last_talker_alias_seen_ms >= coalesce(p25_radio_summary.last_talker_alias_seen_ms, 0)
+                    THEN excluded.last_talker_alias
+                    ELSE p25_radio_summary.last_talker_alias
+                END,
+                last_talker_alias_seen_ms = max(coalesce(p25_radio_summary.last_talker_alias_seen_ms, 0),
+                    excluded.last_talker_alias_seen_ms)
+            """))
+        {
+            statement.setInt(1, systemKey);
+            statement.setInt(2, radio);
+            statement.setLong(3, observedAt);
+            statement.setLong(4, observedAt);
+            statement.setString(5, talkerAlias.trim());
+            statement.setLong(6, observedAt);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void upsertSiteTalkerAliases(Connection connection,
+                                                P25ActivityLogRecords.SiteSnapshot snapshot,
+                                                Integer systemKey) throws SQLException
+    {
+        if(systemKey == null || snapshot.talkerAliases() == null)
+        {
+            return;
+        }
+
+        for(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias: snapshot.talkerAliases())
+        {
+            if(talkerAlias != null && talkerAlias.radio() != null)
+            {
+                upsertP25TalkerAlias(connection, systemKey, talkerAlias.radio(), talkerAlias.alias(),
+                    snapshot.observedAtEpochMilliseconds());
+            }
+        }
     }
 
     private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
