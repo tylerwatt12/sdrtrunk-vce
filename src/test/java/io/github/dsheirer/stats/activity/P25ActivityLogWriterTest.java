@@ -473,6 +473,54 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void mergesDuplicateLogicalSiteChannelsWithoutStoppingWriter() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("duplicate-site-channels.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        writer.start();
+        writer.enqueue(siteSnapshotWithDuplicateChannels(1000L));
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(writer.getWrittenRecords() < 1 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        P25ActivityLogWriter.WriterStatus status = writer.getStatus();
+        assertEquals(P25ActivityLogStatus.State.RUNNING, status.state());
+        assertEquals(1, status.recordsWritten());
+        assertEquals(null, status.lastError());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT role, downlink_hz, uplink_hz, timeslots
+                FROM p25_site_channel
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertEquals("primary_control", resultSet.getString("role"));
+            assertEquals(856137500L, resultSet.getLong("downlink_hz"));
+            assertEquals(811137500L, resultSet.getLong("uplink_hz"));
+            assertEquals(1, resultSet.getInt("timeslots"));
+            assertFalse(resultSet.next());
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT observation_count FROM p25_site_channel_summary
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertEquals(1, resultSet.getInt("observation_count"));
+            assertFalse(resultSet.next());
+        }
+    }
+
+    @Test
     void replacesCurrentSiteFactsButKeepsHistoricalObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-site.sqlite");
@@ -743,5 +791,24 @@ class P25ActivityLogWriterTest
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, "123e4567-e89b-12d3-a456-426614174000",
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
             0xBEE00, 0x348, 0x348, 2, 1, 856137500L, 856137500L, channels, neighbors, bands, patches, aliases);
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithDuplicateChannels(long timestamp)
+    {
+        P25ActivityLogRecords.SiteSnapshot snapshot = siteSnapshot(timestamp);
+        List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
+            new P25NetworkConfigurationSnapshot.Channel("secondary_control", "0-821", 856137500L,
+                811137500L, false, 1),
+            new P25NetworkConfigurationSnapshot.Channel("fdma_data", "00-0821", 856137500L,
+                null, false, 1),
+            new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856137500L,
+                null, false, null));
+
+        return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
+            snapshot.contextKind(), "duplicate-channel-hash", snapshot.protocol(), snapshot.channelName(),
+            snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
+            snapshot.rfss(), snapshot.site(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
+            channels, snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
+            snapshot.talkerAliases());
     }
 }

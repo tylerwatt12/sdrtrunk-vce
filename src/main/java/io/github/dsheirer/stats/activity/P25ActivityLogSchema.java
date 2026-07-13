@@ -207,11 +207,12 @@ public class P25ActivityLogSchema
     static void insertSite(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot) throws SQLException
     {
         boolean changed = siteSnapshotChanged(connection, snapshot);
+        java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> channels = mergeSiteChannels(snapshot);
         Integer systemKey = upsertP25System(connection, snapshot.wacn(), snapshot.systemId(),
             snapshot.observedAtEpochMilliseconds());
         upsertReceiverContext(connection, snapshot, systemKey);
         upsertSiteSnapshot(connection, snapshot, systemKey);
-        upsertSiteChannelSummaries(connection, snapshot);
+        upsertSiteChannelSummaries(connection, snapshot, channels);
         upsertSiteFrequencyBandSummaries(connection, snapshot);
         upsertSiteNeighborSummaries(connection, snapshot);
         upsertSitePatchSummaries(connection, snapshot);
@@ -219,7 +220,7 @@ public class P25ActivityLogSchema
 
         if(changed)
         {
-            replaceCurrentSiteFacts(connection, snapshot);
+            replaceCurrentSiteFacts(connection, snapshot, channels);
         }
         else
         {
@@ -1370,22 +1371,14 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void upsertSiteChannelSummaries(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static void upsertSiteChannelSummaries(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
+                                                   java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> channels)
         throws SQLException
     {
-        if(snapshot.channels() == null)
+        for(java.util.Map.Entry<String,P25NetworkConfigurationSnapshot.Channel> entry: channels.entrySet())
         {
-            return;
-        }
-
-        for(P25NetworkConfigurationSnapshot.Channel channel: snapshot.channels())
-        {
-            String key = channelKey(channel);
-
-            if(key == null)
-            {
-                continue;
-            }
+            String key = entry.getKey();
+            P25NetworkConfigurationSnapshot.Channel channel = entry.getValue();
 
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO p25_site_channel_summary (
@@ -1700,7 +1693,8 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static void replaceCurrentSiteFacts(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static void replaceCurrentSiteFacts(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
+                                                java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> channels)
         throws SQLException
     {
         clearCurrentSiteFacts(connection, snapshot.guid());
@@ -1710,25 +1704,29 @@ public class P25ActivityLogSchema
             INSERT INTO p25_site_channel
                 (guid, channel_key, descriptor, role, downlink_hz, uplink_hz, tdma, timeslots, confirmed_at_ms)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guid, channel_key) DO UPDATE SET
+                descriptor = coalesce(excluded.descriptor, p25_site_channel.descriptor),
+                role = coalesce(excluded.role, p25_site_channel.role),
+                downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel.downlink_hz),
+                uplink_hz = coalesce(excluded.uplink_hz, p25_site_channel.uplink_hz),
+                tdma = coalesce(excluded.tdma, p25_site_channel.tdma),
+                timeslots = coalesce(excluded.timeslots, p25_site_channel.timeslots),
+                confirmed_at_ms = max(excluded.confirmed_at_ms, p25_site_channel.confirmed_at_ms)
             """))
         {
-            for(P25NetworkConfigurationSnapshot.Channel channel: list(snapshot.channels()))
+            for(java.util.Map.Entry<String,P25NetworkConfigurationSnapshot.Channel> entry: channels.entrySet())
             {
-                String key = channelKey(channel);
-
-                if(key != null)
-                {
-                    statement.setString(1, snapshot.guid());
-                    statement.setString(2, key);
-                    statement.setString(3, channel.descriptor());
-                    statement.setString(4, channel.role());
-                    setLong(statement, 5, channel.downlink());
-                    setLong(statement, 6, channel.uplink());
-                    setBoolean(statement, 7, channel.tdma());
-                    setInteger(statement, 8, channel.timeslots());
-                    statement.setLong(9, timestamp);
-                    statement.addBatch();
-                }
+                P25NetworkConfigurationSnapshot.Channel channel = entry.getValue();
+                statement.setString(1, snapshot.guid());
+                statement.setString(2, entry.getKey());
+                statement.setString(3, channel.descriptor());
+                statement.setString(4, channel.role());
+                setLong(statement, 5, channel.downlink());
+                setLong(statement, 6, channel.uplink());
+                setBoolean(statement, 7, channel.tdma());
+                setInteger(statement, 8, channel.timeslots());
+                statement.setLong(9, timestamp);
+                statement.addBatch();
             }
 
             statement.executeBatch();
@@ -2132,6 +2130,90 @@ public class P25ActivityLogSchema
         }
 
         return null;
+    }
+
+    private static java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> mergeSiteChannels(
+        P25ActivityLogRecords.SiteSnapshot snapshot)
+    {
+        java.util.Map<String,P25NetworkConfigurationSnapshot.Channel> merged = new java.util.LinkedHashMap<>();
+
+        for(P25NetworkConfigurationSnapshot.Channel channel: list(snapshot.channels()))
+        {
+            String key = channelKey(channel);
+
+            if(key != null)
+            {
+                P25NetworkConfigurationSnapshot.Channel existing = merged.putIfAbsent(key, channel);
+
+                if(existing != null)
+                {
+                    merged.put(key, mergeSiteChannel(existing, channel));
+                    warnSiteChannelCollision(snapshot.guid(), key, existing, channel);
+                }
+            }
+        }
+
+        return merged;
+    }
+
+    private static P25NetworkConfigurationSnapshot.Channel mergeSiteChannel(
+        P25NetworkConfigurationSnapshot.Channel first, P25NetworkConfigurationSnapshot.Channel second)
+    {
+        P25NetworkConfigurationSnapshot.Channel preferred = channelRolePriority(second.role()) >
+            channelRolePriority(first.role()) ? second : first;
+        P25NetworkConfigurationSnapshot.Channel fallback = preferred == first ? second : first;
+
+        return new P25NetworkConfigurationSnapshot.Channel(
+            firstNonBlank(preferred.role(), fallback.role()),
+            firstNonBlank(preferred.descriptor(), fallback.descriptor()),
+            firstNonNull(preferred.downlink(), fallback.downlink()),
+            firstNonNull(preferred.uplink(), fallback.uplink()),
+            firstNonNull(preferred.tdma(), fallback.tdma()),
+            firstNonNull(preferred.timeslots(), fallback.timeslots()));
+    }
+
+    private static int channelRolePriority(String role)
+    {
+        return switch(role != null ? role : "")
+        {
+            case "current_control" -> 5;
+            case "primary_control" -> 4;
+            case "secondary_control" -> 3;
+            case "tdma_data" -> 2;
+            case "fdma_data" -> 1;
+            default -> 0;
+        };
+    }
+
+    private static <T> T firstNonNull(T preferred, T fallback)
+    {
+        return preferred != null ? preferred : fallback;
+    }
+
+    private static String firstNonBlank(String preferred, String fallback)
+    {
+        return preferred != null && !preferred.isBlank() ? preferred : fallback;
+    }
+
+    private static final org.slf4j.Logger mLog =
+        org.slf4j.LoggerFactory.getLogger(P25ActivityLogSchema.class);
+    private static final java.util.concurrent.ConcurrentMap<String,Long> mSiteChannelCollisionWarnings =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static void warnSiteChannelCollision(String guid, String key,
+                                                 P25NetworkConfigurationSnapshot.Channel existing,
+                                                 P25NetworkConfigurationSnapshot.Channel incoming)
+    {
+        String warningKey = guid + ':' + key;
+        long now = System.currentTimeMillis();
+        Long previous = mSiteChannelCollisionWarnings.get(warningKey);
+
+        if(previous == null || now - previous >= 300_000L)
+        {
+            mSiteChannelCollisionWarnings.put(warningKey, now);
+            mLog.warn("Merging duplicate P25 site channel [{}] for site [{}]: roles [{}] and [{}]",
+                key, guid, existing.role(), incoming.role());
+        }
     }
 
     private static String neighborKey(P25NetworkConfigurationSnapshot.NeighborSite neighbor)
