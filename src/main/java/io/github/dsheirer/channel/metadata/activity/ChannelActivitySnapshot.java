@@ -34,7 +34,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
             table != null && table.isControlActive(), rows);
     }
 
-    public record Row(String key, String status, List<String> tags, String lcn,
+    public record Row(String key, String channelName, String status, List<String> tags, String lcn,
                       long frequencyHz,
                       Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
                       Integer timeslot, String sourceId, String sourceAlias, String talkerAlias,
@@ -43,8 +43,9 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
     {
         private static Row from(ChannelActivityRow row)
         {
-            return new Row(row.getKey(), row.getState().name(), row.getTags().stream().map(Enum::name).toList(),
-                row.getLcn(),
+            String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
+            return new Row(row.getKey(), channelName, row.getState().name(),
+                row.getTags().stream().map(Enum::name).toList(), row.getLcn(),
                 row.getFrequency(), row.getSignalDbfs(),
                 row.getDecodeHealthPercent(), row.getQualityObservedAt(), row.getTimeslot(),
                 value(row.getSource()), aliases(row.getSourceAliases()), value(row.getTalkerAlias()),

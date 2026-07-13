@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,7 +24,8 @@ class ChannelActivityTableModelTest
         ChannelActivityTableModel model = new ChannelActivityTableModel("Conventional", null, false);
         AtomicReference<ChannelActivitySnapshot> latest = new AtomicReference<>();
         model.addSnapshotListener(latest::set);
-        ChannelActivityRow row = model.getOrCreate("row-1", null, ChannelActivityRow.Role.CONVENTIONAL,
+        Channel channel = new Channel("County Fire");
+        ChannelActivityRow row = model.getOrCreate("row-1", channel, ChannelActivityRow.Role.CONVENTIONAL,
             155_250_000L, null);
         row.setState(State.CALL);
         row.setDecoder("NBFM");
@@ -32,7 +34,24 @@ class ChannelActivityTableModelTest
         assertEquals("conventional", latest.get().tableId());
         assertEquals(1, latest.get().rows().size());
         assertEquals("CALL", latest.get().rows().getFirst().status());
+        assertEquals("County Fire", latest.get().rows().getFirst().channelName());
         assertEquals(155_250_000L, latest.get().rows().getFirst().frequencyHz());
+        assertEquals("Channel", model.getColumnName(ChannelActivityTableModel.COLUMN_LCN));
+        assertEquals("County Fire", model.getValueAt(0, ChannelActivityTableModel.COLUMN_LCN));
+    }
+
+    @Test
+    void preservesLcnColumnForTrunkedTables()
+    {
+        Channel owner = new Channel("County System");
+        ChannelActivityTableModel model = new ChannelActivityTableModel("County System", owner, true);
+        ChannelActivityRow row = model.getOrCreate("row-1", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
+            851_012_500L, null);
+        row.setLcn("0-101");
+
+        assertEquals("LCN", model.getColumnName(ChannelActivityTableModel.COLUMN_LCN));
+        assertEquals("0-101", model.getValueAt(0, ChannelActivityTableModel.COLUMN_LCN));
+        assertNull(ChannelActivitySnapshot.from(model).rows().getFirst().channelName());
     }
 
     @Test

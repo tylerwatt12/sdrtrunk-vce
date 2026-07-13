@@ -155,6 +155,7 @@ final class StatsLiveService implements AutoCloseable
     {
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
         row.put("key", snapshot.key());
+        put(row, "channel_name", snapshot.channelName());
         row.put("status", snapshot.status());
         row.put("tags", snapshot.tags());
         put(row, "lcn", snapshot.lcn());

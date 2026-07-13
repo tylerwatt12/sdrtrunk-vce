@@ -369,6 +369,11 @@ public class ChannelActivityTableModel extends AbstractTableModel
     @Override
     public String getColumnName(int column)
     {
+        if(column == COLUMN_LCN && mOwnerChannel == null)
+        {
+            return "Channel";
+        }
+
         return COLUMNS[column];
     }
 
@@ -400,7 +405,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
         {
             case COLUMN_STATUS -> row.getState();
             case COLUMN_TAGS -> row.getTagsDisplay();
-            case COLUMN_LCN -> row.getLcn();
+            case COLUMN_LCN -> mOwnerChannel == null ? row.getChannelName() : row.getLcn();
             case COLUMN_FREQUENCY -> row.getFrequency();
             case COLUMN_SIGNAL -> row.getSignalDbfs();
             case COLUMN_DECODE_HEALTH -> row.getDecodeHealthPercent();
