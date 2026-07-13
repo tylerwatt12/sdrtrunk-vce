@@ -96,4 +96,13 @@ final class P25ActivityLogRecords
         implements P25ActivityLogRecord
     {
     }
+
+    record ControlChannelQuality(long observedAtEpochMilliseconds, String guid, long frequencyHertz,
+                                 Double signalDbfs, Double averageSignalDbfs, Double minimumSignalDbfs,
+                                 Double maximumSignalDbfs, Double decodeHealthPercent, long validFrames,
+                                 long invalidFrames, long correctedBits, long syncLossBits, long droppedBits,
+                                 long lastValidDecodeMs)
+        implements P25ActivityLogRecord
+    {
+    }
 }

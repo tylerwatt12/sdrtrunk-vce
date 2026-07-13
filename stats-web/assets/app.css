@@ -943,6 +943,12 @@ th.center {
   border-color: #abc9dc;
 }
 
+.role-data-announced {
+  color: #4d5962;
+  background: #eef3f6;
+  border-color: #c7d2d9;
+}
+
 .table-only .app-header {
   display: none;
 }
@@ -1036,3 +1042,6 @@ th.center {
     columns: 1;
   }
 }
+.quality-good { color: #18864b; font-weight: 700; }
+.quality-warn { color: #b57900; font-weight: 700; }
+.quality-bad { color: #c23737; font-weight: 700; }

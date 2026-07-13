@@ -25,6 +25,8 @@ import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
+import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.channel.state.AbstractChannelState;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
@@ -41,6 +43,7 @@ import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.DecoderFactory;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -94,6 +97,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private List<Listener<AudioCallEvent>> mAudioCallListeners = new CopyOnWriteArrayList<>();
     private List<Listener<IDecodeEvent>> mDecodeEventListeners = new CopyOnWriteArrayList<>();
     private List<BiConsumer<Channel,IDecodeEvent>> mChannelDecodeEventListeners = new CopyOnWriteArrayList<>();
+    private List<Listener<ControlChannelQualitySnapshot>> mControlChannelQualityListeners = new CopyOnWriteArrayList<>();
     private List<SiteMetadataListener> mSiteMetadataListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
@@ -595,6 +599,13 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         List<Module> modules = DecoderFactory.getModules(mChannelMapModel, channel, mAliasModel, mUserPreferences,
             request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
             mChannelActivityModel);
+
+        if(isP25ControlChannel(channel))
+        {
+            modules.add(new ControlChannelQualityMonitor(channel, source.getFrequency(),
+                this::receiveControlChannelQuality));
+        }
+
         processingChain.addModules(modules);
 
         //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate
@@ -958,6 +969,37 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeChannelDecodeEventListener(BiConsumer<Channel,IDecodeEvent> listener)
     {
         mChannelDecodeEventListeners.remove(listener);
+    }
+
+    public void addControlChannelQualityListener(Listener<ControlChannelQualitySnapshot> listener)
+    {
+        if(listener != null)
+        {
+            mControlChannelQualityListeners.add(listener);
+        }
+    }
+
+    public void removeControlChannelQualityListener(Listener<ControlChannelQualitySnapshot> listener)
+    {
+        mControlChannelQualityListeners.remove(listener);
+    }
+
+    private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
+    {
+        mChannelActivityModel.receiveControlChannelQuality(snapshot);
+
+        for(Listener<ControlChannelQualitySnapshot> listener: mControlChannelQualityListeners)
+        {
+            listener.receive(snapshot);
+        }
+    }
+
+    private boolean isP25ControlChannel(Channel channel)
+    {
+        DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
+            channel.getDecodeConfiguration().getDecoderType() : null;
+        return channel != null && channel.isStandardChannel() &&
+            (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2);
     }
 
     public void addSiteMetadataListener(SiteMetadataListener listener)

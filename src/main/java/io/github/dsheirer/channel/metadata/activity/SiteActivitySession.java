@@ -74,7 +74,7 @@ public class SiteActivitySession
 
         ChannelActivityRow row = getOrCreateControlRow(frequency);
 
-        if(row.getControlRole() == ChannelActivityRow.ControlRole.NONE)
+        if(!row.hasTag(ChannelTag.CURRENT_CONTROL) && !row.hasTag(ChannelTag.ALTERNATE_CONTROL))
         {
             row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
             row.setOrigin(ChannelActivityRow.Origin.CONFIGURED_CONTROL);
@@ -119,10 +119,10 @@ public class SiteActivitySession
         current.setLcn(lcn);
         current.setRole(ChannelActivityRow.Role.CURRENT_CONTROL);
         current.setOrigin(ChannelActivityRow.Origin.DECODED_CURRENT_CONTROL);
-        current.setControlRole(ChannelActivityRow.ControlRole.CURRENT);
         current.setState(State.CONTROL);
         current.clearCallDetails();
         mCurrentControlFrequency = frequency;
+        addTag(frequency, ChannelTag.CURRENT_CONTROL);
 
         return new ControlUpdate(current, demoted);
     }
@@ -147,15 +147,40 @@ public class SiteActivitySession
         ChannelActivityRow row = getOrCreateControlRow(frequency);
         row.setLcn(lcn);
 
-        if(row.getControlRole() != ChannelActivityRow.ControlRole.CURRENT)
+        if(!row.hasTag(ChannelTag.CURRENT_CONTROL))
         {
             row.setRole(ChannelActivityRow.Role.ALTERNATE_CONTROL);
             row.setOrigin(ChannelActivityRow.Origin.DECODED_ALTERNATE_CONTROL);
-            row.setControlRole(ChannelActivityRow.ControlRole.ALTERNATE);
             row.setState(State.IDLE);
             row.clearCallDetails();
+            addTag(frequency, ChannelTag.ALTERNATE_CONTROL);
         }
 
+        return row;
+    }
+
+    public ChannelActivityRow announcedData(long frequency, String lcn)
+    {
+        if(frequency <= 0)
+        {
+            return null;
+        }
+
+        String key = trafficKey(frequency, null);
+        ChannelActivityRow row = mTrafficRows.get(key);
+
+        if(row == null)
+        {
+            row = mTableModel.getOrCreate(key, mParentChannel, ChannelActivityRow.Role.TRAFFIC, frequency, null);
+            mTrafficRows.put(key, row);
+            inheritFrequencyTags(row);
+        }
+
+        row.setChannel(mParentChannel);
+        row.setFrequency(frequency);
+        row.setLcn(lcn);
+        row.setOrigin(ChannelActivityRow.Origin.DECODED_DATA_ANNOUNCEMENT);
+        addTag(frequency, ChannelTag.DATA_ANNOUNCED);
         return row;
     }
 
@@ -177,6 +202,7 @@ public class SiteActivitySession
             row = mTableModel.getOrCreate(key, rowChannel, ChannelActivityRow.Role.TRAFFIC, frequency, timeslot);
             row.setOrigin(ChannelActivityRow.Origin.TRAFFIC_GRANT);
             mTrafficRows.put(key, row);
+            inheritFrequencyTags(row);
         }
 
         row.setChannel(rowChannel);
@@ -204,6 +230,42 @@ public class SiteActivitySession
     public List<ChannelActivityRow> getTrafficRows()
     {
         return new ArrayList<>(mTrafficRows.values());
+    }
+
+    public void addTag(long frequency, ChannelTag tag)
+    {
+        ChannelActivityRow control = mControlRows.get(frequency);
+
+        if(control != null)
+        {
+            control.addTag(tag);
+        }
+
+        for(ChannelActivityRow traffic: mTrafficRows.values())
+        {
+            if(traffic.getFrequency() == frequency)
+            {
+                traffic.addTag(tag);
+            }
+        }
+    }
+
+    public void removeTag(long frequency, ChannelTag tag)
+    {
+        ChannelActivityRow control = mControlRows.get(frequency);
+
+        if(control != null)
+        {
+            control.removeTag(tag);
+        }
+
+        for(ChannelActivityRow traffic: mTrafficRows.values())
+        {
+            if(traffic.getFrequency() == frequency)
+            {
+                traffic.removeTag(tag);
+            }
+        }
     }
 
     /**
@@ -255,7 +317,7 @@ public class SiteActivitySession
         {
             if(row.getFrequency() != configuredFrequency &&
                 row.getOrigin() == ChannelActivityRow.Origin.CONFIGURED_CONTROL &&
-                row.getControlRole() == ChannelActivityRow.ControlRole.NONE)
+                !row.hasTag(ChannelTag.CURRENT_CONTROL) && !row.hasTag(ChannelTag.ALTERNATE_CONTROL))
             {
                 remove.add(row);
             }
@@ -290,7 +352,7 @@ public class SiteActivitySession
             {
                 row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
                 row.setOrigin(ChannelActivityRow.Origin.CONFIGURED_CONTROL);
-                row.setControlRole(ChannelActivityRow.ControlRole.NONE);
+                row.removeTag(ChannelTag.CURRENT_CONTROL);
                 row.setState(State.IDLE);
                 row.clearCallDetails();
                 mTableModel.refresh(row);
@@ -350,6 +412,7 @@ public class SiteActivitySession
                 ChannelActivityRow.Role.CONFIGURED_CONTROL, frequency, null);
             row.setOrigin(ChannelActivityRow.Origin.CONFIGURED_CONTROL);
             mControlRows.put(frequency, row);
+            inheritFrequencyTags(row);
         }
 
         row.setChannel(mParentChannel);
@@ -359,9 +422,27 @@ public class SiteActivitySession
         return row;
     }
 
+    private void inheritFrequencyTags(ChannelActivityRow row)
+    {
+        ChannelActivityRow control = mControlRows.get(row.getFrequency());
+
+        if(control != null && control != row)
+        {
+            row.addTags(control.getTags());
+        }
+
+        for(ChannelActivityRow traffic: mTrafficRows.values())
+        {
+            if(traffic != row && traffic.getFrequency() == row.getFrequency())
+            {
+                row.addTags(traffic.getTags());
+            }
+        }
+    }
+
     private void demoteCurrentControl(ChannelActivityRow row)
     {
-        row.setControlRole(ChannelActivityRow.ControlRole.NONE);
+        removeTag(row.getFrequency(), ChannelTag.CURRENT_CONTROL);
         row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
         row.setState(State.IDLE);
         row.clearCallDetails();

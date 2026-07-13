@@ -60,7 +60,9 @@ public class P25HistoryResetStatsSchema
         "idx_p25_site_patch_talkgroup",
         "idx_p25_site_patch_radio",
         "idx_p25_site_channel_summary_guid_frequency",
-        "idx_p25_site_neighbor_summary_guid_site"
+        "idx_p25_site_channel_tag_summary_guid_tag",
+        "idx_p25_site_neighbor_summary_guid_site",
+        "idx_p25_control_quality_guid_time"
     };
 
     private static final String[] TABLES = {
@@ -101,14 +103,17 @@ public class P25HistoryResetStatsSchema
         "p25_site_patch_group_summary",
         "p25_site_neighbor_summary",
         "p25_site_frequency_band_summary",
+        "p25_site_channel_tag_summary",
         "p25_site_channel_summary",
         "p25_site_patch_group_radio",
         "p25_site_patch_group_talkgroup",
         "p25_site_patch_group",
         "p25_site_neighbor",
         "p25_site_frequency_band",
+        "p25_site_channel_tag",
         "p25_site_channel",
         "p25_site_snapshot",
+        "p25_control_channel_quality",
         "logger_status"
     };
 

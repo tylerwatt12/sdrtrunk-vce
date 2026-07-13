@@ -39,16 +39,20 @@ import javax.swing.table.AbstractTableModel;
 public class ChannelActivityTableModel extends AbstractTableModel
 {
     public static final int COLUMN_STATUS = 0;
-    public static final int COLUMN_LCN = 1;
-    public static final int COLUMN_FREQUENCY = 2;
-    public static final int COLUMN_SOURCE_ALIAS = 3;
-    public static final int COLUMN_SOURCE = 4;
-    public static final int COLUMN_TARGET_ALIAS = 5;
-    public static final int COLUMN_TARGET = 6;
-    public static final int COLUMN_DECODER = 7;
+    public static final int COLUMN_TAGS = 1;
+    public static final int COLUMN_LCN = 2;
+    public static final int COLUMN_FREQUENCY = 3;
+    public static final int COLUMN_SIGNAL = 4;
+    public static final int COLUMN_DECODE_HEALTH = 5;
+    public static final int COLUMN_SOURCE_ALIAS = 6;
+    public static final int COLUMN_SOURCE = 7;
+    public static final int COLUMN_TARGET_ALIAS = 8;
+    public static final int COLUMN_TARGET = 9;
+    public static final int COLUMN_DECODER = 10;
 
     private static final String[] COLUMNS = {
-        "Status", "LCN", "Frequency", "Source Alias", "Source", "Target Alias", "Target", "Decoder"
+        "Status", "Tags", "LCN", "Frequency", "Signal", "Decode", "Source Alias", "Source", "Target Alias",
+        "Target", "Decoder"
     };
     private static final Comparator<ChannelActivityRow> ROW_SORT =
         Comparator.comparingLong(ChannelActivityRow::getFrequency)
@@ -375,6 +379,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
         {
             case COLUMN_STATUS -> State.class;
             case COLUMN_FREQUENCY -> Long.class;
+            case COLUMN_SIGNAL, COLUMN_DECODE_HEALTH -> Double.class;
             case COLUMN_SOURCE_ALIAS, COLUMN_TARGET_ALIAS -> Alias.class;
             case COLUMN_SOURCE, COLUMN_TARGET -> Identifier.class;
             default -> String.class;
@@ -394,8 +399,11 @@ public class ChannelActivityTableModel extends AbstractTableModel
         return switch(columnIndex)
         {
             case COLUMN_STATUS -> row.getState();
+            case COLUMN_TAGS -> row.getTagsDisplay();
             case COLUMN_LCN -> row.getLcn();
             case COLUMN_FREQUENCY -> row.getFrequency();
+            case COLUMN_SIGNAL -> row.getSignalDbfs();
+            case COLUMN_DECODE_HEALTH -> row.getDecodeHealthPercent();
             case COLUMN_SOURCE_ALIAS -> row.getSourceAliases();
             case COLUMN_SOURCE -> row.getSource();
             case COLUMN_TARGET_ALIAS -> row.getTargetAliases();

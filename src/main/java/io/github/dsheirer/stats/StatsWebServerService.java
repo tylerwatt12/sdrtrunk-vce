@@ -169,6 +169,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.site(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/channels", exchange -> handleJson(exchange,
                 () -> mDatabase.siteChannels(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/site/quality", exchange -> handleJson(exchange,
+                () -> mDatabase.siteQuality(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/bands", exchange -> handleJson(exchange,
                 () -> mDatabase.siteBands(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/neighbors", exchange -> handleJson(exchange,

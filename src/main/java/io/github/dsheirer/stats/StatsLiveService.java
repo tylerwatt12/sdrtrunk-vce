@@ -156,10 +156,15 @@ final class StatsLiveService implements AutoCloseable
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
         row.put("key", snapshot.key());
         row.put("status", snapshot.status());
-        row.put("role", snapshot.role());
-        row.put("control_role", snapshot.controlRole());
+        row.put("tags", snapshot.tags());
         put(row, "lcn", snapshot.lcn());
         row.put("frequency_hz", snapshot.frequencyHz());
+        put(row, "signal_dbfs", snapshot.signalDbfs());
+        put(row, "decode_health_pct", snapshot.decodeHealthPercent());
+        if(snapshot.qualityObservedAtMs() > 0)
+        {
+            row.put("quality_observed_at_ms", snapshot.qualityObservedAtMs());
+        }
         put(row, "timeslot", snapshot.timeslot());
         put(row, "source_id", snapshot.sourceId());
         put(row, "source_alias", snapshot.sourceAlias());

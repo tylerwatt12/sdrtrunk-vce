@@ -8,12 +8,34 @@ SDRTrunk, back up the database, run the matching migration here, then relaunch S
 
 ## Current Database
 
-The global SDRTrunk database normally lives at:
+Packaged builds keep the global SDRTrunk database in their portable data directory:
 
-- macOS/Linux: `$HOME/SDRTrunk/database/sdrtrunk.sqlite`
-- Windows receiver nodes: `%USERPROFILE%\SDRTrunk\database\sdrtrunk.sqlite`
+- macOS app: sibling `<app-name>-data/database/sdrtrunk.sqlite`
+- Windows/Linux: `<install>/data/database/sdrtrunk.sqlite`
 
 ## Available Migrations
+
+### P25 history v14 or v15 to v16
+
+Adds retained control-channel signal/decode-health buckets when starting at v14, replaces mutually exclusive channel
+roles with non-exclusive tags, and recovers exact retained data-grant counts from detailed history. Stop SDRTrunk
+before running it. The migration performs an integrity check, checkpoints WAL data, creates a timestamped database
+backup, applies the rewrite in one transaction, and validates the complete v16 schema.
+
+macOS/Linux:
+
+```bash
+tools/sqlite-migrations/p25-history/migrate-v14-or-v15-to-v16-channel-tags.sh \
+  /path/to/sdrtrunk.sqlite /path/to/sdrtrunk-vce
+```
+
+Windows PowerShell:
+
+```powershell
+tools\sqlite-migrations\p25-history\migrate-v14-or-v15-to-v16-channel-tags.ps1 `
+  -DatabasePath C:\path\to\sdrtrunk.sqlite `
+  -AppHome C:\path\to\sdrtrunk-vce
+```
 
 ### Legacy properties and tuner settings
 
