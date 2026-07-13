@@ -741,12 +741,21 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
             polyphaseChannelSourceManager.getTunerChannelCount() == 0)
         {
-            long centerFrequency = polyphaseChannelSourceManager.getCenterFrequency(tunerChannels);
-
-            if(centerFrequency != discoveredTuner.getTuner().getTunerController().getFrequency())
+            try
             {
-                discoveredTuner.getTuner().getTunerController().setFrequency(centerFrequency);
-                mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
+                long centerFrequency = polyphaseChannelSourceManager.getCenterFrequency(tunerChannels);
+
+                if(centerFrequency != discoveredTuner.getTuner().getTunerController().getFrequency())
+                {
+                    discoveredTuner.getTuner().getTunerController().setFrequency(centerFrequency);
+                    mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
+                }
+            }
+            catch(IllegalArgumentException iae)
+            {
+                //The broader frequency set is only a centering preference.  If it cannot fit inside one tuner
+                //passband, continue with normal source allocation so each rotation candidate can be tuned separately.
+                mLog.debug("Unable to pre-position tuner for the full frequency set - using per-frequency tuning");
             }
         }
     }
