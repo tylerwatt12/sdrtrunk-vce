@@ -18,25 +18,32 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
  */
 public enum ChannelTag
 {
-    CONVENTIONAL("Conventional"),
-    CONFIGURED("Configured"),
-    CONTROL("Control"),
-    CURRENT_CONTROL("Current Control"),
-    ALTERNATE_CONTROL("Alternate Control"),
-    VOICE("Voice"),
-    DATA("Data"),
-    DATA_ANNOUNCED("Data Announced");
+    CONVENTIONAL("CONV", "Conventional channel"),
+    CONFIGURED("CFG", "Configured frequency"),
+    CONTROL("CC", "Observed control channel"),
+    CURRENT_CONTROL("CC", "Current control channel"),
+    ALTERNATE_CONTROL("ACC", "Alternate control channel"),
+    VOICE("VC", "Observed voice traffic"),
+    DATA("DAT", "Observed data traffic"),
+    DATA_ANNOUNCED("DAT-A", "Announced data channel");
 
     private final String mLabel;
+    private final String mDescription;
 
-    ChannelTag(String label)
+    ChannelTag(String label, String description)
     {
         mLabel = label;
+        mDescription = description;
     }
 
     public String getLabel()
     {
         return mLabel;
+    }
+
+    public String getDescription()
+    {
+        return mDescription;
     }
 
     public ChannelTag asHistoricalEvidence()
@@ -72,6 +79,6 @@ public enum ChannelTag
 
     public static ChannelTag fromService(State state)
     {
-        return state == State.DATA ? DATA : state == State.CALL ? VOICE : null;
+        return state == State.DATA ? DATA : state == State.CALL || state == State.ENCRYPTED ? VOICE : null;
     }
 }

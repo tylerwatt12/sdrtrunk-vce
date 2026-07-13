@@ -74,4 +74,20 @@ class ChannelActivityTableModelTest
         assertEquals("Portable 12", snapshot.talkerAlias());
         assertEquals("Engine 1 · TA: Portable 12", snapshot.sourceAliasDisplay());
     }
+
+    @Test
+    void abbreviatesTagsAndTreatsEncryptedAudioAsVoice()
+    {
+        ChannelActivityRow row = new ChannelActivityRow("row-1", null, ChannelActivityRow.Role.CONVENTIONAL,
+            155_250_000L, null);
+        row.addTag(ChannelTag.fromService(State.ENCRYPTED));
+
+        assertEquals("CONV + VC", row.getTagsDisplay());
+        assertEquals("Conventional channel + Observed voice traffic", row.getTagsDescription());
+
+        row.addTag(ChannelTag.DATA_ANNOUNCED);
+        assertEquals("CONV + VC + DAT-A", row.getTagsDisplay());
+        row.addTag(ChannelTag.DATA);
+        assertEquals("CONV + VC + DAT", row.getTagsDisplay());
+    }
 }

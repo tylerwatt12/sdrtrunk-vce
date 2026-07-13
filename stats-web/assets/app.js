@@ -4,6 +4,16 @@ const tableOnly = route.get('layout') === 'table';
 const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v1';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
+const CHANNEL_TAG_DISPLAY = Object.freeze({
+  CONVENTIONAL: { abbreviation: 'CONV', description: 'Conventional channel' },
+  CONFIGURED: { abbreviation: 'CFG', description: 'Configured frequency' },
+  CONTROL: { abbreviation: 'CC', description: 'Observed control channel', className: 'role-primary' },
+  CURRENT_CONTROL: { abbreviation: 'CC', description: 'Current control channel', className: 'role-primary' },
+  ALTERNATE_CONTROL: { abbreviation: 'ACC', description: 'Alternate control channel', className: 'role-secondary' },
+  VOICE: { abbreviation: 'VC', description: 'Observed voice traffic', className: 'role-voice' },
+  DATA: { abbreviation: 'DAT', description: 'Observed data traffic', className: 'role-data' },
+  DATA_ANNOUNCED: { abbreviation: 'DAT-A', description: 'Announced data channel', className: 'role-data-announced' }
+});
 const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'action': 82,
   'affiliated': 70,
@@ -147,8 +157,10 @@ function siteLabel(row) {
   return row.channel_name || `${systemLabel(row)} ${identity}`;
 }
 
-function badge(label, className = '') {
-  return node('span', `badge ${className}`.trim(), label);
+function badge(label, className = '', title = '') {
+  const element = node('span', `badge ${className}`.trim(), label);
+  if (title) element.title = title;
+  return element;
 }
 
 function stateBadge(value) {
@@ -235,33 +247,41 @@ function channelTagSet(...values) {
   return tags;
 }
 
+function channelTagBadge(tag) {
+  const display = CHANNEL_TAG_DISPLAY[tag];
+  return badge(display.abbreviation, display.className, display.description);
+}
+
 function channelTags(row) {
   const observed = channelTagSet(row.tags);
   const current = channelTagSet(row.current_tags);
   const tags = [];
-  if (current.has('CURRENT_CONTROL')) tags.push(badge('Current Control', 'role-primary'));
-  else if (observed.has('CONTROL')) tags.push(badge('Control', 'role-primary'));
+  if (current.has('CURRENT_CONTROL')) tags.push(channelTagBadge('CURRENT_CONTROL'));
+  else if (observed.has('CONTROL')) tags.push(channelTagBadge('CONTROL'));
   if (observed.has('ALTERNATE_CONTROL') || current.has('ALTERNATE_CONTROL')) {
-    tags.push(badge('Alternate Control', 'role-secondary'));
+    tags.push(channelTagBadge('ALTERNATE_CONTROL'));
   }
-  if (observed.has('VOICE')) tags.push(badge('Voice', 'role-voice'));
-  if (observed.has('DATA')) tags.push(badge('Data', 'role-data'));
-  if (observed.has('DATA_ANNOUNCED') && !observed.has('DATA')) {
-    tags.push(badge('Data Announced', 'role-data-announced'));
-  }
+  if (observed.has('VOICE')) tags.push(channelTagBadge('VOICE'));
+  if (observed.has('DATA')) tags.push(channelTagBadge('DATA'));
+  if (observed.has('DATA_ANNOUNCED') && !observed.has('DATA')) tags.push(channelTagBadge('DATA_ANNOUNCED'));
   return tags.length ? fragment(...tags) : badge('Unknown', 'state-historical');
 }
 
-function channelTagText(row) {
+function visibleLiveChannelTags(row) {
   const tags = channelTagSet(row.tags);
-  const values = [];
-  if (tags.has('CURRENT_CONTROL')) values.push('Current Control');
-  if (tags.has('ALTERNATE_CONTROL')) values.push('Alternate Control');
-  if (tags.has('VOICE')) values.push('Voice');
-  if (tags.has('DATA')) values.push('Data');
-  if (tags.has('CONFIGURED') && values.length === 0) values.push('Configured');
-  if (tags.has('CONVENTIONAL') && values.length === 0) values.push('Conventional');
-  return values.join(' + ');
+  const visible = ['CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'VOICE', 'DATA', 'DATA_ANNOUNCED']
+    .filter((tag) => tags.has(tag) && (tag !== 'DATA_ANNOUNCED' || !tags.has('DATA')));
+  if (tags.has('CONVENTIONAL')) visible.unshift('CONVENTIONAL');
+  if (tags.has('CONFIGURED') && visible.length === 0) visible.push('CONFIGURED');
+  return visible;
+}
+
+function channelTagText(row) {
+  return visibleLiveChannelTags(row).map((tag) => CHANNEL_TAG_DISPLAY[tag].abbreviation).join(' + ');
+}
+
+function channelTagTitle(row) {
+  return visibleLiveChannelTags(row).map((tag) => CHANNEL_TAG_DISPLAY[tag].description).join(' + ');
 }
 
 function pageHeader(title, subtitle) {
@@ -1055,6 +1075,7 @@ function liveSystemsSection() {
     cellText(cells[8], row.target_alias);
     cellText(cells[9], row.target_id);
     cellText(cells[10], row.decoder);
+    cells[1].title = channelTagTitle(row);
     cells[0].className = `activity-status state-${String(row.status || 'idle').toLowerCase()}`;
     cells[1].className = '';
     const tags = channelTagSet(row.tags);
