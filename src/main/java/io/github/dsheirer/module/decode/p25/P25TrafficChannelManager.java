@@ -233,6 +233,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             mTS1ChannelGrantEventMap.clear();
             mTS2ChannelGrantEventMap.clear();
+            //Band identifiers are scoped to the current control channel.  Wait for fresh IDEN updates after a switch.
+            mFrequencyBandMap.clear();
 
             //Remove the control channel from the previous frequency
             mAllocatedTrafficChannelMap.remove(previous);
