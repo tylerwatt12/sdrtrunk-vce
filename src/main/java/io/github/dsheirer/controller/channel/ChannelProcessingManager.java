@@ -19,6 +19,7 @@
 package io.github.dsheirer.controller.channel;
 
 import com.google.common.eventbus.Subscribe;
+import com.google.common.util.concurrent.MoreExecutors;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
@@ -67,6 +68,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -111,6 +113,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private UserPreferences mUserPreferences;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
     private List<ScheduledFuture<?>> mDelayedChannelStartTasks = new ArrayList<>();
+    private final Executor mSiteMetadataExecutor = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
 
     /**
      * Constructs the channel processing manager
@@ -922,6 +925,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     @Subscribe
     public void process(SiteMetadataEvent event)
+    {
+        mSiteMetadataExecutor.execute(() -> dispatchSiteMetadata(event));
+    }
+
+    private void dispatchSiteMetadata(SiteMetadataEvent event)
     {
         mChannelActivityModel.receiveSiteMetadata(event);
 
