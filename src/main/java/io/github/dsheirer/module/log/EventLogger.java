@@ -18,7 +18,9 @@
  */
 package io.github.dsheirer.module.log;
 
+import com.google.common.util.concurrent.MoreExecutors;
 import io.github.dsheirer.module.Module;
+import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -26,18 +28,25 @@ import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public abstract class EventLogger extends Module
 {
     private static final Logger mLog = LoggerFactory.getLogger(EventLogger.class);
+    private static final Executor FILE_IO_EXECUTOR = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
+    private static final long SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 5;
 
     private Path mLogDirectory;
     private String mFileNameSuffix;
-    private String mLogFileName;
+    private volatile String mLogFileName;
     private long mFrequency;
-    protected Writer mLogFile;
+    private Writer mLogFile;
+    private final Object mLifecycleLock = new Object();
+    private boolean mStarted;
 
     protected EventLogger(Path logDirectory, String fileNameSuffix, long frequency)
     {
@@ -63,32 +72,74 @@ public abstract class EventLogger extends Module
     @Override
     public void start()
     {
-        if(mLogFile == null)
+        synchronized(mLifecycleLock)
         {
-            try
+            if(!mStarted)
             {
-                StringBuilder sb = new StringBuilder();
-                sb.append(mLogDirectory);
-                sb.append(File.separator);
-                sb.append(TimeStamp.getLongTimeStamp("_"));
-                sb.append("_");
-                sb.append(mFrequency);
-                sb.append("_Hz_");
-                sb.append(mFileNameSuffix);
-
-                mLogFileName = sb.toString();
-                mLogFile = new OutputStreamWriter(new FileOutputStream(mLogFileName));
-
-                write(getHeader());
-            }
-            catch(FileNotFoundException e)
-            {
-                mLog.error("Couldn't create log file in directory:" + mLogDirectory);
+                mStarted = true;
+                String logFileName = mLogDirectory + File.separator + TimeStamp.getLongTimeStamp("_") + "_" +
+                    mFrequency + "_Hz_" + mFileNameSuffix;
+                mLogFileName = logFileName;
+                FILE_IO_EXECUTOR.execute(() -> open(logFileName));
             }
         }
     }
 
     public void stop()
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(mStarted)
+            {
+                mStarted = false;
+                FILE_IO_EXECUTOR.execute(this::close);
+            }
+        }
+    }
+
+    protected void write(String eventLogEntry)
+    {
+        String entry = eventLogEntry != null ? eventLogEntry : "";
+
+        synchronized(mLifecycleLock)
+        {
+            if(mStarted)
+            {
+                FILE_IO_EXECUTOR.execute(() -> writeToFile(entry));
+            }
+        }
+    }
+
+    private void open(String logFileName)
+    {
+        try
+        {
+            mLogFile = new OutputStreamWriter(new FileOutputStream(logFileName));
+            writeToFile(getHeader());
+        }
+        catch(FileNotFoundException exception)
+        {
+            mLog.error("Couldn't create log file in directory:" + mLogDirectory);
+        }
+    }
+
+    private void writeToFile(String eventLogEntry)
+    {
+        if(mLogFile != null)
+        {
+            try
+            {
+                mLogFile.write(eventLogEntry + "\n");
+                mLogFile.flush();
+            }
+            catch(Exception exception)
+            {
+                mLog.error("Error writing entry to event log file", exception);
+            }
+        }
+    }
+
+    private void close()
     {
         if(mLogFile != null)
         {
@@ -96,28 +147,37 @@ public abstract class EventLogger extends Module
             {
                 mLogFile.flush();
                 mLogFile.close();
-                mLogFile = null;
             }
-            catch(Exception e)
+            catch(Exception exception)
             {
-                mLog.error("Couldn't close log file:" + mFileNameSuffix);
+                mLog.error("Couldn't close log file:" + mFileNameSuffix, exception);
+            }
+            finally
+            {
+                mLogFile = null;
             }
         }
     }
 
-    protected void write(String eventLogEntry)
+    /**
+     * Drains queued event-log I/O during application shutdown after all channels have stopped.
+     */
+    public static void flushPendingWrites()
     {
+        CountDownLatch drained = new CountDownLatch(1);
+        FILE_IO_EXECUTOR.execute(drained::countDown);
+
         try
         {
-            if(mLogFile != null)
+            if(!drained.await(SHUTDOWN_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS))
             {
-                mLogFile.write((eventLogEntry != null ? eventLogEntry : "") + "\n");
-                mLogFile.flush();
+                mLog.warn("Timed out waiting for queued event-log writes to finish");
             }
         }
-        catch(Exception e)
+        catch(InterruptedException exception)
         {
-            mLog.error("Error writing entry to event log file", e);
+            Thread.currentThread().interrupt();
+            mLog.warn("Interrupted while waiting for queued event-log writes to finish");
         }
     }
 }

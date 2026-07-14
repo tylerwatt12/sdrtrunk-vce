@@ -47,6 +47,7 @@ import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.map.MapService;
 import io.github.dsheirer.metadata.site.SiteControlChannelLearner;
+import io.github.dsheirer.module.log.EventLogger;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -862,6 +863,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             mP25ActivityLogService.dispose();
         }
         mConfigurationManager.getChannelProcessingManager().shutdown();
+        EventLogger.flushPendingWrites();
         if(mAudioCallCoordinator != null)
         {
             mAudioCallCoordinator.dispose();
