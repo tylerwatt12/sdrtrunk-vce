@@ -18,10 +18,13 @@
  */
 package io.github.dsheirer.util;
 
+import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.heartbeat.HeartbeatManager;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledExecutorService;
@@ -30,6 +33,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,8 +69,12 @@ public class Dispatcher<E> implements Listener<E>
                 return t;
             }
         });
-    private final LinkedTransferQueue<E> mQueue = new LinkedTransferQueue<>();
+    private final String mThreadName;
+    private final BlockingQueue<E> mQueue;
     private final List<E> mDrainBuffer = new ArrayList<>();
+    private final Consumer<E> mDiscardHandler;
+    private final int mMaximumQueueSize;
+    private final AtomicLong mDroppedElementCount = new AtomicLong();
     private Listener<E> mListener;
     private final AtomicBoolean mRunning = new AtomicBoolean();
     private ScheduledFuture<?> mScheduledFuture;
@@ -77,39 +86,68 @@ public class Dispatcher<E> implements Listener<E>
     /**
      * Constructs an instance that uses the shared dispatcher pool.  Use for channel sources and channel output
      * processors where thread-per-instance overhead is the primary concern.
-     * @param threadName ignored (retained for call-site compatibility)
+     * @param threadName used for diagnostics
      * @param interval for processing each batch in milliseconds.
      * @param heartbeatManager to receive a heartbeat command at each processing interval.
      */
     public Dispatcher(String threadName, long interval, HeartbeatManager heartbeatManager)
     {
-        this(threadName, interval);
+        this(threadName, interval, ExecutorType.SHARED);
         mHeartbeatManager = heartbeatManager;
     }
 
     /**
      * Constructs an instance that uses the shared dispatcher pool.  Use for channel sources and channel output
      * processors where thread-per-instance overhead is the primary concern.
-     * @param threadName ignored (retained for call-site compatibility)
+     * @param threadName used for diagnostics
      * @param interval for processing each batch in milliseconds.
      */
     public Dispatcher(String threadName, long interval)
     {
-        mInterval = interval;
-        mExecutorType = ExecutorType.SHARED;
+        this(threadName, interval, ExecutorType.SHARED);
     }
 
     /**
      * Constructs an instance with the specified executor type.  Use {@link ExecutorType#PRIVATE} for I/O-bound
      * recorders and other users where slow tasks must not starve the shared channel-dispatch pool.
-     * @param threadName ignored (retained for call-site compatibility)
+     * @param threadName used for private executor threads and diagnostics
      * @param interval for processing each batch in milliseconds.
      * @param executorType whether to use the shared pool or a private single-thread executor.
      */
     public Dispatcher(String threadName, long interval, ExecutorType executorType)
     {
+        this(threadName, interval, executorType, 0, null);
+    }
+
+    /**
+     * Constructs an optionally bounded dispatcher.  When full, the oldest queued element is discarded before the
+     * new element is accepted.  Supply a discard handler when queued elements require explicit release or recycling.
+     *
+     * @param threadName name used for private executor threads and overflow diagnostics
+     * @param interval processing interval in milliseconds
+     * @param executorType shared or private executor
+     * @param maximumQueueSize maximum queued elements, or zero for unbounded
+     * @param discardHandler optional cleanup callback for discarded elements
+     */
+    public Dispatcher(String threadName, long interval, ExecutorType executorType, int maximumQueueSize,
+                      Consumer<E> discardHandler)
+    {
+        if(interval <= 0)
+        {
+            throw new IllegalArgumentException("Dispatcher interval must be greater than zero");
+        }
+
+        if(maximumQueueSize < 0)
+        {
+            throw new IllegalArgumentException("Dispatcher queue limit cannot be negative");
+        }
+
+        mThreadName = threadName != null && !threadName.isBlank() ? threadName : "sdrtrunk dispatcher";
         mInterval = interval;
         mExecutorType = executorType;
+        mMaximumQueueSize = maximumQueueSize;
+        mDiscardHandler = discardHandler;
+        mQueue = maximumQueueSize > 0 ? new ArrayBlockingQueue<>(maximumQueueSize) : new LinkedTransferQueue<>();
     }
 
     /**
@@ -132,7 +170,21 @@ public class Dispatcher<E> implements Listener<E>
     {
         if(mRunning.get())
         {
-            mQueue.add(e);
+            if(!mQueue.offer(e))
+            {
+                E dropped = mQueue.poll();
+
+                if(dropped != null)
+                {
+                    discard(dropped, true);
+                }
+
+                //Another producer can claim the freed slot.  Never block a real-time producer if that happens.
+                if(!mQueue.offer(e))
+                {
+                    discard(e, true);
+                }
+            }
         }
     }
 
@@ -150,7 +202,7 @@ public class Dispatcher<E> implements Listener<E>
                 mScheduledFuture.cancel(false);
             }
 
-            mQueue.clear();
+            discardQueuedElements();
             ScheduledExecutorService executor;
 
             if(mExecutorType == ExecutorType.SHARED)
@@ -163,7 +215,7 @@ public class Dispatcher<E> implements Listener<E>
                 {
                     mPrivateExecutor.shutdown();
                 }
-                mPrivateExecutor = Executors.newSingleThreadScheduledExecutor();
+                mPrivateExecutor = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(mThreadName));
                 executor = mPrivateExecutor;
             }
 
@@ -173,7 +225,7 @@ public class Dispatcher<E> implements Listener<E>
     }
 
     /**
-     * Stops this buffer processor and waits up to two seconds for the processing thread to terminate.
+     * Stops this buffer processor and releases any queued elements.
      */
     public void stop()
     {
@@ -185,7 +237,7 @@ public class Dispatcher<E> implements Listener<E>
                 //be able to release those locks or we'll get a deadlock situation.
                 mScheduledFuture.cancel(false);
                 mScheduledFuture = null;
-                mQueue.clear();
+                discardQueuedElements();
             }
 
             if(mPrivateExecutor != null)
@@ -235,6 +287,10 @@ public class Dispatcher<E> implements Listener<E>
                                 mListener.getClass() + "]", t);
                     }
                 }
+                else
+                {
+                    discard(element, false);
+                }
             }
         }
     }
@@ -248,29 +304,96 @@ public class Dispatcher<E> implements Listener<E>
     }
 
     /**
+     * Current number of queued elements awaiting processing.
+     */
+    public int getQueueSize()
+    {
+        return mQueue.size();
+    }
+
+    /**
+     * Total number of elements discarded because this dispatcher's bounded queue was full.
+     */
+    public long getDroppedElementCount()
+    {
+        return mDroppedElementCount.get();
+    }
+
+    private void discardQueuedElements()
+    {
+        E element = mQueue.poll();
+
+        while(element != null)
+        {
+            discard(element, false);
+            element = mQueue.poll();
+        }
+    }
+
+    private void discard(E element, boolean queueOverflow)
+    {
+        if(element == null)
+        {
+            return;
+        }
+
+        if(mDiscardHandler != null)
+        {
+            try
+            {
+                mDiscardHandler.accept(element);
+            }
+            catch(Throwable throwable)
+            {
+                mLog.error("Error discarding queued element for dispatcher [{}]", mThreadName, throwable);
+            }
+        }
+
+        if(queueOverflow)
+        {
+            long dropped = mDroppedElementCount.incrementAndGet();
+
+            if(dropped == 1 || dropped % 1000 == 0)
+            {
+                mLog.warn("Dispatcher [{}] dropped stale queued element at queue limit [{}], total dropped [{}]",
+                    mThreadName, mMaximumQueueSize, dropped);
+            }
+        }
+    }
+
+    /**
      * Processes elements from the queue.  Note: this should only be invoked on the Processor thread.
      */
     private void process()
     {
         mQueue.drainTo(mDrainBuffer);
 
-        for(E element: mDrainBuffer)
+        try
         {
-            if(mRunning.get() && mListener != null)
+            for(E element: mDrainBuffer)
             {
-                try
+                if(mRunning.get() && mListener != null)
                 {
-                    mListener.receive(element);
+                    try
+                    {
+                        mListener.receive(element);
+                    }
+                    catch(Throwable throwable)
+                    {
+                        mLog.error("Error while dispatching element [" + element.getClass() + "] to listener [" +
+                                mListener.getClass() + "]", throwable);
+                    }
                 }
-                catch(Throwable t)
+                else
                 {
-                    mLog.error("Error while dispatching element [" + element.getClass() + "] to listener [" +
-                            mListener.getClass() + "]", t);
+                    discard(element, false);
                 }
             }
         }
-
-        mDrainBuffer.clear();
+        finally
+        {
+            mDrainBuffer.clear();
+        }
     }
 
     /**
@@ -285,8 +408,14 @@ public class Dispatcher<E> implements Listener<E>
         {
             if(mRunning.compareAndSet(false, true))
             {
-                process();
-                mRunning.set(false);
+                try
+                {
+                    process();
+                }
+                finally
+                {
+                    mRunning.set(false);
+                }
             }
         }
     }
@@ -304,18 +433,19 @@ public class Dispatcher<E> implements Listener<E>
         {
             if(mRunning.compareAndSet(false, true))
             {
-                process();
-
                 try
                 {
+                    process();
                     mHeartbeatManager.broadcast();
                 }
-                catch(Throwable t)
+                catch(Throwable throwable)
                 {
-                    mLog.error("Error broadcasting heartbeat during Dispatcher processing interval", t);
+                    mLog.error("Error broadcasting heartbeat during Dispatcher processing interval", throwable);
                 }
-
-                mRunning.set(false);
+                finally
+                {
+                    mRunning.set(false);
+                }
             }
         }
     }

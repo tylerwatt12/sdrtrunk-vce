@@ -67,6 +67,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      * Determines how many processed channel results to dispatch for threaded IFFT processing per batch
      */
     private static final int PROCESSED_CHANNEL_RESULTS_THRESHOLD = 1024;
+    private static final int IFFT_QUEUE_CAPACITY = 8;
 
     //Sized to process 40 times per second
     private IFFTProcessorDispatcher mIFFTProcessorDispatcher = new IFFTProcessorDispatcher(25);
@@ -557,7 +558,10 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
 
         public IFFTProcessorDispatcher(long interval)
         {
-            super("sdrtrunk polyphase ifft processor", interval);
+            //Keep IFFT work independent from channel consumers.  Recycle stale batches during overload so their
+            //large float arrays cannot accumulate indefinitely in the heap.
+            super("sdrtrunk polyphase ifft processor", interval, ExecutorType.PRIVATE, IFFT_QUEUE_CAPACITY,
+                ChannelResultsBuffer::recycleNow);
 
             //We create a listener interface to receive the batched channel results arrays from the scheduled thread pool
             //dispatcher thread that is part of this continuous buffer processor.  We perform an IFFT on each

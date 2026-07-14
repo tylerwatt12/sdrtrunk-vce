@@ -71,6 +71,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private static final double MINIMUM_CHANNEL_BANDWIDTH = 25000.0;
     private static final double CHANNEL_OVERSAMPLING = 2.0;
     private static final int POLYPHASE_CHANNELIZER_TAPS_PER_CHANNEL = 9;
+    private static final int NATIVE_BUFFER_QUEUE_CAPACITY = 32;
 
     private Broadcaster<SourceEvent> mSourceEventBroadcaster = new Broadcaster<>();
     private INativeBufferProvider mNativeBufferProvider;
@@ -111,7 +112,10 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         }
 
         mChannelCalculator = new ChannelCalculator(sampleRate, channelCount, frequency, CHANNEL_OVERSAMPLING);
-        mBufferDispatcher = new Dispatcher<>("sdrtrunk polyphase buffer processor", 10);
+        //Raw tuner samples are real-time data.  Isolate this CPU-heavy stage from channel consumers and cap retained
+        //samples so a transient processing stall discards stale IQ instead of exhausting the heap.
+        mBufferDispatcher = new Dispatcher<>("sdrtrunk polyphase buffer processor", 10,
+            Dispatcher.ExecutorType.PRIVATE, NATIVE_BUFFER_QUEUE_CAPACITY, null);
         mBufferDispatcher.setListener(mNativeBufferReceiver);
     }
 
