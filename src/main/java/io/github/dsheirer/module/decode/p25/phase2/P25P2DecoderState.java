@@ -88,6 +88,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.Individ
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.LocationRegistrationResponse;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacRelease;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructure;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructureVendor;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MessageUpdateAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MessageUpdateExtendedLCCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MessageUpdateExtendedVCH;
@@ -339,6 +340,12 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
         MacStructure mac = message.getMacStructure();
 
+        if(mChannel.isStandardChannel() && mac instanceof MacStructureVendor vendorStructure)
+        {
+            observeNetworkConfiguration(mNetworkConfigurationMonitor.processVendor(vendorStructure.getVendor()),
+                message.getTimestamp());
+        }
+
         switch((mac.getOpcode()))
         {
             /**
@@ -478,9 +485,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_EC_UNIT_REGISTRATION_RESPONSE_EXTENDED:
                 processUnitRegistration(message, mac);
                 break;
-            case PHASE1_70_SYNCHRONIZATION_BROADCAST:
-                //Ignore - channel timing information
-                break;
             case PHASE1_71_AUTHENTICATION_DEMAND:
             case PHASE1_72_AUTHENTICATION_FNE_RESPONSE_ABBREVIATED:
             case PHASE1_F2_AUTHENTICATION_FNE_RESPONSE_EXTENDED:
@@ -492,6 +496,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 break;
             case PHASE1_73_IDENTIFIER_UPDATE_TDMA_ABBREVIATED:
             case PHASE1_74_IDENTIFIER_UPDATE_V_UHF:
+            case PHASE1_70_SYNCHRONIZATION_BROADCAST:
+            case PHASE1_75_TIME_AND_DATE_ANNOUNCEMENT:
             case PHASE1_78_SYSTEM_SERVICE_BROADCAST:
             case PHASE1_79_SECONDARY_CONTROL_CHANNEL_BROADCAST_IMPLICIT:
             case PHASE1_7A_RFSS_STATUS_BROADCAST_IMPLICIT:
@@ -507,10 +513,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_FE_ADJACENT_STATUS_BROADCAST_EXTENDED_EXPLICIT:
                 processNetwork(message, mac);
                 break;
-            case PHASE1_75_TIME_AND_DATE_ANNOUNCEMENT:
-                //Ignore
-                break;
-
             /**
              * Partition 3 Opcodes
              */

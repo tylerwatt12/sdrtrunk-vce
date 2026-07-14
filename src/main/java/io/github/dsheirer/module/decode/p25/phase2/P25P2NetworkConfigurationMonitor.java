@@ -41,6 +41,10 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.Seconda
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SecondaryControlChannelBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SynchronizationBroadcast;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SystemServiceBroadcast;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.TimeAndDateAnnouncement;
+import io.github.dsheirer.module.decode.p25.reference.Service;
+import io.github.dsheirer.module.decode.p25.reference.SystemServiceClass;
+import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import java.util.ArrayList;
@@ -81,6 +85,7 @@ public class P25P2NetworkConfigurationMonitor
 
     //Current Site Services
     private SystemServiceBroadcast mSystemServiceBroadcast;
+    private P25NetworkConfigurationSnapshot.SiteStatus mSiteStatus;
     private P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer;
 
     //Neighbor Sites
@@ -123,6 +128,18 @@ public class P25P2NetworkConfigurationMonitor
                 {
                     mSynchronizationBroadcastMessage = message;
                     mSynchronizationBroadcast = synchronizationBroadcast;
+                    return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
+                        synchronizationBroadcast.getSystemTime(), synchronizationBroadcast.getMicroSlots(), null,
+                        null, null, null, null, null));
+                }
+                break;
+            case PHASE1_75_TIME_AND_DATE_ANNOUNCEMENT:
+                if(mac instanceof TimeAndDateAnnouncement timeAndDate && timeAndDate.hasValidDate() &&
+                    timeAndDate.hasValidTime())
+                {
+                    return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
+                        timeAndDate.getDateAndTime().toInstant().toEpochMilli(), null, null, null, null, null, null,
+                        null));
                 }
                 break;
             case PHASE1_73_IDENTIFIER_UPDATE_TDMA_ABBREVIATED:
@@ -141,6 +158,10 @@ public class P25P2NetworkConfigurationMonitor
                 if(mac instanceof SystemServiceBroadcast ssb)
                 {
                     mSystemServiceBroadcast = ssb;
+                    P25NetworkConfigurationSnapshot.SiteStatus services = serviceStatus(ssb.getAvailableServices());
+                    return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(null, null,
+                        services.dataService(), null, ssb.getTemporaryWUIDValidityMinutes(),
+                        services.registrationService(), null, services.voiceService()));
                 }
                 break;
             case PHASE1_79_SECONDARY_CONTROL_CHANNEL_BROADCAST_IMPLICIT:
@@ -162,7 +183,7 @@ public class P25P2NetworkConfigurationMonitor
                     mRFSSStatusBroadcastImplicit = rsbe;
                     return observation(null, getCurrentSiteSnapshot(rsbe),
                         getChannelSnapshots("primary_control", rsbe.getChannel()), Collections.emptyList(),
-                        Collections.emptyList());
+                        Collections.emptyList(), serviceStatus(rsbe.getSystemServiceClass()));
                 }
                 break;
             case PHASE1_7B_NETWORK_STATUS_BROADCAST_IMPLICIT:
@@ -192,7 +213,7 @@ public class P25P2NetworkConfigurationMonitor
                 {
                     mSNDCPDataChannelAnnouncement = s;
                     return observation(null, null, getChannelSnapshots("fdma_data", s.getChannel()),
-                        Collections.emptyList(), Collections.emptyList());
+                        Collections.emptyList(), Collections.emptyList(), dataAccessStatus(s));
                 }
                 break;
             case PHASE1_E9_SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
@@ -220,7 +241,7 @@ public class P25P2NetworkConfigurationMonitor
                     mRFSSStatusBroadcastExplicit = rsbe;
                     return observation(null, getCurrentSiteSnapshot(rsbe),
                         getChannelSnapshots("primary_control", rsbe.getChannel()), Collections.emptyList(),
-                        Collections.emptyList());
+                        Collections.emptyList(), serviceStatus(rsbe.getSystemServiceClass()));
                 }
                 break;
             case PHASE1_FB_NETWORK_STATUS_BROADCAST_EXPLICIT:
@@ -263,6 +284,7 @@ public class P25P2NetworkConfigurationMonitor
         mSecondaryControlChannels.clear();
         mSNDCPDataChannelAnnouncement = null;
         mSystemServiceBroadcast = null;
+        mSiteStatus = null;
         mNeighborSitesAbbreviated.clear();
         mNeighborSitesExtended.clear();
         mNeighborSitesExtendedExplicit.clear();
@@ -321,7 +343,8 @@ public class P25P2NetworkConfigurationMonitor
         }
 
         return new P25NetworkConfigurationSnapshot("P25_PHASE_2", network, currentSite, channels,
-            getNeighborSiteSnapshots(), getFrequencyBandSnapshots(), Collections.emptyList(), Collections.emptyList());
+            getNeighborSiteSnapshots(), getFrequencyBandSnapshots(), Collections.emptyList(), Collections.emptyList(),
+            mSiteStatus);
     }
 
     private P25NetworkConfigurationSnapshot observation(P25NetworkConfigurationSnapshot.Network network,
@@ -332,6 +355,61 @@ public class P25P2NetworkConfigurationMonitor
     {
         return new P25NetworkConfigurationSnapshot("P25_PHASE_2", network, currentSite, channels, neighborSites,
             frequencyBands, Collections.emptyList(), Collections.emptyList());
+    }
+
+    private P25NetworkConfigurationSnapshot observation(P25NetworkConfigurationSnapshot.Network network,
+                                                        P25NetworkConfigurationSnapshot.CurrentSite currentSite,
+                                                        List<P25NetworkConfigurationSnapshot.Channel> channels,
+                                                        List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
+                                                        List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
+                                                        P25NetworkConfigurationSnapshot.SiteStatus status)
+    {
+        mSiteStatus = mSiteStatus == null ? status : mSiteStatus.merge(status);
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_2", network, currentSite, channels, neighborSites,
+            frequencyBands, Collections.emptyList(), Collections.emptyList(), mSiteStatus);
+    }
+
+    private P25NetworkConfigurationSnapshot statusObservation(P25NetworkConfigurationSnapshot.SiteStatus status)
+    {
+        return observation(null, null, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
+            status);
+    }
+
+    public P25NetworkConfigurationSnapshot processVendor(Vendor vendor)
+    {
+        if(vendor != null && vendor != Vendor.STANDARD && vendor != Vendor.STANDARD_V1 && vendor != Vendor.VUNK)
+        {
+            return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(null, null, null, null, null,
+                null, vendor.getValue(), null));
+        }
+
+        return null;
+    }
+
+    private P25NetworkConfigurationSnapshot.SiteStatus serviceStatus(SystemServiceClass serviceClass)
+    {
+        return serviceClass != null ? new P25NetworkConfigurationSnapshot.SiteStatus(null, null,
+            serviceClass.hasDataService(), null, null, serviceClass.hasRegistrationService(), null,
+            serviceClass.hasVoiceService()) : null;
+    }
+
+    private P25NetworkConfigurationSnapshot.SiteStatus serviceStatus(List<Service> services)
+    {
+        boolean data = services != null &&
+            (services.contains(Service.GROUP_DATA) || services.contains(Service.INDIVIDUAL_DATA));
+        boolean voice = services != null &&
+            (services.contains(Service.GROUP_VOICE) || services.contains(Service.INDIVIDUAL_VOICE) ||
+                services.contains(Service.PSTN_TO_UNIT_VOICE) || services.contains(Service.UNIT_TO_PSTN_VOICE));
+        return new P25NetworkConfigurationSnapshot.SiteStatus(null, null, data, null, null,
+            services != null && services.contains(Service.UNIT_REGISTRATION), null, voice);
+    }
+
+    private P25NetworkConfigurationSnapshot.SiteStatus dataAccessStatus(SNDCPDataChannelAnnouncement announcement)
+    {
+        String access = announcement.isAutonomousAccess() ?
+            (announcement.isRequestedAccess() ? "Autonomous and by Request" : "Autonomous") :
+            (announcement.isRequestedAccess() ? "Request Only" : null);
+        return new P25NetworkConfigurationSnapshot.SiteStatus(null, null, true, access, null, null, null, null);
     }
 
     private P25NetworkConfigurationSnapshot.Network getNetworkSnapshot()

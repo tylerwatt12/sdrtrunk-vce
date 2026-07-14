@@ -112,6 +112,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.Sta
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.StatusUpdate;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SynchronizationBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SystemServiceBroadcast;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TimeAndDateAnnouncement;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TelephoneInterconnectAnswerRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TelephoneInterconnectVoiceChannelGrant;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TelephoneInterconnectVoiceChannelGrantUpdate;
@@ -368,6 +369,9 @@ public class TSBKMessageFactory
                 break;
             case OSP_TDMA_SYNC_BROADCAST:
                 tsbk = new SynchronizationBroadcast(dataUnitID, message, nac, timestamp);
+                break;
+            case OSP_TIME_DATE_ANNOUNCEMENT:
+                tsbk = new TimeAndDateAnnouncement(dataUnitID, message, nac, timestamp);
                 break;
             case OSP_SYSTEM_SERVICE_BROADCAST:
                 tsbk = new SystemServiceBroadcast(dataUnitID, message, nac, timestamp);

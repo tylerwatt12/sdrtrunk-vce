@@ -4,6 +4,10 @@ const tableOnly = route.get('layout') === 'table';
 const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v1';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
+const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
+const SIGNAL_RANGES = Object.freeze([
+  ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
+]);
 const CHANNEL_TAG_DISPLAY = Object.freeze({
   CONVENTIONAL: { abbreviation: 'CONV', description: 'Conventional channel' },
   CONFIGURED: { abbreviation: 'CFG', description: 'Configured frequency' },
@@ -127,6 +131,10 @@ function dateTime(value) {
 
 function yesNo(value) {
   return Number(value) ? 'Yes' : '';
+}
+
+function yesNoKnown(value) {
+  return value === null || value === undefined || value === '' ? '' : (Number(value) ? 'Yes' : 'No');
 }
 
 function checkbox(checked) {
@@ -821,6 +829,416 @@ function hourlyLineGraph(rows) {
   return wrapper;
 }
 
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === '') return Number.NaN;
+  return Number(value);
+}
+
+function signalNumber(value) {
+  const numeric = optionalNumber(value);
+  return Number.isFinite(numeric) ? `${numeric.toFixed(1)} dBFS` : '—';
+}
+
+function percentNumber(value) {
+  const numeric = optionalNumber(value);
+  return Number.isFinite(numeric) ? `${numeric.toFixed(1)}%` : '—';
+}
+
+function elapsedLabel(timestamp, now = Date.now()) {
+  const elapsed = Math.max(0, now - Number(timestamp || 0));
+  if (!timestamp) return 'No samples';
+  if (elapsed < 60_000) return `${Math.max(1, Math.round(elapsed / 1000))} sec ago`;
+  if (elapsed < 3_600_000) return `${Math.round(elapsed / 60_000)} min ago`;
+  if (elapsed < 86_400_000) return `${Math.round(elapsed / 3_600_000)} hr ago`;
+  return `${Math.round(elapsed / 86_400_000)} days ago`;
+}
+
+function signalSiteState(site, now = Date.now()) {
+  const observed = Number(site.last_observed_ms || 0);
+  if (!observed || now - observed > SIGNAL_OFFLINE_MILLISECONDS) {
+    return { label: 'Offline', className: 'offline', rank: 0 };
+  }
+  const decode = optionalNumber(site.decode_health_pct);
+  if (!Number.isFinite(optionalNumber(site.average_signal_dbfs))) {
+    return { label: 'No signal', className: 'poor', rank: 1 };
+  }
+  if (!Number.isFinite(decode)) return { label: 'Monitoring', className: 'unknown', rank: 2 };
+  if (decode >= 95) return { label: 'Healthy', className: 'healthy', rank: 4 };
+  if (decode >= 80) return { label: 'Degraded', className: 'degraded', rank: 3 };
+  return { label: 'Poor', className: 'poor', rank: 1 };
+}
+
+function sharedSignalDomain(sites) {
+  const values = [];
+  (sites || []).forEach((site) => {
+    (site.series || []).forEach((point) => {
+      [point.minimum_signal_dbfs, point.maximum_signal_dbfs, point.average_signal_dbfs].forEach((value) => {
+        const numeric = optionalNumber(value);
+        if (Number.isFinite(numeric)) values.push(numeric);
+      });
+    });
+  });
+  if (!values.length) return { minimum: -100, maximum: -20 };
+  let minimum = Math.floor((Math.min(...values) - 3) / 10) * 10;
+  let maximum = Math.ceil((Math.max(...values) + 3) / 10) * 10;
+  if (maximum - minimum < 20) {
+    minimum -= 10;
+    maximum += 10;
+  }
+  return { minimum, maximum: Math.min(0, maximum) };
+}
+
+function qualityHistoryChart(site, response, metric, domain) {
+  const signal = metric === 'signal';
+  const nominalWidth = 520;
+  const maximumHeight = 190;
+  const from = Number(response.from_ms);
+  const to = Number(response.to_ms);
+  const range = Math.max(1, to - from);
+  const bucket = Number(response.bucket_ms || 10_000);
+  const svgNamespace = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNamespace, 'svg');
+  svg.setAttribute('class', `quality-chart-svg ${signal ? 'signal-chart-svg' : 'decode-chart-svg'}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${siteLabel(site)} ${signal ? 'signal strength' : 'decode quality'} history`);
+  const svgNode = (tag, attributes = {}, textValue) => {
+    const element = document.createElementNS(svgNamespace, tag);
+    Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+    if (textValue !== undefined) element.textContent = String(textValue);
+    return element;
+  };
+  const points = (site.series || []).map((point) => ({
+    ...point,
+    timestamp: Number(point.time_ms),
+    average: optionalNumber(point.average_signal_dbfs),
+    minimum: optionalNumber(point.minimum_signal_dbfs),
+    maximum: optionalNumber(point.maximum_signal_dbfs),
+    decode: optionalNumber(point.decode_health_pct)
+  }));
+  points.forEach((point) => { point.value = signal ? point.average : point.decode; });
+  const segments = [];
+  let segment = [];
+  points.forEach((point) => {
+    const previous = segment.at(-1);
+    if (!Number.isFinite(point.value) || previous && point.timestamp - previous.timestamp > bucket * 2.5) {
+      if (segment.length) segments.push(segment);
+      segment = [];
+    }
+    if (Number.isFinite(point.value)) segment.push(point);
+  });
+  if (segment.length) segments.push(segment);
+  const wrapper = node('div', `quality-chart ${signal ? 'signal-chart' : 'decode-chart'}`);
+  if (!segments.length) wrapper.append(node('div', 'quality-chart-empty',
+    `No ${signal ? 'signal' : 'decode'} samples in this range`));
+  wrapper.append(svg);
+
+  let drawnWidth = 0;
+  const draw = (availableWidth = nominalWidth) => {
+    const width = Math.max(280, Math.round(availableWidth));
+    if (width === drawnWidth) return;
+    drawnWidth = width;
+    const height = Math.round(Math.max(132, Math.min(maximumHeight,
+      width * maximumHeight / nominalWidth)));
+    const margin = { top: 12, right: 12, bottom: 31, left: 48 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const xFor = (timestamp) => margin.left + plotWidth *
+      Math.max(0, Math.min(1, (timestamp - from) / range));
+    const yFor = (value) => margin.top + plotHeight *
+      (domain.maximum - value) / Math.max(1, domain.maximum - domain.minimum);
+
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.replaceChildren();
+
+    if (!signal) {
+      [[0, 80, 'poor'], [80, 95, 'degraded'], [95, 100, 'healthy']].forEach(([minimum, maximum, state]) => {
+        svg.append(svgNode('rect', { x: margin.left, y: yFor(maximum), width: plotWidth,
+          height: Math.max(0, yFor(minimum) - yFor(maximum)), class: `decode-quality-band ${state}` }));
+      });
+    }
+
+    for (let index = 0; index <= 4; index += 1) {
+      const value = domain.minimum + (domain.maximum - domain.minimum) * index / 4;
+      const y = yFor(value);
+      svg.append(svgNode('line', { x1: margin.left, y1: y, x2: width - margin.right, y2: y,
+        class: 'quality-grid-line' }));
+      svg.append(svgNode('text', { x: margin.left - 8, y: y + 4, class: 'quality-axis-label',
+        'text-anchor': 'end' }, value.toFixed(0)));
+    }
+
+    if (!signal) {
+      [80, 95].forEach((value) => svg.append(svgNode('line', { x1: margin.left, y1: yFor(value),
+        x2: width - margin.right, y2: yFor(value), class: 'decode-threshold-line' })));
+    }
+
+    segments.forEach((values) => {
+      if (signal) {
+        const upper = values.map((point) => [xFor(point.timestamp),
+          yFor(Number.isFinite(point.maximum) ? point.maximum : point.average)]);
+        const lower = [...values].reverse().map((point) => [xFor(point.timestamp),
+          yFor(Number.isFinite(point.minimum) ? point.minimum : point.average)]);
+        const area = [...upper, ...lower].map(([x, y], index) =>
+          `${index ? 'L' : 'M'} ${x.toFixed(2)} ${y.toFixed(2)}`).join(' ') + ' Z';
+        svg.append(svgNode('path', { d: area, class: 'signal-range-path' }));
+      }
+      const line = values.map((point, index) =>
+        `${index ? 'L' : 'M'} ${xFor(point.timestamp).toFixed(2)} ${yFor(point.value).toFixed(2)}`).join(' ');
+      svg.append(svgNode('path', { d: line, class: signal ? 'signal-average-path' : 'decode-health-path' }));
+    });
+
+    points.filter((point) => Number.isFinite(point.value)).forEach((point) => {
+      const target = svgNode('circle', { cx: xFor(point.timestamp), cy: yFor(point.value), r: 7,
+        class: 'quality-hover-target' });
+      const frequencyText = Number(point.frequency_hz) ? `${frequency(point.frequency_hz)} MHz` :
+        (Number(point.frequency_count) > 1 ? `${number(point.frequency_count)} frequencies` :
+          'Frequency unavailable');
+      let detail;
+      if (signal) {
+        const rangeText = Number.isFinite(point.minimum) && Number.isFinite(point.maximum) ?
+          `${point.minimum.toFixed(1)} to ${point.maximum.toFixed(1)} dBFS` : 'Unavailable';
+        detail = `30s average: ${point.average.toFixed(1)} dBFS\nRange: ${rangeText}\n` +
+          `Decode health: ${percentNumber(point.decode)}`;
+      } else {
+        detail = `Decode health: ${point.decode.toFixed(1)}%\n` +
+          `30s signal average: ${signalNumber(point.average)}`;
+      }
+      target.append(svgNode('title', {}, `${dateTime(point.last_observed_ms || point.timestamp)}\n${detail}\n` +
+        `${frequencyText}\n${number(point.sample_count)} retained sample` +
+        `${Number(point.sample_count) === 1 ? '' : 's'}`));
+      svg.append(target);
+    });
+
+    [from, from + range / 2, to].forEach((timestamp, index) => {
+      const longRange = range > 86_400_000;
+      const label = new Date(timestamp).toLocaleString([], longRange ?
+        { month: 'short', day: 'numeric', hour: 'numeric' } : { hour: 'numeric', minute: '2-digit' });
+      svg.append(svgNode('text', { x: xFor(timestamp), y: height - 9, class: 'quality-axis-label',
+        'text-anchor': index === 0 ? 'start' : (index === 2 ? 'end' : 'middle') }, label));
+    });
+  };
+
+  draw();
+  requestAnimationFrame(() => {
+    draw(wrapper.getBoundingClientRect().width || nominalWidth);
+    if ('ResizeObserver' in window) {
+      const observer = new ResizeObserver((entries) => {
+        draw(entries[0]?.contentRect.width || wrapper.getBoundingClientRect().width || nominalWidth);
+      });
+      observer.observe(wrapper);
+      pageObservers.add(observer);
+    }
+  });
+  return wrapper;
+}
+
+function qualityChartPanel(title, description, chart) {
+  const panel = node('div', 'quality-chart-panel');
+  const heading = node('div', 'quality-chart-heading');
+  heading.append(node('strong', '', title), node('span', '', description));
+  panel.append(heading, chart);
+  return panel;
+}
+
+function signalCurrentTile(site) {
+  const tile = node('article', 'signal-current-tile');
+  const state = signalSiteState(site);
+  const header = node('div', 'signal-current-header');
+  const labels = node('div', 'signal-current-labels');
+  labels.append(siteLink(site, siteLabel(site)));
+  labels.append(node('div', 'signal-current-system', systemLabel(site)));
+  header.append(labels, badge(state.label, `signal-state ${state.className}`));
+  const power = node('div', 'signal-current-power');
+  power.append(node('strong', '', signalNumber(site.signal_dbfs)),
+    node('span', '', `30s avg ${signalNumber(site.average_signal_dbfs)}`));
+  const details = node('div', 'signal-current-details');
+  const qualityFrequency = site.quality_frequency_hz || site.current_control_hz;
+  const decode = optionalNumber(site.decode_health_pct);
+  const decodeClass = !Number.isFinite(decode) ? '' :
+    (decode >= 95 ? 'quality-good' : (decode >= 80 ? 'quality-warn' : 'quality-bad'));
+  details.append(node('span', decodeClass,
+  `Decode ${percentNumber(site.decode_health_pct)}`),
+  node('span', '', Number(qualityFrequency) ? `${frequency(qualityFrequency)} MHz` : 'Frequency unavailable'),
+  node('span', '', elapsedLabel(site.last_observed_ms)));
+  tile.append(header, power, details);
+  return tile;
+}
+
+function sortSignalSites(sites, selectedSort) {
+  const now = Date.now();
+  return [...sites].sort((left, right) => {
+    if (selectedSort === 'name') return siteLabel(left).localeCompare(siteLabel(right));
+    const leftState = signalSiteState(left, now);
+    const rightState = signalSiteState(right, now);
+    if (leftState.rank !== rightState.rank && (leftState.rank === 0 || rightState.rank === 0)) {
+      return leftState.rank - rightState.rank;
+    }
+    if (selectedSort === 'signal') {
+      const leftSignal = optionalNumber(left.average_signal_dbfs);
+      const rightSignal = optionalNumber(right.average_signal_dbfs);
+      return (Number.isFinite(leftSignal) ? leftSignal : -Infinity) -
+        (Number.isFinite(rightSignal) ? rightSignal : -Infinity);
+    }
+    const leftDecode = optionalNumber(left.decode_health_pct);
+    const rightDecode = optionalNumber(right.decode_health_pct);
+    return (Number.isFinite(leftDecode) ? leftDecode : -1) -
+      (Number.isFinite(rightDecode) ? rightDecode : -1);
+  });
+}
+
+function signalOverview(site, includeName = true) {
+  const overview = node('div', 'signal-history-overview');
+  overview.classList.toggle('without-identity', !includeName);
+  if (includeName) {
+    const identity = node('div', 'signal-history-identity');
+    identity.append(siteLink(site, siteLabel(site)), node('span', '', systemLabel(site)));
+    overview.append(identity);
+  }
+  [['Current', signalNumber(site.signal_dbfs)], ['30s average', signalNumber(site.average_signal_dbfs)],
+    ['Decode', percentNumber(site.decode_health_pct)],
+    ['Last sample', elapsedLabel(site.last_observed_ms)]].forEach(([label, value]) => {
+    const metric = node('div', 'signal-history-metric');
+    metric.append(node('span', '', label), node('strong', '', value));
+    overview.append(metric);
+  });
+  return overview;
+}
+
+function signalRangeControls(selectedRange, onChange) {
+  const controls = node('div', 'signal-range-controls');
+  const buttons = new Map();
+  SIGNAL_RANGES.forEach(([value, label]) => {
+    const button = node('button', 'signal-range-button secondary', label);
+    button.type = 'button';
+    button.setAttribute('aria-pressed', String(value === selectedRange));
+    button.classList.toggle('active', value === selectedRange);
+    button.addEventListener('click', () => {
+      if (value === selectedRange) return;
+      selectedRange = value;
+      buttons.forEach((candidate, candidateValue) => {
+        candidate.classList.toggle('active', candidateValue === selectedRange);
+        candidate.setAttribute('aria-pressed', String(candidateValue === selectedRange));
+      });
+      onChange(value, buttons);
+    });
+    buttons.set(value, button);
+    controls.append(button);
+  });
+  return { controls, buttons };
+}
+
+async function signalHealthSection() {
+  const host = node('div', 'signal-health');
+  const currentPanel = node('div', 'signal-current-panel');
+  const currentToolbar = node('div', 'signal-current-toolbar');
+  const summary = node('div', 'signal-health-summary');
+  const sortLabel = node('label', 'signal-sort-label', 'Sort');
+  const sort = node('select', 'signal-sort');
+  [['decode', 'Lowest decode'], ['signal', 'Weakest signal'], ['name', 'Name']].forEach(([value, label]) => {
+    const option = node('option', '', label);
+    option.value = value;
+    sort.append(option);
+  });
+  let selectedSort = 'decode';
+  sort.value = selectedSort;
+  sortLabel.append(sort);
+  currentToolbar.append(summary, sortLabel);
+  const tiles = node('div', 'signal-current-grid');
+  currentPanel.append(currentToolbar, tiles);
+  host.append(currentPanel);
+  const block = section('Signal Health', host);
+  let currentResponse = null;
+
+  const renderCurrent = () => {
+    const sites = sortSignalSites(currentResponse?.sites || [], selectedSort);
+    const now = Date.now();
+    const reporting = sites.filter((site) => now - Number(site.last_observed_ms || 0) <=
+      SIGNAL_OFFLINE_MILLISECONDS);
+    const healthy = reporting.filter((site) => optionalNumber(site.decode_health_pct) >= 95).length;
+    const degraded = reporting.filter((site) => {
+      const decode = optionalNumber(site.decode_health_pct);
+      return Number.isFinite(decode) && decode < 95;
+    }).length;
+    const unknown = reporting.length - healthy - degraded;
+    summary.textContent = `${number(reporting.length)} reporting · ${number(healthy)} healthy · ` +
+      `${number(degraded)} degraded${unknown ? ` · ${number(unknown)} unknown` : ''} · ` +
+      `${number(sites.length - reporting.length)} offline`;
+    tiles.replaceChildren(...sites.map(signalCurrentTile));
+    if (!sites.length) tiles.append(node('div', 'empty', 'No P25 sites are available'));
+  };
+
+  sort.addEventListener('change', () => {
+    selectedSort = sort.value;
+    if (currentResponse) renderCurrent();
+  });
+
+  const logging = statsLoggingState();
+  if (logging.available && !logging.summaryActive) {
+    currentToolbar.hidden = true;
+    const message = node('div', 'empty signal-disabled');
+    message.append('Signal health requires Stats Logging. ', anchor('Live signal levels remain available',
+      href('live')), '.');
+    tiles.append(message);
+  } else {
+    summary.textContent = 'Loading current signal health…';
+    try {
+      currentResponse = await api('/api/quality', { range: '1h', points: 60, include_history: false });
+      renderCurrent();
+    } catch (error) {
+      summary.textContent = '';
+      tiles.replaceChildren(node('div', 'error', error.message));
+    }
+  }
+  return block;
+}
+
+async function siteSignalHistorySection(site) {
+  const host = node('div', 'site-signal-history');
+  const block = section('Control Channel Quality History', host);
+  block.classList.add('site-signal-history-section');
+  let selectedRange = '24h';
+  let loadingSequence = 0;
+  const rangeControl = signalRangeControls(selectedRange, async (value, buttons) => {
+    selectedRange = value;
+    await load(buttons);
+  });
+  block.querySelector('.section-title').append(rangeControl.controls);
+  const load = async (buttons = rangeControl.buttons) => {
+    const sequence = ++loadingSequence;
+    buttons.forEach((button) => { button.disabled = true; });
+    host.replaceChildren(node('div', 'loading', 'Loading control channel quality history'));
+    try {
+      const response = await api('/api/quality', { guid: site.guid, range: selectedRange, points: 300 });
+      if (sequence !== loadingSequence) return;
+      const qualitySite = (response.sites || [])[0];
+      host.replaceChildren();
+      if (!qualitySite) {
+        host.append(node('div', 'empty', 'No control channel quality history is available for this site'));
+        return;
+      }
+      const charts = node('div', 'quality-chart-stack');
+      charts.append(
+        qualityChartPanel('Signal Strength', '30-second average and observed range · dBFS',
+          qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))),
+        qualityChartPanel('Decode Quality', '30-second rolling successful-frame rate · percent',
+          qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }))
+      );
+      host.append(signalOverview(qualitySite, false), charts);
+    } catch (error) {
+      if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
+    } finally {
+      if (sequence === loadingSequence) buttons.forEach((button) => { button.disabled = false; });
+    }
+  };
+  const logging = statsLoggingState();
+  if (logging.available && !logging.summaryActive) {
+    rangeControl.controls.hidden = true;
+    host.append(node('div', 'empty', 'Control channel quality history requires Stats Logging.'));
+  } else {
+    await load();
+  }
+  return block;
+}
+
 async function api(path, parameters = {}) {
   const query = new URLSearchParams();
   Object.entries(parameters).forEach(([key, value]) => {
@@ -834,6 +1252,7 @@ async function api(path, parameters = {}) {
 
 const liveConnections = new Set();
 const pageConnections = new Set();
+const pageObservers = new Set();
 
 function liveConnection(path, parameters = {}) {
   const query = new URLSearchParams();
@@ -852,6 +1271,8 @@ function closePageConnections() {
     liveConnections.delete(source);
   });
   pageConnections.clear();
+  pageObservers.forEach((observer) => observer.disconnect());
+  pageObservers.clear();
 }
 
 window.addEventListener('beforeunload', () => {
@@ -983,6 +1404,7 @@ async function renderDashboard() {
     ['Systems', counts.systems], ['Sites', counts.sites], ['Talkgroups', counts.talkgroups],
     ['Radios', counts.radios], ['Frequencies', counts.frequencies], ['Conventional', counts.conventional]
   ]));
+  content.append(await signalHealthSection());
   content.append(section('Calls Per Hour', hourlyLineGraph(dashboard.activityPerHour || [])));
   const sites = section('Recent Sites', table(dashboard.recentSites || [], siteColumns, 'No rows', { type: 'sites' }));
   const actions = section('24 Hour Actions', node('div', 'action-chart'));
@@ -1400,23 +1822,12 @@ async function renderSite() {
     siteTabs(site, tab));
 
   if (tab === 'quality') {
-    const data = await api('/api/site/quality', { guid, limit: 500 });
-    content.append(section('Control Channel Quality', table(data.rows || [], [
-      { id: 'time', label: 'Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
-      { id: 'frequency', label: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
-      { id: 'signal', label: 'Signal dBFS', render: (row) => row.signal_dbfs == null ? '' : Number(row.signal_dbfs).toFixed(1), className: 'numeric', sortValue: (row) => Number(row.signal_dbfs ?? -999) },
-      { id: 'average-signal', label: '30s Avg dBFS', render: (row) => row.average_signal_dbfs == null ? '' : Number(row.average_signal_dbfs).toFixed(1), className: 'numeric', sortValue: (row) => Number(row.average_signal_dbfs ?? -999) },
-      { id: 'decode-health', label: 'Decode Health', render: (row) => row.decode_health_pct == null ? '' : `${Number(row.decode_health_pct).toFixed(1)}%`, className: 'numeric', sortValue: (row) => Number(row.decode_health_pct ?? -1) },
-      { label: 'Valid', key: 'valid_frames', className: 'numeric' },
-      { label: 'Invalid', key: 'invalid_frames', className: 'numeric' },
-      { label: 'Corrected Bits', key: 'corrected_bits', className: 'numeric' },
-      { label: 'Sync Loss Bits', key: 'sync_loss_bits', className: 'numeric' },
-      { label: 'Dropped Bits', key: 'dropped_bits', className: 'numeric' }
-    ], 'No retained control-channel quality metrics', { type: 'site-quality' })));
+    content.append(await siteSignalHistorySection(site));
   } else if (tab === 'channels') {
     const data = await api('/api/site/channels', { guid });
     const columns = [
       { label: 'LCN / Modes', key: 'descriptor' },
+      { label: 'Callsign', key: 'callsign' },
       { label: 'Tags', key: 'tags', render: channelTags },
       { id: 'downlink', label: 'Downlink MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
       { id: 'uplink', label: 'Uplink MHz', render: (row) => frequency(row.uplink_hz), className: 'numeric', sortValue: (row) => Number(row.uplink_hz || 0) },
@@ -1504,8 +1915,17 @@ async function renderSite() {
     content.append(section('Site Info', keyValues([
       ['System', systemLink(site)], ['GUID', site.guid], ['Name', site.channel_name],
       ['Alias List', site.alias_list_name], ['Protocol', site.protocol], ['Decoder', site.decoder],
-      ['NAC', hexDecimal(site.nac, 3)],
+      ['Callsign', site.callsign], ['WACN', hexDecimal(site.wacn, 5)],
+      ['SysID', hexDecimal(site.system_id, 3)], ['NAC', hexDecimal(site.nac, 3)],
       ['RFSS', hexDecimal(site.rfss, 2)], ['Site', hexDecimal(site.site, 2)],
+      ['Local Registration Area', hexDecimal(site.lra, 2)], ['MFID', site.mfid_display],
+      ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
+      ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
+      ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' : `${number(site.wuid_lease_minutes)} minutes`],
+      ['Unit registration over control channel', yesNoKnown(site.registration_service)],
+      ['TDMA', yesNoKnown(site.tdma)],
+      ['u-Slots', site.micro_slots == null ? '' : number(site.micro_slots)],
+      ['Voice', yesNoKnown(site.voice_service)],
       ['Control Frequency', frequency(site.current_control_hz)],
       ['First Seen', dateTime(site.first_seen_ms)], ['Last Seen', dateTime(site.last_seen_ms)],
       ['Channels', number(site.channels)], ['Neighbors', number(site.neighbors)],

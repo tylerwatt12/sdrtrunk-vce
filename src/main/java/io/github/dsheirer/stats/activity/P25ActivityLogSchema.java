@@ -34,14 +34,14 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v16 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
+ * The v17 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
  * Detailed event rows are optional, while lifetime and hourly summaries are always updated when stats logging is
  * enabled. Table names are split by protocol family so DMR/NXDN can be added without folding unrelated records into
  * the P25 tables.
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 16;
+    private static final int SCHEMA_VERSION = 17;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
@@ -521,6 +521,16 @@ public class P25ActivityLogSchema
                 nac INTEGER,
                 rfss INTEGER,
                 site INTEGER,
+                lra INTEGER,
+                mfid INTEGER,
+                broadcast_clock_ms INTEGER,
+                micro_slots INTEGER,
+                data_service INTEGER,
+                data_access TEXT,
+                wuid_lease_minutes INTEGER,
+                registration_service INTEGER,
+                tdma INTEGER,
+                voice_service INTEGER,
                 primary_frequency_hz INTEGER,
                 current_control_hz INTEGER
             )
@@ -534,6 +544,7 @@ public class P25ActivityLogSchema
                 uplink_hz INTEGER,
                 tdma INTEGER,
                 timeslots INTEGER,
+                callsign TEXT,
                 confirmed_at_ms INTEGER NOT NULL,
                 PRIMARY KEY(guid, channel_key)
             )
@@ -778,9 +789,11 @@ public class P25ActivityLogSchema
             "bucket_start_ms"),
         table("p25_site_snapshot", "guid", "snapshot_hash", "first_seen_ms", "last_seen_ms", "observation_count",
             "protocol", "channel_name", "alias_list_name", "decoder", "system_key", "nac", "rfss", "site",
-            "primary_frequency_hz", "current_control_hz"),
+            "lra", "mfid", "broadcast_clock_ms", "micro_slots", "data_service", "data_access",
+            "wuid_lease_minutes", "registration_service", "tdma", "voice_service", "primary_frequency_hz",
+            "current_control_hz"),
         table("p25_site_channel", "guid", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
-            "tdma", "timeslots", "confirmed_at_ms"),
+            "tdma", "timeslots", "callsign", "confirmed_at_ms"),
         table("p25_site_channel_summary", "guid", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
             "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "observation_count"),
         table("p25_site_channel_tag", "guid", "channel_key", "tag", "confirmed_at_ms"),
@@ -1441,8 +1454,10 @@ public class P25ActivityLogSchema
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_snapshot (
                 guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, protocol, channel_name,
-                alias_list_name, decoder, system_key, nac, rfss, site, primary_frequency_hz, current_control_hz
-            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                alias_list_name, decoder, system_key, nac, rfss, site, lra, mfid, broadcast_clock_ms, micro_slots,
+                data_service, data_access, wuid_lease_minutes, registration_service, tdma, voice_service,
+                primary_frequency_hz, current_control_hz
+            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid) DO UPDATE SET
                 snapshot_hash = coalesce(excluded.snapshot_hash, p25_site_snapshot.snapshot_hash),
                 last_seen_ms = excluded.last_seen_ms,
@@ -1455,6 +1470,17 @@ public class P25ActivityLogSchema
                 nac = excluded.nac,
                 rfss = excluded.rfss,
                 site = excluded.site,
+                lra = coalesce(excluded.lra, p25_site_snapshot.lra),
+                mfid = coalesce(excluded.mfid, p25_site_snapshot.mfid),
+                broadcast_clock_ms = coalesce(excluded.broadcast_clock_ms, p25_site_snapshot.broadcast_clock_ms),
+                micro_slots = coalesce(excluded.micro_slots, p25_site_snapshot.micro_slots),
+                data_service = coalesce(excluded.data_service, p25_site_snapshot.data_service),
+                data_access = coalesce(excluded.data_access, p25_site_snapshot.data_access),
+                wuid_lease_minutes = coalesce(excluded.wuid_lease_minutes, p25_site_snapshot.wuid_lease_minutes),
+                registration_service = coalesce(excluded.registration_service,
+                    p25_site_snapshot.registration_service),
+                tdma = coalesce(excluded.tdma, p25_site_snapshot.tdma),
+                voice_service = coalesce(excluded.voice_service, p25_site_snapshot.voice_service),
                 primary_frequency_hz = coalesce(excluded.primary_frequency_hz, p25_site_snapshot.primary_frequency_hz),
                 current_control_hz = excluded.current_control_hz
             """))
@@ -1471,8 +1497,19 @@ public class P25ActivityLogSchema
             setInteger(statement, 10, snapshot.nac());
             setInteger(statement, 11, snapshot.rfss());
             setInteger(statement, 12, snapshot.site());
-            setLong(statement, 13, snapshot.primaryFrequencyHertz());
-            setLong(statement, 14, snapshot.currentControlHertz());
+            setInteger(statement, 13, snapshot.lra());
+            P25NetworkConfigurationSnapshot.SiteStatus status = snapshot.siteStatus();
+            setInteger(statement, 14, status != null ? status.mfid() : null);
+            setLong(statement, 15, status != null ? status.broadcastClockEpochMilliseconds() : null);
+            setInteger(statement, 16, status != null ? status.microSlots() : null);
+            setBoolean(statement, 17, status != null ? status.dataService() : null);
+            statement.setString(18, status != null ? status.dataAccess() : null);
+            setInteger(statement, 19, status != null ? status.wuidLeaseMinutes() : null);
+            setBoolean(statement, 20, status != null ? status.registrationService() : null);
+            setBoolean(statement, 21, snapshot.tdma());
+            setBoolean(statement, 22, status != null ? status.voiceService() : null);
+            setLong(statement, 23, snapshot.primaryFrequencyHertz());
+            setLong(statement, 24, snapshot.currentControlHertz());
             statement.executeUpdate();
         }
     }
@@ -1824,14 +1861,15 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_channel
-                (guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots, confirmed_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots, callsign, confirmed_at_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guid, channel_key) DO UPDATE SET
                 descriptor = coalesce(excluded.descriptor, p25_site_channel.descriptor),
                 downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel.downlink_hz),
                 uplink_hz = coalesce(excluded.uplink_hz, p25_site_channel.uplink_hz),
                 tdma = coalesce(excluded.tdma, p25_site_channel.tdma),
                 timeslots = coalesce(excluded.timeslots, p25_site_channel.timeslots),
+                callsign = coalesce(excluded.callsign, p25_site_channel.callsign),
                 confirmed_at_ms = max(excluded.confirmed_at_ms, p25_site_channel.confirmed_at_ms)
             """))
         {
@@ -1845,7 +1883,8 @@ public class P25ActivityLogSchema
                 setLong(statement, 5, channel.uplink());
                 setBoolean(statement, 6, channel.tdma());
                 setInteger(statement, 7, channel.timeslots());
-                statement.setLong(8, timestamp);
+                statement.setString(8, channel.callsign());
+                statement.setLong(9, timestamp);
                 statement.addBatch();
             }
 
@@ -2311,7 +2350,7 @@ public class P25ActivityLogSchema
     }
 
     private record SiteChannelEvidence(String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots,
-                                       Set<ChannelTag> tags)
+                                       String callsign, Set<ChannelTag> tags)
     {
         private SiteChannelEvidence
         {
@@ -2330,7 +2369,8 @@ public class P25ActivityLogSchema
 
             return new SiteChannelEvidence(channel != null ? channel.descriptor() : null,
                 channel != null ? channel.downlink() : null, channel != null ? channel.uplink() : null,
-                channel != null ? channel.tdma() : null, channel != null ? channel.timeslots() : null, tags);
+                channel != null ? channel.tdma() : null, channel != null ? channel.timeslots() : null,
+                channel != null ? channel.callsign() : null, tags);
         }
 
         private SiteChannelEvidence merge(SiteChannelEvidence other)
@@ -2344,7 +2384,7 @@ public class P25ActivityLogSchema
                 Math.max(timeslots, other.timeslots) : firstNonNull(timeslots, other.timeslots);
             return new SiteChannelEvidence(firstNonBlank(descriptor, other.descriptor),
                 firstNonNull(downlink, other.downlink), firstNonNull(uplink, other.uplink), mergedTdma,
-                mergedTimeslots, mergedTags);
+                mergedTimeslots, firstNonBlank(callsign, other.callsign), mergedTags);
         }
 
         private Set<ChannelTag> currentTags()

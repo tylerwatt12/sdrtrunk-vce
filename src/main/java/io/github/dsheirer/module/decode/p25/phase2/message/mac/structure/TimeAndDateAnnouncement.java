@@ -72,9 +72,9 @@ public class TimeAndDateAnnouncement extends MacStructure
      */
     public OffsetDateTime getDateAndTime()
     {
-        boolean hasDate = getMessage().get(VD_FLAG + getOffset());
-        boolean hasTime = getMessage().get(VT_FLAG + getOffset());
-        boolean hasOffset = getMessage().get(VL_FLAG + getOffset());
+        boolean hasDate = hasValidDate();
+        boolean hasTime = hasValidTime();
+        boolean hasOffset = hasLocalTimeOffset();
         int year = hasDate ? getInt(YEAR) : 0;
         int month = hasDate ? getInt(MONTH) : 0;
         int day = hasDate ? getInt(DAY) : 0;
@@ -84,7 +84,22 @@ public class TimeAndDateAnnouncement extends MacStructure
         int offsetMinutes = hasOffset ? getInt(LOCAL_TIME_OFFSET) : 0;
         offsetMinutes *= getMessage().get(LOCAL_TIME_OFFSET_SIGN + getOffset()) ? -1 : 1;
         return OffsetDateTime.of(year, month, day, hours, minutes, seconds, 0,
-                ZoneOffset.ofHoursMinutes(0, offsetMinutes));
+                ZoneOffset.ofTotalSeconds(offsetMinutes * 60));
+    }
+
+    public boolean hasValidDate()
+    {
+        return getMessage().get(VD_FLAG + getOffset());
+    }
+
+    public boolean hasValidTime()
+    {
+        return getMessage().get(VT_FLAG + getOffset());
+    }
+
+    public boolean hasLocalTimeOffset()
+    {
+        return getMessage().get(VL_FLAG + getOffset());
     }
 
     @Override

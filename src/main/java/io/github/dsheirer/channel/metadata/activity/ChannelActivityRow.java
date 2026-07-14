@@ -62,6 +62,7 @@ public class ChannelActivityRow
     private State mState = State.IDLE;
     private String mLcn;
     private long mFrequency;
+    private String mCallsign;
     private Integer mTimeslot;
     private Identifier<?> mSource;
     private List<Alias> mSourceAliases = Collections.emptyList();
@@ -217,6 +218,16 @@ public class ChannelActivityRow
     public void setFrequency(long frequency)
     {
         mFrequency = frequency;
+    }
+
+    public String getCallsign()
+    {
+        return mCallsign;
+    }
+
+    public void setCallsign(String callsign)
+    {
+        mCallsign = callsign != null && !callsign.isBlank() ? callsign.trim() : null;
     }
 
     public Integer getTimeslot()

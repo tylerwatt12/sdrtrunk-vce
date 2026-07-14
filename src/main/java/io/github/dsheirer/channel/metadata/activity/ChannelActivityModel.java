@@ -428,6 +428,14 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                     continue;
                 }
 
+                if(channel.callsign() != null && !channel.callsign().isBlank())
+                {
+                    for(ChannelActivityRow callsignRow: session.callsign(channel.downlink(), channel.callsign()))
+                    {
+                        table.refresh(callsignRow);
+                    }
+                }
+
                 ChannelTag networkTag = ChannelTag.fromNetworkRole(channel.role());
 
                 if(networkTag == ChannelTag.CURRENT_CONTROL)

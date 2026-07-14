@@ -180,10 +180,13 @@ class P25ActivityLogMapper
         Integer nac = snapshot.network() != null ? snapshot.network().nac() : null;
         Integer rfss = snapshot.currentSite() != null ? snapshot.currentSite().rfss() : null;
         Integer site = snapshot.currentSite() != null ? snapshot.currentSite().site() : null;
+        Integer lra = snapshot.currentSite() != null && snapshot.currentSite().lra() != null ?
+            snapshot.currentSite().lra() : snapshot.network() != null ? snapshot.network().lra() : null;
+        Boolean tdma = hasTdma(snapshot);
         Long currentControl = currentControl(snapshot.channels());
         String hash = sha256(String.join("|", safe(snapshot.decoder()), safe(snapshot.network()),
             safe(snapshot.currentSite()), safe(snapshot.channels()), safe(snapshot.neighborSites()),
-            safe(snapshot.frequencyBands()), safe(snapshot.patchGroups())));
+            safe(snapshot.frequencyBands()), safe(snapshot.patchGroups()), safe(snapshot.siteStatus())));
         String guid = blankToNull(channel.getRadresGuid());
 
         if(guid == null)
@@ -194,8 +197,45 @@ class P25ActivityLogMapper
         return new P25ActivityLogRecords.SiteSnapshot(event.observedAtEpochMilliseconds(), guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, hash, Protocol.APCO25.name(),
             blankToNull(channel.getName()), blankToNull(channel.getAliasListName()), snapshot.decoder(), wacn,
-            system, nac, rfss, site, currentControl, currentControl, snapshot.channels(), snapshot.neighborSites(),
+            system, nac, rfss, site, lra, tdma, snapshot.siteStatus(), currentControl, currentControl,
+            snapshot.channels(), snapshot.neighborSites(),
             snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.talkerAliases());
+    }
+
+    private static Boolean hasTdma(P25NetworkConfigurationSnapshot snapshot)
+    {
+        boolean observed = false;
+
+        for(P25NetworkConfigurationSnapshot.FrequencyBand band: safeList(snapshot.frequencyBands()))
+        {
+            if(band.tdma() != null)
+            {
+                observed = true;
+                if(band.tdma())
+                {
+                    return true;
+                }
+            }
+        }
+
+        for(P25NetworkConfigurationSnapshot.Channel channel: safeList(snapshot.channels()))
+        {
+            if(channel.tdma() != null)
+            {
+                observed = true;
+                if(channel.tdma())
+                {
+                    return true;
+                }
+            }
+        }
+
+        return observed ? false : null;
+    }
+
+    private static <T> List<T> safeList(List<T> values)
+    {
+        return values != null ? values : List.of();
     }
 
     private static boolean isHighChurnCallEvent(DecodeEventType eventType)

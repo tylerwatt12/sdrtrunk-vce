@@ -28,15 +28,28 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                               List<Channel> channels, List<NeighborSite> neighborSites,
                                               List<FrequencyBand> frequencyBands,
                                               List<PatchGroup> patchGroups,
-                                              List<TalkerAlias> talkerAliases)
+                                              List<TalkerAlias> talkerAliases,
+                                              SiteStatus siteStatus)
 {
+    /**
+     * Compatibility constructor for snapshot producers that don't provide current site services/status.
+     */
+    public P25NetworkConfigurationSnapshot(String decoder, Network network, CurrentSite currentSite,
+                                           List<Channel> channels, List<NeighborSite> neighborSites,
+                                           List<FrequencyBand> frequencyBands, List<PatchGroup> patchGroups,
+                                           List<TalkerAlias> talkerAliases)
+    {
+        this(decoder, network, currentSite, channels, neighborSites, frequencyBands, patchGroups, talkerAliases, null);
+    }
+
     /**
      * Indicates if this snapshot contains enough learned over-the-air configuration to send.
      */
     public boolean isUseful()
     {
         return network != null || currentSite != null || (channels != null && !channels.isEmpty()) ||
-            (neighborSites != null && !neighborSites.isEmpty()) || (frequencyBands != null && !frequencyBands.isEmpty());
+            (neighborSites != null && !neighborSites.isEmpty()) ||
+            (frequencyBands != null && !frequencyBands.isEmpty()) || siteStatus != null;
     }
 
     public record Network(Integer wacn, Integer system, Integer nac, Integer lra)
@@ -49,8 +62,42 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     }
 
     public record Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma,
-                          Integer timeslots)
+                          Integer timeslots, String callsign)
     {
+        public Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots)
+        {
+            this(role, descriptor, downlink, uplink, tdma, timeslots, null);
+        }
+    }
+
+    /**
+     * Latest values broadcast by the current site.  Null means the value has not yet been observed.
+     */
+    public record SiteStatus(Long broadcastClockEpochMilliseconds, Integer microSlots, Boolean dataService,
+                             String dataAccess, Integer wuidLeaseMinutes, Boolean registrationService,
+                             Integer mfid, Boolean voiceService)
+    {
+        /**
+         * Applies non-null values from a newer partial broadcast to this latest-value snapshot.
+         */
+        public SiteStatus merge(SiteStatus newer)
+        {
+            if(newer == null)
+            {
+                return this;
+            }
+
+            return new SiteStatus(
+                newer.broadcastClockEpochMilliseconds != null ? newer.broadcastClockEpochMilliseconds :
+                    broadcastClockEpochMilliseconds,
+                newer.microSlots != null ? newer.microSlots : microSlots,
+                newer.dataService != null ? newer.dataService : dataService,
+                newer.dataAccess != null ? newer.dataAccess : dataAccess,
+                newer.wuidLeaseMinutes != null ? newer.wuidLeaseMinutes : wuidLeaseMinutes,
+                newer.registrationService != null ? newer.registrationService : registrationService,
+                newer.mfid != null ? newer.mfid : mfid,
+                newer.voiceService != null ? newer.voiceService : voiceService);
+        }
     }
 
     public record NeighborSite(Integer system, Integer nac, Integer rfss, Integer site, Integer lra,

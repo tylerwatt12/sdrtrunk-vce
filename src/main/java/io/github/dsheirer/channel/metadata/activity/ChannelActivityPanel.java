@@ -75,9 +75,9 @@ import net.miginfocom.swing.MigLayout;
  */
 public class ChannelActivityPanel extends JPanel
 {
-    private static final String TABLE_COLUMN_WIDTH_PREFERENCE_KEY = "now.playing.activity.table.v3";
-    private static final int[] TABLE_COLUMN_DEFAULT_WIDTHS = {150, 180, 130, 96, 82, 72, 210, 88, 210, 88, 74};
-    private static final int[] TABLE_COLUMN_MINIMUM_WIDTHS = {90, 90, 90, 80, 70, 62, 80, 67, 80, 67, 54};
+    private static final String TABLE_COLUMN_WIDTH_PREFERENCE_KEY = "now.playing.activity.table.v4";
+    private static final int[] TABLE_COLUMN_DEFAULT_WIDTHS = {150, 180, 130, 96, 92, 82, 72, 210, 88, 210, 88, 74};
+    private static final int[] TABLE_COLUMN_MINIMUM_WIDTHS = {90, 90, 90, 80, 75, 70, 62, 80, 67, 80, 67, 54};
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ChannelActivityModel mActivityModel;
     private final IconModel mIconModel;
@@ -442,6 +442,8 @@ public class ChannelActivityPanel extends JPanel
             .setCellRenderer(new LcnCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_FREQUENCY)
             .setCellRenderer(new FrequencyCellRenderer());
+        table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_CALLSIGN)
+            .setCellRenderer(new CenteredCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_SIGNAL)
             .setCellRenderer(new QualityCellRenderer(false));
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_DECODE_HEALTH)

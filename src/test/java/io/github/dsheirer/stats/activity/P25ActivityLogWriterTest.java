@@ -327,7 +327,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("16", resultSet.getString(1));
+                assertEquals("17", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA user_version"))
@@ -548,10 +548,31 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_system", 1);
 
             try(Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery("SELECT observation_count FROM p25_site_snapshot"))
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT observation_count, lra, mfid, broadcast_clock_ms, micro_slots, data_service,
+                        data_access, wuid_lease_minutes, registration_service, tdma, voice_service
+                    FROM p25_site_snapshot
+                    """))
             {
                 assertTrue(resultSet.next());
                 assertEquals(2, resultSet.getInt("observation_count"));
+                assertEquals(0, resultSet.getInt("lra"));
+                assertEquals(0x90, resultSet.getInt("mfid"));
+                assertEquals(1_784_000_000_000L, resultSet.getLong("broadcast_clock_ms"));
+                assertEquals(110, resultSet.getInt("micro_slots"));
+                assertEquals(1, resultSet.getInt("data_service"));
+                assertEquals("Autonomous and by Request", resultSet.getString("data_access"));
+                assertEquals(240, resultSet.getInt("wuid_lease_minutes"));
+                assertEquals(1, resultSet.getInt("registration_service"));
+                assertEquals(1, resultSet.getInt("tdma"));
+                assertEquals(1, resultSet.getInt("voice_service"));
+            }
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("SELECT callsign FROM p25_site_channel"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("WPFF205", resultSet.getString("callsign"));
             }
 
             try(Statement statement = connection.createStatement();
@@ -921,7 +942,8 @@ class P25ActivityLogWriterTest
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp)
     {
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
-            new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856137500L, null, false, 1));
+            new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856137500L, null, false, 1,
+                "WPFF205"));
         List<P25NetworkConfigurationSnapshot.NeighborSite> neighbors = List.of(
             new P25NetworkConfigurationSnapshot.NeighborSite(0x348, 0x348, 2, 2, null, "00-0661", 855137500L,
                 null, "ACTIVE"));
@@ -935,7 +957,10 @@ class P25ActivityLogWriterTest
 
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, "123e4567-e89b-12d3-a456-426614174000",
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
-            0xBEE00, 0x348, 0x348, 2, 1, 856137500L, 856137500L, channels, neighbors, bands, patches, aliases);
+            0xBEE00, 0x348, 0x348, 2, 1, 0, true,
+            new P25NetworkConfigurationSnapshot.SiteStatus(1_784_000_000_000L, 110, true,
+                "Autonomous and by Request", 240, true, 0x90, true),
+            856137500L, 856137500L, channels, neighbors, bands, patches, aliases);
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithDuplicateChannels(long timestamp)

@@ -15,6 +15,28 @@ Packaged builds keep the global SDRTrunk database in their portable data directo
 
 ## Available Migrations
 
+### P25 history v16 to v17
+
+Adds one latest-value site status record (LRA, MFID, broadcast clock, data/voice/registration service, data access,
+Working Unit ID lease, TDMA, and u-Slots) plus the latest BSI callsign on current site channels. Stop SDRTrunk before
+running it. The migration checks integrity, checkpoints WAL data, creates a timestamped backup, applies the schema
+change in one transaction, and validates the complete v17 schema.
+
+macOS/Linux:
+
+```bash
+tools/sqlite-migrations/p25-history/migrate-v16-to-v17-site-status.sh \
+  /path/to/sdrtrunk.sqlite /path/to/sdrtrunk-vce
+```
+
+Windows PowerShell:
+
+```powershell
+tools\sqlite-migrations\p25-history\migrate-v16-to-v17-site-status.ps1 `
+  -DatabasePath C:\path\to\sdrtrunk.sqlite `
+  -AppHome C:\path\to\sdrtrunk-vce
+```
+
 ### P25 history v14 or v15 to v16
 
 Adds retained control-channel signal/decode-health buckets when starting at v14, replaces mutually exclusive channel
