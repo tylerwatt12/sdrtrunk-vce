@@ -91,6 +91,15 @@ public class SystemServiceBroadcast extends MacStructure
         }
     }
 
+    /**
+     * Working Unit ID lease time in minutes, or null when the broadcast specifies no expiry.
+     */
+    public Integer getTemporaryWUIDValidityMinutes()
+    {
+        int duration = getInt(TWUID_VALIDITY);
+        return duration > 0 ? 240 + (duration * 30) : null;
+    }
+
     public List<Service> getAvailableServices()
     {
         if(mAvailableServices == null)

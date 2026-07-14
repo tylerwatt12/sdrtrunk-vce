@@ -82,6 +82,21 @@ public class SystemServiceClass
         return (mSystemServiceClass & flag) == flag;
     }
 
+    public boolean hasDataService()
+    {
+        return hasFlag(DATA_SERVICE);
+    }
+
+    public boolean hasVoiceService()
+    {
+        return hasFlag(VOICE_SERVICE);
+    }
+
+    public boolean hasRegistrationService()
+    {
+        return hasFlag(REGISTRATION_SERVICE);
+    }
+
     @Override
     public String toString()
     {

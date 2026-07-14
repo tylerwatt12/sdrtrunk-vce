@@ -9,6 +9,7 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -35,6 +36,13 @@ class StatsWebDatabaseTest
     Path mTemporaryFolder;
     private Path mDatabasePath;
     private StatsWebDatabase mDatabase;
+
+    @Test
+    void formatsKnownAndUnknownMfids()
+    {
+        assertEquals("Motorola (0x90)", StatsWebDatabase.mfidDisplay(0x90));
+        assertEquals("0xAB", StatsWebDatabase.mfidDisplay(0xAB));
+    }
 
     @BeforeEach
     void setUp() throws Exception
@@ -85,6 +93,10 @@ class StatsWebDatabaseTest
         Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
         assertEquals("Cleveland Simulcast", site.get("channel_name"));
         assertEquals(856_137_500L, number(site.get("current_control_hz")));
+        assertEquals("WPFF205", site.get("callsign"));
+        assertEquals("Motorola (0x90)", site.get("mfid_display"));
+        assertEquals(110L, number(site.get("micro_slots")));
+        assertEquals("Autonomous and by Request", site.get("data_access"));
 
         List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=" + GUID)));
@@ -96,6 +108,7 @@ class StatsWebDatabaseTest
         assertEquals(2L, number(channels.get(0).get("data_grant_observations")));
         assertEquals(854_187_500L, number(channels.get(0).get("downlink_hz")));
         assertEquals("0-821", channels.get(1).get("descriptor"));
+        assertEquals("WPFF205", channels.get(1).get("callsign"));
         assertEquals("CURRENT", channels.get(1).get("state"));
 
         List<Map<String,Object>> neighbors = rows(mDatabase.siteNeighbors(request(
@@ -260,6 +273,62 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void dashboardQualityAggregatesBoundedSiteSeries() throws Exception
+    {
+        long minute = Math.floorDiv(System.currentTimeMillis(), 60_000L) * 60_000L;
+        long first = minute - 120_000L + 1_000L;
+        long second = minute - 120_000L + 11_000L;
+        long latest = minute - 60_000L + 1_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_control_channel_quality (guid, frequency_hz, bucket_start_ms, observed_at_ms,
+                    signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
+                    decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
+                    dropped_bits, last_valid_decode_ms)
+                VALUES ('test-site-guid', 856137500, %d, %d, -51.0, -50.0, -55.0, -45.0,
+                    80.0, 80, 20, 4, 0, 0, %d),
+                    ('test-site-guid', 856137500, %d, %d, -41.0, -40.0, -60.0, -35.0,
+                    100.0, 100, 0, 2, 0, 0, %d),
+                    ('test-site-guid', 855137500, %d, %d, -61.0, -60.0, -65.0, -55.0,
+                    75.0, 75, 25, 6, 0, 0, %d)
+                """.formatted(first - Math.floorMod(first, 10_000L), first, first,
+                    second - Math.floorMod(second, 10_000L), second, second,
+                    latest - Math.floorMod(latest, 10_000L), latest, latest));
+        }
+
+        Map<String,Object> response = mDatabase.qualityHistory(request(
+            "/api/quality?guid=test-site-guid&range=1h&points=60"));
+        assertEquals("1h", response.get("range"));
+        assertEquals(60_000L, number(response.get("bucket_ms")));
+        assertEquals(60L, number(response.get("target_points")));
+        List<Map<String,Object>> sites = rowsFrom(response, "sites");
+        assertEquals(1, sites.size());
+        Map<String,Object> site = sites.getFirst();
+        assertEquals("Cleveland Simulcast", site.get("channel_name"));
+        assertEquals(855_137_500L, number(site.get("quality_frequency_hz")));
+        assertEquals(-60.0, ((Number)site.get("average_signal_dbfs")).doubleValue());
+        List<Map<String,Object>> series = rowsFrom(site, "series");
+        assertEquals(2, series.size());
+        assertEquals(-45.0, ((Number)series.getFirst().get("average_signal_dbfs")).doubleValue());
+        assertEquals(-60.0, ((Number)series.getFirst().get("minimum_signal_dbfs")).doubleValue());
+        assertEquals(-35.0, ((Number)series.getFirst().get("maximum_signal_dbfs")).doubleValue());
+        assertEquals(90.0, ((Number)series.getFirst().get("decode_health_pct")).doubleValue());
+        assertEquals(2L, number(series.getFirst().get("sample_count")));
+
+        Map<String,Object> current = mDatabase.qualityHistory(request(
+            "/api/quality?include_history=false"));
+        assertFalse((Boolean)current.get("history_included"));
+        assertTrue(rowsFrom(rowsFrom(current, "sites").getFirst(), "series").isEmpty());
+
+        StatsApiException error = assertThrows(StatsApiException.class, () ->
+            mDatabase.qualityHistory(request("/api/quality?range=forever")));
+        assertEquals(400, error.status());
+    }
+
+    @Test
     void sortsDisplayedDirectoryColumnsBeforePagination() throws Exception
     {
         seedSecondSystem(mDatabasePath);
@@ -350,9 +419,11 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
                     protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
-                    primary_frequency_hz, current_control_hz)
+                    lra, mfid, broadcast_clock_ms, micro_slots, data_service, data_access, wuid_lease_minutes,
+                    registration_service, tdma, voice_service, primary_frequency_hz, current_control_hz)
                 VALUES ('test-site-guid', 'hash', 1000, 2000, 10, 'APCO25', 'Cleveland Simulcast', 'County',
-                    'P25-1', 1, 0x49F, 1, 1, 856137500, 856137500)
+                    'P25-1', 1, 0x49F, 1, 1, 0, 0x90, 1784000000000, 110, 1,
+                    'Autonomous and by Request', 240, 1, 1, 1, 856137500, 856137500)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_control_channel_quality (guid, frequency_hz, bucket_start_ms, observed_at_ms,
@@ -364,8 +435,8 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel (guid, channel_key, descriptor, downlink_hz, uplink_hz, tdma,
-                    timeslots, confirmed_at_ms) VALUES ('test-site-guid', '0-821', '0-821',
-                    856137500, 811137500, 0, 1, %d)
+                    timeslots, callsign, confirmed_at_ms) VALUES ('test-site-guid', '0-821', '0-821',
+                    856137500, 811137500, 0, 1, 'WPFF205', %d)
                 """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,

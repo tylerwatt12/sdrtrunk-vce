@@ -49,6 +49,8 @@ public class P25NetworkConfigurationStabilizer
         new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::objectKey);
     private final P25StableFactTracker<P25NetworkConfigurationSnapshot.CurrentSite> mCurrentSite =
         new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::objectKey);
+    private final P25StableFactTracker<P25NetworkConfigurationSnapshot.SiteStatus> mSiteStatus =
+        new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::objectKey);
     private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.Channel>> mChannels = new TreeMap<>();
     private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.NeighborSite>> mNeighborSites =
         new TreeMap<>();
@@ -77,6 +79,7 @@ public class P25NetworkConfigurationStabilizer
     {
         mNetwork.reset();
         mCurrentSite.reset();
+        mSiteStatus.reset();
         mChannels.clear();
         mNeighborSites.clear();
         mFrequencyBands.clear();
@@ -103,6 +106,14 @@ public class P25NetworkConfigurationStabilizer
 
         observeStatic("network", mNetwork, observation.network(), timestamp);
         observeStatic("current_site", mCurrentSite, observation.currentSite(), timestamp);
+
+        if(observation.siteStatus() != null)
+        {
+            //Site status is already a monitor-merged latest-value record; publish each change immediately.
+            mSiteStatus.reset();
+            mSiteStatus.observe(observation.siteStatus(), timestamp, 1, 0, CANDIDATE_EXPIRATION_MILLISECONDS,
+                true, ignored -> true);
+        }
 
         for(P25NetworkConfigurationSnapshot.Channel channel: list(observation.channels()))
         {
@@ -248,7 +259,7 @@ public class P25NetworkConfigurationStabilizer
     {
         return new P25NetworkConfigurationSnapshot(mDecoder, mNetwork.getStableValue(), mCurrentSite.getStableValue(),
             stableValues(mChannels), stableValues(mNeighborSites), stableValues(mFrequencyBands),
-            stableValues(mPatchGroups), stableValues(mTalkerAliases));
+            stableValues(mPatchGroups), stableValues(mTalkerAliases), mSiteStatus.getStableValue());
     }
 
     private <T> void observeStatic(String factType, P25StableFactTracker<T> tracker, T value, long timestamp)
@@ -296,6 +307,14 @@ public class P25NetworkConfigurationStabilizer
         P25StableFactTracker<P25NetworkConfigurationSnapshot.Channel> tracker =
             mChannels.computeIfAbsent(key, ignored -> new P25StableFactTracker<>(
                 P25NetworkConfigurationStabilizer::objectKey));
+
+        if("base_station".equals(channel.role()))
+        {
+            tracker.reset();
+            tracker.observe(channel, timestamp, 1, 0, CANDIDATE_EXPIRATION_MILLISECONDS, true,
+                ignored -> true);
+            return;
+        }
 
         boolean discovery = isDiscoveryMode(timestamp);
         boolean currentControl = isCurrentControlChannel(channel);
@@ -374,6 +393,8 @@ public class P25NetworkConfigurationStabilizer
     {
         expireCandidate(mNetwork, timestamp);
         expireCandidate(mCurrentSite, timestamp);
+        expireCandidate(mSiteStatus, timestamp);
+        mSiteStatus.expireStable(timestamp, STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS);
         expireCandidates(mChannels, timestamp);
         expireCandidates(mNeighborSites, timestamp);
         expireCandidates(mFrequencyBands, timestamp);

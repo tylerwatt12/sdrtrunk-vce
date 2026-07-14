@@ -41,6 +41,7 @@ public class SiteActivitySession
     private final ChannelActivityTableModel mTableModel;
     private final Map<Long,ChannelActivityRow> mControlRows = new HashMap<>();
     private final Map<String,ChannelActivityRow> mTrafficRows = new HashMap<>();
+    private final Map<Long,String> mCallsigns = new HashMap<>();
     private Long mCurrentControlFrequency;
 
     public SiteActivitySession(Channel parentChannel, ChannelActivityTableModel tableModel)
@@ -232,6 +233,39 @@ public class SiteActivitySession
         return new ArrayList<>(mTrafficRows.values());
     }
 
+    /**
+     * Stores the latest BSI callsign for a frequency and applies it to all rows sharing that channel.
+     */
+    public List<ChannelActivityRow> callsign(long frequency, String callsign)
+    {
+        if(frequency <= 0 || callsign == null || callsign.isBlank())
+        {
+            return List.of();
+        }
+
+        String value = callsign.trim();
+        mCallsigns.put(frequency, value);
+        List<ChannelActivityRow> updated = new ArrayList<>();
+        ChannelActivityRow control = mControlRows.get(frequency);
+
+        if(control != null)
+        {
+            control.setCallsign(value);
+            updated.add(control);
+        }
+
+        for(ChannelActivityRow traffic: mTrafficRows.values())
+        {
+            if(traffic.getFrequency() == frequency)
+            {
+                traffic.setCallsign(value);
+                updated.add(traffic);
+            }
+        }
+
+        return updated;
+    }
+
     public void addTag(long frequency, ChannelTag tag)
     {
         ChannelActivityRow control = mControlRows.get(frequency);
@@ -418,6 +452,7 @@ public class SiteActivitySession
         row.setChannel(mParentChannel);
         row.setFrequency(frequency);
         row.setTimeslot(null);
+        applyCallsign(row);
 
         return row;
     }
@@ -437,6 +472,16 @@ public class SiteActivitySession
             {
                 row.addTags(traffic.getTags());
             }
+        }
+
+        applyCallsign(row);
+    }
+
+    private void applyCallsign(ChannelActivityRow row)
+    {
+        if(row != null)
+        {
+            row.setCallsign(mCallsigns.get(row.getFrequency()));
         }
     }
 

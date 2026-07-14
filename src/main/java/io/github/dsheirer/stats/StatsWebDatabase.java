@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats;
 
+import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.preference.UserPreferences;
@@ -38,6 +39,11 @@ class StatsWebDatabase
 {
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebDatabase.class);
     private static final long HOUR_MILLISECONDS = 3_600_000L;
+    private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
+    private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
+    private static final int QUALITY_DEFAULT_POINTS = 240;
+    private static final int QUALITY_MINIMUM_POINTS = 60;
+    private static final int QUALITY_MAXIMUM_POINTS = 360;
     private static final int DASHBOARD_HOURS = 24;
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
         Map.entry("wacn", "system.wacn"),
@@ -239,6 +245,128 @@ class StatsWebDatabase
             dashboard.put("actionMix", actionMix(hourlyActivity));
             dashboard.put("activityPerHour", hourlyActivity);
             return dashboard;
+        });
+    }
+
+    Map<String,Object> qualityHistory(StatsRequest request)
+    {
+        String guid = request.text("guid");
+        boolean includeHistory = !"false".equalsIgnoreCase(request.text("include_history"));
+        String range = request.text("range");
+        range = range != null ? range.toLowerCase() : "6h";
+        long requestedRangeMilliseconds = switch(range)
+        {
+            case "1h" -> HOUR_MILLISECONDS;
+            case "6h" -> 6L * HOUR_MILLISECONDS;
+            case "24h" -> DAY_MILLISECONDS;
+            case "7d" -> 7L * DAY_MILLISECONDS;
+            case "30d" -> 30L * DAY_MILLISECONDS;
+            default -> throw new StatsApiException(400, "range must be one of 1h, 6h, 24h, 7d, or 30d");
+        };
+        Integer requestedPoints = request.optionalInt("points");
+        int targetPoints = Math.max(QUALITY_MINIMUM_POINTS, Math.min(QUALITY_MAXIMUM_POINTS,
+            requestedPoints != null ? requestedPoints : QUALITY_DEFAULT_POINTS));
+        long retentionMilliseconds = Math.max(1,
+            mUserPreferences.getApplicationPreference().getStatsLoggingRetentionDays()) * DAY_MILLISECONDS;
+        long rangeMilliseconds = Math.min(requestedRangeMilliseconds, retentionMilliseconds);
+        long rawBucketMilliseconds = Math.max(1, (rangeMilliseconds + targetPoints - 1) / targetPoints);
+        long bucketMilliseconds = Math.max(QUALITY_BUCKET_MILLISECONDS,
+            ((rawBucketMilliseconds + QUALITY_BUCKET_MILLISECONDS - 1) / QUALITY_BUCKET_MILLISECONDS) *
+                QUALITY_BUCKET_MILLISECONDS);
+        long toMilliseconds = System.currentTimeMillis();
+        long fromMilliseconds = toMilliseconds - rangeMilliseconds;
+        String responseRange = range;
+
+        return read(connection -> {
+            Map<String,Map<String,Object>> sitesByGuid = new LinkedHashMap<>();
+            List<Map<String,Object>> sites = queryRows(connection, """
+                SELECT site.guid, site.channel_name, site.rfss, site.site, site.current_control_hz,
+                    site.last_seen_ms AS site_last_seen_ms, system.wacn, system.system_id
+                FROM p25_site_snapshot site
+                LEFT JOIN p25_system system ON system.system_key = site.system_key
+                WHERE (? IS NULL OR site.guid = ?)
+                ORDER BY lower(coalesce(site.channel_name, site.guid)), site.guid
+                """, guid, guid);
+
+            for(Map<String,Object> site: sites)
+            {
+                site.put("series", new ArrayList<Map<String,Object>>());
+                sitesByGuid.put(site.get("guid").toString(), site);
+            }
+
+            List<Map<String,Object>> latest = queryRows(connection, """
+                SELECT quality.guid, quality.frequency_hz AS quality_frequency_hz,
+                    quality.observed_at_ms AS last_observed_ms, quality.signal_dbfs,
+                    quality.average_signal_dbfs, quality.minimum_signal_dbfs, quality.maximum_signal_dbfs,
+                    quality.decode_health_pct, quality.valid_frames, quality.invalid_frames,
+                    quality.corrected_bits, quality.sync_loss_bits, quality.dropped_bits,
+                    quality.last_valid_decode_ms
+                FROM p25_site_snapshot site
+                JOIN p25_control_channel_quality quality ON quality.guid = site.guid AND
+                    (quality.frequency_hz, quality.bucket_start_ms) = (
+                    SELECT candidate.frequency_hz, candidate.bucket_start_ms
+                    FROM p25_control_channel_quality candidate
+                    WHERE candidate.guid = site.guid
+                    ORDER BY candidate.observed_at_ms DESC, candidate.frequency_hz DESC LIMIT 1
+                )
+                WHERE (? IS NULL OR site.guid = ?)
+                """, guid, guid);
+
+            for(Map<String,Object> quality: latest)
+            {
+                Map<String,Object> site = sitesByGuid.get(quality.get("guid"));
+
+                if(site != null)
+                {
+                    quality.forEach((key, value) -> {
+                        if(!"guid".equals(key))
+                        {
+                            site.put(key, value);
+                        }
+                    });
+                }
+            }
+
+            if(includeHistory)
+            {
+                List<Map<String,Object>> series = queryRows(connection, """
+                    SELECT guid, (observed_at_ms / ?) * ? AS time_ms,
+                        avg(average_signal_dbfs) AS average_signal_dbfs,
+                        min(minimum_signal_dbfs) AS minimum_signal_dbfs,
+                        max(maximum_signal_dbfs) AS maximum_signal_dbfs,
+                        avg(decode_health_pct) AS decode_health_pct,
+                        CASE WHEN min(frequency_hz) = max(frequency_hz) THEN min(frequency_hz) END AS frequency_hz,
+                        count(DISTINCT frequency_hz) AS frequency_count, count(*) AS sample_count,
+                        max(observed_at_ms) AS last_observed_ms
+                    FROM p25_control_channel_quality
+                    WHERE observed_at_ms >= ? AND observed_at_ms <= ? AND (? IS NULL OR guid = ?)
+                    GROUP BY guid, time_ms
+                    ORDER BY guid, time_ms
+                    """, bucketMilliseconds, bucketMilliseconds, fromMilliseconds, toMilliseconds, guid, guid);
+
+                for(Map<String,Object> point: series)
+                {
+                    Map<String,Object> site = sitesByGuid.get(point.get("guid"));
+
+                    if(site != null && site.get("series") instanceof List<?> values)
+                    {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String,Object>> points = (List<Map<String,Object>>)values;
+                        point.remove("guid");
+                        points.add(point);
+                    }
+                }
+            }
+
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("range", responseRange);
+            response.put("from_ms", fromMilliseconds);
+            response.put("to_ms", toMilliseconds);
+            response.put("bucket_ms", bucketMilliseconds);
+            response.put("target_points", targetPoints);
+            response.put("history_included", includeHistory);
+            response.put("sites", new ArrayList<>(sitesByGuid.values()));
+            return response;
         });
     }
 
@@ -569,8 +697,16 @@ class StatsWebDatabase
     Map<String,Object> site(StatsRequest request)
     {
         String guid = request.requiredText("guid");
-        return read(connection -> Map.of("site", first(queryRows(connection,
-            siteSelect() + " WHERE site.guid = ?", guid), "Site not found")));
+        return read(connection -> {
+            Map<String,Object> site = first(queryRows(connection, siteSelect() + " WHERE site.guid = ?", guid),
+                "Site not found");
+            Object mfid = site.get("mfid");
+            if(mfid instanceof Number number)
+            {
+                site.put("mfid_display", mfidDisplay(number.intValue()));
+            }
+            return Map.of("site", site);
+        });
     }
 
     Map<String,Object> siteChannels(StatsRequest request)
@@ -599,6 +735,7 @@ class StatsWebDatabase
                     coalesce(current.uplink_hz, summary.uplink_hz) AS uplink_hz,
                     coalesce(current.tdma, summary.tdma) AS tdma,
                     coalesce(current.timeslots, summary.timeslots) AS timeslots,
+                    current.callsign,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count, tags.tags, tags.control_observations,
                     tags.alternate_control_observations, tags.data_announcement_observations,
@@ -617,6 +754,7 @@ class StatsWebDatabase
             SELECT group_concat(DISTINCT channel_key) AS channel_key,
                 group_concat(DISTINCT descriptor) AS descriptor,
                 downlink_hz, max(uplink_hz) AS uplink_hz, max(tdma) AS tdma, max(timeslots) AS timeslots,
+                max(callsign) AS callsign,
                 max(confirmed_at_ms) AS confirmed_at_ms, min(first_seen_ms) AS first_seen_ms,
                 max(last_seen_ms) AS last_seen_ms, sum(observation_count) AS observation_count,
                 group_concat(DISTINCT tags) AS tags, group_concat(DISTINCT current_tags) AS current_tags,
@@ -888,8 +1026,18 @@ class StatsWebDatabase
         return """
             SELECT site.guid, site.system_key, site.protocol, site.channel_name, site.alias_list_name,
                 site.decoder, system.wacn, system.system_id, site.nac, site.rfss, site.site,
+                site.lra, site.mfid, site.broadcast_clock_ms, site.micro_slots, site.data_service,
+                site.data_access, site.wuid_lease_minutes, site.registration_service, site.tdma,
+                site.voice_service,
                 site.primary_frequency_hz, site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
                 site.observation_count,
+                coalesce(
+                    (SELECT max(channel.callsign) FROM p25_site_channel channel
+                     WHERE channel.guid = site.guid AND channel.downlink_hz = site.current_control_hz),
+                    (SELECT channel.callsign FROM p25_site_channel channel
+                     WHERE channel.guid = site.guid AND channel.callsign IS NOT NULL
+                     ORDER BY channel.confirmed_at_ms DESC LIMIT 1)
+                ) AS callsign,
                 (SELECT COUNT(*) FROM p25_site_channel channel WHERE channel.guid = site.guid) AS channels,
                 (SELECT COUNT(*) FROM p25_site_neighbor neighbor WHERE neighbor.guid = site.guid) AS neighbors,
                 (SELECT COUNT(*) FROM p25_site_frequency_band band WHERE band.guid = site.guid) AS bands,
@@ -897,6 +1045,23 @@ class StatsWebDatabase
             FROM p25_site_snapshot site
             LEFT JOIN p25_system system ON system.system_key = site.system_key
             """;
+    }
+
+    static String mfidDisplay(int value)
+    {
+        int normalized = value & 0xFF;
+        Vendor vendor = Vendor.fromValue(normalized);
+        String hex = String.format("0x%02X", normalized);
+
+        if(vendor == Vendor.VUNK || vendor.name().matches("V\\d+"))
+        {
+            return hex;
+        }
+
+        String description = vendor.getDescription().trim().toLowerCase();
+        String name = description.isEmpty() ? null : Character.toUpperCase(description.charAt(0)) +
+            description.substring(1);
+        return name != null ? name + " (" + hex + ")" : hex;
     }
 
     private List<Map<String,Object>> loggerStatus(Connection connection) throws SQLException

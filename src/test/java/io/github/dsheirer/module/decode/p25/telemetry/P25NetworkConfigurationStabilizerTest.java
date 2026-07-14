@@ -119,6 +119,27 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
+    public void siteStatusUsesLatestBroadcastAndExpires()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot.SiteStatus first = new P25NetworkConfigurationSnapshot.SiteStatus(
+            946_684_860_000L, 85, false, "Request Only", null, true, 0x90, true);
+        P25NetworkConfigurationSnapshot.SiteStatus latest = new P25NetworkConfigurationSnapshot.SiteStatus(
+            946_684_964_000L, 110, true, "Autonomous and by Request", 240, true, 0x90, true);
+
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(),
+            List.of(), List.of(), List.of(), first), 1000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(),
+            List.of(), List.of(), List.of(), latest), 2000L);
+
+        assertEquals(latest, stabilizer.getSnapshot().siteStatus());
+
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(),
+            List.of(), List.of(), List.of()), 602_001L);
+        assertEquals(null, stabilizer.getSnapshot().siteStatus());
+    }
+
+    @Test
     public void neighborIsUpdatedInPlaceWhenFrequencyResolvesLater()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");

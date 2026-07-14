@@ -49,6 +49,10 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.Sec
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SecondaryControlChannelBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SynchronizationBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SystemServiceBroadcast;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.TimeAndDateAnnouncement;
+import io.github.dsheirer.module.decode.p25.reference.Service;
+import io.github.dsheirer.module.decode.p25.reference.SystemServiceClass;
+import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import java.time.Instant;
@@ -102,7 +106,8 @@ public class P25P1NetworkConfigurationMonitor
     private Map<Integer,LCAdjacentSiteStatusBroadcastExplicit> mLCNeighborSitesExplicit = new HashMap<>();
     private Map<Integer,AdjacentStatusBroadcast> mTSBKNeighborSites = new HashMap<>();
 
-    private MotorolaBaseStationId mMotorolaBaseStationId;
+    private Map<String,MotorolaBaseStationId> mMotorolaBaseStationIds = new TreeMap<>();
+    private P25NetworkConfigurationSnapshot.SiteStatus mSiteStatus;
 
     private Modulation mModulation;
     private P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer;
@@ -158,12 +163,25 @@ public class P25P1NetworkConfigurationMonitor
                 if(tsbk instanceof SynchronizationBroadcast synchronizationBroadcast)
                 {
                     mSynchronizationBroadcast = synchronizationBroadcast;
+                    return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
+                        synchronizationBroadcast.getSystemTime(), synchronizationBroadcast.getMicroSlots(), null,
+                        null, null, null, null, null));
+                }
+                break;
+            case OSP_TIME_DATE_ANNOUNCEMENT:
+                if(tsbk instanceof TimeAndDateAnnouncement timeAndDate && timeAndDate.hasValidDate() &&
+                    timeAndDate.hasValidTime())
+                {
+                    return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
+                        timeAndDate.getDateAndTime().toInstant().toEpochMilli(), null, null, null, null, null, null,
+                        null));
                 }
                 break;
             case OSP_SYSTEM_SERVICE_BROADCAST:
                 if(tsbk instanceof SystemServiceBroadcast)
                 {
                     mTSBKSystemServiceBroadcast = (SystemServiceBroadcast)tsbk;
+                    return statusObservation(serviceStatus(mTSBKSystemServiceBroadcast.getAvailableServices()));
                 }
                 break;
             case OSP_RFSS_STATUS_BROADCAST:
@@ -172,7 +190,8 @@ public class P25P1NetworkConfigurationMonitor
                     mTSBKRFSSStatusBroadcast = (RFSSStatusBroadcast)tsbk;
                     return observation(null, getCurrentSiteSnapshot(mTSBKRFSSStatusBroadcast),
                         getChannelSnapshots("primary_control", mTSBKRFSSStatusBroadcast.getChannel()),
-                        Collections.emptyList(), Collections.emptyList());
+                        Collections.emptyList(), Collections.emptyList(),
+                        serviceStatus(mTSBKRFSSStatusBroadcast.getSystemServiceClass()));
                 }
                 break;
             case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST:
@@ -214,13 +233,17 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     mSNDCPDataChannel = (SNDCPDataChannelAnnouncementExplicit)tsbk;
                     return observation(null, null, getChannelSnapshots("fdma_data", mSNDCPDataChannel.getChannel()),
-                        Collections.emptyList(), Collections.emptyList());
+                        Collections.emptyList(), Collections.emptyList(), dataAccessStatus(mSNDCPDataChannel));
                 }
                 break;
             case MOTOROLA_OSP_BASE_STATION_ID:
-                if(tsbk instanceof MotorolaBaseStationId)
+                if(tsbk instanceof MotorolaBaseStationId baseStationId && baseStationId.hasChannel())
                 {
-                    mMotorolaBaseStationId = (MotorolaBaseStationId)tsbk;
+                    mMotorolaBaseStationIds.put(baseStationId.getChannel().toString(), baseStationId);
+                    P25NetworkConfigurationSnapshot.Channel channel = getChannelSnapshot("base_station",
+                        baseStationId.getChannel(), baseStationId.getCWID());
+                    return observation(null, null, channel != null ? List.of(channel) : Collections.emptyList(),
+                        Collections.emptyList(), Collections.emptyList());
                 }
                 break;
             case MOTOROLA_OSP_TDMA_DATA_CHANNEL:
@@ -338,7 +361,8 @@ public class P25P1NetworkConfigurationMonitor
                         mLCRFSSStatusBroadcast = (LCRFSSStatusBroadcast)lcw;
                         return observation(null, getCurrentSiteSnapshot(mLCRFSSStatusBroadcast),
                             getChannelSnapshots("primary_control", mLCRFSSStatusBroadcast.getChannel()),
-                            Collections.emptyList(), Collections.emptyList());
+                            Collections.emptyList(), Collections.emptyList(),
+                            serviceStatus(mLCRFSSStatusBroadcast.getSystemServiceClass()));
                     }
                     break;
                 case RFSS_STATUS_BROADCAST_EXPLICIT:
@@ -347,7 +371,8 @@ public class P25P1NetworkConfigurationMonitor
                         mLCRFSSStatusBroadcastExplicit = (LCRFSSStatusBroadcastExplicit)lcw;
                         return observation(null, getCurrentSiteSnapshot(mLCRFSSStatusBroadcastExplicit),
                             getChannelSnapshots("primary_control", mLCRFSSStatusBroadcastExplicit.getChannel()),
-                            Collections.emptyList(), Collections.emptyList());
+                            Collections.emptyList(), Collections.emptyList(),
+                            serviceStatus(mLCRFSSStatusBroadcastExplicit.getSystemServiceClass()));
                     }
                     break;
                 case SECONDARY_CONTROL_CHANNEL_BROADCAST:
@@ -382,6 +407,7 @@ public class P25P1NetworkConfigurationMonitor
                     if(lcw instanceof LCSystemServiceBroadcast)
                     {
                         mLCSystemServiceBroadcast = (LCSystemServiceBroadcast)lcw;
+                        return statusObservation(serviceStatus(mLCSystemServiceBroadcast.getAvailableServices()));
                     }
                     break;
             }
@@ -400,16 +426,20 @@ public class P25P1NetworkConfigurationMonitor
         mLCNetworkStatusBroadcastExplicit = null;
         mSynchronizationBroadcast = null;
         mTSBKRFSSStatusBroadcast = null;
+        mAMBTCRFSSStatusBroadcast = null;
         mLCRFSSStatusBroadcast = null;
         mLCRFSSStatusBroadcastExplicit = null;
         mSecondaryControlChannels.clear();
         mSNDCPDataChannel = null;
+        mTDMADataChannelMap.clear();
         mTSBKSystemServiceBroadcast = null;
         mLCSystemServiceBroadcast = null;
         mAMBTCNeighborSites = new HashMap<>();
         mLCNeighborSites.clear();
         mLCNeighborSitesExplicit.clear();
         mTSBKNeighborSites.clear();
+        mMotorolaBaseStationIds.clear();
+        mSiteStatus = null;
         mNetworkConfigurationStabilizer.reset();
     }
 
@@ -478,8 +508,19 @@ public class P25P1NetworkConfigurationMonitor
                 .forEach(entry -> addChannelSnapshot(channels, "tdma_data", entry.getKey()));
         }
 
+        for(MotorolaBaseStationId baseStationId: mMotorolaBaseStationIds.values())
+        {
+            P25NetworkConfigurationSnapshot.Channel channel = getChannelSnapshot("base_station",
+                baseStationId.getChannel(), baseStationId.getCWID());
+            if(channel != null)
+            {
+                channels.add(channel);
+            }
+        }
+
         return new P25NetworkConfigurationSnapshot("P25_PHASE_1", network, currentSite, channels,
-            getNeighborSiteSnapshots(), getFrequencyBandSnapshots(), Collections.emptyList(), Collections.emptyList());
+            getNeighborSiteSnapshots(), getFrequencyBandSnapshots(), Collections.emptyList(), Collections.emptyList(),
+            mSiteStatus);
     }
 
     private P25NetworkConfigurationSnapshot observation(P25NetworkConfigurationSnapshot.Network network,
@@ -490,6 +531,35 @@ public class P25P1NetworkConfigurationMonitor
     {
         return new P25NetworkConfigurationSnapshot("P25_PHASE_1", network, currentSite, channels, neighborSites,
             frequencyBands, Collections.emptyList(), Collections.emptyList());
+    }
+
+    private P25NetworkConfigurationSnapshot observation(P25NetworkConfigurationSnapshot.Network network,
+                                                        P25NetworkConfigurationSnapshot.CurrentSite currentSite,
+                                                        List<P25NetworkConfigurationSnapshot.Channel> channels,
+                                                        List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
+                                                        List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
+                                                        P25NetworkConfigurationSnapshot.SiteStatus status)
+    {
+        mSiteStatus = mSiteStatus == null ? status : mSiteStatus.merge(status);
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_1", network, currentSite, channels, neighborSites,
+            frequencyBands, Collections.emptyList(), Collections.emptyList(), mSiteStatus);
+    }
+
+    private P25NetworkConfigurationSnapshot statusObservation(P25NetworkConfigurationSnapshot.SiteStatus status)
+    {
+        return observation(null, null, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
+            status);
+    }
+
+    public P25NetworkConfigurationSnapshot processVendor(Vendor vendor)
+    {
+        if(vendor != null && vendor != Vendor.STANDARD && vendor != Vendor.STANDARD_V1 && vendor != Vendor.VUNK)
+        {
+            return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(null, null, null, null, null,
+                null, vendor.getValue(), null));
+        }
+
+        return null;
     }
 
     private P25NetworkConfigurationSnapshot.Network getNetworkSnapshot()
@@ -687,13 +757,50 @@ public class P25P1NetworkConfigurationMonitor
 
     private P25NetworkConfigurationSnapshot.Channel getChannelSnapshot(String role, IChannelDescriptor channel)
     {
+        return getChannelSnapshot(role, channel, null);
+    }
+
+    private P25NetworkConfigurationSnapshot.Channel getChannelSnapshot(String role, IChannelDescriptor channel,
+                                                                        String callsign)
+    {
         if(!P25FrequencyBandValidator.isResolvedChannel(channel))
         {
             return null;
         }
 
         return new P25NetworkConfigurationSnapshot.Channel(role, channelName(channel), downlink(channel), uplink(channel),
-            channel != null ? channel.isTDMAChannel() : null, channel != null ? channel.getTimeslotCount() : null);
+            channel != null ? channel.isTDMAChannel() : null, channel != null ? channel.getTimeslotCount() : null,
+            callsign != null && !callsign.isBlank() ? callsign.trim() : null);
+    }
+
+    private P25NetworkConfigurationSnapshot.SiteStatus serviceStatus(SystemServiceClass serviceClass)
+    {
+        return serviceClass != null ? new P25NetworkConfigurationSnapshot.SiteStatus(null, null,
+            serviceClass.hasDataService(), null, null, serviceClass.hasRegistrationService(), null,
+            serviceClass.hasVoiceService()) : null;
+    }
+
+    private P25NetworkConfigurationSnapshot.SiteStatus serviceStatus(List<Service> services)
+    {
+        if(services == null)
+        {
+            return null;
+        }
+
+        boolean data = services.contains(Service.GROUP_DATA) || services.contains(Service.INDIVIDUAL_DATA);
+        boolean voice = services.contains(Service.GROUP_VOICE) || services.contains(Service.INDIVIDUAL_VOICE) ||
+            services.contains(Service.PSTN_TO_UNIT_VOICE) || services.contains(Service.UNIT_TO_PSTN_VOICE);
+        return new P25NetworkConfigurationSnapshot.SiteStatus(null, null, data, null, null,
+            services.contains(Service.UNIT_REGISTRATION), null, voice);
+    }
+
+    private P25NetworkConfigurationSnapshot.SiteStatus dataAccessStatus(
+        SNDCPDataChannelAnnouncementExplicit announcement)
+    {
+        String access = announcement.isAutonomousAccess() ?
+            (announcement.isRequestedAccess() ? "Autonomous and by Request" : "Autonomous") :
+            (announcement.isRequestedAccess() ? "Request Only" : null);
+        return new P25NetworkConfigurationSnapshot.SiteStatus(null, null, true, access, null, null, null, null);
     }
 
     private List<P25NetworkConfigurationSnapshot.Channel> getChannelSnapshots(String role, IChannelDescriptor channel)
@@ -745,7 +852,18 @@ public class P25P1NetworkConfigurationMonitor
             return null;
         }
 
-        return observation(null, null, Collections.emptyList(), Collections.emptyList(),
+        List<P25NetworkConfigurationSnapshot.Channel> callsigns = new ArrayList<>();
+        for(MotorolaBaseStationId baseStationId: mMotorolaBaseStationIds.values())
+        {
+            P25NetworkConfigurationSnapshot.Channel channel = getChannelSnapshot("base_station",
+                baseStationId.getChannel(), baseStationId.getCWID());
+            if(channel != null)
+            {
+                callsigns.add(channel);
+            }
+        }
+
+        return observation(null, null, callsigns, Collections.emptyList(),
             List.of(getFrequencyBandSnapshot(frequencyBand)));
     }
 

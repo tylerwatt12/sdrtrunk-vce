@@ -29,6 +29,7 @@ class ChannelActivityTableModelTest
             155_250_000L, null);
         row.setState(State.CALL);
         row.setDecoder("NBFM");
+        row.setCallsign("WPFF205");
         model.refresh(row);
 
         assertEquals("conventional", latest.get().tableId());
@@ -36,6 +37,8 @@ class ChannelActivityTableModelTest
         assertEquals("CALL", latest.get().rows().getFirst().status());
         assertEquals("County Fire", latest.get().rows().getFirst().channelName());
         assertEquals(155_250_000L, latest.get().rows().getFirst().frequencyHz());
+        assertEquals("WPFF205", latest.get().rows().getFirst().callsign());
+        assertEquals("WPFF205", model.getValueAt(0, ChannelActivityTableModel.COLUMN_CALLSIGN));
         assertEquals("Channel", model.getColumnName(ChannelActivityTableModel.COLUMN_LCN));
         assertEquals("County Fire", model.getValueAt(0, ChannelActivityTableModel.COLUMN_LCN));
     }

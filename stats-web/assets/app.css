@@ -451,6 +451,334 @@ body[data-view="live"] .systems-live-tabs {
   stroke-width: 2;
 }
 
+.signal-health {
+  min-width: 0;
+}
+
+.signal-current-panel,
+.site-signal-history {
+  min-width: 0;
+  padding: 10px;
+}
+
+.signal-current-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.signal-health-summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.signal-sort-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.signal-sort {
+  min-height: 30px;
+  padding: 4px 7px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: 3px;
+}
+
+.signal-current-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.signal-current-tile {
+  min-width: 0;
+  padding: 9px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.signal-current-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.signal-current-labels {
+  min-width: 0;
+}
+
+.signal-current-labels > a {
+  display: block;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-current-system {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.signal-state {
+  flex: 0 0 auto;
+}
+
+.signal-state.healthy {
+  color: #126538;
+  background: #dff3e8;
+  border-color: #81b998;
+}
+
+.signal-state.degraded {
+  color: #795000;
+  background: #fff0c9;
+  border-color: #d0a34a;
+}
+
+.signal-state.poor {
+  color: #861d31;
+  background: #f9dce2;
+  border-color: #ca8290;
+}
+
+.signal-state.offline,
+.signal-state.unknown {
+  color: #53606b;
+  background: #e8ecef;
+  border-color: #abb4bc;
+}
+
+.signal-current-power {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+  margin: 8px 0 7px;
+}
+
+.signal-current-power strong {
+  font-size: 21px;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-current-power span {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.signal-current-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-current-details span:first-child {
+  margin-right: auto;
+}
+
+.signal-range-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.site-signal-history-section .section-title {
+  flex-wrap: wrap;
+}
+
+.site-signal-history-section .signal-range-controls {
+  min-width: 0;
+  margin-left: auto;
+}
+
+.signal-range-button {
+  min-height: 28px;
+  padding: 3px 8px;
+  color: #33414e;
+  background: #f5f7f9;
+  border-color: var(--line-dark);
+}
+
+.signal-range-button.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: #07554f;
+}
+
+.signal-range-button:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+.signal-history-overview {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(4, minmax(100px, 1fr));
+  gap: 1px;
+  margin-bottom: 4px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.signal-history-overview.without-identity {
+  grid-template-columns: repeat(4, minmax(100px, 1fr));
+}
+
+.signal-history-identity,
+.signal-history-metric {
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--surface-2);
+}
+
+.signal-history-identity a {
+  display: block;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-history-identity span,
+.signal-history-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.signal-history-metric strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quality-chart-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.quality-chart-panel {
+  min-width: 0;
+  padding: 8px 9px 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.quality-chart-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 2px;
+}
+
+.quality-chart-heading strong {
+  font-size: 13px;
+}
+
+.quality-chart-heading span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.quality-chart {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.quality-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.quality-grid-line {
+  stroke: #d7dde2;
+  stroke-width: 1;
+}
+
+.quality-axis-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.signal-range-path {
+  fill: rgb(11 113 104 / 16%);
+  stroke: none;
+}
+
+.signal-average-path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.decode-quality-band.poor {
+  fill: rgb(174 50 70 / 6%);
+}
+
+.decode-quality-band.degraded {
+  fill: rgb(207 151 35 / 9%);
+}
+
+.decode-quality-band.healthy {
+  fill: rgb(30 133 78 / 8%);
+}
+
+.decode-threshold-line {
+  stroke: rgb(74 85 95 / 38%);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.decode-health-path {
+  fill: none;
+  stroke: #3d64b1;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.quality-hover-target {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+}
+
+.quality-chart-empty {
+  position: absolute;
+  inset: 42% 0 auto;
+  color: var(--muted);
+  text-align: center;
+}
+
+.signal-disabled,
+.signal-health-error {
+  grid-column: 1 / -1;
+}
+
 .live-connection {
   min-height: 44px;
   display: flex;
@@ -1003,6 +1331,22 @@ th.center {
     grid-template-columns: 1fr 1fr;
   }
 
+  .signal-current-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .signal-history-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .signal-history-overview.without-identity {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .signal-history-identity {
+    grid-column: 1 / -1;
+  }
+
   .action-chart {
     grid-template-columns: 1fr;
   }
@@ -1027,6 +1371,17 @@ th.center {
 
   .summary-band,
   .split {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-current-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .signal-current-grid,
+  .signal-history-overview,
+  .signal-history-overview.without-identity {
     grid-template-columns: 1fr;
   }
 

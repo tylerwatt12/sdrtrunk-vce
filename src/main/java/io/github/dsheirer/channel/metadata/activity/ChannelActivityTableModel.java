@@ -42,16 +42,17 @@ public class ChannelActivityTableModel extends AbstractTableModel
     public static final int COLUMN_TAGS = 1;
     public static final int COLUMN_LCN = 2;
     public static final int COLUMN_FREQUENCY = 3;
-    public static final int COLUMN_SIGNAL = 4;
-    public static final int COLUMN_DECODE_HEALTH = 5;
-    public static final int COLUMN_SOURCE_ALIAS = 6;
-    public static final int COLUMN_SOURCE = 7;
-    public static final int COLUMN_TARGET_ALIAS = 8;
-    public static final int COLUMN_TARGET = 9;
-    public static final int COLUMN_DECODER = 10;
+    public static final int COLUMN_CALLSIGN = 4;
+    public static final int COLUMN_SIGNAL = 5;
+    public static final int COLUMN_DECODE_HEALTH = 6;
+    public static final int COLUMN_SOURCE_ALIAS = 7;
+    public static final int COLUMN_SOURCE = 8;
+    public static final int COLUMN_TARGET_ALIAS = 9;
+    public static final int COLUMN_TARGET = 10;
+    public static final int COLUMN_DECODER = 11;
 
     private static final String[] COLUMNS = {
-        "Status", "Tags", "LCN", "Frequency", "Signal", "Decode", "Source Alias", "Source", "Target Alias",
+        "Status", "Tags", "LCN", "Frequency", "Callsign", "Signal", "Decode", "Source Alias", "Source", "Target Alias",
         "Target", "Decoder"
     };
     private static final Comparator<ChannelActivityRow> ROW_SORT =
@@ -407,6 +408,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
             case COLUMN_TAGS -> row.getTagsDisplay();
             case COLUMN_LCN -> mOwnerChannel == null ? row.getChannelName() : row.getLcn();
             case COLUMN_FREQUENCY -> row.getFrequency();
+            case COLUMN_CALLSIGN -> row.getCallsign();
             case COLUMN_SIGNAL -> row.getSignalDbfs();
             case COLUMN_DECODE_HEALTH -> row.getDecodeHealthPercent();
             case COLUMN_SOURCE_ALIAS -> row.getSourceAliases();

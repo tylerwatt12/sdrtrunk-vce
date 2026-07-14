@@ -175,6 +175,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.Uni
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitRegistrationResponse;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitToUnitVoiceChannelGrant;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.UnitToUnitVoiceChannelGrantUpdate;
+import io.github.dsheirer.module.decode.p25.reference.Direction;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.Response;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
@@ -1274,6 +1275,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
         if(message.isValid() && message instanceof TSBKMessage tsbk)
         {
+            if(mChannel.isStandardChannel() && tsbk.getDirection() == Direction.OUTBOUND)
+            {
+                observeNetworkConfiguration(mNetworkConfigurationMonitor.processVendor(tsbk.getVendor()),
+                    tsbk.getTimestamp());
+            }
+
             switch(tsbk.getOpcode())
             {
                 //Channel Grant messages
