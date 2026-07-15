@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
 import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterSet;
@@ -80,6 +81,7 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
     private transient HistoryManagementPanel<IDecodeEvent> mHistoryManagementPanel;
     private transient long mSelectedFrequency;
     private transient Integer mSelectedTimeslot;
+    private transient boolean mSiteEventSelection;
 
 
     /**
@@ -154,12 +156,14 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         final boolean clearRequested = context == null || context.clearRequested();
         final long selectedFrequency = clearRequested ? 0 : context.frequency();
         final Integer selectedTimeslot = clearRequested ? null : context.timeslot();
+        final boolean siteEventSelection = isSiteEventSelection(context);
         final boolean selectionChanged = selectionChanged(selectedFrequency, selectedTimeslot);
 
         EventQueue.invokeLater(() -> {
             detachEventHistory();
             mSelectedFrequency = selectedFrequency;
             mSelectedTimeslot = selectedTimeslot;
+            mSiteEventSelection = siteEventSelection;
 
             if(clearRequested)
             {
@@ -226,13 +230,31 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
 
     private boolean matchesSelectedFrequency(IDecodeEvent event)
     {
-        if(mSelectedFrequency <= 0)
+        return matchesSelectedFrequency(event, mSelectedFrequency, mSiteEventSelection);
+    }
+
+    /**
+     * Control rows represent the trunked site in the Events view.  P25 channel-grant events are produced by the
+     * control processing chain but carry the granted traffic frequency, so exact-frequency filtering would otherwise
+     * hide every call when the control row is selected.
+     */
+    static boolean isSiteEventSelection(SelectedFrequencyContext context)
+    {
+        ChannelActivityRow.Role role = context != null ? context.rowType() : null;
+        return role == ChannelActivityRow.Role.CONFIGURED_CONTROL ||
+            role == ChannelActivityRow.Role.CURRENT_CONTROL ||
+            role == ChannelActivityRow.Role.ALTERNATE_CONTROL;
+    }
+
+    static boolean matchesSelectedFrequency(IDecodeEvent event, long selectedFrequency, boolean siteEventSelection)
+    {
+        if(siteEventSelection || selectedFrequency <= 0)
         {
             return true;
         }
 
         IChannelDescriptor channelDescriptor = event != null ? event.getChannelDescriptor() : null;
-        return channelDescriptor != null && channelDescriptor.getDownlinkFrequency() == mSelectedFrequency;
+        return channelDescriptor != null && channelDescriptor.getDownlinkFrequency() == selectedFrequency;
     }
 
     /**
