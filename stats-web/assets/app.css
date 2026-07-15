@@ -761,10 +761,48 @@ body[data-view="live"] .systems-live-tabs {
   stroke-linejoin: round;
 }
 
-.quality-hover-target {
+.quality-hover-surface {
   fill: transparent;
-  stroke: transparent;
-  pointer-events: all;
+  cursor: crosshair;
+}
+
+.quality-hover-guide {
+  stroke: rgb(42 53 62 / 52%);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.quality-hover-point {
+  fill: var(--surface-2);
+  stroke: var(--accent);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.decode-chart .quality-hover-point {
+  stroke: #3d64b1;
+}
+
+.quality-hover-stats {
+  position: absolute;
+  z-index: 2;
+  max-width: min(240px, calc(100% - 8px));
+  padding: 7px 9px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid rgb(42 53 62 / 28%);
+  border-radius: 3px;
+  box-shadow: 0 3px 12px rgb(18 27 34 / 18%);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  white-space: pre-line;
+  pointer-events: none;
+}
+
+.quality-hover-stats[hidden] {
+  display: none;
 }
 
 .quality-chart-empty {
