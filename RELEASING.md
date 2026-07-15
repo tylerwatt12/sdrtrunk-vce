@@ -15,6 +15,7 @@ The examples below use `0.6.2-alpha-2`. Replace it with the version being publis
 git switch main
 git status --short --branch
 git pull --ff-only origin main
+git config core.hooksPath .githooks
 ```
 
 - [ ] Set shell variables for the release:
@@ -49,10 +50,10 @@ java -version
 ./gradlew properties | sed -n '/^version:/p'
 ```
 
-- [ ] Run the clean build and release-package safety check:
+- [ ] Run the clean build and its release-package safety checks:
 
 ```bash
-./gradlew clean build verifyNoBundledVoiceoptional processing
+./gradlew clean build
 ```
 
 - [ ] Stop if any test, build, or safety check fails. Fix the problem and restart the checklist from the preparation

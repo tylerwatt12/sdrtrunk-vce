@@ -19,9 +19,7 @@ CPU was lower for VCE in every replicate. VCE's highest run was 83.40% of one co
 
 ## Important configuration caveat
 
-The VCE profile loaded the optional `sdrtrunk-vce` voice-optional processing module in all six VCE runs. Mainline does not support that module, so this is an as-configured comparison rather than a perfectly feature-matched comparison. A clean rerun with the optional module disabled was prepared but not performed at the user's direction.
-
-The module is expected to add startup and optional protected-audio work, which would tend to bias the comparison against VCE. Because it can also alter downstream audio behavior, that direction cannot be guaranteed experimentally. It is not scientifically valid to assign a numerical cost to the module or claim the same exact effect size for a module-free comparison without another test. This caveat should accompany any published result.
+The VCE and mainline runtime profiles were not perfectly feature-matched, so this is an as-configured comparison. It is not scientifically valid to assign a numerical cost to any one optional component or claim the same exact effect size for a feature-matched comparison without another test. This caveat should accompany any published result.
 
 ## Builds
 
@@ -73,7 +71,7 @@ The P25 Phase 1 CQPSK/LSM demodulation loop itself is effectively the same in th
 ## Limitations
 
 - This was a live-RF crossover, not deterministic IQ replay. The balanced block design controls gradual drift, but call mix and traffic-channel activity were not identical second-for-second.
-- The optional VCE optional processing module was not feature-matched, as described above.
+- The VCE and mainline runtime profiles were not feature-matched, as described above.
 - Six independent runs per build are enough for the large CPU/GC effects seen here, but are modest for memory effects.
 - Working set is controlled by Windows memory trimming and should not be presented as heap usage. Private committed bytes are more stable, while GC behavior is the strongest memory-allocation evidence.
 - No JFR or native sampling profiler was enabled, so the study supports end-to-end efficiency claims, not per-method attribution.
