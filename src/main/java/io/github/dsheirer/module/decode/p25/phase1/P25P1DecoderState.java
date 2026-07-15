@@ -33,6 +33,8 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
@@ -192,7 +194,8 @@ import org.slf4j.LoggerFactory;
  * Decoder state for an APCO25 channel.  Maintains the call/data/idle state of the channel and produces events by
  * monitoring the decoded message stream.
  */
-public class P25P1DecoderState extends DecoderState implements IChannelEventListener, P25NetworkConfigurationSnapshotProvider
+public class P25P1DecoderState extends DecoderState implements IChannelEventListener,
+    P25NetworkConfigurationSnapshotProvider, TalkerAliasManagerProvider
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderState.class);
     private static final String CALL_ALERT_LABEL = "CALL ALERT";
@@ -368,8 +371,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
         else if(iMessage instanceof MotorolaTalkerAliasComplete tac && tac.isValid())
         {
-            mTrafficChannelManager.getTalkerAliasManager().update(tac.getRadio(), tac.getAlias());
-            mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), tac.getAlias(), tac.getTimestamp());
+            mTrafficChannelManager.processP1TalkerAlias(getCurrentFrequency(), tac.getRadio(), tac.getAlias(),
+                getIdentifierCollection(), tac.getTimestamp());
         }
         else if(iMessage instanceof LCHarrisTalkerAliasComplete talkerAlias)
         {
@@ -404,13 +407,15 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processTalkerAlias(LCHarrisTalkerAliasComplete talkerAlias)
     {
         Identifier identifier = getIdentifierCollection().getFromIdentifier();
+        RadioIdentifier radio = identifier instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
+        mTrafficChannelManager.processP1TalkerAlias(getCurrentFrequency(), radio, talkerAlias.getTalkerAlias(),
+            getIdentifierCollection(), talkerAlias.getTimestamp());
+    }
 
-        if(identifier instanceof RadioIdentifier radioIdentifier)
-        {
-            mTrafficChannelManager.getTalkerAliasManager().update(radioIdentifier, talkerAlias.getTalkerAlias());
-        }
-
-        mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), talkerAlias.getTalkerAlias(), talkerAlias.getTimestamp());
+    @Override
+    public TalkerAliasManager getTalkerAliasManager()
+    {
+        return mTrafficChannelManager.getTalkerAliasManager();
     }
 
     /**

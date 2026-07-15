@@ -33,6 +33,7 @@ import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
@@ -116,6 +117,29 @@ class P25ActivityLogMapperTest
         assertEquals(P25ActivityLogRecords.Action.GRANT, grant.action());
         assertFalse(grant.countedCall());
         assertNull(grant.dedupeKey());
+    }
+
+    @Test
+    void mapsLateTalkerAliasObservationWithoutCallEvent()
+    {
+        Channel channel = channel(DecoderType.P25_PHASE1);
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25Wacn.create(0xBEE00));
+        identifiers.update(APCO25System.create(0x348));
+        P25TalkerAliasEvent event = new P25TalkerAliasEvent(channel,
+            APCO25RadioIdentifier.createFrom(1811524), P25TalkerAliasIdentifier.create(" CAR 201 "),
+            identifiers, 2000L);
+
+        P25ActivityLogRecords.TalkerAliasUpdate update = new P25ActivityLogMapper().map(event);
+
+        assertNotNull(update);
+        assertEquals(2000L, update.observedAtEpochMilliseconds());
+        assertEquals("GUID:" + GUID, update.contextKey());
+        assertEquals(GUID, update.guid());
+        assertEquals(0xBEE00, update.wacn());
+        assertEquals(0x348, update.systemId());
+        assertEquals(1811524, update.radioId());
+        assertEquals("CAR 201", update.talkerAlias());
     }
 
     @Test

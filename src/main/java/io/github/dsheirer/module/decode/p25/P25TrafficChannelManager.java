@@ -35,11 +35,13 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.scramble.ScrambleParameterIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.IMessage;
@@ -173,6 +175,59 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public TalkerAliasManager getTalkerAliasManager()
     {
         return mTalkerAliasManager;
+    }
+
+    /**
+     * Records a completed Phase 1 talker alias independently of the current call tracker, then applies it to the
+     * tracker when the call is still active.
+     */
+    public void processP1TalkerAlias(long frequency, RadioIdentifier radio, TalkerAliasIdentifier alias,
+                                     IdentifierCollection identifiers, long timestamp)
+    {
+        if(!isUsableTalkerAlias(alias))
+        {
+            return;
+        }
+
+        observeTalkerAlias(radio, alias, identifiers, timestamp);
+        processP1TrafficCurrentUser(frequency, alias, timestamp);
+    }
+
+    /**
+     * Records a completed Phase 2 talker alias independently of the current call tracker, then applies it to the
+     * tracker when the call is still active.
+     */
+    public void processP2TalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+                                     TalkerAliasIdentifier alias, IdentifierCollection identifiers, long timestamp)
+    {
+        if(!isUsableTalkerAlias(alias))
+        {
+            return;
+        }
+
+        observeTalkerAlias(radio, alias, identifiers, timestamp);
+        processP2TrafficCurrentUser(frequency, timeslot, alias, timestamp);
+    }
+
+    private void observeTalkerAlias(RadioIdentifier radio, TalkerAliasIdentifier alias,
+                                    IdentifierCollection identifiers, long timestamp)
+    {
+        if(radio == null || radio.getRole() != Role.FROM)
+        {
+            return;
+        }
+
+        mTalkerAliasManager.update(radio, alias);
+        IdentifierCollection context = identifiers != null ?
+            new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
+        context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
+        MyEventBus.getGlobalEventBus().post(new P25TalkerAliasEvent(mParentChannel, radio, alias, context,
+            timestamp > 0 ? timestamp : System.currentTimeMillis()));
+    }
+
+    private static boolean isUsableTalkerAlias(TalkerAliasIdentifier alias)
+    {
+        return alias != null && alias.getValue() != null && !alias.getValue().toString().isBlank();
     }
 
     /**

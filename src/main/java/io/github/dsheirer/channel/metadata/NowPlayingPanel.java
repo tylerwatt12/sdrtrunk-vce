@@ -20,6 +20,7 @@ package io.github.dsheirer.channel.metadata;
 
 import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
+import io.github.dsheirer.channel.details.ChannelDetailPanel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
@@ -55,6 +56,7 @@ public class NowPlayingPanel extends JPanel
     private final SettingsManager mSettingsManager;
     private final ChannelActivityPanel mChannelActivityPanel;
     private final UserPreferences mUserPreferences;
+    private ChannelDetailPanel mChannelDetailPanel;
     private DecodeEventPanel mDecodeEventPanel;
     private MessageActivityPanel mMessageActivityPanel;
     private ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
@@ -125,6 +127,7 @@ public class NowPlayingPanel extends JPanel
         {
             mTabbedPane = new JideTabbedPane();
             ensureLowerPanels();
+            mTabbedPane.addTab("Details", mChannelDetailPanel);
             mTabbedPane.addTab("Events", mDecodeEventPanel);
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
@@ -234,8 +237,8 @@ public class NowPlayingPanel extends JPanel
             mLowerTabsToggleButton.setIcon(IconFontSwing.buildIcon(mRequestedLowerTabsVisible ?
                 FontAwesome.CHEVRON_DOWN : FontAwesome.CHEVRON_UP, 12));
             mLowerTabsToggleButton.setToolTipText(mRequestedLowerTabsVisible ?
-                "Collapse Events, Messages, and Channel tabs" :
-                "Expand Events, Messages, and Channel tabs");
+                "Collapse Details, Events, Messages, and Channel tabs" :
+                "Expand Details, Events, Messages, and Channel tabs");
         }
     }
 
@@ -244,6 +247,7 @@ public class NowPlayingPanel extends JPanel
         if(!mLowerTabsAttached)
         {
             ensureLowerPanels();
+            mChannelActivityPanel.addSelectedFrequencyListener(mChannelDetailPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
@@ -260,10 +264,12 @@ public class NowPlayingPanel extends JPanel
         if(mLowerTabsAttached)
         {
             saveSplitPaneDividerLocation();
+            mChannelActivityPanel.removeSelectedFrequencyListener(mChannelDetailPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
 
+            mChannelDetailPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mDecodeEventPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mMessageActivityPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mChannelSpectrumSquelchPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
@@ -278,6 +284,11 @@ public class NowPlayingPanel extends JPanel
 
     private void ensureLowerPanels()
     {
+        if(mChannelDetailPanel == null)
+        {
+            mChannelDetailPanel = new ChannelDetailPanel(mConfigurationManager.getChannelProcessingManager());
+        }
+
         if(mDecodeEventPanel == null)
         {
             mDecodeEventPanel = new DecodeEventPanel(mIconModel, mUserPreferences, mConfigurationManager.getAliasModel());
@@ -312,6 +323,7 @@ public class NowPlayingPanel extends JPanel
         }
 
         mTabbedPane = null;
+        mChannelDetailPanel = null;
         mDecodeEventPanel = null;
         mMessageActivityPanel = null;
         mChannelSpectrumSquelchPanel = null;
