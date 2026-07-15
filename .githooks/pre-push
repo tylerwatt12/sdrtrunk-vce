@@ -13,6 +13,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         continue
     fi
 
+    if [[ "$local_ref" == refs/tags/* ]] && [[ "$(git cat-file -t "$local_sha")" == "tag" ]]; then
+        if ! git for-each-ref --format='%(contents)' "$local_ref" | "$checker" --stdin "tag metadata"; then
+            failed=1
+        fi
+    fi
+
     if [[ "$remote_sha" == "$zero" ]]; then
         if ! git rev-list "$local_sha" --not --remotes="$remote_name" | "$checker" --commits; then
             failed=1

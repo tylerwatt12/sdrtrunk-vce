@@ -3,6 +3,8 @@ name: Publication policy
 on:
   push:
   pull_request:
+  release:
+    types: [published, edited, prereleased, released]
 
 permissions:
   contents: read
@@ -38,3 +40,15 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | ./tools/verify-publication-policy.sh --stdin "pull request metadata"
+
+      - name: Check tag metadata
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: git for-each-ref --format='%(contents)' "$GITHUB_REF" | ./tools/verify-publication-policy.sh --stdin "tag metadata"
+
+      - name: Check release metadata
+        if: github.event_name == 'release'
+        env:
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: printf '%s\n%s\n%s\n' "$RELEASE_NAME" "$RELEASE_BODY" "$RELEASE_TAG" | ./tools/verify-publication-policy.sh --stdin "release metadata"

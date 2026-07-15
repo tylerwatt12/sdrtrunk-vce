@@ -149,6 +149,7 @@ git show --stat --oneline HEAD
 
 ```bash
 git push origin main
+printf '%s\n' "$RELEASE_TITLE" | ./tools/verify-publication-policy.sh --stdin "tag metadata"
 git tag -a "$TAG" -m "$RELEASE_TITLE"
 git push origin "$TAG"
 ```
@@ -171,6 +172,7 @@ The preferred command uses the GitHub CLI. Install it and run `gh auth login` fi
 - [ ] Create a draft prerelease and upload the eight prepared assets:
 
 ```bash
+./tools/verify-publication-policy.sh --message-file /tmp/sdrtrunk-vce-release-notes.md
 gh release create "$TAG" \
   build/image/sdrtrunk-vce-*-v"${VERSION}".zip \
   build/image/SHA256SUMS.txt \
@@ -203,6 +205,8 @@ prerelease, paste the release notes, upload the same eight assets, and keep it a
 - [ ] Publish the reviewed draft as a prerelease:
 
 ```bash
+gh release view "$TAG" --repo tylerwatt12/sdrtrunk-vce --json name,body --jq '.name, .body' | \
+  ./tools/verify-publication-policy.sh --stdin "release metadata"
 gh release edit "$TAG" \
   --repo tylerwatt12/sdrtrunk-vce \
   --draft=false \
