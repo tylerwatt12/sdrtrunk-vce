@@ -414,6 +414,7 @@ body[data-view="live"] .systems-live-tabs {
 }
 
 .activity-line-chart {
+  position: relative;
   width: 100%;
   min-height: 270px;
   padding: 8px 10px 2px;
@@ -449,6 +450,78 @@ body[data-view="live"] .systems-live-tabs {
   fill: #fff;
   stroke: var(--accent);
   stroke-width: 2;
+}
+
+.talkgroup-activity-history .summary-band {
+  margin: 0 0 12px;
+}
+
+.talkgroup-activity-chart {
+  min-width: 0;
+}
+
+.activity-series-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 2px 10px 6px;
+}
+
+.activity-series-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.62;
+}
+
+.activity-series-button.active {
+  opacity: 1;
+  color: #fff;
+  background: var(--accent);
+  border-color: #07554f;
+}
+
+.activity-series-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.activity-series-total {
+  color: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  opacity: .88;
+}
+
+.activity-metric-note {
+  color: var(--muted);
+  font-size: 0.86rem;
+  padding: 0 10px 10px;
+}
+
+.entity-info-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
+  align-items: start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.entity-info-column {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.entity-info-layout .section {
+  margin-bottom: 0;
+}
+
+.dashboard-scope-note {
+  padding: 0 11px 9px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .signal-health {
@@ -761,30 +834,26 @@ body[data-view="live"] .systems-live-tabs {
   stroke-linejoin: round;
 }
 
-.quality-hover-surface {
+.chart-hover-surface {
   fill: transparent;
   cursor: crosshair;
 }
 
-.quality-hover-guide {
+.chart-hover-guide {
   stroke: rgb(42 53 62 / 52%);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   pointer-events: none;
 }
 
-.quality-hover-point {
-  fill: var(--surface-2);
+.chart-hover-point {
+  fill: var(--surface);
   stroke: var(--accent);
   stroke-width: 2;
   pointer-events: none;
 }
 
-.decode-chart .quality-hover-point {
-  stroke: #3d64b1;
-}
-
-.quality-hover-stats {
+.chart-tooltip {
   position: absolute;
   z-index: 2;
   max-width: min(240px, calc(100% - 8px));
@@ -801,7 +870,7 @@ body[data-view="live"] .systems-live-tabs {
   pointer-events: none;
 }
 
-.quality-hover-stats[hidden] {
+.chart-tooltip[hidden] {
   display: none;
 }
 
@@ -1035,7 +1104,8 @@ button {
   cursor: pointer;
 }
 
-.button.secondary {
+.button.secondary,
+button.secondary {
   color: #26333e;
   background: #f5f7f9;
   border-color: var(--line-dark);
@@ -1367,6 +1437,10 @@ th.center {
   .summary-band,
   .split {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .entity-info-layout {
+    grid-template-columns: 1fr;
   }
 
   .signal-current-grid {

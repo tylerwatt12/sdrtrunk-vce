@@ -15,6 +15,45 @@ Packaged builds keep the global SDRTrunk database in their portable data directo
 
 ## Available Migrations
 
+### P25 history v18 to v19
+
+Adds compact aggregate `recorded_count` and `streamed_count` columns to `p25_talkgroup_summary`. Existing retained
+hourly output buckets are summed into the new talkgroup totals, including output-only talkgroups. The migration also
+preserves the original v18 output-metric start timestamp in dedicated metadata so later schema versions do not change
+the chart boundary. No table or index is added.
+
+Stop SDRTrunk before running it. The migration checks integrity, checkpoints the WAL, creates a timestamped backup,
+applies and validates the change in one transaction, and runs a post-migration quick check.
+
+```bash
+tools/sqlite-migrations/p25-history/migrate-v18-to-v19-talkgroup-output-summary.sh \
+  /path/to/sdrtrunk.sqlite /path/to/sdrtrunk-app
+```
+
+```powershell
+tools\sqlite-migrations\p25-history\migrate-v18-to-v19-talkgroup-output-summary.ps1 `
+  -DatabasePath C:\path\to\sdrtrunk.sqlite `
+  -AppHome C:\path\to\sdrtrunk-app
+```
+
+### P25 history v17 to v18
+
+Adds hourly `recorded_count` and `streamed_count` columns to the existing site and site/talkgroup activity buckets.
+Stop SDRTrunk before running it. The migration checks integrity, checkpoints the WAL, creates a timestamped backup,
+applies the change in one transaction, and validates the complete v18 schema. Existing history remains intact; the new
+counters begin at zero.
+
+```bash
+tools/sqlite-migrations/p25-history/migrate-v17-to-v18-call-output-metrics.sh \
+  /path/to/sdrtrunk.sqlite /path/to/sdrtrunk-app
+```
+
+```powershell
+tools\sqlite-migrations\p25-history\migrate-v17-to-v18-call-output-metrics.ps1 `
+  -DatabasePath C:\path\to\sdrtrunk.sqlite `
+  -AppHome C:\path\to\sdrtrunk-app
+```
+
 ### P25 history v16 to v17
 
 Adds one latest-value site status record (LRA, MFID, broadcast clock, data/voice/registration service, data access,

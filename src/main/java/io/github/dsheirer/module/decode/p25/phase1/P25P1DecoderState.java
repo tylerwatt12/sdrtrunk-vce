@@ -369,14 +369,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
             }
         }
-        else if(iMessage instanceof MotorolaTalkerAliasComplete tac && tac.isValid())
-        {
-            mTrafficChannelManager.processP1TalkerAlias(getCurrentFrequency(), tac.getRadio(), tac.getAlias(),
-                getIdentifierCollection(), tac.getTimestamp());
-        }
         else if(iMessage instanceof LCHarrisTalkerAliasComplete talkerAlias)
         {
             processTalkerAlias(talkerAlias);
+        }
+        else if(iMessage instanceof MotorolaTalkerAliasComplete talkerAlias && talkerAlias.isValid())
+        {
+            mTrafficChannelManager.processP1TalkerAlias(getCurrentFrequency(), talkerAlias.getRadio(),
+                talkerAlias.getAlias(), getIdentifierCollection(), talkerAlias.getTimestamp());
         }
         else if(iMessage instanceof LinkControlWord lcw)
         {
@@ -990,7 +990,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processTDU(P25P1Message message)
     {
         mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
-        broadcast(new DecoderStateEvent(this, Event.END, State.FADE));
+        broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
     }
 
     /**
@@ -1008,12 +1008,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(lcw != null && lcw.isValid())
             {
                 mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
+                broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
                 processLC(lcw, message.getTimestamp(), true);
-
-                if(!isExplicitTerminationLCW(lcw))
-                {
-                    broadcast(new DecoderStateEvent(this, Event.END, State.FADE));
-                }
             }
         }
     }
@@ -2099,7 +2095,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 //Ignore - there's nothing we can do with failsoft
                 break;
             case MOTOROLA_TALKER_ALIAS_HEADER, MOTOROLA_TALKER_ALIAS_DATA_BLOCK:
-                //Inore - we'll pickup the talker alias from the assembler in the MessageProcessor.
+                //Handled by the assembler in the message processor.
                 break;
 
             //Other events
@@ -2226,15 +2222,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             default:
                 break;
         }
-    }
-
-    /**
-     * Indicates if the TDULC link control word already represents an explicit network-commanded termination that
-     * will broadcast its own END transition.
-     */
-    private boolean isExplicitTerminationLCW(LinkControlWord lcw)
-    {
-        return lcw instanceof LCCallTermination lcct && lcct.isNetworkCommandedTeardown();
     }
 
     @Override

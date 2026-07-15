@@ -406,6 +406,13 @@ class P25ActivityLogWriter implements AutoCloseable
                     P25ActivityLogSchema.insertControlChannelQuality(connection, quality);
                     writtenRecords++;
                 }
+                else if(record instanceof P25ActivityLogRecords.CompletedCallOutput callOutput)
+                {
+                    if(P25ActivityLogSchema.applyCompletedCallOutput(connection, callOutput))
+                    {
+                        writtenRecords++;
+                    }
+                }
             }
 
             long writtenTotal = mWrittenRecords.get() + writtenRecords;

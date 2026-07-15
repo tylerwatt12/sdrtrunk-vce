@@ -230,6 +230,8 @@ code cleanup are summarized by area instead of listing every changed source file
 - Supports configurable detailed-history retention and periodic cleanup.
 - Provides **Run Maintenance**, **Shrink Database**, **Check Database**, and **Reset Lifetime Stats** controls.
 - Uses compact numeric fields and targeted indexes for multi-gigabyte databases and browser drilldown queries.
+- Applies the repository's [SQLite activity database guidelines](docs/sqlite-activity-database-guidelines.md) to keep
+  new statistics query-driven, compact, normalized, bounded, and summary-first.
 
 ### P25 Site And Channel Behavior
 
@@ -358,6 +360,10 @@ publishing a numbered alpha release on GitHub.
 - Expanded P25 site telemetry for BSI callsigns, LRA, MFID, broadcast clock, service availability, data access,
   Working Unit ID lease time, TDMA/u-Slots, and registration status.
 - External P25 history v16-to-v17 migration tooling.
+- Talkgroup activity history charts plus retained Recorded and Sent to Streamer call counters.
+- External P25 history v17-to-v18 call-output metrics migration tooling.
+- Compact talkgroup output totals, directory columns, and a dashboard hourly call-output chart.
+- External P25 history v18-to-v19 talkgroup-output summary migration tooling.
 - Automated publication-policy and release-content safeguards.
 
 #### Changed
@@ -366,6 +372,7 @@ publishing a numbered alpha release on GitHub.
 - Move P25 site-metadata processing and event-log file I/O off decoder threads.
 - Bound native-tuner, IFFT, and asynchronous event-log backlogs for sustained receiver operation.
 - Refresh active signal-health views automatically and use consistent healthy, degraded, and poor thresholds.
+- Use one native SVG time-series renderer and tooltip implementation across website activity charts.
 - Disable App Nap in macOS packages to prevent background receiver throttling.
 
 #### Fixed
@@ -378,9 +385,11 @@ publishing a numbered alpha release on GitHub.
 
 #### Upgrade Notes
 
-- This release uses P25 history schema v17. Stop SDRTrunk and back up the portable database before upgrading.
-- Alpha 2 databases can use the external `migrate-v16-to-v17-site-status` tool.
-- Existing v14 or v15 databases must first migrate to v16 and then migrate to v17.
+- This release uses P25 history schema v19. Stop SDRTrunk and back up the portable database before upgrading.
+- Schema v18 databases can use the external `migrate-v18-to-v19-talkgroup-output-summary` tool.
+- Schema v17 databases must migrate to v18 and then to v19.
+- Alpha 2 databases must migrate from v16 to v17, v18, and then v19.
+- Existing v14 or v15 databases must first migrate to v16 and then follow each migration through v19.
 - Alpha 1 used schema v13; use the external Stats Server reset tool when upgrading from Alpha 1. The reset preserves
   configuration, channels, aliases, streams, preferences, and vault data, but starts Stats Server history fresh.
 

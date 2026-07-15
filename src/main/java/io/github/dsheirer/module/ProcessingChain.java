@@ -73,7 +73,6 @@ import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
 import io.github.dsheirer.source.heartbeat.IHeartbeatProvider;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -315,11 +314,20 @@ public class ProcessingChain implements Listener<ChannelEvent>
     }
 
     /**
-     * List of current modules for this processing chain
+     * Snapshot of the current modules for this processing chain.
      */
     public List<Module> getModules()
     {
-        return Collections.unmodifiableList(mModules);
+        mModuleLock.lock();
+
+        try
+        {
+            return List.copyOf(mModules);
+        }
+        finally
+        {
+            mModuleLock.unlock();
+        }
     }
 
     /**

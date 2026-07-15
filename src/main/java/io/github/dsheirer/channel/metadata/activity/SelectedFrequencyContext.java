@@ -22,7 +22,8 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.ProcessingChain;
 
 /**
- * Exact selected-frequency context broadcast by the Now Playing activity tables.
+ * Selected-frequency context broadcast by the Now Playing activity tables, including the logical site owner used by
+ * the Events view when a control row is selected.
  *
  * @param frequency selected row frequency in hertz
  * @param timeslot selected row timeslot, when applicable
@@ -32,15 +33,18 @@ import io.github.dsheirer.module.ProcessingChain;
  * @param ownerChannel owner channel for the activity table, when applicable
  * @param rowChannel channel associated with the selected row, when applicable
  * @param processingChain exact-frequency active processing chain, when one exists
+ * @param siteProcessingChain site-owner processing chain used by the Events view for control-channel selections
+ * @param siteEventSelection true when the selected row represents a trunked site in the Events view
  * @param clearRequested true when listeners should detach and clear
  */
 public record SelectedFrequencyContext(long frequency, Integer timeslot, ChannelActivityRow.Role rowType,
                                        String decoderHint, String sessionId, Channel ownerChannel, Channel rowChannel,
-                                       ProcessingChain processingChain, boolean clearRequested)
+                                       ProcessingChain processingChain, ProcessingChain siteProcessingChain,
+                                       boolean siteEventSelection, boolean clearRequested)
 {
     public static SelectedFrequencyContext clear()
     {
-        return new SelectedFrequencyContext(0, null, null, null, null, null, null, null, true);
+        return new SelectedFrequencyContext(0, null, null, null, null, null, null, null, null, false, true);
     }
 
     public boolean hasFrequency()
@@ -51,5 +55,14 @@ public record SelectedFrequencyContext(long frequency, Integer timeslot, Channel
     public boolean hasExactProcessingChain()
     {
         return processingChain != null;
+    }
+
+    /**
+     * Events for a trunked site are produced by the site-owner control processing chain even when the selected
+     * control frequency temporarily has no exact processing chain.
+     */
+    public ProcessingChain eventProcessingChain()
+    {
+        return siteEventSelection ? siteProcessingChain : processingChain;
     }
 }

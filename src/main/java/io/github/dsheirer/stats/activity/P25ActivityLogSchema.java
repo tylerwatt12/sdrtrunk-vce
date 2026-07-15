@@ -34,15 +34,16 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v17 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
+ * The v19 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
  * Detailed event rows are optional, while lifetime and hourly summaries are always updated when stats logging is
  * enabled. Table names are split by protocol family so DMR/NXDN can be added without folding unrelated records into
  * the P25 tables.
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 17;
+    private static final int SCHEMA_VERSION = 19;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
+    public static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY = "p25_call_output_metrics_started_at_ms";
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int NULL_TIMESLOT = -1;
@@ -148,6 +149,8 @@ public class P25ActivityLogSchema
         }
 
         SdrTrunkDatabaseStartup.setMetadata(connection, SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION));
+        SdrTrunkDatabaseStartup.setMetadata(connection, CALL_OUTPUT_METRICS_STARTED_AT_KEY,
+            Long.toString(System.currentTimeMillis()));
     }
 
     public static void validate(Connection connection) throws SQLException
@@ -196,6 +199,81 @@ public class P25ActivityLogSchema
         }
 
         return activityId;
+    }
+
+    static boolean applyCompletedCallOutput(Connection connection,
+                                            P25ActivityLogRecords.CompletedCallOutput completedCallOutput)
+        throws SQLException
+    {
+        if(completedCallOutput == null || completedCallOutput.guid() == null ||
+            completedCallOutput.guid().isBlank() || completedCallOutput.talkgroupId() <= 0 ||
+            completedCallOutput.output() == null)
+        {
+            return false;
+        }
+
+        ReceiverContextIdentity context = selectContextIdentityByGuid(connection, completedCallOutput.guid());
+
+        if(context == null || context.kindCode() != CONTEXT_TRUNKED_SITE || context.systemKey() == null)
+        {
+            return false;
+        }
+
+        int recorded = completedCallOutput.output() == P25ActivityLogRecords.CallOutput.RECORDED ? 1 : 0;
+        int streamed = completedCallOutput.output() == P25ActivityLogRecords.CallOutput.STREAMED ? 1 : 0;
+        long callStart = completedCallOutput.callStartEpochMilliseconds();
+        long bucket = bucketStart(callStart);
+
+        try(PreparedStatement summary = connection.prepareStatement("""
+                INSERT INTO p25_talkgroup_summary (
+                    system_key, talkgroup_id, first_seen_ms, last_seen_ms, recorded_count, streamed_count
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(system_key, talkgroup_id) DO UPDATE SET
+                    first_seen_ms = min(p25_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
+                    last_seen_ms = max(p25_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
+                    recorded_count = p25_talkgroup_summary.recorded_count + excluded.recorded_count,
+                    streamed_count = p25_talkgroup_summary.streamed_count + excluded.streamed_count
+                """);
+            PreparedStatement talkgroup = connection.prepareStatement("""
+                INSERT INTO p25_site_talkgroup_bucket (
+                    context_id, talkgroup_id, bucket_start_ms, recorded_count, streamed_count
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(context_id, talkgroup_id, bucket_start_ms) DO UPDATE SET
+                    recorded_count = p25_site_talkgroup_bucket.recorded_count + excluded.recorded_count,
+                    streamed_count = p25_site_talkgroup_bucket.streamed_count + excluded.streamed_count
+                """);
+            PreparedStatement site = connection.prepareStatement("""
+                INSERT INTO p25_site_activity_bucket (
+                    context_id, bucket_start_ms, recorded_count, streamed_count
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(context_id, bucket_start_ms) DO UPDATE SET
+                    recorded_count = p25_site_activity_bucket.recorded_count + excluded.recorded_count,
+                    streamed_count = p25_site_activity_bucket.streamed_count + excluded.streamed_count
+                """))
+        {
+            summary.setInt(1, context.systemKey());
+            summary.setInt(2, completedCallOutput.talkgroupId());
+            summary.setLong(3, callStart);
+            summary.setLong(4, callStart);
+            summary.setInt(5, recorded);
+            summary.setInt(6, streamed);
+            summary.executeUpdate();
+
+            talkgroup.setInt(1, context.contextId());
+            talkgroup.setInt(2, completedCallOutput.talkgroupId());
+            talkgroup.setLong(3, bucket);
+            talkgroup.setInt(4, recorded);
+            talkgroup.setInt(5, streamed);
+            talkgroup.executeUpdate();
+
+            site.setInt(1, context.contextId());
+            site.setLong(2, bucket);
+            site.setInt(3, recorded);
+            site.setInt(4, streamed);
+            site.executeUpdate();
+        }
+
+        return true;
     }
 
     static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
@@ -433,6 +511,8 @@ public class P25ActivityLogSchema
                 last_seen_ms INTEGER NOT NULL,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
+                recorded_count INTEGER NOT NULL DEFAULT 0,
+                streamed_count INTEGER NOT NULL DEFAULT 0,
                 last_source_radio_id INTEGER,
                 last_encryption_algorithm_id INTEGER,
                 last_encryption_key_id INTEGER,
@@ -502,6 +582,8 @@ public class P25ActivityLogSchema
                 bucket_start_ms INTEGER NOT NULL,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
+                recorded_count INTEGER NOT NULL DEFAULT 0,
+                streamed_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(context_id, talkgroup_id, bucket_start_ms)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
@@ -511,6 +593,8 @@ public class P25ActivityLogSchema
                 bucket_start_ms INTEGER NOT NULL,
                 %s,
                 encrypted_count INTEGER NOT NULL DEFAULT 0,
+                recorded_count INTEGER NOT NULL DEFAULT 0,
+                streamed_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(context_id, bucket_start_ms)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
@@ -807,7 +891,8 @@ public class P25ActivityLogSchema
             "source_radio_id", "target_id", "target_kind_code", "frequency_hz", "lcn_band", "lcn_number",
             "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id"),
         tableWithActions("p25_talkgroup_summary", "system_key", "talkgroup_id", "target_kind_code",
-            "first_seen_ms", "last_seen_ms", "encrypted_count", "last_source_radio_id",
+            "first_seen_ms", "last_seen_ms", "encrypted_count", "recorded_count", "streamed_count",
+            "last_source_radio_id",
             "last_encryption_algorithm_id", "last_encryption_key_id"),
         tableWithActions("p25_radio_summary", "system_key", "radio_id", "first_seen_ms", "last_seen_ms",
             "encrypted_count", "last_talkgroup_id", "last_talker_alias", "last_talker_alias_seen_ms",
@@ -819,8 +904,9 @@ public class P25ActivityLogSchema
             "lcn_number", "first_seen_ms", "last_seen_ms", "encrypted_count", "last_source_radio_id",
             "last_target_id", "last_encryption_algorithm_id", "last_encryption_key_id"),
         tableWithActions("p25_site_talkgroup_bucket", "context_id", "talkgroup_id", "bucket_start_ms",
-            "encrypted_count"),
-        tableWithActions("p25_site_activity_bucket", "context_id", "bucket_start_ms", "encrypted_count"),
+            "encrypted_count", "recorded_count", "streamed_count"),
+        tableWithActions("p25_site_activity_bucket", "context_id", "bucket_start_ms", "encrypted_count",
+            "recorded_count", "streamed_count"),
         tableWithActions("conventional_activity_summary", "context_id", "frequency_hz", "timeslot",
             "first_seen_ms", "last_seen_ms", "last_event_type_code"),
         tableWithActions("conventional_activity_bucket", "context_id", "frequency_hz", "timeslot",
@@ -2117,6 +2203,28 @@ public class P25ActivityLogSchema
         throw new SQLException("Missing receiver_context row for context [" + contextKey + "]");
     }
 
+    private static ReceiverContextIdentity selectContextIdentityByGuid(Connection connection, String guid)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT id, system_key, kind_code FROM receiver_context WHERE guid = ?"))
+        {
+            statement.setString(1, guid);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                if(resultSet.next())
+                {
+                    int systemKey = resultSet.getInt("system_key");
+                    return new ReceiverContextIdentity(resultSet.getInt("id"),
+                        resultSet.wasNull() ? null : systemKey, resultSet.getInt("kind_code"));
+                }
+
+                return null;
+            }
+        }
+    }
+
     private static int deleteByTime(Connection connection, String table, String column, long cutoffEpochMilliseconds)
         throws SQLException
     {
@@ -2404,6 +2512,10 @@ public class P25ActivityLogSchema
         }
 
         return merged;
+    }
+
+    private record ReceiverContextIdentity(int contextId, Integer systemKey, int kindCode)
+    {
     }
 
     private record SiteChannelEvidence(String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots,

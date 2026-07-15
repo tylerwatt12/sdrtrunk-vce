@@ -161,6 +161,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.systemTalkerAliases(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/talkgroup", exchange -> handleJson(exchange,
                 () -> mDatabase.talkgroup(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/talkgroup/activity", exchange -> handleJson(exchange,
+                () -> mDatabase.talkgroupActivity(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/radio", exchange -> handleJson(exchange,
                 () -> mDatabase.radio(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/affiliations", exchange -> handleJson(exchange,
@@ -171,6 +173,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.site(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/channels", exchange -> handleJson(exchange,
                 () -> mDatabase.siteChannels(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/site/talkgroups", exchange -> handleJson(exchange,
+                () -> mDatabase.siteTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/quality", exchange -> handleJson(exchange,
                 () -> mDatabase.siteQuality(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/bands", exchange -> handleJson(exchange,

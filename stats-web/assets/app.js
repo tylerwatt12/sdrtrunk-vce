@@ -7,8 +7,42 @@ const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const SIGNAL_RANGES = Object.freeze([
   ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
+]);
+const ACTIVITY_RANGES = Object.freeze([
+  ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
+]);
+const CALL_ACTIVITY_SERIES = Object.freeze([
+  { field: 'call_count', label: 'Tracked Calls', color: '#0b7168', visible: true },
+  { field: 'recorded_count', label: 'Recorded', color: '#2f6da5', visible: true },
+  { field: 'streamed_count', label: 'Sent to Streamer', color: '#cc7a00', visible: true }
+]);
+const TALKGROUP_ACTIVITY_SERIES = Object.freeze([
+  ...CALL_ACTIVITY_SERIES,
+  { field: 'encrypted_count', label: 'Encrypted', color: '#9d174d' },
+  { field: 'emergency_count', label: 'Emergency', color: '#b42318' },
+  { field: 'data_count', label: 'Data', color: '#6b4fa3' },
+  { field: 'join_count', label: 'Join', color: '#3c7a3c' },
+  { field: 'register_count', label: 'Register', color: '#0085a1' },
+  { field: 'denial_count', label: 'Denial', color: '#b33b5e' },
+  { field: 'busy_count', label: 'Busy', color: '#a65a3a' },
+  { field: 'queued_count', label: 'Queued', color: '#7c6b2f' },
+  { field: 'continue_count', label: 'Continue', color: '#526778' },
+  { field: 'active_count', label: 'Active', color: '#4d7f7b' },
+  { field: 'acknowledge_count', label: 'Acknowledge', color: '#865d9c' },
+  { field: 'check_count', label: 'Check', color: '#8b5d2e' },
+  { field: 'check_ack_count', label: 'Check Ack', color: '#556b2f' },
+  { field: 'gps_count', label: 'GPS', color: '#00758a' },
+  { field: 'logout_count', label: 'Logout', color: '#806000' },
+  { field: 'page_count', label: 'Page', color: '#754668' },
+  { field: 'patch_count', label: 'Patch', color: '#476a30' },
+  { field: 'patch_cancel_count', label: 'Patch Cancel', color: '#9a5b13' },
+  { field: 'patch_create_count', label: 'Patch Create', color: '#5b5f97' },
+  { field: 'request_count', label: 'Request', color: '#2f728f' },
+  { field: 'status_count', label: 'Status', color: '#6b6257' },
+  { field: 'unknown_count', label: 'Unknown', color: '#737c86' }
 ]);
 const CHANNEL_TAG_DISPLAY = Object.freeze({
   CONVENTIONAL: { abbreviation: 'CONV', description: 'Conventional channel' },
@@ -40,6 +74,7 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'name': 175,
   'radio': 82,
   'radio-alias': 165,
+  'recorded': 78,
   'rfss': 66,
   'signal': 82,
   'decode-health': 72,
@@ -48,6 +83,7 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'source-alias': 165,
   'state': 82,
   'status': 116,
+  'streamed': 118,
   'system': 106,
   'talker-alias': 160,
   'talkgroup-id': 76,
@@ -79,6 +115,98 @@ function node(tag, className, textValue) {
   if (className) element.className = className;
   if (textValue !== undefined && textValue !== null) element.textContent = String(textValue);
   return element;
+}
+
+function svgNode(tag, attributes = {}, textValue) {
+  const element = document.createElementNS(SVG_NAMESPACE, tag);
+  Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+  if (textValue !== undefined) element.textContent = String(textValue);
+  return element;
+}
+
+function installTimeChartHover(wrapper, svg, options) {
+  const { width, height, margin, from, to, points, timestamp, markers, tooltipText } = options;
+  if (!points.length) return;
+
+  wrapper.querySelector(':scope > .chart-tooltip')?.remove();
+  const tooltip = node('div', 'chart-tooltip');
+  tooltip.hidden = true;
+  tooltip.setAttribute('role', 'tooltip');
+  const guide = svgNode('line', {
+    y1: margin.top,
+    y2: height - margin.bottom,
+    class: 'chart-hover-guide',
+    visibility: 'hidden'
+  });
+  const markerGroup = svgNode('g', { class: 'chart-hover-markers', visibility: 'hidden' });
+  const plotWidth = width - margin.left - margin.right;
+  const range = Math.max(1, to - from);
+
+  const hide = () => {
+    tooltip.hidden = true;
+    guide.setAttribute('visibility', 'hidden');
+    markerGroup.setAttribute('visibility', 'hidden');
+  };
+
+  const show = (event) => {
+    const bounds = svg.getBoundingClientRect();
+    const scale = Math.min(bounds.width / width, bounds.height / height);
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const renderedWidth = width * scale;
+    const renderedHeight = height * scale;
+    const renderedLeft = bounds.left + (bounds.width - renderedWidth) / 2;
+    const renderedTop = bounds.top + (bounds.height - renderedHeight) / 2;
+    const chartX = (event.clientX - renderedLeft) / scale;
+    const hoveredTimestamp = from + Math.max(0, Math.min(1,
+      (chartX - margin.left) / plotWidth)) * range;
+    const point = points.reduce((nearest, candidate) =>
+      Math.abs(timestamp(candidate) - hoveredTimestamp) < Math.abs(timestamp(nearest) - hoveredTimestamp) ?
+        candidate : nearest);
+    const visibleMarkers = markers(point).filter((marker) =>
+      Number.isFinite(marker.x) && Number.isFinite(marker.y));
+    if (!visibleMarkers.length) return;
+
+    const pointX = visibleMarkers[0].x;
+    const pointY = Math.min(...visibleMarkers.map((marker) => marker.y));
+    guide.setAttribute('x1', pointX);
+    guide.setAttribute('x2', pointX);
+    guide.removeAttribute('visibility');
+    markerGroup.replaceChildren(...visibleMarkers.map((marker) => {
+      const circle = svgNode('circle', { cx: marker.x, cy: marker.y, r: marker.radius || 4,
+        class: 'chart-hover-point' });
+      if (marker.color) circle.style.stroke = marker.color;
+      return circle;
+    }));
+    markerGroup.removeAttribute('visibility');
+
+    const text = tooltipText(point);
+    tooltip.textContent = Array.isArray(text) ? text.join('\n') : String(text);
+    tooltip.hidden = false;
+    const wrapperBounds = wrapper.getBoundingClientRect();
+    const leftAtPoint = renderedLeft + pointX * scale - wrapperBounds.left + wrapper.scrollLeft;
+    const topAtPoint = renderedTop + pointY * scale - wrapperBounds.top + wrapper.scrollTop;
+    const gap = 10;
+    let left = leftAtPoint + gap;
+    if (left + tooltip.offsetWidth > wrapper.clientWidth - 4) {
+      left = leftAtPoint - tooltip.offsetWidth - gap;
+    }
+    let top = topAtPoint - tooltip.offsetHeight - gap;
+    if (top < 4) top = topAtPoint + gap;
+    tooltip.style.left = `${Math.max(4, left)}px`;
+    tooltip.style.top = `${Math.max(4, top)}px`;
+  };
+
+  const surface = svgNode('rect', {
+    x: margin.left,
+    y: margin.top,
+    width: plotWidth,
+    height: height - margin.top - margin.bottom,
+    class: 'chart-hover-surface'
+  });
+  surface.addEventListener('pointermove', show);
+  surface.addEventListener('pointerleave', hide);
+  svg.append(guide, markerGroup, surface);
+  wrapper.append(tooltip);
 }
 
 function readCookie(name) {
@@ -121,6 +249,21 @@ function hex(value, width = 0) {
 function hexDecimal(value, width = 0) {
   if (value === null || value === undefined || value === '') return '';
   return `${hex(value, width)} (${Number(value)})`;
+}
+
+const P25_ENCRYPTION_ALGORITHM_NAMES = Object.freeze({
+  0x00: 'ACRD3', 0x01: 'BAT-E', 0x02: 'FIREF', 0x03: 'MAYFL', 0x04: 'SAVIL', 0x05: 'PADSTN',
+  0x41: 'BAT-O', 0x81: 'DESOFB', 0x82: '3DES2', 0x83: '3DES3', 0x84: 'AES256', 0x85: 'AES128',
+  0x88: 'AESCBC', 0x89: 'A128OF', 0x9F: 'DESXL', 0xA0: 'DVIXL', 0xA1: 'DVPXL', 0xA2: 'DVPSPF',
+  0xA3: 'HAYSTK', 0xA4: 'MOT-A4', 0xA5: 'MOT-A5', 0xA6: 'MOT-A6', 0xA7: 'MOT-A7',
+  0xA8: 'MOT-A8', 0xA9: 'MOT-A9', 0xAA: 'ADP', 0xAB: 'CFX256', 0xAC: 'MOT-AC',
+  0xAD: 'MOT-AD', 0xAE: 'MOT-AE', 0xAF: 'A256GM', 0xB0: 'DVPB0'
+});
+
+function encryptionAlgorithm(value) {
+  if (value === null || value === undefined || value === '') return '';
+  const algorithm = Number(value);
+  return P25_ENCRYPTION_ALGORITHM_NAMES[algorithm] || `0x${hex(algorithm, 2)}`;
 }
 
 function frequency(value) {
@@ -662,8 +805,8 @@ function keyValues(entries) {
   return list;
 }
 
-function metrics(values) {
-  const band = node('section', 'summary-band');
+function metrics(values, embedded = false) {
+  const band = node(embedded ? 'div' : 'section', 'summary-band');
   values.forEach(([label, value]) => {
     const metric = node('div', 'metric');
     metric.append(node('span', '', label), node('strong', '', number(value)));
@@ -720,9 +863,11 @@ function pagedSection(title, page, columns, searchPlaceholder, tableType) {
     })());
 }
 
+const NON_ACTION_COUNT_FIELDS = new Set(['grant_count', 'recorded_count', 'streamed_count']);
+
 function actionCounts(row) {
   return Object.entries(row)
-    .filter(([key, value]) => key.endsWith('_count') && key !== 'grant_count' && Number(value) > 0)
+    .filter(([key, value]) => key.endsWith('_count') && !NON_ACTION_COUNT_FIELDS.has(key) && Number(value) > 0)
     .map(([key, value]) => [key.replace(/_count$/, '').replaceAll('_', ' '), Number(value)]);
 }
 
@@ -767,67 +912,172 @@ function actionPie(rows) {
   return fragment(chart, legend);
 }
 
-function hourlyLineGraph(rows) {
-  const values = (rows || []).map((row) => ({
-    hour: Number(row.hour_ms),
-    calls: Number(row.call_count || 0)
-  }));
-  if (!values.length) return node('div', 'empty', 'No hourly activity data');
+function roundedChartMaximum(maximum) {
+  const roughStep = Math.max(1, maximum) / 4;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const normalized = roughStep / magnitude;
+  const step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
+  return Math.max(4, step * 4);
+}
 
-  const width = 960;
-  const height = 270;
-  const margin = { top: 18, right: 20, bottom: 42, left: 55 };
+function countTimeSeriesChart(rows, configurations, options = {}) {
+  const values = (rows || []).map((row) => ({ ...row,
+    time_ms: Number(row[options.timeField || 'time_ms']) }));
+  if (!values.length) return node('div', 'empty', options.emptyMessage || 'No hourly activity data');
+
+  const series = (configurations || []).filter((configuration) => configuration && configuration.field);
+  if (!series.length) return node('div', 'empty', 'No activity series selected');
+
+  const width = Number(options.width || 960);
+  const height = Number(options.height || 270);
+  const margin = options.margin || { top: 18, right: 20, bottom: 42, left: 55 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const maximum = Math.max(1, ...values.map((value) => value.calls));
-  const roundedMaximum = Math.max(4, Math.ceil(maximum / 4) * 4);
-  const svgNamespace = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNamespace, 'svg');
-  svg.setAttribute('class', 'activity-line-svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Calls per hour for the last 24 hours');
+  const maximum = Math.max(1, ...series.flatMap((configuration) =>
+    values.map((value) => Number(value[configuration.field] || 0))));
+  const roundedMaximum = roundedChartMaximum(maximum);
+  const from = Number(options.from ?? values[0].time_ms);
+  const to = Math.max(from + 1, Number(options.to ?? values.at(-1).time_ms));
+  const xFor = (timestamp) => margin.left + plotWidth * Math.max(0, Math.min(1,
+    (timestamp - from) / (to - from)));
+  const yFor = (value) => margin.top + plotHeight - plotHeight * Number(value || 0) / roundedMaximum;
+  const svg = svgNode('svg', {
+    class: 'activity-line-svg',
+    viewBox: `0 0 ${width} ${height}`,
+    role: 'img',
+    'aria-label': options.ariaLabel || 'Call activity by time'
+  });
+  svg.style.height = `${height}px`;
 
-  const svgNode = (tag, attributes = {}, textValue) => {
-    const element = document.createElementNS(svgNamespace, tag);
-    Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
-    if (textValue !== undefined) element.textContent = String(textValue);
-    return element;
-  };
-
-  for (let index = 0; index <= 4; index++) {
-    const y = margin.top + plotHeight - (plotHeight * index / 4);
+  for (let index = 0; index <= 4; index += 1) {
     const value = roundedMaximum * index / 4;
+    const y = yFor(value);
     svg.append(svgNode('line', { x1: margin.left, y1: y, x2: width - margin.right, y2: y,
       class: 'chart-grid-line' }));
     svg.append(svgNode('text', { x: margin.left - 10, y: y + 4, class: 'chart-axis-label',
       'text-anchor': 'end' }, number(value)));
   }
 
-  const xFor = (index) => margin.left + (values.length === 1 ? plotWidth / 2 :
-    plotWidth * index / (values.length - 1));
-  [['calls', 'Calls']].forEach(([field, label]) => {
-    const points = values.map((value, index) => ({ ...value, x: xFor(index),
-      y: margin.top + plotHeight - (plotHeight * value[field] / roundedMaximum) }));
-    const path = points.map((point, index) =>
-      `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
-    svg.append(svgNode('path', { d: path, class: `activity-line-path ${field}` }));
-    points.forEach((point) => {
-      const circle = svgNode('circle', { cx: point.x, cy: point.y, r: 3,
-        class: `activity-line-point ${field}` });
-      circle.append(svgNode('title', {},
-        `${new Date(point.hour).toLocaleString()}: ${number(point[field])} ${label.toLowerCase()}`));
-      svg.append(circle);
-    });
+  series.forEach((configuration) => {
+    const points = values.map((value) => ({ timestamp: value.time_ms,
+      count: Number(value[configuration.field] || 0) }));
+    const path = points.map((point, index) => `${index ? 'L' : 'M'} ${xFor(point.timestamp).toFixed(2)} ` +
+      `${yFor(point.count).toFixed(2)}`).join(' ');
+    const line = svgNode('path', { d: path, class: 'activity-line-path' });
+    line.style.stroke = configuration.color;
+    svg.append(line);
+    if (values.length <= 96) {
+      points.forEach((point) => {
+        const circle = svgNode('circle', { cx: xFor(point.timestamp), cy: yFor(point.count),
+          r: values.length <= 48 ? 3 : 1.8, class: 'activity-line-point' });
+        circle.style.stroke = configuration.color;
+        svg.append(circle);
+      });
+    }
   });
+
+  const tickStep = Math.max(1, Math.ceil(values.length / 6));
   values.forEach((value, index) => {
-    if (index % 4 === 0 || index === values.length - 1) svg.append(svgNode('text', {
-      x: xFor(index), y: height - 15, class: 'chart-axis-label', 'text-anchor': 'middle'
-    }, new Date(value.hour).toLocaleTimeString([], { hour: 'numeric' })));
+    if (index % tickStep !== 0 && index !== values.length - 1) return;
+    const longRange = to - from > 2 * 86_400_000;
+    const label = longRange ? new Date(value.time_ms).toLocaleString([], {
+      month: 'short', day: 'numeric', hour: 'numeric'
+    }) : new Date(value.time_ms).toLocaleTimeString([], { hour: 'numeric' });
+    svg.append(svgNode('text', { x: xFor(value.time_ms), y: height - 15,
+      class: 'chart-axis-label', 'text-anchor': 'middle' }, label));
   });
 
   const wrapper = node('div', 'activity-line-chart');
+  wrapper.style.minHeight = `${height}px`;
   wrapper.append(svg);
+  installTimeChartHover(wrapper, svg, {
+    width, height, margin, from, to, points: values,
+    timestamp: (point) => point.time_ms,
+    markers: (point) => series.map((configuration) => ({
+      x: xFor(point.time_ms),
+      y: yFor(point[configuration.field]),
+      color: configuration.color
+    })),
+    tooltipText: (point) => [new Date(point.time_ms).toLocaleString(),
+      ...series.map((configuration) =>
+        `${configuration.label}: ${number(point[configuration.field] || 0)}`)]
+  });
+  return wrapper;
+}
+
+function callsPerHourChart(rows) {
+  return countTimeSeriesChart(rows, [CALL_ACTIVITY_SERIES[0]], {
+    timeField: 'hour_ms',
+    ariaLabel: 'Tracked calls per hour for the last 24 hours'
+  });
+}
+
+function outputMetricStartNote(response) {
+  const metricStart = Number(response?.metric_start_ms || 0);
+  if (metricStart > Number(response?.from_ms || 0) &&
+      metricStart <= Number(response?.to_ms || Date.now())) {
+    return node('div', 'activity-metric-note',
+      `Recorded and Sent to Streamer counters begin ${dateTime(metricStart)}.`);
+  }
+  return null;
+}
+
+function talkgroupActivityChart(response) {
+  const values = (response.series || []).map((row) => ({ ...row, time_ms: Number(row.time_ms) }));
+  if (!values.length) return node('div', 'empty', 'No activity data is available for this range');
+
+  const totals = response.totals || {};
+  const configurations = TALKGROUP_ACTIVITY_SERIES.filter((series) => series.visible ||
+    Number(totals[series.field] || 0) > 0);
+  const selected = new Set(configurations.filter((series) => series.visible).map((series) => series.field));
+  if (!selected.size && configurations.length) selected.add(configurations[0].field);
+
+  const wrapper = node('div', 'talkgroup-activity-chart');
+  const legend = node('div', 'activity-series-legend');
+  const chartHost = node('div', 'talkgroup-activity-chart-host');
+  wrapper.append(legend, chartHost);
+
+  const draw = () => {
+    chartHost.replaceChildren();
+    const visible = configurations.filter((series) => selected.has(series.field));
+    if (!visible.length) {
+      chartHost.append(node('div', 'empty', 'Select at least one activity type'));
+      return;
+    }
+
+    chartHost.append(countTimeSeriesChart(values, visible, {
+      from: Number(response.from_ms || values[0].time_ms),
+      to: Number(response.to_ms || values.at(-1).time_ms),
+      height: 300,
+      margin: { top: 18, right: 20, bottom: 48, left: 55 },
+      ariaLabel: 'Talkgroup activity by time and activity type',
+      emptyMessage: 'No activity data is available for this range'
+    }));
+  };
+
+  configurations.forEach((series) => {
+    const button = node('button', 'activity-series-button secondary');
+    button.type = 'button';
+    const swatch = node('span', 'activity-series-swatch');
+    swatch.style.backgroundColor = series.color;
+    button.append(swatch, node('span', '', series.label),
+      node('span', 'activity-series-total', number(totals[series.field] || 0)));
+    const update = () => {
+      const active = selected.has(series.field);
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    };
+    button.addEventListener('click', () => {
+      if (selected.has(series.field)) selected.delete(series.field);
+      else selected.add(series.field);
+      update();
+      draw();
+    });
+    update();
+    legend.append(button);
+  });
+
+  draw();
   return wrapper;
 }
 
@@ -902,17 +1152,10 @@ function qualityHistoryChart(site, response, metric, domain) {
   const to = Number(response.to_ms);
   const range = Math.max(1, to - from);
   const bucket = Number(response.bucket_ms || 10_000);
-  const svgNamespace = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNamespace, 'svg');
+  const svg = svgNode('svg');
   svg.setAttribute('class', `quality-chart-svg ${signal ? 'signal-chart-svg' : 'decode-chart-svg'}`);
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', `${siteLabel(site)} ${signal ? 'signal strength' : 'decode quality'} history`);
-  const svgNode = (tag, attributes = {}, textValue) => {
-    const element = document.createElementNS(svgNamespace, tag);
-    Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
-    if (textValue !== undefined) element.textContent = String(textValue);
-    return element;
-  };
   const points = (site.series || []).map((point) => ({
     ...point,
     timestamp: Number(point.time_ms),
@@ -934,12 +1177,9 @@ function qualityHistoryChart(site, response, metric, domain) {
   });
   if (segment.length) segments.push(segment);
   const wrapper = node('div', `quality-chart ${signal ? 'signal-chart' : 'decode-chart'}`);
-  const hoverStats = node('div', 'quality-hover-stats');
-  hoverStats.hidden = true;
-  hoverStats.setAttribute('role', 'tooltip');
   if (!segments.length) wrapper.append(node('div', 'quality-chart-empty',
     `No ${signal ? 'signal' : 'decode'} samples in this range`));
-  wrapper.append(svg, hoverStats);
+  wrapper.append(svg);
 
   let drawnWidth = 0;
   const draw = (availableWidth = nominalWidth) => {
@@ -958,7 +1198,6 @@ function qualityHistoryChart(site, response, metric, domain) {
 
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.replaceChildren();
-    hoverStats.hidden = true;
 
     if (!signal) {
       [[0, DECODE_DEGRADED_MINIMUM_PERCENT, 'poor'],
@@ -999,80 +1238,40 @@ function qualityHistoryChart(site, response, metric, domain) {
       svg.append(svgNode('path', { d: line, class: signal ? 'signal-average-path' : 'decode-health-path' }));
     });
 
-    const hoverPoints = points.filter((point) => Number.isFinite(point.value));
-    const hoverGuide = svgNode('line', { y1: margin.top, y2: margin.top + plotHeight,
-      class: 'quality-hover-guide' });
-    const hoverPoint = svgNode('circle', { r: 4, class: 'quality-hover-point' });
-    hoverGuide.setAttribute('visibility', 'hidden');
-    hoverPoint.setAttribute('visibility', 'hidden');
-    svg.append(hoverGuide, hoverPoint);
-
-    const showHoverStats = (event) => {
-      if (!hoverPoints.length) return;
-      const bounds = svg.getBoundingClientRect();
-      if (!bounds.width) return;
-      const chartX = (event.clientX - bounds.left) * width / bounds.width;
-      const timestamp = from + Math.max(0, Math.min(1, (chartX - margin.left) / plotWidth)) * range;
-      const point = hoverPoints.reduce((nearest, candidate) =>
-        Math.abs(candidate.timestamp - timestamp) < Math.abs(nearest.timestamp - timestamp) ? candidate : nearest);
-      const pointX = xFor(point.timestamp);
-      const pointY = yFor(point.value);
-      const frequencyText = Number(point.frequency_hz) ? `${frequency(point.frequency_hz)} MHz` :
-        (Number(point.frequency_count) > 1 ? `${number(point.frequency_count)} frequencies` :
-          'Frequency unavailable');
-      let detail;
-      if (signal) {
-        const rangeText = Number.isFinite(point.minimum) && Number.isFinite(point.maximum) ?
-          `${point.minimum.toFixed(1)} to ${point.maximum.toFixed(1)} dBFS` : 'Unavailable';
-        detail = `30s average: ${point.average.toFixed(1)} dBFS\nRange: ${rangeText}\n` +
-          `Decode health: ${percentNumber(point.decode)}`;
-      } else {
-        detail = `Decode health: ${point.decode.toFixed(1)}%\n` +
-          `30s signal average: ${signalNumber(point.average)}`;
-      }
-      hoverStats.textContent = `${dateTime(point.last_observed_ms || point.timestamp)}\n${detail}\n` +
-        `${frequencyText}\n${number(point.sample_count)} retained sample` +
-        `${Number(point.sample_count) === 1 ? '' : 's'}`;
-      hoverStats.hidden = false;
-      hoverGuide.removeAttribute('visibility');
-      hoverPoint.removeAttribute('visibility');
-      hoverGuide.setAttribute('x1', pointX);
-      hoverGuide.setAttribute('x2', pointX);
-      hoverPoint.setAttribute('cx', pointX);
-      hoverPoint.setAttribute('cy', pointY);
-
-      const wrapperBounds = wrapper.getBoundingClientRect();
-      const leftAtPoint = bounds.left - wrapperBounds.left + pointX * bounds.width / width;
-      const topAtPoint = bounds.top - wrapperBounds.top + pointY * bounds.height / height;
-      const gap = 10;
-      let left = leftAtPoint + gap;
-      if (left + hoverStats.offsetWidth > wrapper.clientWidth - 4) {
-        left = leftAtPoint - hoverStats.offsetWidth - gap;
-      }
-      let top = topAtPoint - hoverStats.offsetHeight - gap;
-      if (top < 4) top = topAtPoint + gap;
-      hoverStats.style.left = `${Math.max(4, left)}px`;
-      hoverStats.style.top = `${Math.max(4, top)}px`;
-    };
-
-    const hideHoverStats = () => {
-      hoverStats.hidden = true;
-      hoverGuide.setAttribute('visibility', 'hidden');
-      hoverPoint.setAttribute('visibility', 'hidden');
-    };
-
-    const hoverSurface = svgNode('rect', { x: margin.left, y: margin.top, width: plotWidth,
-      height: plotHeight, class: 'quality-hover-surface' });
-    hoverSurface.addEventListener('pointermove', showHoverStats);
-    hoverSurface.addEventListener('pointerleave', hideHoverStats);
-    svg.append(hoverSurface);
-
     [from, from + range / 2, to].forEach((timestamp, index) => {
       const longRange = range > 86_400_000;
       const label = new Date(timestamp).toLocaleString([], longRange ?
         { month: 'short', day: 'numeric', hour: 'numeric' } : { hour: 'numeric', minute: '2-digit' });
       svg.append(svgNode('text', { x: xFor(timestamp), y: height - 9, class: 'quality-axis-label',
         'text-anchor': index === 0 ? 'start' : (index === 2 ? 'end' : 'middle') }, label));
+    });
+
+    const hoverPoints = points.filter((point) => Number.isFinite(point.value));
+    installTimeChartHover(wrapper, svg, {
+      width, height, margin, from, to, points: hoverPoints,
+      timestamp: (point) => point.timestamp,
+      markers: (point) => [{
+        x: xFor(point.timestamp),
+        y: yFor(point.value),
+        color: signal ? '#0b7168' : '#3d64b1'
+      }],
+      tooltipText: (point) => {
+        const frequencyText = Number(point.frequency_hz) ? `${frequency(point.frequency_hz)} MHz` :
+          (Number(point.frequency_count) > 1 ? `${number(point.frequency_count)} frequencies` :
+            'Frequency unavailable');
+        let detail;
+        if (signal) {
+          const rangeText = Number.isFinite(point.minimum) && Number.isFinite(point.maximum) ?
+            `${point.minimum.toFixed(1)} to ${point.maximum.toFixed(1)} dBFS` : 'Unavailable';
+          detail = [`30s average: ${point.average.toFixed(1)} dBFS`, `Range: ${rangeText}`,
+            `Decode health: ${percentNumber(point.decode)}`];
+        } else {
+          detail = [`Decode health: ${point.decode.toFixed(1)}%`,
+            `30s signal average: ${signalNumber(point.average)}`];
+        }
+        return [dateTime(point.last_observed_ms || point.timestamp), ...detail, frequencyText,
+          `${number(point.sample_count)} retained sample${Number(point.sample_count) === 1 ? '' : 's'}`];
+      }
     });
   };
 
@@ -1128,14 +1327,8 @@ function signalCurrentTile(site) {
 }
 
 function sortSignalSites(sites, selectedSort) {
-  const now = Date.now();
   return [...sites].sort((left, right) => {
     if (selectedSort === 'name') return siteLabel(left).localeCompare(siteLabel(right));
-    const leftState = signalSiteState(left, now);
-    const rightState = signalSiteState(right, now);
-    if (leftState.rank !== rightState.rank && (leftState.rank === 0 || rightState.rank === 0)) {
-      return leftState.rank - rightState.rank;
-    }
     if (selectedSort === 'signal') {
       const leftSignal = optionalNumber(left.average_signal_dbfs);
       const rightSignal = optionalNumber(right.average_signal_dbfs);
@@ -1144,8 +1337,8 @@ function sortSignalSites(sites, selectedSort) {
     }
     const leftDecode = optionalNumber(left.decode_health_pct);
     const rightDecode = optionalNumber(right.decode_health_pct);
-    return (Number.isFinite(leftDecode) ? leftDecode : -1) -
-      (Number.isFinite(rightDecode) ? rightDecode : -1);
+    return (Number.isFinite(rightDecode) ? rightDecode : -1) -
+      (Number.isFinite(leftDecode) ? leftDecode : -1);
   });
 }
 
@@ -1167,10 +1360,10 @@ function signalOverview(site, includeName = true) {
   return overview;
 }
 
-function signalRangeControls(selectedRange, onChange) {
+function rangeControls(ranges, selectedRange, onChange) {
   const controls = node('div', 'signal-range-controls');
   const buttons = new Map();
-  SIGNAL_RANGES.forEach(([value, label]) => {
+  ranges.forEach(([value, label]) => {
     const button = node('button', 'signal-range-button secondary', label);
     button.type = 'button';
     button.setAttribute('aria-pressed', String(value === selectedRange));
@@ -1190,6 +1383,10 @@ function signalRangeControls(selectedRange, onChange) {
   return { controls, buttons };
 }
 
+function signalRangeControls(selectedRange, onChange) {
+  return rangeControls(SIGNAL_RANGES, selectedRange, onChange);
+}
+
 async function signalHealthSection() {
   const host = node('div', 'signal-health');
   const currentPanel = node('div', 'signal-current-panel');
@@ -1197,7 +1394,7 @@ async function signalHealthSection() {
   const summary = node('div', 'signal-health-summary');
   const sortLabel = node('label', 'signal-sort-label', 'Sort');
   const sort = node('select', 'signal-sort');
-  [['decode', 'Lowest decode'], ['signal', 'Weakest signal'], ['name', 'Name']].forEach(([value, label]) => {
+  [['decode', 'Highest decode'], ['signal', 'Weakest signal'], ['name', 'Name']].forEach(([value, label]) => {
     const option = node('option', '', label);
     option.value = value;
     sort.append(option);
@@ -1339,6 +1536,117 @@ async function siteSignalHistorySection(site) {
   } else {
     await load(rangeControl.buttons, true);
     pageInterval(load, 30_000);
+  }
+  return block;
+}
+
+async function talkgroupActivityHistorySection(scopeParameters) {
+  const host = node('div', 'talkgroup-activity-history');
+  const block = section('Activity History', host);
+  let selectedRange = '24h';
+  let loadingSequence = 0;
+  let loading = false;
+  const rangeControl = rangeControls(ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
+    selectedRange = value;
+    await load(buttons, true);
+  });
+  block.querySelector('.section-title').append(rangeControl.controls);
+
+  const load = async (buttons = rangeControl.buttons, interactive = false) => {
+    if (loading && !interactive) return;
+    const sequence = ++loadingSequence;
+    loading = true;
+    if (interactive) {
+      buttons.forEach((button) => { button.disabled = true; });
+      host.replaceChildren(node('div', 'loading', 'Loading talkgroup activity history'));
+    }
+    try {
+      const response = await api('/api/talkgroup/activity', { ...scopeParameters, range: selectedRange });
+      if (sequence !== loadingSequence) return;
+      host.replaceChildren(metrics([
+        ['Tracked Calls', response.totals?.call_count],
+        ['Recorded', response.totals?.recorded_count],
+        ['Sent to Streamer', response.totals?.streamed_count]
+      ], true), talkgroupActivityChart(response));
+      const metricNote = outputMetricStartNote(response);
+      if (metricNote) host.append(metricNote);
+    } catch (error) {
+      if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
+    } finally {
+      if (sequence === loadingSequence) {
+        loading = false;
+        buttons.forEach((button) => { button.disabled = false; });
+      }
+    }
+  };
+
+  const logging = statsLoggingState();
+  if (logging.available && !logging.summaryActive) {
+    rangeControl.controls.hidden = true;
+    host.append(node('div', 'empty', 'Talkgroup activity history requires Stats Logging.'));
+  } else {
+    await load(rangeControl.buttons, true);
+    pageInterval(load, 30_000);
+  }
+  return block;
+}
+
+async function siteTopTalkgroupsSection(site) {
+  const host = node('div', 'site-top-talkgroups');
+  const block = section('Top Talkgroups', host);
+  let selectedRange = '24h';
+  let loadingSequence = 0;
+  let loading = false;
+  const rangeControl = rangeControls(SIGNAL_RANGES, selectedRange, async (value, buttons) => {
+    selectedRange = value;
+    await load(buttons, true);
+  });
+  block.querySelector('.section-title').append(rangeControl.controls);
+  const columns = [
+    { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sortValue: (row) => Number(row.talkgroup_id) },
+    { id: 'talkgroup-name', label: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
+    { label: 'Group', key: 'alias_group', className: 'alias-cell', sortValue: (row) => row.alias_group || '' },
+    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
+    { id: 'recorded', label: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
+    { id: 'streamed', label: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sortValue: (row) => Number(row.streamed_count || 0) },
+    { id: 'last-active', label: 'Last Active', render: (row) => dateTime(row.last_active_ms), sortValue: (row) => Number(row.last_active_ms || 0) }
+  ];
+
+  const load = async (buttons = rangeControl.buttons, interactive = false) => {
+    if (loading && !interactive) return;
+    const sequence = ++loadingSequence;
+    loading = true;
+    if (interactive) {
+      buttons.forEach((button) => { button.disabled = true; });
+      host.replaceChildren(node('div', 'loading', 'Loading top talkgroups'));
+    }
+    try {
+      const response = await api('/api/site/talkgroups', {
+        guid: site.guid, range: selectedRange, limit: 20
+      });
+      if (sequence !== loadingSequence) return;
+      host.replaceChildren(table(response.rows || [], columns,
+        'No talkgroup activity is available for this range', { type: 'site-top-talkgroups' }));
+      host.append(node('div', 'activity-metric-note',
+        'Last Active identifies the newest hourly activity bucket for this site and range.'));
+      const metricNote = outputMetricStartNote(response);
+      if (metricNote) host.append(metricNote);
+    } catch (error) {
+      if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
+    } finally {
+      if (sequence === loadingSequence) {
+        loading = false;
+        buttons.forEach((button) => { button.disabled = false; });
+      }
+    }
+  };
+
+  const logging = statsLoggingState();
+  if (logging.available && !logging.summaryActive) {
+    rangeControl.controls.hidden = true;
+    host.append(node('div', 'empty', 'Top talkgroups require Stats Logging.'));
+  } else {
+    await load(rangeControl.buttons, true);
   }
   return block;
 }
@@ -1504,6 +1812,8 @@ const talkgroupColumns = [
   { id: 'talkgroup-name', label: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
   { label: 'Group', key: 'alias_group', className: 'alias-cell', sort: 'group' },
   { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
+  { id: 'recorded', label: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sort: 'recorded', sortValue: (row) => Number(row.recorded_count || 0) },
+  { id: 'streamed', label: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sort: 'streamed', sortValue: (row) => Number(row.streamed_count || 0) },
   { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
   { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
@@ -1528,8 +1838,25 @@ async function renderDashboard() {
     ['Systems', counts.systems], ['Sites', counts.sites], ['Talkgroups', counts.talkgroups],
     ['Radios', counts.radios], ['Frequencies', counts.frequencies], ['Conventional', counts.conventional]
   ]));
+  const p25CallActivity = dashboard.p25CallActivity || {};
+  const p25CallBody = node('div', 'dashboard-call-activity');
+  p25CallBody.append(metrics([
+    ['Tracked Calls', p25CallActivity.totals?.call_count],
+    ['Recorded', p25CallActivity.totals?.recorded_count],
+    ['Sent to Streamer', p25CallActivity.totals?.streamed_count]
+  ], true), countTimeSeriesChart(p25CallActivity.series || [], CALL_ACTIVITY_SERIES, {
+    from: p25CallActivity.from_ms,
+    to: p25CallActivity.to_ms,
+    ariaLabel: 'P25 trunked tracked, recorded, and sent-to-streamer calls per hour'
+  }));
+  const metricNote = outputMetricStartNote(p25CallActivity);
+  if (metricNote) p25CallBody.append(metricNote);
+  const p25CallSection = section('P25 Trunked Call Activity · Last 24 Hours', p25CallBody);
+  p25CallSection.append(node('div', 'dashboard-scope-note',
+    'P25 trunked talkgroups only. Calls Per Hour below also includes conventional calls.'));
+  content.append(p25CallSection);
   content.append(await signalHealthSection());
-  content.append(section('Calls Per Hour', hourlyLineGraph(dashboard.activityPerHour || [])));
+  content.append(section('Calls Per Hour', callsPerHourChart(dashboard.activityPerHour || [])));
   const sites = section('Recent Sites', table(dashboard.recentSites || [], siteColumns, 'No rows', { type: 'sites' }));
   const actions = section('24 Hour Actions', node('div', 'action-chart'));
   actions.lastChild.append(actionPie(dashboard.actionMix || []));
@@ -1870,24 +2197,35 @@ async function renderTalkgroup() {
     ];
     content.append(pagedSection('Radios', relationships, columns, null, 'talkgroup-radios'));
   } else if (tab === 'activity') {
-    await renderActivity({ ...systemScope, talkgroup_id: id });
+    if (detailedHistoryAvailable()) {
+      await renderActivity({ ...systemScope, talkgroup_id: id }, 'Activity Log');
+    } else {
+      content.append(section('Activity Log', node('div', 'empty',
+        'Detailed history logging is not running.')));
+    }
   } else {
     const affiliationLink = anchor(number(talkgroup.affiliated_radios),
       href('talkgroup', { ...scope(talkgroup), id, tab: 'radios' }));
-    content.append(section('Talkgroup Info', keyValues([
+    const infoColumn = node('div', 'entity-info-column');
+    infoColumn.append(section('Talkgroup Info', keyValues([
       ['System', systemLink(talkgroup)], ['Talkgroup ID', id], ['Alias', aliasLabel(talkgroup)],
       ['Group', talkgroup.alias_group], ['First Seen', dateTime(talkgroup.first_seen_ms)],
       ['Last Seen', dateTime(talkgroup.last_seen_ms)], ['Calls', number(talkgroup.call_count)],
+      ['Recorded', number(talkgroup.recorded_count)],
+      ['Sent to Streamer', number(talkgroup.streamed_count)],
       ['Radios', number(talkgroup.radios)], ['Currently Affiliated', affiliationLink],
       ['Enc', number(talkgroup.encrypted_count)],
       ['Last Source', radioLink(talkgroup, talkgroup.last_source_radio_id)],
-      ['Last Alg ID', hexDecimal(talkgroup.last_encryption_algorithm_id, 2)],
+      ['Last Alg', encryptionAlgorithm(talkgroup.last_encryption_algorithm_id)],
       ['Last Key ID', hexDecimal(talkgroup.last_encryption_key_id)]
     ])));
-    content.append(section('Action Counts', table(actionCounts(talkgroup).map(([action, count]) => ({ action, count })), [
+    infoColumn.append(section('Action Counts', table(actionCounts(talkgroup).map(([action, count]) => ({ action, count })), [
       { label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
     ], 'No actions recorded', { type: 'action-counts' })));
+    const layout = node('div', 'entity-info-layout');
+    layout.append(infoColumn, await talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id }));
+    content.append(layout);
   }
 }
 
@@ -1927,7 +2265,7 @@ async function renderRadio() {
       ['Calls', number(radio.call_count)],
       ['Talkgroups', number(radio.talkgroups)],
       ['Enc', number(radio.encrypted_count)],
-      ['Last Alg ID', hexDecimal(radio.last_encryption_algorithm_id, 2)],
+      ['Last Alg', encryptionAlgorithm(radio.last_encryption_algorithm_id)],
       ['Last Key ID', hexDecimal(radio.last_encryption_key_id)]
     ])));
     content.append(section('Action Counts', table(actionCounts(radio).map(([action, count]) => ({ action, count })), [
@@ -2037,7 +2375,8 @@ async function renderSite() {
   } else if (tab === 'activity') {
     await renderActivity({ guid });
   } else {
-    content.append(section('Site Info', keyValues([
+    const infoColumn = node('div', 'entity-info-column');
+    infoColumn.append(section('Site Info', keyValues([
       ['System', systemLink(site)], ['GUID', site.guid], ['Name', site.channel_name],
       ['Alias List', site.alias_list_name], ['Protocol', site.protocol], ['Decoder', site.decoder],
       ['Callsign', site.callsign], ['WACN', hexDecimal(site.wacn, 5)],
@@ -2056,6 +2395,9 @@ async function renderSite() {
       ['Channels', number(site.channels)], ['Neighbors', number(site.neighbors)],
       ['Band Plans', number(site.bands)], ['Patches', number(site.patches)]
     ])));
+    const layout = node('div', 'entity-info-layout');
+    layout.append(infoColumn, await siteTopTalkgroupsSection(site));
+    content.append(layout);
   }
 }
 
@@ -2071,13 +2413,13 @@ function activityColumns() {
     { id: 'frequency', label: 'MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
     { label: 'LCN', key: 'lcn' },
     { label: 'Slot', key: 'timeslot', className: 'numeric' },
-    { id: 'encryption', label: 'Encryption', render: (row) => row.encrypted ? `${hexDecimal(row.encryption_algorithm_id, 2)}:${hexDecimal(row.encryption_key_id)}` : '', className: 'encrypted', sortValue: (row) => row.encrypted ? `${row.encryption_algorithm_id}:${row.encryption_key_id}` : '' }
+    { id: 'encryption', label: 'Encryption', render: (row) => row.encrypted ? `${encryptionAlgorithm(row.encryption_algorithm_id)}:${hexDecimal(row.encryption_key_id)}` : '', className: 'encrypted', sortValue: (row) => row.encrypted ? `${row.encryption_algorithm_id}:${row.encryption_key_id}` : '' }
   ];
 }
 
-async function renderActivity(scopeParameters) {
+async function renderActivity(scopeParameters, title = 'Activity') {
   if (!detailedHistoryAvailable()) {
-    content.append(section('Activity', node('div', 'empty',
+    content.append(section(title, node('div', 'empty',
       'Detailed history logging is not running. Summary views and Live Systems remain available.')));
     return;
   }
@@ -2091,7 +2433,7 @@ async function renderActivity(scopeParameters) {
   const activityTable = table(withoutGrantActions(data.rows), columns, 'No activity recorded',
     { type: 'activity', rowKey: (row) => row.id });
   const body = activityTable.querySelector('tbody');
-  const block = section('Activity', activityTable);
+  const block = section(title, activityTable);
   const controls = node('div', 'pager');
   controls.append(route.get('before_id') ? anchor('Newest', currentHref({ before_id: null }), 'button secondary') :
     node('span', 'button disabled', 'Newest'));

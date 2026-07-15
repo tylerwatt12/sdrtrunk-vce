@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
@@ -71,6 +72,32 @@ public class P25ActivityLogService implements SiteMetadataListener
     public Listener<ControlChannelQualitySnapshot> getControlChannelQualityListener()
     {
         return mQualityListener;
+    }
+
+    public void receiveRecordedCall(CompletedAudioCall call)
+    {
+        receiveCallOutput(call, P25ActivityLogRecords.CallOutput.RECORDED);
+    }
+
+    public void receiveStreamedCall(CompletedAudioCall call)
+    {
+        receiveCallOutput(call, P25ActivityLogRecords.CallOutput.STREAMED);
+    }
+
+    private void receiveCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer != null)
+        {
+            P25ActivityLogRecords.CompletedCallOutput completedCallOutput =
+                mMapper.mapCompletedCallOutput(call, output);
+
+            if(completedCallOutput != null)
+            {
+                writer.enqueue(completedCallOutput);
+            }
+        }
     }
 
     private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)

@@ -13,16 +13,20 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
+import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
@@ -123,6 +127,35 @@ class P25ActivityLogMapper
         }
     }
 
+    P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(CompletedAudioCall call,
+                                                                     P25ActivityLogRecords.CallOutput output)
+    {
+        if(call == null || call.snapshot() == null || call.snapshot().identifierCollection() == null ||
+            output == null)
+        {
+            return null;
+        }
+
+        IdentifierCollection identifiers = call.snapshot().identifierCollection();
+        IdentifierFacts facts = IdentifierFacts.from(identifiers);
+        Integer talkgroup = talkgroup(identifiers.getToIdentifier());
+
+        if(facts.radresGuid() == null || facts.radresGuid().isBlank() || talkgroup == null || talkgroup <= 0)
+        {
+            return null;
+        }
+
+        long timestamp = call.snapshot().startTimestamp() > 0 ? call.snapshot().startTimestamp() :
+            call.snapshot().lastActivityTimestamp();
+
+        if(timestamp <= 0)
+        {
+            timestamp = System.currentTimeMillis();
+        }
+
+        return new P25ActivityLogRecords.CompletedCallOutput(timestamp, facts.radresGuid(), talkgroup, output);
+    }
+
     private P25ActivityLogRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
                                                      P25ActivityLogRecords.Action actionOverride)
     {
@@ -170,6 +203,11 @@ class P25ActivityLogMapper
         String targetKind = affiliationEvent != null && affiliationEvent.getTalkgroupId() != null ?
             Form.TALKGROUP.name() : facts.targetForm();
         P25ActivityLogRecords.RadioAffiliationUpdate affiliationUpdate = affiliationUpdate(affiliationEvent);
+        boolean metricsEncrypted = facts.encrypted() && event instanceof P25ChannelGrantEvent grantEvent &&
+            P25EncryptionConfirmationTracker.isConfirmed(grantEvent, facts.encryptionAlgorithmId(),
+                facts.encryptionKeyId());
+        Integer metricsAlgorithmId = metricsEncrypted ? facts.encryptionAlgorithmId() : null;
+        Integer metricsKeyId = metricsEncrypted ? facts.encryptionKeyId() : null;
 
         String dedupeKey = null;
         if(actionOverride == null &&
@@ -183,15 +221,15 @@ class P25ActivityLogMapper
                 safe(sourceRadioId),
                 safe(targetId),
                 safe(targetKind),
-                safe(facts.encryptionAlgorithmId()),
-                safe(facts.encryptionKeyId()));
+                safe(metricsAlgorithmId),
+                safe(metricsKeyId));
         }
 
         return new P25ActivityLogRecords.ActivityEvent(observedAt, contextKey, guid, contextKind,
             event.getProtocol() != null ? event.getProtocol().name() : null, action,
             event.getEventType() != null ? event.getEventType().name() : null, sourceRadioId, targetId,
-            targetKind, frequency, lcn, timeslot, facts.encrypted(), facts.encryptionAlgorithmId(),
-            facts.encryptionKeyId(), facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(),
+            targetKind, frequency, lcn, timeslot, metricsEncrypted, metricsAlgorithmId,
+            metricsKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(),
             activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(),
             action == P25ActivityLogRecords.Action.CALL &&
                 (contextKind != P25ActivityLogRecords.ContextKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
@@ -426,6 +464,22 @@ class P25ActivityLogMapper
         }
 
         return facts.frequencyHertz();
+    }
+
+    private static Integer talkgroup(Identifier identifier)
+    {
+        if(identifier instanceof TalkgroupIdentifier talkgroup)
+        {
+            return talkgroup.getValue();
+        }
+
+        if(identifier instanceof PatchGroupIdentifier patchGroup && patchGroup.getValue() != null &&
+            patchGroup.getValue().getPatchGroup() != null)
+        {
+            return patchGroup.getValue().getPatchGroup().getValue();
+        }
+
+        return null;
     }
 
     private static String contextKey(String guid, Protocol protocol, IdentifierFacts facts, Long frequency,

@@ -24,8 +24,8 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
-import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
 import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterSet;
 import io.github.dsheirer.icon.IconModel;
@@ -81,6 +81,7 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
     private transient HistoryManagementPanel<IDecodeEvent> mHistoryManagementPanel;
     private transient long mSelectedFrequency;
     private transient Integer mSelectedTimeslot;
+    private transient Channel mSelectedSiteOwner;
     private transient boolean mSiteEventSelection;
 
 
@@ -152,28 +153,38 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
     @Override
     public void receive(final SelectedFrequencyContext context)
     {
-        final ProcessingChain processingChain = context != null ? context.processingChain() : null;
-        final boolean clearRequested = context == null || context.clearRequested();
-        final long selectedFrequency = clearRequested ? 0 : context.frequency();
-        final Integer selectedTimeslot = clearRequested ? null : context.timeslot();
-        final boolean siteEventSelection = isSiteEventSelection(context);
-        final boolean selectionChanged = selectionChanged(selectedFrequency, selectedTimeslot);
-
         EventQueue.invokeLater(() -> {
-            detachEventHistory();
+            ProcessingChain processingChain = context != null ? context.eventProcessingChain() : null;
+            boolean clearRequested = context == null || context.clearRequested();
+            long selectedFrequency = clearRequested ? 0 : context.frequency();
+            Integer selectedTimeslot = clearRequested ? null : context.timeslot();
+            boolean siteEventSelection = isSiteEventSelection(context);
+            Channel siteOwner = siteEventSelection ? context.ownerChannel() : null;
+            boolean selectionChanged = selectionChanged(selectedFrequency, selectedTimeslot, siteEventSelection,
+                siteOwner);
+
             mSelectedFrequency = selectedFrequency;
             mSelectedTimeslot = selectedTimeslot;
+            mSelectedSiteOwner = siteOwner;
             mSiteEventSelection = siteEventSelection;
 
             if(clearRequested)
             {
-                mCurrentEventHistory = null;
+                detachEventHistory();
                 mEventModel.clearAndSet(Collections.emptyList());
                 mHistoryManagementPanel.setEnabled(false);
             }
             else if(processingChain != null)
             {
-                mCurrentEventHistory = processingChain.getDecodeEventHistory();
+                DecodeEventHistory eventHistory = processingChain.getDecodeEventHistory();
+
+                if(mCurrentEventHistory != eventHistory)
+                {
+                    detachEventHistory();
+                    mCurrentEventHistory = eventHistory;
+                    mCurrentEventHistory.addListener(mEventModel);
+                }
+
                 List<IDecodeEvent> selectedEvents = mCurrentEventHistory.getItems().stream()
                     .filter(this::matchesSelectedFrequency)
                     .toList();
@@ -187,18 +198,20 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
                     selectedEvents.forEach(mEventModel::add);
                 }
 
-                processingChain.getDecodeEventHistory().addListener(mEventModel);
                 mHistoryManagementPanel.setEnabled(true);
             }
             else
             {
-                mCurrentEventHistory = null;
+                //The old chain cannot produce more events.  Keep the displayed site history during a temporary
+                //receiver/control-channel gap and bind to the replacement owner chain when it starts.
+                detachEventHistory();
 
                 if(selectionChanged)
                 {
                     mEventModel.clearAndSet(Collections.emptyList());
-                    mHistoryManagementPanel.setEnabled(false);
                 }
+
+                mHistoryManagementPanel.setEnabled(siteEventSelection);
             }
         });
     }
@@ -213,19 +226,33 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         mCurrentEventHistory = null;
     }
 
-    private boolean selectionChanged(long frequency, Integer timeslot)
+    private boolean selectionChanged(long frequency, Integer timeslot, boolean siteEventSelection, Channel siteOwner)
     {
-        if(mSelectedFrequency != frequency)
+        return logicalSelectionChanged(mSelectedFrequency, mSelectedTimeslot, mSiteEventSelection,
+            mSelectedSiteOwner, frequency, timeslot, siteEventSelection, siteOwner);
+    }
+
+    static boolean logicalSelectionChanged(long previousFrequency, Integer previousTimeslot,
+                                           boolean previousSiteSelection, Channel previousSiteOwner,
+                                           long frequency, Integer timeslot, boolean siteEventSelection,
+                                           Channel siteOwner)
+    {
+        if(previousSiteSelection || siteEventSelection)
+        {
+            return previousSiteSelection != siteEventSelection || previousSiteOwner != siteOwner;
+        }
+
+        if(previousFrequency != frequency)
         {
             return true;
         }
 
-        if(mSelectedTimeslot == null)
+        if(previousTimeslot == null)
         {
             return timeslot != null;
         }
 
-        return !mSelectedTimeslot.equals(timeslot);
+        return !previousTimeslot.equals(timeslot);
     }
 
     private boolean matchesSelectedFrequency(IDecodeEvent event)
@@ -240,10 +267,7 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
      */
     static boolean isSiteEventSelection(SelectedFrequencyContext context)
     {
-        ChannelActivityRow.Role role = context != null ? context.rowType() : null;
-        return role == ChannelActivityRow.Role.CONFIGURED_CONTROL ||
-            role == ChannelActivityRow.Role.CURRENT_CONTROL ||
-            role == ChannelActivityRow.Role.ALTERNATE_CONTROL;
+        return context != null && context.siteEventSelection();
     }
 
     static boolean matchesSelectedFrequency(IDecodeEvent event, long selectedFrequency, boolean siteEventSelection)
