@@ -934,9 +934,12 @@ function qualityHistoryChart(site, response, metric, domain) {
   });
   if (segment.length) segments.push(segment);
   const wrapper = node('div', `quality-chart ${signal ? 'signal-chart' : 'decode-chart'}`);
+  const hoverStats = node('div', 'quality-hover-stats');
+  hoverStats.hidden = true;
+  hoverStats.setAttribute('role', 'tooltip');
   if (!segments.length) wrapper.append(node('div', 'quality-chart-empty',
     `No ${signal ? 'signal' : 'decode'} samples in this range`));
-  wrapper.append(svg);
+  wrapper.append(svg, hoverStats);
 
   let drawnWidth = 0;
   const draw = (availableWidth = nominalWidth) => {
@@ -955,6 +958,7 @@ function qualityHistoryChart(site, response, metric, domain) {
 
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.replaceChildren();
+    hoverStats.hidden = true;
 
     if (!signal) {
       [[0, DECODE_DEGRADED_MINIMUM_PERCENT, 'poor'],
@@ -995,9 +999,24 @@ function qualityHistoryChart(site, response, metric, domain) {
       svg.append(svgNode('path', { d: line, class: signal ? 'signal-average-path' : 'decode-health-path' }));
     });
 
-    points.filter((point) => Number.isFinite(point.value)).forEach((point) => {
-      const target = svgNode('circle', { cx: xFor(point.timestamp), cy: yFor(point.value), r: 7,
-        class: 'quality-hover-target' });
+    const hoverPoints = points.filter((point) => Number.isFinite(point.value));
+    const hoverGuide = svgNode('line', { y1: margin.top, y2: margin.top + plotHeight,
+      class: 'quality-hover-guide' });
+    const hoverPoint = svgNode('circle', { r: 4, class: 'quality-hover-point' });
+    hoverGuide.setAttribute('visibility', 'hidden');
+    hoverPoint.setAttribute('visibility', 'hidden');
+    svg.append(hoverGuide, hoverPoint);
+
+    const showHoverStats = (event) => {
+      if (!hoverPoints.length) return;
+      const bounds = svg.getBoundingClientRect();
+      if (!bounds.width) return;
+      const chartX = (event.clientX - bounds.left) * width / bounds.width;
+      const timestamp = from + Math.max(0, Math.min(1, (chartX - margin.left) / plotWidth)) * range;
+      const point = hoverPoints.reduce((nearest, candidate) =>
+        Math.abs(candidate.timestamp - timestamp) < Math.abs(nearest.timestamp - timestamp) ? candidate : nearest);
+      const pointX = xFor(point.timestamp);
+      const pointY = yFor(point.value);
       const frequencyText = Number(point.frequency_hz) ? `${frequency(point.frequency_hz)} MHz` :
         (Number(point.frequency_count) > 1 ? `${number(point.frequency_count)} frequencies` :
           'Frequency unavailable');
@@ -1011,11 +1030,42 @@ function qualityHistoryChart(site, response, metric, domain) {
         detail = `Decode health: ${point.decode.toFixed(1)}%\n` +
           `30s signal average: ${signalNumber(point.average)}`;
       }
-      target.append(svgNode('title', {}, `${dateTime(point.last_observed_ms || point.timestamp)}\n${detail}\n` +
+      hoverStats.textContent = `${dateTime(point.last_observed_ms || point.timestamp)}\n${detail}\n` +
         `${frequencyText}\n${number(point.sample_count)} retained sample` +
-        `${Number(point.sample_count) === 1 ? '' : 's'}`));
-      svg.append(target);
-    });
+        `${Number(point.sample_count) === 1 ? '' : 's'}`;
+      hoverStats.hidden = false;
+      hoverGuide.removeAttribute('visibility');
+      hoverPoint.removeAttribute('visibility');
+      hoverGuide.setAttribute('x1', pointX);
+      hoverGuide.setAttribute('x2', pointX);
+      hoverPoint.setAttribute('cx', pointX);
+      hoverPoint.setAttribute('cy', pointY);
+
+      const wrapperBounds = wrapper.getBoundingClientRect();
+      const leftAtPoint = bounds.left - wrapperBounds.left + pointX * bounds.width / width;
+      const topAtPoint = bounds.top - wrapperBounds.top + pointY * bounds.height / height;
+      const gap = 10;
+      let left = leftAtPoint + gap;
+      if (left + hoverStats.offsetWidth > wrapper.clientWidth - 4) {
+        left = leftAtPoint - hoverStats.offsetWidth - gap;
+      }
+      let top = topAtPoint - hoverStats.offsetHeight - gap;
+      if (top < 4) top = topAtPoint + gap;
+      hoverStats.style.left = `${Math.max(4, left)}px`;
+      hoverStats.style.top = `${Math.max(4, top)}px`;
+    };
+
+    const hideHoverStats = () => {
+      hoverStats.hidden = true;
+      hoverGuide.setAttribute('visibility', 'hidden');
+      hoverPoint.setAttribute('visibility', 'hidden');
+    };
+
+    const hoverSurface = svgNode('rect', { x: margin.left, y: margin.top, width: plotWidth,
+      height: plotHeight, class: 'quality-hover-surface' });
+    hoverSurface.addEventListener('pointermove', showHoverStats);
+    hoverSurface.addEventListener('pointerleave', hideHoverStats);
+    svg.append(hoverSurface);
 
     [from, from + range / 2, to].forEach((timestamp, index) => {
       const longRange = range > 86_400_000;
