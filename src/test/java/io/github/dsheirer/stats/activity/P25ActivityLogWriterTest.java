@@ -375,7 +375,16 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("17", resultSet.getString(1));
+                assertEquals("19", resultSet.getString(1));
+            }
+
+            try(ResultSet resultSet = statement.executeQuery("""
+                SELECT CAST(value AS INTEGER) FROM database_metadata
+                WHERE key='p25_call_output_metrics_started_at_ms'
+                """))
+            {
+                assertTrue(resultSet.next());
+                assertTrue(resultSet.getLong(1) > 0);
             }
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA user_version"))
@@ -800,9 +809,11 @@ class P25ActivityLogWriterTest
         writer.start();
         writer.enqueue(activity(1000L, P25ActivityLogRecords.Action.GRANT));
         writer.enqueue(siteSnapshot(2000L));
+        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1000L,
+            "123e4567-e89b-12d3-a456-426614174000", 56138, P25ActivityLogRecords.CallOutput.RECORDED));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
-        while(writer.getWrittenRecords() < 2 && System.currentTimeMillis() < deadline)
+        while(writer.getWrittenRecords() < 3 && System.currentTimeMillis() < deadline)
         {
             Thread.sleep(25);
         }
@@ -813,8 +824,88 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "p25_activity_event", 1);
             assertCount(connection, "p25_site_snapshot", 1);
+            assertActionCount(connection, "p25_site_talkgroup_bucket", "recorded_count", 1);
+            assertActionCount(connection, "p25_site_activity_bucket", "recorded_count", 1);
             assertTrue(count(connection, "logger_status") > 0);
             assertTrue(Long.parseLong(status(connection, "last_successful_write_ms")) > 0);
+        }
+    }
+
+    @Test
+    void aggregatesSuccessfulCallOutputsWithoutChangingTrackedCalls() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("call-outputs.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(1_000L, P25ActivityLogRecords.Action.CALL), false);
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(1_000L,
+                    "123e4567-e89b-12d3-a456-426614174000", 56138,
+                    P25ActivityLogRecords.CallOutput.RECORDED)));
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(1_000L,
+                    "123e4567-e89b-12d3-a456-426614174000", 56138,
+                    P25ActivityLogRecords.CallOutput.STREAMED)));
+
+            for(String table: List.of("p25_site_talkgroup_bucket", "p25_site_activity_bucket"))
+            {
+                try(Statement statement = connection.createStatement();
+                    ResultSet resultSet = statement.executeQuery(
+                        "SELECT call_count, recorded_count, streamed_count FROM " + table))
+                {
+                    assertTrue(resultSet.next());
+                    assertEquals(1, resultSet.getInt("call_count"));
+                    assertEquals(1, resultSet.getInt("recorded_count"));
+                    assertEquals(1, resultSet.getInt("streamed_count"));
+                }
+            }
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT call_count, recorded_count, streamed_count
+                    FROM p25_talkgroup_summary WHERE system_key = 1 AND talkgroup_id = 56138
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(1, resultSet.getInt("call_count"));
+                assertEquals(1, resultSet.getInt("recorded_count"));
+                assertEquals(1, resultSet.getInt("streamed_count"));
+            }
+
+            assertFalse(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(1_000L, "missing-guid", 56138,
+                    P25ActivityLogRecords.CallOutput.RECORDED)));
+        }
+    }
+
+    @Test
+    void createsCompactSummaryForOutputOnlyTalkgroup() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("output-only-talkgroup.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L));
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(2_000L,
+                    "123e4567-e89b-12d3-a456-426614174000", 60000,
+                    P25ActivityLogRecords.CallOutput.RECORDED)));
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT call_count, recorded_count, streamed_count
+                    FROM p25_talkgroup_summary WHERE system_key = 1 AND talkgroup_id = 60000
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(0, resultSet.getInt("call_count"));
+                assertEquals(1, resultSet.getInt("recorded_count"));
+                assertEquals(0, resultSet.getInt("streamed_count"));
+            }
         }
     }
 

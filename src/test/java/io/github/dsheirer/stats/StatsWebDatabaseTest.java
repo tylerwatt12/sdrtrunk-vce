@@ -65,6 +65,9 @@ class StatsWebDatabaseTest
         Map<String,Object> talkgroup = rows(talkgroups).get(0);
         assertEquals("Dispatch", talkgroup.get("alias_name"));
         assertEquals(56132L, number(talkgroup.get("talkgroup_id")));
+        assertEquals(0, number(talkgroup.get("recorded_count")));
+        assertEquals(0, number(talkgroup.get("streamed_count")));
+        assertFalse(talkgroup.containsKey("grant_count"));
         assertFalse((Boolean)talkgroups.get("hasMore"));
 
         Map<String,Object> radios = mDatabase.systemRadios(request(
@@ -247,8 +250,8 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO p25_site_activity_bucket
-                    (context_id, bucket_start_ms, call_count, grant_count)
-                VALUES (1, %d, 7, 9)
+                    (context_id, bucket_start_ms, call_count, grant_count, recorded_count, streamed_count)
+                VALUES (1, %d, 7, 9, 5, 4)
                 """.formatted(currentHour));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_bucket
@@ -273,6 +276,114 @@ class StatsWebDatabaseTest
         assertTrue(rowsFrom(mDatabase.system(request(
             "/api/system?wacn=BEE00&system_id=0x348")), "actionCounts").stream()
             .noneMatch(row -> "GRANT".equals(row.get("action"))));
+        Map<String,Object> p25CallActivity = map(dashboard, "p25CallActivity");
+        Map<String,Object> p25Totals = map(p25CallActivity, "totals");
+        assertEquals(7, number(p25Totals.get("call_count")));
+        assertEquals(5, number(p25Totals.get("recorded_count")));
+        assertEquals(4, number(p25Totals.get("streamed_count")));
+        List<Map<String,Object>> p25Series = rowsFrom(p25CallActivity, "series");
+        assertEquals(24, p25Series.size());
+        assertEquals(currentHour, number(p25Series.getLast().get("time_ms")));
+        assertEquals(7, number(p25Series.getLast().get("call_count")));
+        assertEquals(5, number(p25Series.getLast().get("recorded_count")));
+        assertEquals(4, number(p25Series.getLast().get("streamed_count")));
+        assertTrue(number(p25CallActivity.get("metric_start_ms")) > 0);
+    }
+
+    @Test
+    void providesSystemScopedZeroFilledTalkgroupActivityHistory() throws Exception
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        seedSecondSystem(mDatabasePath);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_talkgroup_bucket
+                    (context_id, talkgroup_id, bucket_start_ms, call_count, emergency_count,
+                     grant_count, recorded_count, streamed_count)
+                VALUES (1, 56132, %d, 7, 1, 9, 5, 4),
+                       (3, 56132, %d, 100, 2, 100, 90, 80)
+                """.formatted(currentHour, currentHour));
+        }
+
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+        Map<String,Object> response = mDatabase.talkgroupActivity(request(
+            "/api/talkgroup/activity?wacn=BEE00&system_id=0x348&talkgroup_id=56132&range=24h"));
+        assertEquals("24h", response.get("range"));
+        assertEquals(3_600_000L, number(response.get("bucket_ms")));
+        assertTrue(number(response.get("metric_start_ms")) > 0);
+        List<Map<String,Object>> series = rowsFrom(response, "series");
+        Map<String,Object> current = series.stream()
+            .filter(row -> number(row.get("time_ms")) == currentHour)
+            .findFirst().orElseThrow();
+        assertEquals(7, number(current.get("call_count")));
+        assertEquals(1, number(current.get("emergency_count")));
+        assertEquals(5, number(current.get("recorded_count")));
+        assertEquals(4, number(current.get("streamed_count")));
+        assertFalse(current.containsKey("grant_count"));
+        assertTrue(series.stream().anyMatch(row -> number(row.get("call_count")) == 0));
+        Map<String,Object> totals = map(response, "totals");
+        assertEquals(7, number(totals.get("call_count")));
+        assertEquals(5, number(totals.get("recorded_count")));
+        assertEquals(4, number(totals.get("streamed_count")));
+        assertFalse(totals.containsKey("grant_count"));
+
+        StatsApiException error = assertThrows(StatsApiException.class, () -> mDatabase.talkgroupActivity(request(
+            "/api/talkgroup/activity?wacn=BEE00&system_id=0x348&talkgroup_id=56132&range=forever")));
+        assertEquals(400, error.status());
+    }
+
+    @Test
+    void aggregatesTopTalkgroupsForOneSiteAndSelectedRange() throws Exception
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        seedSecondSystem(mDatabasePath);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_talkgroup_bucket
+                    (context_id, talkgroup_id, bucket_start_ms, call_count, encrypted_count,
+                     recorded_count, streamed_count)
+                VALUES (1, 56132, %d, 7, 1, 2, 3),
+                       (1, 56132, %d, 5, 2, 4, 1),
+                       (1, 60000, %d, 20, 0, 0, 0),
+                       (1, 56132, %d, 50, 0, 50, 50),
+                       (3, 56132, %d, 100, 0, 90, 80)
+                """.formatted(currentHour - 3_600_000L, currentHour, currentHour,
+                    currentHour - 25L * 3_600_000L, currentHour));
+        }
+
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+        Map<String,Object> response = mDatabase.siteTalkgroups(request(
+            "/api/site/talkgroups?guid=" + GUID + "&range=24h&limit=20"));
+        assertEquals("24h", response.get("range"));
+        assertEquals(3_600_000L, number(response.get("bucket_ms")));
+        assertEquals(2, rows(response).size());
+        assertEquals(60000L, number(rows(response).getFirst().get("talkgroup_id")));
+
+        Map<String,Object> dispatch = rows(response).stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 56132L)
+            .findFirst().orElseThrow();
+        assertEquals("Dispatch", dispatch.get("alias_name"));
+        assertEquals(12L, number(dispatch.get("call_count")));
+        assertEquals(6L, number(dispatch.get("recorded_count")));
+        assertEquals(4L, number(dispatch.get("streamed_count")));
+        assertEquals(3L, number(dispatch.get("encrypted_count")));
+        assertEquals(currentHour, number(dispatch.get("last_active_ms")));
+        assertFalse(dispatch.containsKey("first_seen_ms"));
+
+        Map<String,Object> oneHour = mDatabase.siteTalkgroups(request(
+            "/api/site/talkgroups?guid=" + GUID + "&range=1h&limit=20"));
+        Map<String,Object> currentDispatch = rows(oneHour).stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 56132L)
+            .findFirst().orElseThrow();
+        assertEquals(5L, number(currentDispatch.get("call_count")));
+        assertEquals(4L, number(currentDispatch.get("recorded_count")));
+        assertEquals(1L, number(currentDispatch.get("streamed_count")));
     }
 
     @Test
@@ -374,6 +485,12 @@ class StatsWebDatabaseTest
         assertEquals("Dispatch", rows(mDatabase.systemTalkgroups(request(
             "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=group&direction=asc&limit=1")))
             .getFirst().get("alias_name"));
+        assertEquals(100, number(rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=recorded&direction=desc&limit=1")))
+            .getFirst().get("talkgroup_id")));
+        assertEquals(100, number(rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=streamed&direction=desc&limit=1")))
+            .getFirst().get("talkgroup_id")));
 
         assertEquals("Engine 1", rows(mDatabase.systemRadios(request(
             "/api/system/radios?wacn=BEE00&system_id=0x348&sort=alias&direction=asc&limit=1")))
@@ -646,8 +763,9 @@ class StatsWebDatabaseTest
         {
             statement.executeUpdate("""
                 INSERT INTO p25_talkgroup_summary (system_key, talkgroup_id, target_kind_code, first_seen_ms,
-                    last_seen_ms, call_count, grant_count, encrypted_count, last_source_radio_id)
-                VALUES (1, 100, 1, 1000, 3000, 100, 100, 0, 100)
+                    last_seen_ms, call_count, grant_count, encrypted_count, recorded_count, streamed_count,
+                    last_source_radio_id)
+                VALUES (1, 100, 1, 1000, 3000, 100, 100, 0, 10, 12, 100)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_radio_summary (system_key, radio_id, first_seen_ms, last_seen_ms, call_count,

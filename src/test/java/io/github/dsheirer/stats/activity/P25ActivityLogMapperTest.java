@@ -17,6 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -30,6 +33,7 @@ import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
@@ -48,6 +52,7 @@ import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class P25ActivityLogMapperTest
@@ -67,7 +72,9 @@ class P25ActivityLogMapperTest
         identifiers.update(APCO25Rfss.create(2));
         identifiers.update(APCO25Site.create(1));
         identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
-        identifiers.update(EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 101)));
+        EncryptionKeyIdentifier encryptionKey =
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 101));
+        identifiers.update(encryptionKey);
         identifiers.update(P25TalkerAliasIdentifier.create("CAR 201"));
 
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED,
@@ -76,6 +83,8 @@ class P25ActivityLogMapperTest
             .details("PHASE 1 CHANNEL GRANT")
             .identifiers(identifiers)
             .build();
+        P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1000L);
+        P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1360L);
 
         P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1),
             event);
@@ -117,6 +126,63 @@ class P25ActivityLogMapperTest
         assertEquals(P25ActivityLogRecords.Action.GRANT, grant.action());
         assertFalse(grant.countedCall());
         assertNull(grant.dedupeKey());
+        assertFalse(grant.encrypted());
+        assertNull(grant.encryptionAlgorithmId());
+        assertNull(grant.encryptionKeyId());
+        P25EncryptionConfirmationTracker.complete(event, 4000L);
+    }
+
+    @Test
+    void suppressesEncryptionMetricsUntilTwoKnownMatchingObservations()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25Talkgroup.create(56138));
+        identifiers.update(APCO25Wacn.create(0xBEE00));
+        identifiers.update(APCO25System.create(0x348));
+        EncryptionKeyIdentifier encryptionKey =
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 101));
+        identifiers.update(encryptionKey);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED,
+                1000L, VoiceServiceOptions.createEncrypted())
+            .identifiers(identifiers)
+            .build();
+
+        P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1000L);
+        P25ActivityLogRecords.ActivityEvent record =
+            new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1), event);
+
+        assertNotNull(record);
+        assertFalse(record.encrypted());
+        assertNull(record.encryptionAlgorithmId());
+        assertNull(record.encryptionKeyId());
+        P25EncryptionConfirmationTracker.complete(event, 2000L);
+    }
+
+    @Test
+    void suppressesRepeatedUnknownEncryptionAlgorithm()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25Talkgroup.create(56138));
+        identifiers.update(APCO25Wacn.create(0xBEE00));
+        identifiers.update(APCO25System.create(0x348));
+        EncryptionKeyIdentifier encryptionKey =
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x08, 8322));
+        identifiers.update(encryptionKey);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED,
+                1000L, VoiceServiceOptions.createEncrypted())
+            .identifiers(identifiers)
+            .build();
+
+        P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1000L);
+        P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1360L);
+        P25ActivityLogRecords.ActivityEvent record =
+            new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1), event);
+
+        assertNotNull(record);
+        assertFalse(record.encrypted());
+        assertNull(record.encryptionAlgorithmId());
+        assertNull(record.encryptionKeyId());
+        P25EncryptionConfirmationTracker.complete(event, 2000L);
     }
 
     @Test
@@ -227,6 +293,27 @@ class P25ActivityLogMapperTest
         assertEquals(854187500L, record.frequencyHertz());
         assertTrue(record.dedupeKey() != null && !record.dedupeKey().isBlank());
         assertFalse(record.countedCall());
+    }
+
+    @Test
+    void mapsCompletedCallOutputToSiteTalkgroupAndCallStartHour()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25Talkgroup.create(56138));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, 2L, 1), null, null,
+            identifiers, Set.of(), 3_600_123L, 3_605_000L, 1, 1, 3_600_123L, 3_605_000L,
+            false, true, false, true, 100, false);
+        CompletedAudioCall call = new CompletedAudioCall(snapshot, List.of(new float[800]));
+
+        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(call,
+            P25ActivityLogRecords.CallOutput.RECORDED);
+
+        assertNotNull(metric);
+        assertEquals(3_600_123L, metric.callStartEpochMilliseconds());
+        assertEquals(GUID, metric.guid());
+        assertEquals(56138, metric.talkgroupId());
+        assertEquals(P25ActivityLogRecords.CallOutput.RECORDED, metric.output());
     }
 
     @Test

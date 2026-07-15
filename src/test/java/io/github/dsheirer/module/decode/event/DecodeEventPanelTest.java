@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
 import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.protocol.Protocol;
 import org.junit.jupiter.api.Test;
@@ -43,10 +44,23 @@ class DecodeEventPanelTest
         assertTrue(DecodeEventPanel.matchesSelectedFrequency(grant, TRAFFIC_FREQUENCY, false));
     }
 
+    @Test
+    void controlRetuneWithinSameSiteDoesNotChangeLogicalEventSelection()
+    {
+        Channel site = new Channel("Test Site");
+
+        assertFalse(DecodeEventPanel.logicalSelectionChanged(CONTROL_FREQUENCY, null, true, site,
+            TRAFFIC_FREQUENCY, null, true, site));
+        assertTrue(DecodeEventPanel.logicalSelectionChanged(CONTROL_FREQUENCY, null, true, site,
+            TRAFFIC_FREQUENCY, null, true, new Channel("Other Site")));
+    }
+
     private static SelectedFrequencyContext selection(ChannelActivityRow.Role role)
     {
+        boolean siteEventSelection = role == ChannelActivityRow.Role.CONFIGURED_CONTROL ||
+            role == ChannelActivityRow.Role.CURRENT_CONTROL || role == ChannelActivityRow.Role.ALTERNATE_CONTROL;
         return new SelectedFrequencyContext(CONTROL_FREQUENCY, null, role, "P25", "site", null, null, null,
-            false);
+            null, siteEventSelection, false);
     }
 
     private record TestChannelDescriptor(long getDownlinkFrequency) implements IChannelDescriptor

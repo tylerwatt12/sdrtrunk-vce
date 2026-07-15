@@ -36,8 +36,10 @@ public class P25TrafficChannelEventTracker
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25TrafficChannelEventTracker.class);
     private static final long STALE_EVENT_THRESHOLD_MS = 2000;
+    static final long CONTROL_CONTINUATION_THRESHOLD_MS = 10000;
     private static final long MAX_TDMA_DATA_CHANNEL_EVENT_DURATION_MS = 15000;
     private P25ChannelGrantEvent mEvent;
+    private long mLastObservationTimestamp;
     private boolean mStarted = false;
     private boolean mComplete = false;
 
@@ -48,6 +50,7 @@ public class P25TrafficChannelEventTracker
     public P25TrafficChannelEventTracker(P25ChannelGrantEvent event)
     {
         mEvent = event;
+        mLastObservationTimestamp = event.getTimeStart();
     }
 
     /**
@@ -61,18 +64,22 @@ public class P25TrafficChannelEventTracker
 
     /**
      * Indicates if this event is stale relative to the provided timestamp.  Staleness is determined by the time delta
-     * between the event's end time and timestamp argument.
+     * between the most recent control or traffic observation and timestamp argument.
      * @param timestamp to check for staleness
      * @return true if the delta time exceeds a threshold.
      */
     public boolean isStale(long timestamp)
     {
-        if(getEvent().getTimeEnd() > 0)
-        {
-            return timestamp - getEvent().getTimeEnd() > STALE_EVENT_THRESHOLD_MS;
-        }
+        return timestamp - mLastObservationTimestamp > STALE_EVENT_THRESHOLD_MS;
+    }
 
-        return timestamp - getEvent().getTimeStart() > STALE_EVENT_THRESHOLD_MS;
+    /**
+     * Control-channel grant-update messages often contain only a destination.  They can be spaced farther apart than
+     * the normal event matching window, so an incomplete call gets a bounded continuation window.
+     */
+    public boolean isStaleControlContinuation(long timestamp)
+    {
+        return timestamp - mLastObservationTimestamp > CONTROL_CONTINUATION_THRESHOLD_MS;
     }
 
     /**
@@ -130,7 +137,18 @@ public class P25TrafficChannelEventTracker
     {
         Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
         Identifier nextTO = toCompare.getToIdentifier();
-        return currentTO != null && currentTO.equals(nextTO) && !isStale(timestamp);
+        return !isComplete() && currentTO != null && currentTO.equals(nextTO) && !isStale(timestamp);
+    }
+
+    /**
+     * Matches a source-less control-channel update to an incomplete event using the longer continuation window.
+     */
+    public boolean isSameControlContinuationCheckingToOnly(IdentifierCollection toCompare, long timestamp)
+    {
+        Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
+        Identifier nextTO = toCompare.getToIdentifier();
+        return !isComplete() && currentTO != null && currentTO.equals(nextTO) &&
+            !isStaleControlContinuation(timestamp);
     }
 
     /**
@@ -159,7 +177,7 @@ public class P25TrafficChannelEventTracker
      */
     public boolean isSameCallCheckingToAndFrom(IdentifierCollection toCompareIC, long timestamp)
     {
-        if(!isStale(timestamp))
+        if(!isComplete() && !isStale(timestamp))
         {
             Identifier currentTO = getEvent().getIdentifierCollection().getToIdentifier();
             Identifier nextTO = toCompareIC.getToIdentifier();
@@ -222,10 +240,15 @@ public class P25TrafficChannelEventTracker
      */
     public boolean updateDurationControl(long timestamp)
     {
-        if(!isStarted())
+        if(!isComplete())
         {
-            getEvent().update(timestamp);
-            return true;
+            observe(timestamp);
+
+            if(!isStarted())
+            {
+                getEvent().update(timestamp);
+                return true;
+            }
         }
 
         return false;
@@ -243,6 +266,7 @@ public class P25TrafficChannelEventTracker
         if(!isComplete())
         {
             mStarted = true;
+            observe(timestamp);
             getEvent().update(timestamp);
         }
         else
@@ -263,11 +287,20 @@ public class P25TrafficChannelEventTracker
         if(!isComplete())
         {
             mComplete = true;
+            observe(timestamp);
             getEvent().end(timestamp);
             return true;
         }
 
         return false;
+    }
+
+    private void observe(long timestamp)
+    {
+        if(timestamp > mLastObservationTimestamp)
+        {
+            mLastObservationTimestamp = timestamp;
+        }
     }
 
     /**

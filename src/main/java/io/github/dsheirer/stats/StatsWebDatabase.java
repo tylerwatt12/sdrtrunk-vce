@@ -15,6 +15,7 @@ import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,7 +46,18 @@ class StatsWebDatabase
     private static final int QUALITY_DEFAULT_POINTS = 240;
     private static final int QUALITY_MINIMUM_POINTS = 60;
     private static final int QUALITY_MAXIMUM_POINTS = 360;
+    private static final int ACTIVITY_TARGET_POINTS = 240;
     private static final int DASHBOARD_HOURS = 24;
+    private static final List<String> CALL_ACTIVITY_FIELDS = List.of(
+        "call_count", "recorded_count", "streamed_count"
+    );
+    private static final List<String> TALKGROUP_ACTIVITY_FIELDS = List.of(
+        "acknowledge_count", "active_count", "busy_count", "call_count", "check_count", "check_ack_count",
+        "continue_count", "data_count", "denial_count", "emergency_count", "gps_count",
+        "join_count", "logout_count", "page_count", "patch_count", "patch_cancel_count", "patch_create_count",
+        "queued_count", "register_count", "request_count", "status_count", "unknown_count", "encrypted_count",
+        "recorded_count", "streamed_count"
+    );
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
         Map.entry("wacn", "system.wacn"),
         Map.entry("system_id", "system.system_id"),
@@ -82,6 +94,8 @@ class StatsWebDatabase
         Map.entry("name", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "name")),
         Map.entry("group", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "group_name")),
         Map.entry("calls", "summary.call_count"),
+        Map.entry("recorded", "summary.recorded_count"),
+        Map.entry("streamed", "summary.streamed_count"),
         Map.entry("grants", "summary.grant_count"),
         Map.entry("encrypted", "summary.encrypted_count"),
         Map.entry("last_source", "summary.last_source_radio_id"),
@@ -219,8 +233,8 @@ class StatsWebDatabase
 
             List<Map<String,Object>> talkgroups = queryRows(connection, """
                 SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id, summary.call_count,
-                    summary.grant_count, summary.continue_count,
-                    summary.encrypted_count, summary.last_source_radio_id, summary.last_seen_ms
+                    summary.recorded_count, summary.streamed_count, summary.encrypted_count,
+                    summary.last_source_radio_id, summary.last_seen_ms
                 FROM p25_talkgroup_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 ORDER BY summary.call_count DESC, summary.last_seen_ms DESC
@@ -248,6 +262,7 @@ class StatsWebDatabase
             List<Map<String,Object>> hourlyActivity = hourlyActivity(connection);
             dashboard.put("actionMix", actionMix(hourlyActivity));
             dashboard.put("activityPerHour", hourlyActivity);
+            dashboard.put("p25CallActivity", p25CallActivity(connection));
             return dashboard;
         });
     }
@@ -486,7 +501,9 @@ class StatsWebDatabase
 
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, summary.*
+                SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id,
+                    summary.first_seen_ms, summary.last_seen_ms, summary.call_count, summary.encrypted_count,
+                    summary.recorded_count, summary.streamed_count
                 FROM p25_talkgroup_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 WHERE system.wacn = ? AND system.system_id = ?
@@ -587,6 +604,85 @@ class StatsWebDatabase
                 """, wacn, systemId, talkgroup);
             mAliasResolver.enrichTalkgroups(connection, rows);
             return Map.of("talkgroup", first(rows, "Talkgroup not found"));
+        });
+    }
+
+    Map<String,Object> talkgroupActivity(StatsRequest request)
+    {
+        int wacn = request.requiredIdentifier("wacn");
+        int systemId = request.requiredIdentifier("system_id");
+        int talkgroup = request.requiredIdentifier("talkgroup_id");
+        ActivityRange requestedRange = activityRange(request);
+        long rangeMilliseconds = requestedRange.milliseconds();
+        long sourceBuckets = Math.max(1, (rangeMilliseconds + HOUR_MILLISECONDS - 1) / HOUR_MILLISECONDS);
+        long combinedHours = Math.max(1, (sourceBuckets + ACTIVITY_TARGET_POINTS - 1) / ACTIVITY_TARGET_POINTS);
+        long bucketMilliseconds = combinedHours * HOUR_MILLISECONDS;
+        long toMilliseconds = System.currentTimeMillis();
+        long throughMilliseconds = Math.floorDiv(toMilliseconds, bucketMilliseconds) * bucketMilliseconds;
+        long pointCount = Math.max(1, (rangeMilliseconds + bucketMilliseconds - 1) / bucketMilliseconds);
+        long fromMilliseconds = throughMilliseconds - (pointCount - 1) * bucketMilliseconds;
+        String responseRange = requestedRange.label();
+
+        return read(connection -> {
+            String sums = String.join(",\n                    ", TALKGROUP_ACTIVITY_FIELDS.stream()
+                .map(field -> "SUM(bucket." + field + ") AS " + field)
+                .toList());
+            List<Map<String,Object>> stored = queryRows(connection, """
+                SELECT CAST(bucket.bucket_start_ms / ? AS INTEGER) * ? AS time_ms,
+                    %s
+                FROM p25_site_talkgroup_bucket bucket
+                JOIN receiver_context context ON context.id = bucket.context_id
+                JOIN p25_system system ON system.system_key = context.system_key
+                WHERE system.wacn = ? AND system.system_id = ? AND bucket.talkgroup_id = ?
+                    AND bucket.bucket_start_ms >= ?
+                GROUP BY time_ms
+                ORDER BY time_ms
+                """.formatted(sums), bucketMilliseconds, bucketMilliseconds, wacn, systemId, talkgroup,
+                fromMilliseconds);
+            Map<Long,Map<String,Object>> storedByTime = new LinkedHashMap<>();
+
+            for(Map<String,Object> row: stored)
+            {
+                if(row.get("time_ms") instanceof Number timestamp)
+                {
+                    storedByTime.put(timestamp.longValue(), row);
+                }
+            }
+
+            List<Map<String,Object>> series = new ArrayList<>();
+            Map<String,Long> totals = new LinkedHashMap<>();
+
+            for(String field: TALKGROUP_ACTIVITY_FIELDS)
+            {
+                totals.put(field, 0L);
+            }
+
+            for(long timestamp = fromMilliseconds; timestamp <= throughMilliseconds;
+                timestamp += bucketMilliseconds)
+            {
+                Map<String,Object> storedRow = storedByTime.get(timestamp);
+                Map<String,Object> point = new LinkedHashMap<>();
+                point.put("time_ms", timestamp);
+
+                for(String field: TALKGROUP_ACTIVITY_FIELDS)
+                {
+                    long value = storedRow != null ? number(storedRow.get(field)) : 0L;
+                    point.put(field, value);
+                    totals.compute(field, (key, total) -> total + value);
+                }
+
+                series.add(point);
+            }
+
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("range", responseRange);
+            response.put("from_ms", fromMilliseconds);
+            response.put("to_ms", toMilliseconds);
+            response.put("bucket_ms", bucketMilliseconds);
+            response.put("metric_start_ms", p25CallOutputMetricsStartedAt(connection));
+            response.put("totals", totals);
+            response.put("series", series);
+            return response;
         });
     }
 
@@ -772,6 +868,53 @@ class StatsWebDatabase
             GROUP BY guid, coalesce(CAST(downlink_hz AS TEXT), channel_key)
             ORDER BY coalesce(downlink_hz, 9223372036854775807), channel_key
             """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS)));
+    }
+
+    Map<String,Object> siteTalkgroups(StatsRequest request)
+    {
+        String guid = request.requiredText("guid");
+        ActivityRange range = activityRange(request);
+        long throughMilliseconds = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) *
+            HOUR_MILLISECONDS;
+        long bucketCount = Math.max(1,
+            (range.milliseconds() + HOUR_MILLISECONDS - 1) / HOUR_MILLISECONDS);
+        long fromMilliseconds = throughMilliseconds - (bucketCount - 1) * HOUR_MILLISECONDS;
+
+        return read(connection -> {
+            Map<String,Object> context = first(queryRows(connection, """
+                SELECT context.id AS context_id, system.system_key, system.wacn, system.system_id
+                FROM receiver_context context
+                JOIN p25_system system ON system.system_key = context.system_key
+                WHERE context.guid = ?
+                """, guid), "Site not found");
+            List<Map<String,Object>> rows = queryRows(connection, """
+                SELECT talkgroup_id, SUM(call_count) AS call_count,
+                    SUM(recorded_count) AS recorded_count, SUM(streamed_count) AS streamed_count,
+                    SUM(encrypted_count) AS encrypted_count, MAX(bucket_start_ms) AS last_active_ms
+                FROM p25_site_talkgroup_bucket
+                WHERE context_id = ? AND bucket_start_ms >= ?
+                GROUP BY talkgroup_id
+                ORDER BY call_count DESC, talkgroup_id
+                LIMIT ?
+                """, context.get("context_id"), fromMilliseconds, request.limit());
+
+            for(Map<String,Object> row: rows)
+            {
+                row.put("system_key", context.get("system_key"));
+                row.put("wacn", context.get("wacn"));
+                row.put("system_id", context.get("system_id"));
+            }
+
+            mAliasResolver.enrichTalkgroups(connection, rows);
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("range", range.label());
+            response.put("from_ms", fromMilliseconds);
+            response.put("to_ms", System.currentTimeMillis());
+            response.put("bucket_ms", HOUR_MILLISECONDS);
+            response.put("metric_start_ms", p25CallOutputMetricsStartedAt(connection));
+            response.put("rows", rows);
+            return response;
+        });
     }
 
     Map<String,Object> siteQuality(StatsRequest request)
@@ -1126,6 +1269,71 @@ class StatsWebDatabase
         return result;
     }
 
+    private static Map<String,Object> p25CallActivity(Connection connection) throws SQLException
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
+        long firstHour = currentHour - (DASHBOARD_HOURS - 1L) * HOUR_MILLISECONDS;
+        List<Map<String,Object>> stored = queryRows(connection, """
+            SELECT bucket_start_ms AS time_ms, SUM(call_count) AS call_count,
+                SUM(recorded_count) AS recorded_count, SUM(streamed_count) AS streamed_count
+            FROM p25_site_activity_bucket
+            WHERE bucket_start_ms >= ?
+            GROUP BY bucket_start_ms
+            ORDER BY bucket_start_ms
+            """, firstHour);
+        Map<Long,Map<String,Object>> storedByTime = new LinkedHashMap<>();
+
+        for(Map<String,Object> row: stored)
+        {
+            if(row.get("time_ms") instanceof Number timestamp)
+            {
+                storedByTime.put(timestamp.longValue(), row);
+            }
+        }
+
+        Map<String,Long> totals = new LinkedHashMap<>();
+
+        for(String field: CALL_ACTIVITY_FIELDS)
+        {
+            totals.put(field, 0L);
+        }
+
+        List<Map<String,Object>> series = new ArrayList<>(DASHBOARD_HOURS);
+
+        for(long timestamp = firstHour; timestamp <= currentHour; timestamp += HOUR_MILLISECONDS)
+        {
+            Map<String,Object> storedRow = storedByTime.get(timestamp);
+            Map<String,Object> point = new LinkedHashMap<>();
+            point.put("time_ms", timestamp);
+
+            for(String field: CALL_ACTIVITY_FIELDS)
+            {
+                long value = storedRow != null ? number(storedRow.get(field)) : 0L;
+                point.put(field, value);
+                totals.compute(field, (key, total) -> total + value);
+            }
+
+            series.add(point);
+        }
+
+        Map<String,Object> result = new LinkedHashMap<>();
+        result.put("range", "24h");
+        result.put("from_ms", firstHour);
+        result.put("to_ms", System.currentTimeMillis());
+        result.put("bucket_ms", HOUR_MILLISECONDS);
+        result.put("metric_start_ms", p25CallOutputMetricsStartedAt(connection));
+        result.put("totals", totals);
+        result.put("series", series);
+        return result;
+    }
+
+    private static long p25CallOutputMetricsStartedAt(Connection connection) throws SQLException
+    {
+        return scalarLong(connection, """
+            SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
+            """, P25ActivityLogSchema.CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+    }
+
     private static List<Map<String,Object>> actionMix(List<Map<String,Object>> hourlyActivity)
     {
         Map<String,Long> totals = new LinkedHashMap<>();
@@ -1228,6 +1436,24 @@ class StatsWebDatabase
         return connection;
     }
 
+    private ActivityRange activityRange(StatsRequest request)
+    {
+        String label = request.text("range");
+        label = label != null ? label.toLowerCase() : "24h";
+        long requestedMilliseconds = switch(label)
+        {
+            case "1h" -> HOUR_MILLISECONDS;
+            case "6h" -> 6L * HOUR_MILLISECONDS;
+            case "24h" -> DAY_MILLISECONDS;
+            case "7d" -> 7L * DAY_MILLISECONDS;
+            case "30d" -> 30L * DAY_MILLISECONDS;
+            default -> throw new StatsApiException(400, "range must be one of 1h, 6h, 24h, 7d, or 30d");
+        };
+        long retentionMilliseconds = Math.max(1,
+            mUserPreferences.getApplicationPreference().getStatsLoggingRetentionDays()) * DAY_MILLISECONDS;
+        return new ActivityRange(label, Math.min(requestedMilliseconds, retentionMilliseconds));
+    }
+
     private Path getDatabasePath()
     {
         return mDatabasePath;
@@ -1243,6 +1469,10 @@ class StatsWebDatabase
         {
             return 0;
         }
+    }
+
+    private record ActivityRange(String label, long milliseconds)
+    {
     }
 
     /**
@@ -1347,11 +1577,19 @@ class StatsWebDatabase
         return rows.get(0);
     }
 
-    private static long scalarLong(Connection connection, String sql) throws SQLException
+    private static long scalarLong(Connection connection, String sql, Object... parameters) throws SQLException
     {
-        try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery(sql))
+        try(PreparedStatement statement = connection.prepareStatement(sql))
         {
-            return resultSet.next() ? resultSet.getLong(1) : 0;
+            for(int x = 0; x < parameters.length; x++)
+            {
+                statement.setObject(x + 1, parameters[x]);
+            }
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next() ? resultSet.getLong(1) : 0;
+            }
         }
     }
 
