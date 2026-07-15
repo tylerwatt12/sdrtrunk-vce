@@ -78,6 +78,8 @@ public class ChannelActivityPanel extends JPanel
     private static final String TABLE_COLUMN_WIDTH_PREFERENCE_KEY = "now.playing.activity.table.v4";
     private static final int[] TABLE_COLUMN_DEFAULT_WIDTHS = {150, 180, 130, 96, 92, 82, 72, 210, 88, 210, 88, 74};
     private static final int[] TABLE_COLUMN_MINIMUM_WIDTHS = {90, 90, 90, 80, 75, 70, 62, 80, 67, 80, 67, 54};
+    private static final double DECODE_HEALTHY_MINIMUM_PERCENT = 90.0;
+    private static final double DECODE_DEGRADED_MINIMUM_PERCENT = 75.0;
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ChannelActivityModel mActivityModel;
     private final IconModel mIconModel;
@@ -1037,8 +1039,8 @@ public class ChannelActivityPanel extends JPanel
 
                 if(mHealth)
                 {
-                    label.setForeground(measurement >= 95.0 ? new Color(0, 128, 0) :
-                        measurement >= 80.0 ? new Color(180, 130, 0) : Color.RED);
+                    label.setForeground(measurement >= DECODE_HEALTHY_MINIMUM_PERCENT ? new Color(0, 128, 0) :
+                        measurement >= DECODE_DEGRADED_MINIMUM_PERCENT ? new Color(180, 130, 0) : Color.RED);
                 }
                 else
                 {

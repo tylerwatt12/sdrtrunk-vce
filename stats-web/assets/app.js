@@ -5,6 +5,8 @@ const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v1';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
+const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
+const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const SIGNAL_RANGES = Object.freeze([
   ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
 ]);
@@ -863,8 +865,12 @@ function signalSiteState(site, now = Date.now()) {
     return { label: 'No signal', className: 'poor', rank: 1 };
   }
   if (!Number.isFinite(decode)) return { label: 'Monitoring', className: 'unknown', rank: 2 };
-  if (decode >= 95) return { label: 'Healthy', className: 'healthy', rank: 4 };
-  if (decode >= 80) return { label: 'Degraded', className: 'degraded', rank: 3 };
+  if (decode >= DECODE_HEALTHY_MINIMUM_PERCENT) {
+    return { label: 'Healthy', className: 'healthy', rank: 4 };
+  }
+  if (decode >= DECODE_DEGRADED_MINIMUM_PERCENT) {
+    return { label: 'Degraded', className: 'degraded', rank: 3 };
+  }
   return { label: 'Poor', className: 'poor', rank: 1 };
 }
 
@@ -951,7 +957,9 @@ function qualityHistoryChart(site, response, metric, domain) {
     svg.replaceChildren();
 
     if (!signal) {
-      [[0, 80, 'poor'], [80, 95, 'degraded'], [95, 100, 'healthy']].forEach(([minimum, maximum, state]) => {
+      [[0, DECODE_DEGRADED_MINIMUM_PERCENT, 'poor'],
+        [DECODE_DEGRADED_MINIMUM_PERCENT, DECODE_HEALTHY_MINIMUM_PERCENT, 'degraded'],
+        [DECODE_HEALTHY_MINIMUM_PERCENT, 100, 'healthy']].forEach(([minimum, maximum, state]) => {
         svg.append(svgNode('rect', { x: margin.left, y: yFor(maximum), width: plotWidth,
           height: Math.max(0, yFor(minimum) - yFor(maximum)), class: `decode-quality-band ${state}` }));
       });
@@ -967,7 +975,8 @@ function qualityHistoryChart(site, response, metric, domain) {
     }
 
     if (!signal) {
-      [80, 95].forEach((value) => svg.append(svgNode('line', { x1: margin.left, y1: yFor(value),
+      [DECODE_DEGRADED_MINIMUM_PERCENT, DECODE_HEALTHY_MINIMUM_PERCENT].forEach((value) =>
+        svg.append(svgNode('line', { x1: margin.left, y1: yFor(value),
         x2: width - margin.right, y2: yFor(value), class: 'decode-threshold-line' })));
     }
 
@@ -1053,7 +1062,8 @@ function updateSignalCurrentTile(tile, site) {
   const qualityFrequency = site.quality_frequency_hz || site.current_control_hz;
   const decode = optionalNumber(site.decode_health_pct);
   const decodeClass = !Number.isFinite(decode) ? '' :
-    (decode >= 95 ? 'quality-good' : (decode >= 80 ? 'quality-warn' : 'quality-bad'));
+    (decode >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
+      (decode >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'quality-warn' : 'quality-bad'));
   details.append(node('span', decodeClass,
   `Decode ${percentNumber(site.decode_health_pct)}`),
   node('span', '', Number(qualityFrequency) ? `${frequency(qualityFrequency)} MHz` : 'Frequency unavailable'),
@@ -1158,14 +1168,20 @@ async function signalHealthSection() {
     const now = Date.now();
     const sites = sortSignalSites((currentResponse?.sites || []).filter((site) =>
       now - Number(site.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS), selectedSort);
-    const healthy = sites.filter((site) => optionalNumber(site.decode_health_pct) >= 95).length;
+    const healthy = sites.filter((site) =>
+      optionalNumber(site.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
     const degraded = sites.filter((site) => {
       const decode = optionalNumber(site.decode_health_pct);
-      return Number.isFinite(decode) && decode < 95;
+      return Number.isFinite(decode) && decode >= DECODE_DEGRADED_MINIMUM_PERCENT &&
+        decode < DECODE_HEALTHY_MINIMUM_PERCENT;
     }).length;
-    const unknown = sites.length - healthy - degraded;
+    const poor = sites.filter((site) => {
+      const decode = optionalNumber(site.decode_health_pct);
+      return Number.isFinite(decode) && decode < DECODE_DEGRADED_MINIMUM_PERCENT;
+    }).length;
+    const unknown = sites.length - healthy - degraded - poor;
     summary.textContent = `${number(sites.length)} reporting · ${number(healthy)} healthy · ` +
-      `${number(degraded)} degraded${unknown ? ` · ${number(unknown)} unknown` : ''}`;
+      `${number(degraded)} degraded · ${number(poor)} poor${unknown ? ` · ${number(unknown)} unknown` : ''}`;
 
     const activeKeys = new Set();
     const orderedTiles = sites.map((site) => {
@@ -1567,8 +1583,9 @@ function liveSystemsSection() {
     cells[3].className = cells[2].className;
     cells[4].className = cells[2].className;
     cells[5].className = row.decode_health_pct == null ? '' :
-      (Number(row.decode_health_pct) >= 95 ? 'quality-good' :
-        (Number(row.decode_health_pct) >= 80 ? 'quality-warn' : 'quality-bad'));
+      (Number(row.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
+        (Number(row.decode_health_pct) >= DECODE_DEGRADED_MINIMUM_PERCENT ?
+          'quality-warn' : 'quality-bad'));
     element.classList.toggle('selected', selectedRowKey === row.key);
   };
 
