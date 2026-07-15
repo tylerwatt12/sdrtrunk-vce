@@ -10,7 +10,7 @@ This project is currently an **alpha release**. Back up important receiver data 
 > **More features, less overhead.**
 >
 > SDRTrunk VCE used 8.5% less CPU and triggered 25% fewer Java cleanup pauses than the latest tested mainline
-> build—all while providing enhanced signal, decode-health, web, portability, and optional optional processing features.
+> build—all while providing enhanced signal, decode-health, web, and portability features.
 
 ## Highlights
 
