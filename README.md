@@ -350,6 +350,39 @@ publishing a numbered alpha release on GitHub.
 
 ## Changelog
 
+### 0.6.2-alpha-3 - 2026-07-15
+
+#### Added
+
+- Live Signal Health dashboard with current P25 receiver status and retained signal and decode-quality charts.
+- Expanded P25 site telemetry for BSI callsigns, LRA, MFID, broadcast clock, service availability, data access,
+  Working Unit ID lease time, TDMA/u-Slots, and registration status.
+- External P25 history v16-to-v17 migration tooling.
+- Automated publication-policy and release-content safeguards.
+
+#### Changed
+
+- Show complete site activity in Events when a control-channel row is selected.
+- Move P25 site-metadata processing and event-log file I/O off decoder threads.
+- Bound native-tuner, IFFT, and asynchronous event-log backlogs for sustained receiver operation.
+- Refresh active signal-health views automatically and use consistent healthy, degraded, and poor thresholds.
+- Disable App Nap in macOS packages to prevent background receiver throttling.
+
+#### Fixed
+
+- Deduplicated FDMA activity so each frequency uses one control/traffic row while TDMA calls remain separated by
+  timeslot.
+- Preserved active traffic details when a frequency is also identified as a control channel.
+- Prevented slow event-log storage from blocking decoder processing or creating an unbounded backlog.
+
+#### Upgrade Notes
+
+- This release uses P25 history schema v17. Stop SDRTrunk and back up the portable database before upgrading.
+- Alpha 2 databases can use the external `migrate-v16-to-v17-site-status` tool.
+- Existing v14 or v15 databases must first migrate to v16 and then migrate to v17.
+- Alpha 1 used schema v13; use the external Stats Server reset tool when upgrading from Alpha 1. The reset preserves
+  configuration, channels, aliases, streams, preferences, and vault data, but starts Stats Server history fresh.
+
 ### 0.6.2-alpha-2 - 2026-07-13
 
 #### Added
