@@ -40,6 +40,7 @@ class StatsWebDatabase
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebDatabase.class);
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
+    private static final long CURRENT_STATE_WINDOW_MILLISECONDS = 6L * HOUR_MILLISECONDS;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int QUALITY_DEFAULT_POINTS = 240;
     private static final int QUALITY_MINIMUM_POINTS = 60;
@@ -742,8 +743,7 @@ class StatsWebDatabase
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count, tags.tags, tags.control_observations,
                     tags.alternate_control_observations, tags.data_announcement_observations,
-                    tags.voice_grant_observations, tags.data_grant_observations, active.current_tags,
-                    site.last_seen_ms AS site_last_seen_ms
+                    tags.voice_grant_observations, tags.data_grant_observations, active.current_tags
                 FROM p25_site_channel_summary summary
                 LEFT JOIN p25_site_channel current
                   ON current.guid = summary.guid AND current.channel_key = summary.channel_key
@@ -766,13 +766,12 @@ class StatsWebDatabase
                 sum(coalesce(data_announcement_observations, 0)) AS data_announcement_observations,
                 sum(coalesce(voice_grant_observations, 0)) AS voice_grant_observations,
                 sum(coalesce(data_grant_observations, 0)) AS data_grant_observations,
-                CASE WHEN max(confirmed_at_ms) IS NOT NULL AND
-                    max(max(coalesce(confirmed_at_ms, 0), site_last_seen_ms)) >= ?
+                CASE WHEN max(max(coalesce(confirmed_at_ms, 0), last_seen_ms)) >= ?
                     THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
             FROM logical
             GROUP BY guid, coalesce(CAST(downlink_hz AS TEXT), channel_key)
             ORDER BY coalesce(downlink_hz, 9223372036854775807), channel_key
-            """, guid, guid, guid, System.currentTimeMillis() - 15_000L)));
+            """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS)));
     }
 
     Map<String,Object> siteQuality(StatsRequest request)
@@ -796,12 +795,13 @@ class StatsWebDatabase
             SELECT current.band, current.tdma, current.base_hz, current.bandwidth, current.spacing_hz,
                 current.transmit_offset_hz, current.timeslots, current.confirmed_at_ms,
                 summary.first_seen_ms, summary.last_seen_ms, summary.observation_count,
-                CASE WHEN current.confirmed_at_ms >= ? THEN 'CURRENT' ELSE 'STALE' END AS state
+                CASE WHEN max(current.confirmed_at_ms, coalesce(summary.last_seen_ms, 0)) >= ?
+                    THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
             FROM p25_site_frequency_band current
             LEFT JOIN p25_site_frequency_band_summary summary
               ON summary.guid = current.guid AND summary.band = current.band
             WHERE current.guid = ? ORDER BY current.band
-            """, System.currentTimeMillis() - 15_000L, guid)));
+            """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid)));
     }
 
     Map<String,Object> siteNeighbors(StatsRequest request)
@@ -819,15 +819,15 @@ class StatsWebDatabase
                 coalesce(current.status, summary.status) AS status,
                 current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                 summary.observation_count,
-                CASE WHEN current.neighbor_key IS NULL THEN 'HISTORICAL'
-                     WHEN current.confirmed_at_ms >= ? THEN 'CURRENT' ELSE 'STALE' END AS state
+                CASE WHEN max(coalesce(current.confirmed_at_ms, 0), summary.last_seen_ms) >= ?
+                    THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
             FROM p25_site_neighbor_summary summary
             LEFT JOIN p25_site_neighbor current
               ON current.guid = summary.guid AND current.neighbor_key = summary.neighbor_key
             WHERE summary.guid = ?
             ORDER BY CASE WHEN current.neighbor_key IS NULL THEN 1 ELSE 0 END,
                 system_id, rfss, site, summary.neighbor_key
-            """, System.currentTimeMillis() - 15_000L, guid)));
+            """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid)));
     }
 
     Map<String,Object> sitePatches(StatsRequest request)
@@ -839,14 +839,15 @@ class StatsWebDatabase
                 SELECT system.system_key, system.wacn, system.system_id, current.patch_group, current.version,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count,
-                    CASE WHEN current.confirmed_at_ms >= ? THEN 'CURRENT' ELSE 'STALE' END AS state
+                    CASE WHEN max(current.confirmed_at_ms, coalesce(summary.last_seen_ms, 0)) >= ?
+                        THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
                 FROM p25_site_patch_group current
                 JOIN p25_site_snapshot site ON site.guid = current.guid
                 LEFT JOIN p25_system system ON system.system_key = site.system_key
                 LEFT JOIN p25_site_patch_group_summary summary
                   ON summary.guid = current.guid AND summary.patch_group = current.patch_group
                 WHERE current.guid = ? ORDER BY current.patch_group
-                """, System.currentTimeMillis() - 15_000L, guid);
+                """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid);
             List<Map<String,Object>> talkgroups = queryRows(connection, """
                 SELECT system.system_key, system.wacn, system.system_id, current.patch_group, current.talkgroup_id,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,

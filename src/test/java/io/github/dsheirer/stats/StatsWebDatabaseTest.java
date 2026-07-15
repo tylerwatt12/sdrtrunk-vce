@@ -110,11 +110,14 @@ class StatsWebDatabaseTest
         assertEquals("0-821", channels.get(1).get("descriptor"));
         assertEquals("WPFF205", channels.get(1).get("callsign"));
         assertEquals("CURRENT", channels.get(1).get("state"));
+        assertEquals("CURRENT", channels.stream().filter(row -> "0-900".equals(row.get("descriptor")))
+            .findFirst().orElseThrow().get("state"));
 
         List<Map<String,Object>> neighbors = rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=" + GUID)));
         assertEquals("CURRENT", neighbors.get(0).get("state"));
         assertEquals("HISTORICAL", neighbors.get(1).get("state"));
+        assertEquals("CURRENT", neighbors.get(2).get("state"));
 
         Map<String,Object> patches = mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID));
         assertEquals("Dispatch", rowsFrom(patches, "groups").get(0).get("patch_alias_name"));
@@ -468,8 +471,10 @@ class StatsWebDatabaseTest
                 VALUES ('test-site-guid', '0-509', '0-509', 854187500, NULL,
                     0, 1, 1000, 2000, 4),
                     ('test-site-guid', '0-510', '0-510', 854187500, NULL,
-                    0, 1, 1000, 2000, 2)
-                """);
+                    0, 1, 1000, 2000, 2),
+                    ('test-site-guid', '0-900', '0-900', 857137500, NULL,
+                    0, 1, 1000, %d, 2)
+                """.formatted(now - 3_600_000L));
             statement.executeUpdate("""
                 INSERT INTO p25_site_channel_tag (guid, channel_key, tag, confirmed_at_ms)
                 VALUES ('test-site-guid', '0-821', 'CURRENT_CONTROL', %d)
@@ -493,8 +498,10 @@ class StatsWebDatabaseTest
                 VALUES ('test-site-guid', '348:1:2:0-661', 0x348, 1, 2, '0-661', 855137500,
                     '[VALID INFORMATION, ACTIVE RFSS CONNECTION]', 1000, 2000, 10),
                     ('test-site-guid', '348:1:3:0-677', 0x348, 1, 3, '0-677', 855237500,
-                    '[VALID INFORMATION]', 1000, 1500, 2)
-                """);
+                    '[VALID INFORMATION]', 1000, 1500, 2),
+                    ('test-site-guid', '348:1:4:0-693', 0x348, 1, 4, '0-693', 855337500,
+                    '[VALID INFORMATION]', 1000, %d, 2)
+                """.formatted(now - 3_600_000L));
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group (guid, patch_group, version, confirmed_at_ms)
                 VALUES ('test-site-guid', 56132, 0, %d)
