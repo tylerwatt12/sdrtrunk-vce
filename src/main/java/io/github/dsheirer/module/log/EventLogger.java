@@ -30,7 +30,9 @@ import java.io.Writer;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,21 +40,47 @@ public abstract class EventLogger extends Module
 {
     private static final Logger mLog = LoggerFactory.getLogger(EventLogger.class);
     private static final Executor FILE_IO_EXECUTOR = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
+    private static final int MAXIMUM_PENDING_WRITE_COUNT = 4096;
+    private static final Semaphore PENDING_WRITE_PERMITS = new Semaphore(MAXIMUM_PENDING_WRITE_COUNT);
     private static final long SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 5;
 
-    private Path mLogDirectory;
-    private String mFileNameSuffix;
-    private volatile String mLogFileName;
-    private long mFrequency;
-    private Writer mLogFile;
+    private final Path mLogDirectory;
+    private final String mFileNameSuffix;
+    private final long mFrequency;
     private final Object mLifecycleLock = new Object();
+    private final Semaphore mPendingWritePermits;
+    private final int mPendingWriteLimit;
+    private final AtomicLong mDroppedEntryCount = new AtomicLong();
+    private volatile String mLogFileName;
+    private Writer mLogFile;
     private boolean mStarted;
 
     protected EventLogger(Path logDirectory, String fileNameSuffix, long frequency)
     {
+        this(logDirectory, fileNameSuffix, frequency, PENDING_WRITE_PERMITS, MAXIMUM_PENDING_WRITE_COUNT);
+    }
+
+    /**
+     * Test constructor that permits deterministic overflow testing with a small queue limit.
+     */
+    EventLogger(Path logDirectory, String fileNameSuffix, long frequency, int pendingWriteLimit)
+    {
+        this(logDirectory, fileNameSuffix, frequency, new Semaphore(pendingWriteLimit), pendingWriteLimit);
+    }
+
+    private EventLogger(Path logDirectory, String fileNameSuffix, long frequency, Semaphore pendingWritePermits,
+                        int pendingWriteLimit)
+    {
+        if(pendingWriteLimit <= 0)
+        {
+            throw new IllegalArgumentException("Pending event-log write limit must be greater than zero");
+        }
+
         mLogDirectory = logDirectory;
         mFileNameSuffix = fileNameSuffix;
         mFrequency = frequency;
+        mPendingWritePermits = pendingWritePermits;
+        mPendingWriteLimit = pendingWriteLimit;
     }
 
     public String toString()
@@ -61,10 +89,8 @@ public abstract class EventLogger extends Module
         {
             return mLogFileName;
         }
-        else
-        {
-            return "Unknown";
-        }
+
+        return "Unknown";
     }
 
     public abstract String getHeader();
@@ -80,11 +106,12 @@ public abstract class EventLogger extends Module
                 String logFileName = mLogDirectory + File.separator + TimeStamp.getLongTimeStamp("_") + "_" +
                     mFrequency + "_Hz_" + mFileNameSuffix;
                 mLogFileName = logFileName;
-                FILE_IO_EXECUTOR.execute(() -> open(logFileName));
+                submitIoOperation(() -> open(logFileName));
             }
         }
     }
 
+    @Override
     public void stop()
     {
         synchronized(mLifecycleLock)
@@ -92,21 +119,76 @@ public abstract class EventLogger extends Module
             if(mStarted)
             {
                 mStarted = false;
-                FILE_IO_EXECUTOR.execute(this::close);
+                submitIoOperation(this::close);
             }
         }
     }
 
     protected void write(String eventLogEntry)
     {
-        String entry = eventLogEntry != null ? eventLogEntry : "";
-
         synchronized(mLifecycleLock)
         {
-            if(mStarted)
+            if(!mStarted)
             {
-                FILE_IO_EXECUTOR.execute(() -> writeToFile(entry));
+                return;
             }
+
+            if(mPendingWritePermits.tryAcquire())
+            {
+                submitWrite(eventLogEntry != null ? eventLogEntry : "");
+            }
+            else
+            {
+                long dropped = mDroppedEntryCount.incrementAndGet();
+
+                if(dropped == 1)
+                {
+                    submitIoOperation(() -> mLog.warn(
+                        "Event logger [{}] reached the pending-write limit [{}]; dropping new log entries",
+                        mFileNameSuffix, mPendingWriteLimit));
+                }
+            }
+        }
+    }
+
+    long getDroppedEntryCount()
+    {
+        return mDroppedEntryCount.get();
+    }
+
+    private void submitWrite(String entry)
+    {
+        try
+        {
+            FILE_IO_EXECUTOR.execute(() -> {
+                try
+                {
+                    writeToFile(entry);
+                }
+                finally
+                {
+                    mPendingWritePermits.release();
+                }
+            });
+        }
+        catch(RuntimeException exception)
+        {
+            mPendingWritePermits.release();
+            mLog.error("Unable to schedule asynchronous event-log write", exception);
+        }
+    }
+
+    private static boolean submitIoOperation(Runnable operation)
+    {
+        try
+        {
+            FILE_IO_EXECUTOR.execute(operation);
+            return true;
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Unable to schedule asynchronous event-log operation", exception);
+            return false;
         }
     }
 
@@ -129,7 +211,7 @@ public abstract class EventLogger extends Module
         {
             try
             {
-                mLogFile.write(eventLogEntry + "\n");
+                mLogFile.write((eventLogEntry != null ? eventLogEntry : "") + "\n");
                 mLogFile.flush();
             }
             catch(Exception exception)
@@ -165,7 +247,11 @@ public abstract class EventLogger extends Module
     public static void flushPendingWrites()
     {
         CountDownLatch drained = new CountDownLatch(1);
-        FILE_IO_EXECUTOR.execute(drained::countDown);
+
+        if(!submitIoOperation(drained::countDown))
+        {
+            return;
+        }
 
         try
         {
