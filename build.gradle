@@ -532,6 +532,8 @@ if(os.isMacOsX())
     def macRuntimeZipRootDir = layout.buildDirectory.dir('runtime-current/sdrtrunk-vce')
     def macJpackageInputDir = layout.buildDirectory.dir('jpackage-input')
     def macIconFile = layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns')
+    def macInfoPlist = macAppBundle.map {it.file('Contents/Info.plist')}
+    def macJpackageScript = layout.projectDirectory.file('src/main/packaging/macos/create-app-image.sh')
 
     tasks.register('jreCurrent', Exec) {
         inputs.property('runtimeModules', runtimeModules)
@@ -589,6 +591,7 @@ if(os.isMacOsX())
 
         inputs.dir(jpmsModsDir)
         inputs.file(macIconFile)
+        inputs.file(macJpackageScript)
         inputs.dir(macRuntimeImageDir)
         inputs.dir(macJpackageInputDir)
         outputs.dir(macAppBundle)
@@ -613,8 +616,9 @@ if(os.isMacOsX())
                 jpackageArgs.add(jvmArg)
             }
 
-            executable = "${java25Home.get()}/bin/jpackage"
-            args = jpackageArgs
+            executable = '/bin/sh'
+            args = [macJpackageScript.asFile.absolutePath, "${java25Home.get()}/bin/jpackage",
+                    macInfoPlist.get().asFile.absolutePath] + jpackageArgs
         }
     }
 
