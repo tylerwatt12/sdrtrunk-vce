@@ -81,11 +81,52 @@ public class EventLoggerTest
         }
     }
 
+    @Test
+    public void boundedQueueRejectsNewEntriesWhileFileIoIsBlocked() throws Exception
+    {
+        CountDownLatch headerStarted = new CountDownLatch(1);
+        CountDownLatch releaseHeader = new CountDownLatch(1);
+        BlockingHeaderEventLogger logger = new BlockingHeaderEventLogger(mTemporaryDirectory, headerStarted,
+            releaseHeader, 2);
+
+        try
+        {
+            logger.start();
+            assertTrue(headerStarted.await(5, TimeUnit.SECONDS));
+            logger.log("one");
+            logger.log("two");
+            logger.log("three");
+            logger.log("four");
+            logger.stop();
+            assertEquals(2, logger.getDroppedEntryCount());
+        }
+        finally
+        {
+            releaseHeader.countDown();
+            EventLogger.flushPendingWrites();
+        }
+
+        List<Path> files;
+
+        try(Stream<Path> paths = Files.list(mTemporaryDirectory))
+        {
+            files = paths.toList();
+        }
+
+        assertEquals(1, files.size());
+        assertEquals("HEADER\none\ntwo\n", Files.readString(files.getFirst()));
+    }
+
     private static class TestEventLogger extends EventLogger
     {
         private TestEventLogger(Path directory, String suffix)
         {
             super(directory, suffix, 851_000_000L);
+        }
+
+        private TestEventLogger(Path directory, String suffix, int pendingEntryLimit)
+        {
+            super(directory, suffix, 851_000_000L, pendingEntryLimit);
         }
 
         @Override
@@ -112,7 +153,13 @@ public class EventLoggerTest
 
         private BlockingHeaderEventLogger(Path directory, CountDownLatch headerStarted, CountDownLatch releaseHeader)
         {
-            super(directory, "blocking.log");
+            this(directory, headerStarted, releaseHeader, 4096);
+        }
+
+        private BlockingHeaderEventLogger(Path directory, CountDownLatch headerStarted, CountDownLatch releaseHeader,
+                                          int pendingEntryLimit)
+        {
+            super(directory, "blocking.log", pendingEntryLimit);
             mHeaderStarted = headerStarted;
             mReleaseHeader = releaseHeader;
         }
