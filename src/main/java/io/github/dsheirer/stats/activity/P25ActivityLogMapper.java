@@ -27,6 +27,7 @@ import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.charset.StandardCharsets;
@@ -40,6 +41,37 @@ import java.util.List;
  */
 class P25ActivityLogMapper
 {
+    P25ActivityLogRecords.TalkerAliasUpdate map(P25TalkerAliasEvent event)
+    {
+        if(event == null || event.channel() == null || event.radio() == null || event.alias() == null ||
+            event.alias().getValue() == null || event.alias().getValue().toString().isBlank())
+        {
+            return null;
+        }
+
+        DecoderType decoderType = event.channel().getDecodeConfiguration() != null ?
+            event.channel().getDecodeConfiguration().getDecoderType() : null;
+
+        if(decoderType != DecoderType.P25_PHASE1 && decoderType != DecoderType.P25_PHASE2)
+        {
+            return null;
+        }
+
+        IdentifierFacts facts = IdentifierFacts.from(event.identifiers());
+        String guid = firstNonBlank(event.channel().getRadresGuid(), facts.radresGuid());
+        String contextKey = contextKey(guid, Protocol.APCO25, facts, null,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, event.channel().getName());
+
+        if(contextKey == null)
+        {
+            return null;
+        }
+
+        long observedAt = event.timestamp() > 0 ? event.timestamp() : System.currentTimeMillis();
+        return new P25ActivityLogRecords.TalkerAliasUpdate(observedAt, contextKey, guid, facts.wacn(),
+            facts.systemId(), event.radio().getValue(), event.alias().getValue().toString().trim());
+    }
+
     P25ActivityLogRecords.ActivityEvent map(Channel channel, IDecodeEvent event)
     {
         return map(channel, event, null);
