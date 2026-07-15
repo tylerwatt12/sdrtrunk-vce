@@ -1025,7 +1025,7 @@ function qualityHistoryChart(site, response, metric, domain) {
         draw(entries[0]?.contentRect.width || wrapper.getBoundingClientRect().width || nominalWidth);
       });
       observer.observe(wrapper);
-      pageObservers.add(observer);
+      pageObservers.set(observer, wrapper);
     }
   });
   return wrapper;
@@ -1039,8 +1039,7 @@ function qualityChartPanel(title, description, chart) {
   return panel;
 }
 
-function signalCurrentTile(site) {
-  const tile = node('article', 'signal-current-tile');
+function updateSignalCurrentTile(tile, site) {
   const state = signalSiteState(site);
   const header = node('div', 'signal-current-header');
   const labels = node('div', 'signal-current-labels');
@@ -1059,8 +1058,13 @@ function signalCurrentTile(site) {
   `Decode ${percentNumber(site.decode_health_pct)}`),
   node('span', '', Number(qualityFrequency) ? `${frequency(qualityFrequency)} MHz` : 'Frequency unavailable'),
   node('span', '', elapsedLabel(site.last_observed_ms)));
-  tile.append(header, power, details);
+  tile.dataset.guid = site.guid || '';
+  tile.replaceChildren(header, power, details);
   return tile;
+}
+
+function signalCurrentTile(site) {
+  return updateSignalCurrentTile(node('article', 'signal-current-tile'), site);
 }
 
 function sortSignalSites(sites, selectedSort) {
@@ -1147,23 +1151,34 @@ async function signalHealthSection() {
   host.append(currentPanel);
   const block = section('Signal Health', host);
   let currentResponse = null;
+  const tileNodes = new Map();
+  let loading = false;
 
   const renderCurrent = () => {
-    const sites = sortSignalSites(currentResponse?.sites || [], selectedSort);
     const now = Date.now();
-    const reporting = sites.filter((site) => now - Number(site.last_observed_ms || 0) <=
-      SIGNAL_OFFLINE_MILLISECONDS);
-    const healthy = reporting.filter((site) => optionalNumber(site.decode_health_pct) >= 95).length;
-    const degraded = reporting.filter((site) => {
+    const sites = sortSignalSites((currentResponse?.sites || []).filter((site) =>
+      now - Number(site.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS), selectedSort);
+    const healthy = sites.filter((site) => optionalNumber(site.decode_health_pct) >= 95).length;
+    const degraded = sites.filter((site) => {
       const decode = optionalNumber(site.decode_health_pct);
       return Number.isFinite(decode) && decode < 95;
     }).length;
-    const unknown = reporting.length - healthy - degraded;
-    summary.textContent = `${number(reporting.length)} reporting · ${number(healthy)} healthy · ` +
-      `${number(degraded)} degraded${unknown ? ` · ${number(unknown)} unknown` : ''} · ` +
-      `${number(sites.length - reporting.length)} offline`;
-    tiles.replaceChildren(...sites.map(signalCurrentTile));
-    if (!sites.length) tiles.append(node('div', 'empty', 'No P25 sites are available'));
+    const unknown = sites.length - healthy - degraded;
+    summary.textContent = `${number(sites.length)} reporting · ${number(healthy)} healthy · ` +
+      `${number(degraded)} degraded${unknown ? ` · ${number(unknown)} unknown` : ''}`;
+
+    const activeKeys = new Set();
+    const orderedTiles = sites.map((site) => {
+      const key = site.guid || siteLabel(site);
+      activeKeys.add(key);
+      const existing = tileNodes.get(key);
+      const tile = existing ? updateSignalCurrentTile(existing, site) : signalCurrentTile(site);
+      tileNodes.set(key, tile);
+      return tile;
+    });
+    [...tileNodes.keys()].filter((key) => !activeKeys.has(key)).forEach((key) => tileNodes.delete(key));
+    tiles.replaceChildren(...orderedTiles);
+    if (!sites.length) tiles.append(node('div', 'empty', 'No P25 receivers are currently reporting'));
   };
 
   sort.addEventListener('change', () => {
@@ -1179,14 +1194,22 @@ async function signalHealthSection() {
       href('live')), '.');
     tiles.append(message);
   } else {
-    summary.textContent = 'Loading current signal health…';
-    try {
-      currentResponse = await api('/api/quality', { range: '1h', points: 60, include_history: false });
-      renderCurrent();
-    } catch (error) {
-      summary.textContent = '';
-      tiles.replaceChildren(node('div', 'error', error.message));
-    }
+    const loadCurrent = async (initial = false) => {
+      if (loading) return;
+      loading = true;
+      if (initial) summary.textContent = 'Loading current signal health…';
+      try {
+        currentResponse = await api('/api/quality', { range: '1h', points: 60, include_history: false });
+        renderCurrent();
+      } catch (error) {
+        summary.textContent = currentResponse ? `Signal health update failed: ${error.message}` : '';
+        if (!currentResponse) tiles.replaceChildren(node('div', 'error', error.message));
+      } finally {
+        loading = false;
+      }
+    };
+    await loadCurrent(true);
+    pageInterval(loadCurrent, 10_000);
   }
   return block;
 }
@@ -1197,19 +1220,26 @@ async function siteSignalHistorySection(site) {
   block.classList.add('site-signal-history-section');
   let selectedRange = '24h';
   let loadingSequence = 0;
+  let loading = false;
   const rangeControl = signalRangeControls(selectedRange, async (value, buttons) => {
     selectedRange = value;
-    await load(buttons);
+    await load(buttons, true);
   });
   block.querySelector('.section-title').append(rangeControl.controls);
-  const load = async (buttons = rangeControl.buttons) => {
+  const load = async (buttons = rangeControl.buttons, interactive = false) => {
+    if (loading && !interactive) return;
     const sequence = ++loadingSequence;
-    buttons.forEach((button) => { button.disabled = true; });
-    host.replaceChildren(node('div', 'loading', 'Loading control channel quality history'));
+    loading = true;
+    if (interactive) {
+      buttons.forEach((button) => { button.disabled = true; });
+      disconnectPageObserversWithin(host);
+      host.replaceChildren(node('div', 'loading', 'Loading control channel quality history'));
+    }
     try {
       const response = await api('/api/quality', { guid: site.guid, range: selectedRange, points: 300 });
       if (sequence !== loadingSequence) return;
       const qualitySite = (response.sites || [])[0];
+      disconnectPageObserversWithin(host);
       host.replaceChildren();
       if (!qualitySite) {
         host.append(node('div', 'empty', 'No control channel quality history is available for this site'));
@@ -1223,10 +1253,17 @@ async function siteSignalHistorySection(site) {
           qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }))
       );
       host.append(signalOverview(qualitySite, false), charts);
+      host.removeAttribute('title');
     } catch (error) {
-      if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
+      if (sequence === loadingSequence) {
+        if (interactive) host.replaceChildren(node('div', 'error', error.message));
+        else host.title = `Quality history update failed: ${error.message}`;
+      }
     } finally {
-      if (sequence === loadingSequence) buttons.forEach((button) => { button.disabled = false; });
+      if (sequence === loadingSequence) {
+        loading = false;
+        if (interactive) buttons.forEach((button) => { button.disabled = false; });
+      }
     }
   };
   const logging = statsLoggingState();
@@ -1234,7 +1271,8 @@ async function siteSignalHistorySection(site) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Control channel quality history requires Stats Logging.'));
   } else {
-    await load();
+    await load(rangeControl.buttons, true);
+    pageInterval(load, 30_000);
   }
   return block;
 }
@@ -1252,7 +1290,25 @@ async function api(path, parameters = {}) {
 
 const liveConnections = new Set();
 const pageConnections = new Set();
-const pageObservers = new Set();
+const pageObservers = new Map();
+const pageTimers = new Set();
+
+function pageInterval(callback, interval) {
+  const timer = window.setInterval(() => {
+    if (!document.hidden) Promise.resolve(callback()).catch(() => {});
+  }, interval);
+  pageTimers.add(timer);
+  return timer;
+}
+
+function disconnectPageObserversWithin(root) {
+  pageObservers.forEach((target, observer) => {
+    if (root?.contains(target)) {
+      observer.disconnect();
+      pageObservers.delete(observer);
+    }
+  });
+}
 
 function liveConnection(path, parameters = {}) {
   const query = new URLSearchParams();
@@ -1271,8 +1327,10 @@ function closePageConnections() {
     liveConnections.delete(source);
   });
   pageConnections.clear();
-  pageObservers.forEach((observer) => observer.disconnect());
+  pageObservers.forEach((target, observer) => observer.disconnect());
   pageObservers.clear();
+  pageTimers.forEach((timer) => window.clearInterval(timer));
+  pageTimers.clear();
 }
 
 window.addEventListener('beforeunload', () => {
@@ -2178,4 +2236,6 @@ window.addEventListener('popstate', () => {
 });
 initializePlaybackHeader();
 loadStatus().finally(render);
-window.setInterval(() => loadStatus(true), 10000);
+window.setInterval(() => {
+  if (!document.hidden) loadStatus(true);
+}, 10_000);

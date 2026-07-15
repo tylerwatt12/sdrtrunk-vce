@@ -240,7 +240,10 @@ class StatsWebDatabase
                 """);
             mAliasResolver.enrichRadios(connection, radios);
             dashboard.put("topRadios", radios);
-            dashboard.put("recentSites", queryRows(connection, siteSelect() + " ORDER BY site.last_seen_ms DESC LIMIT 12"));
+            dashboard.put("recentSites", queryRows(connection, siteSelect() + """
+                 WHERE site.system_key IS NOT NULL AND site.rfss IS NOT NULL AND site.site IS NOT NULL
+                 ORDER BY site.last_seen_ms DESC LIMIT 12
+                """));
             List<Map<String,Object>> hourlyActivity = hourlyActivity(connection);
             dashboard.put("actionMix", actionMix(hourlyActivity));
             dashboard.put("activityPerHour", hourlyActivity);

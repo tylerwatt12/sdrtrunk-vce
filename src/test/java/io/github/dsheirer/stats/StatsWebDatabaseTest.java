@@ -273,6 +273,24 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void dashboardRecentSitesRequireDecodedSiteIdentity() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot
+                    (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, channel_name, decoder)
+                VALUES ('unidentified-site-guid', 'empty', 3000, 4000, 1, 'No Signal', 'P25-1')
+                """);
+        }
+
+        List<Map<String,Object>> recentSites = rowsFrom(mDatabase.dashboard(), "recentSites");
+        assertTrue(recentSites.stream().anyMatch(row -> GUID.equals(row.get("guid"))));
+        assertFalse(recentSites.stream().anyMatch(row -> "unidentified-site-guid".equals(row.get("guid"))));
+    }
+
+    @Test
     void dashboardQualityAggregatesBoundedSiteSeries() throws Exception
     {
         long minute = Math.floorDiv(System.currentTimeMillis(), 60_000L) * 60_000L;
