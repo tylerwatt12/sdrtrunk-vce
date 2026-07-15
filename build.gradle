@@ -584,6 +584,8 @@ if(os.isMacOsX())
         from('stats-web') {
             into 'stats-web'
         }
+        from('LICENSE')
+        from('NOTICE')
     }
 
     tasks.register('image', Exec) {

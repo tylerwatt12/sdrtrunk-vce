@@ -374,6 +374,7 @@ publishing a numbered alpha release on GitHub.
   timeslot.
 - Preserved active traffic details when a frequency is also identified as a control channel.
 - Prevented slow event-log storage from blocking decoder processing or creating an unbounded backlog.
+- Included product license and attribution notices in the native macOS application archive.
 
 #### Upgrade Notes
 
