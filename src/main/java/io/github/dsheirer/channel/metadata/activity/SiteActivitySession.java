@@ -31,8 +31,8 @@ import java.util.Set;
 /**
  * Session-only activity state for one started trunked configuration item.
  *
- * Control and traffic rows are intentionally stored in separate maps so that a frequency can be both a learned
- * traffic frequency and a learned control frequency during the same session without changing row identity.
+ * Control metadata and non-timeslot traffic share one row per frequency.  TDMA traffic retains one row per timeslot
+ * so that simultaneous calls remain independently visible.
  */
 public class SiteActivitySession
 {
@@ -148,15 +148,15 @@ public class SiteActivitySession
         ChannelActivityRow row = getOrCreateControlRow(frequency);
         row.setLcn(lcn);
 
-        if(!row.hasTag(ChannelTag.CURRENT_CONTROL))
+        if(!row.hasTag(ChannelTag.CURRENT_CONTROL) && !hasActiveTraffic(row))
         {
             row.setRole(ChannelActivityRow.Role.ALTERNATE_CONTROL);
             row.setOrigin(ChannelActivityRow.Origin.DECODED_ALTERNATE_CONTROL);
             row.setState(State.IDLE);
             row.clearCallDetails();
-            addTag(frequency, ChannelTag.ALTERNATE_CONTROL);
         }
 
+        addTag(frequency, ChannelTag.ALTERNATE_CONTROL);
         return row;
     }
 
@@ -259,7 +259,11 @@ public class SiteActivitySession
             if(traffic.getFrequency() == frequency)
             {
                 traffic.setCallsign(value);
-                updated.add(traffic);
+
+                if(!updated.contains(traffic))
+                {
+                    updated.add(traffic);
+                }
             }
         }
 
@@ -362,6 +366,7 @@ public class SiteActivitySession
             mControlRows.remove(row.getFrequency());
         }
 
+        remove.removeIf(mTrafficRows::containsValue);
         return remove;
     }
 
@@ -382,19 +387,30 @@ public class SiteActivitySession
                 continue;
             }
 
+            boolean trafficRow = mTrafficRows.containsValue(row);
+
             if(row.getFrequency() == configuredFrequency)
             {
-                row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
-                row.setOrigin(ChannelActivityRow.Origin.CONFIGURED_CONTROL);
                 row.removeTag(ChannelTag.CURRENT_CONTROL);
-                row.setState(State.IDLE);
-                row.clearCallDetails();
+
+                if(!trafficRow || row.getTrafficGrantExpiresAt() <= 0)
+                {
+                    row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
+                    row.setOrigin(ChannelActivityRow.Origin.CONFIGURED_CONTROL);
+                    row.setState(State.IDLE);
+                    row.clearCallDetails();
+                }
+
                 mTableModel.refresh(row);
             }
             else
             {
                 mControlRows.remove(row.getFrequency());
-                remove.add(row);
+
+                if(!trafficRow)
+                {
+                    remove.add(row);
+                }
             }
 
             if(mCurrentControlFrequency != null && mCurrentControlFrequency == row.getFrequency())
@@ -410,18 +426,12 @@ public class SiteActivitySession
     {
         if(row != null)
         {
-            if(row.isControlRow())
-            {
-                mControlRows.remove(row.getFrequency());
+            mControlRows.values().removeIf(candidate -> candidate == row);
+            mTrafficRows.values().removeIf(candidate -> candidate == row);
 
-                if(mCurrentControlFrequency != null && mCurrentControlFrequency == row.getFrequency())
-                {
-                    mCurrentControlFrequency = null;
-                }
-            }
-            else if(row.getRole() == ChannelActivityRow.Role.TRAFFIC)
+            if(mCurrentControlFrequency != null && mCurrentControlFrequency == row.getFrequency())
             {
-                mTrafficRows.remove(trafficKey(row.getFrequency(), row.getTimeslot()));
+                mCurrentControlFrequency = null;
             }
         }
     }
@@ -433,7 +443,8 @@ public class SiteActivitySession
 
     public String trafficKey(long frequency, Integer timeslot)
     {
-        return "TRAFFIC:" + mSessionId + ":" + frequency + ":" + (timeslot != null ? timeslot : 0);
+        return timeslot == null ? controlKey(frequency) :
+            "TRAFFIC:" + mSessionId + ":" + frequency + ":" + timeslot;
     }
 
     private ChannelActivityRow getOrCreateControlRow(long frequency)
@@ -488,9 +499,18 @@ public class SiteActivitySession
     private void demoteCurrentControl(ChannelActivityRow row)
     {
         removeTag(row.getFrequency(), ChannelTag.CURRENT_CONTROL);
-        row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
-        row.setState(State.IDLE);
-        row.clearCallDetails();
+
+        if(!hasActiveTraffic(row))
+        {
+            row.setRole(ChannelActivityRow.Role.CONFIGURED_CONTROL);
+            row.setState(State.IDLE);
+            row.clearCallDetails();
+        }
+    }
+
+    private boolean hasActiveTraffic(ChannelActivityRow row)
+    {
+        return row != null && mTrafficRows.containsValue(row) && row.getTrafficGrantExpiresAt() > 0;
     }
 
     private String getLcn(IChannelDescriptor channelDescriptor)
