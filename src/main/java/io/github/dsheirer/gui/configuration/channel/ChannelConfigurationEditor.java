@@ -37,9 +37,13 @@ import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.stats.activity.P25ActivityLogMaintenance;
+import io.github.dsheirer.stats.activity.P25ActivityLogPath;
 import io.github.dsheirer.util.ThreadPool;
+import java.nio.file.Path;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
@@ -61,6 +65,7 @@ import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -93,6 +98,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private GridPane mTextFieldPane;
     private Button mSaveButton;
     private Button mResetButton;
+    private Button mClearSiteStatisticsButton;
+    private boolean mSiteStatisticsMaintenanceRunning;
     private VBox mButtonBox;
     private ScrollPane mTitledPanesScrollPane;
     private VBox mTitledPanesBox;
@@ -183,6 +190,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         getAliasListComboBox().setDisable(disable);
         getNewAliasListButton().setDisable(disable);
         getAutoStartSwitch().setDisable(disable);
+        updateClearSiteStatisticsButtonState();
 
         if(channel != null)
         {
@@ -300,6 +308,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             saveSourceConfiguration();
 
             modifiedProperty().set(false);
+            updateClearSiteStatisticsButtonState();
         }
     }
 
@@ -751,7 +760,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         {
             mButtonBox = new VBox();
             mButtonBox.setSpacing(10);
-            mButtonBox.getChildren().addAll(getSaveButton(), getResetButton());
+            mButtonBox.getChildren().addAll(getSaveButton(), getResetButton(), getClearSiteStatisticsButton());
         }
 
         return mButtonBox;
@@ -819,6 +828,115 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         return mResetButton;
     }
 
+    private Button getClearSiteStatisticsButton()
+    {
+        if(mClearSiteStatisticsButton == null)
+        {
+            mClearSiteStatisticsButton = new Button("Clear Statistics for This Site");
+            mClearSiteStatisticsButton.setMaxWidth(Double.MAX_VALUE);
+            mClearSiteStatisticsButton.setTooltip(new Tooltip(
+                "Deletes Stats Server history and summaries owned by this P25 site."));
+            mClearSiteStatisticsButton.setVisible(false);
+            mClearSiteStatisticsButton.setManaged(false);
+            mClearSiteStatisticsButton.setOnAction(event -> clearSiteStatistics());
+        }
+
+        return mClearSiteStatisticsButton;
+    }
+
+    private void clearSiteStatistics()
+    {
+        Channel channel = getItem();
+        String guid = channel != null ? channel.getRadresGuid() : null;
+
+        if(channel == null || channel.isProcessing() || guid == null || guid.isBlank())
+        {
+            updateClearSiteStatisticsButtonState();
+            return;
+        }
+
+        String siteName = channel.getName() != null && !channel.getName().isBlank() ? channel.getName() : guid;
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
+            "Delete this site's channel inventory, frequency summaries, activity history, snapshots, and signal " +
+                "quality history?\n\nOther sites, shared system-wide radio/talkgroup summaries, and the channel " +
+                "configuration will not be changed. The site will reappear as new observations arrive.",
+            ButtonType.YES, ButtonType.NO);
+        confirmation.setTitle("Clear Site Statistics");
+        confirmation.setHeaderText("Clear statistics for " + siteName + "?");
+
+        if(getClearSiteStatisticsButton().getScene() != null)
+        {
+            confirmation.initOwner(getClearSiteStatisticsButton().getScene().getWindow());
+        }
+
+        Optional<ButtonType> result = confirmation.showAndWait();
+
+        if(result.isEmpty() || result.get() != ButtonType.YES)
+        {
+            return;
+        }
+
+        Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
+        mSiteStatisticsMaintenanceRunning = true;
+        getClearSiteStatisticsButton().setText("Clearing Site Statistics...");
+        getClearSiteStatisticsButton().setDisable(true);
+
+        CompletableFuture.supplyAsync(() -> {
+            try
+            {
+                return P25ActivityLogMaintenance.clearSiteStats(databasePath, guid);
+            }
+            catch(Exception e)
+            {
+                throw new RuntimeException(e);
+            }
+        }, ThreadPool.CACHED).whenComplete((maintenanceResult, throwable) -> Platform.runLater(() -> {
+            mSiteStatisticsMaintenanceRunning = false;
+            getClearSiteStatisticsButton().setText("Clear Statistics for This Site");
+            updateClearSiteStatisticsButtonState();
+
+            if(throwable != null)
+            {
+                Throwable cause = throwable.getCause() != null ? throwable.getCause() : throwable;
+                Alert alert = new Alert(Alert.AlertType.ERROR,
+                    "Unable to clear site statistics: " + cause.getMessage(), ButtonType.OK);
+                alert.setTitle("Clear Site Statistics Failed");
+                alert.setHeaderText("Site statistics were not cleared");
+                initOwner(alert);
+                alert.showAndWait();
+            }
+            else
+            {
+                Alert alert = new Alert(Alert.AlertType.INFORMATION,
+                    maintenanceResult.summary() + "\n\nThe site will reappear as new observations arrive.",
+                    ButtonType.OK);
+                alert.setTitle("Site Statistics Cleared");
+                alert.setHeaderText("Cleared statistics for " + siteName);
+                initOwner(alert);
+                alert.showAndWait();
+            }
+        }));
+    }
+
+    private void updateClearSiteStatisticsButtonState()
+    {
+        boolean supported = getDecoderType() == DecoderType.P25_PHASE1 || getDecoderType() == DecoderType.P25_PHASE2;
+        Channel channel = getItem();
+        String guid = channel != null ? channel.getRadresGuid() : null;
+        getClearSiteStatisticsButton().setVisible(supported);
+        getClearSiteStatisticsButton().setManaged(supported);
+        getClearSiteStatisticsButton().setDisable(mSiteStatisticsMaintenanceRunning || !supported || channel == null ||
+            channel.isProcessing() || guid == null || guid.isBlank());
+    }
+
+    private void initOwner(Alert alert)
+    {
+        if(alert != null && getClearSiteStatisticsButton().getScene() != null)
+        {
+            alert.initOwner(getClearSiteStatisticsButton().getScene().getWindow());
+        }
+    }
+
 
     /**
      * Simple string change listener that sets the editor modified flag to true any time text fields are edited.
@@ -841,6 +959,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             {
                 setPlayButtonState(newValue);
                 getRadresGuidField().setDisable(newValue);
+                updateClearSiteStatisticsButtonState();
             }
         }
     }

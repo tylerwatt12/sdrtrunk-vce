@@ -341,6 +341,44 @@ public class P25ActivityLogSchema
         return deleted;
     }
 
+    /**
+     * Clears receiver/site-scoped statistics for a single configured site GUID. System-wide talkgroup, radio, and
+     * affiliation summaries are intentionally retained because they can contain observations from multiple sites.
+     */
+    static int clearSiteStats(Connection connection, String guid) throws SQLException
+    {
+        if(guid == null || guid.isBlank())
+        {
+            throw new IllegalArgumentException("Site GUID is required");
+        }
+
+        int deleted = 0;
+        deleted += deleteByContextGuid(connection, "p25_activity_event", guid);
+        deleted += deleteByContextGuid(connection, "p25_site_talkgroup_bucket", guid);
+        deleted += deleteByContextGuid(connection, "p25_site_activity_bucket", guid);
+        deleted += deleteByContextGuid(connection, "p25_site_frequency_summary", guid);
+        deleted += deleteByContextGuid(connection, "conventional_activity_bucket", guid);
+        deleted += deleteByContextGuid(connection, "conventional_activity_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_patch_group_radio_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_patch_group_talkgroup_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_patch_group_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_neighbor_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_frequency_band_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_channel_tag_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_channel_summary", guid);
+        deleted += deleteByGuid(connection, "p25_site_patch_group_radio", guid);
+        deleted += deleteByGuid(connection, "p25_site_patch_group_talkgroup", guid);
+        deleted += deleteByGuid(connection, "p25_site_patch_group", guid);
+        deleted += deleteByGuid(connection, "p25_site_neighbor", guid);
+        deleted += deleteByGuid(connection, "p25_site_frequency_band", guid);
+        deleted += deleteByGuid(connection, "p25_site_channel_tag", guid);
+        deleted += deleteByGuid(connection, "p25_site_channel", guid);
+        deleted += deleteByGuid(connection, "p25_site_snapshot", guid);
+        deleted += deleteByGuid(connection, "p25_control_channel_quality", guid);
+        deleted += deleteByGuid(connection, "receiver_context", guid);
+        return deleted;
+    }
+
     static void updateStatus(Connection connection, String key, String value) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -2095,6 +2133,25 @@ public class P25ActivityLogSchema
         try(Statement statement = connection.createStatement())
         {
             return statement.executeUpdate("DELETE FROM " + table);
+        }
+    }
+
+    private static int deleteByContextGuid(Connection connection, String table, String guid) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement(
+            "DELETE FROM " + table + " WHERE context_id IN (SELECT id FROM receiver_context WHERE guid = ?)"))
+        {
+            statement.setString(1, guid);
+            return statement.executeUpdate();
+        }
+    }
+
+    private static int deleteByGuid(Connection connection, String table, String guid) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE guid = ?"))
+        {
+            statement.setString(1, guid);
+            return statement.executeUpdate();
         }
     }
 

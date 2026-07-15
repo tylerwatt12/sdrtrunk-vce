@@ -315,6 +315,54 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void clearsOnlySelectedSiteStatistics() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("clear-site.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String clearedGuid = "123e4567-e89b-12d3-a456-426614174000";
+        String retainedGuid = "223e4567-e89b-12d3-a456-426614174000";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L));
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(2_000L, P25ActivityLogRecords.Action.GRANT, clearedGuid), true);
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(3_000L, P25ActivityLogRecords.Action.GRANT, retainedGuid), true);
+            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(4_000L, -20.0, clearedGuid));
+            P25ActivityLogSchema.insertControlChannelQuality(connection, quality(5_000L, -21.0, retainedGuid));
+        }
+
+        P25ActivityLogMaintenance.Result result =
+            P25ActivityLogMaintenance.clearSiteStats(database, clearedGuid);
+
+        assertEquals(P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS, result.operation());
+        assertTrue(result.rowsDeleted() > 0);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertGuidCount(connection, "receiver_context", clearedGuid, 0);
+            assertGuidCount(connection, "receiver_context", retainedGuid, 1);
+            assertGuidCount(connection, "p25_site_snapshot", clearedGuid, 0);
+            assertGuidCount(connection, "p25_site_channel_summary", clearedGuid, 0);
+            assertGuidCount(connection, "p25_site_channel_tag_summary", clearedGuid, 0);
+            assertGuidCount(connection, "p25_control_channel_quality", clearedGuid, 0);
+            assertGuidCount(connection, "p25_site_channel_summary", retainedGuid, 1);
+            assertGuidCount(connection, "p25_site_channel_tag_summary", retainedGuid, 1);
+            assertGuidCount(connection, "p25_control_channel_quality", retainedGuid, 1);
+            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "p25_site_frequency_summary", 1);
+            assertCount(connection, "p25_site_talkgroup_bucket", 1);
+            assertCount(connection, "p25_site_activity_bucket", 1);
+
+            //These summaries are shared by all receiver sites for the system and cannot be deleted site-by-site.
+            assertCount(connection, "p25_system", 1);
+            assertCount(connection, "p25_talkgroup_summary", 1);
+            assertActionCount(connection, "p25_talkgroup_summary", "grant_count", 2);
+        }
+    }
+
+    @Test
     void storesSchemaVersionInDatabaseMetadata() throws Exception
     {
         Path database = mTemporaryFolder.resolve("schema-metadata.sqlite");
@@ -808,6 +856,18 @@ class P25ActivityLogWriterTest
         }
     }
 
+    private static void assertGuidCount(Connection connection, String table, String guid, int expected)
+        throws Exception
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "SELECT COUNT(*) FROM " + table + " WHERE guid='" + guid + "'"))
+        {
+            assertTrue(resultSet.next());
+            assertEquals(expected, resultSet.getInt(1));
+        }
+    }
+
     private static String status(Connection connection, String key) throws Exception
     {
         try(Statement statement = connection.createStatement();
@@ -870,8 +930,12 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ControlChannelQuality quality(long timestamp, double signalDbfs)
     {
-        return new P25ActivityLogRecords.ControlChannelQuality(timestamp,
-            "123e4567-e89b-12d3-a456-426614174000", 856_137_500L, signalDbfs, signalDbfs,
+        return quality(timestamp, signalDbfs, "123e4567-e89b-12d3-a456-426614174000");
+    }
+
+    private static P25ActivityLogRecords.ControlChannelQuality quality(long timestamp, double signalDbfs, String guid)
+    {
+        return new P25ActivityLogRecords.ControlChannelQuality(timestamp, guid, 856_137_500L, signalDbfs, signalDbfs,
             signalDbfs - 1.0, signalDbfs + 1.0, 98.5, 10, 1, 3, 0, 0, timestamp);
     }
 
