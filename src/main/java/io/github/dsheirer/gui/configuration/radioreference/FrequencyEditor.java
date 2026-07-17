@@ -25,8 +25,6 @@ import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
-import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
-import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.rrapi.type.Category;
@@ -401,7 +399,7 @@ public class FrequencyEditor extends VBox
      * @param name value
      * @return configured channel or null
      */
-    private Channel createChannel(ModeDecoderType modeDecoderType, long frequency, String system, String site, String name)
+    static Channel createChannel(ModeDecoderType modeDecoderType, long frequency, String system, String site, String name)
     {
         if(modeDecoderType.hasDecoderType())
         {
@@ -417,10 +415,6 @@ public class FrequencyEditor extends VBox
             if(decodeConfiguration instanceof DecodeConfigNBFM && modeDecoderType == ModeDecoderType.FM)
             {
                 ((DecodeConfigNBFM)decodeConfiguration).setBandwidth(DecodeConfigNBFM.Bandwidth.BW_25_0);
-            }
-            else if(decodeConfiguration instanceof DecodeConfigP25Phase1)
-            {
-                ((DecodeConfigP25Phase1)decodeConfiguration).setModulation(Modulation.C4FM);
             }
             channel.setDecodeConfiguration(decodeConfiguration);
             return channel;
