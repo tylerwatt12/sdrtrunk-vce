@@ -37,6 +37,33 @@ a:hover {
   text-decoration: underline;
 }
 
+.number-base-pair {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.number-base-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.number-base-label {
+  color: #8a949d;
+  font-size: 9px;
+  font-variant-caps: all-small-caps;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+}
+
+.number-base-separator {
+  color: #a4adb5;
+  font-size: 10px;
+}
+
 .app-shell {
   min-height: 100vh;
 }
@@ -146,9 +173,9 @@ body[data-view="live"] .systems-live-tabs {
 }
 
 .playback-bar {
-  min-height: 42px;
+  min-height: 50px;
   display: grid;
-  grid-template-columns: repeat(5, max-content) minmax(180px, 1fr) max-content max-content max-content;
+  grid-template-columns: repeat(5, max-content) minmax(280px, 1fr) max-content max-content max-content;
   align-items: center;
   gap: 5px;
   padding: 5px 12px;
@@ -183,17 +210,40 @@ body[data-view="live"] .systems-live-tabs {
 
 .playback-now {
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
+  column-gap: 7px;
   padding: 0 8px;
 }
 
-.playback-now strong {
+.playback-now > .playback-field {
+  grid-row: 1 / span 2;
+}
+
+.playback-current {
+  min-width: 0;
   overflow: hidden;
-  color: #64e47e;
+}
+
+.playback-current-primary,
+.playback-current-secondary {
+  display: block;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.playback-current-primary {
+  color: #64e47e;
+  font-weight: 600;
+}
+
+.playback-current-secondary {
+  margin-top: 1px;
+  color: #aab3b9;
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .playback-field {
@@ -1416,6 +1466,7 @@ th.center {
 .key-values {
   display: grid;
   grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  margin: 0;
 }
 
 .key-values dt,
@@ -1549,7 +1600,7 @@ th.center {
   }
 
   .playback-bar {
-    grid-template-columns: repeat(5, max-content) minmax(160px, 1fr);
+    grid-template-columns: repeat(5, max-content) minmax(260px, 1fr);
     overflow-x: auto;
   }
 

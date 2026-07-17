@@ -204,9 +204,46 @@ class WebCallPlayer {
   }
 
   callLabel(call) {
-    const target = call.target_alias || call.target_id || call.channel || 'Unknown target';
-    const source = call.source_alias || call.source_id;
-    return `${target}${source ? ` · ${source}` : ''}`;
+    const targetId = call.target_id === null || call.target_id === undefined || call.target_id === '' ? '' :
+      String(call.target_id);
+    const sourceId = call.source_id === null || call.source_id === undefined || call.source_id === '' ? '' :
+      String(call.source_id);
+    const targetType = this.identifierType(call.target_form, 'TGID');
+    const sourceType = this.identifierType(call.source_form, 'Radio');
+    const target = call.target_alias ?
+      `${call.target_alias}${targetId ? ` · ${targetType} ${targetId}` : ''}` :
+      (targetId ? `${targetType} ${targetId}` : call.channel || 'Unknown target');
+    const source = call.source_alias ?
+      `${call.source_alias}${sourceId ? ` · ${sourceType} ${sourceId}` : ''}` :
+      (sourceId ? `${sourceType} ${sourceId}` : '');
+    return `${target}${source ? ` ← ${source}` : ''}`;
+  }
+
+  identifierType(form, fallback) {
+    return {
+      PATCH_GROUP: 'Patch',
+      RADIO: 'Radio',
+      TALKGROUP: 'TGID',
+      TELEPHONE_NUMBER: 'Phone'
+    }[String(form || '').toUpperCase()] || fallback;
+  }
+
+  callDetails(call) {
+    const details = [];
+    if (call.system) details.push(String(call.system));
+    if (call.channel) details.push(String(call.channel));
+    const frequency = Number(call.frequency_hz);
+    if (Number.isFinite(frequency) && frequency > 0) details.push(`${(frequency / 1000000).toFixed(5)} MHz`);
+    const timeslot = Number(call.timeslot);
+    if (call.timeslot !== null && call.timeslot !== undefined && call.timeslot !== '' &&
+        Number.isFinite(timeslot) && timeslot >= 0) {
+      details.push(`Slot ${timeslot}`);
+    }
+    if (call.decoder) details.push(String(call.decoder));
+    if (call.encrypted) details.push('Encrypted');
+    const duration = Number(call.duration_ms);
+    if (Number.isFinite(duration) && duration > 0) details.push(`${(duration / 1000).toFixed(1)} sec`);
+    return details.join(' · ');
   }
 
   setStatus(value) {
@@ -215,7 +252,28 @@ class WebCallPlayer {
 
   render() {
     const activelyPlaying = Boolean(this.source);
-    this.ui.current.textContent = activelyPlaying && this.current ? this.callLabel(this.current) : 'Idle';
+    this.ui.current.replaceChildren();
+    if (activelyPlaying && this.current) {
+      const label = this.callLabel(this.current);
+      const primary = document.createElement('strong');
+      primary.className = 'playback-current-primary';
+      primary.textContent = label;
+      this.ui.current.append(primary);
+      const details = this.callDetails(this.current);
+      if (details) {
+        const secondary = document.createElement('span');
+        secondary.className = 'playback-current-secondary';
+        secondary.textContent = details;
+        this.ui.current.append(secondary);
+      }
+      this.ui.current.title = details ? `${label}\n${details}` : label;
+    } else {
+      const idle = document.createElement('strong');
+      idle.className = 'playback-current-primary';
+      idle.textContent = 'Idle';
+      this.ui.current.append(idle);
+      this.ui.current.removeAttribute('title');
+    }
     this.ui.queued.textContent = String(this.queue.length);
     this.ui.dropped.textContent = this.dropped ? ` · Dropped ${this.dropped}` : '';
     this.ui.queueList.replaceChildren();
@@ -223,6 +281,8 @@ class WebCallPlayer {
       const item = document.createElement('div');
       item.className = 'playback-queue-item';
       item.textContent = `${index + 1}. ${this.callLabel(call)}`;
+      const details = this.callDetails(call);
+      if (details) item.title = details;
       this.ui.queueList.append(item);
     });
     if (!this.queue.length) {
