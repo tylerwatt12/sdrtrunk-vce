@@ -7,6 +7,8 @@ package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
@@ -111,5 +113,29 @@ class ChannelActivityTableModelTest
         assertEquals("CONV + VC + DAT-A", row.getTagsDisplay());
         row.addTag(ChannelTag.DATA);
         assertEquals("CONV + VC + DAT", row.getTagsDisplay());
+    }
+
+    @Test
+    void treatsSharedTrafficAndControlRowAsSiteSelection()
+    {
+        ChannelActivityRow row = new ChannelActivityRow("row-1", null, ChannelActivityRow.Role.TRAFFIC,
+            851_012_500L, null);
+        row.addTag(ChannelTag.CURRENT_CONTROL);
+
+        assertTrue(ChannelActivitySelectionController.isSiteControl(row));
+    }
+
+    @Test
+    void selectsCurrentControlWhenLogicalSiteRowNeedsReplacement()
+    {
+        Channel owner = new Channel("County System");
+        ChannelActivityTableModel model = new ChannelActivityTableModel("County System", owner, true);
+        ChannelActivityRow configured = model.getOrCreate("configured", owner,
+            ChannelActivityRow.Role.CONFIGURED_CONTROL, 851_012_500L, null);
+        ChannelActivityRow current = model.getOrCreate("current", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
+            852_012_500L, null);
+
+        assertSame(current, ChannelActivitySelectionController.findPreferredSiteControl(model));
+        assertTrue(ChannelActivitySelectionController.isSiteControl(configured));
     }
 }

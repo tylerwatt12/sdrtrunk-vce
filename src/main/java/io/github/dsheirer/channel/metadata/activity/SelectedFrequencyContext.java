@@ -22,21 +22,24 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.ProcessingChain;
 
 /**
- * Exact selected-frequency context broadcast by the Now Playing activity tables.
+ * Selected-frequency context broadcast by the Now Playing activity tables, including the logical site owner used by
+ * the Events view when a control row is selected.
  *
  * @param frequency selected row frequency in hertz
  * @param timeslot selected row timeslot, when applicable
- * @param rowType selected activity row type
  * @param decoderHint selected row decoder text
- * @param sessionId stable selected activity table/session identifier
  * @param ownerChannel owner channel for the activity table, when applicable
  * @param rowChannel channel associated with the selected row, when applicable
  * @param processingChain exact-frequency active processing chain, when one exists
+ * @param eventProcessingChain processing chain used by the Events view
+ * @param selectionScope logical scope of the user selection
  * @param clearRequested true when listeners should detach and clear
  */
-public record SelectedFrequencyContext(long frequency, Integer timeslot, ChannelActivityRow.Role rowType,
-                                       String decoderHint, String sessionId, Channel ownerChannel, Channel rowChannel,
-                                       ProcessingChain processingChain, boolean clearRequested)
+public record SelectedFrequencyContext(long frequency, Integer timeslot, String decoderHint, Channel ownerChannel,
+                                       Channel rowChannel, ProcessingChain processingChain,
+                                       ProcessingChain eventProcessingChain,
+                                       ChannelActivitySelectionScope selectionScope,
+                                       boolean clearRequested)
 {
     public static SelectedFrequencyContext clear()
     {
@@ -51,5 +54,10 @@ public record SelectedFrequencyContext(long frequency, Integer timeslot, Channel
     public boolean hasExactProcessingChain()
     {
         return processingChain != null;
+    }
+
+    public boolean isSiteSelection()
+    {
+        return selectionScope == ChannelActivitySelectionScope.SITE;
     }
 }

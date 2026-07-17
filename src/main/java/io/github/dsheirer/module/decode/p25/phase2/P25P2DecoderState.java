@@ -34,6 +34,8 @@ import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
@@ -148,7 +150,8 @@ import org.slf4j.LoggerFactory;
  * Decoder state for an APCO-25 Phase II channel.  Maintains the call/control/data/idle state of the channel and
  * produces events by monitoring the decoded message stream.
  */
-public class P25P2DecoderState extends TimeslotDecoderState implements IdentifierUpdateListener, P25NetworkConfigurationSnapshotProvider
+public class P25P2DecoderState extends TimeslotDecoderState implements IdentifierUpdateListener,
+    P25NetworkConfigurationSnapshotProvider, TalkerAliasManagerProvider
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P2DecoderState.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(LOGGER);
@@ -307,7 +310,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             }
             else if(message instanceof MotorolaTalkerAliasComplete tac && tac.isValid())
             {
-                mTrafficChannelManager.getTalkerAliasManager().update(tac.getRadio(), tac.getAlias());
+                mTrafficChannelManager.processP2TalkerAlias(getCurrentFrequency(), getTimeslot(), tac.getRadio(),
+                    tac.getAlias(), getIdentifierCollection(), tac.getTimestamp());
             }
 
             mSiteMetadataPublisher.publish(message.getTimestamp());
@@ -1798,16 +1802,17 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             P25TalkerAliasIdentifier alias = talkerAlias.getAlias();
             getIdentifierCollection().update(alias);
-            mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), alias, message.getTimestamp());
-
-            //Add the alias to the talker alias manager if we know the associated radio
             Identifier from = getIdentifierCollection().getFromIdentifier();
-
-            if(from instanceof RadioIdentifier ri)
-            {
-                mTrafficChannelManager.getTalkerAliasManager().update(ri, alias);
-            }
+            RadioIdentifier radio = from instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
+            mTrafficChannelManager.processP2TalkerAlias(getCurrentFrequency(), getTimeslot(), radio, alias,
+                getIdentifierCollection(), message.getTimestamp());
         }
+    }
+
+    @Override
+    public TalkerAliasManager getTalkerAliasManager()
+    {
+        return mTrafficChannelManager.getTalkerAliasManager();
     }
 
     /**
@@ -1944,7 +1949,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 case REQUEST_RESET:
                     resetState();
                     mNetworkConfigurationMonitor.reset();
-                    mNetworkConfigurationStabilizer.reset();
                     mSiteMetadataPublisher.reset();
                     break;
                 case NOTIFICATION_SOURCE_FREQUENCY:

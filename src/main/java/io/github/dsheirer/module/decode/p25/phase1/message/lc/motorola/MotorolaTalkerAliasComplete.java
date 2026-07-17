@@ -76,7 +76,6 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage
      *
      * @param message assembled from the data blocks
      * @param talkgroup from the header
-     * @param dataBlockCount from the header
      * @param sequence number for the alias
      * @param timeslot for the message
      * @param timestamp of the most recent header or data block

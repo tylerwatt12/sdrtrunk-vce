@@ -34,11 +34,13 @@ import io.github.dsheirer.util.StringUtils;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,6 +53,7 @@ public class AudioRecordingManager
     private LinkedTransferQueue<CompletedAudioCall> mCompletedAudioCallQueue = new LinkedTransferQueue<>();
     private ScheduledFuture<?> mQueueProcessorHandle;
     private UserPreferences mUserPreferences;
+    private final Consumer<CompletedAudioCall> mRecordedCallConsumer;
     private int mUnknownAudioRecordingIndex = 1;
     private int mDuplicateAudioRecordingSuffix = 1;
     private String mPreviousRecordingPath = null;
@@ -61,7 +64,13 @@ public class AudioRecordingManager
      */
     public AudioRecordingManager(UserPreferences userPreferences)
     {
+        this(userPreferences, null);
+    }
+
+    public AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer)
+    {
         mUserPreferences = userPreferences;
+        mRecordedCallConsumer = recordedCallConsumer;
     }
 
     /**
@@ -107,6 +116,11 @@ public class AudioRecordingManager
                 try
                 {
                     AudioCallRecorder.write(completedAudioCall, path, recordFormat, mUserPreferences);
+
+                    if(Files.isRegularFile(path) && Files.size(path) > 0)
+                    {
+                        notifyRecorded(completedAudioCall);
+                    }
                 }
                 catch(IOException ioe)
                 {
@@ -124,6 +138,21 @@ public class AudioRecordingManager
         if(completedAudioCall != null && completedAudioCall.snapshot().recordAudio())
         {
             mCompletedAudioCallQueue.add(completedAudioCall);
+        }
+    }
+
+    private void notifyRecorded(CompletedAudioCall completedAudioCall)
+    {
+        if(mRecordedCallConsumer != null)
+        {
+            try
+            {
+                mRecordedCallConsumer.accept(completedAudioCall);
+            }
+            catch(RuntimeException e)
+            {
+                mLog.warn("Recorded-call stats listener failed", e);
+            }
         }
     }
 

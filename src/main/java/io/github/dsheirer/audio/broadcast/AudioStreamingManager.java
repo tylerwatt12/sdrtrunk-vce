@@ -36,6 +36,7 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -45,6 +46,7 @@ import java.util.Set;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,6 +61,7 @@ public class AudioStreamingManager
     private Listener<AudioRecording> mAudioRecordingListener;
     private BroadcastFormat mBroadcastFormat;
     private UserPreferences mUserPreferences;
+    private final Consumer<CompletedAudioCall> mStreamedCallConsumer;
     private ScheduledFuture<?> mAudioSegmentProcessorFuture;
     private int mNextRecordingNumber = 1;
 
@@ -70,9 +73,17 @@ public class AudioStreamingManager
      */
     public AudioStreamingManager(Listener<AudioRecording> listener, BroadcastFormat broadcastFormat, UserPreferences userPreferences)
     {
+        this(listener, broadcastFormat, userPreferences, null);
+    }
+
+    public AudioStreamingManager(Listener<AudioRecording> listener, BroadcastFormat broadcastFormat,
+                                 UserPreferences userPreferences,
+                                 Consumer<CompletedAudioCall> streamedCallConsumer)
+    {
         mAudioRecordingListener = listener;
         mBroadcastFormat = broadcastFormat;
         mUserPreferences = userPreferences;
+        mStreamedCallConsumer = streamedCallConsumer;
     }
 
     /**
@@ -137,7 +148,8 @@ public class AudioStreamingManager
          * @param identifierCollection to use for the streamed audio recording
          * @param broadcastChannels to receive the audio recording
          */
-        private void processAudioCall(CompletedAudioCall completedAudioCall, IdentifierCollection identifierCollection,
+        private boolean processAudioCall(CompletedAudioCall completedAudioCall,
+                                         IdentifierCollection identifierCollection,
                                          Set<BroadcastChannel> broadcastChannels)
         {
             Path path = getTemporaryRecordingPath();
@@ -148,13 +160,25 @@ public class AudioStreamingManager
                 AudioCallRecorder.write(completedAudioCall, path, RecordFormat.MP3, mUserPreferences,
                     identifierCollection);
 
+                if(!Files.isRegularFile(path) || Files.size(path) <= 0)
+                {
+                    return false;
+                }
+
                 AudioRecording audioRecording = new AudioRecording(path, broadcastChannels, identifierCollection,
                     completedAudioCall.snapshot().startTimestamp(), length);
                 mAudioRecordingListener.receive(audioRecording);
+                return true;
             }
             catch(IOException ioe)
             {
                 mLog.error("Error recording temporary stream MP3");
+                return false;
+            }
+            catch(RuntimeException e)
+            {
+                mLog.warn("Error handing completed call to the streaming pipeline", e);
+                return false;
             }
         }
 
@@ -170,6 +194,7 @@ public class AudioStreamingManager
             while(it.hasNext())
             {
                 completedAudioCall = it.next();
+                boolean sentToStreamer = false;
 
                 if(completedAudioCall.snapshot().duplicate() &&
                     mUserPreferences.getCallManagementPreference().isDuplicateStreamingSuppressionEnabled())
@@ -201,7 +226,7 @@ public class AudioStreamingManager
                                 //If there are no patched radios/talkgroups, override user preference and stream as a patch group
                                 if(ids.isEmpty() || completedAudioCall.snapshot().aliasList() == null)
                                 {
-                                    processAudioCall(completedAudioCall, identifiers,
+                                    sentToStreamer |= processAudioCall(completedAudioCall, identifiers,
                                         completedAudioCall.snapshot().broadcastChannels());
                                 }
                                 else
@@ -224,23 +249,29 @@ public class AudioStreamingManager
                                             //Remove patch group TO identifier & replace with the patched talkgroup/radio
                                             decomposedIdentifiers.remove(Role.TO);
                                             decomposedIdentifiers.update(identifier);
-                                            processAudioCall(completedAudioCall, decomposedIdentifiers, broadcastChannels);
+                                            sentToStreamer |= processAudioCall(completedAudioCall,
+                                                decomposedIdentifiers, broadcastChannels);
                                         }
                                     }
                                 }
                             }
                             else
                             {
-                                processAudioCall(completedAudioCall, identifiers,
+                                sentToStreamer |= processAudioCall(completedAudioCall, identifiers,
                                     completedAudioCall.snapshot().broadcastChannels());
                             }
                         }
                         else
                         {
-                            processAudioCall(completedAudioCall, identifiers,
+                            sentToStreamer |= processAudioCall(completedAudioCall, identifiers,
                                 completedAudioCall.snapshot().broadcastChannels());
                         }
                     }
+                }
+
+                if(sentToStreamer)
+                {
+                    notifyStreamed(completedAudioCall);
                 }
             }
         }
@@ -264,6 +295,21 @@ public class AudioStreamingManager
         if(completedAudioCall != null)
         {
             mNewAudioCalls.add(completedAudioCall);
+        }
+    }
+
+    private void notifyStreamed(CompletedAudioCall completedAudioCall)
+    {
+        if(mStreamedCallConsumer != null)
+        {
+            try
+            {
+                mStreamedCallConsumer.accept(completedAudioCall);
+            }
+            catch(RuntimeException e)
+            {
+                mLog.warn("Streamed-call stats listener failed", e);
+            }
         }
     }
 }

@@ -147,6 +147,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.qualityHistory(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/systems", exchange -> handleJson(exchange,
                 () -> mDatabase.systems(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/system-directory", exchange -> handleJson(exchange,
+                () -> mDatabase.systemDirectory(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/sites", exchange -> handleJson(exchange,
                 () -> mDatabase.sites(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/system", exchange -> handleJson(exchange,
@@ -161,6 +163,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.systemTalkerAliases(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/talkgroup", exchange -> handleJson(exchange,
                 () -> mDatabase.talkgroup(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/talkgroup/activity", exchange -> handleJson(exchange,
+                () -> mDatabase.talkgroupActivity(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/radio", exchange -> handleJson(exchange,
                 () -> mDatabase.radio(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/affiliations", exchange -> handleJson(exchange,
@@ -171,6 +175,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.site(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/channels", exchange -> handleJson(exchange,
                 () -> mDatabase.siteChannels(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/site/talkgroups", exchange -> handleJson(exchange,
+                () -> mDatabase.siteTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/quality", exchange -> handleJson(exchange,
                 () -> mDatabase.siteQuality(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/site/bands", exchange -> handleJson(exchange,
@@ -266,6 +272,17 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             preference.getStatsLoggingRetentionDays(), summaryConfigured ? P25ActivityLogStatus.State.STOPPED :
             P25ActivityLogStatus.State.DISABLED, P25ActivityLogPath.getDatabasePath(mUserPreferences).toString(),
             0, 0, 0, null);
+    }
+
+    /**
+     * Current state for desktop controls that open embedded-web pages.
+     */
+    public synchronized StatsWebNavigationState getNavigationState()
+    {
+        P25ActivityLogStatus loggingStatus = statsLoggingStatus();
+        int port = mPort > 0 ? mPort : mUserPreferences.getApplicationPreference().getStatsWebServerPort();
+        return new StatsWebNavigationState(mServer != null, port, loggingStatus.summaryActive(),
+            loggingStatus.detailedHistoryActive());
     }
 
     private void handleJson(HttpExchange exchange, JsonSupplier supplier) throws IOException

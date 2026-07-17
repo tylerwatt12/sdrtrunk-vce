@@ -49,6 +49,11 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
         MyEventBus.getGlobalEventBus().register(this);
     }
 
+    public void dispose()
+    {
+        MyEventBus.getGlobalEventBus().unregister(this);
+    }
+
     /**
      * Receives preference update notifications via the event bus
      * @param preferenceType that was updated

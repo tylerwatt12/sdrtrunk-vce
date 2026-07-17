@@ -47,9 +47,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -71,13 +73,19 @@ public class AudioStreamingManagerTest
 
         //We use a countdown latch to count the number of expected audio recordings produced.
         CountDownLatch latch = new CountDownLatch(expectedRecordingsCount);
+        CountDownLatch metricLatch = new CountDownLatch(1);
+        AtomicInteger streamedMetrics = new AtomicInteger();
         Listener<AudioRecording> listener = audioRecording -> {
             latch.countDown();
         };
 
         UserPreferences userPreferences = new UserPreferences();
         userPreferences.getCallManagementPreference().setPatchGroupStreamingOption(PatchGroupStreamingOption.PATCH_GROUP);
-        AudioStreamingManager manager = new AudioStreamingManager(listener, BroadcastFormat.MP3, userPreferences);
+        AudioStreamingManager manager = new AudioStreamingManager(listener, BroadcastFormat.MP3, userPreferences,
+            call -> {
+                streamedMetrics.incrementAndGet();
+                metricLatch.countDown();
+            });
         manager.start();
         manager.receive(getCompletedAudioCall());
 
@@ -86,6 +94,7 @@ public class AudioStreamingManagerTest
         try
         {
             success = latch.await(5, TimeUnit.SECONDS);
+            success &= metricLatch.await(5, TimeUnit.SECONDS);
         }
         catch(InterruptedException e)
         {
@@ -96,6 +105,7 @@ public class AudioStreamingManagerTest
 
         assertTrue(success, "Stream patch group audio as PATCHED GROUP failed to produce [" +
                 latch.getCount() + "/" + expectedRecordingsCount + "] streaming recordings");
+        assertEquals(1, streamedMetrics.get());
     }
 
     @Test
@@ -106,13 +116,19 @@ public class AudioStreamingManagerTest
         //We use a countdown latch to count the number of expected audio recordings produced.  In this case, we expect
         //two audio recordings, one for stream B and one for stream C associated with the two patched talkgroups.
         CountDownLatch latch = new CountDownLatch(expectedRecordingsCount);
+        CountDownLatch metricLatch = new CountDownLatch(1);
+        AtomicInteger streamedMetrics = new AtomicInteger();
         Listener<AudioRecording> listener = audioRecording -> {
             latch.countDown();
         };
 
         UserPreferences userPreferences = new UserPreferences();
         userPreferences.getCallManagementPreference().setPatchGroupStreamingOption(PatchGroupStreamingOption.TALKGROUPS);
-        AudioStreamingManager manager = new AudioStreamingManager(listener, BroadcastFormat.MP3, userPreferences);
+        AudioStreamingManager manager = new AudioStreamingManager(listener, BroadcastFormat.MP3, userPreferences,
+            call -> {
+                streamedMetrics.incrementAndGet();
+                metricLatch.countDown();
+            });
         manager.start();
         manager.receive(getCompletedAudioCall());
 
@@ -121,6 +137,7 @@ public class AudioStreamingManagerTest
         try
         {
             success = latch.await(5, TimeUnit.SECONDS);
+            success &= metricLatch.await(5, TimeUnit.SECONDS);
         }
         catch(InterruptedException e)
         {
@@ -131,6 +148,7 @@ public class AudioStreamingManagerTest
 
         assertTrue(success, "Stream patch group audio as INDIVIDUAL TALKGROUPS failed to produce [" +
                 latch.getCount() + "/" + expectedRecordingsCount + "] streaming recordings");
+        assertEquals(1, streamedMetrics.get());
     }
 
     /**

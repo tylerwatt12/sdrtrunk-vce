@@ -49,8 +49,10 @@ import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.swing.BorderFactory;
 import javax.swing.Icon;
 import javax.swing.JLabel;
@@ -64,6 +66,7 @@ import javax.swing.event.ChangeEvent;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.TableColumnModelEvent;
 import javax.swing.event.TableColumnModelListener;
+import javax.swing.event.TableModelListener;
 import javax.swing.border.Border;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableColumn;
@@ -93,13 +96,14 @@ public class ChannelActivityPanel extends JPanel
     private final Map<State,Color> mBackgroundColors = new EnumMap<>(State.class);
     private final Map<State,Color> mForegroundColors = new EnumMap<>(State.class);
     private final Map<ChannelActivityTableModel,Component> mTabComponents = new HashMap<>();
-    private final Map<ChannelActivityTableModel,JTable> mTables = new HashMap<>();
+    private final Map<ChannelActivityTableModel,ChannelActivityTable> mTables = new HashMap<>();
     private final Map<JTable,JTableColumnWidthMonitor> mColumnWidthMonitors = new HashMap<>();
     private final Map<JTable,TableColumnModelListener> mColumnWidthSyncListeners = new HashMap<>();
-    private final Map<JTable,String> mSelectedRowKeys = new HashMap<>();
+    private final Map<ChannelActivityTableModel,TableModelListener> mSelectionRenderListeners = new HashMap<>();
+    private final Set<ChannelActivityTableModel> mPendingSelectionRenders = new HashSet<>();
+    private final ChannelActivitySelectionController mSelectionController =
+        new ChannelActivitySelectionController();
     private SelectedFrequencyContext mLastBroadcastSelectedFrequencyContext;
-    private JTable mSelectedTable;
-    private boolean mSuppressSelectionEvents;
     private boolean mApplyingColumnWidths;
     private boolean mActive;
     private boolean mRegisteredForPreferences;
@@ -177,8 +181,7 @@ public class ChannelActivityPanel extends JPanel
         disposeTableWiring();
         mTabComponents.clear();
         mTables.clear();
-        mSelectedRowKeys.clear();
-        mSelectedTable = null;
+        mPendingSelectionRenders.clear();
 
         if(mTabbedPane != null)
         {
@@ -188,6 +191,16 @@ public class ChannelActivityPanel extends JPanel
 
     private void disposeTableWiring()
     {
+        for(Map.Entry<ChannelActivityTableModel,TableModelListener> entry: mSelectionRenderListeners.entrySet())
+        {
+            entry.getKey().removeTableModelListener(entry.getValue());
+        }
+
+        for(ChannelActivityTable table: mTables.values())
+        {
+            table.setUserSelectionListener(null);
+        }
+
         for(JTableColumnWidthMonitor monitor: mColumnWidthMonitors.values())
         {
             monitor.dispose();
@@ -200,6 +213,7 @@ public class ChannelActivityPanel extends JPanel
 
         mColumnWidthMonitors.clear();
         mColumnWidthSyncListeners.clear();
+        mSelectionRenderListeners.clear();
     }
 
     public void addSelectedFrequencyListener(Listener<SelectedFrequencyContext> listener)
@@ -214,21 +228,15 @@ public class ChannelActivityPanel extends JPanel
 
     public void clearSelectedFrequencyContext()
     {
-        mSuppressSelectionEvents = true;
+        mSelectionController.clear();
+        clearSelectionPresentation();
+    }
 
-        try
+    private void clearSelectionPresentation()
+    {
+        for(JTable table: mTables.values())
         {
-            mSelectedRowKeys.clear();
-            mSelectedTable = null;
-
-            for(JTable table: mTables.values())
-            {
-                table.clearSelection();
-            }
-        }
-        finally
-        {
-            mSuppressSelectionEvents = false;
+            table.clearSelection();
         }
 
         broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), true);
@@ -377,12 +385,20 @@ public class ChannelActivityPanel extends JPanel
 
         tableModel.setActivityViewVisible(false);
 
-        JTable table = mTables.remove(tableModel);
-        boolean selectedTableClosed = table != null && mSelectedTable == table;
+        ChannelActivityTable table = mTables.remove(tableModel);
+        boolean selectedTableClosed = mSelectionController.isSelected(tableModel);
 
         if(table != null)
         {
-            mSelectedRowKeys.remove(table);
+            mPendingSelectionRenders.remove(tableModel);
+            table.setUserSelectionListener(null);
+            TableModelListener selectionListener = mSelectionRenderListeners.remove(tableModel);
+
+            if(selectionListener != null)
+            {
+                tableModel.removeTableModelListener(selectionListener);
+            }
+
             JTableColumnWidthMonitor monitor = mColumnWidthMonitors.remove(table);
 
             if(monitor != null)
@@ -400,7 +416,7 @@ public class ChannelActivityPanel extends JPanel
 
         if(selectedTableClosed)
         {
-            mSelectedTable = null;
+            mSelectionController.clear();
             broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), true);
         }
 
@@ -411,12 +427,23 @@ public class ChannelActivityPanel extends JPanel
     private void updateTableVisibility()
     {
         Component selectedComponent = getTabbedPane().getSelectedComponent();
+        ChannelActivityTableModel selectedTableModel = null;
 
         for(Map.Entry<ChannelActivityTableModel,Component> entry: mTabComponents.entrySet())
         {
-            entry.getKey().setActivityViewVisible(entry.getValue() == selectedComponent);
+            boolean selected = entry.getValue() == selectedComponent;
+            entry.getKey().setActivityViewVisible(selected);
+
+            if(selected)
+            {
+                selectedTableModel = entry.getKey();
+            }
         }
 
+        if(mSelectionController.clearIfSelectionIsOutside(selectedTableModel))
+        {
+            clearSelectionPresentation();
+        }
     }
 
     private void refreshTables()
@@ -429,13 +456,15 @@ public class ChannelActivityPanel extends JPanel
 
     private JTable createTable(ChannelActivityTableModel tableModel)
     {
-        JTable table = new JTable(tableModel);
+        ChannelActivityTable table = new ChannelActivityTable(tableModel);
         mTables.put(tableModel, table);
         table.setAutoCreateRowSorter(false);
         table.setSelectionBackground(table.getBackground());
         table.setSelectionForeground(table.getForeground());
-        tableModel.addTableModelListener(event -> refreshSelectedFrequencyContext(table));
-        table.getSelectionModel().addListSelectionListener(event -> processSelection(event, table));
+        TableModelListener selectionListener = event -> scheduleSelectionRender(tableModel);
+        tableModel.addTableModelListener(selectionListener);
+        mSelectionRenderListeners.put(tableModel, selectionListener);
+        table.setUserSelectionListener(this::processUserSelection);
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_STATUS)
             .setCellRenderer(new StateCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_TAGS)
@@ -592,127 +621,122 @@ public class ChannelActivityPanel extends JPanel
         return column < TABLE_COLUMN_DEFAULT_WIDTHS.length ? TABLE_COLUMN_DEFAULT_WIDTHS[column] : fallback;
     }
 
-    private void processSelection(ListSelectionEvent event, JTable table)
+    private void processUserSelection(ChannelActivityTable table)
     {
-        if(event.getValueIsAdjusting() || mSuppressSelectionEvents)
+        if(!(table.getModel() instanceof ChannelActivityTableModel model))
         {
             return;
         }
 
-        if(table.getModel() instanceof ChannelActivityTableModel model)
-        {
-            int selectedRow = table.getSelectedRow();
+        int selectedViewRow = table.getSelectedRow();
+        ChannelActivityRow row = selectedViewRow >= 0 ?
+            model.getRow(table.convertRowIndexToModel(selectedViewRow)) : null;
 
-            if(selectedRow >= 0)
-            {
-                ChannelActivityRow row = model.getRow(table.convertRowIndexToModel(selectedRow));
-
-                if(row != null)
-                {
-                    if(mSelectedTable != table)
-                    {
-                        clearOtherTableSelections(table);
-                        mSelectedTable = table;
-                    }
-
-                    mSelectedRowKeys.put(table, row.getKey());
-                    broadcastSelection(row, model, true);
-                    return;
-                }
-            }
-
-            String selectedKey = mSelectedRowKeys.get(table);
-
-            if(selectedKey != null && model.get(selectedKey) != null)
-            {
-                SwingUtilities.invokeLater(() -> restoreSelection(table, selectedKey));
-                return;
-            }
-
-            mSelectedRowKeys.remove(table);
-        }
-
-        if(mSelectedTable == table)
-        {
-            mSelectedTable = null;
-            broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), true);
-        }
-    }
-
-    private void refreshSelectedFrequencyContext(JTable table)
-    {
-        if(table != mSelectedTable)
-        {
-            return;
-        }
-
-        if(table.getModel() instanceof ChannelActivityTableModel model)
-        {
-            int selectedRow = table.getSelectedRow();
-
-            if(selectedRow >= 0)
-            {
-                ChannelActivityRow row = model.getRow(table.convertRowIndexToModel(selectedRow));
-
-                if(row != null)
-                {
-                    mSelectedRowKeys.put(table, row.getKey());
-                    broadcastSelection(row, model, false);
-                }
-            }
-        }
-    }
-
-    private void clearOtherTableSelections(JTable activeTable)
-    {
-        mSuppressSelectionEvents = true;
-
-        try
-        {
-            for(JTable table: mTables.values())
-            {
-                if(table != activeTable)
-                {
-                    table.clearSelection();
-                    mSelectedRowKeys.remove(table);
-                }
-            }
-        }
-        finally
-        {
-            mSuppressSelectionEvents = false;
-        }
-    }
-
-    private void broadcastSelection(ChannelActivityRow row, ChannelActivityTableModel model, boolean force)
-    {
-        broadcastSelectedFrequencyContext(getSelectedFrequencyContext(row, model), force);
-    }
-
-    private ProcessingChain getProcessingChain(ChannelActivityRow row, ChannelActivityTableModel model)
-    {
-        if(row == null || row.getFrequency() <= 0)
-        {
-            return null;
-        }
-
-        ProcessingChain processingChain = mChannelProcessingManager.getProcessingChainByFrequency(row.getFrequency(),
-            row.getTimeslot());
-
-        return processingChain != null ? processingChain : null;
-    }
-
-    private SelectedFrequencyContext getSelectedFrequencyContext(ChannelActivityRow row, ChannelActivityTableModel model)
-    {
         if(row == null)
+        {
+            clearSelectedFrequencyContext();
+            return;
+        }
+
+        ChannelActivitySelectionController.Selection selection = mSelectionController.select(model, row);
+        clearOtherSelectionHighlights(model);
+        broadcastSelection(selection, row, true);
+    }
+
+    /**
+     * Schedules a passive redraw after JTable has applied a model mutation.  This redraw reads the latest logical
+     * selection, so a user click that occurs before it runs always wins.
+     */
+    private void scheduleSelectionRender(ChannelActivityTableModel model)
+    {
+        if(mSelectionController.isSelected(model) && mPendingSelectionRenders.add(model))
+        {
+            SwingUtilities.invokeLater(() -> {
+                mPendingSelectionRenders.remove(model);
+                renderSelection(model);
+            });
+        }
+    }
+
+    private void renderSelection(ChannelActivityTableModel model)
+    {
+        ChannelActivityTable table = mTables.get(model);
+
+        if(table == null)
+        {
+            return;
+        }
+
+        if(!mSelectionController.isSelected(model))
+        {
+            table.clearSelection();
+            return;
+        }
+
+        ChannelActivityRow row = mSelectionController.resolveSelectedRow();
+        ChannelActivitySelectionController.Selection selection = mSelectionController.getSelection();
+
+        if(selection == null)
+        {
+            table.clearSelection();
+            broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), false);
+            return;
+        }
+
+        if(row == null)
+        {
+            //There is temporarily no row to highlight, but the site remains the user's logical selection.
+            table.clearSelection();
+        }
+        else
+        {
+            int modelRow = model.getRowIndex(row.getKey());
+            int viewRow = modelRow >= 0 ? table.convertRowIndexToView(modelRow) : -1;
+
+            if(viewRow >= 0 && table.getSelectedRow() != viewRow)
+            {
+                table.getSelectionModel().setSelectionInterval(viewRow, viewRow);
+            }
+        }
+
+        broadcastSelection(selection, row, false);
+    }
+
+    private void clearOtherSelectionHighlights(ChannelActivityTableModel selectedModel)
+    {
+        for(Map.Entry<ChannelActivityTableModel,ChannelActivityTable> entry: mTables.entrySet())
+        {
+            if(entry.getKey() != selectedModel)
+            {
+                entry.getValue().clearSelection();
+            }
+        }
+    }
+
+    private void broadcastSelection(ChannelActivitySelectionController.Selection selection, ChannelActivityRow row,
+                                    boolean force)
+    {
+        broadcastSelectedFrequencyContext(getSelectedFrequencyContext(selection, row), force);
+    }
+
+    private SelectedFrequencyContext getSelectedFrequencyContext(
+        ChannelActivitySelectionController.Selection selection, ChannelActivityRow row)
+    {
+        if(selection == null)
         {
             return SelectedFrequencyContext.clear();
         }
 
-        Channel ownerChannel = model != null ? model.getOwnerChannel() : null;
-        String sessionId = model != null ? model.getTitle() : null;
-        return new SelectedFrequencyContext(row.getFrequency(), row.getTimeslot(), row.getRole(), row.getDecoder(),
-            sessionId, ownerChannel, row.getChannel(), getProcessingChain(row, model), false);
+        long frequency = row != null ? row.getFrequency() : selection.frequency();
+        Integer timeslot = row != null ? row.getTimeslot() : selection.timeslot();
+        String decoderHint = row != null ? row.getDecoder() : selection.decoderHint();
+        Channel rowChannel = row != null ? row.getChannel() : selection.rowChannel();
+        ProcessingChain processingChain = frequency > 0 ?
+            mChannelProcessingManager.getProcessingChainByFrequency(frequency, timeslot) : null;
+        ProcessingChain eventProcessingChain = selection.isSite() && selection.ownerChannel() != null ?
+            mChannelProcessingManager.getProcessingChain(selection.ownerChannel()) : processingChain;
+        return new SelectedFrequencyContext(frequency, timeslot, decoderHint, selection.ownerChannel(), rowChannel,
+            processingChain, eventProcessingChain, selection.scope(), false);
     }
 
     private void broadcastSelectedFrequencyContext(SelectedFrequencyContext context, boolean force)
@@ -721,28 +745,6 @@ public class ChannelActivityPanel extends JPanel
         {
             mLastBroadcastSelectedFrequencyContext = context;
             mSelectedFrequencyBroadcaster.broadcast(context);
-        }
-    }
-
-    private void restoreSelection(JTable table, String key)
-    {
-        if(table.getModel() instanceof ChannelActivityTableModel model)
-        {
-            int modelRow = model.getRowIndex(key);
-
-            if(modelRow >= 0)
-            {
-                int viewRow = table.convertRowIndexToView(modelRow);
-
-                if(viewRow >= 0 && table.getSelectedRow() != viewRow)
-                {
-                    table.getSelectionModel().setSelectionInterval(viewRow, viewRow);
-                }
-            }
-            else
-            {
-                mSelectedRowKeys.remove(table);
-            }
         }
     }
 
