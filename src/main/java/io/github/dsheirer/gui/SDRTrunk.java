@@ -261,14 +261,16 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mAudioPlaybackManager = new AudioPlaybackManager(mUserPreferences);
 
-        mAudioRecordingManager = new AudioRecordingManager(mUserPreferences);
+        mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
+
+        mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
+            mP25ActivityLogService::receiveRecordedCall);
         mAudioRecordingManager.start();
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
-            mUserPreferences);
+            mUserPreferences, mP25ActivityLogService::receiveStreamedCall);
         mAudioStreamingManager.start();
 
-        mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
         mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
@@ -293,7 +295,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         if(!GraphicsEnvironment.isHeadless())
         {
             mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences, mSystemsVisible, mNowPlayingLowerViewsVisible, visible -> {
+                    mSettingsManager, mTunerManager, mUserPreferences, mStatsWebServerService, mSystemsVisible,
+                    mNowPlayingLowerViewsVisible, visible -> {
                         mNowPlayingLowerViewsVisible = visible;
                         mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, visible);
                     });
@@ -1140,7 +1143,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor,
                 mUserPreferences.getEncryptionKeyPreference().getVaultService(),
-                mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager());
+                mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager(),
+                mStatsWebServerService::getNavigationState);
         }
 
         return mResourceStatusPanel;
@@ -1237,7 +1241,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     {
         public ResourceStatusVisibleMenuItem()
         {
-            super("Show Resource Status");
+            super("Show Status Footer");
             setSelected(mResourceStatusVisible);
             addActionListener(e -> {
                 mResourceStatusVisible = !mResourceStatusVisible;

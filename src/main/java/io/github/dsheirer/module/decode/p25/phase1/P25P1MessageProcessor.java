@@ -30,6 +30,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.lc.IExtendedSourceMes
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.HarrisTalkerAliasAssembler;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasBase;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasComplete;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSBlock1;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSBlock2;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSComplete;
@@ -114,6 +115,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
             if(message instanceof LDU1Message ldu1)
             {
                 LinkControlWord lcw = ldu1.getLinkControlWord();
+                LCHarrisTalkerAliasComplete harrisTalkerAliasComplete = null;
 
                 switch(lcw)
                 {
@@ -125,8 +127,8 @@ public class P25P1MessageProcessor implements Listener<IMessage>
                         mHeldLDU1Message = ldu1;
                         return;
                     case LCHarrisTalkerAliasBase harrisTalkerAlias:
-                        //Send the LCW to the harris talker alias assembler
-                        dispatch(mHarrisTalkerAliasAssembler.process(harrisTalkerAlias, ldu1.getTimestamp()));
+                        harrisTalkerAliasComplete =
+                            mHarrisTalkerAliasAssembler.process(harrisTalkerAlias, ldu1.getTimestamp());
                         break;
                     default:
                         break;
@@ -136,6 +138,9 @@ public class P25P1MessageProcessor implements Listener<IMessage>
                 processSourceIDExtension(null);
 
                 dispatch(ldu1);
+
+                //Dispatch after the source LDU so the decoder state can anchor the assembly to the active FROM radio.
+                dispatch(harrisTalkerAliasComplete);
 
                 //Process Harris Talker GPS messages
                 if(lcw instanceof LCHarrisTalkerGPSBlock1 block1)

@@ -57,6 +57,12 @@ final class P25ActivityLogRecords
         UNKNOWN
     }
 
+    enum CallOutput
+    {
+        RECORDED,
+        STREAMED
+    }
+
     /**
      * One current talkgroup per radio.  A null talkgroup clears the current affiliation.
      */
@@ -82,6 +88,21 @@ final class P25ActivityLogRecords
                              Integer systemId, int radioId, String talkerAlias)
         implements P25ActivityLogRecord
     {
+    }
+
+    /**
+     * One successful completed-call output. This ephemeral writer message is aggregated directly into compact
+     * summaries and time buckets; it is never stored as an individual database row. The call-start timestamp keeps
+     * tracked, recorded, and streamed series aligned to the same call hour.
+     */
+    record CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)
+        implements P25ActivityLogRecord
+    {
+        @Override
+        public long observedAtEpochMilliseconds()
+        {
+            return callStartEpochMilliseconds;
+        }
     }
 
     record SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,

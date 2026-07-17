@@ -95,6 +95,30 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
+    public void candidateResetRetainsTrustedFactsWithoutReopeningDiscovery()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot initial = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x123, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x123, 2, 1, null, true),
+            List.of(primary(856137500L)), List.of(neighbor(855237500L)),
+            List.of(new P25NetworkConfigurationSnapshot.FrequencyBand(0, false, 851006250L, 12500,
+                6250L, -45000000L, 1)), List.of(), List.of());
+        stabilizer.observe(initial, 1_000L);
+
+        stabilizer.resetCandidates();
+        stabilizer.observe(snapshot(secondary(851462500L)), 200_000L);
+
+        P25NetworkConfigurationSnapshot stable = stabilizer.getSnapshot();
+        assertEquals(initial.network(), stable.network());
+        assertEquals(initial.currentSite(), stable.currentSite());
+        assertTrue(hasChannel(stable, "primary_control", 856137500L));
+        assertFalse(hasChannel(stable, "secondary_control", 851462500L));
+        assertEquals(1, stable.neighborSites().size());
+        assertEquals(1, stable.frequencyBands().size());
+    }
+
+    @Test
     public void capsPromotedControlFrequenciesAtEight()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");

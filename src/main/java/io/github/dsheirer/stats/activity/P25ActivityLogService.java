@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
@@ -20,6 +21,7 @@ import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -70,6 +72,32 @@ public class P25ActivityLogService implements SiteMetadataListener
     public Listener<ControlChannelQualitySnapshot> getControlChannelQualityListener()
     {
         return mQualityListener;
+    }
+
+    public void receiveRecordedCall(CompletedAudioCall call)
+    {
+        receiveCallOutput(call, P25ActivityLogRecords.CallOutput.RECORDED);
+    }
+
+    public void receiveStreamedCall(CompletedAudioCall call)
+    {
+        receiveCallOutput(call, P25ActivityLogRecords.CallOutput.STREAMED);
+    }
+
+    private void receiveCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer != null)
+        {
+            P25ActivityLogRecords.CompletedCallOutput completedCallOutput =
+                mMapper.mapCompletedCallOutput(call, output);
+
+            if(completedCallOutput != null)
+            {
+                writer.enqueue(completedCallOutput);
+            }
+        }
     }
 
     private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
@@ -215,6 +243,24 @@ public class P25ActivityLogService implements SiteMetadataListener
         if(record != null)
         {
             writer.enqueue(record);
+        }
+    }
+
+    @Subscribe
+    public void receiveTalkerAlias(P25TalkerAliasEvent event)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.TalkerAliasUpdate update = mMapper.map(event);
+
+        if(update != null && shouldLogTalkerAlias(update))
+        {
+            writer.enqueue(update);
         }
     }
 

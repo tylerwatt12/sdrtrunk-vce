@@ -36,7 +36,8 @@ public final class P25ActivityLogMaintenance
         MAINTAIN,
         SHRINK,
         CHECK,
-        RESET_STATS
+        RESET_STATS,
+        CLEAR_SITE_STATS
     }
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
@@ -57,11 +58,13 @@ public final class P25ActivityLogMaintenance
                 case SHRINK -> sb.append("Shrink complete");
                 case CHECK -> sb.append(checkOk() ? "Database check passed" : "Database check failed");
                 case RESET_STATS -> sb.append("Lifetime stats reset");
+                case CLEAR_SITE_STATS -> sb.append("Site statistics cleared");
             }
 
             if(operation != Operation.CHECK)
             {
-                sb.append(". Deleted ").append(rowsDeleted).append(operation == Operation.RESET_STATS ?
+                sb.append(". Deleted ").append(rowsDeleted).append(
+                    operation == Operation.RESET_STATS || operation == Operation.CLEAR_SITE_STATS ?
                     " stats row(s)" : " expired row(s)");
             }
 
@@ -119,11 +122,54 @@ public final class P25ActivityLogMaintenance
                     optimize(connection);
                     updateStatus(connection, "last_stats_reset_ms");
                 }
+                case CLEAR_SITE_STATS -> throw new IllegalArgumentException(
+                    "CLEAR_SITE_STATS requires a site GUID");
             }
         }
 
         return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(databasePath), walBytesBefore,
             size(walPath(databasePath)));
+    }
+
+    /**
+     * Clears statistics and history owned by one configured site without changing its channel configuration or
+     * system-wide summaries that may be shared by other sites.
+     */
+    public static Result clearSiteStats(Path databasePath, String guid) throws IOException, SQLException
+    {
+        if(guid == null || guid.isBlank())
+        {
+            throw new IllegalArgumentException("Site GUID is required");
+        }
+
+        long databaseBytesBefore = size(databasePath);
+        long walBytesBefore = size(walPath(databasePath));
+        int rowsDeleted;
+
+        try(Connection connection = SdrTrunkDatabase.open(databasePath))
+        {
+            connection.setAutoCommit(false);
+
+            try
+            {
+                rowsDeleted = P25ActivityLogSchema.clearSiteStats(connection, guid);
+                P25ActivityLogSchema.updateStatus(connection, "last_site_stats_clear_ms",
+                    Long.toString(System.currentTimeMillis()));
+                connection.commit();
+            }
+            catch(SQLException e)
+            {
+                connection.rollback();
+                throw e;
+            }
+
+            connection.setAutoCommit(true);
+            checkpoint(connection);
+            optimize(connection);
+        }
+
+        return new Result(Operation.CLEAR_SITE_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
+            walBytesBefore, size(walPath(databasePath)));
     }
 
     static int runLightMaintenance(Connection connection, int retentionDays) throws SQLException

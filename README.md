@@ -43,7 +43,8 @@ This project is currently an **alpha release**. Back up important receiver data 
 
    SQLite summary collection tracks talkgroups, radios, affiliations, frequencies, sites, patches, band plans, and
    activity counts. Summaries are enabled by default for new profiles; detailed event history is optional with
-   configurable retention.
+   configurable retention. See [How Talker Aliases Work](docs/talker-alias-implementation.md) for a detailed,
+   plain-language explanation of talker-alias collection and storage.
 
 7. **More reliable P25 site information**
 
@@ -140,7 +141,8 @@ code cleanup are summarized by area instead of listing every changed source file
 - Colors both LCN and frequency for current and alternate control channels.
 - Shows a live control-status indicator on each site tab. Stale or stopped tabs can be closed without stopping the
   configured channel.
-- Maintains one selected row across all site tables and outlines it without hiding status colors.
+- Maintains one selected row in the visible Systems table and outlines it without hiding status colors. Switching
+  between Conventional and trunked-site tabs clears the selection and lower views until another row is selected.
 - Sends the exact selected frequency to the lower views. It does not silently substitute a parent control channel,
   another traffic channel, or the last active system.
 - Keeps Events and Messages history until the configured history limit is reached.
@@ -156,9 +158,11 @@ code cleanup are summarized by area instead of listing every changed source file
   disposes their panels, clears selection, and stops their spectrum work.
 - Spectrum and waterfall use a matching expand/collapse control. Removing them detaches the display and stops its DFT
   processing; selecting **View Spectrum** from a tuner restores the section automatically.
+- Uses a compact fixed-position status footer for CPU, heap, storage, database size, summary logging, detailed history,
+  web-server state, and key-vault state, so changing values do not shift neighboring items.
 - Window size, position, maximized state, split-pane positions, and section visibility persist across launches.
 - Playlist Editor and User Preferences have toolbar shortcuts.
-- The status bar reports Java process CPU use, allocated and used heap, disk usage, and SQLite database size.
+- Provides a compact contextual **Open Web** menu with grouped Site, System, and Conventional destinations.
 
 ### Embedded Web Console
 
@@ -167,10 +171,11 @@ code cleanup are summarized by area instead of listing every changed source file
 - Can bind to localhost only or allow access from a trusted LAN or private overlay network.
 - Serves editable files from the external `stats-web` folder. HTML, CSS, and JavaScript can be changed without
   recompiling SDRTrunk.
-- Provides top-level Dashboard, Systems, Sites, and Conventional views.
+- Provides top-level Dashboard, Systems, and Conventional views.
 - Provides scoped drilldowns for:
-  - system information, sites, talkgroups, and radios
-  - site information, channels, neighbors, band plans, patches, and activity
+  - system information with its Sites table in a responsive one-third/two-thirds layout, plus talkgroups and radios
+  - site information with Top Talkgroups in a responsive one-third/two-thirds layout, plus channels, neighbors,
+    band plans, patches, and activity
   - talkgroup information, related radios, and activity
   - radio information, related talkgroups, current affiliation, and activity
   - conventional channel information and applicable activity
@@ -178,7 +183,9 @@ code cleanup are summarized by area instead of listing every changed source file
 - Includes table-only deep links suitable for embedding a site Info, Channels, Neighbors, Band Plan, or Patches view.
 - Uses bounded server-sent event feeds for live Systems state, activity, and completed calls.
 - Keeps live table rows stable instead of rebuilding and reordering the page on every update.
-- Includes dashboard action and hourly-hit charts.
+- Uses compact browser-local date-and-time stamps with full date, time, and time-zone details in their tooltips.
+- Lists P25 identities in WACN, System ID, RFSS, and Site order.
+- Includes an hourly call chart and a 24-hour system-activity ranking with previous-day comparisons.
 
 | Web feature | Summary statistics | Detailed event history |
 | --- | --- | --- |
@@ -230,6 +237,8 @@ code cleanup are summarized by area instead of listing every changed source file
 - Supports configurable detailed-history retention and periodic cleanup.
 - Provides **Run Maintenance**, **Shrink Database**, **Check Database**, and **Reset Lifetime Stats** controls.
 - Uses compact numeric fields and targeted indexes for multi-gigabyte databases and browser drilldown queries.
+- Applies the repository's [SQLite activity database guidelines](docs/sqlite-activity-database-guidelines.md) to keep
+  new statistics query-driven, compact, normalized, bounded, and summary-first.
 
 ### P25 Site And Channel Behavior
 
@@ -358,6 +367,10 @@ publishing a numbered alpha release on GitHub.
 - Expanded P25 site telemetry for BSI callsigns, LRA, MFID, broadcast clock, service availability, data access,
   Working Unit ID lease time, TDMA/u-Slots, and registration status.
 - External P25 history v16-to-v17 migration tooling.
+- Talkgroup activity history charts plus retained Recorded and Sent to Streamer call counters.
+- External P25 history v17-to-v18 call-output metrics migration tooling.
+- Compact talkgroup output totals, directory columns, and a dashboard hourly call-output chart.
+- External P25 history v18-to-v19 talkgroup-output summary migration tooling.
 - Automated publication-policy and release-content safeguards.
 
 #### Changed
@@ -366,6 +379,7 @@ publishing a numbered alpha release on GitHub.
 - Move P25 site-metadata processing and event-log file I/O off decoder threads.
 - Bound native-tuner, IFFT, and asynchronous event-log backlogs for sustained receiver operation.
 - Refresh active signal-health views automatically and use consistent healthy, degraded, and poor thresholds.
+- Use one native SVG time-series renderer and tooltip implementation across website activity charts.
 - Disable App Nap in macOS packages to prevent background receiver throttling.
 
 #### Fixed
@@ -378,9 +392,11 @@ publishing a numbered alpha release on GitHub.
 
 #### Upgrade Notes
 
-- This release uses P25 history schema v17. Stop SDRTrunk and back up the portable database before upgrading.
-- Alpha 2 databases can use the external `migrate-v16-to-v17-site-status` tool.
-- Existing v14 or v15 databases must first migrate to v16 and then migrate to v17.
+- This release uses P25 history schema v19. Stop SDRTrunk and back up the portable database before upgrading.
+- Schema v18 databases can use the external `migrate-v18-to-v19-talkgroup-output-summary` tool.
+- Schema v17 databases must migrate to v18 and then to v19.
+- Alpha 2 databases must migrate from v16 to v17, v18, and then v19.
+- Existing v14 or v15 databases must first migrate to v16 and then follow each migration through v19.
 - Alpha 1 used schema v13; use the external Stats Server reset tool when upgrading from Alpha 1. The reset preserves
   configuration, channels, aliases, streams, preferences, and vault data, but starts Stats Server history fresh.
 

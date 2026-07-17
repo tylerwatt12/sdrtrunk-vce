@@ -50,6 +50,14 @@ class P25StableFactTracker<T>
         clearCandidate();
     }
 
+    /**
+     * Clears an untrusted candidate while retaining the last promoted value.
+     */
+    void resetCandidate()
+    {
+        clearCandidate();
+    }
+
     T getStableValue()
     {
         return mStableValue;
