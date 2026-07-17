@@ -100,31 +100,60 @@ code cleanup are summarized by area instead of listing every changed source file
 
 ## Screenshots
 
+Select any screenshot to view it at full resolution.
+
 ### Desktop Application
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/java-systems.png" alt="Desktop Systems activity workspace"></td>
-    <td width="50%"><img src="docs/screenshots/java-tuners-spectrum.png" alt="Desktop tuner, spectrum, and waterfall view"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Systems activity workspace</strong></td>
-    <td align="center"><strong>Tuners, spectrum, and waterfall</strong></td>
-  </tr>
-</table>
+<p align="center">
+  <a href="docs/screenshots/desktop-systems-workspace.png"><img src="docs/screenshots/desktop-systems-workspace.png" width="85%" alt="Desktop sdrtrunk-vce Systems workspace showing stable P25 channel rows, recent events, stream status, and runtime health"></a>
+  <br>
+  <strong>Systems workspace</strong> — stable channel rows, recent events, stream status, and portable-runtime health.
+</p>
 
 ### Web Console
 
-![Web console dashboard](docs/screenshots/web-dashboard.jpg)
+<p align="center">
+  <a href="docs/screenshots/web-dashboard-overview.png"><img src="docs/screenshots/web-dashboard-overview.png" width="80%" alt="Web console dashboard showing signal health, hourly call volume, recent sites, top talkgroups, and top radios"></a>
+  <br>
+  <strong>Operations dashboard</strong> — signal health, hourly call volume, site activity, talkgroup totals, and radio totals.
+</p>
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/web-live-systems.jpg" alt="Web console live Systems view"></td>
-    <td width="50%"><img src="docs/screenshots/web-site-channels.jpg" alt="Web console site channel history"></td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/web-live-systems.png"><img src="docs/screenshots/web-live-systems.png" alt="Web console Live Systems table showing active calls, control-channel signal level, and decode quality"></a>
+      <br>
+      <p align="center"><strong>Live Systems</strong> — stable channel rows with calls, control frequency, signal level, and decode quality.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/web-systems-sites-directory.png"><img src="docs/screenshots/web-systems-sites-directory.png" alt="Web console Systems and Sites directory grouping sites beneath their P25 system identities"></a>
+      <br>
+      <p align="center"><strong>Systems &amp; Sites directory</strong> — hierarchical system and site inventory with identifiers, control frequencies, and totals.</p>
+    </td>
   </tr>
   <tr>
-    <td align="center"><strong>Live Systems view</strong></td>
-    <td align="center"><strong>Site channel history</strong></td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/web-system-overview.png"><img src="docs/screenshots/web-system-overview.png" alt="Web console P25 system overview showing aggregate totals, site inventory, system metadata, and observed actions"></a>
+      <br>
+      <p align="center"><strong>System overview</strong> — aggregate counts, site inventory, metadata, and observed P25 actions.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/web-site-overview.png"><img src="docs/screenshots/web-site-overview.png" alt="Web console P25 site information displayed beside a table of top talkgroups"></a>
+      <br>
+      <p align="center"><strong>Site overview</strong> — decoded site metadata beside its busiest talkgroups for the selected time range.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/web-control-channel-quality.png"><img src="docs/screenshots/web-control-channel-quality.png" alt="Web console control-channel quality history charts for signal strength and decode rate"></a>
+      <br>
+      <p align="center"><strong>Control-channel quality</strong> — signal strength and rolling decode quality across selectable time ranges.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/web-site-activity.png"><img src="docs/screenshots/web-site-activity.png" alt="Web console site activity table with timestamps, actions, radio IDs, talkgroups, frequencies, channel numbers, and security status"></a>
+      <br>
+      <p align="center"><strong>Detailed site activity</strong> — timestamped calls and control events with linked radio and talkgroup identities.</p>
+    </td>
   </tr>
 </table>
 
