@@ -359,6 +359,47 @@ publishing a numbered alpha release on GitHub.
 
 ## Changelog
 
+### 0.6.2-alpha-4 - 2026-07-17
+
+#### Added
+
+- Compact contextual **Open Web** navigation for selected trunked sites, systems, and conventional channels.
+- Fixed-position desktop status footer for CPU, heap, storage, database, logging, web-server, and key-vault state.
+- Talkgroup activity history with retained Recorded and Sent to Streamer counters and plain-language metric guides.
+- Dashboard hourly call-output chart and a 24-hour site-activity comparison chart.
+- Bounded native tuner-buffer processing that discards stale queued IQ during sustained overload.
+- External P25 history v17-to-v18 and v18-to-v19 migration tooling.
+- Detailed talker-alias implementation documentation and expanded lifecycle, selection, buffer, and web regression tests.
+
+#### Changed
+
+- Clear activity selection and lower detail views when switching between Conventional and trunked-site tabs.
+- Keep site selection tied to stable channel identity instead of transient table row positions.
+- Use compact full date-and-time values, WACN-first identity order, fixed table widths, and shorter headers throughout
+  the web console.
+- Move System Sites and Site Top Talkgroups into responsive one-third/two-thirds information layouts.
+- Track completed calls, recordings, and streamer handoffs through one explicit call lifecycle.
+- Stabilize P25 talker-alias aggregation and persistence across control and traffic processing chains.
+- Use one native SVG time-series renderer and tooltip implementation across website activity charts.
+
+#### Fixed
+
+- Reduced multi-million-row site activity lookups from several seconds to milliseconds by using indexed time-order
+  cursor pagination.
+- Prevented duplicate or incomplete traffic lifecycle observations from inflating call-output statistics.
+- Corrected Harris talker-alias fragment assembly and reset handling.
+- Prevented changing footer values, long timestamps, and table headers from clipping or shifting adjacent content.
+- Kept detailed history, summary logging, and web-server availability states synchronized with desktop controls.
+- Removed invalid P25 security-metric observations and added bounded cleanup tooling for affected databases.
+
+#### Upgrade Notes
+
+- This release uses P25 history schema v19. Stop SDRTrunk and back up the portable database before upgrading.
+- Schema v18 databases can use the external `migrate-v18-to-v19-talkgroup-output-summary` tool.
+- Schema v17 databases must migrate to v18 and then to v19.
+- Alpha 3 databases use schema v17 and must run both external migrations while SDRTrunk is stopped.
+- Existing v14, v15, or v16 databases must follow each documented migration in order through v19.
+
 ### 0.6.2-alpha-3 - 2026-07-15
 
 #### Added
@@ -367,10 +408,6 @@ publishing a numbered alpha release on GitHub.
 - Expanded P25 site telemetry for BSI callsigns, LRA, MFID, broadcast clock, service availability, data access,
   Working Unit ID lease time, TDMA/u-Slots, and registration status.
 - External P25 history v16-to-v17 migration tooling.
-- Talkgroup activity history charts plus retained Recorded and Sent to Streamer call counters.
-- External P25 history v17-to-v18 call-output metrics migration tooling.
-- Compact talkgroup output totals, directory columns, and a dashboard hourly call-output chart.
-- External P25 history v18-to-v19 talkgroup-output summary migration tooling.
 - Automated publication-policy and release-content safeguards.
 
 #### Changed
@@ -379,7 +416,6 @@ publishing a numbered alpha release on GitHub.
 - Move P25 site-metadata processing and event-log file I/O off decoder threads.
 - Bound native-tuner, IFFT, and asynchronous event-log backlogs for sustained receiver operation.
 - Refresh active signal-health views automatically and use consistent healthy, degraded, and poor thresholds.
-- Use one native SVG time-series renderer and tooltip implementation across website activity charts.
 - Disable App Nap in macOS packages to prevent background receiver throttling.
 
 #### Fixed
@@ -392,11 +428,9 @@ publishing a numbered alpha release on GitHub.
 
 #### Upgrade Notes
 
-- This release uses P25 history schema v19. Stop SDRTrunk and back up the portable database before upgrading.
-- Schema v18 databases can use the external `migrate-v18-to-v19-talkgroup-output-summary` tool.
-- Schema v17 databases must migrate to v18 and then to v19.
-- Alpha 2 databases must migrate from v16 to v17, v18, and then v19.
-- Existing v14 or v15 databases must first migrate to v16 and then follow each migration through v19.
+- This release uses P25 history schema v17. Stop SDRTrunk and back up the portable database before upgrading.
+- Alpha 2 databases can use the external `migrate-v16-to-v17-site-status` tool.
+- Existing v14 or v15 databases must first migrate to v16 and then migrate to v17.
 - Alpha 1 used schema v13; use the external Stats Server reset tool when upgrading from Alpha 1. The reset preserves
   configuration, channels, aliases, streams, preferences, and vault data, but starts Stats Server history fresh.
 
