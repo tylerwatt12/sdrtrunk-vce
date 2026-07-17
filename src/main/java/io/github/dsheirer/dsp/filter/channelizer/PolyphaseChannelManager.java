@@ -33,7 +33,6 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
-import io.github.dsheirer.util.Dispatcher;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -71,7 +70,6 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private static final double MINIMUM_CHANNEL_BANDWIDTH = 25000.0;
     private static final double CHANNEL_OVERSAMPLING = 2.0;
     private static final int POLYPHASE_CHANNELIZER_TAPS_PER_CHANNEL = 9;
-    private static final int NATIVE_BUFFER_QUEUE_CAPACITY = 32;
 
     private Broadcaster<SourceEvent> mSourceEventBroadcaster = new Broadcaster<>();
     private INativeBufferProvider mNativeBufferProvider;
@@ -81,7 +79,8 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private ComplexPolyphaseChannelizerM2 mPolyphaseChannelizer;
     private ChannelSourceEventListener mChannelSourceEventListener = new ChannelSourceEventListener();
     private NativeBufferReceiver mNativeBufferReceiver = new NativeBufferReceiver();
-    private Dispatcher<INativeBuffer> mBufferDispatcher;
+    private NativeBufferProcessor mBufferProcessor;
+    private final Object mChannelizerLock = new Object();
     private Map<Integer,float[]> mOutputProcessorFilters = new HashMap<>();
     private TunerController mTunerController;
     private boolean mRunning = true;
@@ -112,11 +111,8 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         }
 
         mChannelCalculator = new ChannelCalculator(sampleRate, channelCount, frequency, CHANNEL_OVERSAMPLING);
-        //Raw tuner samples are real-time data.  Isolate this CPU-heavy stage from channel consumers and cap retained
-        //samples so a transient processing stall discards stale IQ instead of exhausting the heap.
-        mBufferDispatcher = new Dispatcher<>("sdrtrunk polyphase buffer processor", 10,
-            Dispatcher.ExecutorType.PRIVATE, NATIVE_BUFFER_QUEUE_CAPACITY, null);
-        mBufferDispatcher.setListener(mNativeBufferReceiver);
+        mBufferProcessor = new NativeBufferProcessor("sdrtrunk polyphase buffer processor", sampleRate,
+            mNativeBufferReceiver);
     }
 
     /**
@@ -169,6 +165,22 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         {
             MyEventBus.getGlobalEventBus().post(new ChannelStopProcessingRequest(tunerChannelSource));
         }
+    }
+
+    /**
+     * Releases this manager's tuner listener and processing thread.
+     */
+    public void dispose()
+    {
+        mRunning = false;
+
+        synchronized(mChannelizerLock)
+        {
+            mNativeBufferProvider.removeBufferListener(mBufferProcessor);
+            mBufferProcessor.dispose();
+        }
+
+        mSourceEventBroadcaster.clear();
     }
 
     /**
@@ -230,7 +242,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
      */
     private void stopChannelSource(PolyphaseChannelSource channelSource)
     {
-        synchronized(mBufferDispatcher)
+        synchronized(mChannelizerLock)
         {
             mChannelSources.remove(channelSource);
 
@@ -244,8 +256,8 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             //If this is the last/only channel, deregister to stop the sample buffers
             if(mPolyphaseChannelizer != null && mPolyphaseChannelizer.getRegisteredChannelCount() == 0)
             {
-                mNativeBufferProvider.removeBufferListener(mBufferDispatcher);
-                mBufferDispatcher.stop();
+                mNativeBufferProvider.removeBufferListener(mBufferProcessor);
+                mBufferProcessor.stop();
                 mPolyphaseChannelizer.stop();
             }
         }
@@ -278,6 +290,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             case NOTIFICATION_SAMPLE_RATE_CHANGE:
                 //Update channel calculator immediately so that channels can be allocated
                 double sampleRate = sourceEvent.getValue().doubleValue();
+                mBufferProcessor.setSampleRate(sampleRate);
                 int channelCount = ComplexPolyphaseChannelizerM2.getChannelCount(sampleRate);
                 mChannelCalculator.setRates(sampleRate, channelCount);
                 break;
@@ -396,7 +409,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
          */
         private void startChannelSource(PolyphaseChannelSource channelSource)
         {
-            synchronized(mBufferDispatcher)
+            synchronized(mChannelizerLock)
             {
                 //Note: the polyphase channel source has already been added to the mChannelSources in getChannel() method
                 checkChannelizerConfiguration();
@@ -407,9 +420,9 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 //If this is the first channel, register to start the sample buffers flowing
                 if(mPolyphaseChannelizer.getRegisteredChannelCount() == 1)
                 {
-                    mNativeBufferProvider.addBufferListener(mBufferDispatcher);
                     mPolyphaseChannelizer.start();
-                    mBufferDispatcher.start();
+                    mBufferProcessor.start();
+                    mNativeBufferProvider.addBufferListener(mBufferProcessor);
                 }
             }
         }

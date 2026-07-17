@@ -90,6 +90,23 @@ public class P25NetworkConfigurationStabilizer
     }
 
     /**
+     * Clears only untrusted candidate observations after a temporary decoder reset.  Promoted site identity and RF
+     * facts remain authoritative across short signal, buffer, and USB interruptions, and the initial discovery window
+     * is not reopened.
+     */
+    public synchronized void resetCandidates()
+    {
+        mNetwork.resetCandidate();
+        mCurrentSite.resetCandidate();
+        mSiteStatus.resetCandidate();
+        resetCandidates(mChannels);
+        resetCandidates(mNeighborSites);
+        resetCandidates(mFrequencyBands);
+        resetCandidates(mPatchGroups);
+        resetCandidates(mTalkerAliases);
+    }
+
+    /**
      * Observes a fresh, message-scoped snapshot.
      * @param observation freshly decoded facts.
      * @param timestamp observation timestamp.
@@ -416,6 +433,14 @@ public class P25NetworkConfigurationStabilizer
         for(P25StableFactTracker<T> tracker: trackers.values())
         {
             expireCandidate(tracker, timestamp);
+        }
+    }
+
+    private <T> void resetCandidates(Map<String,P25StableFactTracker<T>> trackers)
+    {
+        for(P25StableFactTracker<T> tracker: trackers.values())
+        {
+            tracker.resetCandidate();
         }
     }
 

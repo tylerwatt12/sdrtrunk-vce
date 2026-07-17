@@ -50,6 +50,8 @@ import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.stats.StatsWebNavigationState;
+import java.util.function.Supplier;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
@@ -136,7 +138,8 @@ public class JavaFxWindowManager extends Application
      * @return JFXPanel accessible on Swing thread that delegates JavaFX scene creation to the FX event thread.
      */
     public JFXPanel getStatusPanel(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
-                                   VoiceDecryptionModuleManager moduleManager)
+                                   VoiceDecryptionModuleManager moduleManager,
+                                   Supplier<StatsWebNavigationState> navigationStateSupplier)
     {
         if(mStatusPanel == null)
         {
@@ -144,7 +147,8 @@ public class JavaFxWindowManager extends Application
 
             //JFXPanel has to be populated on the FX event thread
             Platform.runLater(() -> {
-                Scene scene = new Scene(new StatusBox(resourceMonitor, vaultService, moduleManager));
+                Scene scene = new Scene(new StatusBox(resourceMonitor, vaultService, moduleManager,
+                    navigationStateSupplier));
                 mStatusPanel.setScene(scene);
             });
         }

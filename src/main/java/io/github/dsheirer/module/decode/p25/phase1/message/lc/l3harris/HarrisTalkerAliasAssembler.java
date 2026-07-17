@@ -29,6 +29,7 @@ public class HarrisTalkerAliasAssembler
     private LCHarrisTalkerAliasBlock3 mBlock3;
     private LCHarrisTalkerAliasBlock4 mBlock4;
     private long mTimestamp;
+    private boolean mComplete;
 
     /**
      * Resets the contents when a terminator or idle message is received.
@@ -39,6 +40,7 @@ public class HarrisTalkerAliasAssembler
         mBlock2 = null;
         mBlock3 = null;
         mBlock4 = null;
+        mComplete = false;
     }
 
     /**
@@ -57,6 +59,11 @@ public class HarrisTalkerAliasAssembler
                 case L3HARRIS_TALKER_ALIAS_BLOCK_1:
                     if(lcw instanceof LCHarrisTalkerAliasBlock1 block1)
                     {
+                        if(mComplete)
+                        {
+                            reset();
+                        }
+
                         mBlock1 = block1;
                         return assemble();
                     }
@@ -96,11 +103,12 @@ public class HarrisTalkerAliasAssembler
      */
     private LCHarrisTalkerAliasComplete assemble()
     {
-        if(mBlock1 != null && mBlock2 != null)
+        if(!mComplete && mBlock1 != null && mBlock2 != null)
         {
             String fragment2 = mBlock2.getPayloadFragmentString();
             String fragment3 = mBlock3 != null ? mBlock3.getPayloadFragmentString() : null;
             String fragment4 = mBlock4 != null ? mBlock4.getPayloadFragmentString() : null;
+            mComplete = true;
             return new LCHarrisTalkerAliasComplete(mBlock1.getMessage(), fragment2, fragment3, fragment4, mTimestamp);
         }
 

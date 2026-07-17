@@ -36,3 +36,7 @@ gradle-app.setting
 
 # Local development and deployment instructions
 AGENTS.md
+
+# Machine-local maintenance scripts and data fixes
+.DS_Store
+scripts/maintenance/

@@ -279,8 +279,8 @@ public class P25ActivityLogSchema
     static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
         throws SQLException
     {
-        Integer systemKey = resolveP25SystemKey(connection, update.wacn(), update.systemId(),
-            update.observedAtEpochMilliseconds(), update.contextKey(), update.guid());
+        Integer systemKey = resolveEstablishedP25SystemKey(connection, update.observedAtEpochMilliseconds(),
+            update.contextKey(), update.guid());
 
         if(systemKey != null)
         {
@@ -1384,47 +1384,50 @@ public class P25ActivityLogSchema
     private static Integer resolveP25SystemKey(Connection connection, P25ActivityLogRecords.ActivityEvent activity)
         throws SQLException
     {
-        return resolveP25SystemKey(connection, activity.wacn(), activity.systemId(),
-            activity.observedAtEpochMilliseconds(), activity.contextKey(), activity.guid());
+        return resolveEstablishedP25SystemKey(connection, activity.observedAtEpochMilliseconds(),
+            activity.contextKey(), activity.guid());
     }
 
-    private static Integer resolveP25SystemKey(Connection connection, Integer wacn, Integer systemId,
-                                               long observedAt, String contextKey, String guid) throws SQLException
+    /**
+     * Resolves only identity previously established by a stabilized site snapshot.  Activity and talker-alias records
+     * are intentionally unable to create or re-key a P25 system from message-scoped identifiers.
+     */
+    private static Integer resolveEstablishedP25SystemKey(Connection connection, long observedAt, String contextKey,
+                                                          String guid) throws SQLException
     {
-        Integer systemKey = upsertP25System(connection, wacn, systemId, observedAt);
+        Integer systemKey = null;
 
-        if(systemKey == null)
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT system_key
+            FROM p25_site_snapshot
+            WHERE guid = ? AND system_key IS NOT NULL
+            UNION ALL
+            SELECT context.system_key
+            FROM receiver_context context
+            JOIN p25_site_snapshot snapshot
+                ON snapshot.guid = context.guid AND snapshot.system_key = context.system_key
+            WHERE context.context_key = ? AND context.system_key IS NOT NULL
+            LIMIT 1
+            """))
+        {
+            statement.setString(1, guid);
+            statement.setString(2, contextKey);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                systemKey = resultSet.next() ? resultSet.getInt(1) : null;
+            }
+        }
+
+        if(systemKey != null)
         {
             try(PreparedStatement statement = connection.prepareStatement("""
-                SELECT system_key
-                FROM receiver_context
-                WHERE context_key = ? AND system_key IS NOT NULL
-                UNION ALL
-                SELECT system_key
-                FROM p25_site_snapshot
-                WHERE guid = ? AND system_key IS NOT NULL
-                LIMIT 1
+                UPDATE p25_system SET last_seen_ms = max(last_seen_ms, ?) WHERE system_key = ?
                 """))
             {
-                statement.setString(1, contextKey);
-                statement.setString(2, guid);
-
-                try(ResultSet resultSet = statement.executeQuery())
-                {
-                    systemKey = resultSet.next() ? resultSet.getInt(1) : null;
-                }
-            }
-
-            if(systemKey != null)
-            {
-                try(PreparedStatement statement = connection.prepareStatement("""
-                    UPDATE p25_system SET last_seen_ms = max(last_seen_ms, ?) WHERE system_key = ?
-                    """))
-                {
-                    statement.setLong(1, observedAt);
-                    statement.setInt(2, systemKey);
-                    statement.executeUpdate();
-                }
+                statement.setLong(1, observedAt);
+                statement.setInt(2, systemKey);
+                statement.executeUpdate();
             }
         }
 
@@ -1486,6 +1489,8 @@ public class P25ActivityLogSchema
     private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
                                              Integer systemKey) throws SQLException
     {
+        boolean trunkedSite = activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
+
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO receiver_context (
                 context_key, guid, kind_code, protocol_code, channel_name, decoder, first_seen_ms, last_seen_ms,
@@ -1515,9 +1520,9 @@ public class P25ActivityLogSchema
             statement.setLong(7, activity.observedAtEpochMilliseconds());
             statement.setLong(8, activity.observedAtEpochMilliseconds());
             setInteger(statement, 9, systemKey);
-            setInteger(statement, 10, activity.nac());
-            setInteger(statement, 11, activity.rfss());
-            setInteger(statement, 12, activity.site());
+            setInteger(statement, 10, trunkedSite ? null : activity.nac());
+            setInteger(statement, 11, trunkedSite ? null : activity.rfss());
+            setInteger(statement, 12, trunkedSite ? null : activity.site());
             setLong(statement, 13, isConventional(activity.contextKind()) ? activity.frequencyHertz() : null);
             statement.executeUpdate();
         }

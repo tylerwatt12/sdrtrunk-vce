@@ -59,6 +59,7 @@ import javax.swing.RowFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableModel;
 import javax.swing.table.TableRowSorter;
+import javax.swing.event.TableModelEvent;
 
 public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequencyContext>
 {
@@ -105,7 +106,8 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         mTableColumnWidthMonitor = new JTableColumnWidthMonitor(mUserPreferences, mTable, TABLE_PREFERENCE_KEY,
             MINIMUM_COLUMN_WIDTHS, DEFAULT_COLUMN_WIDTHS, JTable.AUTO_RESIZE_LAST_COLUMN);
         updateCellRenderers();
-        mHistoryManagementPanel = new HistoryManagementPanel<>(mEventModel, "Event Filter Editor");
+        mHistoryManagementPanel = new HistoryManagementPanel<>(mEventModel, "Event Filter Editor",
+            this::restoreTablePresentation);
         mHistoryManagementPanel.updateFilterSet(mFilterSet);
         add(mHistoryManagementPanel, "span,growx");
         mEmptyScroller = new JScrollPane(mTable);
@@ -113,6 +115,12 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
 
         //Register filter change listener to refresh the table any time the event filters are changed.
         mFilterSet.register(() -> mEventModel.fireTableDataChanged());
+        mEventModel.addTableModelListener(event -> {
+            if(event.getFirstRow() == TableModelEvent.HEADER_ROW)
+            {
+                EventQueue.invokeLater(this::restoreTablePresentation);
+            }
+        });
     }
 
     public void dispose()
@@ -121,6 +129,8 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         {
             mTableColumnWidthMonitor.dispose();
         }
+
+        mEventModel.dispose();
 
         MyEventBus.getGlobalEventBus().unregister(this);
     }
@@ -148,6 +158,25 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_TO_ALIAS).setCellRenderer(new AliasedIdentifierCellRenderer(Role.TO));
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_CHANNEL).setCellRenderer(new ChannelDescriptorCellRenderer());
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_FREQUENCY).setCellRenderer(new FrequencyCellRenderer());
+    }
+
+    /**
+     * Restores the table presentation that JTable can discard when its model structure is refreshed.
+     */
+    void restoreTablePresentation()
+    {
+        if(mTable.getColumnModel().getColumnCount() != mEventModel.getColumnCount())
+        {
+            return;
+        }
+
+        if(mTable.getRowSorter() != mTableRowSorter)
+        {
+            mTable.setRowSorter(mTableRowSorter);
+        }
+
+        mTableRowSorter.setRowFilter(new EventRowFilter());
+        updateCellRenderers();
     }
 
     @Override
@@ -267,7 +296,7 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
      */
     static boolean isSiteEventSelection(SelectedFrequencyContext context)
     {
-        return context != null && context.siteEventSelection();
+        return context != null && context.isSiteSelection();
     }
 
     static boolean matchesSelectedFrequency(IDecodeEvent event, long selectedFrequency, boolean siteEventSelection)

@@ -20,7 +20,7 @@ package io.github.dsheirer.channel.metadata;
 
 import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
-import io.github.dsheirer.channel.details.ChannelDetailPanel;
+import io.github.dsheirer.channel.details.ChannelWebLinkPanel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
@@ -30,6 +30,7 @@ import io.github.dsheirer.module.decode.event.MessageActivityPanel;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
+import io.github.dsheirer.stats.StatsWebServerService;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.event.ComponentAdapter;
@@ -49,6 +50,8 @@ import javax.swing.JToggleButton;
 public class NowPlayingPanel extends JPanel
 {
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
+    private static final String SPLIT_PANE_RATIO_IDENTIFIER = "now.playing.split.pane.ratio.v2";
+    private static final int DEFAULT_SPLIT_PANE_RATIO_PERMILLE = 333;
     private static final int CHANNEL_ACTIVITY_MINIMUM_HEIGHT = 120;
     private static final int LOWER_TABS_MINIMUM_HEIGHT = 120;
     private final ConfigurationManager mConfigurationManager;
@@ -56,7 +59,8 @@ public class NowPlayingPanel extends JPanel
     private final SettingsManager mSettingsManager;
     private final ChannelActivityPanel mChannelActivityPanel;
     private final UserPreferences mUserPreferences;
-    private ChannelDetailPanel mChannelDetailPanel;
+    private final StatsWebServerService mStatsWebServerService;
+    private ChannelWebLinkPanel mChannelWebLinkPanel;
     private DecodeEventPanel mDecodeEventPanel;
     private MessageActivityPanel mMessageActivityPanel;
     private ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
@@ -73,13 +77,15 @@ public class NowPlayingPanel extends JPanel
      * GUI panel that combines the Systems activity table and optional messages, events, and spectral viewers.
      */
     public NowPlayingPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences,
-                           SettingsManager settingsManager, boolean lowerViewsVisible,
+                           SettingsManager settingsManager, StatsWebServerService statsWebServerService,
+                           boolean lowerViewsVisible,
                            Consumer<Boolean> lowerViewsVisibilityListener)
     {
         mConfigurationManager = configurationManager;
         mIconModel = iconModel;
         mSettingsManager = settingsManager;
         mUserPreferences = userPreferences;
+        mStatsWebServerService = statsWebServerService;
         mChannelActivityPanel = new ChannelActivityPanel(configurationManager, iconModel, userPreferences);
         mRequestedLowerTabsVisible = lowerViewsVisible;
         mLowerTabsVisibilityListener = lowerViewsVisibilityListener;
@@ -127,7 +133,7 @@ public class NowPlayingPanel extends JPanel
         {
             mTabbedPane = new JideTabbedPane();
             ensureLowerPanels();
-            mTabbedPane.addTab("Details", mChannelDetailPanel);
+            mTabbedPane.addTab("Details", mChannelWebLinkPanel);
             mTabbedPane.addTab("Events", mDecodeEventPanel);
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
@@ -152,6 +158,7 @@ public class NowPlayingPanel extends JPanel
             mSplitPane = new JideSplitPane(JideSplitPane.VERTICAL_SPLIT);
             mSplitPane.setDividerSize(5);
             mSplitPane.setShowGripper(true);
+            mSplitPane.setProportionalLayout(true);
             mSplitPane.addComponentListener(new ComponentAdapter()
             {
                 @Override
@@ -247,7 +254,7 @@ public class NowPlayingPanel extends JPanel
         if(!mLowerTabsAttached)
         {
             ensureLowerPanels();
-            mChannelActivityPanel.addSelectedFrequencyListener(mChannelDetailPanel);
+            mChannelActivityPanel.addSelectedFrequencyListener(mChannelWebLinkPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.addSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
@@ -264,12 +271,12 @@ public class NowPlayingPanel extends JPanel
         if(mLowerTabsAttached)
         {
             saveSplitPaneDividerLocation();
-            mChannelActivityPanel.removeSelectedFrequencyListener(mChannelDetailPanel);
+            mChannelActivityPanel.removeSelectedFrequencyListener(mChannelWebLinkPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mDecodeEventPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mMessageActivityPanel);
             mChannelActivityPanel.removeSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
 
-            mChannelDetailPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
+            mChannelWebLinkPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mDecodeEventPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mMessageActivityPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
             mChannelSpectrumSquelchPanel.receive(io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext.clear());
@@ -284,9 +291,9 @@ public class NowPlayingPanel extends JPanel
 
     private void ensureLowerPanels()
     {
-        if(mChannelDetailPanel == null)
+        if(mChannelWebLinkPanel == null)
         {
-            mChannelDetailPanel = new ChannelDetailPanel(mConfigurationManager.getChannelProcessingManager());
+            mChannelWebLinkPanel = new ChannelWebLinkPanel(mStatsWebServerService);
         }
 
         if(mDecodeEventPanel == null)
@@ -307,6 +314,11 @@ public class NowPlayingPanel extends JPanel
 
     private void disposeLowerPanels()
     {
+        if(mChannelWebLinkPanel != null)
+        {
+            mChannelWebLinkPanel.dispose();
+        }
+
         if(mDecodeEventPanel != null)
         {
             mDecodeEventPanel.dispose();
@@ -323,7 +335,7 @@ public class NowPlayingPanel extends JPanel
         }
 
         mTabbedPane = null;
-        mChannelDetailPanel = null;
+        mChannelWebLinkPanel = null;
         mDecodeEventPanel = null;
         mMessageActivityPanel = null;
         mChannelSpectrumSquelchPanel = null;
@@ -336,17 +348,34 @@ public class NowPlayingPanel extends JPanel
             return;
         }
 
-        int location = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
-        mSplitPaneDividerRestored = SplitPaneDividerHelper.restore(mSplitPane, 0, location,
-            Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, LOWER_TABS_MINIMUM_HEIGHT), true);
+        int height = mSplitPane.getHeight();
+        int minimumPaneSize = Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, LOWER_TABS_MINIMUM_HEIGHT);
+
+        if(height < minimumPaneSize * 2)
+        {
+            return;
+        }
+
+        double minimumRatio = minimumPaneSize / (double)height;
+        int storedRatio = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_RATIO_IDENTIFIER,
+            DEFAULT_SPLIT_PANE_RATIO_PERMILLE);
+        double ratio = Math.clamp(storedRatio / 1000.0, minimumRatio, 1.0 - minimumRatio);
+        mSplitPane.setProportions(new double[]{ratio});
+        mSplitPaneDividerRestored = true;
     }
 
     private void saveSplitPaneDividerLocation()
     {
-        int savedLocation = mUserPreferences.getSwingPreference().getInt(SPLIT_PANE_DIVIDER_IDENTIFIER, 250);
-        mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_DIVIDER_IDENTIFIER,
-            SplitPaneDividerHelper.getDividerLocationOrDefault(mSplitPane, 0, savedLocation,
-                Math.min(CHANNEL_ACTIVITY_MINIMUM_HEIGHT, LOWER_TABS_MINIMUM_HEIGHT), true));
+        if(mSplitPane == null || mSplitPane.getPaneCount() < 2 || mSplitPane.getHeight() <= 0)
+        {
+            return;
+        }
+
+        double[] proportions = mSplitPane.getProportions();
+        double ratio = proportions != null && proportions.length == 1 ? proportions[0] :
+            mSplitPane.getDividerLocation(0) / (double)mSplitPane.getHeight();
+        mUserPreferences.getSwingPreference().setInt(SPLIT_PANE_RATIO_IDENTIFIER,
+            (int)Math.round(Math.clamp(ratio, 0.0, 1.0) * 1000.0));
     }
 
     public int getSplitPaneDividerLocation()

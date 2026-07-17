@@ -1949,7 +1949,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 case REQUEST_RESET:
                     resetState();
                     mNetworkConfigurationMonitor.reset();
-                    mNetworkConfigurationStabilizer.reset();
                     mSiteMetadataPublisher.reset();
                     break;
                 case NOTIFICATION_SOURCE_FREQUENCY:
