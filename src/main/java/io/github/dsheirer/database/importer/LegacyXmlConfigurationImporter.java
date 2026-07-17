@@ -19,6 +19,7 @@ import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationState;
@@ -30,6 +31,8 @@ import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.Modulation;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.IOException;
 import java.io.InputStream;
@@ -37,8 +40,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * One-way import from a legacy playlist XML file into a new SQLite database.
@@ -48,6 +53,9 @@ public class LegacyXmlConfigurationImporter
     private static final String PLAYLIST_DIRECTORY = "playlist";
     private static final String DEFAULT_PLAYLIST = "default.xml";
     private static final String LEGACY_PLAYLIST = "playlist_v2.xml";
+    private static final long P25_TRUNKED_BAND_MINIMUM_HZ = 700_000_000L;
+    private static final long P25_TRUNKED_BAND_MAXIMUM_HZ = 1_000_000_000L;
+    private static final int P25_TRUNKED_TALKGROUP_COUNT = 3;
 
     private LegacyXmlConfigurationImporter()
     {
@@ -94,7 +102,7 @@ public class LegacyXmlConfigurationImporter
         }
 
         ConfigurationState state = readConfigurationState(normalizedXml);
-        int p25ConventionalConversions = convertSingleFrequencyP25Channels(state);
+        int p25ConventionalConversions = convertLikelyConventionalP25Channels(state);
         DatabaseFileInstaller.install(normalizedDatabase, temporaryDatabase -> {
             SdrTrunkDatabaseStartup.createGlobalDatabase(temporaryDatabase);
             new AliasDatabaseStore(temporaryDatabase).replaceAliases(state.getAliases());
@@ -137,14 +145,15 @@ public class LegacyXmlConfigurationImporter
         return values != null ? values : new ArrayList<>();
     }
 
-    private static int convertSingleFrequencyP25Channels(ConfigurationState state)
+    static int convertLikelyConventionalP25Channels(ConfigurationState state)
     {
         int conversions = 0;
 
         for(Channel channel: state.getChannels())
         {
-            if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 &&
-                channel.getSourceConfiguration() instanceof SourceConfigTuner)
+            if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 p25Phase1 &&
+                channel.getSourceConfiguration() instanceof SourceConfigTuner tuner &&
+                !hasTrunkedP25Indicators(channel, p25Phase1, tuner, state.getAliases()))
             {
                 channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
                 conversions++;
@@ -152,6 +161,42 @@ public class LegacyXmlConfigurationImporter
         }
 
         return conversions;
+    }
+
+    private static boolean hasTrunkedP25Indicators(Channel channel, DecodeConfigP25Phase1 p25Phase1,
+                                                   SourceConfigTuner tuner, List<Alias> aliases)
+    {
+        long frequency = tuner.getFrequency();
+
+        return p25Phase1.getModulation() == Modulation.CQPSK ||
+            (frequency >= P25_TRUNKED_BAND_MINIMUM_HZ && frequency < P25_TRUNKED_BAND_MAXIMUM_HZ) ||
+            countDistinctP25Talkgroups(channel.getAliasListName(), aliases) >= P25_TRUNKED_TALKGROUP_COUNT;
+    }
+
+    private static int countDistinctP25Talkgroups(String aliasListName, List<Alias> aliases)
+    {
+        Set<Integer> talkgroups = new HashSet<>();
+
+        for(Alias alias: aliases)
+        {
+            if(alias != null && alias.matchesAliasList(aliasListName))
+            {
+                for(var aliasIdentifier: alias.getAliasIdentifiers())
+                {
+                    if(aliasIdentifier instanceof Talkgroup talkgroup && talkgroup.getProtocol() == Protocol.APCO25)
+                    {
+                        talkgroups.add(talkgroup.getValue());
+
+                        if(talkgroups.size() >= P25_TRUNKED_TALKGROUP_COUNT)
+                        {
+                            return talkgroups.size();
+                        }
+                    }
+                }
+            }
+        }
+
+        return talkgroups.size();
     }
 
     private static void validateMigration(Path databasePath, ConfigurationState expected) throws IOException, SQLException
