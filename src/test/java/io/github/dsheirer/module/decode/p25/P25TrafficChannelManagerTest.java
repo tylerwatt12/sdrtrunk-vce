@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -98,9 +99,63 @@ class P25TrafficChannelManagerTest
         trafficTrackers(manager).put(frequency, tracker);
         P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("DISPATCH");
 
-        manager.processP1TalkerAlias(frequency, null, alias, identifiers, 1_100L);
+        manager.processP1HarrisTalkerAlias(frequency, null, alias, identifiers, 1_100L);
 
         assertTrue(event.getIdentifierCollection().hasIdentifier(alias));
+    }
+
+    @Test
+    void usesMatchingGrantRadioForHarrisConsoleAlias() throws Exception
+    {
+        long frequency = 851_012_500L;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        RadioIdentifier subscriber = APCO25RadioIdentifier.createFrom(1_880_997);
+        RadioIdentifier console = APCO25RadioIdentifier.createFrom(1_104);
+        MutableIdentifierCollection grantIdentifiers = identifiers(56_132, subscriber);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+            .identifiers(grantIdentifiers)
+            .build();
+        trafficTrackers(manager).put(frequency, new P25TrafficChannelEventTracker(event));
+        MutableIdentifierCollection trafficIdentifiers = identifiers(56_132, console);
+        P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("CDP #0997");
+        TalkerAliasSubscriber aliasSubscriber = new TalkerAliasSubscriber();
+        MyEventBus.getGlobalEventBus().register(aliasSubscriber);
+
+        try
+        {
+            manager.processP1HarrisTalkerAlias(frequency, console, alias, trafficIdentifiers, 1_100L);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(aliasSubscriber);
+        }
+
+        assertEquals(subscriber, aliasSubscriber.event.get().radio());
+        assertTrue(manager.getTalkerAliasManager().hasAlias(subscriber));
+        assertFalse(manager.getTalkerAliasManager().hasAlias(console));
+        assertEquals(subscriber, event.getIdentifierCollection().getFromIdentifier());
+        assertTrue(event.getIdentifierCollection().hasIdentifier(alias));
+    }
+
+    @Test
+    void doesNotAttachAliasToDifferentTrackedCall() throws Exception
+    {
+        long frequency = 851_012_500L;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        RadioIdentifier trackedRadio = APCO25RadioIdentifier.createFrom(1_880_997);
+        RadioIdentifier observedRadio = APCO25RadioIdentifier.createFrom(1_104);
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+            .identifiers(identifiers(56_132, trackedRadio))
+            .build();
+        trafficTrackers(manager).put(frequency, new P25TrafficChannelEventTracker(event));
+        P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("DISPATCH");
+
+        manager.processP1HarrisTalkerAlias(frequency, observedRadio, alias,
+            identifiers(56_106, observedRadio), 1_100L);
+
+        assertTrue(manager.getTalkerAliasManager().hasAlias(observedRadio));
+        assertFalse(manager.getTalkerAliasManager().hasAlias(trackedRadio));
+        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
     }
 
     @Test

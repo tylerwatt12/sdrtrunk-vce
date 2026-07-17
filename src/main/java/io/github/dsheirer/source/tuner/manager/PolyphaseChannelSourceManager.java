@@ -72,6 +72,24 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         mPolyphaseChannelManager.stopAllChannels();
     }
 
+    @Override
+    public void dispose()
+    {
+        if(mPolyphaseChannelManager != null)
+        {
+            if(mTunerController != null)
+            {
+                mTunerController.removeListener(mPolyphaseChannelManager);
+            }
+
+            mPolyphaseChannelManager.dispose();
+            mPolyphaseChannelManager = null;
+        }
+
+        mTunerController = null;
+        super.dispose();
+    }
+
     /**
      * Indicates if the channel min/max frequencies are within the tunable frequency range of the tuner controller
      *

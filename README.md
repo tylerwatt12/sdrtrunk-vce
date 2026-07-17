@@ -43,7 +43,8 @@ This project is currently an **alpha release**. Back up important receiver data 
 
    SQLite summary collection tracks talkgroups, radios, affiliations, frequencies, sites, patches, band plans, and
    activity counts. Summaries are enabled by default for new profiles; detailed event history is optional with
-   configurable retention.
+   configurable retention. See [How Talker Aliases Work](docs/talker-alias-implementation.md) for a detailed,
+   plain-language explanation of talker-alias collection and storage.
 
 7. **More reliable P25 site information**
 
@@ -140,7 +141,8 @@ code cleanup are summarized by area instead of listing every changed source file
 - Colors both LCN and frequency for current and alternate control channels.
 - Shows a live control-status indicator on each site tab. Stale or stopped tabs can be closed without stopping the
   configured channel.
-- Maintains one selected row across all site tables and outlines it without hiding status colors.
+- Maintains one selected row in the visible Systems table and outlines it without hiding status colors. Switching
+  between Conventional and trunked-site tabs clears the selection and lower views until another row is selected.
 - Sends the exact selected frequency to the lower views. It does not silently substitute a parent control channel,
   another traffic channel, or the last active system.
 - Keeps Events and Messages history until the configured history limit is reached.
@@ -156,9 +158,11 @@ code cleanup are summarized by area instead of listing every changed source file
   disposes their panels, clears selection, and stops their spectrum work.
 - Spectrum and waterfall use a matching expand/collapse control. Removing them detaches the display and stops its DFT
   processing; selecting **View Spectrum** from a tuner restores the section automatically.
+- Uses a compact fixed-position status footer for CPU, heap, storage, database size, summary logging, detailed history,
+  web-server state, and key-vault state, so changing values do not shift neighboring items.
 - Window size, position, maximized state, split-pane positions, and section visibility persist across launches.
 - Playlist Editor and User Preferences have toolbar shortcuts.
-- The status bar reports Java process CPU use, allocated and used heap, disk usage, and SQLite database size.
+- Provides a compact contextual **Open Web** menu with grouped Site, System, and Conventional destinations.
 
 ### Embedded Web Console
 
@@ -167,10 +171,11 @@ code cleanup are summarized by area instead of listing every changed source file
 - Can bind to localhost only or allow access from a trusted LAN or private overlay network.
 - Serves editable files from the external `stats-web` folder. HTML, CSS, and JavaScript can be changed without
   recompiling SDRTrunk.
-- Provides top-level Dashboard, Systems, Sites, and Conventional views.
+- Provides top-level Dashboard, Systems, and Conventional views.
 - Provides scoped drilldowns for:
-  - system information, sites, talkgroups, and radios
-  - site information, channels, neighbors, band plans, patches, and activity
+  - system information with its Sites table in a responsive one-third/two-thirds layout, plus talkgroups and radios
+  - site information with Top Talkgroups in a responsive one-third/two-thirds layout, plus channels, neighbors,
+    band plans, patches, and activity
   - talkgroup information, related radios, and activity
   - radio information, related talkgroups, current affiliation, and activity
   - conventional channel information and applicable activity
@@ -178,7 +183,9 @@ code cleanup are summarized by area instead of listing every changed source file
 - Includes table-only deep links suitable for embedding a site Info, Channels, Neighbors, Band Plan, or Patches view.
 - Uses bounded server-sent event feeds for live Systems state, activity, and completed calls.
 - Keeps live table rows stable instead of rebuilding and reordering the page on every update.
-- Includes dashboard action and hourly-hit charts.
+- Uses compact browser-local date-and-time stamps with full date, time, and time-zone details in their tooltips.
+- Lists P25 identities in WACN, System ID, RFSS, and Site order.
+- Includes an hourly call chart and a 24-hour system-activity ranking with previous-day comparisons.
 
 | Web feature | Summary statistics | Detailed event history |
 | --- | --- | --- |

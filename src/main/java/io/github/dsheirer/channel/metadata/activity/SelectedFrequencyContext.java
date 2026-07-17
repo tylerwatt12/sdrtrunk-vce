@@ -27,24 +27,23 @@ import io.github.dsheirer.module.ProcessingChain;
  *
  * @param frequency selected row frequency in hertz
  * @param timeslot selected row timeslot, when applicable
- * @param rowType selected activity row type
  * @param decoderHint selected row decoder text
- * @param sessionId stable selected activity table/session identifier
  * @param ownerChannel owner channel for the activity table, when applicable
  * @param rowChannel channel associated with the selected row, when applicable
  * @param processingChain exact-frequency active processing chain, when one exists
- * @param siteProcessingChain site-owner processing chain used by the Events view for control-channel selections
- * @param siteEventSelection true when the selected row represents a trunked site in the Events view
+ * @param eventProcessingChain processing chain used by the Events view
+ * @param selectionScope logical scope of the user selection
  * @param clearRequested true when listeners should detach and clear
  */
-public record SelectedFrequencyContext(long frequency, Integer timeslot, ChannelActivityRow.Role rowType,
-                                       String decoderHint, String sessionId, Channel ownerChannel, Channel rowChannel,
-                                       ProcessingChain processingChain, ProcessingChain siteProcessingChain,
-                                       boolean siteEventSelection, boolean clearRequested)
+public record SelectedFrequencyContext(long frequency, Integer timeslot, String decoderHint, Channel ownerChannel,
+                                       Channel rowChannel, ProcessingChain processingChain,
+                                       ProcessingChain eventProcessingChain,
+                                       ChannelActivitySelectionScope selectionScope,
+                                       boolean clearRequested)
 {
     public static SelectedFrequencyContext clear()
     {
-        return new SelectedFrequencyContext(0, null, null, null, null, null, null, null, null, false, true);
+        return new SelectedFrequencyContext(0, null, null, null, null, null, null, null, true);
     }
 
     public boolean hasFrequency()
@@ -57,12 +56,8 @@ public record SelectedFrequencyContext(long frequency, Integer timeslot, Channel
         return processingChain != null;
     }
 
-    /**
-     * Events for a trunked site are produced by the site-owner control processing chain even when the selected
-     * control frequency temporarily has no exact processing chain.
-     */
-    public ProcessingChain eventProcessingChain()
+    public boolean isSiteSelection()
     {
-        return siteEventSelection ? siteProcessingChain : processingChain;
+        return selectionScope == ChannelActivitySelectionScope.SITE;
     }
 }

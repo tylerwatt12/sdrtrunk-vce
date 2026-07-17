@@ -46,6 +46,7 @@ public class HistoryManagementPanel<T> extends JPanel
     private JLabel mHistoryTitleLabel;
     private JLabel mHistoryValueLabel;
     private String mFilterEditorTitle;
+    private Runnable mHistorySizeChangeListener;
 
     /**
      * Constructs an instance
@@ -53,8 +54,18 @@ public class HistoryManagementPanel<T> extends JPanel
      */
     public HistoryManagementPanel(ClearableHistoryModel model, String filterEditorTitle)
     {
+        this(model, filterEditorTitle, null);
+    }
+
+    /**
+     * Constructs an instance with a callback that can restore table presentation state after a history-size change.
+     */
+    public HistoryManagementPanel(ClearableHistoryModel model, String filterEditorTitle,
+                                  Runnable historySizeChangeListener)
+    {
         mModel = model;
         mFilterEditorTitle = filterEditorTitle;
+        mHistorySizeChangeListener = historySizeChangeListener;
         setLayout(new MigLayout("insets 6 1 5 5", "[]5[]10[]5[]5[][grow]", ""));
         add(getFilterButton());
         add(getClearButton());
@@ -200,6 +211,11 @@ public class HistoryManagementPanel<T> extends JPanel
             mHistorySlider.addChangeListener(e -> {
                 mModel.setHistorySize(mHistorySlider.getValue());
                 getHistoryValueLabel().setText(String.valueOf(mHistorySlider.getValue()));
+
+                if(mHistorySizeChangeListener != null && !mHistorySlider.getValueIsAdjusting())
+                {
+                    mHistorySizeChangeListener.run();
+                }
             });
         }
 

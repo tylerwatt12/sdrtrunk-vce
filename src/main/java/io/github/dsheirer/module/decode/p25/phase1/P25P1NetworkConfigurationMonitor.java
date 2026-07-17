@@ -440,7 +440,7 @@ public class P25P1NetworkConfigurationMonitor
         mTSBKNeighborSites.clear();
         mMotorolaBaseStationIds.clear();
         mSiteStatus = null;
-        mNetworkConfigurationStabilizer.reset();
+        mNetworkConfigurationStabilizer.resetCandidates();
     }
 
     /**

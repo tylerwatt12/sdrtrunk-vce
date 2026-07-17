@@ -295,7 +295,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         if(!GraphicsEnvironment.isHeadless())
         {
             mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences, mSystemsVisible, mNowPlayingLowerViewsVisible, visible -> {
+                    mSettingsManager, mTunerManager, mUserPreferences, mStatsWebServerService, mSystemsVisible,
+                    mNowPlayingLowerViewsVisible, visible -> {
                         mNowPlayingLowerViewsVisible = visible;
                         mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, visible);
                     });
@@ -1142,7 +1143,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor,
                 mUserPreferences.getEncryptionKeyPreference().getVaultService(),
-                mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager());
+                mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager(),
+                mStatsWebServerService::getNavigationState);
         }
 
         return mResourceStatusPanel;
@@ -1239,7 +1241,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     {
         public ResourceStatusVisibleMenuItem()
         {
-            super("Show Resource Status");
+            super("Show Status Footer");
             setSelected(mResourceStatusVisible);
             addActionListener(e -> {
                 mResourceStatusVisible = !mResourceStatusVisible;

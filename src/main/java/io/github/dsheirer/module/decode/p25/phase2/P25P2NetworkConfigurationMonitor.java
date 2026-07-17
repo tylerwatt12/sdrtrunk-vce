@@ -288,7 +288,7 @@ public class P25P2NetworkConfigurationMonitor
         mNeighborSitesAbbreviated.clear();
         mNeighborSitesExtended.clear();
         mNeighborSitesExtendedExplicit.clear();
-        mNetworkConfigurationStabilizer.reset();
+        mNetworkConfigurationStabilizer.resetCandidates();
     }
 
     /**

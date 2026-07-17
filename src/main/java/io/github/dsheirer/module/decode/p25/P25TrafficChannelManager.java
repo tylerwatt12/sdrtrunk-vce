@@ -184,13 +184,60 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void processP1TalkerAlias(long frequency, RadioIdentifier radio, TalkerAliasIdentifier alias,
                                      IdentifierCollection identifiers, long timestamp)
     {
+        if(isUsableTalkerAlias(alias))
+        {
+            observeTalkerAlias(radio, alias, identifiers, timestamp);
+            processP1TrafficCurrentUser(frequency, alias, timestamp);
+        }
+    }
+
+    /**
+     * Records a completed Phase 1 Harris talker alias.  Harris traffic-channel signalling can use a console/proxy RID,
+     * so a matching control-channel grant source is preferred when it is available.
+     */
+    public void processP1HarrisTalkerAlias(long frequency, RadioIdentifier radio, TalkerAliasIdentifier alias,
+                                           IdentifierCollection identifiers, long timestamp)
+    {
         if(!isUsableTalkerAlias(alias))
         {
             return;
         }
 
-        observeTalkerAlias(radio, alias, identifiers, timestamp);
-        processP1TrafficCurrentUser(frequency, alias, timestamp);
+        mLock.lock();
+
+        try
+        {
+            P25TrafficChannelEventTracker tracker = getTracker(frequency, TimeslotMessage.TIMESLOT_1);
+            boolean matchesTrackedCall = tracker != null && identifiers != null &&
+                tracker.isSameCallCheckingToOnly(identifiers, timestamp);
+
+            if(matchesTrackedCall)
+            {
+                Identifier trackedSource = tracker.getEvent().getIdentifierCollection().getFromIdentifier();
+
+                if(trackedSource instanceof RadioIdentifier trackedRadio)
+                {
+                    radio = trackedRadio;
+                }
+                else
+                {
+                    tracker.addIdentifierIfMissing(radio);
+                }
+            }
+
+            observeTalkerAlias(radio, alias, identifiers, timestamp);
+
+            if(matchesTrackedCall)
+            {
+                tracker.addIdentifierIfMissing(alias);
+                tracker.updateDurationTraffic(timestamp);
+                broadcast(tracker);
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
     }
 
     /**

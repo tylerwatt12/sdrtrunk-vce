@@ -29,6 +29,7 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -51,7 +52,8 @@ public class ControllerPanel extends JPanel
 
     public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
-                           TunerManager tunerManager, UserPreferences userPreferences, boolean systemsVisible,
+                           TunerManager tunerManager, UserPreferences userPreferences,
+                           StatsWebServerService statsWebServerService, boolean systemsVisible,
                            boolean lowerViewsVisible,
                            Consumer<Boolean> lowerViewsVisibilityListener)
     {
@@ -61,7 +63,7 @@ public class ControllerPanel extends JPanel
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
             configurationManager.getAliasModel());
         mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
-            lowerViewsVisible, lowerViewsVisibilityListener);
+            statsWebServerService, lowerViewsVisible, lowerViewsVisibilityListener);
         mMapPanel = new MapPanel(mapService, configurationManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
 

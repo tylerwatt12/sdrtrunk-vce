@@ -70,6 +70,8 @@ import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HeaderData;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisReturnToControlChannel;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasBase;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasBlock1;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasComplete;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSComplete;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaEmergencyAlarmActivation;
@@ -222,6 +224,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
     private ServiceOptions mCurrentServiceOptions;
+    private RadioIdentifier mHarrisTalkerAliasRadio;
+    private boolean mHarrisTalkerAliasSourceInvalid;
 
     /**
      * Constructs an APCO-25 decoder state with an optional traffic channel manager.
@@ -407,9 +411,47 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processTalkerAlias(LCHarrisTalkerAliasComplete talkerAlias)
     {
         Identifier identifier = getIdentifierCollection().getFromIdentifier();
-        RadioIdentifier radio = identifier instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
-        mTrafficChannelManager.processP1TalkerAlias(getCurrentFrequency(), radio, talkerAlias.getTalkerAlias(),
-            getIdentifierCollection(), talkerAlias.getTimestamp());
+        RadioIdentifier currentRadio = identifier instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
+
+        if(!mHarrisTalkerAliasSourceInvalid && mHarrisTalkerAliasRadio != null &&
+            mHarrisTalkerAliasRadio.equals(currentRadio))
+        {
+            mTrafficChannelManager.processP1HarrisTalkerAlias(getCurrentFrequency(), mHarrisTalkerAliasRadio,
+                talkerAlias.getTalkerAlias(), getIdentifierCollection(), talkerAlias.getTimestamp());
+        }
+
+        resetHarrisTalkerAliasSource();
+    }
+
+    private void observeHarrisTalkerAliasFragment(LCHarrisTalkerAliasBase fragment)
+    {
+        Identifier identifier = getIdentifierCollection().getFromIdentifier();
+        RadioIdentifier currentRadio = identifier instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
+
+        if(fragment instanceof LCHarrisTalkerAliasBlock1)
+        {
+            mHarrisTalkerAliasRadio = currentRadio;
+            mHarrisTalkerAliasSourceInvalid = currentRadio == null;
+        }
+        else if(!mHarrisTalkerAliasSourceInvalid)
+        {
+            if(mHarrisTalkerAliasRadio == null)
+            {
+                mHarrisTalkerAliasRadio = currentRadio;
+                mHarrisTalkerAliasSourceInvalid = currentRadio == null;
+            }
+            else if(!mHarrisTalkerAliasRadio.equals(currentRadio))
+            {
+                mHarrisTalkerAliasRadio = null;
+                mHarrisTalkerAliasSourceInvalid = true;
+            }
+        }
+    }
+
+    private void resetHarrisTalkerAliasSource()
+    {
+        mHarrisTalkerAliasRadio = null;
+        mHarrisTalkerAliasSourceInvalid = false;
     }
 
     @Override
@@ -989,6 +1031,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private void processTDU(P25P1Message message)
     {
+        resetHarrisTalkerAliasSource();
         mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
         broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
     }
@@ -1003,6 +1046,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(message instanceof TDULCMessage tdulc)
         {
+            resetHarrisTalkerAliasSource();
             LinkControlWord lcw = tdulc.getLinkControlWord();
 
             if(lcw != null && lcw.isValid())
@@ -2097,6 +2141,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case MOTOROLA_TALKER_ALIAS_HEADER, MOTOROLA_TALKER_ALIAS_DATA_BLOCK:
                 //Handled by the assembler in the message processor.
                 break;
+            case L3HARRIS_TALKER_ALIAS_BLOCK_1, L3HARRIS_TALKER_ALIAS_BLOCK_2,
+                    L3HARRIS_TALKER_ALIAS_BLOCK_3, L3HARRIS_TALKER_ALIAS_BLOCK_4:
+                if(lcw instanceof LCHarrisTalkerAliasBase fragment)
+                {
+                    observeHarrisTalkerAliasFragment(fragment);
+                }
+                break;
 
             //Other events
             case CALL_ALERT:
@@ -2237,8 +2288,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         {
             case REQUEST_RESET:
                 resetState();
+                resetHarrisTalkerAliasSource();
                 mNetworkConfigurationMonitor.reset();
-                mNetworkConfigurationStabilizer.reset();
                 mSiteMetadataPublisher.reset();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:

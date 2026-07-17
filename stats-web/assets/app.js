@@ -1,7 +1,7 @@
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
 const tableOnly = route.get('layout') === 'table';
-const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v1';
+const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
@@ -16,6 +16,12 @@ const ACTIVITY_RANGES = Object.freeze([
 ]);
 const CALL_ACTIVITY_SERIES = Object.freeze([
   { field: 'call_count', label: 'Tracked Calls', color: '#0b7168', visible: true },
+  { field: 'recorded_count', label: 'Recorded', color: '#2f6da5', visible: true },
+  { field: 'streamed_count', label: 'Sent to Streamer', color: '#cc7a00', visible: true }
+]);
+const DASHBOARD_CALL_ACTIVITY_SERIES = Object.freeze([
+  { field: 'call_count', label: 'P25 Calls', color: '#0b7168', visible: true },
+  { field: 'non_p25_call_count', label: 'Non-P25 Calls', color: '#6b4fa3', visible: true },
   { field: 'recorded_count', label: 'Recorded', color: '#2f6da5', visible: true },
   { field: 'streamed_count', label: 'Sent to Streamer', color: '#cc7a00', visible: true }
 ]);
@@ -44,6 +50,35 @@ const TALKGROUP_ACTIVITY_SERIES = Object.freeze([
   { field: 'status_count', label: 'Status', color: '#6b6257' },
   { field: 'unknown_count', label: 'Unknown', color: '#737c86' }
 ]);
+const CALL_METRIC_GUIDE = Object.freeze([
+  ['Tracked Calls', 'Traffic calls accepted by the channel manager. A tracked call can have no usable audio.'],
+  ['Recorded', 'Completed calls written to a nonempty recording file. Recording rules and duplicate suppression apply.'],
+  ['Sent to Streamer', 'Completed calls encoded into a nonempty temporary file and handed to at least one configured stream. This does not mean the remote service accepted the upload.'],
+  ['Encrypted', 'Tracked activity for which encrypted audio was confirmed.']
+]);
+const ACTION_METRIC_GUIDE = Object.freeze([
+  ['Active', 'A voice-channel grant event observed outside the dedicated call-start assignment. It is an event count, not the number of calls currently active.'],
+  ['Continue', 'A repeated or continuing channel-grant observation for an already assigned call. It is not a new call.'],
+  ['Emergency', 'An emergency service event or a tracked call carrying the emergency flag.'],
+  ['Data', 'A data-call event.'],
+  ['Join', 'A radio affiliation or group-join event.'],
+  ['Register', 'A unit-registration event.'],
+  ['Denial', 'A denied service request.'],
+  ['Busy', 'A busy response, including a target group already active response.'],
+  ['Queued', 'A service request placed in a queue.'],
+  ['Acknowledge', 'An acknowledgement response.'],
+  ['Check', 'A radio-check or query event.'],
+  ['Check Ack', 'An acknowledgement of a radio check.'],
+  ['GPS', 'A location or GPS event.'],
+  ['Logout', 'A unit de-registration or logout event.'],
+  ['Page', 'A page event.'],
+  ['Patch', 'A dynamic regroup or patch event whose operation was not more specific.'],
+  ['Patch Create', 'A dynamic regroup or patch activation.'],
+  ['Patch Cancel', 'A dynamic regroup or patch deactivation.'],
+  ['Request', 'A service request event.'],
+  ['Status', 'A unit or user status event.'],
+  ['Unknown', 'An observed event that could not be mapped to a more specific action.']
+]);
 const CHANNEL_TAG_DISPLAY = Object.freeze({
   CONVENTIONAL: { abbreviation: 'CONV', description: 'Conventional channel' },
   CONFIGURED: { abbreviation: 'CFG', description: 'Configured frequency' },
@@ -61,15 +96,16 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'band': 54,
   'calls': 66,
   'control-frequency': 94,
-  'count': 66,
+  'count': 94,
   'decoder': 78,
   'encrypted': 52,
   'encryption': 92,
   'event': 115,
-  'first-seen': 142,
+  'first-seen': 166,
   'frequency': 94,
   'group': 135,
-  'last-seen': 142,
+  'last-active': 166,
+  'last-seen': 166,
   'lcn': 68,
   'name': 175,
   'radio': 82,
@@ -77,20 +113,20 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'recorded': 78,
   'rfss': 66,
   'signal': 82,
-  'decode-health': 72,
+  'decode-health': 90,
   'site': 66,
   'source': 82,
   'source-alias': 165,
   'state': 82,
   'status': 116,
-  'streamed': 118,
+  'streamed': 82,
   'system': 106,
   'talker-alias': 160,
-  'talkgroup-id': 76,
+  'talkgroup-id': 90,
   'talkgroup-name': 175,
   'target': 82,
   'target-alias': 165,
-  'time': 142,
+  'time': 166,
   'wacn': 108
 };
 const SERVER_TABLE_DEFAULT_SORTS = {
@@ -270,8 +306,25 @@ function frequency(value) {
   return value ? (Number(value) / 1000000).toFixed(5) : '';
 }
 
+function exactDateTime(value) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+  const date = new Date(timestamp);
+  const twoDigits = (part) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())} ` +
+    `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}:${twoDigits(date.getSeconds())}`;
+}
+
 function dateTime(value) {
-  return value ? new Date(Number(value)).toLocaleString() : '';
+  const exact = exactDateTime(value);
+  if (!exact) return '';
+  const timestamp = Number(value);
+  const time = node('time', 'exact-time', exact);
+  time.dateTime = new Date(timestamp).toISOString();
+  time.title = new Intl.DateTimeFormat([], {
+    dateStyle: 'full', timeStyle: 'long'
+  }).format(new Date(timestamp));
+  return time;
 }
 
 function yesNo(value) {
@@ -441,7 +494,11 @@ function pageHeader(title, subtitle) {
   const wrapper = node('div', 'page-header');
   const labels = node('div');
   labels.append(node('h1', 'page-title', title));
-  if (subtitle) labels.append(node('div', 'page-subtitle', subtitle));
+  if (subtitle) {
+    const detail = node('div', 'page-subtitle');
+    detail.append(valueNode(subtitle));
+    labels.append(detail);
+  }
   wrapper.append(labels);
   return wrapper;
 }
@@ -496,10 +553,10 @@ function databaseLoggingNotice(view) {
       'Summary logging is off. Database-backed views remain available but are not updating.';
     const detail = logging.summaryConfigured && logging.lastError ? ` ${logging.lastError}` : '';
     const lastWrite = logging.lastSuccessfulWriteMs ?
-      ` Last successful summary write: ${dateTime(logging.lastSuccessfulWriteMs)}.` : '';
+      ` Last successful summary write: ${exactDateTime(logging.lastSuccessfulWriteMs)}.` : '';
     const activityState = logging.historyRetained ?
       ` Activity pages show retained history${logging.lastHistoryMs ?
-        ` through ${dateTime(logging.lastHistoryMs)}` : ''} and are not updating.` :
+        ` through ${exactDateTime(logging.lastHistoryMs)}` : ''} and are not updating.` :
       ' Activity pages require detailed history and are unavailable.';
     return node('div', 'logging-notice warning',
       `${message}${detail}${lastWrite}${activityState} ` +
@@ -508,7 +565,7 @@ function databaseLoggingNotice(view) {
   if (!logging.historyActive) {
     const reason = logging.historyConfigured ? 'not currently running' : 'off';
     if (logging.historyRetained) {
-      const through = logging.lastHistoryMs ? ` through ${dateTime(logging.lastHistoryMs)}` : '';
+      const through = logging.lastHistoryMs ? ` through ${exactDateTime(logging.lastHistoryMs)}` : '';
       return node('div', 'logging-notice',
         `Summary logging is running. Detailed history is ${reason}; Activity pages show retained data${through} ` +
         'and are not updating.');
@@ -571,8 +628,10 @@ function compareTableValues(left, right) {
   return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function renderTableRow(data, columns, rowKey) {
+function renderTableRow(data, columns, rowKey, rowClass) {
   const row = node('tr');
+  const classes = typeof rowClass === 'function' ? rowClass(data) : rowClass;
+  if (classes) row.classList.add(...String(classes).split(/\s+/).filter(Boolean));
   if (rowKey) {
     const value = rowKey(data);
     if (value !== null && value !== undefined) row.dataset.id = String(value);
@@ -595,11 +654,13 @@ function defaultTableColumnWidth(column) {
   return Math.max(90, Math.min(220, String(column.label || '').length * 9 + 34));
 }
 
-function setTableColumnWidths(columnElements, widths) {
+function setTableColumnWidths(element, columnElements, widths) {
   const total = widths.reduce((sum, width) => sum + width, 0) || 1;
   widths.forEach((width, index) => {
-    columnElements[index].style.width = `${(width / total * 100).toFixed(4)}%`;
+    columnElements[index].style.width = `${Math.round(width)}px`;
   });
+  element.style.width = '100%';
+  element.style.minWidth = `${Math.round(total)}px`;
 }
 
 function applyPreferredTableWidths(element, columns, columnElements, tableType) {
@@ -611,9 +672,7 @@ function applyPreferredTableWidths(element, columns, columnElements, tableType) 
     return Number.isFinite(width) && width >= TABLE_WIDTH_MINIMUM && width <= TABLE_WIDTH_MAXIMUM ?
       Math.round(width) : defaultTableColumnWidth(column);
   });
-  setTableColumnWidths(columnElements, widths);
-  element.style.width = '100%';
-  element.style.minWidth = '0';
+  setTableColumnWidths(element, columnElements, widths);
 }
 
 function addColumnResizers(element, columns, columnElements, headers, tableType) {
@@ -638,7 +697,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType)
       widths[index] = original + appliedDelta;
       widths[adjacentIndex] = adjacent - appliedDelta;
     }
-    setTableColumnWidths(columnElements, widths);
+    setTableColumnWidths(element, columnElements, widths);
     return widths;
   };
   headers.forEach((header, index) => {
@@ -720,7 +779,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       body.append(row);
       return;
     }
-    orderedRows.forEach((data) => body.append(renderTableRow(data, columns, options.rowKey)));
+    orderedRows.forEach((data) => body.append(renderTableRow(data, columns, options.rowKey, options.rowClass)));
   };
 
   const updateSortIndicators = () => {
@@ -740,6 +799,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
 
   columns.forEach((column, index) => {
     const header = node('th', column.className || '');
+    const fullLabel = column.fullLabel || column.label;
+    if (fullLabel) header.title = fullLabel;
     const serverSortable = options.serverSort && column.sort;
     if (serverSortable) {
       const currentSort = route.get('sort') || options.defaultSort;
@@ -747,7 +808,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       const direction = currentSort === column.sort && currentDirection === 'desc' ? 'asc' : 'desc';
       header.append(anchor(column.label, currentHref({ sort: column.sort, direction, offset: null }),
         'table-sort-control'));
-    } else {
+    } else if (options.sortable !== false) {
       const control = node('button', 'table-sort-control', column.label);
       control.type = 'button';
       control.addEventListener('click', () => {
@@ -758,6 +819,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         renderBody();
       });
       header.append(control);
+    } else {
+      header.append(node('span', 'table-column-label', column.label));
     }
     headers.push(header);
     headRow.append(header);
@@ -779,7 +842,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         renderBody();
         return;
       }
-      const rendered = renderTableRow(data, columns, options.rowKey);
+      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass);
       if (body.querySelector('.empty')) body.replaceChildren(rendered);
       else if (prepend) body.prepend(rendered);
       else body.append(rendered);
@@ -875,41 +938,60 @@ function withoutGrantActions(rows) {
   return (rows || []).filter((row) => String(row.action || '').toUpperCase() !== 'GRANT');
 }
 
-const actionColors = [
-  '#0b7168', '#2f6da5', '#cc7a00', '#9d174d', '#6b4fa3', '#3c7a3c', '#a65a3a', '#526778',
-  '#b33b5e', '#0085a1', '#7c6b2f', '#4d7f7b', '#865d9c', '#8b5d2e', '#556b2f', '#737c86'
-];
+function siteActivityColor(index) {
+  return `hsl(${Math.round(index * 137.508) % 360} 58% 42%)`;
+}
 
-function actionPie(rows) {
-  const actions = withoutGrantActions(rows).filter((row) => Number(row.count) > 0);
-  const total = actions.reduce((sum, row) => sum + Number(row.count), 0);
-  if (!total) return node('div', 'empty', 'No actions recorded in the last 24 hours');
+function siteActivityPie(activity) {
+  const rows = (activity?.rows || []).filter((row) => Number(row.call_count) > 0);
+  if (!rows.length) return node('div', 'empty', 'No P25 site calls recorded in the last 24 hours');
 
-  let start = 0;
-  const segments = actions.map((row, index) => {
-    const end = start + (Number(row.count) / total * 100);
-    const segment = `${actionColors[index % actionColors.length]} ${start}% ${end}%`;
-    start = end;
+  const total = Number(rows[0].total_call_count) ||
+    rows.reduce((sum, row) => sum + Number(row.call_count), 0);
+  let offset = 0;
+  const segments = rows.map((row, index) => {
+    const calls = Number(row.call_count);
+    const share = total ? calls / total * 100 : 0;
+    const segment = { row, calls, share, start: offset, end: offset + share,
+      color: siteActivityColor(index) };
+    offset += share;
     return segment;
   });
-
-  const chart = node('div', 'action-pie');
-  chart.style.backgroundImage = `conic-gradient(${segments.join(', ')})`;
-  chart.setAttribute('role', 'img');
-  chart.setAttribute('aria-label', `24 hour actions, ${number(total)} total`);
-
-  const legend = node('div', 'action-legend');
-  actions.forEach((row, index) => {
-    const item = node('div', 'action-legend-item');
-    const swatch = node('span', 'action-swatch');
-    swatch.style.backgroundColor = actionColors[index % actionColors.length];
-    const label = node('span', 'action-label', String(row.action).replaceAll('_', ' '));
-    const percentage = Number(row.count) / total * 100;
-    item.append(swatch, label, node('span', 'action-value', `${number(row.count)} · ${percentage.toFixed(1)}%`));
+  const chart = node('div', 'site-activity-chart');
+  const graphic = node('div', 'site-activity-pie');
+  graphic.style.background = `conic-gradient(${segments.map((segment) =>
+    `${segment.color} ${segment.start.toFixed(4)}% ${segment.end.toFixed(4)}%`).join(', ')})`;
+  graphic.setAttribute('role', 'img');
+  graphic.setAttribute('aria-label', segments.map((segment) =>
+    `${siteLabel(segment.row)} ${number(segment.calls)} calls ${segment.share.toFixed(1)} percent`).join('; '));
+  const legend = node('div', 'site-activity-legend');
+  legend.setAttribute('role', 'list');
+  segments.forEach((segment) => {
+    const item = node('div', 'site-activity-legend-row');
+    item.setAttribute('role', 'listitem');
+    const swatch = node('span', 'site-activity-swatch');
+    swatch.style.backgroundColor = segment.color;
+    const identity = node('span', 'site-activity-identity');
+    identity.append(siteLink(segment.row));
+    const values = node('span', 'site-activity-values');
+    values.append(node('strong', '', number(segment.calls)), node('span', '', `${segment.share.toFixed(1)}%`));
+    item.append(swatch, identity, values);
     legend.append(item);
   });
+  chart.append(graphic, legend);
+  return chart;
+}
 
-  return fragment(chart, legend);
+function activityMetricGuide(includeCallMetrics = false) {
+  const details = node('details', 'metric-guide');
+  details.append(node('summary', '', 'What these activity metrics mean'));
+  const list = node('dl', 'metric-guide-list');
+  const entries = includeCallMetrics ? [...CALL_METRIC_GUIDE, ...ACTION_METRIC_GUIDE] : ACTION_METRIC_GUIDE;
+  entries.forEach(([label, description]) => {
+    list.append(node('dt', '', label), node('dd', '', description));
+  });
+  details.append(list);
+  return details;
 }
 
 function roundedChartMaximum(maximum) {
@@ -1005,19 +1087,13 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
   return wrapper;
 }
 
-function callsPerHourChart(rows) {
-  return countTimeSeriesChart(rows, [CALL_ACTIVITY_SERIES[0]], {
-    timeField: 'hour_ms',
-    ariaLabel: 'Tracked calls per hour for the last 24 hours'
-  });
-}
-
 function outputMetricStartNote(response) {
   const metricStart = Number(response?.metric_start_ms || 0);
   if (metricStart > Number(response?.from_ms || 0) &&
       metricStart <= Number(response?.to_ms || Date.now())) {
-    return node('div', 'activity-metric-note',
-      `Recorded and Sent to Streamer counters begin ${dateTime(metricStart)}.`);
+    const note = node('div', 'activity-metric-note');
+    note.append('Recorded and Sent to Streamer counters begin ', dateTime(metricStart), '.');
+    return note;
   }
   return null;
 }
@@ -1269,7 +1345,7 @@ function qualityHistoryChart(site, response, metric, domain) {
           detail = [`Decode health: ${point.decode.toFixed(1)}%`,
             `30s signal average: ${signalNumber(point.average)}`];
         }
-        return [dateTime(point.last_observed_ms || point.timestamp), ...detail, frequencyText,
+        return [exactDateTime(point.last_observed_ms || point.timestamp), ...detail, frequencyText,
           `${number(point.sample_count)} retained sample${Number(point.sample_count) === 1 ? '' : 's'}`];
       }
     });
@@ -1567,7 +1643,7 @@ async function talkgroupActivityHistorySection(scopeParameters) {
         ['Tracked Calls', response.totals?.call_count],
         ['Recorded', response.totals?.recorded_count],
         ['Sent to Streamer', response.totals?.streamed_count]
-      ], true), talkgroupActivityChart(response));
+      ], true), talkgroupActivityChart(response), activityMetricGuide(true));
       const metricNote = outputMetricStartNote(response);
       if (metricNote) host.append(metricNote);
     } catch (error) {
@@ -1604,12 +1680,12 @@ async function siteTopTalkgroupsSection(site) {
   block.querySelector('.section-title').append(rangeControl.controls);
   const columns = [
     { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sortValue: (row) => Number(row.talkgroup_id) },
-    { id: 'talkgroup-name', label: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
+    { id: 'talkgroup-name', label: 'Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
     { label: 'Group', key: 'alias_group', className: 'alias-cell', sortValue: (row) => row.alias_group || '' },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
-    { id: 'recorded', label: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
-    { id: 'streamed', label: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sortValue: (row) => Number(row.streamed_count || 0) },
-    { id: 'last-active', label: 'Last Active', render: (row) => dateTime(row.last_active_ms), sortValue: (row) => Number(row.last_active_ms || 0) }
+    { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
+    { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sortValue: (row) => Number(row.streamed_count || 0) },
+    { id: 'last-active', label: 'Active', fullLabel: 'Last Active', render: (row) => dateTime(row.last_active_ms), sortValue: (row) => Number(row.last_active_ms || 0) }
   ];
 
   const load = async (buttons = rangeControl.buttons, interactive = false) => {
@@ -1749,6 +1825,13 @@ function requiredSystemScope() {
   return { wacn, system_id: systemId };
 }
 
+async function routedSystemScope() {
+  const guid = route.get('guid');
+  if (!guid) return requiredSystemScope();
+  const response = await api('/api/site', { guid });
+  return { wacn: response.site.wacn, system_id: response.site.system_id };
+}
+
 function requiredId() {
   const id = Number(route.get('id'));
   if (!Number.isInteger(id) || id < 0) throw new Error('Identifier is missing from the URL');
@@ -1759,7 +1842,6 @@ function systemTabs(system, active) {
   const values = scope(system);
   return tabs([
     { id: 'info', label: 'Info', href: href('system', { ...values, tab: 'info' }) },
-    { id: 'sites', label: 'Sites', href: href('system', { ...values, tab: 'sites' }) },
     { id: 'talkgroups', label: 'Talkgroups', href: href('system', { ...values, tab: 'talkgroups' }) },
     { id: 'radios', label: 'Radios', href: href('system', { ...values, tab: 'radios' }) },
     { id: 'talker-aliases', label: 'Talker Aliases', href: href('system', { ...values, tab: 'talker-aliases' }) }
@@ -1796,44 +1878,47 @@ function siteTabs(site, active) {
 }
 
 const siteColumns = [
-  { id: 'system', label: 'System', render: systemLink, sort: 'system', sortValue: systemLabel },
+  { id: 'system', label: 'Sys', fullLabel: 'System', render: systemLink, sort: 'system', sortValue: systemLabel },
   { id: 'rfss', label: 'RFSS', key: 'rfss', render: (row) => hexDecimal(row.rfss, 2), className: 'numeric', sort: 'rfss' },
   { id: 'site', label: 'Site', key: 'site', render: (row) => hexDecimal(row.site, 2), className: 'numeric', sort: 'site' },
   { id: 'name', label: 'Name', render: (row) => siteLink(row), className: 'alias-cell', sort: 'name', sortValue: siteLabel },
-  { id: 'control-frequency', label: 'Control MHz', render: (row) => frequency(row.current_control_hz), className: 'numeric', sort: 'control', sortValue: (row) => Number(row.current_control_hz || 0) },
-  { label: 'Channels', key: 'channels', className: 'numeric', sort: 'channels' },
-  { label: 'Neighbors', key: 'neighbors', className: 'numeric', sort: 'neighbors' },
+  { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.current_control_hz), className: 'numeric', sort: 'control', sortValue: (row) => Number(row.current_control_hz || 0) },
+  { label: 'Ch', fullLabel: 'Channels', key: 'channels', className: 'numeric', sort: 'channels' },
+  { label: 'Nbrs', fullLabel: 'Neighbors', key: 'neighbors', className: 'numeric', sort: 'neighbors' },
   { label: 'Bands', key: 'bands', className: 'numeric', sort: 'bands' },
-  { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+  { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
+const scopedSiteColumns = siteColumns.filter((column) => column.id !== 'system');
 
 const talkgroupColumns = [
   { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
-  { id: 'talkgroup-name', label: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
+  { id: 'talkgroup-name', label: 'Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
   { label: 'Group', key: 'alias_group', className: 'alias-cell', sort: 'group' },
   { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-  { id: 'recorded', label: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sort: 'recorded', sortValue: (row) => Number(row.recorded_count || 0) },
-  { id: 'streamed', label: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sort: 'streamed', sortValue: (row) => Number(row.streamed_count || 0) },
+  { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sort: 'recorded', sortValue: (row) => Number(row.recorded_count || 0) },
+  { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sort: 'streamed', sortValue: (row) => Number(row.streamed_count || 0) },
   { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-  { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+  { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
 
 const radioColumns = [
   { id: 'radio', label: 'ID', render: (row) => radioLink(row), className: 'numeric', sort: 'id', sortValue: (row) => Number(row.radio_id) },
   { id: 'alias', label: 'Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
-  { label: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
+  { label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
   { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
   { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-  { id: 'talkgroup-id', label: 'Affiliated TGID', render: (row) => talkgroupLink(row, row.affiliated_talkgroup_id), className: 'numeric', sort: 'affiliated_talkgroup', sortValue: (row) => Number(row.affiliated_talkgroup_id) },
-  { id: 'talkgroup-name', label: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row,
+  { id: 'talkgroup-id', label: 'Affil TG', fullLabel: 'Affiliated Talkgroup ID', render: (row) => talkgroupLink(row, row.affiliated_talkgroup_id), className: 'numeric', sort: 'affiliated_talkgroup', sortValue: (row) => Number(row.affiliated_talkgroup_id) },
+  { id: 'talkgroup-name', label: 'TG Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row,
     row.affiliated_talkgroup_id, 'affiliated_talkgroup_alias_'), className: 'alias-cell', sortValue: (row) => row.affiliated_talkgroup_alias_name || '' },
-  { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+  { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
 
 async function renderDashboard() {
   const dashboard = await api('/api/dashboard');
   const counts = dashboard.counts || {};
-  content.append(pageHeader('Dashboard', `Last activity ${dateTime(dashboard.lastSeenMs) || 'not recorded'}`));
+  content.append(pageHeader('Dashboard', dashboard.lastSeenMs ?
+    fragment('Last activity ', dateTime(dashboard.lastSeenMs)) : 'Last activity not recorded'));
+  content.append(await signalHealthSection());
   content.append(metrics([
     ['Systems', counts.systems], ['Sites', counts.sites], ['Talkgroups', counts.talkgroups],
     ['Radios', counts.radios], ['Frequencies', counts.frequencies], ['Conventional', counts.conventional]
@@ -1841,25 +1926,23 @@ async function renderDashboard() {
   const p25CallActivity = dashboard.p25CallActivity || {};
   const p25CallBody = node('div', 'dashboard-call-activity');
   p25CallBody.append(metrics([
-    ['Tracked Calls', p25CallActivity.totals?.call_count],
+    ['P25 Calls', p25CallActivity.totals?.call_count],
+    ['Non-P25 Calls', p25CallActivity.totals?.non_p25_call_count],
     ['Recorded', p25CallActivity.totals?.recorded_count],
     ['Sent to Streamer', p25CallActivity.totals?.streamed_count]
-  ], true), countTimeSeriesChart(p25CallActivity.series || [], CALL_ACTIVITY_SERIES, {
+  ], true), countTimeSeriesChart(p25CallActivity.series || [], DASHBOARD_CALL_ACTIVITY_SERIES, {
     from: p25CallActivity.from_ms,
     to: p25CallActivity.to_ms,
-    ariaLabel: 'P25 trunked tracked, recorded, and sent-to-streamer calls per hour'
+    ariaLabel: 'P25, non-P25, recorded, and sent-to-streamer calls per hour'
   }));
   const metricNote = outputMetricStartNote(p25CallActivity);
   if (metricNote) p25CallBody.append(metricNote);
-  const p25CallSection = section('P25 Trunked Call Activity · Last 24 Hours', p25CallBody);
+  const p25CallSection = section('Call Activity · Last 24 Hours', p25CallBody);
   p25CallSection.append(node('div', 'dashboard-scope-note',
-    'P25 trunked talkgroups only. Calls Per Hour below also includes conventional calls.'));
+    'Non-P25 calls are the hourly total minus P25 trunked calls. Recorded and streamer counts apply to P25 calls.'));
   content.append(p25CallSection);
-  content.append(await signalHealthSection());
-  content.append(section('Calls Per Hour', callsPerHourChart(dashboard.activityPerHour || [])));
   const sites = section('Recent Sites', table(dashboard.recentSites || [], siteColumns, 'No rows', { type: 'sites' }));
-  const actions = section('24 Hour Actions', node('div', 'action-chart'));
-  actions.lastChild.append(actionPie(dashboard.actionMix || []));
+  const actions = section('Site Activity · Last 24 Hours', siteActivityPie(dashboard.siteActivity24h));
   content.append(node('div', 'split'));
   content.lastChild.append(sites, actions);
   const talkgroups = section('Top Talkgroups', table(dashboard.topTalkgroups || [], talkgroupColumns, 'No rows', { type: 'talkgroups' }));
@@ -1877,13 +1960,13 @@ function liveSystemsSection() {
     { id: 'tags', label: 'Tags', width: 180, sortValue: channelTagText },
     { id: 'channel-lcn', label: 'LCN', width: 130, sortValue: (row) =>
       channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || '') },
-    { id: 'frequency', label: 'Frequency', width: 100, sortValue: (row) => Number(row.frequency_hz || 0) },
-    { id: 'signal', label: 'Signal', width: 90, sortValue: (row) => Number(row.signal_dbfs ?? -999) },
-    { id: 'decode-health', label: 'Decode', width: 80, sortValue: (row) => Number(row.decode_health_pct ?? -1) },
-    { id: 'source-alias', label: 'Source Alias', width: 220, sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '' },
-    { id: 'source', label: 'Source', width: 105, sortValue: (row) => Number(row.source_id || 0) },
-    { id: 'target-alias', label: 'Target Alias', width: 220, sortValue: (row) => row.target_alias || '' },
-    { id: 'target', label: 'Target', width: 105, sortValue: (row) => Number(row.target_id || 0) },
+    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', width: 100, sortValue: (row) => Number(row.frequency_hz || 0) },
+    { id: 'signal', label: 'dBFS', fullLabel: 'Signal dBFS', width: 90, sortValue: (row) => Number(row.signal_dbfs ?? -999) },
+    { id: 'decode-health', label: 'Decode %', width: 90, sortValue: (row) => Number(row.decode_health_pct ?? -1) },
+    { id: 'source-alias', label: 'Source', fullLabel: 'Source Alias', width: 220, sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '' },
+    { id: 'source', label: 'Src ID', fullLabel: 'Source ID', width: 105, sortValue: (row) => Number(row.source_id || 0) },
+    { id: 'target-alias', label: 'Target', fullLabel: 'Target Alias', width: 220, sortValue: (row) => row.target_alias || '' },
+    { id: 'target', label: 'Tgt ID', fullLabel: 'Target ID', width: 105, sortValue: (row) => Number(row.target_id || 0) },
     { id: 'decoder', label: 'Decoder', width: 80, sortValue: (row) => row.decoder || '' }
   ];
   const tabBar = node('div', 'systems-live-tabs');
@@ -1899,6 +1982,7 @@ function liveSystemsSection() {
   let liveSort = null;
   columns.forEach((column) => {
     const header = node('th');
+    header.title = column.fullLabel || column.label;
     const control = node('button', 'table-sort-control', column.label);
     control.type = 'button';
     control.addEventListener('click', () => {
@@ -2101,38 +2185,70 @@ async function renderLive() {
 }
 
 async function renderSystems() {
-  const page = await api('/api/systems', pageParameters());
-  content.append(pageHeader('Systems', 'P25 systems are grouped by WACN and System ID'));
+  const page = await api('/api/system-directory', pageParameters({ limit: 25 }));
+  content.append(pageHeader('Systems & Sites',
+    'Parent systems with child sites · fixed order by WACN, System ID, RFSS, and Site'));
+  const rows = [];
+  (page.rows || []).forEach((system) => {
+    rows.push({ ...system, directory_type: 'system' });
+    (system.children || []).forEach((site) => rows.push({ ...site, directory_type: 'site' }));
+  });
   const columns = [
-    { id: 'wacn', label: 'WACN', render: (row) => systemLink(row, hexDecimal(row.wacn, 5)), sort: 'wacn', sortValue: (row) => Number(row.wacn) },
-    { id: 'system', label: 'System', render: (row) => systemLink(row, hexDecimal(row.system_id, 3)), sort: 'system_id', sortValue: (row) => Number(row.system_id) },
-    { label: 'Site Names', key: 'site_names', className: 'alias-cell', sort: 'site_names' },
-    { label: 'Sites', key: 'sites', className: 'numeric', sort: 'sites' },
-    { label: 'Talkgroups', key: 'talkgroups', className: 'numeric', sort: 'talkgroups' },
-    { label: 'Radios', key: 'radios', className: 'numeric', sort: 'radios' },
-    { label: 'Affiliated', key: 'affiliations', className: 'numeric', sort: 'affiliations' },
-    { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+    { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
+      const wrapper = node('div', 'directory-entity');
+      if (row.directory_type === 'system') {
+        wrapper.append(node('strong', '', 'System'));
+        if (row.site_names) wrapper.append(node('span', 'directory-secondary', row.site_names));
+      } else {
+        wrapper.append(node('span', 'directory-branch', '↳'), siteLink(row));
+      }
+      return wrapper;
+    } },
+    { id: 'wacn', label: 'WACN', className: 'numeric', render: (row) =>
+      row.directory_type === 'system' ? hexDecimal(row.wacn, 5) : '' },
+    { id: 'system', label: 'Sys ID', fullLabel: 'System ID', className: 'numeric', render: (row) =>
+      row.directory_type === 'system' ? systemLink(row, hexDecimal(row.system_id, 3)) : '' },
+    { id: 'rfss', label: 'RFSS', className: 'numeric', render: (row) =>
+      row.directory_type === 'site' ? hexDecimal(row.rfss, 2) : '' },
+    { id: 'site', label: 'Site', className: 'numeric', render: (row) =>
+      row.directory_type === 'site' ? hexDecimal(row.site, 2) : '' },
+    { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
+      render: (row) => row.directory_type === 'site' ? frequency(row.current_control_hz) : '' },
+    { id: 'count', label: 'Sites / Ch', fullLabel: 'Sites or Channels', className: 'numeric', render: (row) =>
+      row.directory_type === 'system' ? `${number(row.sites)} ${Number(row.sites) === 1 ? 'site' : 'sites'}` :
+        `${number(row.channels)} ch` },
+    { id: 'talkgroups', label: 'TGs', fullLabel: 'Talkgroups', className: 'numeric', render: (row) =>
+      row.directory_type === 'system' ? number(row.talkgroups) : '' },
+    { id: 'radios', label: 'Radios', className: 'numeric', render: (row) =>
+      row.directory_type === 'system' ? number(row.radios) : '' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
   ];
-  content.append(pagedSection('System Directory', page, columns, 'Search system or site name', 'systems'));
+  content.append(searchBar('Search system, site name, or GUID'));
+  const directory = section('System Directory', table(rows, columns, 'No systems or sites recorded', {
+    type: 'system-directory',
+    sortable: false,
+    rowClass: (row) => `directory-${row.directory_type}-row`
+  }));
+  const truncated = (page.rows || []).filter((row) => row.children_truncated);
+  if (truncated.length) directory.append(node('div', 'directory-warning',
+    `${number(truncated.length)} system group${truncated.length === 1 ? '' : 's'} exceeded the child-site display limit.`));
+  directory.append(pager(page));
+  content.append(directory);
 }
 
 async function renderSites() {
-  const page = await api('/api/sites', pageParameters());
-  content.append(pageHeader('Sites', 'All observed trunked sites with their parent system'));
-  content.append(pagedSection('Sites', page, siteColumns, 'Search site name or GUID', 'sites'));
+  return renderSystems();
 }
 
 async function renderSystem() {
-  const systemScope = requiredSystemScope();
+  const systemScope = await routedSystemScope();
   const response = await api('/api/system', systemScope);
   const system = response.system;
-  const tab = route.get('tab') || 'info';
+  const requestedTab = route.get('tab') || 'info';
+  const tab = requestedTab === 'sites' ? 'info' : requestedTab;
   content.append(pageHeader(systemLabel(system), system.site_names || 'P25 trunked system'), systemTabs(system, tab));
 
-  if (tab === 'sites') {
-    const page = await api('/api/system/sites', pageParameters(systemScope));
-    content.append(pagedSection('Sites', page, siteColumns, 'Search site name or GUID', 'sites'));
-  } else if (tab === 'talkgroups') {
+  if (tab === 'talkgroups') {
     const page = await api('/api/system/talkgroups', pageParameters(systemScope));
     content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups'));
   } else if (tab === 'radios') {
@@ -2141,32 +2257,41 @@ async function renderSystem() {
   } else if (tab === 'talker-aliases') {
     const page = await api('/api/system/talker-aliases', pageParameters(systemScope));
     const columns = [
-      { id: 'radio', label: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
-      { id: 'talker-alias', label: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
-      { id: 'radio-alias', label: 'Configured Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
+      { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
+      { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
+      { id: 'radio-alias', label: 'Alias', fullLabel: 'Configured Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
       { id: 'talkgroup-id', label: 'Last TGID', render: (row) => talkgroupLink(row, row.last_talkgroup_id), className: 'numeric', sort: 'last_talkgroup', sortValue: (row) => Number(row.last_talkgroup_id) },
-      { id: 'talkgroup-name', label: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.last_talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'last_talkgroup_name', sortValue: (row) => row.talkgroup_alias_name || '' },
+      { id: 'talkgroup-name', label: 'TG Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.last_talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'last_talkgroup_name', sortValue: (row) => row.talkgroup_alias_name || '' },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
       { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-      { id: 'last-seen', label: 'Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
+      { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
     ];
     const block = pagedSection('Talker Alias Summary', page, columns,
       'Search radio ID or talker alias', 'talker-aliases');
     if (!page.rows.length) block.querySelector('.empty').textContent = 'No talker aliases recorded for this system';
     content.append(block);
   } else {
-    content.append(metrics([
+    const infoColumn = node('div', 'entity-info-column system-info-column');
+    const summary = metrics([
       ['Sites', system.sites], ['Talkgroups', system.talkgroups], ['Radios', system.radios],
       ['Affiliated', system.affiliations], ['Calls', system.activity_calls]
-    ]));
-    content.append(section('System Info', keyValues([
+    ]);
+    summary.classList.add('system-summary-band');
+    infoColumn.append(summary, section('System Info', keyValues([
       ['System', systemLabel(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
-    ])));
-    content.append(section('Observed Actions', table(withoutGrantActions(response.actionCounts), [
+    ])), section('Observed Actions', fragment(table(withoutGrantActions(response.actionCounts), [
       { label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-    ], 'No actions recorded', { type: 'action-counts' })));
+    ], 'No actions recorded', { type: 'action-counts' }), activityMetricGuide())));
+
+    const sitesPage = await api('/api/system/sites', pageParameters(systemScope));
+    const sitesColumn = node('div', 'entity-info-column system-sites-column');
+    sitesColumn.append(pagedSection('Sites', sitesPage, scopedSiteColumns,
+      'Search site name or GUID', 'sites'));
+    const layout = node('div', 'entity-info-layout system-info-layout');
+    layout.append(infoColumn, sitesColumn);
+    content.append(layout);
   }
 }
 
@@ -2189,11 +2314,11 @@ async function renderTalkgroup() {
     const columns = [
       { id: 'radio', label: 'Radio', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
       { id: 'alias', label: 'Alias', render: (row) => row.radio_alias_name ? radioLink(row, row.radio_id, row.radio_alias_name) : '', className: 'alias-cell', sort: 'radio_alias', sortValue: (row) => row.radio_alias_name || '' },
-      { label: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
-      { id: 'affiliated', label: 'Affiliated', render: (row) => checkbox(affiliated.has(Number(row.radio_id))), className: 'center', sort: 'affiliated', sortValue: (row) => affiliated.has(Number(row.radio_id)) },
+      { label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
+      { id: 'affiliated', label: 'Affil', fullLabel: 'Affiliated', render: (row) => checkbox(affiliated.has(Number(row.radio_id))), className: 'center', sort: 'affiliated', sortValue: (row) => affiliated.has(Number(row.radio_id)) },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
       { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-      { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     content.append(pagedSection('Radios', relationships, columns, null, 'talkgroup-radios'));
   } else if (tab === 'activity') {
@@ -2244,11 +2369,11 @@ async function renderRadio() {
       pageParameters({ ...systemScope, radio_id: id }));
     const columns = [
       { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
-      { id: 'talkgroup-name', label: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row,
+      { id: 'talkgroup-name', label: 'TG Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row,
         row.talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'talkgroup_alias', sortValue: (row) => row.talkgroup_alias_name || '' },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
       { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-      { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     content.append(pagedSection('Talkgroups', relationships, columns, null, 'radio-talkgroups'));
   } else if (tab === 'activity') {
@@ -2268,10 +2393,10 @@ async function renderRadio() {
       ['Last Alg', encryptionAlgorithm(radio.last_encryption_algorithm_id)],
       ['Last Key ID', hexDecimal(radio.last_encryption_key_id)]
     ])));
-    content.append(section('Action Counts', table(actionCounts(radio).map(([action, count]) => ({ action, count })), [
+    content.append(section('Action Counts', fragment(table(actionCounts(radio).map(([action, count]) => ({ action, count })), [
       { label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-    ], 'No actions recorded', { type: 'action-counts' })));
+    ], 'No actions recorded', { type: 'action-counts' }), activityMetricGuide())));
   }
 }
 
@@ -2280,7 +2405,8 @@ async function renderSite() {
   if (!guid) throw new Error('Site GUID is missing from the URL');
   const response = await api('/api/site', { guid });
   const site = response.site;
-  const tab = route.get('tab') || 'info';
+  const requestedTab = route.get('tab') || 'info';
+  const tab = requestedTab === 'talkgroups' ? 'info' : requestedTab;
   content.append(pageHeader(siteLabel(site), `${systemLabel(site)} · ${hexDecimal(site.rfss, 2)}-${hexDecimal(site.site, 2)}`),
     siteTabs(site, tab));
 
@@ -2289,17 +2415,17 @@ async function renderSite() {
   } else if (tab === 'channels') {
     const data = await api('/api/site/channels', { guid });
     const columns = [
-      { label: 'LCN / Modes', key: 'descriptor' },
+      { label: 'LCN / Mode', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
       { label: 'Callsign', key: 'callsign' },
       { label: 'Tags', key: 'tags', render: channelTags },
-      { id: 'downlink', label: 'Downlink MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
-      { id: 'uplink', label: 'Uplink MHz', render: (row) => frequency(row.uplink_hz), className: 'numeric', sortValue: (row) => Number(row.uplink_hz || 0) },
+      { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
+      { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz', render: (row) => frequency(row.uplink_hz), className: 'numeric', sortValue: (row) => Number(row.uplink_hz || 0) },
       { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
       { label: 'Slots', key: 'timeslots', className: 'numeric' },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { label: 'Voice Grants', key: 'voice_grant_observations', className: 'numeric' },
-      { label: 'Data Grants', key: 'data_grant_observations', className: 'numeric' },
-      { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { label: 'Voice', fullLabel: 'Voice Grant Observations', key: 'voice_grant_observations', className: 'numeric' },
+      { label: 'Data', fullLabel: 'Data Grant Observations', key: 'data_grant_observations', className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     const rows = data.rows || [];
     content.append(section('Channels', table(rows, columns, 'No channels recorded', { type: 'site-channels' })));
@@ -2307,28 +2433,28 @@ async function renderSite() {
     const data = await api('/api/site/neighbors', { guid });
     content.append(section('Neighbors', table(data.rows || [], [
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'system', label: 'System', render: (row) => hexDecimal(row.system_id, 3), sortValue: (row) => Number(row.system_id || 0) },
+      { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hexDecimal(row.system_id, 3), sortValue: (row) => Number(row.system_id || 0) },
       { id: 'rfss', label: 'RFSS', render: (row) => hexDecimal(row.rfss, 2), sortValue: (row) => Number(row.rfss || 0) },
       { id: 'site', label: 'Site', render: (row) => hexDecimal(row.site, 2), sortValue: (row) => Number(row.site || 0) },
       { label: 'LCN', key: 'channel_descriptor' },
-      { id: 'control-frequency', label: 'Control MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
-      { id: 'advertised-status', label: 'Advertised Status', render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
-      { label: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
+      { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status', render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
+      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No neighbors recorded', { type: 'site-neighbors' })));
   } else if (tab === 'band-plan') {
     const data = await api('/api/site/bands', { guid });
     content.append(section('Band Plan', table(data.rows || [], [
       { label: 'Band', key: 'band', className: 'numeric' },
-      { id: 'base', label: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
-      { id: 'spacing', label: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
-      { label: 'Bandwidth Hz', key: 'bandwidth', className: 'numeric' },
-      { id: 'offset', label: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
+      { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
+      { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
+      { label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth', className: 'numeric' },
+      { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
       { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
       { label: 'Slots', key: 'timeslots', className: 'numeric' },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { label: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No band plan recorded', { type: 'site-bands' })));
   } else if (tab === 'patches') {
     const data = await api('/api/site/patches', { guid });
@@ -2352,22 +2478,22 @@ async function renderSite() {
     };
     const groups = data.groups || [];
     const columns = [
-      { id: 'patch-id', label: 'Patch TGID', render: (row) => talkgroupLink(site, row.patch_group), className: 'numeric', sortValue: (row) => Number(row.patch_group) },
-      { id: 'patch-name', label: 'Patch Name', render: (row) => row.patch_alias_name ?
+      { id: 'patch-id', label: 'Patch', fullLabel: 'Patch Talkgroup ID', render: (row) => talkgroupLink(site, row.patch_group), className: 'numeric', sortValue: (row) => Number(row.patch_group) },
+      { id: 'patch-name', label: 'Name', fullLabel: 'Patch Name', render: (row) => row.patch_alias_name ?
         talkgroupLink(site, row.patch_group, row.patch_alias_name) : '', className: 'alias-cell', sortValue: (row) => row.patch_alias_name || '' },
-      { id: 'member-talkgroup-ids', label: 'Member TGIDs', render: (row) =>
+      { id: 'member-talkgroup-ids', label: 'TGIDs', fullLabel: 'Member Talkgroup IDs', render: (row) =>
         memberLinks(talkgroups.get(row.patch_group), (member) => talkgroupLink(site, member.talkgroup_id)) },
-      { id: 'member-talkgroup-names', label: 'Talkgroup Names', className: 'alias-cell', render: (row) =>
+      { id: 'member-talkgroup-names', label: 'TG Names', fullLabel: 'Talkgroup Names', className: 'alias-cell', render: (row) =>
         memberLinks(talkgroups.get(row.patch_group), (member) => member.alias_name ?
           talkgroupLink(site, member.talkgroup_id, member.alias_name) : '') },
-      { id: 'member-radio-ids', label: 'Radio IDs', render: (row) =>
+      { id: 'member-radio-ids', label: 'Radios', fullLabel: 'Radio IDs', render: (row) =>
         memberLinks(radios.get(row.patch_group), (member) => radioLink(site, member.radio_id)) },
       { id: 'member-radio-names', label: 'Radio Names', className: 'alias-cell', render: (row) =>
         memberLinks(radios.get(row.patch_group), (member) => member.alias_name ?
           radioLink(site, member.radio_id, member.alias_name) : '') },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { label: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     if (groups.some((row) => Number(row.version))) columns.splice(2, 0,
       { label: 'Version', key: 'version', className: 'numeric' });
@@ -2403,17 +2529,17 @@ async function renderSite() {
 
 function activityColumns() {
   return [
-    { id: 'time', label: 'Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
+    { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
     { label: 'Action', key: 'action' },
     { label: 'Event', key: 'event_type' },
-    { id: 'source', label: 'Source', render: (row) => radioLink(row, row.source_radio_id), className: 'numeric', sortValue: (row) => Number(row.source_radio_id || 0) },
-    { id: 'source-alias', label: 'Source Alias', render: (row) => row.source_alias_name ? radioLink(row, row.source_radio_id, row.source_alias_name) : '', className: 'alias-cell', sortValue: (row) => row.source_alias_name || '' },
-    { id: 'target', label: 'Target', render: (row) => TALKGROUP_TARGET_KINDS.has(Number(row.target_kind_code)) ? talkgroupLink(row, row.target_id) : row.target_id, className: 'numeric', sortValue: (row) => Number(row.target_id || 0) },
-    { id: 'target-alias', label: 'Target Alias', render: (row) => row.target_alias_name || '', className: 'alias-cell', sortValue: (row) => row.target_alias_name || '' },
+    { id: 'source', label: 'Src', fullLabel: 'Source ID', render: (row) => radioLink(row, row.source_radio_id), className: 'numeric', sortValue: (row) => Number(row.source_radio_id || 0) },
+    { id: 'source-alias', label: 'Src Alias', fullLabel: 'Source Alias', render: (row) => row.source_alias_name ? radioLink(row, row.source_radio_id, row.source_alias_name) : '', className: 'alias-cell', sortValue: (row) => row.source_alias_name || '' },
+    { id: 'target', label: 'Tgt', fullLabel: 'Target ID', render: (row) => TALKGROUP_TARGET_KINDS.has(Number(row.target_kind_code)) ? talkgroupLink(row, row.target_id) : row.target_id, className: 'numeric', sortValue: (row) => Number(row.target_id || 0) },
+    { id: 'target-alias', label: 'Tgt Alias', fullLabel: 'Target Alias', render: (row) => row.target_alias_name || '', className: 'alias-cell', sortValue: (row) => row.target_alias_name || '' },
     { id: 'frequency', label: 'MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
     { label: 'LCN', key: 'lcn' },
     { label: 'Slot', key: 'timeslot', className: 'numeric' },
-    { id: 'encryption', label: 'Encryption', render: (row) => row.encrypted ? `${encryptionAlgorithm(row.encryption_algorithm_id)}:${hexDecimal(row.encryption_key_id)}` : '', className: 'encrypted', sortValue: (row) => row.encrypted ? `${row.encryption_algorithm_id}:${row.encryption_key_id}` : '' }
+    { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) => row.encrypted ? `${encryptionAlgorithm(row.encryption_algorithm_id)}:${hexDecimal(row.encryption_key_id)}` : '', className: 'encrypted', sortValue: (row) => row.encrypted ? `${row.encryption_algorithm_id}:${row.encryption_key_id}` : '' }
   ];
 }
 
@@ -2461,11 +2587,11 @@ async function renderConventional() {
       href('conventional-detail', { context: row.context_key, tab: 'info' })), className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.context_key },
     { id: 'protocol', label: 'Protocol', render: (row) => protocol(row.protocol_code), sort: 'protocol', sortValue: (row) => protocol(row.protocol_code) },
     { label: 'Decoder', key: 'decoder', sort: 'decoder' },
-    { id: 'frequency', label: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
+    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
     { label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot' },
     { id: 'nac', label: 'NAC', render: (row) => hexDecimal(row.nac, 3), sort: 'nac', sortValue: (row) => Number(row.nac || 0) },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-    { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
   content.append(pagedSection('Conventional Channels', page, columns, 'Search name or frequency', 'conventional'));
 }
@@ -2493,11 +2619,11 @@ async function renderConventionalDetail() {
       ['Last Seen', dateTime(context.last_seen_ms)]
     ])));
     content.append(section('Frequency Summaries', table(data.summaries || [], [
-      { id: 'frequency', label: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
+      { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
       { label: 'Slot', key: 'timeslot', className: 'numeric' },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
-      { id: 'first-seen', label: 'First Seen', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
-      { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { id: 'first-seen', label: 'First', fullLabel: 'First Seen', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No frequency summaries recorded', { type: 'conventional-frequencies' })));
   }
 }
@@ -2593,6 +2719,10 @@ async function loadStatus(refreshCurrentView = false) {
 }
 
 async function render() {
+  if (route.get('view') === 'sites') {
+    route.set('view', 'systems');
+    window.history.replaceState({}, '', `${window.location.pathname}?${route}`);
+  }
   const view = route.get('view') || 'dashboard';
   document.body.dataset.view = view;
   closePageConnections();

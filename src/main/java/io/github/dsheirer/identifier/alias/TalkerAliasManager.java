@@ -19,7 +19,9 @@
 
 package io.github.dsheirer.identifier.alias;
 
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
@@ -65,27 +67,32 @@ public class TalkerAliasManager
 
     /**
      * Enriches the immutable identifier collection by detecting a radio identifier with the FROM role, lookup a
-     * matching alias, and insert the alias into a new mutable identifier collection.
+     * matching alias, and insert the alias into a new mutable identifier collection.  Any existing talker alias is
+     * removed first so that an alias for a previous FROM radio cannot survive a source-radio change.
      * @param originalIC to enrich
-     * @return enriched identifier collection or the original identifier collection if we don't have an alias.
+     * @return an enriched or stale-alias-cleaned collection, or the original when no change is required.
      */
     public synchronized IdentifierCollection enrich(IdentifierCollection originalIC)
     {
         Identifier fromRadio = originalIC.getFromIdentifier();
+        TalkerAliasIdentifier alias = fromRadio instanceof RadioIdentifier rid ? mAliasMap.get(rid.getValue()) : null;
+        Identifier existingAlias = originalIC.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
 
-        if(fromRadio instanceof RadioIdentifier rid)
+        if(alias == null && existingAlias == null)
         {
-            TalkerAliasIdentifier alias = mAliasMap.get(rid.getValue());
-
-            if(alias != null)
-            {
-                MutableIdentifierCollection enrichedIC = new MutableIdentifierCollection(originalIC.getIdentifiers());
-                enrichedIC.update(alias);
-                return enrichedIC;
-            }
+            return originalIC;
         }
 
-        return originalIC;
+        MutableIdentifierCollection enrichedIC = new MutableIdentifierCollection(originalIC.getIdentifiers(),
+            originalIC.getTimeslot());
+        enrichedIC.remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+
+        if(alias != null)
+        {
+            enrichedIC.update(alias);
+        }
+
+        return enrichedIC;
     }
 
     /**
@@ -96,6 +103,7 @@ public class TalkerAliasManager
     public synchronized void enrichMutable(MutableIdentifierCollection mic)
     {
         Identifier fromRadio = mic.getFromIdentifier();
+        mic.remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
 
         if(fromRadio instanceof RadioIdentifier rid)
         {

@@ -18,7 +18,10 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -190,6 +193,40 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void activityPaginatesByTimestampAndIdInsteadOfInsertionOrder() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code)
+                VALUES (1, 5000, 0, 0), (1, 4000, 0, 0), (1, 6000, 0, 0), (1, 4000, 0, 0)
+                """);
+        }
+
+        Map<String,Object> firstPage = mDatabase.activity(request(
+            "/api/activity?guid=" + GUID + "&limit=2"));
+        assertEquals(List.of(6000L, 5000L), rows(firstPage).stream()
+            .map(row -> number(row.get("observed_at_ms"))).toList());
+        assertTrue((Boolean)firstPage.get("hasMore"));
+
+        long firstCursor = number(firstPage.get("nextBeforeId"));
+        Map<String,Object> secondPage = mDatabase.activity(request(
+            "/api/activity?guid=" + GUID + "&limit=2&before_id=" + firstCursor));
+        assertEquals(List.of(4000L, 4000L), rows(secondPage).stream()
+            .map(row -> number(row.get("observed_at_ms"))).toList());
+        assertTrue(number(rows(secondPage).getFirst().get("id")) >
+            number(rows(secondPage).getLast().get("id")));
+
+        long secondCursor = number(secondPage.get("nextBeforeId"));
+        Map<String,Object> thirdPage = mDatabase.activity(request(
+            "/api/activity?guid=" + GUID + "&limit=2&before_id=" + secondCursor));
+        assertEquals(List.of(2001L, 2000L), rows(thirdPage).stream()
+            .map(row -> number(row.get("observed_at_ms"))).toList());
+        assertFalse((Boolean)thirdPage.get("hasMore"));
+    }
+
+    @Test
     void scopesAliasesToEachSystemsAssignedAliasList() throws Exception
     {
         seedSecondSystem(mDatabasePath);
@@ -267,27 +304,161 @@ class StatsWebDatabaseTest
         assertEquals(10, number(hours.getLast().get("call_count")));
         assertFalse(hours.getLast().containsKey("grant_count"));
         assertTrue(hours.stream().limit(23).allMatch(row -> number(row.get("call_count")) == 0));
-        assertEquals(10, rowsFrom(dashboard, "actionMix").stream()
-            .filter(row -> "CALL".equals(row.get("action")))
-            .mapToLong(row -> number(row.get("count")))
-            .findFirst().orElseThrow());
-        assertTrue(rowsFrom(dashboard, "actionMix").stream()
-            .noneMatch(row -> "GRANT".equals(row.get("action"))));
         assertTrue(rowsFrom(mDatabase.system(request(
             "/api/system?wacn=BEE00&system_id=0x348")), "actionCounts").stream()
             .noneMatch(row -> "GRANT".equals(row.get("action"))));
         Map<String,Object> p25CallActivity = map(dashboard, "p25CallActivity");
         Map<String,Object> p25Totals = map(p25CallActivity, "totals");
         assertEquals(7, number(p25Totals.get("call_count")));
+        assertEquals(3, number(p25Totals.get("non_p25_call_count")));
         assertEquals(5, number(p25Totals.get("recorded_count")));
         assertEquals(4, number(p25Totals.get("streamed_count")));
         List<Map<String,Object>> p25Series = rowsFrom(p25CallActivity, "series");
         assertEquals(24, p25Series.size());
         assertEquals(currentHour, number(p25Series.getLast().get("time_ms")));
         assertEquals(7, number(p25Series.getLast().get("call_count")));
+        assertEquals(3, number(p25Series.getLast().get("non_p25_call_count")));
         assertEquals(5, number(p25Series.getLast().get("recorded_count")));
         assertEquals(4, number(p25Series.getLast().get("streamed_count")));
         assertTrue(number(p25CallActivity.get("metric_start_ms")) > 0);
+        Map<String,Object> siteActivity = map(dashboard, "siteActivity24h");
+        List<Map<String,Object>> sites = rows(siteActivity);
+        assertEquals(1, sites.size());
+        assertEquals(GUID, sites.getFirst().get("guid"));
+        assertEquals("Cleveland Simulcast", sites.getFirst().get("channel_name"));
+        assertEquals(SYSTEM, number(sites.getFirst().get("system_id")));
+        assertEquals(7, number(sites.getFirst().get("call_count")));
+        assertEquals(7, number(sites.getFirst().get("total_call_count")));
+    }
+
+    @Test
+    void dashboardRanksEachSiteSeparately() throws Exception
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        long firstHour = currentHour - 23L * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
+                    first_seen_ms, last_seen_ms, system_key, rfss, site)
+                VALUES (3, 'site-lakewood', 'test-site-lakewood', 1, 1, 'Lakewood', 1000, 2000, 1, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
+                VALUES (1, %d, 7), (3, %d, 3), (1, %d, 5)
+                """.formatted(currentHour, currentHour, firstHour));
+        }
+
+        Map<String,Object> activity = map(mDatabase.dashboard(), "siteActivity24h");
+        List<Map<String,Object>> rows = rows(activity);
+        assertEquals(2, rows.size());
+        assertEquals(GUID, rows.getFirst().get("guid"));
+        assertEquals(12, number(rows.getFirst().get("call_count")));
+        assertEquals("test-site-lakewood", rows.getLast().get("guid"));
+        assertEquals(3, number(rows.getLast().get("call_count")));
+        assertTrue(rows.stream().allMatch(row -> number(row.get("total_call_count")) == 15));
+        assertEquals(firstHour, number(activity.get("from_ms")));
+    }
+
+    @Test
+    void siteActivityDashboardQueryUsesTheTimeIndexAtRepresentativeVolume() throws Exception
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        long firstHour = currentHour - 23L * 3_600_000L;
+        long previousFirstHour = firstHour - 24L * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            connection.setAutoCommit(false);
+            try(PreparedStatement contexts = connection.prepareStatement("""
+                INSERT INTO receiver_context (id, context_key, kind_code, protocol_code, first_seen_ms,
+                    last_seen_ms, system_key) VALUES (?, ?, 1, 1, 1000, 2000, 1)
+                """);
+                PreparedStatement buckets = connection.prepareStatement("""
+                    INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
+                    VALUES (?, ?, ?)
+                    """))
+            {
+                for(int context = 100; context < 150; context++)
+                {
+                    contexts.setInt(1, context);
+                    contexts.setString(2, "volume-site-" + context);
+                    contexts.addBatch();
+
+                    for(int hour = 0; hour < 48; hour++)
+                    {
+                        buckets.setInt(1, context);
+                        buckets.setLong(2, previousFirstHour + hour * 3_600_000L);
+                        buckets.setInt(3, 1);
+                        buckets.addBatch();
+                    }
+                }
+
+                contexts.executeBatch();
+                buckets.executeBatch();
+            }
+            connection.commit();
+
+            List<String> plan = new ArrayList<>();
+            try(PreparedStatement statement = connection.prepareStatement(
+                "EXPLAIN QUERY PLAN " + StatsWebDatabase.DASHBOARD_SITE_ACTIVITY_SQL))
+            {
+                statement.setLong(1, firstHour);
+                statement.setLong(2, currentHour + 3_600_000L);
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    while(resultSet.next())
+                    {
+                        plan.add(resultSet.getString("detail"));
+                    }
+                }
+            }
+
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_site_activity_bucket_time")),
+                () -> "Expected time-indexed bucket scan, plan was: " + plan);
+            assertTrue(plan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+        }
+    }
+
+    @Test
+    void detailedSiteActivityQueryUsesTheContextTimeIndexAtRepresentativeVolume() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT value + 1 FROM sequence WHERE value < 50000
+                )
+                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code)
+                SELECT 1, 10000 + value, 0, 0 FROM sequence
+                """);
+
+            List<String> plan = new ArrayList<>();
+            try(PreparedStatement query = connection.prepareStatement("EXPLAIN QUERY PLAN " +
+                StatsWebDatabase.ACTIVITY_SELECT_SQL + " AND guid = ?" + StatsWebDatabase.ACTIVITY_ORDER_SQL))
+            {
+                query.setString(1, GUID);
+                query.setInt(2, 201);
+
+                try(ResultSet resultSet = query.executeQuery())
+                {
+                    while(resultSet.next())
+                    {
+                        plan.add(resultSet.getString("detail"));
+                    }
+                }
+            }
+
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_activity_event_context_time")),
+                () -> "Expected context/time-indexed activity scan, plan was: " + plan);
+            assertTrue(plan.stream().noneMatch(detail -> detail.contains("USE TEMP B-TREE")),
+                () -> "Expected index-ordered activity results, plan was: " + plan);
+        }
     }
 
     @Test
@@ -508,6 +679,46 @@ class StatsWebDatabaseTest
 
         assertEquals("Alpha Channel", rows(mDatabase.conventional(request(
             "/api/conventional?sort=name&direction=asc&limit=1"))).getFirst().get("channel_name"));
+    }
+
+    @Test
+    void groupsSystemDirectoryParentsAndChildrenInFixedIdentityOrder() throws Exception
+    {
+        seedSecondSystem(mDatabasePath);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO p25_system VALUES (3, 1, 4095, 1000, 4000)");
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                    protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
+                    primary_frequency_hz, current_control_hz)
+                VALUES ('earlier-child', 'earlier-child-hash', 1000, 2500, 1, 'APCO25', 'Earlier Child',
+                    'County', 'P25-1', 1, 0x49F, 0, 9, 857137500, 857137500)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                    protocol, channel_name, alias_list_name, decoder, system_key, nac,
+                    primary_frequency_hz, current_control_hz)
+                VALUES ('unknown-child', 'unknown-child-hash', 1000, 2400, 1, 'APCO25', 'Unknown Child',
+                    'County', 'P25-1', 1, 0x49F, 858137500, 858137500)
+                """);
+        }
+
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+        Map<String,Object> directory = mDatabase.systemDirectory(request(
+            "/api/system-directory?sort=last_seen&direction=desc"));
+        List<Map<String,Object>> systems = rows(directory);
+        assertEquals(1, number(systems.getFirst().get("wacn")));
+        assertEquals(4095, number(systems.getFirst().get("system_id")));
+        assertEquals(SYSTEM, number(systems.get(1).get("system_id")));
+        assertEquals(SECOND_SYSTEM, number(systems.getLast().get("system_id")));
+        List<Map<String,Object>> children = rowsFrom(systems.get(1), "children");
+        assertEquals("earlier-child", children.getFirst().get("guid"));
+        assertEquals(GUID, children.get(1).get("guid"));
+        assertEquals("unknown-child", children.getLast().get("guid"));
+        assertFalse((Boolean)systems.get(1).get("children_truncated"));
     }
 
     private static StatsRequest request(String uri)

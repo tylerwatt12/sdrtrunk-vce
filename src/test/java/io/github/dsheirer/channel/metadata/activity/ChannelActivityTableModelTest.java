@@ -122,7 +122,7 @@ class ChannelActivityTableModelTest
             851_012_500L, null);
         row.addTag(ChannelTag.CURRENT_CONTROL);
 
-        assertTrue(ChannelActivityPanel.isSiteControlSelection(row));
+        assertTrue(ChannelActivitySelectionController.isSiteControl(row));
     }
 
     @Test
@@ -135,7 +135,7 @@ class ChannelActivityTableModelTest
         ChannelActivityRow current = model.getOrCreate("current", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
             852_012_500L, null);
 
-        assertSame(current, ChannelActivityPanel.findPreferredSiteControlRow(model));
-        assertTrue(ChannelActivityPanel.isSiteControlSelection(configured));
+        assertSame(current, ChannelActivitySelectionController.findPreferredSiteControl(model));
+        assertTrue(ChannelActivitySelectionController.isSiteControl(configured));
     }
 }
