@@ -14,7 +14,7 @@ is_publication_path()
 {
     case "$1" in
         README|README.*|CHANGELOG|CHANGELOG.*|RELEASING|RELEASING.*|NOTICE|NOTICE.*|\
-        *.md|*.markdown|*.rst|*.adoc|*.txt|*.csv|*.tsv|*.tar.gz|*.tgz|\
+        *.md|*.markdown|*.rst|*.adoc|*.html|*.htm|*.txt|*.csv|*.tsv|*.tar.gz|*.tgz|\
         .github/*.json|.github/*.yml|.github/*.yaml|\
         .github/**/*.json|.github/**/*.yml|.github/**/*.yaml)
             return 0

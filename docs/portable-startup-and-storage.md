@@ -9,8 +9,8 @@ SDRTrunk-VCE keeps each extracted distribution independent from stock SDRTrunk a
 - Development launches: `<working-directory>/data`, unless `sdrtrunk.vce.data.root` is set
 
 The data directory owns the SQLite database, vault, preferences, logs, recordings, event logs, screenshots, streaming
-files, JMBE libraries, and optional modules. Java Preferences are stored in the SQLite `application_settings` table;
-the operating-system Java preference store is not used by the normal application.
+files, temporary bug-report bundles, JMBE libraries, and optional modules. Java Preferences are stored in the SQLite
+`application_settings` table; the operating-system Java preference store is not used by the normal application.
 
 ## First Launch
 

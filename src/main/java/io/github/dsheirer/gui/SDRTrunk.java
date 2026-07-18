@@ -37,12 +37,14 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
+import io.github.dsheirer.gui.bugreport.BugReportDialog;
 import io.github.dsheirer.gui.preference.CalibrateRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.calibration.CalibrationDialog;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
+import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.map.MapService;
@@ -331,6 +333,7 @@ public class SDRTrunk implements Listener<TunerEvent>
                 if(!GraphicsEnvironment.isHeadless())
                 {
                     mMainGui.setVisible(true);
+                    WhatsNewDialog.showOnFirstLaunch(mMainGui);
 
                     if(mSpectralPanelVisible)
                     {
@@ -790,6 +793,20 @@ public class SDRTrunk implements Listener<TunerEvent>
         menuBar.add(screenCaptureItem);
 
         JMenu helpMenu = new JMenu("Help");
+        if(WhatsNewDialog.hasCurrent())
+        {
+            JMenuItem whatsNewItem = new JMenuItem("What's New");
+            whatsNewItem.addActionListener(event -> WhatsNewDialog.showCurrent(mMainGui));
+            helpMenu.add(whatsNewItem);
+            helpMenu.add(new JSeparator());
+        }
+
+        JMenuItem bugReportItem = new JMenuItem("Submit Bug Report...");
+        bugReportItem.setIcon(IconFontSwing.buildIcon(FontAwesome.BUG, 12));
+        bugReportItem.addActionListener(event ->
+            new BugReportDialog(mMainGui, mUserPreferences, mTunerManager).setVisible(true));
+        helpMenu.add(bugReportItem);
+        helpMenu.add(new JSeparator());
         JMenuItem creditsItem = new JMenuItem("Credits & Licensing");
         creditsItem.addActionListener(event -> new CreditsDialog(mMainGui).setVisible(true));
         helpMenu.add(creditsItem);
