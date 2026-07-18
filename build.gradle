@@ -63,6 +63,83 @@ def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlat
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
+def releaseVersion = version.toString()
+def releaseNotesDirectory = file('src/main/resources/release-notes')
+def releaseNotesMetadataFile = file("${releaseNotesDirectory}/${releaseVersion}.properties")
+def releaseNotesHtmlFile = file("${releaseNotesDirectory}/${releaseVersion}.html")
+def isNumberedPublicRelease = { String candidate ->
+    def normalized = candidate.toLowerCase(Locale.US)
+    !normalized.contains('nightly') && !normalized.contains('snapshot') && !normalized.contains('dev')
+}
+
+tasks.register('verifyReleaseNotesContent') {
+    group = 'verification'
+    description = 'Checks that the current numbered version has complete rich-text release notes.'
+    inputs.property('releaseVersion', releaseVersion)
+    inputs.files(releaseNotesMetadataFile, releaseNotesHtmlFile)
+
+    doLast {
+        if(!isNumberedPublicRelease(releaseVersion)) {
+            return
+        }
+
+        if(!releaseNotesMetadataFile.isFile() || !releaseNotesHtmlFile.isFile()) {
+            throw new GradleException("Public release ${releaseVersion} requires ${releaseNotesMetadataFile} and ${releaseNotesHtmlFile}")
+        }
+
+        def metadata = new Properties()
+        releaseNotesMetadataFile.withReader('UTF-8') { reader -> metadata.load(reader) }
+
+        if(metadata.getProperty('version', '').trim() != releaseVersion) {
+            throw new GradleException("Release-note version must exactly match projectVersion ${releaseVersion}")
+        }
+
+        if(metadata.getProperty('title', '').trim().isEmpty()) {
+            throw new GradleException("Release-note title is missing for ${releaseVersion}")
+        }
+
+        def html = releaseNotesHtmlFile.getText('UTF-8')
+        ['What', 'Added', 'Changed', 'Fixed', 'Removed', 'Before You Upgrade'].each { heading ->
+            if(!html.contains(heading)) {
+                throw new GradleException("Release notes for ${releaseVersion} are missing the '${heading}' section")
+            }
+        }
+
+        def plainWords = html.replaceAll('<[^>]+>', ' ').trim().split('\\s+').findAll { !it.isBlank() }
+        if(plainWords.size() < 150) {
+            throw new GradleException("Release notes for ${releaseVersion} are too brief (${plainWords.size()} words)")
+        }
+    }
+}
+
+tasks.register('verifyApprovedReleaseNotes') {
+    group = 'verification'
+    description = 'Stops public packaging until the versioned release notes have explicit human approval.'
+    dependsOn('verifyReleaseNotesContent')
+    inputs.property('releaseVersion', releaseVersion)
+    inputs.file(releaseNotesMetadataFile)
+
+    doLast {
+        if(!isNumberedPublicRelease(releaseVersion)) {
+            return
+        }
+
+        def metadata = new Properties()
+        releaseNotesMetadataFile.withReader('UTF-8') { reader -> metadata.load(reader) }
+
+        if(!metadata.getProperty('status', '').trim().equalsIgnoreCase('approved')) {
+            throw new GradleException("Release notes for ${releaseVersion} are still a draft. Stop, obtain user approval, then set status=approved in ${releaseNotesMetadataFile}.")
+        }
+    }
+}
+
+def publicPackagingTasks = ['runtimeZipCurrent', 'runtimeZipWindows', 'runtimeZipOthers', 'image', 'macAppZip'] as Set
+tasks.configureEach { candidate ->
+    if(publicPackagingTasks.contains(candidate.name)) {
+        candidate.dependsOn('verifyApprovedReleaseNotes')
+    }
+}
+
 //Java 25 is required for this version of the Project Panama preview/incubator feature
 java {
     toolchain {
@@ -117,6 +194,7 @@ dependencies {
     implementation 'com.github.wendykierp:JTransforms:3.1'
     implementation 'com.google.code.gson:gson:2.13.2'
     implementation 'com.google.guava:guava:33.5.0-jre'
+    implementation 'com.github.oshi:oshi-core:7.4.0'
     implementation 'com.jidesoft:jide-oss:3.6.18'
     implementation 'com.miglayout:miglayout-swing:11.4.2'
     implementation 'com.mpatric:mp3agic:0.9.1'
@@ -284,7 +362,7 @@ def applicationJvmArgs = javafxPlatform == "win" ? jvmArgsWindows : (javafxPlatf
 def jpmsJvmArgsMac =
         ['--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls', //Needed for controls-fx.jar
          '-Dsdrtrunk.stats.web.root=$APPDIR/stats-web',
-         '--enable-native-access=javafx.graphics,usb4java,sdr.trunk,org.xerial.sqlitejdbc'] +
+         '--enable-native-access=com.sun.jna,javafx.graphics,usb4java,sdr.trunk,org.xerial.sqlitejdbc'] +
         commonPerformanceJvmArgs
 
 application {
@@ -467,6 +545,9 @@ tasks.register('jpmsJar', Jar) {
 
     archiveFileName = jpmsAppJar.get().asFile.name
     destinationDirectory = jpmsModuleDir
+    manifest {
+        from(tasks.named('jar', Jar).get().manifest)
+    }
     from(jpmsClassesDir)
     from(layout.buildDirectory.dir('resources/main'))
     from(jpmsModuleInfoOutputDir) {

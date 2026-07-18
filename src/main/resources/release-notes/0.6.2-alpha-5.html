@@ -1,0 +1,44 @@
+<h1>What&rsquo;s New in Alpha 5</h1>
+
+<p><b>Alpha 5 makes updates easier to understand, improves help when something goes wrong, and makes P25 and web-call information clearer.</b></p>
+
+<p>This is still alpha software. Stop sdrtrunk-vce and back up its portable <code>data</code> folder before replacing an earlier build.</p>
+
+<h2>Added</h2>
+
+<ul>
+  <li><b>A one-time What&rsquo;s New window.</b> Starting with this release, a plain-language summary opens automatically the first time you run each new public version. It does not interrupt later launches. You can open it again from the Help menu.</li>
+  <li><b>Bug reports from inside the application.</b> Help &gt; Submit Bug Report lets you describe a problem, attach extra screenshots, and either send the report or save a ZIP for manual upload. Before anything is collected, the window explains exactly what is included and requires your consent.</li>
+  <li><b>More useful browser playback details.</b> The web player now keeps aliases together with their talkgroup or radio number and shows the system, channel, frequency, slot, decoder, protected-call status, and call length when available.</li>
+</ul>
+
+<h2>Changed</h2>
+
+<ul>
+  <li><b>P25 conventional imports are classified more accurately.</b> A conventional P25 frequency imported from RadioReference now becomes a P25 Conventional channel instead of a trunked P25 control channel.</li>
+  <li><b>Older XML playlists are handled more carefully.</b> Single-frequency P25 entries that look conventional are converted to P25 Conventional during a first-time import, while entries with strong signs of a trunked system are kept as trunked channels. Existing channels in an already-created portable database are not changed automatically.</li>
+  <li><b>Radio-system numbers are easier to read.</b> Compact web tables use the familiar hexadecimal form, while detail pages show labeled hexadecimal and decimal values together where both are useful.</li>
+  <li><b>Documentation has current screen images and clearer feature descriptions.</b> Obsolete screenshots were replaced with views of the current desktop and web interfaces, and a new signal-path and delay explanation helps identify where listening latency comes from.</li>
+</ul>
+
+<h2>Fixed</h2>
+
+<ul>
+  <li>The browser player now correctly identifies whether a number is a talkgroup, radio, patch, or phone number and keeps the source-to-target relationship visible for playing and queued calls.</li>
+  <li>Packaged builds now retain the exact application version and build details used by diagnostics, making submitted reports easier to match to the correct release.</li>
+</ul>
+
+<h2>Removed</h2>
+
+<p>No user feature, setting, channel, alias, recording, or stored statistic is removed by this release. Only outdated documentation images were replaced.</p>
+
+<h2>Before You Upgrade</h2>
+
+<ul>
+  <li><b>No database migration is needed from Alpha 4.</b> Alpha 5 continues to use P25 history schema version 19.</li>
+  <li>Replace the application files instead of merging two releases together, and keep your portable <code>data</code> folder.</li>
+  <li>The new bug-report tool includes the current application screenshot, application log, sanitized configuration, exact tuner identifiers and serial numbers, hostname, and basic computer details. The report service records the public address used for the upload and normally retains a report for 30 days. Recordings, the key vault, passwords, API credentials, and security-key material are excluded. Screenshots are not automatically redacted, so review the on-screen disclosure before consenting.</li>
+  <li>The P25 import improvements affect new RadioReference or legacy-XML imports. Review newly imported channels as usual; existing portable-database channels are left alone.</li>
+</ul>
+
+<p><b>Downloads:</b> Use the package that matches your operating system and processor. Java is included. JMBE remains a separate setup under Preferences &gt; Decoder &gt; JMBE Audio Library. Verify the downloaded ZIP with <code>SHA256SUMS.txt</code> before installing.</p>

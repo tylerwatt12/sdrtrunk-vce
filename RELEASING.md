@@ -3,7 +3,7 @@
 This checklist publishes a numbered `sdrtrunk-vce` alpha from `main` with self-contained Java 25 binaries for Windows,
 Linux, and macOS. It follows the asset layout used for `v0.6.2-alpha-1`.
 
-The examples below use `0.6.2-alpha-2`. Replace it with the version being published.
+The examples below use `0.6.2-alpha-5`. Replace it with the version being published.
 
 ## 1. Prepare the release
 
@@ -21,21 +21,34 @@ git config core.hooksPath .githooks
 - [ ] Set shell variables for the release:
 
 ```bash
-export VERSION=0.6.2-alpha-2
+export VERSION=0.6.2-alpha-5
 export TAG="v${VERSION}"
-export RELEASE_TITLE="sdrtrunk-vce 0.6.2 Alpha 2"
+export RELEASE_TITLE="sdrtrunk-vce 0.6.2 Alpha 5"
+export RELEASE_NOTES="src/main/resources/release-notes/${VERSION}.html"
+export RELEASE_NOTES_METADATA="src/main/resources/release-notes/${VERSION}.properties"
 ```
 
 - [ ] Set `projectVersion` in `gradle.properties` to `$VERSION`.
-- [ ] Add a dated `$VERSION` section to the changelog in `README.md`.
+- [ ] Create `$RELEASE_NOTES` as the plain-language, rich-text document bundled into the application and used as the
+      GitHub release body. It must explain what was added, changed, fixed, and removed; how users may be affected; and
+      any upgrade actions.
+- [ ] Create `$RELEASE_NOTES_METADATA` with the exact version, display title, and `status=draft`.
+- [ ] Add an unreleased `$VERSION` section to the changelog in `README.md` that agrees with the rich-text document.
+- [ ] Render and review the document for normal users. Keep programming details out unless a user must act on them.
+- [ ] **STOP FOR APPROVAL.** Show the exact rich-text document to the release owner. Do not commit, build, tag, create a
+      GitHub draft, or publish until the owner explicitly approves it. If wording changes, show the revised document
+      again.
+- [ ] After approval, change only the metadata approval field from `status=draft` to `status=approved` and date the
+      matching changelog section.
 - [ ] Check that no credentials, receiver addresses, private operational notes, databases, recordings, or local-only files
       are included in the pending changes.
-- [ ] Review and commit the release preparation:
+- [ ] Verify the approval marker and document structure, then review and commit the release preparation:
 
 ```bash
+./gradlew verifyApprovedReleaseNotes
 git diff --check
 git diff
-git add gradle.properties README.md
+git add gradle.properties README.md RELEASING.md "$RELEASE_NOTES" "$RELEASE_NOTES_METADATA"
 git commit -m "Prepare sdrtrunk-vce ${VERSION}"
 ```
 
@@ -53,7 +66,7 @@ java -version
 - [ ] Run the clean build and its release-package safety checks:
 
 ```bash
-./gradlew clean build
+./gradlew verifyApprovedReleaseNotes clean build
 ```
 
 - [ ] Stop if any test, build, or safety check fails. Fix the problem and restart the checklist from the preparation
@@ -163,16 +176,18 @@ git ls-remote --exit-code origin "refs/tags/${TAG}"
 
 ## 6. Create and review a draft GitHub release
 
-Prepare release notes in a temporary file outside the repository, for example `/tmp/sdrtrunk-vce-release-notes.md`.
-Include an alpha warning, highlights, upgrade or data-layout cautions, platform download guidance, JMBE status, and a
-request to verify downloads with `SHA256SUMS.txt`. Never include credentials or private receiver details.
+Use the approved `$RELEASE_NOTES` document bundled with the application. Do not rewrite or generate a second set of
+release notes at this stage. It must already include an alpha warning, highlights, upgrade or data-layout cautions,
+platform download guidance, JMBE status, and a request to verify downloads with `SHA256SUMS.txt`. Never include
+credentials or private receiver details.
 
 The preferred command uses the GitHub CLI. Install it and run `gh auth login` first if `gh` is unavailable.
 
 - [ ] Create a draft prerelease and upload the eight prepared assets:
 
 ```bash
-./tools/verify-publication-policy.sh --message-file /tmp/sdrtrunk-vce-release-notes.md
+./gradlew verifyApprovedReleaseNotes
+./tools/verify-publication-policy.sh --message-file "$RELEASE_NOTES"
 gh release create "$TAG" \
   build/image/sdrtrunk-vce-*-v"${VERSION}".zip \
   build/image/SHA256SUMS.txt \
@@ -180,7 +195,7 @@ gh release create "$TAG" \
   --verify-tag \
   --target main \
   --title "$RELEASE_TITLE" \
-  --notes-file /tmp/sdrtrunk-vce-release-notes.md \
+  --notes-file "$RELEASE_NOTES" \
   --prerelease \
   --draft
 ```
@@ -195,6 +210,7 @@ prerelease, paste the release notes, upload the same eight assets, and keep it a
   - All seven platform ZIPs and `SHA256SUMS.txt` are present.
   - GitHub also shows its automatically generated source-code ZIP and tarball.
   - Platform guidance and warnings render correctly.
+  - The GitHub text matches the in-application What's New document.
   - No secrets or private operational details appear in the notes or assets.
 
 - [ ] Download at least one uploaded ZIP and `SHA256SUMS.txt` from the draft and compare the downloaded ZIP checksum

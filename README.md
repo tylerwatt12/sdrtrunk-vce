@@ -388,15 +388,18 @@ publishing a numbered alpha release on GitHub.
 
 ## Changelog
 
-### 0.6.2-alpha-5 (Theoretical) - Unreleased
+### 0.6.2-alpha-5 - 2026-07-18
 
-> Draft release notes for candidate changes after Alpha 4. This is not a published release. Temporary traffic-startup,
-> wideband-IQ, channelizer-latency, and RTL-SDR tuning experiments are intentionally excluded.
+> The user-facing What's New document was approved before this version was packaged or published.
 
 #### Added
 
 - Richer web-call playback details, including identifier type, alias and numeric identity, system, channel, frequency,
   timeslot, decoder, protected-call state, and call duration.
+- A rich-text What's New window that opens automatically once for each new public version and remains available from
+  the Help menu.
+- A consent-based **Help > Submit Bug Report** workflow that can upload a sanitized diagnostic package or save it for
+  manual submission.
 
 #### Changed
 
@@ -407,6 +410,8 @@ publishing a numbered alpha release on GitHub.
   to P25 Conventional.
 - Present compact hexadecimal values in web tables while showing labeled hexadecimal and decimal pairs in entity-detail
   views, and refresh README screenshots for the current desktop and web interfaces.
+- Add plain-language signal-path and listening-delay documentation.
+- Require version-matched, explicitly approved What's New content before any public release-package task can run.
 
 #### Fixed
 
@@ -414,10 +419,16 @@ publishing a numbered alpha release on GitHub.
   labeled correctly.
 - Improve web playback labels so aliases retain their numeric identifiers and the source-to-target relationship remains
   visible during current and queued calls.
+- Preserve exact packaged version and build information for diagnostic reports.
+
+#### Removed
+
+- No user-facing feature or stored data is removed. Obsolete documentation screenshots were replaced.
 
 #### Upgrade Notes
 
-- This draft does not introduce a database schema change; Alpha 4 P25 history schema v19 remains current.
+- Alpha 5 does not introduce a database schema change; Alpha 4 P25 history schema v19 remains current.
+- P25 import changes apply only to new RadioReference and legacy-XML imports; existing database channels are unchanged.
 
 ### 0.6.2-alpha-4 - 2026-07-17
 

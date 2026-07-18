@@ -18,6 +18,9 @@ public final class ApplicationInfo
     private static final String PRODUCT_NAME = "sdrtrunk-vce";
     private static final String VERSION = "Implementation-Version";
     private static final String BUILD_TIMESTAMP = "Build-Timestamp";
+    private static final String BUILD_JDK = "Build-JDK";
+    private static final String BUILD_OS = "Build-OS";
+    private static final Manifest MANIFEST = manifest();
     private static final String DISPLAY_NAME = createDisplayName();
 
     private ApplicationInfo()
@@ -29,25 +32,53 @@ public final class ApplicationInfo
         return DISPLAY_NAME;
     }
 
+    public static String getProductName()
+    {
+        return PRODUCT_NAME;
+    }
+
+    public static String getVersion()
+    {
+        return manifestValue(VERSION);
+    }
+
+    public static String getBuildTimestamp()
+    {
+        return manifestValue(BUILD_TIMESTAMP);
+    }
+
+    public static String getBuildJdk()
+    {
+        return manifestValue(BUILD_JDK);
+    }
+
+    public static String getBuildOs()
+    {
+        return manifestValue(BUILD_OS);
+    }
+
     private static String createDisplayName()
     {
-        Manifest manifest = manifest();
-
-        if(manifest == null)
+        if(MANIFEST == null)
         {
             return PRODUCT_NAME;
         }
 
-        String version = manifest.getMainAttributes().getValue(VERSION);
+        String version = manifestValue(VERSION);
 
         if(version == null || version.isBlank())
         {
             return PRODUCT_NAME;
         }
 
-        String timestamp = manifest.getMainAttributes().getValue(BUILD_TIMESTAMP);
+        String timestamp = manifestValue(BUILD_TIMESTAMP);
         return version.contains("nightly") && timestamp != null ? PRODUCT_NAME + " nightly - " + timestamp :
             PRODUCT_NAME + " v" + version;
+    }
+
+    private static String manifestValue(String name)
+    {
+        return MANIFEST != null ? MANIFEST.getMainAttributes().getValue(name) : null;
     }
 
     private static Manifest manifest()
