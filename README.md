@@ -388,6 +388,37 @@ publishing a numbered alpha release on GitHub.
 
 ## Changelog
 
+### 0.6.2-alpha-5 (Theoretical) - Unreleased
+
+> Draft release notes for candidate changes after Alpha 4. This is not a published release. Temporary traffic-startup,
+> wideband-IQ, channelizer-latency, and RTL-SDR tuning experiments are intentionally excluded.
+
+#### Added
+
+- Richer web-call playback details, including identifier type, alias and numeric identity, system, channel, frequency,
+  timeslot, decoder, protected-call state, and call duration.
+
+#### Changed
+
+- Import RadioReference `p25` conventional frequencies as P25 Conventional channels rather than P25 Phase 1 trunked
+  channels.
+- Preserve likely trunked P25 configurations during legacy XML import when CQPSK modulation, a 700-1000 MHz frequency,
+  or at least three distinct APCO-25 talkgroups indicate trunking; convert other single-frequency P25 configurations
+  to P25 Conventional.
+- Present compact hexadecimal values in web tables while showing labeled hexadecimal and decimal pairs in entity-detail
+  views, and refresh README screenshots for the current desktop and web interfaces.
+
+#### Fixed
+
+- Preserve the source and target identifier forms supplied to the web call player so supported identifier types are
+  labeled correctly.
+- Improve web playback labels so aliases retain their numeric identifiers and the source-to-target relationship remains
+  visible during current and queued calls.
+
+#### Upgrade Notes
+
+- This draft does not introduce a database schema change; Alpha 4 P25 history schema v19 remains current.
+
 ### 0.6.2-alpha-4 - 2026-07-17
 
 #### Added

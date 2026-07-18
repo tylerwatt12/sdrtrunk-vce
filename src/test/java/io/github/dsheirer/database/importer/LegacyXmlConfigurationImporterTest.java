@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.configuration.ConfigurationState;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
@@ -30,6 +31,8 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.Modulation;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.io.IOException;
@@ -105,6 +108,66 @@ class LegacyXmlConfigurationImporterTest
         assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.importPlaylist(xml, database));
     }
 
+    @Test
+    void classifiesLegacyP25ChannelsUsingTrunkedIndicators()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setAliases(List.of(
+            talkgroupAlias("Trunked", 1001),
+            talkgroupAlias("Trunked", 1002),
+            talkgroupAlias("Trunked", 1003),
+            talkgroupAlias("Two Talkgroups", 2001),
+            talkgroupAlias("Two Talkgroups", 2002),
+            talkgroupAlias("Other List", 2003)));
+
+        Channel conventional = p25Channel("Conventional", "No Aliases", 154_755_000L, Modulation.C4FM);
+        Channel lsm = p25Channel("LSM", "No Aliases", 155_250_000L, Modulation.CQPSK);
+        Channel sevenHundredMhz = p25Channel("700 MHz", "No Aliases", 769_012_500L, Modulation.C4FM);
+        Channel eightHundredMhz = p25Channel("800 MHz", "No Aliases", 851_012_500L, Modulation.C4FM);
+        Channel nineHundredMhz = p25Channel("900 MHz", "No Aliases", 935_012_500L, Modulation.C4FM);
+        Channel threeTalkgroups = p25Channel("Three Talkgroups", "Trunked", 155_500_000L, Modulation.C4FM);
+        Channel twoTalkgroups = p25Channel("Two Talkgroups", "Two Talkgroups", 155_750_000L, Modulation.C4FM);
+        Channel multipleFrequencies = new Channel("Multiple Frequencies");
+        multipleFrequencies.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        SourceConfigTunerMultipleFrequency multipleFrequencySource = new SourceConfigTunerMultipleFrequency();
+        multipleFrequencySource.setFrequencies(List.of(155_000_000L, 156_000_000L));
+        multipleFrequencies.setSourceConfiguration(multipleFrequencySource);
+
+        state.setChannels(List.of(conventional, lsm, sevenHundredMhz, eightHundredMhz, nineHundredMhz,
+            threeTalkgroups, twoTalkgroups, multipleFrequencies));
+
+        assertEquals(2, LegacyXmlConfigurationImporter.convertLikelyConventionalP25Channels(state));
+        assertInstanceOf(DecodeConfigP25Conventional.class, conventional.getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Phase1.class, lsm.getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Phase1.class, sevenHundredMhz.getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Phase1.class, eightHundredMhz.getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Phase1.class, nineHundredMhz.getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Phase1.class, threeTalkgroups.getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Conventional.class, twoTalkgroups.getDecodeConfiguration());
+        assertInstanceOf(DecodeConfigP25Phase1.class, multipleFrequencies.getDecodeConfiguration());
+    }
+
+    private static Alias talkgroupAlias(String aliasListName, int talkgroup)
+    {
+        Alias alias = new Alias("Talkgroup " + talkgroup);
+        alias.setAliasListName(aliasListName);
+        alias.addAliasID(new Talkgroup(Protocol.APCO25, talkgroup));
+        return alias;
+    }
+
+    private static Channel p25Channel(String name, String aliasListName, long frequency, Modulation modulation)
+    {
+        Channel channel = new Channel(name);
+        channel.setAliasListName(aliasListName);
+        DecodeConfigP25Phase1 decodeConfiguration = new DecodeConfigP25Phase1();
+        decodeConfiguration.setModulation(modulation);
+        channel.setDecodeConfiguration(decodeConfiguration);
+        SourceConfigTuner sourceConfiguration = new SourceConfigTuner();
+        sourceConfiguration.setFrequency(frequency);
+        channel.setSourceConfiguration(sourceConfiguration);
+        return channel;
+    }
+
     private Path writePlaylistXml() throws IOException
     {
         Path xml = mTemporaryFolder.resolve("default.xml");
@@ -127,7 +190,7 @@ class LegacyXmlConfigurationImporterTest
                 <alias_list_name>County</alias_list_name>
                 <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="155250000"/>
                 <aux_decode_configuration/>
-                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK" ignore_data_calls="false"
+                <decode_configuration type="decodeConfigP25Phase1" modulation="C4FM" ignore_data_calls="false"
                     learn_control_channels="false" traffic_channel_pool_size="20"/>
                 <event_log_configuration/>
                 <record_configuration/>
