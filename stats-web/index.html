@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>sdrtrunk-vce</title>
-  <link rel="stylesheet" href="/assets/app.css?v=15">
+  <link rel="stylesheet" href="/assets/app.css?v=18">
 </head>
 <body>
   <div class="app-shell">
@@ -28,7 +28,9 @@
         <button type="button" id="playback-skip" class="playback-command">Skip</button>
         <div class="playback-now">
           <span class="playback-field">Now</span>
-          <strong id="playback-current">Idle</strong>
+          <div id="playback-current" class="playback-current">
+            <strong class="playback-current-primary">Idle</strong>
+          </div>
         </div>
         <details class="playback-queue">
           <summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong>
@@ -45,7 +47,7 @@
       <div class="loading">Loading</div>
     </main>
   </div>
-  <script src="/assets/web-call-player.js?v=1"></script>
-  <script src="/assets/app.js?v=18"></script>
+  <script src="/assets/web-call-player.js?v=2"></script>
+  <script src="/assets/app.js?v=21"></script>
 </body>
 </html>

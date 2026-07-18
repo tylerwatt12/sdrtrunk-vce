@@ -179,8 +179,10 @@ final class StatsWebCallService implements AutoCloseable
         put(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY));
         put(value, "source_id", value(source));
         put(value, "source_alias", alias(aliasList, source));
+        put(value, "source_form", form(source));
         put(value, "target_id", value(target));
         put(value, "target_alias", alias(aliasList, target));
+        put(value, "target_form", form(target));
         value.put("frequency_hz", longValue(identifiers, Form.CHANNEL_FREQUENCY));
         value.put("timeslot", snapshot.timeslot());
         value.put("encrypted", snapshot.encrypted());
@@ -197,6 +199,11 @@ final class StatsWebCallService implements AutoCloseable
     {
         Object value = identifier != null ? identifier.getValue() : null;
         return value != null ? value.toString() : null;
+    }
+
+    private static String form(Identifier<?> identifier)
+    {
+        return identifier != null && identifier.getForm() != null ? identifier.getForm().name() : null;
     }
 
     private static long longValue(IdentifierCollection identifiers, Form form)

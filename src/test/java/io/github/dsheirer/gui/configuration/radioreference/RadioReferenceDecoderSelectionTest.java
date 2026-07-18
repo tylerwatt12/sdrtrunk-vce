@@ -1,0 +1,80 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.gui.configuration.radioreference;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.rrapi.type.Flavor;
+import io.github.dsheirer.rrapi.type.Mode;
+import io.github.dsheirer.rrapi.type.System;
+import io.github.dsheirer.rrapi.type.Type;
+import io.github.dsheirer.rrapi.type.Voice;
+import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class RadioReferenceDecoderSelectionTest
+{
+    @Test
+    void createsConventionalDecoderForP25AgencyFrequency()
+    {
+        Mode mode = new Mode();
+        mode.setName("p25");
+        ModeDecoderType modeDecoderType = ModeDecoderType.get(mode);
+
+        Channel channel = FrequencyEditor.createChannel(modeDecoderType, 154_755_000L, "Public Safety",
+            "Law Enforcement", "AMHST PDISP");
+
+        assertEquals(DecoderType.P25_CONVENTIONAL, modeDecoderType.getDecoderType());
+        assertInstanceOf(DecodeConfigP25Conventional.class, channel.getDecodeConfiguration());
+        SourceConfigTuner source = assertInstanceOf(SourceConfigTuner.class, channel.getSourceConfiguration());
+        assertEquals(154_755_000L, source.getFrequency());
+        assertEquals("Public Safety", channel.getSystem());
+        assertEquals("Law Enforcement", channel.getSite());
+        assertEquals("AMHST PDISP", channel.getName());
+    }
+
+    @Test
+    void keepsPhaseSpecificDecodersForTrunkedP25Systems()
+    {
+        assertEquals(DecoderType.P25_PHASE1, trunkedDecoderType("Phase I"));
+        assertEquals(DecoderType.P25_PHASE2, trunkedDecoderType("Phase II"));
+    }
+
+    private static DecoderType trunkedDecoderType(String flavorName)
+    {
+        Type type = new Type();
+        type.setTypeId(1);
+        type.setName("Project 25");
+
+        Flavor flavor = new Flavor();
+        flavor.setFlavorId(2);
+        flavor.setName(flavorName);
+
+        Voice voice = new Voice();
+        voice.setVoiceId(3);
+        voice.setName("Digital");
+
+        System system = new System();
+        system.setTypeId(type.getTypeId());
+        system.setFlavorId(flavor.getFlavorId());
+        system.setVoiceId(voice.getVoiceId());
+
+        RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
+            Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
+        return decoder.getDecoderType(system);
+    }
+}

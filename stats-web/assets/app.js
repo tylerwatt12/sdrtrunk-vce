@@ -282,9 +282,19 @@ function hex(value, width = 0) {
   return Number(value).toString(16).toUpperCase().padStart(width, '0');
 }
 
-function hexDecimal(value, width = 0) {
+function labeledBaseValue(value, label) {
+  const result = node('span', 'number-base-value');
+  result.append(String(value), node('small', 'number-base-label', label));
+  return result;
+}
+
+function hexDecimalPair(value, width = 0) {
   if (value === null || value === undefined || value === '') return '';
-  return `${hex(value, width)} (${Number(value)})`;
+  const result = node('span', 'number-base-pair');
+  result.append(labeledBaseValue(hex(value, width), 'HEX'),
+    node('span', 'number-base-separator', '·'),
+    labeledBaseValue(Number(value), 'DEC'));
+  return result;
 }
 
 const P25_ENCRYPTION_ALGORITHM_NAMES = Object.freeze({
@@ -300,6 +310,17 @@ function encryptionAlgorithm(value) {
   if (value === null || value === undefined || value === '') return '';
   const algorithm = Number(value);
   return P25_ENCRYPTION_ALGORITHM_NAMES[algorithm] || `0x${hex(algorithm, 2)}`;
+}
+
+function encryptionAlgorithmInfoValue(value) {
+  const label = encryptionAlgorithm(value);
+  return label.startsWith('0x') ? hexDecimalPair(value, 2) : label;
+}
+
+function encryptionDetails(algorithm, key) {
+  const algorithmValue = encryptionAlgorithm(algorithm);
+  const keyValue = hex(key);
+  return `${algorithmValue}${keyValue ? `:${keyValue}` : ''}`;
 }
 
 function frequency(value) {
@@ -358,9 +379,30 @@ function systemLabel(row) {
   return wacn && system ? `${wacn}-${system}` : wacn || system;
 }
 
+function systemValue(row) {
+  return systemLabel(row);
+}
+
+function systemInfoValue(row) {
+  const hexadecimal = systemLabel(row);
+  const wacn = row.wacn === null || row.wacn === undefined || row.wacn === '' ? '' : Number(row.wacn);
+  const system = row.system_id === null || row.system_id === undefined || row.system_id === '' ? '' :
+    Number(row.system_id);
+  if (!hexadecimal || wacn === '' || system === '') return hexadecimal;
+  const result = node('span', 'number-base-pair');
+  result.append(labeledBaseValue(hexadecimal, 'HEX'),
+    node('span', 'number-base-separator', '·'),
+    labeledBaseValue(`${wacn}-${system}`, 'DEC'));
+  return result;
+}
+
 function siteLabel(row) {
-  const identity = `${hexDecimal(row.rfss, 2)}-${hexDecimal(row.site, 2)}`;
+  const identity = `${hex(row.rfss, 2)}-${hex(row.site, 2)}`;
   return row.channel_name || `${systemLabel(row)} ${identity}`;
+}
+
+function siteValue(row) {
+  return siteLabel(row);
 }
 
 function badge(label, className = '', title = '') {
@@ -408,7 +450,8 @@ function currentHref(overrides = {}) {
 }
 
 function anchor(label, target, className) {
-  const element = node('a', className, label);
+  const element = node('a', className);
+  element.append(valueNode(label));
   element.href = target;
   return element;
 }
@@ -420,11 +463,11 @@ function externalAnchor(label, target) {
   return element;
 }
 
-function systemLink(row, label = systemLabel(row)) {
+function systemLink(row, label = systemValue(row)) {
   return anchor(label, href('system', { ...scope(row), tab: 'info' }));
 }
 
-function siteLink(row, label = siteLabel(row)) {
+function siteLink(row, label = siteValue(row)) {
   return anchor(label, href('site', { guid: row.guid, tab: 'info' }));
 }
 
@@ -493,7 +536,9 @@ function channelTagTitle(row) {
 function pageHeader(title, subtitle) {
   const wrapper = node('div', 'page-header');
   const labels = node('div');
-  labels.append(node('h1', 'page-title', title));
+  const heading = node('h1', 'page-title');
+  heading.append(valueNode(title));
+  labels.append(heading);
   if (subtitle) {
     const detail = node('div', 'page-subtitle');
     detail.append(valueNode(subtitle));
@@ -1377,8 +1422,10 @@ function updateSignalCurrentTile(tile, site) {
   const state = signalSiteState(site);
   const header = node('div', 'signal-current-header');
   const labels = node('div', 'signal-current-labels');
-  labels.append(siteLink(site, siteLabel(site)));
-  labels.append(node('div', 'signal-current-system', systemLabel(site)));
+  labels.append(siteLink(site));
+  const system = node('div', 'signal-current-system');
+  system.append(systemValue(site));
+  labels.append(system);
   header.append(labels, badge(state.label, `signal-state ${state.className}`));
   const power = node('div', 'signal-current-power');
   power.append(node('strong', '', signalNumber(site.signal_dbfs)),
@@ -1423,7 +1470,9 @@ function signalOverview(site, includeName = true) {
   overview.classList.toggle('without-identity', !includeName);
   if (includeName) {
     const identity = node('div', 'signal-history-identity');
-    identity.append(siteLink(site, siteLabel(site)), node('span', '', systemLabel(site)));
+    const system = node('span');
+    system.append(systemValue(site));
+    identity.append(siteLink(site), system);
     overview.append(identity);
   }
   [['Current', signalNumber(site.signal_dbfs)], ['30s average', signalNumber(site.average_signal_dbfs)],
@@ -1879,8 +1928,8 @@ function siteTabs(site, active) {
 
 const siteColumns = [
   { id: 'system', label: 'Sys', fullLabel: 'System', render: systemLink, sort: 'system', sortValue: systemLabel },
-  { id: 'rfss', label: 'RFSS', key: 'rfss', render: (row) => hexDecimal(row.rfss, 2), className: 'numeric', sort: 'rfss' },
-  { id: 'site', label: 'Site', key: 'site', render: (row) => hexDecimal(row.site, 2), className: 'numeric', sort: 'site' },
+  { id: 'rfss', label: 'RFSS', key: 'rfss', render: (row) => hex(row.rfss, 2), className: 'numeric', sort: 'rfss' },
+  { id: 'site', label: 'Site', key: 'site', render: (row) => hex(row.site, 2), className: 'numeric', sort: 'site' },
   { id: 'name', label: 'Name', render: (row) => siteLink(row), className: 'alias-cell', sort: 'name', sortValue: siteLabel },
   { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.current_control_hz), className: 'numeric', sort: 'control', sortValue: (row) => Number(row.current_control_hz || 0) },
   { label: 'Ch', fullLabel: 'Channels', key: 'channels', className: 'numeric', sort: 'channels' },
@@ -2205,13 +2254,13 @@ async function renderSystems() {
       return wrapper;
     } },
     { id: 'wacn', label: 'WACN', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? hexDecimal(row.wacn, 5) : '' },
+      row.directory_type === 'system' ? hex(row.wacn, 5) : '' },
     { id: 'system', label: 'Sys ID', fullLabel: 'System ID', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? systemLink(row, hexDecimal(row.system_id, 3)) : '' },
+      row.directory_type === 'system' ? systemLink(row, hex(row.system_id, 3)) : '' },
     { id: 'rfss', label: 'RFSS', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? hexDecimal(row.rfss, 2) : '' },
+      row.directory_type === 'site' ? hex(row.rfss, 2) : '' },
     { id: 'site', label: 'Site', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? hexDecimal(row.site, 2) : '' },
+      row.directory_type === 'site' ? hex(row.site, 2) : '' },
     { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
       render: (row) => row.directory_type === 'site' ? frequency(row.current_control_hz) : '' },
     { id: 'count', label: 'Sites / Ch', fullLabel: 'Sites or Channels', className: 'numeric', render: (row) =>
@@ -2246,7 +2295,7 @@ async function renderSystem() {
   const system = response.system;
   const requestedTab = route.get('tab') || 'info';
   const tab = requestedTab === 'sites' ? 'info' : requestedTab;
-  content.append(pageHeader(systemLabel(system), system.site_names || 'P25 trunked system'), systemTabs(system, tab));
+  content.append(pageHeader(systemValue(system), system.site_names || 'P25 trunked system'), systemTabs(system, tab));
 
   if (tab === 'talkgroups') {
     const page = await api('/api/system/talkgroups', pageParameters(systemScope));
@@ -2278,7 +2327,7 @@ async function renderSystem() {
     ]);
     summary.classList.add('system-summary-band');
     infoColumn.append(summary, section('System Info', keyValues([
-      ['System', systemLabel(system)],
+      ['System', systemInfoValue(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
     ])), section('Observed Actions', fragment(table(withoutGrantActions(response.actionCounts), [
       { label: 'Action', key: 'action' },
@@ -2302,7 +2351,7 @@ async function renderTalkgroup() {
   const talkgroup = response.talkgroup;
   const tab = route.get('tab') || 'info';
   const title = aliasLabel(talkgroup) || `Talkgroup ${id}`;
-  content.append(pageHeader(title, `${systemLabel(talkgroup)} · Talkgroup ${id}`),
+  content.append(pageHeader(title, fragment(systemValue(talkgroup), ` · Talkgroup ${id}`)),
     entityTabs('talkgroup', talkgroup, id, tab, false));
 
   if (tab === 'radios') {
@@ -2333,7 +2382,8 @@ async function renderTalkgroup() {
       href('talkgroup', { ...scope(talkgroup), id, tab: 'radios' }));
     const infoColumn = node('div', 'entity-info-column');
     infoColumn.append(section('Talkgroup Info', keyValues([
-      ['System', systemLink(talkgroup)], ['Talkgroup ID', id], ['Alias', aliasLabel(talkgroup)],
+      ['System', systemLink(talkgroup, systemInfoValue(talkgroup))],
+      ['Talkgroup ID', id], ['Alias', aliasLabel(talkgroup)],
       ['Group', talkgroup.alias_group], ['First Seen', dateTime(talkgroup.first_seen_ms)],
       ['Last Seen', dateTime(talkgroup.last_seen_ms)], ['Calls', number(talkgroup.call_count)],
       ['Recorded', number(talkgroup.recorded_count)],
@@ -2341,8 +2391,8 @@ async function renderTalkgroup() {
       ['Radios', number(talkgroup.radios)], ['Currently Affiliated', affiliationLink],
       ['Enc', number(talkgroup.encrypted_count)],
       ['Last Source', radioLink(talkgroup, talkgroup.last_source_radio_id)],
-      ['Last Alg', encryptionAlgorithm(talkgroup.last_encryption_algorithm_id)],
-      ['Last Key ID', hexDecimal(talkgroup.last_encryption_key_id)]
+      ['Last Alg', encryptionAlgorithmInfoValue(talkgroup.last_encryption_algorithm_id)],
+      ['Last Key ID', hexDecimalPair(talkgroup.last_encryption_key_id)]
     ])));
     infoColumn.append(section('Action Counts', table(actionCounts(talkgroup).map(([action, count]) => ({ action, count })), [
       { label: 'Action', key: 'action' },
@@ -2361,7 +2411,7 @@ async function renderRadio() {
   const radio = response.radio;
   const tab = route.get('tab') || 'info';
   const title = aliasLabel(radio) || radio.last_talker_alias || `Radio ${id}`;
-  content.append(pageHeader(title, `${systemLabel(radio)} · Radio ${id}`),
+  content.append(pageHeader(title, fragment(systemValue(radio), ` · Radio ${id}`)),
     entityTabs('radio', radio, id, tab, true));
 
   if (tab === 'talkgroups') {
@@ -2380,7 +2430,7 @@ async function renderRadio() {
     await renderActivity({ ...systemScope, radio_id: id });
   } else {
     content.append(section('Radio Info', keyValues([
-      ['System', systemLink(radio)], ['Radio ID', id], ['Alias', aliasLabel(radio)],
+      ['System', systemLink(radio, systemInfoValue(radio))], ['Radio ID', id], ['Alias', aliasLabel(radio)],
       ['Talker Alias', radio.last_talker_alias], ['Talker Alias Seen', dateTime(radio.last_talker_alias_seen_ms)],
       ['Current Affiliation TGID', talkgroupLink(radio, radio.affiliated_talkgroup_id)],
       ['Current Affiliation Name', talkgroupAliasLink(radio, radio.affiliated_talkgroup_id,
@@ -2390,8 +2440,8 @@ async function renderRadio() {
       ['Calls', number(radio.call_count)],
       ['Talkgroups', number(radio.talkgroups)],
       ['Enc', number(radio.encrypted_count)],
-      ['Last Alg', encryptionAlgorithm(radio.last_encryption_algorithm_id)],
-      ['Last Key ID', hexDecimal(radio.last_encryption_key_id)]
+      ['Last Alg', encryptionAlgorithmInfoValue(radio.last_encryption_algorithm_id)],
+      ['Last Key ID', hexDecimalPair(radio.last_encryption_key_id)]
     ])));
     content.append(section('Action Counts', fragment(table(actionCounts(radio).map(([action, count]) => ({ action, count })), [
       { label: 'Action', key: 'action' },
@@ -2407,7 +2457,8 @@ async function renderSite() {
   const site = response.site;
   const requestedTab = route.get('tab') || 'info';
   const tab = requestedTab === 'talkgroups' ? 'info' : requestedTab;
-  content.append(pageHeader(siteLabel(site), `${systemLabel(site)} · ${hexDecimal(site.rfss, 2)}-${hexDecimal(site.site, 2)}`),
+  content.append(pageHeader(siteValue(site), fragment(systemValue(site), ' · ',
+    hex(site.rfss, 2), '-', hex(site.site, 2))),
     siteTabs(site, tab));
 
   if (tab === 'quality') {
@@ -2433,9 +2484,9 @@ async function renderSite() {
     const data = await api('/api/site/neighbors', { guid });
     content.append(section('Neighbors', table(data.rows || [], [
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hexDecimal(row.system_id, 3), sortValue: (row) => Number(row.system_id || 0) },
-      { id: 'rfss', label: 'RFSS', render: (row) => hexDecimal(row.rfss, 2), sortValue: (row) => Number(row.rfss || 0) },
-      { id: 'site', label: 'Site', render: (row) => hexDecimal(row.site, 2), sortValue: (row) => Number(row.site || 0) },
+      { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hex(row.system_id, 3), sortValue: (row) => Number(row.system_id || 0) },
+      { id: 'rfss', label: 'RFSS', render: (row) => hex(row.rfss, 2), sortValue: (row) => Number(row.rfss || 0) },
+      { id: 'site', label: 'Site', render: (row) => hex(row.site, 2), sortValue: (row) => Number(row.site || 0) },
       { label: 'LCN', key: 'channel_descriptor' },
       { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
       { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status', render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
@@ -2503,12 +2554,13 @@ async function renderSite() {
   } else {
     const infoColumn = node('div', 'entity-info-column');
     infoColumn.append(section('Site Info', keyValues([
-      ['System', systemLink(site)], ['GUID', site.guid], ['Name', site.channel_name],
+      ['System', systemLink(site, systemInfoValue(site))], ['GUID', site.guid], ['Name', site.channel_name],
       ['Alias List', site.alias_list_name], ['Protocol', site.protocol], ['Decoder', site.decoder],
-      ['Callsign', site.callsign], ['WACN', hexDecimal(site.wacn, 5)],
-      ['SysID', hexDecimal(site.system_id, 3)], ['NAC', hexDecimal(site.nac, 3)],
-      ['RFSS', hexDecimal(site.rfss, 2)], ['Site', hexDecimal(site.site, 2)],
-      ['Local Registration Area', hexDecimal(site.lra, 2)], ['MFID', site.mfid_display],
+      ['Callsign', site.callsign], ['WACN', hexDecimalPair(site.wacn, 5)],
+      ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
+      ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site, 2)],
+      ['Local Registration Area', hexDecimalPair(site.lra, 2)],
+      ['MFID', site.mfid === null || site.mfid === undefined ? site.mfid_display : hexDecimalPair(site.mfid, 2)],
       ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
       ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
       ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' : `${number(site.wuid_lease_minutes)} minutes`],
@@ -2539,7 +2591,7 @@ function activityColumns() {
     { id: 'frequency', label: 'MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
     { label: 'LCN', key: 'lcn' },
     { label: 'Slot', key: 'timeslot', className: 'numeric' },
-    { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) => row.encrypted ? `${encryptionAlgorithm(row.encryption_algorithm_id)}:${hexDecimal(row.encryption_key_id)}` : '', className: 'encrypted', sortValue: (row) => row.encrypted ? `${row.encryption_algorithm_id}:${row.encryption_key_id}` : '' }
+    { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) => row.encrypted ? encryptionDetails(row.encryption_algorithm_id, row.encryption_key_id) : '', className: 'encrypted', sortValue: (row) => row.encrypted ? `${row.encryption_algorithm_id}:${row.encryption_key_id}` : '' }
   ];
 }
 
@@ -2589,7 +2641,7 @@ async function renderConventional() {
     { label: 'Decoder', key: 'decoder', sort: 'decoder' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
     { label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot' },
-    { id: 'nac', label: 'NAC', render: (row) => hexDecimal(row.nac, 3), sort: 'nac', sortValue: (row) => Number(row.nac || 0) },
+    { id: 'nac', label: 'NAC', render: (row) => hex(row.nac, 3), sort: 'nac', sortValue: (row) => Number(row.nac || 0) },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
@@ -2615,7 +2667,7 @@ async function renderConventionalDetail() {
       ['Name', context.channel_name], ['Context', context.context_key], ['GUID', context.guid],
       ['Protocol', protocol(context.protocol_code)], ['Decoder', context.decoder],
       ['Alias List', context.alias_list_name], ['Frequency', frequency(context.primary_frequency_hz)],
-      ['NAC', hexDecimal(context.nac, 3)], ['First Seen', dateTime(context.first_seen_ms)],
+      ['NAC', hexDecimalPair(context.nac, 3)], ['First Seen', dateTime(context.first_seen_ms)],
       ['Last Seen', dateTime(context.last_seen_ms)]
     ])));
     content.append(section('Frequency Summaries', table(data.summaries || [], [
@@ -2638,7 +2690,10 @@ function renderCredits() {
     externalAnchor('SDRTrunk', 'https://github.com/DSheirer/sdrtrunk'),
     ', created by Dennis Sheirer. It includes work from SDRTrunk contributors and optimization and platform work ',
     'associated with the ', externalAnchor('W6BAZ experimental fork', 'https://github.com/bazineta/sdrtrunk'), '.');
-  project.append(lineage);
+  const webInterface = node('p');
+  webInterface.append('Web interface by Tyler Watthanaphand ',
+    externalAnchor('@tylerwatt12', 'https://github.com/tylerwatt12'), '.');
+  project.append(lineage, webInterface);
   content.append(section('Project', project));
 
   const license = node('div', 'credits-copy');

@@ -44,7 +44,9 @@ class StatsWebCallServiceTest
             Map<String,Object> metadata = (Map<String,Object>)event.data();
             assertEquals("Test System", metadata.get("system"));
             assertEquals("4400", metadata.get("target_id"));
+            assertEquals("TALKGROUP", metadata.get("target_form"));
             assertEquals("9001", metadata.get("source_id"));
+            assertEquals("RADIO", metadata.get("source_form"));
             assertEquals(854_187_500L, metadata.get("frequency_hz"));
             assertEquals(100L, metadata.get("duration_ms"));
 
