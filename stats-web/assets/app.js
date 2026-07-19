@@ -2735,6 +2735,13 @@ function renderCredits() {
   content.append(section('Open-source acknowledgements', acknowledgements));
 }
 
+function renderSpectrum() {
+  const host = node('div');
+  content.append(host);
+  const view = new window.WidebandSignalView(host);
+  pageConnections.add(view);
+}
+
 function activateNavigation(view) {
   const parent = ['system', 'talkgroup', 'radio'].includes(view) ? 'systems' :
     (view === 'site' ? 'sites' : (view === 'conventional-detail' ? 'conventional' : view));
@@ -2789,6 +2796,7 @@ async function render() {
     const handlers = {
       dashboard: renderDashboard,
       live: renderLive,
+      spectrum: renderSpectrum,
       systems: renderSystems,
       sites: renderSites,
       system: renderSystem,

@@ -274,7 +274,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mAudioStreamingManager.start();
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
-            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
+            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService, mTunerManager);
         mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
             mAudioRecordingManager, mAudioStreamingManager, mStatsWebServerService::receive);
 

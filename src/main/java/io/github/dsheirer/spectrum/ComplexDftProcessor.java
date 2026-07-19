@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  * Processes both complex samples or float samples and dispatches a float array of DFT results, using configurable fft
  * size and output dispatch timelines.
  */
-public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthChangeProcessor
+public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthChangeProcessor, AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(ComplexDftProcessor.class);
     //The Cosine and Hann windows seem to offer the best spectral display with minimal bin leakage/smearing
@@ -52,6 +52,7 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     private int mFrameRate;
     private final SpectrumPreference mSpectrumPreference;
     private AtomicBoolean mRunning = new AtomicBoolean();
+    private final AtomicBoolean mDisposed = new AtomicBoolean();
     private ScheduledFuture<?> mProcessorTaskHandle;
     private ScheduledExecutorService mExecutorService = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk dft processor"));
     private CopyOnWriteArrayList<DFTResultsConverter> mListeners = new CopyOnWriteArrayList<>();
@@ -74,10 +75,37 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
 
     public void dispose()
     {
+        if(!mDisposed.compareAndSet(false, true))
+        {
+            return;
+        }
+
         stop();
+        mExecutorService.shutdownNow();
+
+        try
+        {
+            if(!mExecutorService.awaitTermination(5, TimeUnit.SECONDS))
+            {
+                mLog.warn("DFT processor executor did not terminate within five seconds");
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
 
         mListeners.clear();
+        // Do not clear the buffer manager here. A producer callback that entered receive() just before disposal can
+        // still be completing its non-blocking enqueue; the now-unreachable manager and its bounded buffers are
+        // reclaimed with this processor without racing that latency-sensitive callback.
         mWindow = null;
+    }
+
+    @Override
+    public void close()
+    {
+        dispose();
     }
 
     public WindowType getWindowType()
@@ -133,6 +161,11 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
 
     public void start()
     {
+        if(mDisposed.get())
+        {
+            throw new IllegalStateException("Cannot restart a disposed DFT processor");
+        }
+
         if(mProcessorTaskHandle == null)
         {
             //Schedule the DFT to run calculations at a fixed rate
@@ -171,7 +204,10 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     @Override
     public void receive(INativeBuffer buffer)
     {
-        mDftBufferManager.add(buffer);
+        if(!mDisposed.get())
+        {
+            mDftBufferManager.add(buffer);
+        }
     }
 
     public void addConverter(DFTResultsConverter listener)
@@ -263,19 +299,28 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
         @Override
         public void run()
         {
+            boolean acquired = false;
+
             try
             {
 				/* Only run if we're not currently running */
                 if(mRunning.compareAndSet(false, true))
                 {
+                    acquired = true;
                     checkFFTSize();
                     calculate();
-                    mRunning.set(false);
                 }
             }
             catch(Exception e)
             {
                 mLog.error("error during dft processor calculation task", e);
+            }
+            finally
+            {
+                if(acquired)
+                {
+                    mRunning.set(false);
+                }
             }
         }
     }
@@ -283,5 +328,10 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     public void clearBuffer()
     {
         mDftBufferManager.clear();
+    }
+
+    public boolean isExecutorTerminated()
+    {
+        return mExecutorService.isTerminated();
     }
 }

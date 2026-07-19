@@ -46,6 +46,9 @@ open module sdr.trunk {
     requires org.apache.commons.io;
     requires org.apache.commons.lang3;
     requires org.controlsfx.controls;
+    requires org.eclipse.jetty.server;
+    requires org.eclipse.jetty.websocket.api;
+    requires org.eclipse.jetty.websocket.server;
     requires org.slf4j;
     requires org.xerial.sqlitejdbc;
     requires usb.api;

@@ -1697,3 +1697,55 @@ th.center {
 .quality-good { color: #18864b; font-weight: 700; }
 .quality-warn { color: #b57900; font-weight: 700; }
 .quality-bad { color: #c23737; font-weight: 700; }
+
+/* Wideband signal is deliberately self-contained so frontend-only iterations can ship as static asset changes. */
+body[data-view="spectrum"] { background: #071018; }
+body[data-view="spectrum"] .content { max-width: none; padding: 12px; }
+.wideband-page { color: #dce8ee; background: #0b151d; border: 1px solid #263b49; min-height: calc(100vh - 130px); }
+.wideband-heading, .wideband-toolbar, .wideband-footer { display: flex; align-items: center; gap: 18px; padding: 10px 14px; }
+.wideband-heading { justify-content: space-between; border-bottom: 1px solid #263b49; }
+.wideband-heading .page-title { color: #fff; margin: 0; }
+.wideband-heading .page-subtitle { color: #91a5b1; }
+.wideband-access { color: #83e1d5; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.wideband-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) max-content max-content; background: #101e28; border-bottom: 1px solid #263b49; }
+.wideband-target { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.wideband-target span { color: #91a5b1; }
+.wideband-status { min-width: 190px; font-weight: 700; }
+.wideband-status.live { color: #6ee7a5; }
+.wideband-status.connecting, .wideband-status.reconnecting { color: #f1c86b; }
+.wideband-status.degraded, .wideband-status.locked { color: #ff9b8b; }
+.wideband-status.paused { color: #aab8c1; }
+.wideband-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 230px; min-height: 590px; }
+.wideband-plots { min-width: 0; border-right: 1px solid #263b49; }
+.wideband-plot { position: relative; margin: 0; border-bottom: 1px solid #263b49; background: #071018; }
+.wideband-plot-label { position: absolute; z-index: 2; top: 8px; left: 10px; padding: 2px 5px; color: #8fa8b7; background: rgb(7 16 24 / 78%); font-size: 10px; font-weight: 700; letter-spacing: .08em; pointer-events: none; }
+.wideband-canvas { display: block; width: 100%; height: 250px; }
+.wideband-plot.waterfall .wideband-canvas { height: 310px; }
+.wideband-readouts { padding: 14px; background: #0f1b24; }
+.wideband-readouts h2 { margin: 0 0 12px; font-size: 13px; color: #fff; }
+.wideband-readout { display: grid; grid-template-columns: 82px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid #203541; }
+.wideband-readout span { color: #8297a4; }
+.wideband-readout output { color: #f2f7fa; font-variant-numeric: tabular-nums; text-align: right; }
+.wideband-note { margin-top: 18px; color: #8ca0ac; font-size: 11px; line-height: 1.45; }
+.wideband-footer { min-height: 42px; color: #8fa8b7; border-top: 1px solid #263b49; font-size: 11px; font-weight: 700; letter-spacing: .03em; }
+
+@media (max-width: 760px) {
+  body[data-view="spectrum"] { overflow: auto; }
+  .wideband-toolbar { grid-template-columns: 1fr; }
+  .wideband-workspace { grid-template-columns: 1fr; }
+  .wideband-plots { border-right: 0; }
+  .wideband-readouts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+  .wideband-readouts h2, .wideband-note { grid-column: 1 / -1; }
+}
+
+@media (max-width: 480px) {
+  .wideband-heading { align-items: flex-start; flex-direction: column; }
+  .wideband-readouts { grid-template-columns: 1fr; }
+  .wideband-readouts h2, .wideband-note { grid-column: auto; }
+  .wideband-canvas { height: 190px; }
+  .wideband-plot.waterfall .wideband-canvas { height: 240px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wideband-page * { scroll-behavior: auto !important; transition: none !important; }
+}
