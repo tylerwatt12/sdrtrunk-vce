@@ -22,6 +22,8 @@ import com.jidesoft.plaf.LookAndFeelFactory;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.application.update.UpdateCheckResult;
+import io.github.dsheirer.application.update.UpdateCheckService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
@@ -95,6 +97,7 @@ import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -102,6 +105,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
@@ -145,6 +149,8 @@ public class SDRTrunk implements Listener<TunerEvent>
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
     private static final String PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE = "sdrtrunk.now.playing.details.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
+    private static final String PREFERENCE_UPDATE_FOOTER_MIGRATION =
+        "sdrtrunk.resource.status.update.icon.migration.1";
     private static final String PREFERENCE_SYSTEMS_VISIBLE = "sdrtrunk.systems.visible";
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
     private static final String CONTROLLER_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".control.panel";
@@ -181,6 +187,11 @@ public class SDRTrunk implements Listener<TunerEvent>
     private ApplicationLog mApplicationLog;
     private ResourceMonitor mResourceMonitor;
     private JFXPanel mResourceStatusPanel;
+    private UpdateCheckService mUpdateCheckService;
+    private volatile UpdateCheckResult mUpdateCheckResult = UpdateCheckResult.notChecked();
+    private final AtomicBoolean mUpdateCheckInProgress = new AtomicBoolean();
+    private volatile boolean mManualUpdateFeedbackRequested;
+    private JMenuItem mCheckForUpdatesMenuItem;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
     private JMenuItem mEncryptionKeysItem;
@@ -198,6 +209,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     {
         mUserPreferences = userPreferences;
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
+        mUpdateCheckService = new UpdateCheckService();
         mIconModel = new IconModel();
 
         if(!GraphicsEnvironment.isHeadless())
@@ -334,6 +346,7 @@ public class SDRTrunk implements Listener<TunerEvent>
                 if(!GraphicsEnvironment.isHeadless())
                 {
                     mMainGui.setVisible(true);
+                    checkForUpdates(false);
                     WhatsNewDialog.showOnFirstLaunch(mMainGui);
 
                     if(mSpectralPanelVisible)
@@ -655,7 +668,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mMainGui.add(mSplitPane, "cell 0 1,grow");
 
         mResourceMonitor.start();
-        mResourceStatusVisible = mPreferences.getBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, true);
+        mResourceStatusVisible = initializeResourceStatusVisibility();
         if(mResourceStatusVisible)
         {
             mMainGui.add(getResourceStatusPanel(), "cell 0 2,growx");
@@ -808,6 +821,21 @@ public class SDRTrunk implements Listener<TunerEvent>
             helpMenu.add(new JSeparator());
         }
 
+        mCheckForUpdatesMenuItem = new JMenuItem("Check for Updates");
+        mCheckForUpdatesMenuItem.setIcon(IconFontSwing.buildIcon(FontAwesome.DOWNLOAD, 12));
+        mCheckForUpdatesMenuItem.addActionListener(event -> {
+            if(mUpdateCheckResult.isUpdateAvailable())
+            {
+                openUpdateReleasePage(mUpdateCheckResult.releaseUri());
+            }
+            else
+            {
+                checkForUpdates(true);
+            }
+        });
+        helpMenu.add(mCheckForUpdatesMenuItem);
+        helpMenu.add(new JSeparator());
+
         JMenuItem bugReportItem = new JMenuItem("Submit Bug Report...");
         bugReportItem.setIcon(IconFontSwing.buildIcon(FontAwesome.BUG, 12));
         bugReportItem.addActionListener(event ->
@@ -818,6 +846,98 @@ public class SDRTrunk implements Listener<TunerEvent>
         creditsItem.addActionListener(event -> new CreditsDialog(mMainGui).setVisible(true));
         helpMenu.add(creditsItem);
         menuBar.add(helpMenu);
+    }
+
+    private boolean initializeResourceStatusVisibility()
+    {
+        if(!mPreferences.getBoolean(PREFERENCE_UPDATE_FOOTER_MIGRATION, false))
+        {
+            mPreferences.putBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, true);
+            mPreferences.putBoolean(PREFERENCE_UPDATE_FOOTER_MIGRATION, true);
+            return true;
+        }
+
+        return mPreferences.getBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, true);
+    }
+
+    private void checkForUpdates(boolean manual)
+    {
+        if(manual)
+        {
+            mManualUpdateFeedbackRequested = true;
+        }
+
+        if(!mUpdateCheckInProgress.compareAndSet(false, true))
+        {
+            if(manual)
+            {
+                mCheckForUpdatesMenuItem.setText("Checking for Updates...");
+                mCheckForUpdatesMenuItem.setEnabled(false);
+            }
+
+            return;
+        }
+
+        if(manual)
+        {
+            mCheckForUpdatesMenuItem.setText("Checking for Updates...");
+            mCheckForUpdatesMenuItem.setEnabled(false);
+        }
+
+        ThreadPool.CACHED.execute(() -> {
+            UpdateCheckResult result = mUpdateCheckService.check();
+            mUpdateCheckResult = result;
+            mUpdateCheckInProgress.set(false);
+            boolean showNonAvailableResult = mManualUpdateFeedbackRequested;
+            mManualUpdateFeedbackRequested = false;
+
+            if(result.state() == UpdateCheckResult.State.UNAVAILABLE)
+            {
+                mLog.warn("Unable to check for updates: {}", result.detail());
+            }
+
+            EventQueue.invokeLater(() -> updateCheckMenuItem(result, showNonAvailableResult));
+        });
+    }
+
+    private void updateCheckMenuItem(UpdateCheckResult result, boolean showNonAvailableResult)
+    {
+        mCheckForUpdatesMenuItem.setEnabled(true);
+
+        if(result.isUpdateAvailable())
+        {
+            mCheckForUpdatesMenuItem.setText("Update Available — " + result.version());
+        }
+        else if(showNonAvailableResult && result.state() == UpdateCheckResult.State.CURRENT)
+        {
+            mCheckForUpdatesMenuItem.setText("Check for Updates — Up to Date");
+        }
+        else if(showNonAvailableResult)
+        {
+            mCheckForUpdatesMenuItem.setText("Check for Updates — Unable to Check");
+        }
+        else
+        {
+            mCheckForUpdatesMenuItem.setText("Check for Updates");
+        }
+    }
+
+    private void openUpdateReleasePage(URI releaseUri)
+    {
+        EventQueue.invokeLater(() -> {
+            try
+            {
+                if(releaseUri != null && Desktop.isDesktopSupported() &&
+                    Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
+                {
+                    Desktop.getDesktop().browse(releaseUri);
+                }
+            }
+            catch(Exception e)
+            {
+                mLog.error("Unable to open update release page", e);
+            }
+        });
     }
 
     /**
@@ -1168,7 +1288,8 @@ public class SDRTrunk implements Listener<TunerEvent>
             mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor,
                 mUserPreferences.getEncryptionKeyPreference().getVaultService(),
                 mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager(),
-                mStatsWebServerService::getNavigationState);
+                mStatsWebServerService::getNavigationState, () -> mUpdateCheckResult,
+                this::openUpdateReleasePage);
         }
 
         return mResourceStatusPanel;

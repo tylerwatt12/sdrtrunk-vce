@@ -63,6 +63,17 @@ def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlat
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
+def updateTrack = (project.findProperty('updateTrack') ?: 'main').toString()
+def updateBuild = (project.findProperty('updateBuild') ?: '0').toString()
+
+if(!(updateTrack in ['main', 'webfirst'])) {
+    throw new GradleException("updateTrack must be 'main' or 'webfirst'")
+}
+
+if(!(updateBuild ==~ /\d+/)) {
+    throw new GradleException('updateBuild must be a non-negative integer')
+}
+
 def releaseVersion = version.toString()
 def releaseNotesDirectory = file('src/main/resources/release-notes')
 def releaseNotesMetadataFile = file("${releaseNotesDirectory}/${releaseVersion}.properties")
@@ -391,6 +402,8 @@ jar {
         attributes (
                 'Implementation-Title'  : 'sdrtrunk-vce project',
                 'Implementation-Version' : archiveVersion,
+                'Update-Track'           : updateTrack,
+                'Update-Build'           : updateBuild,
                 'Created-By'            : "Gradle ${gradle.gradleVersion}",
                 'Build-Timestamp'       : new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ").format(new Date()),
                 'Build-JDK'             : "${System.properties['java.version']} (${System.properties['java.vendor']} ${System.properties['java.vm.version']}",
