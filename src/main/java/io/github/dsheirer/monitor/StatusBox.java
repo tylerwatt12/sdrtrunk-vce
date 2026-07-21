@@ -19,13 +19,16 @@
 
 package io.github.dsheirer.monitor;
 
+import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultState;
 import io.github.dsheirer.stats.StatsWebNavigationState;
+import java.net.URI;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
@@ -39,6 +42,8 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.util.Duration;
 import jiconfont.icons.font_awesome.FontAwesome;
@@ -61,12 +66,15 @@ public class StatusBox extends HBox
     private static final double HISTORY_CELL_WIDTH = 88;
     private static final double WEB_CELL_WIDTH = 88;
     private static final double VAULT_CELL_WIDTH = 80;
+    private static final double UPDATE_CELL_WIDTH = 30;
     private static final Color ACTIVE_COLOR = Color.FORESTGREEN;
     private static final Color INACTIVE_COLOR = Color.DIMGRAY;
     private final ResourceMonitor mResourceMonitor;
     private final EncryptionKeyVaultService mVaultService;
     private final VoiceDecryptionModuleManager mModuleManager;
     private final Supplier<StatsWebNavigationState> mNavigationStateSupplier;
+    private final Supplier<UpdateCheckResult> mUpdateResultSupplier;
+    private final Consumer<URI> mUpdateReleasePageConsumer;
     private HBox mVaultStatusBox;
     private Tooltip mVaultTooltip;
     private Label mStatsStatusLabel;
@@ -78,6 +86,10 @@ public class StatusBox extends HBox
     private StatsWebNavigationState mLastNavigationState;
     private boolean mNavigationStatusInitialized;
     private Timeline mNavigationStatusTimeline;
+    private HBox mUpdateStatusBox;
+    private Separator mUpdateStatusSeparator;
+    private Tooltip mUpdateStatusTooltip;
+    private UpdateCheckResult mLastUpdateResult;
 
     /**
      * Constructs an instance.
@@ -85,7 +97,7 @@ public class StatusBox extends HBox
      */
     public StatusBox(ResourceMonitor resourceMonitor)
     {
-        this(resourceMonitor, null, null, null);
+        this(resourceMonitor, null, null, null, null, null);
     }
 
     /**
@@ -95,23 +107,27 @@ public class StatusBox extends HBox
      */
     public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService)
     {
-        this(resourceMonitor, vaultService, null, null);
+        this(resourceMonitor, vaultService, null, null, null, null);
     }
 
     public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
                      VoiceDecryptionModuleManager moduleManager)
     {
-        this(resourceMonitor, vaultService, moduleManager, null);
+        this(resourceMonitor, vaultService, moduleManager, null, null, null);
     }
 
     public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
                      VoiceDecryptionModuleManager moduleManager,
-                     Supplier<StatsWebNavigationState> navigationStateSupplier)
+                     Supplier<StatsWebNavigationState> navigationStateSupplier,
+                     Supplier<UpdateCheckResult> updateResultSupplier,
+                     Consumer<URI> updateReleasePageConsumer)
     {
         mResourceMonitor = resourceMonitor;
         mVaultService = vaultService;
         mModuleManager = moduleManager;
         mNavigationStateSupplier = navigationStateSupplier;
+        mUpdateResultSupplier = updateResultSupplier;
+        mUpdateReleasePageConsumer = updateReleasePageConsumer;
         setAlignment(Pos.CENTER_LEFT);
         setPadding(new Insets(1, 4, 1, 4));
         setSpacing(0);
@@ -128,6 +144,18 @@ public class StatusBox extends HBox
         if(mVaultService != null)
         {
             addVaultStatusCell();
+        }
+
+        if(mUpdateResultSupplier != null)
+        {
+            addUpdateStatusCell();
+        }
+
+        if(mNavigationStateSupplier != null || mUpdateResultSupplier != null)
+        {
+            mNavigationStatusTimeline = new Timeline(new KeyFrame(Duration.seconds(1), event -> updateDynamicStatus()));
+            mNavigationStatusTimeline.setCycleCount(Animation.INDEFINITE);
+            mNavigationStatusTimeline.play();
         }
     }
 
@@ -222,9 +250,74 @@ public class StatusBox extends HBox
         addCell(webCell);
 
         updateNavigationStatus();
-        mNavigationStatusTimeline = new Timeline(new KeyFrame(Duration.seconds(1), event -> updateNavigationStatus()));
-        mNavigationStatusTimeline.setCycleCount(Animation.INDEFINITE);
-        mNavigationStatusTimeline.play();
+    }
+
+    private void updateDynamicStatus()
+    {
+        if(mNavigationStateSupplier != null)
+        {
+            updateNavigationStatus();
+        }
+
+        if(mUpdateResultSupplier != null)
+        {
+            updateUpdateStatus();
+        }
+    }
+
+    private void addUpdateStatusCell()
+    {
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        getChildren().add(spacer);
+        mUpdateStatusSeparator = createSeparator();
+        getChildren().add(mUpdateStatusSeparator);
+        mUpdateStatusBox = createCell(UPDATE_CELL_WIDTH);
+        mUpdateStatusBox.setAlignment(Pos.CENTER);
+        IconNode updateIcon = new IconNode(FontAwesome.DOWNLOAD);
+        updateIcon.setIconSize(14);
+        updateIcon.setFill(Color.DARKORANGE);
+        mUpdateStatusBox.getChildren().add(updateIcon);
+        mUpdateStatusTooltip = new Tooltip();
+        Tooltip.install(mUpdateStatusBox, mUpdateStatusTooltip);
+        mUpdateStatusBox.setOnMouseClicked(event -> {
+            UpdateCheckResult result = mUpdateResultSupplier.get();
+
+            if(result != null && result.isUpdateAvailable() && mUpdateReleasePageConsumer != null)
+            {
+                mUpdateReleasePageConsumer.accept(result.releaseUri());
+            }
+        });
+        setUpdateStatusVisible(false);
+        updateUpdateStatus();
+    }
+
+    private void updateUpdateStatus()
+    {
+        UpdateCheckResult result = mUpdateResultSupplier.get();
+
+        if(Objects.equals(result, mLastUpdateResult))
+        {
+            return;
+        }
+
+        mLastUpdateResult = result;
+        boolean available = result != null && result.isUpdateAvailable();
+        setUpdateStatusVisible(available);
+
+        if(available)
+        {
+            mUpdateStatusTooltip.setText(result.track() + " update " + result.version() +
+                " is available. Click to open the release page.");
+        }
+    }
+
+    private void setUpdateStatusVisible(boolean visible)
+    {
+        mUpdateStatusSeparator.setVisible(visible);
+        mUpdateStatusSeparator.setManaged(visible);
+        mUpdateStatusBox.setVisible(visible);
+        mUpdateStatusBox.setManaged(visible);
     }
 
     private void addVaultStatusCell()

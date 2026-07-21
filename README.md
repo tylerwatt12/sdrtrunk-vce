@@ -402,6 +402,9 @@ publishing a numbered alpha release on GitHub.
   formats; MHz or Hz frequencies; and optional uplink frequencies.
 - Bounded P25 ISSI foreign-system band storage and website presentation that keeps foreign band IDs separate from
   home-system band IDs.
+- A quiet startup update check for the `main` release track, a manual **Help > Check for Updates** action, and an amber
+  status-footer icon that opens the release page when a newer published build is available. The application does not
+  download or install updates.
 
 #### Changed
 
@@ -410,6 +413,8 @@ publishing a numbered alpha release on GitHub.
 - Preserve DMR decoder settings and complete channel maps when cloning a channel or importing legacy XML.
 - Sort copied and pasted DMR channel maps by logical channel number and reject malformed or duplicate rows without
   partially replacing the saved map.
+- Enable the status footer once after upgrading so update availability can be seen; later visibility changes remain
+  under user control.
 
 #### Fixed
 

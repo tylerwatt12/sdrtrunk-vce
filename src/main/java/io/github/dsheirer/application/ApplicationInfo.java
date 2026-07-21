@@ -20,6 +20,8 @@ public final class ApplicationInfo
     private static final String BUILD_TIMESTAMP = "Build-Timestamp";
     private static final String BUILD_JDK = "Build-JDK";
     private static final String BUILD_OS = "Build-OS";
+    private static final String UPDATE_TRACK = "Update-Track";
+    private static final String UPDATE_BUILD = "Update-Build";
     private static final Manifest MANIFEST = manifest();
     private static final String DISPLAY_NAME = createDisplayName();
 
@@ -55,6 +57,16 @@ public final class ApplicationInfo
     public static String getBuildOs()
     {
         return manifestValue(BUILD_OS);
+    }
+
+    public static String getUpdateTrack()
+    {
+        return manifestValue(UPDATE_TRACK);
+    }
+
+    public static String getUpdateBuild()
+    {
+        return manifestValue(UPDATE_BUILD);
     }
 
     private static String createDisplayName()

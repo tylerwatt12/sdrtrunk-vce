@@ -12,6 +12,7 @@
   <li><b>A safety backup is created before import.</b> The importer writes a timestamped SQLite backup before applying changes and attempts to restore it if the import fails. Applying an import reloads configuration and stops currently running channels so the result can be reviewed before reception resumes.</li>
   <li><b>Copy and paste complete DMR channel maps.</b> The DMR editor accepts spreadsheet-friendly tabs, commas, semicolons, or whitespace. Frequencies may be entered in MHz or Hz, and the uplink column is optional.</li>
   <li><b>P25 ISSI foreign systems retain their own band plans.</b> Foreign WACN and System ID advertisements are stored separately from the home system, preventing matching band IDs from overwriting one another. The website can show one ISSI neighbor entry per foreign system and list its individual band definitions.</li>
+  <li><b>Check for newer releases without leaving the application.</b> A quiet startup check watches the <code>main</code> release track, and Help &gt; Check for Updates provides a manual check. When a newer published build is available, an amber icon appears in the status footer and opens its GitHub release page. The application does not download or install updates.</li>
 </ul>
 
 <h2>Changed</h2>
@@ -21,6 +22,7 @@
   <li><b>DMR channel copies preserve their configuration.</b> Cloning a DMR channel now carries over decoder options and creates an independent copy of every channel-map row.</li>
   <li><b>DMR map pasting is validated before replacement.</b> Rows are sorted by logical channel number. Duplicate LCNs, negative frequencies, missing columns, and nonnumeric values are rejected without partially changing the current map.</li>
   <li><b>Repeated ISSI advertisements remain bounded.</b> Repeated observations update the existing current and summary records instead of accumulating copies of the same band definition.</li>
+  <li><b>The status footer is enabled once after upgrading.</b> This makes update availability visible for existing installations. If you turn the footer off afterward, that preference is respected.</li>
 </ul>
 
 <h2>Fixed</h2>
