@@ -423,8 +423,29 @@ function neighborStatus(value) {
   if (status.includes('ACTIVE RFSS')) labels.push(['RFSS Linked', 'state-current']);
   if (status.includes('FAILURE')) labels.push(['Failure', 'state-stale']);
   if (status.includes('CONVENTIONAL')) labels.push(['Conventional', '']);
+  if (status.includes('ISSI ADVERTISED')) labels.push(['ISSI Advertised', 'state-current']);
   if (!labels.length && status) labels.push([value, '']);
   return fragment(...labels.map(([label, className]) => badge(label, className)));
+}
+
+function neighborModes(row) {
+  const modes = [];
+  if (Number(row.has_fdma)) modes.push('FDMA');
+  if (Number(row.has_tdma)) modes.push('TDMA');
+  if (Number(row.has_unknown)) modes.push('Unknown');
+  return modes.join(', ');
+}
+
+function foreignBandDetails(value) {
+  const types = [
+    { mode: 'FDMA', bandwidth: 12500, slots: 1, voiceRate: 'Half-rate' },
+    { mode: 'FDMA', bandwidth: 12500, slots: 1, voiceRate: 'Full-rate' },
+    { mode: 'FDMA', bandwidth: 6250, slots: 1, voiceRate: 'Half-rate' },
+    { mode: 'TDMA', bandwidth: 12500, slots: 2, voiceRate: 'Half-rate' },
+    { mode: 'TDMA', bandwidth: 25000, slots: 4, voiceRate: 'Half-rate' },
+    { mode: 'TDMA H-D8PSK', bandwidth: 12500, slots: 2, voiceRate: 'Half-rate' }
+  ];
+  return types[Number(value)] || { mode: 'Unknown', bandwidth: '', slots: '', voiceRate: 'Unknown' };
 }
 
 function scope(row) {
@@ -2484,18 +2505,23 @@ async function renderSite() {
     const data = await api('/api/site/neighbors', { guid });
     content.append(section('Neighbors', table(data.rows || [], [
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+      { id: 'type', label: 'Type', render: (row) => row.entry_type === 'ISSI' ? 'ISSI System' : 'Site' },
+      { id: 'wacn', label: 'WACN', render: (row) => hex(row.wacn, 5), sortValue: (row) => Number(row.wacn || 0) },
       { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hex(row.system_id, 3), sortValue: (row) => Number(row.system_id || 0) },
       { id: 'rfss', label: 'RFSS', render: (row) => hex(row.rfss, 2), sortValue: (row) => Number(row.rfss || 0) },
       { id: 'site', label: 'Site', render: (row) => hex(row.site, 2), sortValue: (row) => Number(row.site || 0) },
+      { id: 'lra', label: 'LRA', render: (row) => hex(row.lra, 2), sortValue: (row) => Number(row.lra || 0) },
       { label: 'LCN', key: 'channel_descriptor' },
       { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
+      { id: 'modes', label: 'Modes', render: neighborModes },
+      { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric' },
       { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status', render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
       { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No neighbors recorded', { type: 'site-neighbors' })));
   } else if (tab === 'band-plan') {
     const data = await api('/api/site/bands', { guid });
-    content.append(section('Band Plan', table(data.rows || [], [
+    content.append(section('Home System Band Plan', table(data.rows || [], [
       { label: 'Band', key: 'band', className: 'numeric' },
       { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
       { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
@@ -2506,7 +2532,22 @@ async function renderSite() {
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
       { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ], 'No band plan recorded', { type: 'site-bands' })));
+    ], 'No home-system band plan recorded', { type: 'site-bands' })));
+    content.append(section('ISSI Advertised Band Plans', table(data.foreign_rows || [], [
+      { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
+      { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
+      { label: 'Band', key: 'band', className: 'numeric' },
+      { id: 'mode', label: 'Mode', render: (row) => foreignBandDetails(row.channel_type).mode },
+      { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
+      { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
+      { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', render: (row) => foreignBandDetails(row.channel_type).bandwidth, className: 'numeric' },
+      { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
+      { id: 'slots', label: 'Slots', render: (row) => foreignBandDetails(row.channel_type).slots, className: 'numeric' },
+      { id: 'voice-rate', label: 'Voice Rate', render: (row) => foreignBandDetails(row.channel_type).voiceRate },
+      { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+    ], 'No ISSI-advertised band plans recorded', { type: 'site-foreign-bands' })));
   } else if (tab === 'patches') {
     const data = await api('/api/site/patches', { guid });
     const talkgroups = new Map();

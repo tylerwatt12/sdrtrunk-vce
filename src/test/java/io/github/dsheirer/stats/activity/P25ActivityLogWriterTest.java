@@ -13,6 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -376,7 +377,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("19", resultSet.getString(1));
+                assertEquals("20", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
@@ -415,6 +416,35 @@ class P25ActivityLogWriterTest
             assertColumnAbsent(connection, "receiver_context", "wacn");
             assertColumnAbsent(connection, "receiver_context", "system_id");
             assertEquals(0, count(connection, "p25_radio_affiliation"));
+        }
+    }
+
+    @Test
+    void explicitV19ToV20SchemaStepCreatesAndValidatesForeignBandTables() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("schema-v19-to-v20.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP TABLE p25_foreign_system_band");
+            statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");
+            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "19");
+
+            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+
+            statement.execute("BEGIN IMMEDIATE");
+            P25ActivityLogSchema.createForeignSystemBandTables(statement);
+            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "20");
+            P25ActivityLogSchema.validate(connection);
+            statement.execute("COMMIT");
+
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA quick_check"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("ok", resultSet.getString(1));
+            }
         }
     }
 
@@ -671,6 +701,8 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_site_snapshot", 1);
             assertCount(connection, "p25_site_channel", 1);
             assertCount(connection, "p25_site_frequency_band", 1);
+            assertCount(connection, "p25_foreign_system_band", 3);
+            assertCount(connection, "p25_foreign_system_band_summary", 3);
             assertCount(connection, "p25_site_neighbor", 1);
             assertCount(connection, "p25_site_patch_group", 1);
             assertCount(connection, "p25_site_patch_group_talkgroup", 1);
@@ -711,6 +743,22 @@ class P25ActivityLogWriterTest
             {
                 assertTrue(resultSet.next());
                 assertEquals(1, resultSet.getInt("observation_count"));
+            }
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT foreign_wacn, foreign_system_id, band, channel_type, base_hz, spacing_hz,
+                        transmit_offset_hz
+                    FROM p25_foreign_system_band
+                    WHERE foreign_system_id = 0x9EF AND band = 5
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(0xBEE00, resultSet.getInt("foreign_wacn"));
+                assertEquals(3, resultSet.getInt("channel_type"));
+                assertEquals(935_012_500L, resultSet.getLong("base_hz"));
+                assertEquals(12_500L, resultSet.getLong("spacing_hz"));
+                assertEquals(-39_000_000L, resultSet.getLong("transmit_offset_hz"));
             }
         }
     }
@@ -877,9 +925,11 @@ class P25ActivityLogWriterTest
 
             assertCount(connection, "p25_site_channel", 0);
             assertCount(connection, "p25_site_neighbor", 0);
+            assertCount(connection, "p25_foreign_system_band", 0);
             assertCount(connection, "p25_site_patch_group", 0);
             assertCount(connection, "p25_site_channel_summary", 1);
             assertCount(connection, "p25_site_neighbor_summary", 1);
+            assertCount(connection, "p25_foreign_system_band_summary", 3);
             assertCount(connection, "p25_site_patch_group_summary", 1);
         }
     }
@@ -1265,13 +1315,20 @@ class P25ActivityLogWriterTest
             new P25NetworkConfigurationSnapshot.PatchGroup(56182, 1, List.of(56180), List.of(1811524)));
         List<P25NetworkConfigurationSnapshot.TalkerAlias> aliases = List.of(
             new P25NetworkConfigurationSnapshot.TalkerAlias(1811524, "WPFF205"));
+        List<P25NetworkConfigurationSnapshot.ForeignSystemBand> foreignBands = List.of(
+            new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 4, 1,
+                935_012_500L, 12_500L, -39_000_000L),
+            new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 5, 3,
+                935_012_500L, 12_500L, -39_000_000L),
+            new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x954, 0, 1,
+                851_006_250L, 6_250L, -45_000_000L));
 
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
             0xBEE00, 0x348, 0x348, 2, 1, 0, true,
             new P25NetworkConfigurationSnapshot.SiteStatus(1_784_000_000_000L, 110, true,
                 "Autonomous and by Request", 240, true, 0x90, true),
-            856137500L, 856137500L, channels, neighbors, bands, patches, aliases);
+            856137500L, 856137500L, channels, neighbors, bands, patches, aliases, foreignBands);
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithDuplicateChannels(long timestamp)

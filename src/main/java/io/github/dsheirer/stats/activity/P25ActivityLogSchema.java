@@ -34,14 +34,14 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v19 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
+ * The v20 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
  * Detailed event rows are optional, while lifetime and hourly summaries are always updated when stats logging is
  * enabled. Table names are split by protocol family so DMR/NXDN can be added without folding unrelated records into
  * the P25 tables.
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 19;
+    private static final int SCHEMA_VERSION = 20;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY = "p25_call_output_metrics_started_at_ms";
     private static final long HOUR_MILLISECONDS = 3_600_000L;
@@ -303,6 +303,7 @@ public class P25ActivityLogSchema
         {
             upsertSiteChannelSummaries(connection, snapshot, channels);
             upsertSiteFrequencyBandSummaries(connection, snapshot);
+            upsertForeignSystemBandSummaries(connection, snapshot);
             upsertSiteNeighborSummaries(connection, snapshot);
             upsertSitePatchSummaries(connection, snapshot);
             replaceCurrentSiteFacts(connection, snapshot, channels);
@@ -368,6 +369,7 @@ public class P25ActivityLogSchema
         deleted += deleteByTime(connection, "p25_site_channel", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel_tag", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_frequency_band", "confirmed_at_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "p25_foreign_system_band", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_neighbor", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_talkgroup", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_radio", "confirmed_at_ms", cutoffEpochMilliseconds);
@@ -375,6 +377,8 @@ public class P25ActivityLogSchema
         deleted += deleteByTime(connection, "p25_site_channel_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel_tag_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_frequency_band_summary", "last_seen_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "p25_foreign_system_band_summary", "last_seen_ms",
+            cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_neighbor_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_talkgroup_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_radio_summary", "last_seen_ms", cutoffEpochMilliseconds);
@@ -402,6 +406,7 @@ public class P25ActivityLogSchema
         deleted += deleteAll(connection, "p25_site_patch_group_summary");
         deleted += deleteAll(connection, "p25_site_neighbor_summary");
         deleted += deleteAll(connection, "p25_site_frequency_band_summary");
+        deleted += deleteAll(connection, "p25_foreign_system_band_summary");
         deleted += deleteAll(connection, "p25_site_channel_tag_summary");
         deleted += deleteAll(connection, "p25_site_channel_summary");
         deleted += deleteAll(connection, "p25_site_patch_group_radio");
@@ -409,6 +414,7 @@ public class P25ActivityLogSchema
         deleted += deleteAll(connection, "p25_site_patch_group");
         deleted += deleteAll(connection, "p25_site_neighbor");
         deleted += deleteAll(connection, "p25_site_frequency_band");
+        deleted += deleteAll(connection, "p25_foreign_system_band");
         deleted += deleteAll(connection, "p25_site_channel_tag");
         deleted += deleteAll(connection, "p25_site_channel");
         deleted += deleteAll(connection, "p25_site_snapshot");
@@ -442,6 +448,7 @@ public class P25ActivityLogSchema
         deleted += deleteByGuid(connection, "p25_site_patch_group_summary", guid);
         deleted += deleteByGuid(connection, "p25_site_neighbor_summary", guid);
         deleted += deleteByGuid(connection, "p25_site_frequency_band_summary", guid);
+        deleted += deleteByGuid(connection, "p25_foreign_system_band_summary", guid);
         deleted += deleteByGuid(connection, "p25_site_channel_tag_summary", guid);
         deleted += deleteByGuid(connection, "p25_site_channel_summary", guid);
         deleted += deleteByGuid(connection, "p25_site_patch_group_radio", guid);
@@ -449,6 +456,7 @@ public class P25ActivityLogSchema
         deleted += deleteByGuid(connection, "p25_site_patch_group", guid);
         deleted += deleteByGuid(connection, "p25_site_neighbor", guid);
         deleted += deleteByGuid(connection, "p25_site_frequency_band", guid);
+        deleted += deleteByGuid(connection, "p25_foreign_system_band", guid);
         deleted += deleteByGuid(connection, "p25_site_channel_tag", guid);
         deleted += deleteByGuid(connection, "p25_site_channel", guid);
         deleted += deleteByGuid(connection, "p25_site_snapshot", guid);
@@ -736,6 +744,7 @@ public class P25ActivityLogSchema
                 PRIMARY KEY(guid, band)
             )
             """);
+        createForeignSystemBandTables(statement);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_neighbor (
                 guid TEXT NOT NULL,
@@ -856,6 +865,44 @@ public class P25ActivityLogSchema
             """);
     }
 
+    /**
+     * Creates the current and retained foreign-system band tables. This is called only by the startup schema creator
+     * for a new database and by the explicit external v19-to-v20 migration.
+     */
+    public static void createForeignSystemBandTables(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE TABLE IF NOT EXISTS p25_foreign_system_band (
+                guid TEXT NOT NULL,
+                foreign_wacn INTEGER NOT NULL,
+                foreign_system_id INTEGER NOT NULL,
+                band INTEGER NOT NULL,
+                channel_type INTEGER NOT NULL,
+                base_hz INTEGER,
+                spacing_hz INTEGER,
+                transmit_offset_hz INTEGER,
+                confirmed_at_ms INTEGER NOT NULL,
+                PRIMARY KEY(guid, foreign_wacn, foreign_system_id, band)
+            ) WITHOUT ROWID
+            """);
+        statement.executeUpdate("""
+            CREATE TABLE IF NOT EXISTS p25_foreign_system_band_summary (
+                guid TEXT NOT NULL,
+                foreign_wacn INTEGER NOT NULL,
+                foreign_system_id INTEGER NOT NULL,
+                band INTEGER NOT NULL,
+                channel_type INTEGER NOT NULL,
+                base_hz INTEGER,
+                spacing_hz INTEGER,
+                transmit_offset_hz INTEGER,
+                first_seen_ms INTEGER NOT NULL,
+                last_seen_ms INTEGER NOT NULL,
+                observation_count INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY(guid, foreign_wacn, foreign_system_id, band)
+            ) WITHOUT ROWID
+            """);
+    }
+
     private static void createIndexesAndViews(Statement statement) throws SQLException
     {
         statement.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_receiver_context_guid ON receiver_context(guid) WHERE guid IS NOT NULL");
@@ -927,6 +974,11 @@ public class P25ActivityLogSchema
             "transmit_offset_hz", "timeslots", "confirmed_at_ms"),
         table("p25_site_frequency_band_summary", "guid", "band", "tdma", "base_hz", "bandwidth",
             "spacing_hz", "transmit_offset_hz", "timeslots", "first_seen_ms", "last_seen_ms",
+            "observation_count"),
+        table("p25_foreign_system_band", "guid", "foreign_wacn", "foreign_system_id", "band",
+            "channel_type", "base_hz", "spacing_hz", "transmit_offset_hz", "confirmed_at_ms"),
+        table("p25_foreign_system_band_summary", "guid", "foreign_wacn", "foreign_system_id", "band",
+            "channel_type", "base_hz", "spacing_hz", "transmit_offset_hz", "first_seen_ms", "last_seen_ms",
             "observation_count"),
         table("p25_site_neighbor", "guid", "neighbor_key", "system_id", "rfss", "site", "lra",
             "channel_descriptor", "downlink_hz", "uplink_hz", "status", "confirmed_at_ms"),
@@ -1858,6 +1910,40 @@ public class P25ActivityLogSchema
         }
     }
 
+    private static void upsertForeignSystemBandSummaries(Connection connection,
+                                                         P25ActivityLogRecords.SiteSnapshot snapshot)
+        throws SQLException
+    {
+        for(P25NetworkConfigurationSnapshot.ForeignSystemBand band: list(snapshot.foreignSystemBands()))
+        {
+            if(!isValidForeignSystemBand(band))
+            {
+                continue;
+            }
+
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO p25_foreign_system_band_summary (
+                    guid, foreign_wacn, foreign_system_id, band, channel_type, base_hz, spacing_hz,
+                    transmit_offset_hz, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(guid, foreign_wacn, foreign_system_id, band) DO UPDATE SET
+                    channel_type = excluded.channel_type,
+                    base_hz = coalesce(excluded.base_hz, p25_foreign_system_band_summary.base_hz),
+                    spacing_hz = coalesce(excluded.spacing_hz, p25_foreign_system_band_summary.spacing_hz),
+                    transmit_offset_hz = coalesce(excluded.transmit_offset_hz,
+                        p25_foreign_system_band_summary.transmit_offset_hz),
+                    last_seen_ms = excluded.last_seen_ms,
+                    observation_count = p25_foreign_system_band_summary.observation_count + 1
+                """))
+            {
+                setForeignSystemBand(statement, snapshot.guid(), band);
+                statement.setLong(9, snapshot.observedAtEpochMilliseconds());
+                statement.setLong(10, snapshot.observedAtEpochMilliseconds());
+                statement.executeUpdate();
+            }
+        }
+    }
+
     private static void upsertSitePatchSummaries(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot)
         throws SQLException
     {
@@ -2097,6 +2183,26 @@ public class P25ActivityLogSchema
             statement.executeBatch();
         }
 
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_foreign_system_band
+                (guid, foreign_wacn, foreign_system_id, band, channel_type, base_hz, spacing_hz,
+                 transmit_offset_hz, confirmed_at_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """))
+        {
+            for(P25NetworkConfigurationSnapshot.ForeignSystemBand band: list(snapshot.foreignSystemBands()))
+            {
+                if(isValidForeignSystemBand(band))
+                {
+                    setForeignSystemBand(statement, snapshot.guid(), band);
+                    statement.setLong(9, timestamp);
+                    statement.addBatch();
+                }
+            }
+
+            statement.executeBatch();
+        }
+
         try(PreparedStatement group = connection.prepareStatement("""
                 INSERT INTO p25_site_patch_group (guid, patch_group, version, confirmed_at_ms) VALUES (?, ?, ?, ?)
                 """);
@@ -2156,8 +2262,8 @@ public class P25ActivityLogSchema
     private static void clearCurrentSiteFacts(Connection connection, String guid) throws SQLException
     {
         for(String table: List.of("p25_site_patch_group_radio", "p25_site_patch_group_talkgroup",
-            "p25_site_patch_group", "p25_site_neighbor", "p25_site_frequency_band", "p25_site_channel_tag",
-            "p25_site_channel"))
+            "p25_site_patch_group", "p25_site_neighbor", "p25_foreign_system_band", "p25_site_frequency_band",
+            "p25_site_channel_tag", "p25_site_channel"))
         {
             try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE guid = ?"))
             {
@@ -2171,8 +2277,8 @@ public class P25ActivityLogSchema
         throws SQLException
     {
         for(String table: List.of("p25_site_patch_group_radio", "p25_site_patch_group_talkgroup",
-            "p25_site_patch_group", "p25_site_neighbor", "p25_site_frequency_band", "p25_site_channel_tag",
-            "p25_site_channel"))
+            "p25_site_patch_group", "p25_site_neighbor", "p25_foreign_system_band", "p25_site_frequency_band",
+            "p25_site_channel_tag", "p25_site_channel"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
                 "UPDATE " + table + " SET confirmed_at_ms = ? WHERE guid = ?"))
@@ -2187,6 +2293,28 @@ public class P25ActivityLogSchema
     private static <T> List<T> list(List<T> values)
     {
         return values != null ? values : List.of();
+    }
+
+    private static boolean isValidForeignSystemBand(P25NetworkConfigurationSnapshot.ForeignSystemBand band)
+    {
+        return band != null && band.wacn() != null && band.wacn() >= 0 && band.wacn() <= 0xFFFFF &&
+            band.system() != null && band.system() >= 0 && band.system() <= 0xFFF &&
+            band.band() != null && band.band() >= 0 && band.band() <= 0xF &&
+            band.channelType() != null && band.channelType() >= 0 && band.channelType() <= 0xF;
+    }
+
+    private static void setForeignSystemBand(PreparedStatement statement, String guid,
+                                             P25NetworkConfigurationSnapshot.ForeignSystemBand band)
+        throws SQLException
+    {
+        statement.setString(1, guid);
+        statement.setInt(2, band.wacn());
+        statement.setInt(3, band.system());
+        statement.setInt(4, band.band());
+        statement.setInt(5, band.channelType());
+        setLong(statement, 6, band.base());
+        setLong(statement, 7, band.spacing());
+        setLong(statement, 8, band.transmitOffset());
     }
 
     private static int selectContextId(Connection connection, String contextKey) throws SQLException
