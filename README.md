@@ -388,6 +388,51 @@ publishing a numbered alpha release on GitHub.
 
 ## Changelog
 
+### 0.6.2-alpha-6 - 2026-07-21
+
+> The user-facing What's New document was approved before this version was packaged or published.
+
+#### Added
+
+- A **File > Import Legacy Playlist XML** workflow that previews aliases, channels, channel maps, streams, and name
+  conflicts before merging an older playlist into the current portable database.
+- Skip, rename, and replace policies for legacy-import conflicts, with reference updates and a timestamped SQLite backup
+  before changes are applied.
+- Copy and Paste Map controls for DMR channel maps, including spreadsheet-friendly tab, comma, semicolon, and whitespace
+  formats; MHz or Hz frequencies; and optional uplink frequencies.
+- Bounded P25 ISSI foreign-system band storage and website presentation that keeps foreign band IDs separate from
+  home-system band IDs.
+
+#### Changed
+
+- Preserve more complete NXDN MBE call and frame metadata and strengthen decoder validation with published protocol
+  vectors and additional Type-D, channel-access, and initialization-vector coverage.
+- Preserve DMR decoder settings and complete channel maps when cloning a channel or importing legacy XML.
+- Sort copied and pasted DMR channel maps by logical channel number and reject malformed or duplicate rows without
+  partially replacing the saved map.
+
+#### Fixed
+
+- Report the correct removed row when Events or Messages exceed their configured history limit, including while a table
+  sorter is active.
+- Preserve large DMR Tier III frequency maps, optional uplink frequencies, and decoder options during legacy XML import.
+- Prevent matching band IDs advertised by different P25 systems from overwriting one another.
+
+#### Removed
+
+- No user-facing feature, setting, channel, alias, recording, or stored statistic is intentionally removed by this
+  release.
+
+#### Upgrade Notes
+
+- Alpha 6 advances the P25 activity schema from version 19 to version 20. Existing Alpha 5 databases must be migrated
+  with the supplied external `migrate-v19-to-v20-foreign-system-bands` tool while SDRTrunk is stopped.
+- The migration checks database integrity, creates a timestamped backup, applies the bounded foreign-system band tables,
+  and verifies the result. Normal application startup does not alter an existing schema.
+- Back up the complete portable data directory before upgrading. Returning to Alpha 5 requires restoring the
+  pre-migration database backup as well as the earlier application.
+- The experimental `webfirst` browser spectrum and web-first interface work is not included in this release.
+
 ### 0.6.2-alpha-5 - 2026-07-18
 
 > The user-facing What's New document was approved before this version was packaged or published.
