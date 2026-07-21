@@ -367,7 +367,9 @@ class P25ActivityLogMapperTest
                 851006250L, 12500, 6250L, -45000000L, 1)),
             List.of(new P25NetworkConfigurationSnapshot.PatchGroup(56182, 1,
                 List.of(56180), List.of(1811524))),
-            List.of(new P25NetworkConfigurationSnapshot.TalkerAlias(1811524, "WPFF205")));
+            List.of(new P25NetworkConfigurationSnapshot.TalkerAlias(1811524, "WPFF205")), null,
+            List.of(new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 4, 1,
+                935_012_500L, 12_500L, -39_000_000L)));
 
         P25ActivityLogRecords.SiteSnapshot record =
             new P25ActivityLogMapper().map(new SiteMetadataEvent(channel, snapshot, 5000L));
@@ -383,6 +385,8 @@ class P25ActivityLogMapperTest
         assertEquals("primary_control", record.channels().get(0).role());
         assertEquals(1, record.patchGroups().size());
         assertEquals(56182, record.patchGroups().get(0).patchGroup());
+        assertEquals(1, record.foreignSystemBands().size());
+        assertEquals(0x9EF, record.foreignSystemBands().getFirst().system());
         assertNotNull(record.snapshotHash());
     }
 

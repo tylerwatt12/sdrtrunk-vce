@@ -109,6 +109,14 @@ public class AMBTCFrequencyBandUpdateTDMA extends AMBTCMessage // implements IFr
         return mChannelType;
     }
 
+    /**
+     * Raw four-bit channel type advertised over the air.
+     */
+    public int getChannelTypeValue()
+    {
+        return getHeader().getMessage().getInt(HEADER_CHANNEL_TYPE);
+    }
+
     public int getIdentifier()
     {
         return getHeader().getMessage().getInt(HEADER_IDENTIFIER);

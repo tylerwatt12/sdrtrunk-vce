@@ -56,6 +56,8 @@ public class P25NetworkConfigurationStabilizer
         new TreeMap<>();
     private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.FrequencyBand>> mFrequencyBands =
         new TreeMap<>();
+    private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.ForeignSystemBand>>
+        mForeignSystemBands = new TreeMap<>();
     private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.PatchGroup>> mPatchGroups =
         new TreeMap<>();
     private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.TalkerAlias>> mTalkerAliases =
@@ -83,6 +85,7 @@ public class P25NetworkConfigurationStabilizer
         mChannels.clear();
         mNeighborSites.clear();
         mFrequencyBands.clear();
+        mForeignSystemBands.clear();
         mPatchGroups.clear();
         mTalkerAliases.clear();
         mRejectedControlChannelFrequencies.clear();
@@ -102,6 +105,7 @@ public class P25NetworkConfigurationStabilizer
         resetCandidates(mChannels);
         resetCandidates(mNeighborSites);
         resetCandidates(mFrequencyBands);
+        resetCandidates(mForeignSystemBands);
         resetCandidates(mPatchGroups);
         resetCandidates(mTalkerAliases);
     }
@@ -146,6 +150,13 @@ public class P25NetworkConfigurationStabilizer
         {
             observeStatic("frequency_band", mFrequencyBands, frequencyBandKey(frequencyBand), frequencyBand,
                 timestamp);
+        }
+
+        for(P25NetworkConfigurationSnapshot.ForeignSystemBand foreignSystemBand:
+            list(observation.foreignSystemBands()))
+        {
+            observeStatic("foreign_system_band", mForeignSystemBands, foreignSystemBandKey(foreignSystemBand),
+                foreignSystemBand, timestamp);
         }
 
         observePatchGroups(observation.patchGroups(), timestamp);
@@ -276,7 +287,8 @@ public class P25NetworkConfigurationStabilizer
     {
         return new P25NetworkConfigurationSnapshot(mDecoder, mNetwork.getStableValue(), mCurrentSite.getStableValue(),
             stableValues(mChannels), stableValues(mNeighborSites), stableValues(mFrequencyBands),
-            stableValues(mPatchGroups), stableValues(mTalkerAliases), mSiteStatus.getStableValue());
+            stableValues(mPatchGroups), stableValues(mTalkerAliases), mSiteStatus.getStableValue(),
+            stableValues(mForeignSystemBands));
     }
 
     private <T> void observeStatic(String factType, P25StableFactTracker<T> tracker, T value, long timestamp)
@@ -415,11 +427,13 @@ public class P25NetworkConfigurationStabilizer
         expireCandidates(mChannels, timestamp);
         expireCandidates(mNeighborSites, timestamp);
         expireCandidates(mFrequencyBands, timestamp);
+        expireCandidates(mForeignSystemBands, timestamp);
         expireCandidates(mPatchGroups, timestamp);
         expireCandidates(mTalkerAliases, timestamp);
         expireStableBroadcastFacts(mChannels, timestamp);
         expireStableBroadcastFacts(mNeighborSites, timestamp);
         expireStableBroadcastFacts(mFrequencyBands, timestamp);
+        expireStableBroadcastFacts(mForeignSystemBands, timestamp);
     }
 
     private <T> void expireStableBroadcastFacts(Map<String,P25StableFactTracker<T>> trackers, long timestamp)
@@ -514,6 +528,16 @@ public class P25NetworkConfigurationStabilizer
     private static String frequencyBandKey(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand)
     {
         return frequencyBand != null && frequencyBand.band() != null ? String.valueOf(frequencyBand.band()) : null;
+    }
+
+    private static String foreignSystemBandKey(P25NetworkConfigurationSnapshot.ForeignSystemBand band)
+    {
+        if(band == null || band.wacn() == null || band.system() == null || band.band() == null)
+        {
+            return null;
+        }
+
+        return band.wacn() + ":" + band.system() + ":" + band.band();
     }
 
     private static String patchGroupKey(P25NetworkConfigurationSnapshot.PatchGroup patchGroup)

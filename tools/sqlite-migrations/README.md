@@ -15,6 +15,24 @@ Packaged builds keep the global SDRTrunk database in their portable data directo
 
 ## Available Migrations
 
+### P25 history v19 to v20
+
+Adds bounded current and summary tables for foreign-system frequency bands advertised over a monitored P25 control
+channel. Rows are scoped by the configured home-site GUID, foreign WACN, foreign System ID, and band ID so they cannot
+collide with home-system band plans. Stop SDRTrunk before running the migration. It checks integrity, checkpoints WAL
+data, creates a timestamped backup, applies and validates the v20 schema, and runs a post-migration quick check.
+
+```bash
+tools/sqlite-migrations/p25-history/migrate-v19-to-v20-foreign-system-bands.sh \
+  /path/to/sdrtrunk.sqlite /path/to/sdrtrunk-app
+```
+
+```powershell
+tools\sqlite-migrations\p25-history\migrate-v19-to-v20-foreign-system-bands.ps1 `
+  -DatabasePath C:\path\to\sdrtrunk.sqlite `
+  -AppHome C:\path\to\sdrtrunk-app
+```
+
 ### P25 history v18 to v19
 
 Adds compact aggregate `recorded_count` and `streamed_count` columns to `p25_talkgroup_summary`. Existing retained

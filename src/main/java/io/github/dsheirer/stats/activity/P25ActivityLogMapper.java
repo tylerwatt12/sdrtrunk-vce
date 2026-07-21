@@ -256,7 +256,8 @@ class P25ActivityLogMapper
         Long currentControl = currentControl(snapshot.channels());
         String hash = sha256(String.join("|", safe(snapshot.decoder()), safe(snapshot.network()),
             safe(snapshot.currentSite()), safe(snapshot.channels()), safe(snapshot.neighborSites()),
-            safe(snapshot.frequencyBands()), safe(snapshot.patchGroups()), safe(snapshot.siteStatus())));
+            safe(snapshot.frequencyBands()), safe(snapshot.patchGroups()), safe(snapshot.siteStatus()),
+            safe(snapshot.foreignSystemBands())));
         String guid = blankToNull(channel.getRadresGuid());
 
         if(guid == null)
@@ -269,7 +270,8 @@ class P25ActivityLogMapper
             blankToNull(channel.getName()), blankToNull(channel.getAliasListName()), snapshot.decoder(), wacn,
             system, nac, rfss, site, lra, tdma, snapshot.siteStatus(), currentControl, currentControl,
             snapshot.channels(), snapshot.neighborSites(),
-            snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.talkerAliases());
+            snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.talkerAliases(),
+            snapshot.foreignSystemBands());
     }
 
     private static Boolean hasTdma(P25NetworkConfigurationSnapshot snapshot)

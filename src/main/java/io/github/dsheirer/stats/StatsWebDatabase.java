@@ -1048,24 +1048,51 @@ class StatsWebDatabase
     Map<String,Object> siteBands(StatsRequest request)
     {
         String guid = request.requiredText("guid");
-        return read(connection -> Map.of("rows", queryRows(connection, """
-            SELECT current.band, current.tdma, current.base_hz, current.bandwidth, current.spacing_hz,
-                current.transmit_offset_hz, current.timeslots, current.confirmed_at_ms,
-                summary.first_seen_ms, summary.last_seen_ms, summary.observation_count,
-                CASE WHEN max(current.confirmed_at_ms, coalesce(summary.last_seen_ms, 0)) >= ?
-                    THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
-            FROM p25_site_frequency_band current
-            LEFT JOIN p25_site_frequency_band_summary summary
-              ON summary.guid = current.guid AND summary.band = current.band
-            WHERE current.guid = ? ORDER BY current.band
-            """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid)));
+        return read(connection -> {
+            long currentSince = System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS;
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("rows", queryRows(connection, """
+                SELECT current.band, current.tdma, current.base_hz, current.bandwidth, current.spacing_hz,
+                    current.transmit_offset_hz, current.timeslots, current.confirmed_at_ms,
+                    summary.first_seen_ms, summary.last_seen_ms, summary.observation_count,
+                    CASE WHEN max(current.confirmed_at_ms, coalesce(summary.last_seen_ms, 0)) >= ?
+                        THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                FROM p25_site_frequency_band current
+                LEFT JOIN p25_site_frequency_band_summary summary
+                  ON summary.guid = current.guid AND summary.band = current.band
+                WHERE current.guid = ? ORDER BY current.band
+                """, currentSince, guid));
+            response.put("foreign_rows", queryRows(connection, """
+                SELECT summary.foreign_wacn, summary.foreign_system_id, summary.band,
+                    coalesce(current.channel_type, summary.channel_type) AS channel_type,
+                    coalesce(current.base_hz, summary.base_hz) AS base_hz,
+                    coalesce(current.spacing_hz, summary.spacing_hz) AS spacing_hz,
+                    coalesce(current.transmit_offset_hz, summary.transmit_offset_hz) AS transmit_offset_hz,
+                    current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
+                    summary.observation_count,
+                    CASE WHEN max(coalesce(current.confirmed_at_ms, 0), summary.last_seen_ms) >= ?
+                        THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                FROM p25_foreign_system_band_summary summary
+                LEFT JOIN p25_foreign_system_band current
+                  ON current.guid = summary.guid
+                 AND current.foreign_wacn = summary.foreign_wacn
+                 AND current.foreign_system_id = summary.foreign_system_id
+                 AND current.band = summary.band
+                WHERE summary.guid = ?
+                ORDER BY CASE WHEN current.band IS NULL THEN 1 ELSE 0 END,
+                    summary.foreign_wacn, summary.foreign_system_id, summary.band
+                """, currentSince, guid));
+            return response;
+        });
     }
 
     Map<String,Object> siteNeighbors(StatsRequest request)
     {
         String guid = request.requiredText("guid");
-        return read(connection -> Map.of("rows", queryRows(connection, """
-            SELECT summary.neighbor_key,
+        return read(connection -> {
+            long currentSince = System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS;
+            List<Map<String,Object>> rows = new ArrayList<>(queryRows(connection, """
+            SELECT 'SITE' AS entry_type, NULL AS wacn, summary.neighbor_key,
                 coalesce(current.system_id, summary.system_id) AS system_id,
                 coalesce(current.rfss, summary.rfss) AS rfss,
                 coalesce(current.site, summary.site) AS site,
@@ -1084,7 +1111,34 @@ class StatsWebDatabase
             WHERE summary.guid = ?
             ORDER BY CASE WHEN current.neighbor_key IS NULL THEN 1 ELSE 0 END,
                 system_id, rfss, site, summary.neighbor_key
-            """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid)));
+            """, currentSince, guid));
+            rows.addAll(queryRows(connection, """
+                SELECT 'ISSI' AS entry_type, summary.foreign_wacn AS wacn,
+                    printf('%X:%03X', summary.foreign_wacn, summary.foreign_system_id) AS neighbor_key,
+                    summary.foreign_system_id AS system_id, NULL AS rfss, NULL AS site, NULL AS lra,
+                    NULL AS channel_descriptor, NULL AS downlink_hz, NULL AS uplink_hz,
+                    'ISSI ADVERTISED' AS status, MAX(current.confirmed_at_ms) AS confirmed_at_ms,
+                    MIN(summary.first_seen_ms) AS first_seen_ms, MAX(summary.last_seen_ms) AS last_seen_ms,
+                    SUM(summary.observation_count) AS observation_count,
+                    COUNT(*) AS band_count,
+                    MAX(CASE WHEN summary.channel_type BETWEEN 0 AND 2 THEN 1 ELSE 0 END) AS has_fdma,
+                    MAX(CASE WHEN summary.channel_type BETWEEN 3 AND 5 THEN 1 ELSE 0 END) AS has_tdma,
+                    MAX(CASE WHEN summary.channel_type NOT BETWEEN 0 AND 5 THEN 1 ELSE 0 END) AS has_unknown,
+                    CASE WHEN MAX(coalesce(current.confirmed_at_ms, 0)) >= ? OR MAX(summary.last_seen_ms) >= ?
+                        THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                FROM p25_foreign_system_band_summary summary
+                LEFT JOIN p25_foreign_system_band current
+                  ON current.guid = summary.guid
+                 AND current.foreign_wacn = summary.foreign_wacn
+                 AND current.foreign_system_id = summary.foreign_system_id
+                 AND current.band = summary.band
+                WHERE summary.guid = ?
+                GROUP BY summary.foreign_wacn, summary.foreign_system_id
+                ORDER BY CASE WHEN MAX(current.confirmed_at_ms) IS NULL THEN 1 ELSE 0 END,
+                    summary.foreign_wacn, summary.foreign_system_id
+                """, currentSince, currentSince, guid));
+            return Map.of("rows", rows);
+        });
     }
 
     Map<String,Object> sitePatches(StatsRequest request)

@@ -29,8 +29,21 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                               List<FrequencyBand> frequencyBands,
                                               List<PatchGroup> patchGroups,
                                               List<TalkerAlias> talkerAliases,
-                                              SiteStatus siteStatus)
+                                              SiteStatus siteStatus,
+                                              List<ForeignSystemBand> foreignSystemBands)
 {
+    /**
+     * Compatibility constructor for snapshot producers that don't provide foreign-system frequency bands.
+     */
+    public P25NetworkConfigurationSnapshot(String decoder, Network network, CurrentSite currentSite,
+                                           List<Channel> channels, List<NeighborSite> neighborSites,
+                                           List<FrequencyBand> frequencyBands, List<PatchGroup> patchGroups,
+                                           List<TalkerAlias> talkerAliases, SiteStatus siteStatus)
+    {
+        this(decoder, network, currentSite, channels, neighborSites, frequencyBands, patchGroups, talkerAliases,
+            siteStatus, List.of());
+    }
+
     /**
      * Compatibility constructor for snapshot producers that don't provide current site services/status.
      */
@@ -39,7 +52,8 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                            List<FrequencyBand> frequencyBands, List<PatchGroup> patchGroups,
                                            List<TalkerAlias> talkerAliases)
     {
-        this(decoder, network, currentSite, channels, neighborSites, frequencyBands, patchGroups, talkerAliases, null);
+        this(decoder, network, currentSite, channels, neighborSites, frequencyBands, patchGroups, talkerAliases, null,
+            List.of());
     }
 
     /**
@@ -49,7 +63,8 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     {
         return network != null || currentSite != null || (channels != null && !channels.isEmpty()) ||
             (neighborSites != null && !neighborSites.isEmpty()) ||
-            (frequencyBands != null && !frequencyBands.isEmpty()) || siteStatus != null;
+            (frequencyBands != null && !frequencyBands.isEmpty()) ||
+            (foreignSystemBands != null && !foreignSystemBands.isEmpty()) || siteStatus != null;
     }
 
     public record Network(Integer wacn, Integer system, Integer nac, Integer lra)
@@ -107,6 +122,15 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
 
     public record FrequencyBand(Integer band, Boolean tdma, Long base, Integer bandwidth, Long spacing,
                                 Long transmitOffset, Integer timeslots)
+    {
+    }
+
+    /**
+     * Frequency band advertised for a foreign P25 system. Channel type is the compact over-the-air value (0-5),
+     * from which access mode, bandwidth, timeslots, and voice rate can be derived without duplicating those values.
+     */
+    public record ForeignSystemBand(Integer wacn, Integer system, Integer band, Integer channelType,
+                                    Long base, Long spacing, Long transmitOffset)
     {
     }
 
