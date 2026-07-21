@@ -33,6 +33,18 @@ public class VoiceEncryptionAlgorithmTest
     }
 
     @Test
+    void resolvesKnownNxdnAlgorithmMetadata()
+    {
+        assertEquals(VoiceEncryptionAlgorithm.NXDN_SCRAMBLER,
+            VoiceEncryptionAlgorithm.fromValue(VoiceEncryptionProtocol.NXDN, 0x01));
+        assertEquals(VoiceEncryptionAlgorithm.NXDN_DES_OFB,
+            VoiceEncryptionAlgorithm.fromValue(VoiceEncryptionProtocol.NXDN, 0x02));
+        assertEquals(VoiceEncryptionAlgorithm.NXDN_AES_256_OFB,
+            VoiceEncryptionAlgorithm.fromValue(VoiceEncryptionProtocol.NXDN, 0x03));
+        assertEquals(32, VoiceEncryptionAlgorithm.NXDN_AES_256_OFB.getExpectedKeyBytes());
+    }
+
+    @Test
     void unknownAlgorithmsUseHexLabel()
     {
         assertEquals("0xFE", VoiceEncryptionAlgorithm.getLabel(VoiceEncryptionProtocol.APCO25, 0xFE));
