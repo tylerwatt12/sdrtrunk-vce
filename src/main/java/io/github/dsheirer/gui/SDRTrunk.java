@@ -61,6 +61,8 @@ import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultExceptio
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
+import io.github.dsheirer.portable.PortableApplicationPaths;
+import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
@@ -202,12 +204,14 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mSystemsVisible;
     private boolean mMainSplitPaneDividerRestored;
     private boolean mVaultLaunchPromptProcessed;
+    private PortableDataRootLock mDataRootLock;
 
     private String mTitle;
 
-    private SDRTrunk(UserPreferences userPreferences)
+    private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock)
     {
         mUserPreferences = userPreferences;
+        mDataRootLock = dataRootLock;
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
         mUpdateCheckService = new UpdateCheckService();
         mIconModel = new IconModel();
@@ -1030,6 +1034,20 @@ public class SDRTrunk implements Listener<TunerEvent>
         mLog.info("Shutdown complete.");
         mApplicationLog.stop();
         SqlitePreferencesFactory.shutdown();
+
+        if(mDataRootLock != null)
+        {
+            try
+            {
+                mDataRootLock.close();
+            }
+            catch(IOException e)
+            {
+                mLog.error("Unable to release the portable data lock", e);
+            }
+
+            mDataRootLock = null;
+        }
     }
 
     private void registerQuitHandler()
@@ -1442,29 +1460,62 @@ public class SDRTrunk implements Listener<TunerEvent>
     public static void main(String[] args)
     {
         System.setProperty("apple.awt.application.name", "sdrtrunk-vce");
+        PortableDataRootLock dataRootLock = null;
 
         try
         {
-            Path databasePath = SdrTrunkDatabasePath.getDatabasePath();
-            boolean newProfile = !Files.isRegularFile(databasePath);
+            Path dataRoot = PortableApplicationPaths.getDataRoot();
+            Path databasePath = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
 
-            if(!SdrTrunkDatabaseBootstrap.run(args))
+            if(Files.isRegularFile(databasePath))
             {
+                dataRootLock = PortableDataRootLock.acquire(dataRoot);
+            }
+
+            SdrTrunkDatabaseBootstrap.BootstrapResult bootstrap = SdrTrunkDatabaseBootstrap.run(args);
+
+            if(!bootstrap.startApplication())
+            {
+                if(dataRootLock != null)
+                {
+                    dataRootLock.close();
+                }
+
                 return;
+            }
+
+            if(dataRootLock == null)
+            {
+                dataRootLock = PortableDataRootLock.acquire(dataRoot);
             }
 
             SqlitePreferencesFactory.install(databasePath);
             UserPreferences userPreferences = new UserPreferences();
 
-            if(newProfile)
+            if(bootstrap.initializeNewPreferences())
             {
                 userPreferences.getApplicationPreference().setStatsLoggingEnabled(true);
             }
 
-            new SDRTrunk(userPreferences);
+            new SDRTrunk(userPreferences, dataRootLock);
+            dataRootLock = null;
         }
         catch(Exception e)
         {
+            SqlitePreferencesFactory.shutdown();
+
+            if(dataRootLock != null)
+            {
+                try
+                {
+                    dataRootLock.close();
+                }
+                catch(IOException closeFailure)
+                {
+                    e.addSuppressed(closeFailure);
+                }
+            }
+
             String message = "sdrtrunk-vce could not start.\n\n" + e.getMessage();
             System.err.println(message);
             e.printStackTrace(System.err);

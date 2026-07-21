@@ -130,6 +130,11 @@ done
 - [ ] Inspect at least one archive from each operating-system family. Confirm that it contains the launcher, bundled
       runtime, application libraries, web assets, and license, and does not contain a portable `data` directory with
       local state.
+- [ ] Confirm that each archive's application JAR contains
+      `io/github/dsheirer/database/upgrade/P25ActivityV19ToV20Upgrade.class`. For the native macOS app this class is in
+      `Contents/app/mods/sdrtrunk-vce-jpms.jar`.
+- [ ] Run the packaged upgrade helper with `--help` from one classpath image and the native macOS app. Confirm both
+      return exit code 0 and print usage without creating a data folder.
 - [ ] Smoke-test the native macOS application and the package for each available receiver-node architecture. Use a new
       temporary install directory; do not overwrite the active receiver-node installation during release validation.
 - [ ] Generate and verify the checksum file:
