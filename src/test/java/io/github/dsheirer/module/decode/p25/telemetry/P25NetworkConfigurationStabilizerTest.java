@@ -183,6 +183,27 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(855237500L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
     }
 
+    @Test
+    public void keepsForeignBandsScopedByWacnSystemAndBand()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        List<P25NetworkConfigurationSnapshot.ForeignSystemBand> bands = List.of(
+            new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 4, 1,
+                935_012_500L, 12_500L, -39_000_000L),
+            new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 5, 3,
+                935_012_500L, 12_500L, -39_000_000L),
+            new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x954, 0, 1,
+                851_006_250L, 6_250L, -45_000_000L));
+        P25NetworkConfigurationSnapshot observation = new P25NetworkConfigurationSnapshot("P25_PHASE_1", null,
+            null, List.of(), List.of(), List.of(), List.of(), List.of(), null, bands);
+
+        stabilizer.observe(observation, 1_000L);
+
+        assertEquals(3, stabilizer.getSnapshot().foreignSystemBands().size());
+        assertTrue(stabilizer.getSnapshot().foreignSystemBands().containsAll(bands));
+        assertTrue(stabilizer.getSnapshot().frequencyBands().isEmpty());
+    }
+
     private static P25NetworkConfigurationSnapshot snapshot(P25NetworkConfigurationSnapshot.NeighborSite neighbor)
     {
         return new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(neighbor),

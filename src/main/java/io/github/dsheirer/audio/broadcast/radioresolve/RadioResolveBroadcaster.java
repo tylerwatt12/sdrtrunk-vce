@@ -908,7 +908,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             P25NetworkConfigurationSnapshot summary = new P25NetworkConfigurationSnapshot(snapshot.decoder(),
                 snapshot.network(), snapshot.currentSite(), snapshot.channels(), snapshot.neighborSites(),
-                snapshot.frequencyBands(), snapshot.patchGroups(), List.of());
+                snapshot.frequencyBands(), snapshot.patchGroups(), List.of(), null, snapshot.foreignSystemBands());
             byte[] hash = digest.digest(GSON.toJson(summary).getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder();
 

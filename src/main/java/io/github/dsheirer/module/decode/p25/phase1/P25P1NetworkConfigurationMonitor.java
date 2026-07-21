@@ -36,6 +36,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSeconda
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSystemServiceBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCAdjacentStatusBroadcast;
+import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCFrequencyBandUpdateTDMA;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCNetworkStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCRFSSStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessage;
@@ -105,6 +106,9 @@ public class P25P1NetworkConfigurationMonitor
     private Map<Integer,LCAdjacentSiteStatusBroadcast> mLCNeighborSites = new HashMap<>();
     private Map<Integer,LCAdjacentSiteStatusBroadcastExplicit> mLCNeighborSitesExplicit = new HashMap<>();
     private Map<Integer,AdjacentStatusBroadcast> mTSBKNeighborSites = new HashMap<>();
+
+    //Frequency bands that the serving system advertises for a foreign P25 system.
+    private Map<String,P25NetworkConfigurationSnapshot.ForeignSystemBand> mForeignSystemBands = new TreeMap<>();
 
     private Map<String,MotorolaBaseStationId> mMotorolaBaseStationIds = new TreeMap<>();
     private P25NetworkConfigurationSnapshot.SiteStatus mSiteStatus;
@@ -296,6 +300,14 @@ public class P25P1NetworkConfigurationMonitor
                         Collections.emptyList(), Collections.emptyList());
                 }
                 break;
+            case OSP_IDENTIFIER_UPDATE_TDMA:
+                if(ambtc instanceof AMBTCFrequencyBandUpdateTDMA tdma)
+                {
+                    P25NetworkConfigurationSnapshot.ForeignSystemBand band = getForeignSystemBandSnapshot(tdma);
+                    mForeignSystemBands.put(foreignSystemBandKey(band), band);
+                    return foreignSystemBandObservation(band);
+                }
+                break;
 //TODO: process the rest of the messages here
         }
 
@@ -438,6 +450,7 @@ public class P25P1NetworkConfigurationMonitor
         mLCNeighborSites.clear();
         mLCNeighborSitesExplicit.clear();
         mTSBKNeighborSites.clear();
+        mForeignSystemBands.clear();
         mMotorolaBaseStationIds.clear();
         mSiteStatus = null;
         mNetworkConfigurationStabilizer.resetCandidates();
@@ -520,7 +533,7 @@ public class P25P1NetworkConfigurationMonitor
 
         return new P25NetworkConfigurationSnapshot("P25_PHASE_1", network, currentSite, channels,
             getNeighborSiteSnapshots(), getFrequencyBandSnapshots(), Collections.emptyList(), Collections.emptyList(),
-            mSiteStatus);
+            mSiteStatus, new ArrayList<>(mForeignSystemBands.values()));
     }
 
     private P25NetworkConfigurationSnapshot observation(P25NetworkConfigurationSnapshot.Network network,
@@ -531,6 +544,14 @@ public class P25P1NetworkConfigurationMonitor
     {
         return new P25NetworkConfigurationSnapshot("P25_PHASE_1", network, currentSite, channels, neighborSites,
             frequencyBands, Collections.emptyList(), Collections.emptyList());
+    }
+
+    private P25NetworkConfigurationSnapshot foreignSystemBandObservation(
+        P25NetworkConfigurationSnapshot.ForeignSystemBand band)
+    {
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, Collections.emptyList(),
+            Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), null,
+            List.of(band));
     }
 
     private P25NetworkConfigurationSnapshot observation(P25NetworkConfigurationSnapshot.Network network,
@@ -753,6 +774,21 @@ public class P25P1NetworkConfigurationMonitor
         return new P25NetworkConfigurationSnapshot.FrequencyBand(band.getIdentifier(), band.isTDMA(),
             band.getBaseFrequency(), band.getBandwidth(), band.getChannelSpacing(), band.getTransmitOffset(),
             band.getTimeslotCount());
+    }
+
+    private P25NetworkConfigurationSnapshot.ForeignSystemBand getForeignSystemBandSnapshot(
+        AMBTCFrequencyBandUpdateTDMA band)
+    {
+        return new P25NetworkConfigurationSnapshot.ForeignSystemBand(intValue(band.getWacn()),
+            intValue(band.getSystem()), band.getIdentifier(), band.getChannelTypeValue(),
+            band.hasDataBlock(0) ? band.getBaseFrequency() : null,
+            band.hasDataBlock(0) ? band.getChannelSpacing() : null,
+            band.hasTransmitOffset() ? band.getTransmitOffset() : null);
+    }
+
+    private String foreignSystemBandKey(P25NetworkConfigurationSnapshot.ForeignSystemBand band)
+    {
+        return band.wacn() + ":" + band.system() + ":" + band.band();
     }
 
     private P25NetworkConfigurationSnapshot.Channel getChannelSnapshot(String role, IChannelDescriptor channel)

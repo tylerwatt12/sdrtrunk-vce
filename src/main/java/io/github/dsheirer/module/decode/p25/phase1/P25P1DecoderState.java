@@ -822,8 +822,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     }
                     break;
                 case OSP_IDENTIFIER_UPDATE_TDMA:
-                    //Ignore - in the extended format it is carrying a frequency band for a foreign system and we
-                    //don't allow that to corrupt the real frequency bands for this system.
+                    //Keep foreign-system bands isolated from the home system frequency-band map.
+                    observeNetworkConfiguration(mNetworkConfigurationMonitor.process(ambtc), ambtc.getTimestamp());
                     break;
                 default:
                     break;

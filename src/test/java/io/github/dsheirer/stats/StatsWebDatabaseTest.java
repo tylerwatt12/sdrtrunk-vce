@@ -124,6 +124,26 @@ class StatsWebDatabaseTest
         assertEquals("CURRENT", neighbors.get(0).get("state"));
         assertEquals("HISTORICAL", neighbors.get(1).get("state"));
         assertEquals("CURRENT", neighbors.get(2).get("state"));
+        assertEquals(5, neighbors.size());
+        assertEquals("ISSI", neighbors.get(3).get("entry_type"));
+        assertEquals(0xBEE00L, number(neighbors.get(3).get("wacn")));
+        assertEquals(0x954L, number(neighbors.get(3).get("system_id")));
+        assertEquals(1L, number(neighbors.get(3).get("band_count")));
+        assertEquals(1L, number(neighbors.get(3).get("has_fdma")));
+        assertEquals("ISSI", neighbors.get(4).get("entry_type"));
+        assertEquals(0x9EFL, number(neighbors.get(4).get("system_id")));
+        assertEquals(2L, number(neighbors.get(4).get("band_count")));
+        assertEquals(1L, number(neighbors.get(4).get("has_fdma")));
+        assertEquals(1L, number(neighbors.get(4).get("has_tdma")));
+
+        Map<String,Object> bands = mDatabase.siteBands(request("/api/site/bands?guid=" + GUID));
+        List<Map<String,Object>> foreignBands = rowsFrom(bands, "foreign_rows");
+        assertEquals(3, foreignBands.size());
+        assertEquals(0x954L, number(foreignBands.get(0).get("foreign_system_id")));
+        assertEquals(0x9EFL, number(foreignBands.get(1).get("foreign_system_id")));
+        assertEquals(4L, number(foreignBands.get(1).get("band")));
+        assertEquals(1L, number(foreignBands.get(1).get("channel_type")));
+        assertEquals(935_012_500L, number(foreignBands.get(1).get("base_hz")));
 
         Map<String,Object> patches = mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID));
         assertEquals("Dispatch", rowsFrom(patches, "groups").get(0).get("patch_alias_name"));
@@ -458,6 +478,34 @@ class StatsWebDatabaseTest
                 () -> "Expected context/time-indexed activity scan, plan was: " + plan);
             assertTrue(plan.stream().noneMatch(detail -> detail.contains("USE TEMP B-TREE")),
                 () -> "Expected index-ordered activity results, plan was: " + plan);
+        }
+    }
+
+    @Test
+    void foreignBandQueriesUseCompositePrimaryKeys() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            for(String table: List.of("p25_foreign_system_band", "p25_foreign_system_band_summary"))
+            {
+                List<String> plan = new ArrayList<>();
+                try(PreparedStatement query = connection.prepareStatement(
+                    "EXPLAIN QUERY PLAN SELECT * FROM " + table + " WHERE guid = ?"))
+                {
+                    query.setString(1, GUID);
+                    try(ResultSet resultSet = query.executeQuery())
+                    {
+                        while(resultSet.next())
+                        {
+                            plan.add(resultSet.getString("detail"));
+                        }
+                    }
+                }
+
+                assertTrue(plan.stream().anyMatch(detail -> detail.contains("PRIMARY KEY") &&
+                        detail.contains("guid=?")),
+                    () -> "Expected GUID-scoped primary-key lookup for " + table + ", plan was: " + plan);
+            }
         }
     }
 
@@ -830,6 +878,25 @@ class StatsWebDatabaseTest
                     ('test-site-guid', '348:1:4:0-693', 0x348, 1, 4, '0-693', 855337500,
                     '[VALID INFORMATION]', 1000, %d, 2)
                 """.formatted(now - 3_600_000L));
+            statement.executeUpdate("""
+                INSERT INTO p25_foreign_system_band
+                    (guid, foreign_wacn, foreign_system_id, band, channel_type, base_hz, spacing_hz,
+                     transmit_offset_hz, confirmed_at_ms)
+                VALUES ('test-site-guid', 0xBEE00, 0x9EF, 4, 1, 935012500, 12500, -39000000, %1$d),
+                    ('test-site-guid', 0xBEE00, 0x9EF, 5, 3, 935012500, 12500, -39000000, %1$d),
+                    ('test-site-guid', 0xBEE00, 0x954, 0, 1, 851006250, 6250, -45000000, %1$d)
+                """.formatted(now));
+            statement.executeUpdate("""
+                INSERT INTO p25_foreign_system_band_summary
+                    (guid, foreign_wacn, foreign_system_id, band, channel_type, base_hz, spacing_hz,
+                     transmit_offset_hz, first_seen_ms, last_seen_ms, observation_count)
+                VALUES ('test-site-guid', 0xBEE00, 0x9EF, 4, 1, 935012500, 12500, -39000000,
+                        1000, %1$d, 10),
+                    ('test-site-guid', 0xBEE00, 0x9EF, 5, 3, 935012500, 12500, -39000000,
+                        1000, %1$d, 10),
+                    ('test-site-guid', 0xBEE00, 0x954, 0, 1, 851006250, 6250, -45000000,
+                        1000, %1$d, 5)
+                """.formatted(now));
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group (guid, patch_group, version, confirmed_at_ms)
                 VALUES ('test-site-guid', 56132, 0, %d)
