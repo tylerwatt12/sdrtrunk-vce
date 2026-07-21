@@ -36,6 +36,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
+import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.bugreport.BugReportDialog;
 import io.github.dsheirer.gui.preference.CalibrateRequest;
@@ -668,6 +669,12 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         JMenu fileMenu = new JMenu("File");
         menuBar.add(fileMenu);
+
+        JMenuItem importLegacyPlaylistMenu = new JMenuItem("Import Legacy Playlist XML...");
+        importLegacyPlaylistMenu.addActionListener(event -> LegacyPlaylistImportDialog.show(mMainGui,
+            mConfigurationManager, mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot()));
+        fileMenu.add(importLegacyPlaylistMenu);
+        fileMenu.addSeparator();
 
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> {

@@ -39,6 +39,7 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.service.radioreference.RadioReference;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ScheduledFuture;
@@ -266,6 +267,23 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         transferStateToModels(load());
     }
 
+    /**
+     * Completes any pending save before an external configuration operation accesses the SQLite database.
+     * This method should be invoked on the JavaFX application thread.
+     */
+    public void flushConfiguration()
+    {
+        saveNow();
+    }
+
+    /**
+     * Path to the SQLite database containing this configuration.
+     */
+    public Path getDatabasePath()
+    {
+        return mConfigurationDatabaseStore.getDatabasePath();
+    }
+
     private void clearModels()
     {
         mConfigurationLoading = true;
@@ -281,7 +299,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mConfigurationLoading = false;
     }
 
-    private void saveNow()
+    private synchronized void saveNow()
     {
         //Complete any pending configuration save.
         if(mConfigurationSaveFuture != null)
@@ -359,7 +377,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     /**
      * Saves the current runtime configuration state to the global SDRTrunk database.
      */
-    private void save()
+    private synchronized void save()
     {
         boolean saveAliases = mAliasesDirty.getAndSet(false);
         boolean saveConfigurationState = mConfigurationStateDirty.getAndSet(false);
