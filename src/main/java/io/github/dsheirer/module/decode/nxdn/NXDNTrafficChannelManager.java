@@ -38,6 +38,7 @@ import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelFake;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.DataCallAssignment;
@@ -151,7 +152,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                     trafficChannel.setAliasListName(mParentChannel.getAliasListName());
                     trafficChannel.setSystem(mParentChannel.getSystem());
                     trafficChannel.setSite(mParentChannel.getSite());
-                    trafficChannel.setDecodeConfiguration(decodeConfig);
+                    trafficChannel.setDecodeConfiguration(copyDecodeConfiguration(decodeConfig));
                     trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                     trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
                     trafficChannelList.add(trafficChannel);
@@ -161,6 +162,22 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             mAvailableTrafficChannelQueue.addAll(trafficChannelList);
             mManagedTrafficChannels = Collections.unmodifiableList(trafficChannelList);
         }
+    }
+
+    /**
+     * Creates an independent configuration for each pooled traffic channel.  DFA grants can specify a different
+     * transmission mode for each allocation, so sharing the parent configuration would also mutate the control
+     * channel and every other channel in the pool.
+     */
+    private static DecodeConfigNXDN copyDecodeConfiguration(DecodeConfigNXDN source)
+    {
+        DecodeConfigNXDN copy = new DecodeConfigNXDN(source.getTransmissionMode());
+        copy.setTrafficChannelPoolSize(source.getTrafficChannelPoolSize());
+        copy.setIgnoreDataCalls(source.isIgnoreDataCalls());
+        copy.setIgnoreEncryptedCalls(source.isIgnoreEncryptedCalls());
+        copy.setChannelMap(new ArrayList<>(source.getChannelMap()));
+        copy.setEncoding(source.getEncoding());
+        return copy;
     }
 
     /**
@@ -572,6 +589,19 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     {
         if(nxdnChannel != null && nxdnChannel.getDownlinkFrequency() > 0 && getInterModuleEventBus() != null)
         {
+            if(trafficChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN trafficConfig &&
+                mParentChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN parentConfig)
+            {
+                TransmissionMode mode = parentConfig.getTransmissionMode();
+
+                if(nxdnChannel instanceof NXDNChannelDFA dfa && dfa.getBandwidth() != null)
+                {
+                    mode = dfa.getBandwidth().getTransmissionMode();
+                }
+
+                trafficConfig.setTransmissionMode(mode);
+            }
+
             SourceConfigTuner sourceConfig = new SourceConfigTuner();
             sourceConfig.setFrequency(nxdnChannel.getDownlinkFrequency());
             if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTuner parentConfigTuner)

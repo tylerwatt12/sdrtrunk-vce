@@ -631,8 +631,8 @@ public enum NXDNMessageType
             {
                 case 0 -> TYPE_D_OUT_00_CC_CALL_RESPONSE;
                 case 1 -> TYPE_D_OUT_01_CC_VOICE_CALL;
-                case 2 -> TYPE_D_OUT_03_CC_VOICE_CALL_INITIALIZATION_VECTOR;
-                case 3 -> TYPE_D_OUT_04_CC_VOICE_CALL_ASSIGNMENT;
+                case 3 -> TYPE_D_OUT_03_CC_VOICE_CALL_INITIALIZATION_VECTOR;
+                case 4 -> TYPE_D_OUT_04_CC_VOICE_CALL_ASSIGNMENT;
                 case 6 -> TYPE_D_OUT_06_CC_CALL_CONNECTION_RESPONSE;
                 case 7 -> TYPE_D_OUT_07_CC_TRANSMISSION_RELEASE_EXTENSION;
                 case 8 -> TYPE_D_OUT_08_CC_TRANSMISSION_RELEASE;

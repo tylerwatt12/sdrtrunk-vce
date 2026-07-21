@@ -69,9 +69,12 @@ public class ChannelAccessInformation
      */
     public long getFrequency(int channelNumber)
     {
-        if(isDFA() && channelNumber > 0)
+        long baseFrequency = getBaseFrequency();
+        long stepSize = getStepSize();
+
+        if(isDFA() && channelNumber > 0 && baseFrequency > 0 && stepSize > 0)
         {
-            return getBaseFrequency() + (getStepSize() * channelNumber);
+            return baseFrequency + (stepSize * channelNumber);
         }
 
         return 0;
@@ -135,7 +138,8 @@ public class ChannelAccessInformation
             case 1 -> 100_000_000;
             case 2 -> 330_000_000;
             case 3 -> 400_000_000;
-            default -> 450_000_000;
+            case 4 -> 750_000_000;
+            default -> 0;
         };
     }
 }

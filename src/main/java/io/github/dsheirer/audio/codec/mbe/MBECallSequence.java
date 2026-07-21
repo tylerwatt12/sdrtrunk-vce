@@ -36,12 +36,13 @@ import java.util.List;
  * radio identifiers.
  */
 @JsonRootName("mbe_call")
-@JsonPropertyOrder({"protocol", "version", "call_type", "from", "to", "encrypted", "system", "site", "frames"})
+@JsonPropertyOrder({"protocol", "version", "codec", "call_type", "from", "to", "encrypted", "system", "site", "frames"})
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class MBECallSequence
 {
     private String mProtocol;
+    private String mCodec;
     private String mFromIdentifier;
     private String mToIdentifier;
     private String mCallType;
@@ -76,6 +77,21 @@ public class MBECallSequence
     public void setProtocol(String protocol)
     {
         mProtocol = protocol;
+    }
+
+    /**
+     * Optional vocoder rate/format metadata.  Older version-2 files omitted this value and are interpreted according
+     * to their protocol's historical default.
+     */
+    @JsonProperty("codec")
+    public String getCodec()
+    {
+        return mCodec;
+    }
+
+    public void setCodec(String codec)
+    {
+        mCodec = codec;
     }
 
     /**
@@ -327,5 +343,21 @@ public class MBECallSequence
     public void addEncryptedVoiceFrame(long timestamp, String frame, int algorithm, int keyid, String messageIndicator)
     {
         add(new VoiceFrame(timestamp, frame, algorithm, keyid, messageIndicator));
+    }
+
+    /**
+     * Adds an encrypted audio frame with an optional feature identifier.
+     *
+     * @param timestamp of the audio frame
+     * @param frame of hexadecimal values representing the transmitted audio frame and ecc bits
+     * @param algorithm identifier for encryption
+     * @param featureIdentifier optional protocol feature identifier
+     * @param keyid identifying which encryption key was used by the radio which may have multiple keys
+     * @param messageIndicator to seed the key generator
+     */
+    public void addEncryptedVoiceFrame(long timestamp, String frame, int algorithm, Integer featureIdentifier,
+                                       int keyid, String messageIndicator)
+    {
+        add(new VoiceFrame(timestamp, frame, algorithm, featureIdentifier, keyid, messageIndicator));
     }
 }

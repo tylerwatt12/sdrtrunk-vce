@@ -30,12 +30,13 @@ import com.fasterxml.jackson.annotation.JsonRootName;
  */
 @JsonRootName(value = "frame")
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@JsonPropertyOrder({"tag", "encryption_algorithm", "encryption_key_id", "encryption_mi", "time", "hex"})
+@JsonPropertyOrder({"tag", "encryption_algorithm", "encryption_fid", "encryption_key_id", "encryption_mi", "time", "hex"})
 public class VoiceFrame
 {
     private long mTimestamp;
     private String mFrame;
     private Integer mAlgorithm;
+    private Integer mFeatureIdentifier;
     private Integer mKeyId;
     private String mMessageIndicator;
     private String mTag;
@@ -68,8 +69,25 @@ public class VoiceFrame
      */
     public VoiceFrame(long timestamp, String frame, int algorithm, int keyid, String messageIndicator)
     {
+        this(timestamp, frame, algorithm, null, keyid, messageIndicator);
+    }
+
+    /**
+     * Constructs an encrypted voice frame with an optional feature identifier.
+     *
+     * @param timestamp the message was transmitted
+     * @param frame of hexadecimal values
+     * @param algorithm used to encrypt the voice frame
+     * @param featureIdentifier optional protocol feature identifier
+     * @param keyid used to encrypt the voice frame
+     * @param messageIndicator for the key generator fill
+     */
+    public VoiceFrame(long timestamp, String frame, int algorithm, Integer featureIdentifier, int keyid,
+                      String messageIndicator)
+    {
         this(timestamp, frame);
         mAlgorithm = algorithm;
+        mFeatureIdentifier = featureIdentifier;
         mKeyId = keyid;
         mMessageIndicator = messageIndicator;
     }
@@ -158,6 +176,22 @@ public class VoiceFrame
     public void setAlgorithm(int algorithm)
     {
         mAlgorithm = algorithm;
+    }
+
+    /**
+     * Optional feature identifier associated with the encryption parameters.
+     *
+     * @return feature identifier or null when it was not present in signaling
+     */
+    @JsonProperty("encryption_fid")
+    public Integer getFeatureIdentifier()
+    {
+        return mFeatureIdentifier;
+    }
+
+    public void setFeatureIdentifier(Integer featureIdentifier)
+    {
+        mFeatureIdentifier = featureIdentifier;
     }
 
     /**
