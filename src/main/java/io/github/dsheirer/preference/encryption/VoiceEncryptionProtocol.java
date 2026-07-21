@@ -25,7 +25,8 @@ package io.github.dsheirer.preference.encryption;
 public enum VoiceEncryptionProtocol
 {
     APCO25("APCO-25"),
-    DMR("DMR");
+    DMR("DMR"),
+    NXDN("NXDN");
 
     private final String mLabel;
 

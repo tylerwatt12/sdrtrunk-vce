@@ -37,6 +37,14 @@ public interface VoiceFrameDecryptor
     void reset();
 
     /**
+     * Advances protocol keystream state for transmitted voice positions that were replaced by control/data.  The
+     * default preserves binary compatibility for providers whose protocols do not need explicit gap handling.
+     */
+    default void skipVoiceFrames(int voiceFrameCount) throws VoiceFrameDecryptionException
+    {
+    }
+
+    /**
      * Decrypts an IMBE/AMBE frame represented as bytes.
      */
     byte[] decrypt(byte[] encryptedFrame) throws VoiceFrameDecryptionException;

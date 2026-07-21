@@ -34,6 +34,9 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.module.decode.dmr.audio.DMRAudioModule;
 import io.github.dsheirer.module.decode.dmr.audio.DMRCallSequenceRecorder;
+import io.github.dsheirer.module.decode.nxdn.audio.NXDNAudioModule;
+import io.github.dsheirer.module.decode.nxdn.audio.NXDNCallSequenceRecorder;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.AudioCodec;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P1CallSequenceRecorder;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -246,6 +249,117 @@ public class MBECallSequenceConverter
                 }
             }
         }
+        else if(NXDNCallSequenceRecorder.PROTOCOL.equals(callSequence.getProtocol()))
+        {
+            if(AudioCodec.FULL_RATE.name().equals(callSequence.getCodec()))
+            {
+                throw new IllegalArgumentException("NXDN full-rate AMBE .mbe conversion is not supported");
+            }
+
+            NXDNAudioModule audioModule = new NXDNAudioModule(userPreferences, new AliasList("mbe generator"));
+            VoiceEncryptionKeyResolver keyResolver =
+                new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
+            VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
+                .getVoiceDecryptionModulePreference().getModuleManager());
+            AtomicReference<CompletedAudioCall> completedAudioCall = new AtomicReference<>();
+            AtomicReference<AudioCallSnapshot> latestSnapshot = new AtomicReference<>();
+            List<float[]> audioBuffers = new ArrayList<>();
+            audioModule.setAudioCallEventListener(event -> captureCompletedAudioCall(event, latestSnapshot,
+                audioBuffers, completedAudioCall));
+            audioModule.setRecordAudio(true);
+            audioModule.start();
+            boolean stopped = false;
+
+            try
+            {
+                IAudioCodec codec = audioModule.getAudioCodec();
+                VoiceFrameDecryptor decryptor = null;
+
+                if(codec == null)
+                {
+                    throw new IllegalStateException("NXDN .mbe conversion requires the JMBE AMBE codec");
+                }
+
+                Integer previousNxdnSACCHIndex = null;
+
+                for(VoiceFrame voiceFrame: callSequence.getVoiceFrames())
+                {
+                    Integer currentNxdnSACCHIndex = getNxdnSACCHIndex(voiceFrame.getTag());
+
+                    if(decryptor != null && previousNxdnSACCHIndex != null && currentNxdnSACCHIndex != null)
+                    {
+                        int advance = (currentNxdnSACCHIndex - previousNxdnSACCHIndex + 4) % 4;
+                        int missingFrames = Math.max(0, advance - 1) * 4;
+
+                        if(missingFrames > 0)
+                        {
+                            try
+                            {
+                                decryptor.skipVoiceFrames(missingFrames);
+                            }
+                            catch(VoiceFrameDecryptionException e)
+                            {
+                                throw new IllegalArgumentException("Unable to align NXDN encrypted MBE frames", e);
+                            }
+                        }
+                    }
+
+                    if(hasEncryptionMetadata(voiceFrame))
+                    {
+                        if(hasUsableNxdnEncryptionMetadata(voiceFrame))
+                        {
+                            decryptor = createDecryptor(voiceFrame, VoiceEncryptionProtocol.NXDN, 0,
+                                audioModule.getIdentifierCollection(), keyResolver, decryptorFactory);
+                        }
+                        else
+                        {
+                            decryptor = null;
+                        }
+                    }
+
+                    if(currentNxdnSACCHIndex != null)
+                    {
+                        previousNxdnSACCHIndex = currentNxdnSACCHIndex;
+                    }
+
+                    if(callSequence.isEncrypted() && decryptor == null)
+                    {
+                        continue;
+                    }
+
+                    audioModule.addAudio(codec.getAudio(getFrameBytes(voiceFrame, decryptor)));
+                }
+
+                audioModule.stop();
+                stopped = true;
+                CompletedAudioCall call = completedAudioCall.get();
+
+                if(call == null)
+                {
+                    throw new IllegalStateException("NXDN .mbe conversion did not produce a completed audio call");
+                }
+
+                try
+                {
+                    AudioCallRecorder.recordWAVE(call, outputPath, call.snapshot().identifierCollection());
+                }
+                catch(IOException ioe)
+                {
+                    throw new IllegalArgumentException("Unable to write NXDN WAVE output", ioe);
+                }
+            }
+            finally
+            {
+                if(!stopped)
+                {
+                    audioModule.stop();
+                }
+            }
+        }
+        else
+        {
+            throw new IllegalArgumentException("Unsupported MBE protocol: " + callSequence.getProtocol());
+        }
     }
 
     private static byte[] getFrameBytes(VoiceFrame voiceFrame, VoiceFrameDecryptor decryptor)
@@ -272,6 +386,33 @@ public class MBECallSequenceConverter
         return voiceFrame.getAlgorithm() != null || voiceFrame.getKeyId() != null;
     }
 
+    private static boolean hasUsableNxdnEncryptionMetadata(VoiceFrame voiceFrame)
+    {
+        if(voiceFrame.getAlgorithm() == null || voiceFrame.getKeyId() == null)
+        {
+            return false;
+        }
+
+        return voiceFrame.getAlgorithm() == 1 || voiceFrame.getMessageIndicator() != null;
+    }
+
+    static Integer getNxdnSACCHIndex(String tag)
+    {
+        if(tag == null)
+        {
+            return null;
+        }
+
+        return switch(tag)
+        {
+            case "SACCH 1" -> 0;
+            case "SACCH 2" -> 1;
+            case "SACCH 3" -> 2;
+            case "SACCH 4" -> 3;
+            default -> null;
+        };
+    }
+
     private static VoiceFrameDecryptor createDecryptor(VoiceFrame voiceFrame, VoiceEncryptionProtocol protocol,
                                                        int timeslot, IdentifierCollection identifiers,
                                                        VoiceEncryptionKeyResolver keyResolver,
@@ -285,7 +426,8 @@ public class MBECallSequenceConverter
             }
 
             VoiceEncryptionContext context = new VoiceEncryptionContext(protocol, voiceFrame.getAlgorithm(),
-                voiceFrame.getKeyId(), voiceFrame.getMessageIndicator(), timeslot, identifiers);
+                voiceFrame.getKeyId(), voiceFrame.getMessageIndicator(), timeslot, identifiers,
+                voiceFrame.getFeatureIdentifier());
             VoiceFrameDecryptor decryptor = keyResolver.resolve(context)
                 .flatMap(key -> decryptorFactory.create(context, key))
                 .orElseThrow(() -> new IllegalArgumentException("No configured key for encrypted MBE frame"));

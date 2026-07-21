@@ -210,8 +210,8 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
                 if(mCurrentEncryptionContext != null && mEncryptionContextDirty)
                 {
                     mCallSequence.addEncryptedVoiceFrame(baseTimestamp, frameBits.toHexString(),
-                        mCurrentEncryptionContext.getAlgorithmId(), mCurrentEncryptionContext.getKeyId(),
-                        mCurrentEncryptionContext.getMessageIndicator());
+                        mCurrentEncryptionContext.getAlgorithmId(), mCurrentEncryptionContext.getFeatureIdentifier(),
+                        mCurrentEncryptionContext.getKeyId(), mCurrentEncryptionContext.getMessageIndicator());
                     mCallSequence.setEncrypted(true);
                     mEncryptionContextDirty = false;
                 }
@@ -232,7 +232,7 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
                 mEncrypted = true;
                 mCurrentEncryptionContext = new VoiceEncryptionContext(VoiceEncryptionProtocol.DMR,
                     parameters.getAlgorithm().getValue(), parameters.getKeyId(), parameters.getInitializationVector(),
-                    parameters.getTimeslot(), null);
+                    parameters.getTimeslot(), null, parameters.getVendorValue());
                 mEncryptionContextDirty = true;
 
                 if(mCallSequence != null)
@@ -252,9 +252,11 @@ public class DMRCallSequenceRecorder extends MBECallSequenceRecorder
                     parameters.hasIv() && encryption.getAlgorithm() != EncryptionAlgorithm.UNKNOWN)
                 {
                     mEncrypted = true;
+                    Integer featureIdentifier = mCurrentEncryptionContext != null ?
+                        mCurrentEncryptionContext.getFeatureIdentifier() : null;
                     mPendingEncryptionContext = new VoiceEncryptionContext(VoiceEncryptionProtocol.DMR,
                         encryption.getAlgorithm().getValue(), encryption.getKey(), parameters.getIv(),
-                        voiceMessage.getTimeslot(), null);
+                        voiceMessage.getTimeslot(), null, featureIdentifier);
 
                     if(mCallSequence != null)
                     {

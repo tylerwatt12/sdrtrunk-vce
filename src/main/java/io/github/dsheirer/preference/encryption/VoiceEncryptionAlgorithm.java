@@ -61,7 +61,10 @@ public enum VoiceEncryptionAlgorithm
     DMR_DMRA_RC4(VoiceEncryptionProtocol.DMR, 0x21, "DMRA RC4/EP", 5),
     DMR_DMRA_AES_128(VoiceEncryptionProtocol.DMR, 0x24, "DMRA AES-128", 16),
     DMR_DMRA_AES_256(VoiceEncryptionProtocol.DMR, 0x25, "DMRA AES-256", 32),
-    DMR_HYTERA_ENHANCED_PRIVACY_2(VoiceEncryptionProtocol.DMR, 0x26, "Hytera Enhanced Privacy 2", null);
+    DMR_HYTERA_ENHANCED_PRIVACY_2(VoiceEncryptionProtocol.DMR, 0x26, "Hytera Enhanced Privacy 2", null),
+    NXDN_SCRAMBLER(VoiceEncryptionProtocol.NXDN, 0x01, "Scrambler", 2),
+    NXDN_DES_OFB(VoiceEncryptionProtocol.NXDN, 0x02, "DES-OFB", 8),
+    NXDN_AES_256_OFB(VoiceEncryptionProtocol.NXDN, 0x03, "AES-256-OFB", 32);
 
     private final VoiceEncryptionProtocol mProtocol;
     private final int mValue;

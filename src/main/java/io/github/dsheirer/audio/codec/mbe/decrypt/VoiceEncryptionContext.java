@@ -32,6 +32,7 @@ public class VoiceEncryptionContext
 {
     private final VoiceEncryptionProtocol mProtocol;
     private final int mAlgorithmId;
+    private final Integer mFeatureIdentifier;
     private final int mKeyId;
     private final String mMessageIndicator;
     private final int mTimeslot;
@@ -40,8 +41,16 @@ public class VoiceEncryptionContext
     public VoiceEncryptionContext(VoiceEncryptionProtocol protocol, int algorithmId, int keyId,
                                   String messageIndicator, int timeslot, IdentifierCollection identifiers)
     {
+        this(protocol, algorithmId, keyId, messageIndicator, timeslot, identifiers, null);
+    }
+
+    public VoiceEncryptionContext(VoiceEncryptionProtocol protocol, int algorithmId, int keyId,
+                                  String messageIndicator, int timeslot, IdentifierCollection identifiers,
+                                  Integer featureIdentifier)
+    {
         mProtocol = protocol;
         mAlgorithmId = algorithmId;
+        mFeatureIdentifier = featureIdentifier;
         mKeyId = keyId;
         mMessageIndicator = messageIndicator;
         mTimeslot = timeslot;
@@ -56,6 +65,14 @@ public class VoiceEncryptionContext
     public int getAlgorithmId()
     {
         return mAlgorithmId;
+    }
+
+    /**
+     * Optional feature identifier supplied by protocol signaling.
+     */
+    public Integer getFeatureIdentifier()
+    {
+        return mFeatureIdentifier;
     }
 
     public int getKeyId()

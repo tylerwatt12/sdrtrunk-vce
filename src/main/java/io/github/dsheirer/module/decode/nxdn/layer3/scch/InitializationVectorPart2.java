@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.nxdn.layer3.scch;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.FragmentedIntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
@@ -30,6 +31,11 @@ import java.util.List;
  */
 public class InitializationVectorPart2 extends Information3
 {
+    //NXDN TS 1-E Figures 6.5-3 and 6.5-12: b11-b0 spans the last three bits of octet 1, octet 2,
+    //and bit 7 of octet 3.
+    private static final FragmentedIntField IV = FragmentedIntField.of(13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24);
+
     /**
      * Constructs an instance
      *
@@ -57,7 +63,7 @@ public class InitializationVectorPart2 extends Information3
      */
     public int getIV()
     {
-        return getIdentifier(getMessage());
+        return getMessage().getInt(IV);
     }
 
     @Override

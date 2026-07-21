@@ -244,6 +244,11 @@ public class NXDNNetworkConfigurationMonitor
                 }
                 break;
             case TYPE_D_SCCH_OUT_INFO_4_SITE_ID:
+                if(layer3 instanceof SiteID siteID)
+                {
+                    mTypeDSiteID = siteID;
+                }
+                break;
         }
     }
 }

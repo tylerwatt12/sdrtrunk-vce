@@ -63,11 +63,11 @@ public abstract class InitializationVector extends NXDNLayer3Message
     {
         if(isTypeD())
         {
-            return Long.toHexString(getMessage().getLong(INITIALIZATION_VECTOR_TYPE_D)).toUpperCase();
+            return String.format("%06X", getMessage().getLong(INITIALIZATION_VECTOR_TYPE_D));
         }
         else
         {
-            return Long.toHexString(getMessage().getLong(INITIALIZATION_VECTOR)).toUpperCase();
+            return String.format("%016X", getMessage().getLong(INITIALIZATION_VECTOR));
         }
     }
 }
