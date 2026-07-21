@@ -220,6 +220,8 @@ public class Frame
                     boolean validA = NXDNCRC.checkFACCH3(payloadA);
                     boolean validB = NXDNCRC.checkFACCH3(payloadB);
                     CorrectedBinaryMessage combined = new CorrectedBinaryMessage(160);
+                    combined.load(0, payloadA.getSubMessage(0, 80));
+                    combined.load(80, payloadB.getSubMessage(0, 80));
                     NXDNMessageType type = NXDNMessageType.getTypeD(combined, mLICH);
                     NXDNLayer3Message layer3 = NXDNMessageFactory.get(type, combined, timestamp, RAN_TYPE_D, mLICH);
                     layer3.setValid(validA && validB);

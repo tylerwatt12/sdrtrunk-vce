@@ -31,6 +31,7 @@ public class NXDNChannelDFA extends NXDNChannel
     private ChannelAccessInformation mChannelAccessInformation;
     private final int mOutboundChannelNumber;
     private final int mInboundChannelNumber;
+    private final Bandwidth mBandwidth;
 
     /**
      * Constructs an instance
@@ -42,6 +43,15 @@ public class NXDNChannelDFA extends NXDNChannel
     {
         mOutboundChannelNumber = outboundChannelNumber;
         mInboundChannelNumber = inboundChannelNumber;
+        mBandwidth = bandwidth;
+    }
+
+    /**
+     * Bandwidth and transmission mode assigned to this channel.
+     */
+    public Bandwidth getBandwidth()
+    {
+        return mBandwidth;
     }
 
     @Override
