@@ -53,6 +53,7 @@ import io.github.dsheirer.module.decode.dmr.audio.DMRAudioModule;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRLsn;
 import io.github.dsheirer.module.decode.dmr.channel.DmrRestLsn;
+import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.dmr.message.filter.DmrMessageFilterSet;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
@@ -848,7 +849,16 @@ public class DecoderFactory
                     copyAM.setSquelchAutoTrack(origAM.isSquelchAutoTrack());
                     return copyAM;
                 case DMR:
-                    return new DecodeConfigDMR();
+                    DecodeConfigDMR originalDMR = (DecodeConfigDMR)config;
+                    DecodeConfigDMR copyDMR = new DecodeConfigDMR();
+                    copyDMR.setIgnoreDataCalls(originalDMR.getIgnoreDataCalls());
+                    copyDMR.setIgnoreCRCChecksums(originalDMR.getIgnoreCRCChecksums());
+                    copyDMR.setUseCompressedTalkgroups(originalDMR.isUseCompressedTalkgroups());
+                    copyDMR.setTrafficChannelPoolSize(originalDMR.getTrafficChannelPoolSize());
+                    List<TimeslotFrequency> copiedTimeslotMap = new ArrayList<>();
+                    originalDMR.getTimeslotMap().forEach(mapping -> copiedTimeslotMap.add(mapping.copy()));
+                    copyDMR.setTimeslotMap(copiedTimeslotMap);
+                    return copyDMR;
                 case LTR_NET:
                     DecodeConfigLTRNet originalLTRNet = (DecodeConfigLTRNet)config;
                     DecodeConfigLTRNet copyLTRNet = new DecodeConfigLTRNet();

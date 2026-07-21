@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.dmr;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
@@ -71,6 +72,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
     /**
      * Indicates if traffic channel grants for data calls should be ignored
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "ignore_data_calls")
     public boolean getIgnoreDataCalls()
     {
         return mIgnoreDataCalls;
@@ -88,6 +90,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
     /**
      * Indicates if decoder should ignore CRC checksums when validating decoded messages
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "ignore_crc")
     public boolean getIgnoreCRCChecksums()
     {
         return mIgnoreCRCChecksums;
@@ -105,6 +108,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
     /**
      * Indicates if decoder should use compressed talkgroups
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "use_compressed_talkgroups")
     public boolean isUseCompressedTalkgroups()
     {
         return mUseCompressedTalkgroups;
@@ -127,6 +131,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
      * Traffic channel pool size.
      * @return
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "traffic_channel_pool_size")
     public int getTrafficChannelPoolSize()
     {
         return mTrafficChannelPoolSize;
@@ -160,6 +165,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
      *
      * Note: this is only used for MotoTRBO systems
      */
+    @JacksonXmlProperty(localName = "timeslot")
     public List<TimeslotFrequency> getTimeslotMap()
     {
         return mTimeslotMap;

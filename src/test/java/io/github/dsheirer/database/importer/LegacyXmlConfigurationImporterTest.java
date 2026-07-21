@@ -28,6 +28,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -106,6 +107,50 @@ class LegacyXmlConfigurationImporterTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.importPlaylist(xml, database));
+    }
+
+    @Test
+    void importsLegacyDmrTierThreeFrequencyMappings() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("dmr-tier-three.xml");
+        StringBuilder mappings = new StringBuilder();
+
+        for(int lcn = 1; lcn <= 78; lcn++)
+        {
+            mappings.append("<timeslot lsn=\"").append(lcn).append("\" downlink=\"")
+                .append(451_000_000L + lcn * 12_500L).append("\" uplink=\"0\"/>\n");
+        }
+
+        Files.writeString(xml, """
+            <playlist version="4">
+              <channel system="Busy DMR" site="Site 1" name="Control">
+                <alias_list_name>Busy DMR</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="452000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false" ignore_crc="true"
+                    use_compressed_talkgroups="true" traffic_channel_pool_size="30">
+            """ + mappings + """
+                </decode_configuration>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+            </playlist>
+            """);
+
+        Path database = mTemporaryFolder.resolve("dmr.sqlite");
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
+        DecodeConfigDMR dmr = assertInstanceOf(DecodeConfigDMR.class,
+            state.getChannels().get(0).getDecodeConfiguration());
+
+        assertEquals(78, dmr.getTimeslotMap().size());
+        assertEquals(1, dmr.getTimeslotMap().get(0).getNumber());
+        assertEquals(451_012_500L, dmr.getTimeslotMap().get(0).getDownlinkFrequency());
+        assertEquals(78, dmr.getTimeslotMap().get(77).getNumber());
+        assertEquals(451_975_000L, dmr.getTimeslotMap().get(77).getDownlinkFrequency());
+        assertEquals(30, dmr.getTrafficChannelPoolSize());
+        assertTrue(dmr.getIgnoreCRCChecksums());
+        assertTrue(dmr.isUseCompressedTalkgroups());
     }
 
     @Test

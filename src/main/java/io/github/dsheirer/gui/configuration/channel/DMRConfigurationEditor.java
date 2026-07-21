@@ -38,8 +38,14 @@ import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.beans.value.ChangeListener;
@@ -51,6 +57,7 @@ import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -59,6 +66,9 @@ import javafx.scene.control.TableView;
 import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.KeyCode;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -86,6 +96,8 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     private FrequencyField mDownlinkFrequencyField;
     private Button mAddTimeslotFrequencyButton;
     private Button mDeleteTimeslotFrequencyButton;
+    private Button mCopyTimeslotMapButton;
+    private Button mPasteTimeslotMapButton;
     private Spinner<Integer> mChannelRotationDelaySpinner;
 
     /**
@@ -179,7 +191,8 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             VBox buttonsBox = new VBox();
             buttonsBox.setAlignment(Pos.CENTER);
             buttonsBox.setSpacing(10);
-            buttonsBox.getChildren().addAll(getAddTimeslotFrequencyButton(), getDeleteTimeslotFrequencyButton());
+            buttonsBox.getChildren().addAll(getAddTimeslotFrequencyButton(), getDeleteTimeslotFrequencyButton(),
+                getCopyTimeslotMapButton(), getPasteTimeslotMapButton());
 
             GridPane.setConstraints(buttonsBox, 6, row, 1, 3);
             gridPane.getChildren().addAll(buttonsBox);
@@ -298,6 +311,18 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
 
             mTimeslotFrequencyTable.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, newValue) -> setTimeslot(newValue));
+            mTimeslotFrequencyTable.setOnKeyPressed(event -> {
+                if(event.isShortcutDown() && event.getCode() == KeyCode.C)
+                {
+                    copyTimeslotMap();
+                    event.consume();
+                }
+                else if(event.isShortcutDown() && event.getCode() == KeyCode.V)
+                {
+                    pasteTimeslotMap();
+                    event.consume();
+                }
+            });
         }
 
         return mTimeslotFrequencyTable;
@@ -401,6 +426,173 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mDeleteTimeslotFrequencyButton;
+    }
+
+    private Button getCopyTimeslotMapButton()
+    {
+        if(mCopyTimeslotMapButton == null)
+        {
+            mCopyTimeslotMapButton = new Button("Copy Map");
+            mCopyTimeslotMapButton.setMaxWidth(Double.MAX_VALUE);
+            mCopyTimeslotMapButton.setTooltip(new Tooltip("Copy all LCN mappings as tab-separated values"));
+            mCopyTimeslotMapButton.setOnAction(event -> copyTimeslotMap());
+        }
+
+        return mCopyTimeslotMapButton;
+    }
+
+    private Button getPasteTimeslotMapButton()
+    {
+        if(mPasteTimeslotMapButton == null)
+        {
+            mPasteTimeslotMapButton = new Button("Paste Map");
+            mPasteTimeslotMapButton.setMaxWidth(Double.MAX_VALUE);
+            mPasteTimeslotMapButton.setTooltip(new Tooltip(
+                "Replace the map with rows containing LCN, downlink frequency, and optional uplink frequency"));
+            mPasteTimeslotMapButton.setOnAction(event -> pasteTimeslotMap());
+        }
+
+        return mPasteTimeslotMapButton;
+    }
+
+    private void copyTimeslotMap()
+    {
+        ClipboardContent content = new ClipboardContent();
+        content.putString(formatTimeslotMap(getTimeslotTable().getItems()));
+        Clipboard.getSystemClipboard().setContent(content);
+    }
+
+    private void pasteTimeslotMap()
+    {
+        String text = Clipboard.getSystemClipboard().getString();
+
+        try
+        {
+            List<TimeslotFrequency> mappings = parseTimeslotMap(text);
+            getTimeslotTable().getItems().setAll(mappings);
+            getTimeslotTable().sort();
+            modifiedProperty().set(true);
+        }
+        catch(IllegalArgumentException e)
+        {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Unable to Paste DMR Channel Map");
+            alert.setHeaderText("The clipboard does not contain a valid DMR channel map.");
+            alert.setContentText(e.getMessage());
+            alert.showAndWait();
+        }
+    }
+
+    static String formatTimeslotMap(List<TimeslotFrequency> mappings)
+    {
+        StringBuilder output = new StringBuilder();
+
+        for(TimeslotFrequency mapping: mappings.stream()
+            .sorted(Comparator.comparingInt(TimeslotFrequency::getNumber)).toList())
+        {
+            if(!output.isEmpty())
+            {
+                output.append(System.lineSeparator());
+            }
+
+            output.append(mapping.getNumber()).append('\t').append(mapping.getDownlinkFrequency()).append('\t')
+                .append(mapping.getUplinkFrequency());
+        }
+
+        return output.toString();
+    }
+
+    static List<TimeslotFrequency> parseTimeslotMap(String text)
+    {
+        if(text == null || text.isBlank())
+        {
+            throw new IllegalArgumentException("Copy one or more mapping rows before pasting.");
+        }
+
+        List<TimeslotFrequency> mappings = new ArrayList<>();
+        Set<Integer> logicalChannelNumbers = new HashSet<>();
+        String[] lines = text.split("\\R");
+
+        for(int lineIndex = 0; lineIndex < lines.length; lineIndex++)
+        {
+            String line = lines[lineIndex].trim();
+
+            if(line.isEmpty())
+            {
+                continue;
+            }
+
+            String lower = line.toLowerCase(Locale.ROOT);
+            if((lower.contains("lcn") || lower.contains("lsn")) && mappings.isEmpty())
+            {
+                continue;
+            }
+
+            String[] columns = line.contains("\t") || line.contains(",") || line.contains(";") ?
+                line.split("\\s*[\\t,;]\\s*") : line.split("\\s+");
+
+            if(columns.length < 2 || columns.length > 3)
+            {
+                throw new IllegalArgumentException("Line " + (lineIndex + 1) +
+                    " must contain LCN, downlink frequency, and optional uplink frequency.");
+            }
+
+            try
+            {
+                int lcn = Integer.parseInt(columns[0]);
+                if(lcn < 1)
+                {
+                    throw new IllegalArgumentException("Line " + (lineIndex + 1) + " has an LCN below 1.");
+                }
+
+                if(!logicalChannelNumbers.add(lcn))
+                {
+                    throw new IllegalArgumentException("Line " + (lineIndex + 1) + " repeats LCN " + lcn + ".");
+                }
+
+                TimeslotFrequency mapping = new TimeslotFrequency();
+                mapping.setNumber(lcn);
+                mapping.setDownlinkFrequency(parseFrequency(columns[1], lineIndex + 1));
+                mapping.setUplinkFrequency(columns.length == 3 ? parseFrequency(columns[2], lineIndex + 1) : 0);
+                mappings.add(mapping);
+            }
+            catch(NumberFormatException e)
+            {
+                throw new IllegalArgumentException("Line " + (lineIndex + 1) + " contains a non-numeric value.", e);
+            }
+        }
+
+        if(mappings.isEmpty())
+        {
+            throw new IllegalArgumentException("No mapping rows were found.");
+        }
+
+        mappings.sort(Comparator.comparingInt(TimeslotFrequency::getNumber));
+        return mappings;
+    }
+
+    private static long parseFrequency(String value, int lineNumber)
+    {
+        BigDecimal frequency = new BigDecimal(value.trim());
+
+        if(frequency.signum() < 0)
+        {
+            throw new IllegalArgumentException("Line " + lineNumber + " contains a negative frequency.");
+        }
+
+        if(frequency.signum() > 0 && frequency.compareTo(BigDecimal.valueOf(1_000_000)) < 0)
+        {
+            frequency = frequency.multiply(BigDecimal.valueOf(1_000_000));
+        }
+
+        try
+        {
+            return frequency.setScale(0, RoundingMode.HALF_UP).longValueExact();
+        }
+        catch(ArithmeticException e)
+        {
+            throw new IllegalArgumentException("Line " + lineNumber + " contains a frequency that is too large.", e);
+        }
     }
 
     private IntegerTextField getLogicalChannelNumberField()
@@ -571,6 +763,8 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         getTimeslotTable().getItems().clear();
         getTimeslotTable().setDisable(config == null);
         getAddTimeslotFrequencyButton().setDisable(config == null);
+        getCopyTimeslotMapButton().setDisable(config == null);
+        getPasteTimeslotMapButton().setDisable(config == null);
         getDeleteTimeslotFrequencyButton().setDisable(true);
         getLogicalChannelNumberField().set(0);
         getLogicalChannelNumberField().setDisable(true);
