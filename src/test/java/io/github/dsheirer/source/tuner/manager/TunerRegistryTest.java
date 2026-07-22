@@ -48,6 +48,19 @@ class TunerRegistryTest
     }
 
     @Test
+    void ambiguousDiscoveryIdentitiesAreOmittedInsteadOfChoosingOne()
+    {
+        StubDiscoveredTuner first = new StubDiscoveredTuner(TunerClass.RTL2832,
+            "RTL-2832 USB Bus:3 Port:4");
+        StubDiscoveredTuner conflicting = new StubDiscoveredTuner(TunerClass.RTL2832,
+            "RTL-2832 USB Bus:3 Port:4");
+        TunerRegistry registry = new TunerRegistry(() -> List.of(first, conflicting));
+
+        assertTrue(registry.snapshots().isEmpty());
+        assertTrue(registry.availableTargets().isEmpty());
+    }
+
+    @Test
     void eachSnapshotReflectsCurrentDiscoveryWithoutRetainingRemovedTuners()
     {
         StubDiscoveredTuner first = new StubDiscoveredTuner(TunerClass.RTL2832,

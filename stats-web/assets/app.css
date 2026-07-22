@@ -4237,6 +4237,228 @@ body[data-view="settings"] .settings-info-button {
   line-height: 1.45;
 }
 
+.hardware-settings-panel {
+  margin-top: 16px;
+}
+
+.hardware-settings-state {
+  min-height: 36px;
+  padding: 9px 14px;
+  color: var(--success);
+  font-size: .73rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.hardware-settings-state:empty {
+  min-height: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.hardware-settings-state.failed {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.hardware-settings-body {
+  padding: 14px;
+}
+
+.hardware-settings-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--line));
+  border-radius: 8px;
+}
+
+.hardware-settings-form {
+  display: grid;
+  gap: 13px;
+}
+
+.hardware-form-section {
+  min-width: 0;
+  overflow: visible;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.hardware-form-section > header {
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hardware-form-section h3 {
+  margin: 0;
+  font-size: .9rem;
+}
+
+.hardware-form-section header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+.hardware-field-grid,
+.hardware-device-subgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 14px;
+}
+
+.hardware-field-grid {
+  padding: 13px;
+}
+
+.hardware-device-subgrid {
+  display: contents;
+}
+
+.hardware-device-subgrid[hidden] {
+  display: none;
+}
+
+.hardware-field {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.hardware-field-label {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 720;
+}
+
+.hardware-input-with-unit {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.hardware-field input[type="number"],
+.hardware-field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+}
+
+.hardware-input-with-unit input {
+  border-radius: 7px 0 0 7px !important;
+}
+
+.hardware-input-with-unit > span {
+  min-width: 48px;
+  display: grid;
+  place-items: center;
+  margin-left: -1px;
+  padding: 0 9px;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 700;
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 0 7px 7px 0;
+}
+
+.hardware-input-with-unit > span:empty {
+  display: none;
+}
+
+.hardware-input-with-unit:has(> span:empty) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hardware-input-with-unit:has(> span:empty) input {
+  border-radius: 7px !important;
+}
+
+.hardware-checkbox-field {
+  min-height: 40px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  align-self: end;
+  gap: 9px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+}
+
+.hardware-checkbox-field input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+}
+
+.hardware-checkbox-field .hardware-field-label {
+  min-height: 28px;
+  color: var(--ink);
+}
+
+.hardware-field input:disabled,
+.hardware-field select:disabled,
+.hardware-checkbox-field:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+body[data-view="settings"] .settings-field-info {
+  width: 22px;
+  min-width: 22px;
+  max-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  flex-basis: 22px;
+  font-size: .68rem;
+}
+
+.hardware-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 11px 13px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.hardware-settings-action-message {
+  min-width: 0;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: .73rem;
+}
+
+body[data-view="settings"] button.danger-outline {
+  color: var(--danger);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--line));
+}
+
+body[data-view="settings"] button.danger-outline:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
 .settings-spectrum-panel {
   margin-top: 16px;
 }
@@ -4477,6 +4699,24 @@ body[data-view="settings"] .settings-dialog-close {
 
   .hardware-tuner-grid {
     grid-template-columns: 1fr;
+  }
+
+  .hardware-field-grid,
+  .hardware-device-subgrid {
+    grid-template-columns: 1fr;
+  }
+
+  .hardware-settings-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .hardware-settings-action-message {
+    flex: 1 1 100%;
+  }
+
+  .hardware-settings-actions button {
+    flex: 1 1 0;
   }
 
   .settings-detail-list {

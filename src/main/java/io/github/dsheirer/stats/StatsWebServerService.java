@@ -51,6 +51,7 @@ import io.github.dsheirer.web.tls.WebTlsMaterialService;
 import io.github.dsheirer.web.live.LiveActivityService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerRegistry;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.manager.TunerSnapshot;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
@@ -100,6 +101,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private WebAdminAuthenticationHandler mAuthenticationHandler;
     private TunerSpectrumFrameSource mTunerSpectrumFrameSource;
     private TunerRegistry mTunerRegistry;
+    private TunerSettingsService mTunerSettingsService;
     private String mSignalSourceType = "unavailable";
     private Path mAssetRoot;
     private WebListenAddress mListenAddress;
@@ -211,6 +213,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             if(mTunerManager != null)
             {
                 mTunerRegistry = new TunerRegistry(mTunerManager);
+                mTunerSettingsService = new TunerSettingsService(mTunerManager, mTunerRegistry);
                 mTunerSpectrumFrameSource = new TunerSpectrumFrameSource(
                     TunerSpectrumFrameSource.Configuration.defaults(), mTunerRegistry);
                 frameSource = mTunerSpectrumFrameSource;
@@ -251,7 +254,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             };
             mHandler = new StatsWebHandler(assetRoot, mDatabase, mLiveService, mWebCallService,
                 this::status, mLiveActivityService, mFeatureAccessPolicy, subjectResolver,
-                remoteAddressAdmissionPolicy, this::tunerInventory);
+                remoteAddressAdmissionPolicy, this::tunerInventory, mTunerSettingsService, request ->
+                {
+                    WebAdminAuthenticationHandler current = authenticationHandler.get();
+                    return current != null ? current.authorizeMutation(request) :
+                        new WebAdminAuthenticationHandler.MutationAuthorization(false, () -> false);
+                });
             mAuthenticationHandler = new WebAdminAuthenticationHandler(mAuthenticationService, mHandler,
                 remoteAddressAdmissionPolicy);
             authenticationHandler.set(mAuthenticationHandler);
@@ -302,6 +310,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private synchronized void stop()
     {
+        RuntimeException tunerSettingsStopFailure = null;
         SelectedChannelDiagnosticWebSocketTransport selectedChannelDiagnosticTransport =
             mSelectedChannelDiagnosticTransport;
         mSelectedChannelDiagnosticTransport = null;
@@ -354,6 +363,23 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(handler != null)
         {
             handler.close();
+        }
+
+        TunerSettingsService tunerSettingsService = mTunerSettingsService;
+
+        if(tunerSettingsService != null)
+        {
+            try
+            {
+                tunerSettingsService.close();
+                mTunerSettingsService = null;
+            }
+            catch(RuntimeException exception)
+            {
+                //Retain the service so a later stop can confirm termination before any replacement worker starts.
+                tunerSettingsStopFailure = exception;
+                mLog.warn("Unable to stop web tuner control cleanly; web restart remains blocked", exception);
+            }
         }
 
         mAuthenticationHandler = null;
@@ -412,6 +438,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(mChannelProcessingManager != null)
         {
             mChannelProcessingManager.setChannelActivityEnabled("stats-web", false);
+        }
+
+        if(tunerSettingsStopFailure != null)
+        {
+            throw tunerSettingsStopFailure;
         }
     }
 
@@ -708,12 +739,61 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     public void close()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
-        stop();
-        mLiveService.close();
+        RuntimeException closeFailure = null;
+
+        try
+        {
+            stop();
+        }
+        catch(RuntimeException exception)
+        {
+            closeFailure = exception;
+        }
+
+        try
+        {
+            mLiveService.close();
+        }
+        catch(RuntimeException exception)
+        {
+            closeFailure = accumulate(closeFailure, exception);
+        }
+
         if(mLiveActivityService != null)
         {
-            mLiveActivityService.close();
+            try
+            {
+                mLiveActivityService.close();
+            }
+            catch(RuntimeException exception)
+            {
+                closeFailure = accumulate(closeFailure, exception);
+            }
         }
-        mWebCallService.close();
+
+        try
+        {
+            mWebCallService.close();
+        }
+        catch(RuntimeException exception)
+        {
+            closeFailure = accumulate(closeFailure, exception);
+        }
+
+        if(closeFailure != null)
+        {
+            throw closeFailure;
+        }
+    }
+
+    private static RuntimeException accumulate(RuntimeException primary, RuntimeException additional)
+    {
+        if(primary == null)
+        {
+            return additional;
+        }
+
+        primary.addSuppressed(additional);
+        return primary;
     }
 }

@@ -22,6 +22,9 @@ import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsOperations;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService.EnabledRequest;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService.UpdateRequest;
 import io.github.dsheirer.web.WebApplicationService;
 import io.github.dsheirer.web.access.AuthorizationSubject;
 import io.github.dsheirer.web.access.FeatureAccessMode;
@@ -45,6 +48,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 import org.eclipse.jetty.server.Request;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,6 +58,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class StatsWebHandlerTest
 {
+    private static final String TUNER_ID = "TNR_0123456789ABCDEF0123456789AB";
     @TempDir
     Path mTemporaryFolder;
     private StatsLiveService mLiveService;
@@ -63,6 +69,10 @@ class StatsWebHandlerTest
     private InMemoryFeatureAccessPolicy mAccessPolicy;
     private AtomicReference<AuthorizationSubject> mSubject;
     private AtomicBoolean mSessionValid;
+    private AtomicBoolean mMutationAuthorized;
+    private AtomicReference<UpdateRequest> mTunerUpdate;
+    private AtomicReference<EnabledRequest> mEnabledUpdate;
+    private AtomicInteger mTunerMutationCalls;
 
     @BeforeEach
     void setUp() throws Exception
@@ -82,6 +92,10 @@ class StatsWebHandlerTest
         mAccessPolicy = InMemoryFeatureAccessPolicy.currentProfileDefaults();
         mSubject = new AtomicReference<>(AuthorizationSubject.ANONYMOUS);
         mSessionValid = new AtomicBoolean(true);
+        mMutationAuthorized = new AtomicBoolean(false);
+        mTunerUpdate = new AtomicReference<>();
+        mEnabledUpdate = new AtomicReference<>();
+        mTunerMutationCalls = new AtomicInteger();
         WebRequestSubjectResolver subjectResolver = new WebRequestSubjectResolver()
         {
             @Override
@@ -98,12 +112,43 @@ class StatsWebHandlerTest
                     WebAuthorization.permanent(subject);
             }
         };
+        TunerSettingsOperations tunerSettings = new TunerSettingsOperations()
+        {
+            @Override
+            public CompletableFuture<Map<String,Object>> settings(String tunerId)
+            {
+                return CompletableFuture.completedFuture(Map.of("id", tunerId, "revision", 41,
+                    "enabled", true, "device", Map.of("type", "AIRSPY")));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> update(String tunerId, UpdateRequest request,
+                                                                  BooleanSupplier sessionIsValid)
+            {
+                mTunerMutationCalls.incrementAndGet();
+                mTunerUpdate.set(request);
+                return CompletableFuture.completedFuture(Map.of("id", tunerId, "revision", 42,
+                    "sessionValid", sessionIsValid.getAsBoolean()));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> setEnabled(String tunerId, EnabledRequest request,
+                                                                      BooleanSupplier sessionIsValid)
+            {
+                mTunerMutationCalls.incrementAndGet();
+                mEnabledUpdate.set(request);
+                return CompletableFuture.completedFuture(Map.of("id", tunerId, "revision", 43,
+                    "sessionValid", sessionIsValid.getAsBoolean()));
+            }
+        };
         mHandler = new StatsWebHandler(assets, database, mLiveService, mWebCallService,
             () -> Map.of("server", Map.of("enabled", true)), null, mAccessPolicy, subjectResolver,
             io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy.allowAll(),
             () -> Map.of("revision", 7,
                 "tuners", List.of(Map.of("id", "AIRSPY-TEST", "displayName", "Airspy")),
-                "spectrum", Map.of("exclusive", true, "busy", false)));
+                "spectrum", Map.of("exclusive", true, "busy", false)), tunerSettings,
+            request -> new io.github.dsheirer.web.auth.WebAdminAuthenticationHandler.MutationAuthorization(
+                mMutationAuthorized.get(), mSessionValid::get));
         mWebApplicationService = new WebApplicationService(
             WebApplicationService.Configuration.ephemeralLoopback(), mHandler, container -> {});
         mWebApplicationService.start();
@@ -149,6 +194,68 @@ class StatsWebHandlerTest
 
         mSessionValid.set(false);
         assertEquals(401, get("api/v1/tuners").statusCode());
+    }
+
+    @Test
+    void protectsAndStrictlyParsesTunerSettingsRoutes() throws Exception
+    {
+        String settingsPath = "api/v1/tuners/" + TUNER_ID + "/settings";
+        String enabledPath = "api/v1/tuners/" + TUNER_ID + "/enabled";
+        assertEquals(401, get(settingsPath).statusCode());
+        mSubject.set(AuthorizationSubject.AUTHENTICATED_ADMIN);
+        HttpResponse<String> settings = get(settingsPath);
+        assertEquals(200, settings.statusCode());
+        assertTrue(settings.body().contains("\"revision\":41"));
+
+        String update = """
+            {
+              "revision":41,
+              "frequencyCorrectionPpm":0.0,
+              "autoPpm":true,
+              "minimumFrequencyHz":24000000,
+              "maximumFrequencyHz":1800000000,
+              "centerFrequencyFixed":false,
+              "deviceType":"AIRSPY",
+              "sampleRateHz":10000000,
+              "airspyGainMode":"LINEARITY",
+              "airspyGain":14,
+              "airspyIfGain":9,
+              "airspyMixerGain":9,
+              "airspyLnaGain":7,
+              "airspyMixerAgc":false,
+              "airspyLnaAgc":false,
+              "rtlBiasT":null,
+              "rtlMasterGain":null,
+              "rtlMixerGain":null,
+              "rtlLnaGain":null,
+              "rtlVgaGain":null
+            }
+            """;
+
+        assertEquals(403, put(settingsPath, "application/json", update).statusCode());
+        assertEquals(0, mTunerMutationCalls.get());
+        mMutationAuthorized.set(true);
+        HttpResponse<String> saved = put(settingsPath, "application/json; charset=utf-8", update);
+        assertEquals(200, saved.statusCode());
+        assertTrue(saved.body().contains("\"sessionValid\":true"));
+        assertEquals("AIRSPY", mTunerUpdate.get().deviceType());
+        assertEquals(14, mTunerUpdate.get().airspyGain());
+
+        int calls = mTunerMutationCalls.get();
+        String duplicate = update.replace("\"revision\":41,", "\"revision\":41,\"revision\":41,");
+        assertEquals(400, put(settingsPath, "application/json", duplicate).statusCode());
+        assertEquals(calls, mTunerMutationCalls.get());
+        String unknown = update.replace("\"revision\":41,", "\"revision\":41,\"unexpected\":true,");
+        assertEquals(400, put(settingsPath, "application/json", unknown).statusCode());
+        assertEquals(calls, mTunerMutationCalls.get());
+        assertEquals(415, put(settingsPath, "text/plain", update).statusCode());
+
+        HttpResponse<String> enabled = put(enabledPath, "application/json",
+            "{\"revision\":42,\"enabled\":false,\"confirmActiveStop\":true}");
+        assertEquals(200, enabled.statusCode());
+        assertEquals(Boolean.FALSE, mEnabledUpdate.get().enabled());
+        assertEquals(405, get(enabledPath).statusCode());
+        assertEquals(404, get("api/v1/tuners/" + TUNER_ID + "/unknown").statusCode());
     }
 
     @Test
@@ -307,6 +414,16 @@ class StatsWebHandlerTest
     {
         return mHttpClient.send(HttpRequest.newBuilder(mWebApplicationService.getBaseUri().resolve(relativePath))
             .timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> put(String relativePath, String contentType, String body) throws Exception
+    {
+        URI baseUri = mWebApplicationService.getBaseUri();
+        String origin = baseUri.getScheme() + "://" + baseUri.getAuthority();
+        return mHttpClient.send(HttpRequest.newBuilder(baseUri.resolve(relativePath))
+            .timeout(Duration.ofSeconds(5)).header("Origin", origin)
+            .header("Content-Type", contentType).header("X-CSRF-Token", "test-token")
+            .PUT(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private InputStream openSse(String relativePath) throws Exception

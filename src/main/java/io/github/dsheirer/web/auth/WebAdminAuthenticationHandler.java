@@ -29,6 +29,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.BooleanSupplier;
 import org.eclipse.jetty.http.HttpCookie;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.io.Content;
@@ -131,6 +132,49 @@ public final class WebAdminAuthenticationHandler extends Handler.Wrapper
     public SignalSubjectResolver signalSubjectResolver()
     {
         return this;
+    }
+
+    /**
+     * Authorizes an administrator-only request that changes application state.
+     *
+     * <p>The request must come from an admitted peer and the same browser origin, contain exactly one live
+     * administrator session cookie, and contain exactly one valid CSRF header.  The returned authorization does not
+     * expose the session identifier or CSRF token.  A caller that performs asynchronous work should recheck
+     * {@link MutationAuthorization#isSessionValid()} immediately before applying the change.</p>
+     */
+    public MutationAuthorization authorizeMutation(Request request)
+    {
+        Objects.requireNonNull(request, "Mutation request cannot be null");
+
+        try
+        {
+            if(!mRemoteAddressAdmissionPolicy.isAllowed(request) || !hasSameOrigin(request))
+            {
+                return MutationAuthorization.rejected();
+            }
+
+            CookieLookup cookie = sessionCookie(request);
+            String sessionId = cookie.sessionId();
+
+            if(sessionId == null || mAuthenticationService.resolveSession(sessionId).isEmpty())
+            {
+                return MutationAuthorization.rejected();
+            }
+
+            List<String> csrfHeaders = request.getHeaders().getValuesList(CSRF_HEADER_NAME);
+
+            if(csrfHeaders.size() != 1 || !mAuthenticationService.validateCsrf(sessionId, csrfHeaders.getFirst()))
+            {
+                return MutationAuthorization.rejected();
+            }
+
+            return MutationAuthorization.authorized(
+                () -> mAuthenticationService.resolveSession(sessionId).isPresent());
+        }
+        catch(RuntimeException exception)
+        {
+            return MutationAuthorization.rejected();
+        }
     }
 
     @Override
@@ -760,6 +804,47 @@ public final class WebAdminAuthenticationHandler extends Handler.Wrapper
         public static Configuration defaults()
         {
             return new Configuration(1_024);
+        }
+    }
+
+    /**
+     * Credential-free result for an administrator-only state-changing request.
+     */
+    public record MutationAuthorization(boolean authorized, BooleanSupplier sessionIsValid)
+    {
+        public MutationAuthorization
+        {
+            Objects.requireNonNull(sessionIsValid, "Mutation session validity check cannot be null");
+        }
+
+        /**
+         * Rechecks that the session which authorized this request is still live.  Failures are treated as revoked.
+         */
+        public boolean isSessionValid()
+        {
+            if(!authorized)
+            {
+                return false;
+            }
+
+            try
+            {
+                return sessionIsValid.getAsBoolean();
+            }
+            catch(RuntimeException exception)
+            {
+                return false;
+            }
+        }
+
+        private static MutationAuthorization authorized(BooleanSupplier sessionIsValid)
+        {
+            return new MutationAuthorization(true, sessionIsValid);
+        }
+
+        private static MutationAuthorization rejected()
+        {
+            return new MutationAuthorization(false, () -> false);
         }
     }
 

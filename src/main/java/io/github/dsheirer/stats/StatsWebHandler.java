@@ -11,8 +11,18 @@
 
 package io.github.dsheirer.stats;
 
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.StreamReadConstraints;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.core.util.JsonRecyclerPools;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsOperations;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService.EnabledRequest;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService.TunerSettingsException;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService.UpdateRequest;
 import io.github.dsheirer.web.WebResponses;
 import io.github.dsheirer.web.access.AuthorizationSubject;
 import io.github.dsheirer.web.access.FeatureAccessGateway;
@@ -24,6 +34,7 @@ import io.github.dsheirer.web.access.WebRequestSubjectResolver.WebAuthorization;
 import io.github.dsheirer.web.access.WebTransport;
 import io.github.dsheirer.web.live.LiveActivityService;
 import io.github.dsheirer.web.live.LiveActivityService.FeedType;
+import io.github.dsheirer.web.auth.WebAdminAuthenticationHandler.MutationAuthorization;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -44,12 +55,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
+import org.eclipse.jetty.io.Content;
+import org.eclipse.jetty.io.RetainableByteBuffer;
 import org.eclipse.jetty.util.Callback;
+import org.eclipse.jetty.util.Promise;
 import org.eclipse.jetty.util.component.Graceful;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +81,19 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
 {
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebHandler.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final int MAXIMUM_TUNER_SETTINGS_BODY_BYTES = 4_096;
+    private static final ObjectMapper TUNER_SETTINGS_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
+        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+        .recyclerPool(JsonRecyclerPools.nonRecyclingPool())
+        .streamReadConstraints(StreamReadConstraints.builder()
+            .maxDocumentLength(MAXIMUM_TUNER_SETTINGS_BODY_BYTES)
+            .maxNestingDepth(3)
+            .maxNameLength(48)
+            .maxStringLength(96)
+            .maxTokenCount(64)
+            .build())
+        .build()).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0).asReadOnlyBuffer();
     private static final int STATIC_CHUNK_BYTES = 32 * 1024;
     private static final int MAXIMUM_ASYNC_STREAMS = 128;
@@ -84,6 +112,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private final LiveActivityService mLiveActivityService;
     private final Supplier<Map<String,Object>> mStatusSupplier;
     private final Supplier<?> mTunerInventorySupplier;
+    private final TunerSettingsOperations mTunerSettingsService;
+    private final Function<Request,MutationAuthorization> mMutationAuthorizer;
     private final FeatureAccessGateway mFeatureAccessGateway;
     private final WebRequestSubjectResolver mSubjectResolver;
     private final Set<StatsLiveEventHub.Subscription> mActiveSubscriptions =
@@ -137,6 +167,19 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                     RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
                     Supplier<?> tunerInventorySupplier)
     {
+        this(assetRoot, database, liveService, webCallService, statusSupplier, liveActivityService,
+            featureAccessGateway, subjectResolver, remoteAddressAdmissionPolicy, tunerInventorySupplier, null,
+            request -> new MutationAuthorization(false, () -> false));
+    }
+
+    StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
+                    StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier,
+                    LiveActivityService liveActivityService, FeatureAccessGateway featureAccessGateway,
+                    WebRequestSubjectResolver subjectResolver,
+                    RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
+                    Supplier<?> tunerInventorySupplier, TunerSettingsOperations tunerSettingsService,
+                    Function<Request,MutationAuthorization> mutationAuthorizer)
+    {
         mAssetRoot = Objects.requireNonNull(assetRoot, "Stats web asset root cannot be null")
             .toAbsolutePath().normalize();
         mDatabase = Objects.requireNonNull(database, "Stats web database cannot be null");
@@ -146,6 +189,9 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         mStatusSupplier = Objects.requireNonNull(statusSupplier, "Stats status supplier cannot be null");
         mTunerInventorySupplier = Objects.requireNonNull(tunerInventorySupplier,
             "Tuner inventory supplier cannot be null");
+        mTunerSettingsService = tunerSettingsService;
+        mMutationAuthorizer = Objects.requireNonNull(mutationAuthorizer,
+            "Administrator mutation authorizer cannot be null");
         mFeatureAccessGateway = Objects.requireNonNull(featureAccessGateway,
             "Feature access gateway cannot be null");
         mSubjectResolver = Objects.requireNonNull(subjectResolver, "Web request subject resolver cannot be null");
@@ -201,6 +247,22 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                 if(contextRoute != null)
                 {
                     handleContextActivity(request, response, callback, contextRoute, authorization);
+                    return true;
+                }
+
+                TunerSettingsRoute tunerSettingsRoute = TunerSettingsRoute.parse(path);
+
+                if(tunerSettingsRoute != null)
+                {
+                    handleTunerSettings(request, response, callback, tunerSettingsRoute);
+                    return true;
+                }
+
+                if(path.startsWith(TUNER_INVENTORY_PATH + "/"))
+                {
+                    sendJson(response, callback, 404,
+                        Map.of("error", "Receiver settings route was not found.", "code", "route_not_found",
+                            "status", 404));
                     return true;
                 }
 
@@ -293,7 +355,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private FeatureAuthorization authorizeFeature(Request request, Response response, Callback callback, String path,
                                                   ContextRoute contextRoute)
     {
-        if(TUNER_INVENTORY_PATH.equals(path))
+        if(TUNER_INVENTORY_PATH.equals(path) || path.startsWith(TUNER_INVENTORY_PATH + "/"))
         {
             WebAuthorization authorization = resolveAuthorization(request);
 
@@ -404,6 +466,188 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                 .getBytes(StandardCharsets.UTF_8);
             WebResponses.json(response, callback, 500, fallback);
         }
+    }
+
+    private void handleTunerSettings(Request request, Response response, Callback callback,
+                                     TunerSettingsRoute route)
+    {
+        TunerSettingsOperations service = mTunerSettingsService;
+
+        if(service == null)
+        {
+            sendJson(response, callback, 503,
+                Map.of("error", "Receiver settings are unavailable.", "code", "settings_unavailable",
+                    "status", 503));
+            return;
+        }
+
+        if(route.kind() == TunerSettingsRoute.Kind.SETTINGS && "GET".equals(request.getMethod()))
+        {
+            completeTunerCommand(response, callback, service.settings(route.tunerId()));
+            return;
+        }
+
+        if(!"PUT".equals(request.getMethod()))
+        {
+            response.getHeaders().put(HttpHeader.ALLOW,
+                route.kind() == TunerSettingsRoute.Kind.SETTINGS ? "GET, PUT" : "PUT");
+            sendJson(response, callback, 405,
+                Map.of("error", "Method not allowed.", "code", "method_not_allowed", "status", 405));
+            return;
+        }
+
+        MutationAuthorization authorization = mMutationAuthorizer.apply(request);
+
+        if(authorization == null || !authorization.authorized())
+        {
+            sendJson(response, callback, 403,
+                Map.of("error", "The settings request was rejected.", "code", "request_rejected", "status", 403));
+            return;
+        }
+
+        if(!isJsonContentType(request.getHeaders().get(HttpHeader.CONTENT_TYPE)))
+        {
+            sendJson(response, callback, 415,
+                Map.of("error", "A JSON request body is required.", "code", "invalid_request", "status", 415));
+            return;
+        }
+
+        long contentLength = request.getLength();
+
+        if(contentLength > MAXIMUM_TUNER_SETTINGS_BODY_BYTES)
+        {
+            response.getHeaders().put(HttpHeader.CONNECTION, "close");
+            sendJson(response, callback, 413,
+                Map.of("error", "The settings request is too large.", "code", "invalid_request", "status", 413));
+            return;
+        }
+
+        Promise<RetainableByteBuffer> bodyCompletion = Promise.from(body ->
+            completeTunerBody(response, callback, route, authorization, body.takeByteArray(), null),
+            failure -> completeTunerBody(response, callback, route, authorization, null, failure));
+        Content.Source.asRetainableByteBuffer(request, null, false, MAXIMUM_TUNER_SETTINGS_BODY_BYTES,
+            bodyCompletion);
+    }
+
+    private void completeTunerBody(Response response, Callback callback, TunerSettingsRoute route,
+                                   MutationAuthorization authorization, byte[] body, Throwable failure)
+    {
+        if(failure != null)
+        {
+            response.getHeaders().put(HttpHeader.CONNECTION, "close");
+            int status = failure instanceof IllegalStateException ? 413 : 400;
+            sendJson(response, callback, status,
+                Map.of("error", status == 413 ? "The settings request is too large." :
+                        "The settings request could not be read.",
+                    "code", "invalid_request", "status", status));
+            return;
+        }
+
+        if(body == null || body.length == 0)
+        {
+            sendJson(response, callback, 400,
+                Map.of("error", "A settings request body is required.", "code", "invalid_request", "status", 400));
+            return;
+        }
+
+        try
+        {
+            if(route.kind() == TunerSettingsRoute.Kind.SETTINGS)
+            {
+                UpdateRequest update = TUNER_SETTINGS_OBJECT_MAPPER.readValue(body, UpdateRequest.class);
+                completeTunerCommand(response, callback, mTunerSettingsService.update(route.tunerId(), update,
+                    authorization::isSessionValid));
+            }
+            else
+            {
+                EnabledRequest update = TUNER_SETTINGS_OBJECT_MAPPER.readValue(body, EnabledRequest.class);
+                completeTunerCommand(response, callback, mTunerSettingsService.setEnabled(route.tunerId(), update,
+                    authorization::isSessionValid));
+            }
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            sendJson(response, callback, 400,
+                Map.of("error", "The settings request is invalid.", "code", "invalid_request", "status", 400));
+        }
+    }
+
+    private static void completeTunerCommand(Response response, Callback callback,
+                                             CompletableFuture<Map<String,Object>> completion)
+    {
+        completion.whenComplete((value, failure) ->
+        {
+            Throwable cause = failure;
+
+            while(cause != null && (cause instanceof java.util.concurrent.CompletionException ||
+                cause instanceof ExecutionException) && cause.getCause() != null)
+            {
+                cause = cause.getCause();
+            }
+
+            if(cause == null)
+            {
+                sendJson(response, callback, 200, value);
+            }
+            else if(cause instanceof TunerSettingsException exception)
+            {
+                if(exception.status() == 401)
+                {
+                    response.getHeaders().put(HttpHeader.WWW_AUTHENTICATE, "Bearer realm=\"sdrtrunk-admin\"");
+                }
+
+                if(exception.status() == 503)
+                {
+                    response.getHeaders().put(HttpHeader.RETRY_AFTER, "1");
+                }
+
+                sendJson(response, callback, exception.status(),
+                    Map.of("error", exception.getMessage(), "code", exception.code(), "status", exception.status()));
+            }
+            else
+            {
+                sendJson(response, callback, 503,
+                    Map.of("error", "Receiver settings are unavailable.", "code", "settings_unavailable",
+                        "status", 503));
+            }
+        });
+    }
+
+    private static boolean isJsonContentType(String contentType)
+    {
+        if(contentType == null)
+        {
+            return false;
+        }
+
+        String[] parts = contentType.split(";", -1);
+
+        if(parts.length < 1 || parts.length > 2 || !"application/json".equalsIgnoreCase(parts[0].strip()))
+        {
+            return false;
+        }
+
+        if(parts.length == 1)
+        {
+            return true;
+        }
+
+        String parameter = parts[1].strip();
+        int separator = parameter.indexOf('=');
+
+        if(separator < 1 || !"charset".equalsIgnoreCase(parameter.substring(0, separator).strip()))
+        {
+            return false;
+        }
+
+        String charset = parameter.substring(separator + 1).strip();
+
+        if(charset.length() >= 2 && charset.charAt(0) == '"' && charset.charAt(charset.length() - 1) == '"')
+        {
+            charset = charset.substring(1, charset.length() - 1);
+        }
+
+        return "utf-8".equalsIgnoreCase(charset);
     }
 
     private void handleContextActivity(Request request, Response response, Callback callback,
@@ -1336,6 +1580,41 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             {
                 return null;
             }
+        }
+    }
+
+    private record TunerSettingsRoute(String tunerId, Kind kind)
+    {
+        private static final String PREFIX = TUNER_INVENTORY_PATH + "/";
+
+        private static TunerSettingsRoute parse(String path)
+        {
+            if(path == null || !path.startsWith(PREFIX))
+            {
+                return null;
+            }
+
+            String[] segments = path.substring(PREFIX.length()).split("/", -1);
+
+            if(segments.length != 2 || !segments[0].matches("TNR_[0-9A-Fa-f]{28}"))
+            {
+                return null;
+            }
+
+            return switch(segments[1])
+            {
+                case "settings" -> new TunerSettingsRoute(segments[0].toUpperCase(java.util.Locale.ROOT),
+                    Kind.SETTINGS);
+                case "enabled" -> new TunerSettingsRoute(segments[0].toUpperCase(java.util.Locale.ROOT),
+                    Kind.ENABLED);
+                default -> null;
+            };
+        }
+
+        private enum Kind
+        {
+            SETTINGS,
+            ENABLED
         }
     }
 

@@ -136,6 +136,16 @@ public class RTL2832TunerController extends USBTunerController
         if(tunerConfig instanceof RTL2832TunerConfiguration rtl)
         {
             setSampleRate(rtl.getSampleRate());
+
+            try
+            {
+                setBiasT(rtl.isBiasT());
+            }
+            catch(LibUsbException exception)
+            {
+                throw new SourceException("Couldn't apply RTL-SDR Bias-T setting", exception);
+            }
+
             getEmbeddedTuner().apply(rtl);
         }
     }

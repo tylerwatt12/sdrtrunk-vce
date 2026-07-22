@@ -17,6 +17,7 @@ import io.github.dsheirer.web.WebResponses;
 import io.github.dsheirer.web.access.AuthorizationSubject;
 import io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy;
 import io.github.dsheirer.web.access.WebRequestSubjectResolver.WebAuthorization;
+import io.github.dsheirer.web.auth.WebAdminAuthenticationHandler.MutationAuthorization;
 import java.io.ByteArrayInputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -137,6 +138,21 @@ class WebAdminAuthenticationHandlerTest
             assertTrue(webAuthorization.isSessionValid());
             assertEquals(AuthorizationSubject.AUTHENTICATED_ADMIN, rig.resolveWebSocket(cookie));
 
+            MutationAuthorization mutationAuthorization = rig.captureMutationAuthorization(cookie, csrf,
+                rig.origin(), false);
+            assertTrue(mutationAuthorization.authorized());
+            assertTrue(mutationAuthorization.isSessionValid());
+            assertFalse(rig.captureMutationAuthorization(cookie, csrf, null, false).authorized(),
+                "state-changing requests require an Origin header");
+            assertFalse(rig.captureMutationAuthorization(cookie, csrf, "https://attacker.invalid", false)
+                .authorized());
+            assertFalse(rig.captureMutationAuthorization(cookie + "; " + cookie, csrf, rig.origin(), false)
+                .authorized(), "duplicate administrator cookies must be rejected");
+            assertFalse(rig.captureMutationAuthorization(cookie, null, rig.origin(), false).authorized());
+            assertFalse(rig.captureMutationAuthorization(cookie, csrf, rig.origin(), true).authorized(),
+                "duplicate CSRF headers must be rejected");
+            assertFalse(rig.captureMutationAuthorization(cookie, "wrong-token", rig.origin(), false).authorized());
+
             HttpResponse<String> missingCsrf = rig.post(WebAdminAuthenticationHandler.LOGOUT_PATH, rig.origin(),
                 null, "", cookie, null);
             assertEquals(403, missingCsrf.statusCode());
@@ -150,6 +166,10 @@ class WebAdminAuthenticationHandlerTest
             assertTrue(expiredCookie.contains("Expires=Thu, 01 Jan 1970"), expiredCookie);
             assertEquals("ANONYMOUS", rig.get(AuthRig.SUBJECT_PATH, cookie, null).body());
             assertFalse(webAuthorization.isSessionValid(), "logout must revoke an already-open web authorization");
+            assertFalse(mutationAuthorization.isSessionValid(),
+                "logout must revoke an already-authorized asynchronous mutation");
+            assertFalse(rig.captureMutationAuthorization(cookie, csrf, rig.origin(), false).authorized(),
+                "a stale session cookie and CSRF token must not authorize a new mutation");
 
             HttpResponse<String> noResetRoute = rig.post("/api/v1/auth/reset", rig.origin(), "application/json",
                 "{}", null, null);
@@ -163,6 +183,7 @@ class WebAdminAuthenticationHandlerTest
         AtomicInteger operationCalls = new AtomicInteger();
         AtomicInteger fallbackCalls = new AtomicInteger();
         AtomicInteger policyCalls = new AtomicInteger();
+        AtomicReference<WebAdminAuthenticationHandler> handlerReference = new AtomicReference<>();
         WebAdminAuthenticationOperations operations = new WebAdminAuthenticationOperations()
         {
             private void touched()
@@ -220,6 +241,15 @@ class WebAdminAuthenticationHandlerTest
             public boolean handle(Request request, Response response, Callback callback)
             {
                 fallbackCalls.incrementAndGet();
+
+                if("/mutation-authorization".equals(Request.getPathInContext(request)))
+                {
+                    MutationAuthorization authorization = handlerReference.get().authorizeMutation(request);
+                    WebResponses.text(response, callback, 200, "text/plain; charset=utf-8",
+                        authorization.authorized() ? "authorized" : "rejected");
+                    return true;
+                }
+
                 WebResponses.text(response, callback, 500, "text/plain; charset=utf-8", "unexpected fallback");
                 return true;
             }
@@ -231,6 +261,7 @@ class WebAdminAuthenticationHandlerTest
         };
         WebAdminAuthenticationHandler handler = new WebAdminAuthenticationHandler(operations, fallback,
             WebAdminAuthenticationHandler.Configuration.defaults(), denyPolicy);
+        handlerReference.set(handler);
 
         try(WebApplicationService application = new WebApplicationService(
             WebApplicationService.Configuration.ephemeralLoopback(), handler, container -> {});
@@ -253,14 +284,24 @@ class WebAdminAuthenticationHandlerTest
                     .timeout(TEST_TIMEOUT)
                     .header("Origin", origin).POST(HttpRequest.BodyPublishers.noBody()).build(),
                 HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> mutation = client.send(HttpRequest.newBuilder(baseUri.resolve(
+                    "/mutation-authorization"))
+                    .timeout(TEST_TIMEOUT)
+                    .header("Origin", origin)
+                    .header("Cookie", WebAdminAuthenticationHandler.SESSION_COOKIE_NAME + "=opaque")
+                    .header(WebAdminAuthenticationHandler.CSRF_HEADER_NAME, "opaque")
+                    .POST(HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString());
 
             assertEquals(403, session.statusCode());
             assertEquals(403, login.statusCode());
             assertEquals(403, logout.statusCode());
-            assertEquals(3, policyCalls.get());
+            assertEquals(200, mutation.statusCode());
+            assertEquals("rejected", mutation.body());
+            assertEquals(4, policyCalls.get());
             assertEquals(0, operationCalls.get(),
                 "peer admission must precede session lookup, login hashing, and logout work");
-            assertEquals(0, fallbackCalls.get(), "exact authentication routes must not fall through");
+            assertEquals(1, fallbackCalls.get(), "only the test mutation route should reach the fallback");
         }
     }
 
@@ -298,6 +339,7 @@ class WebAdminAuthenticationHandlerTest
         private static final String PASSWORD = "test administrator password 123!";
         private static final String SUBJECT_PATH = "/subject";
         private static final String WEB_AUTHORIZATION_PATH = "/web-authorization";
+        private static final String MUTATION_AUTHORIZATION_PATH = "/mutation-authorization";
         private static final String WEB_SOCKET_PATH = "/ws-auth-subject";
         private final SingleAdminAuthenticationService authenticationService;
         private final WebAdminAuthenticationHandler authenticationHandler;
@@ -306,6 +348,8 @@ class WebAdminAuthenticationHandlerTest
         private final AtomicReference<CompletableFuture<AuthorizationSubject>> nextWebSocketSubject =
             new AtomicReference<>(new CompletableFuture<>());
         private final AtomicReference<CompletableFuture<WebAuthorization>> nextWebAuthorization =
+            new AtomicReference<>(new CompletableFuture<>());
+        private final AtomicReference<CompletableFuture<MutationAuthorization>> nextMutationAuthorization =
             new AtomicReference<>(new CompletableFuture<>());
 
         private AuthRig(Path database) throws Exception
@@ -339,6 +383,15 @@ class WebAdminAuthenticationHandlerTest
                         nextWebAuthorization.get().complete(authorization);
                         WebResponses.text(response, callback, 200, "text/plain; charset=utf-8",
                             authorization.subject().name());
+                        return true;
+                    }
+
+                    if(MUTATION_AUTHORIZATION_PATH.equals(Request.getPathInContext(request)))
+                    {
+                        MutationAuthorization authorization = handlerReference.get().authorizeMutation(request);
+                        nextMutationAuthorization.get().complete(authorization);
+                        WebResponses.text(response, callback, 200, "text/plain; charset=utf-8",
+                            authorization.authorized() ? "authorized" : "rejected");
                         return true;
                     }
 
@@ -443,6 +496,27 @@ class WebAdminAuthenticationHandlerTest
             CompletableFuture<WebAuthorization> authorization = new CompletableFuture<>();
             nextWebAuthorization.set(authorization);
             HttpResponse<String> response = get(WEB_AUTHORIZATION_PATH, cookie, null);
+            assertEquals(200, response.statusCode());
+            return authorization.get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        }
+
+        private MutationAuthorization captureMutationAuthorization(String cookie, String csrf, String origin,
+                                                                    boolean duplicateCsrf) throws Exception
+        {
+            CompletableFuture<MutationAuthorization> authorization = new CompletableFuture<>();
+            nextMutationAuthorization.set(authorization);
+            HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(MUTATION_AUTHORIZATION_PATH))
+                .timeout(TEST_TIMEOUT).POST(HttpRequest.BodyPublishers.noBody());
+            optionalHeader(builder, "Origin", origin);
+            optionalHeader(builder, "Cookie", cookie);
+            optionalHeader(builder, WebAdminAuthenticationHandler.CSRF_HEADER_NAME, csrf);
+
+            if(duplicateCsrf && csrf != null)
+            {
+                builder.header(WebAdminAuthenticationHandler.CSRF_HEADER_NAME, csrf);
+            }
+
+            HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(200, response.statusCode());
             return authorization.get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         }

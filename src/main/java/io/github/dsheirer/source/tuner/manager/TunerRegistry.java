@@ -130,17 +130,41 @@ public final class TunerRegistry
         return availableTargets().stream().filter(target -> target.id().equals(requested)).findFirst();
     }
 
+    /**
+     * Resolves the manager-owned discovery entry behind an opaque web identifier.
+     *
+     * <p>This method deliberately has package visibility.  The tuner-settings command service lives in this package
+     * and may use the mutable discovery entry after re-resolving it on its serialized worker.  HTTP code must never
+     * receive or retain this handle.</p>
+     */
+    Optional<DiscoveredTuner> findManagedTuner(String id)
+    {
+        if(id == null)
+        {
+            return Optional.empty();
+        }
+
+        String requested = id.strip().toUpperCase(Locale.ROOT);
+        return entries().stream().filter(entry -> entry.snapshot().id().equals(requested))
+            .map(Entry::discoveredTuner).filter(Objects::nonNull).findFirst();
+    }
+
     private List<Entry> entries()
     {
         List<Entry> entries = mDiscoveredTunerSupplier != null ? discoveredEntries() : legacyEntries();
-        Map<String,Entry> distinct = new LinkedHashMap<>();
+        Map<String,List<Entry>> grouped = new LinkedHashMap<>();
 
         for(Entry entry: entries)
         {
-            distinct.putIfAbsent(entry.snapshot().id(), entry);
+            grouped.computeIfAbsent(entry.snapshot().id(), ignored -> new ArrayList<>()).add(entry);
         }
 
-        return disambiguateLabels(new ArrayList<>(distinct.values())).stream().sorted(Comparator
+        //An opaque identifier must resolve to exactly one physical discovery entry. If discovery reports an
+        //ambiguous topology/identity, omit every conflicting entry instead of allowing a web command to pick one.
+        List<Entry> distinct = grouped.values().stream().filter(group -> group.size() == 1)
+            .map(List::getFirst).toList();
+
+        return disambiguateLabels(distinct).stream().sorted(Comparator
             .comparing((Entry entry) -> entry.snapshot().label(), String.CASE_INSENSITIVE_ORDER)
             .thenComparing(entry -> entry.snapshot().id())).toList();
     }
@@ -175,7 +199,7 @@ public final class TunerRegistry
                 snapshot = withLabel(snapshot, prefix + suffix);
             }
 
-            labeled.add(new Entry(snapshot, entry.tuner()));
+            labeled.add(new Entry(snapshot, entry.tuner(), entry.discoveredTuner()));
         }
 
         return labeled;
@@ -244,7 +268,7 @@ public final class TunerRegistry
             discoveredTuner.isEnabled(), available, hardwareIdentifier, measurements.centerFrequencyHz(),
             measurements.sampleRateHz(), measurements.activeChannelCount(), measurements.sampleRateLocked(),
             centerFrequencyFixed, errorMessage);
-        return new Entry(snapshot, available ? tuner : null);
+        return new Entry(snapshot, available ? tuner : null, discoveredTuner);
     }
 
     private Entry entry(Tuner tuner)
@@ -257,7 +281,7 @@ public final class TunerRegistry
             TunerStatus.ENABLED, true, true, null, measurements.centerFrequencyHz(),
             measurements.sampleRateHz(), measurements.activeChannelCount(), measurements.sampleRateLocked(), null,
             null);
-        return new Entry(snapshot, tuner);
+        return new Entry(snapshot, tuner, null);
     }
 
     private static Measurements measurements(Tuner tuner)
@@ -386,7 +410,7 @@ public final class TunerRegistry
         }
     }
 
-    private record Entry(TunerSnapshot snapshot, Tuner tuner)
+    private record Entry(TunerSnapshot snapshot, Tuner tuner, DiscoveredTuner discoveredTuner)
     {
     }
 
