@@ -22,6 +22,8 @@ import io.github.dsheirer.web.access.WebFeature;
 import io.github.dsheirer.web.access.WebRequestSubjectResolver;
 import io.github.dsheirer.web.access.WebRequestSubjectResolver.WebAuthorization;
 import io.github.dsheirer.web.access.WebTransport;
+import io.github.dsheirer.web.live.LiveActivityService;
+import io.github.dsheirer.web.live.LiveActivityService.FeedType;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -78,10 +80,13 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private final StatsWebDatabase mDatabase;
     private final StatsLiveService mLiveService;
     private final StatsWebCallService mWebCallService;
+    private final LiveActivityService mLiveActivityService;
     private final Supplier<Map<String,Object>> mStatusSupplier;
     private final FeatureAccessGateway mFeatureAccessGateway;
     private final WebRequestSubjectResolver mSubjectResolver;
     private final Set<StatsLiveEventHub.Subscription> mActiveSubscriptions =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<LiveActivityService.OpenStream> mActiveContextStreams =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Semaphore mAsyncStreamPermits = new Semaphore(MAXIMUM_ASYNC_STREAMS);
     private final AtomicInteger mActiveStreamCount = new AtomicInteger();
@@ -92,7 +97,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                     StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier)
     {
         this(assetRoot, database, liveService, webCallService, statusSupplier,
-            InMemoryFeatureAccessPolicy.currentProfileDefaults(), WebRequestSubjectResolver.anonymous(),
+            null, InMemoryFeatureAccessPolicy.currentProfileDefaults(), WebRequestSubjectResolver.anonymous(),
             RemoteAddressAdmissionPolicy.allowAll());
     }
 
@@ -109,11 +114,22 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                     FeatureAccessGateway featureAccessGateway, WebRequestSubjectResolver subjectResolver,
                     RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
     {
+        this(assetRoot, database, liveService, webCallService, statusSupplier, null, featureAccessGateway,
+            subjectResolver, remoteAddressAdmissionPolicy);
+    }
+
+    StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
+                    StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier,
+                    LiveActivityService liveActivityService, FeatureAccessGateway featureAccessGateway,
+                    WebRequestSubjectResolver subjectResolver,
+                    RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
+    {
         mAssetRoot = Objects.requireNonNull(assetRoot, "Stats web asset root cannot be null")
             .toAbsolutePath().normalize();
         mDatabase = Objects.requireNonNull(database, "Stats web database cannot be null");
         mLiveService = Objects.requireNonNull(liveService, "Stats live service cannot be null");
         mWebCallService = Objects.requireNonNull(webCallService, "Stats web call service cannot be null");
+        mLiveActivityService = liveActivityService;
         mStatusSupplier = Objects.requireNonNull(statusSupplier, "Stats status supplier cannot be null");
         mFeatureAccessGateway = Objects.requireNonNull(featureAccessGateway,
             "Feature access gateway cannot be null");
@@ -158,10 +174,18 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             }
             else
             {
-                FeatureAuthorization authorization = authorizeFeature(request, response, callback, path);
+                ContextRoute contextRoute = ContextRoute.parse(path);
+                FeatureAuthorization authorization = authorizeFeature(request, response, callback, path,
+                    contextRoute);
 
                 if(authorization == null)
                 {
+                    return true;
+                }
+
+                if(contextRoute != null)
+                {
+                    handleContextActivity(request, response, callback, contextRoute, authorization);
                     return true;
                 }
 
@@ -249,12 +273,18 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         return true;
     }
 
-    private FeatureAuthorization authorizeFeature(Request request, Response response, Callback callback, String path)
+    private FeatureAuthorization authorizeFeature(Request request, Response response, Callback callback, String path,
+                                                  ContextRoute contextRoute)
     {
         WebFeature feature;
         WebTransport transport;
 
-        if("/live/web-calls".equals(path) || path.startsWith("/api/web-player/calls/"))
+        if(contextRoute != null)
+        {
+            feature = contextRoute.feedType() == FeedType.EVENTS ? WebFeature.EVENTS : WebFeature.MESSAGES;
+            transport = contextRoute.stream() ? WebTransport.SSE : WebTransport.HTTP;
+        }
+        else if("/live/web-calls".equals(path) || path.startsWith("/api/web-player/calls/"))
         {
             feature = WebFeature.CALL_AUDIO;
             transport = path.startsWith("/live/") ? WebTransport.SSE : WebTransport.MEDIA;
@@ -322,7 +352,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         }
     }
 
-    private static void sendJson(Response response, Callback callback, int status, Map<String,Object> value)
+    private static void sendJson(Response response, Callback callback, int status, Object value)
     {
         try
         {
@@ -333,6 +363,244 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             byte[] fallback = "{\"error\":\"Unable to encode response\",\"status\":500}"
                 .getBytes(StandardCharsets.UTF_8);
             WebResponses.json(response, callback, 500, fallback);
+        }
+    }
+
+    private void handleContextActivity(Request request, Response response, Callback callback,
+                                       ContextRoute route, FeatureAuthorization authorization)
+    {
+        if(!requireMethod(request, response, callback, "GET"))
+        {
+            return;
+        }
+
+        if(mLiveActivityService == null)
+        {
+            sendJson(response, callback, 503,
+                Map.of("error", "Live channel activity is unavailable", "status", 503));
+            return;
+        }
+
+        if(!route.stream())
+        {
+            mLiveActivityService.snapshot(route.selectionId(), route.feedType()).ifPresentOrElse(
+                snapshot -> sendJson(response, callback, 200, snapshot),
+                () -> sendJson(response, callback, 404,
+                    Map.of("error", "Live selection is no longer available", "status", 404)));
+            return;
+        }
+
+        StreamCursor requestedCursor;
+
+        try
+        {
+            requestedCursor = lastEventCursor(request);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            sendJson(response, callback, 400, Map.of("error", exception.getMessage(), "status", 400));
+            return;
+        }
+
+        LiveActivityService.FeedSnapshot current = mLiveActivityService
+            .snapshot(route.selectionId(), route.feedType()).orElse(null);
+
+        if(current == null)
+        {
+            sendJson(response, callback, 404,
+                Map.of("error", "Live selection is no longer available", "status", 404));
+            return;
+        }
+
+        boolean sameStream = requestedCursor != null && current.streamId().equals(requestedCursor.streamId());
+        Long replayAfter = sameStream ? requestedCursor.sequence() : null;
+
+        LiveActivityService.OpenStream stream = mLiveActivityService
+            .openStream(route.selectionId(), route.feedType(), replayAfter).orElse(null);
+
+        if(stream == null)
+        {
+            sendJson(response, callback, 429,
+                Map.of("error", "Too many viewers for this live selection", "status", 429));
+            return;
+        }
+
+        streamContextSse(request, response, callback, route, stream, !sameStream, authorization);
+    }
+
+    private static StreamCursor lastEventCursor(Request request)
+    {
+        String value = request.getHeaders().get("Last-Event-ID");
+
+        if(value == null || value.isBlank())
+        {
+            return null;
+        }
+
+        if(value.length() > 96)
+        {
+            throw new IllegalArgumentException("Invalid Last-Event-ID header");
+        }
+
+        int separator = value.lastIndexOf(':');
+
+        if(separator < 1 || separator == value.length() - 1)
+        {
+            throw new IllegalArgumentException("Invalid Last-Event-ID header");
+        }
+
+        String streamId = value.substring(0, separator);
+
+        if(!streamId.matches("[A-Za-z0-9-]{1,64}"))
+        {
+            throw new IllegalArgumentException("Invalid Last-Event-ID header");
+        }
+
+        try
+        {
+            long parsed = Long.parseLong(value.substring(separator + 1));
+
+            if(parsed < 0)
+            {
+                throw new IllegalArgumentException("Invalid Last-Event-ID header");
+            }
+
+            return new StreamCursor(streamId, parsed);
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new IllegalArgumentException("Invalid Last-Event-ID header");
+        }
+    }
+
+    private void streamContextSse(Request request, Response response, Callback callback, ContextRoute route,
+                                  LiveActivityService.OpenStream stream, boolean sendInitialSnapshot,
+                                  FeatureAuthorization authorization)
+    {
+        if(!isAuthorized(authorization))
+        {
+            stream.close();
+            response.getHeaders().put(HttpHeader.WWW_AUTHENTICATE, "Bearer realm=\"sdrtrunk-admin\"");
+            sendText(response, callback, 401, "Administrator sign-in required");
+            return;
+        }
+
+        if(!mAcceptingStreams.get() || !mAsyncStreamPermits.tryAcquire())
+        {
+            stream.close();
+            sendText(response, callback, 429, "Too many live Stats Server clients");
+            return;
+        }
+
+        response.setStatus(200);
+        response.getHeaders().put(HttpHeader.CONTENT_TYPE, "text/event-stream; charset=utf-8");
+        response.getHeaders().put(HttpHeader.CACHE_CONTROL, "no-store");
+        response.getHeaders().put(HttpHeader.CONNECTION, "keep-alive");
+        response.getHeaders().put("X-Accel-Buffering", "no");
+        mActiveContextStreams.add(stream);
+        request.addFailureListener(failure -> stream.close());
+
+        if(!executeStream(() -> runContextSse(response, callback, route, stream, sendInitialSnapshot,
+            authorization)))
+        {
+            mActiveContextStreams.remove(stream);
+            stream.close();
+            mAsyncStreamPermits.release();
+            sendText(response, callback, 503, "Stats live stream is stopping");
+        }
+    }
+
+    private void runContextSse(Response response, Callback callback, ContextRoute route,
+                               LiveActivityService.OpenStream stream, boolean sendInitialSnapshot,
+                               FeatureAuthorization authorization)
+    {
+        StatsLiveEventHub.Subscription subscription = stream.subscription();
+        Throwable failure = null;
+
+        try(stream)
+        {
+            if(!isAuthorized(authorization))
+            {
+                writeChunk(response, new byte[0], true);
+                return;
+            }
+
+            long lastWriteNanos = System.nanoTime();
+
+            if(sendInitialSnapshot)
+            {
+                writeChunk(response, sseEvent(streamEventId(stream.snapshot().streamId(),
+                    subscription.registrationHighWaterEventId()), "snapshot", stream.snapshot()), false);
+                lastWriteNanos = System.nanoTime();
+            }
+
+            while(mAcceptingStreams.get() && !subscription.isClosed())
+            {
+                if(!isAuthorized(authorization))
+                {
+                    break;
+                }
+
+                StatsLiveEventHub.LiveEvent event = subscription.poll(SSE_AUTHORIZATION_RECHECK_MILLISECONDS,
+                    TimeUnit.MILLISECONDS);
+
+                if(event != null)
+                {
+                    if(!isAuthorized(authorization))
+                    {
+                        break;
+                    }
+
+                    if(event.requiresResnapshot())
+                    {
+                        LiveActivityService.FeedSnapshot snapshot = mLiveActivityService
+                            .snapshot(route.selectionId(), route.feedType())
+                            .orElse(stream.snapshot());
+                        subscription.acknowledgeSnapshot(snapshot.sequence());
+                        writeChunk(response, sseEvent(streamEventId(snapshot.streamId(), snapshot.sequence()),
+                            StatsLiveEventHub.RESNAPSHOT_EVENT_NAME, snapshot), false);
+                    }
+                    else
+                    {
+                        writeChunk(response, sseEvent(streamEventId(stream.snapshot().streamId(), event.id()),
+                            event.name(), event.data()), false);
+                    }
+
+                    lastWriteNanos = System.nanoTime();
+                }
+                else if(System.nanoTime() - lastWriteNanos >= TimeUnit.SECONDS.toNanos(SSE_HEARTBEAT_SECONDS))
+                {
+                    writeChunk(response, (": heartbeat " + System.currentTimeMillis() + "\n\n")
+                        .getBytes(StandardCharsets.UTF_8), false);
+                    lastWriteNanos = System.nanoTime();
+                }
+            }
+
+            writeChunk(response, new byte[0], true);
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            failure = exception;
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            failure = exception;
+        }
+        finally
+        {
+            mActiveContextStreams.remove(stream);
+            mAsyncStreamPermits.release();
+            mActiveStreamCount.decrementAndGet();
+
+            if(failure == null)
+            {
+                callback.succeeded();
+            }
+            else
+            {
+                callback.failed(failure);
+            }
         }
     }
 
@@ -774,6 +1042,17 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             .getBytes(StandardCharsets.UTF_8);
     }
 
+    private static byte[] sseEvent(String id, String event, Object data) throws JsonProcessingException
+    {
+        return ("id: " + id + "\nevent: " + event + "\ndata: " + OBJECT_MAPPER.writeValueAsString(data) +
+            "\n\n").getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String streamEventId(String streamId, long sequence)
+    {
+        return streamId + ":" + sequence;
+    }
+
     private void sendMissingAssetsPage(Response response, Callback callback)
     {
         sendHtml(response, callback, 200, """
@@ -933,6 +1212,13 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         }
 
         mActiveSubscriptions.clear();
+
+        for(LiveActivityService.OpenStream stream: mActiveContextStreams)
+        {
+            stream.close();
+        }
+
+        mActiveContextStreams.clear();
         ExecutorService executor = mStreamExecutor;
         mStreamExecutor = null;
 
@@ -979,7 +1265,42 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     @FunctionalInterface
     private interface JsonSupplier
     {
-        Map<String,Object> get();
+        Object get();
+    }
+
+    private record ContextRoute(String selectionId, FeedType feedType, boolean stream)
+    {
+        private static final String PREFIX = "/api/v1/contexts/";
+
+        private static ContextRoute parse(String path)
+        {
+            if(path == null || !path.startsWith(PREFIX))
+            {
+                return null;
+            }
+
+            String[] segments = path.substring(PREFIX.length()).split("/", -1);
+
+            if((segments.length != 2 && segments.length != 3) || segments[0].isBlank() ||
+                segments[0].length() > 96 || segments[1].isBlank() ||
+                segments.length == 3 && !"stream".equals(segments[2]))
+            {
+                return null;
+            }
+
+            try
+            {
+                return new ContextRoute(segments[0], FeedType.fromPath(segments[1]), segments.length == 3);
+            }
+            catch(IllegalArgumentException exception)
+            {
+                return null;
+            }
+        }
+    }
+
+    private record StreamCursor(String streamId, long sequence)
+    {
     }
 
     private record FeatureAuthorization(WebFeature feature, WebTransport transport,

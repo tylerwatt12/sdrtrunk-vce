@@ -13,12 +13,42 @@ import io.github.dsheirer.controller.channel.Channel;
  */
 class ChannelActivitySelectionController
 {
-    record Selection(ChannelActivityTableModel tableModel, String rowKey, ChannelActivitySelectionScope scope,
-                     long frequency, Integer timeslot, String decoderHint, Channel ownerChannel, Channel rowChannel)
+    record Selection(ChannelActivityTableModel tableModel, ChannelActivitySelectionDescriptor descriptor,
+                     Channel ownerChannel, Channel rowChannel)
     {
         boolean isSite()
         {
-            return scope == ChannelActivitySelectionScope.SITE;
+            return descriptor.isSite();
+        }
+
+        String rowKey()
+        {
+            return descriptor.rowKey();
+        }
+
+        String selectionId()
+        {
+            return descriptor.selectionId();
+        }
+
+        ChannelActivitySelectionScope scope()
+        {
+            return descriptor.scope();
+        }
+
+        long frequency()
+        {
+            return descriptor.frequencyHz();
+        }
+
+        Integer timeslot()
+        {
+            return descriptor.timeslot();
+        }
+
+        String decoderHint()
+        {
+            return descriptor.decoderHint();
         }
     }
 
@@ -105,14 +135,19 @@ class ChannelActivitySelectionController
     private static Selection selection(ChannelActivityTableModel tableModel, ChannelActivityRow row,
                                        ChannelActivitySelectionScope scope)
     {
-        return new Selection(tableModel, row.getKey(), scope, row.getFrequency(), row.getTimeslot(), row.getDecoder(),
-            tableModel.getOwnerChannel(), row.getChannel());
+        ChannelActivitySelectionDescriptor descriptor = ChannelActivitySelectionFactory.from(tableModel, row);
+
+        if(descriptor.scope() != scope)
+        {
+            throw new IllegalStateException("Activity selection scope changed unexpectedly");
+        }
+
+        return new Selection(tableModel, descriptor, tableModel.getOwnerChannel(), row.getChannel());
     }
 
     static boolean isSiteControl(ChannelActivityRow row)
     {
-        return row != null && (row.isControlRow() || row.hasTag(ChannelTag.CONFIGURED) ||
-            row.hasTag(ChannelTag.CURRENT_CONTROL) || row.hasTag(ChannelTag.ALTERNATE_CONTROL));
+        return ChannelActivitySelectionFactory.isSiteControl(row);
     }
 
     static ChannelActivityRow findPreferredSiteControl(ChannelActivityTableModel model)

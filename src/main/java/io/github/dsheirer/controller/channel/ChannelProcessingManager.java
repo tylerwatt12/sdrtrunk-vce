@@ -257,33 +257,90 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Returns the active processing chain whose source frequency exactly matches the requested frequency.
-     *
-     * This is intentionally frequency-only selection support for the Now Playing activity view.  It does not fall back
-     * to owner/control/traffic chains when the source frequency differs from the selected row.
+     * Returns the one active processing chain that exactly matches the requested frequency and timeslot.  If more than
+     * one chain is a valid match this method returns null rather than attaching a diagnostic view to an arbitrary
+     * decoder.
      *
      * @param frequency selected row frequency in hertz
-     * @param timeslot selected row timeslot, reserved for future decoder-specific disambiguation
-     * @return exact-frequency processing chain or null
+     * @param timeslot selected row timeslot, when applicable
+     * @return unambiguous exact processing chain or null
      */
     public ProcessingChain getProcessingChainByFrequency(long frequency, Integer timeslot)
+    {
+        return getProcessingChainByFrequency(frequency, timeslot, null);
+    }
+
+    /**
+     * Returns the active processing chain that exactly matches the selected Live row.  The process-local channel
+     * identifier disambiguates independently configured or temporary chains that share a frequency.  A missing or
+     * stale preferred channel falls back only when there is one unambiguous frequency/timeslot match.
+     *
+     * @param frequency selected row frequency in hertz
+     * @param timeslot selected row timeslot, when applicable
+     * @param preferredChannelId process-local channel identifier associated with the Live row, when available
+     * @return exact processing chain or null when missing or ambiguous
+     */
+    public ProcessingChain getProcessingChainByFrequency(long frequency, Integer timeslot, Integer preferredChannelId)
     {
         if(frequency <= 0)
         {
             return null;
         }
 
+        ProcessingChain match = null;
+        boolean ambiguous = false;
+
         mLock.lock();
 
         try
         {
-            for(ProcessingChain processingChain: mProcessingChainsMap.values())
+            for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
             {
+                Channel channel = entry.getKey();
+                ProcessingChain processingChain = entry.getValue();
                 Source source = processingChain != null ? processingChain.getSource() : null;
 
-                if(source != null && source.getFrequency() == frequency)
+                if(source != null && source.getFrequency() == frequency && supportsTimeslot(channel, timeslot))
                 {
-                    return processingChain;
+                    if(preferredChannelId != null && channel != null &&
+                        channel.getChannelID() == preferredChannelId)
+                    {
+                        return processingChain;
+                    }
+
+                    if(match != null && match != processingChain)
+                    {
+                        ambiguous = true;
+                    }
+                    else if(match == null)
+                    {
+                        match = processingChain;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        return !ambiguous ? match : null;
+    }
+
+    /**
+     * Returns the currently processing channel with the process-local identifier.
+     */
+    public Channel getProcessingChannel(int channelId)
+    {
+        mLock.lock();
+
+        try
+        {
+            for(Channel channel: mProcessingChainsMap.keySet())
+            {
+                if(channel != null && channel.getChannelID() == channelId)
+                {
+                    return channel;
                 }
             }
         }
@@ -293,6 +350,29 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
 
         return null;
+    }
+
+    static boolean supportsTimeslot(Channel channel, Integer timeslot)
+    {
+        if(timeslot == null)
+        {
+            return true;
+        }
+
+        if(channel == null || channel.getDecodeConfiguration() == null)
+        {
+            return false;
+        }
+
+        for(int supportedTimeslot: channel.getDecodeConfiguration().getTimeslots())
+        {
+            if(supportedTimeslot == timeslot)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -85,6 +85,42 @@ class ChannelActivitySelectionControllerTest
     }
 
     @Test
+    void siteSelectionIdentifierSurvivesControlReplacement()
+    {
+        ChannelActivityTableModel model = model();
+        ChannelActivityRow first = row(model, "old-control", ChannelActivityRow.Role.CURRENT_CONTROL,
+            851_000_000L);
+        ChannelActivitySelectionController controller = new ChannelActivitySelectionController();
+        controller.select(model, first);
+        String selectionId = controller.getSelection().selectionId();
+        model.remove(first);
+        ChannelActivityRow replacement = row(model, "new-control", ChannelActivityRow.Role.CURRENT_CONTROL,
+            852_000_000L);
+
+        assertSame(replacement, controller.resolveSelectedRow());
+        assertEquals(selectionId, controller.getSelection().selectionId());
+    }
+
+    @Test
+    void exactTimeslotsHaveDifferentStableSelectionIdentifiers()
+    {
+        ChannelActivityTableModel model = model();
+        ChannelActivityRow slotZero = model.getOrCreate("traffic-slot-0", model.getOwnerChannel(),
+            ChannelActivityRow.Role.TRAFFIC, 852_000_000L, 0);
+        ChannelActivityRow slotOne = model.getOrCreate("traffic-slot-1", model.getOwnerChannel(),
+            ChannelActivityRow.Role.TRAFFIC, 852_000_000L, 1);
+        ChannelActivitySelectionDescriptor first = ChannelActivitySelectionFactory.from(model, slotZero);
+        ChannelActivitySelectionDescriptor repeated = ChannelActivitySelectionFactory.from(model, slotZero);
+        ChannelActivitySelectionDescriptor second = ChannelActivitySelectionFactory.from(model, slotOne);
+
+        assertEquals(first.selectionId(), repeated.selectionId());
+        assertFalse(first.selectionId().equals(second.selectionId()));
+        assertEquals(0, first.timeslot());
+        assertEquals(1, second.timeslot());
+        assertEquals(ChannelActivitySelectionScope.EXACT_FREQUENCY, first.scope());
+    }
+
+    @Test
     void trafficRowWithControlEvidenceHasSiteScope()
     {
         ChannelActivityTableModel model = model();

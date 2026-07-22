@@ -40,6 +40,11 @@ class ChannelActivityTableModelTest
         assertEquals("County Fire", latest.get().rows().getFirst().channelName());
         assertEquals(155_250_000L, latest.get().rows().getFirst().frequencyHz());
         assertEquals("WPFF205", latest.get().rows().getFirst().callsign());
+        assertTrue(latest.get().rows().getFirst().selectionId().startsWith("exact-"));
+        assertEquals(ChannelActivitySelectionScope.EXACT_FREQUENCY,
+            latest.get().rows().getFirst().selectionScope());
+        assertEquals(channel.getChannelID(), latest.get().rows().getFirst().rowChannelId());
+        assertNull(latest.get().rows().getFirst().ownerChannelId());
         assertEquals("WPFF205", model.getValueAt(0, ChannelActivityTableModel.COLUMN_CALLSIGN));
         assertEquals("Channel", model.getColumnName(ChannelActivityTableModel.COLUMN_LCN));
         assertEquals("County Fire", model.getValueAt(0, ChannelActivityTableModel.COLUMN_LCN));

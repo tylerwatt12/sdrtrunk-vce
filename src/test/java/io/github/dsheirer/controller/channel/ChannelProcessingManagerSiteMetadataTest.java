@@ -12,6 +12,8 @@
 package io.github.dsheirer.controller.channel;
 
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -22,10 +24,27 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelProcessingManagerSiteMetadataTest
 {
+    @Test
+    public void timeslotMatchingRejectsUnsupportedDecoderSlots()
+    {
+        Channel dmr = new Channel("DMR");
+        dmr.setDecodeConfiguration(new DecodeConfigDMR());
+        Channel nbfm = new Channel("NBFM");
+        nbfm.setDecodeConfiguration(new DecodeConfigNBFM());
+
+        assertTrue(ChannelProcessingManager.supportsTimeslot(dmr, 1));
+        assertTrue(ChannelProcessingManager.supportsTimeslot(dmr, 2));
+        assertFalse(ChannelProcessingManager.supportsTimeslot(dmr, 0));
+        assertFalse(ChannelProcessingManager.supportsTimeslot(dmr, 3));
+        assertFalse(ChannelProcessingManager.supportsTimeslot(nbfm, 0));
+        assertTrue(ChannelProcessingManager.supportsTimeslot(nbfm, null));
+    }
+
     @Test
     public void siteMetadataListenersDoNotBlockTheCallingThread() throws Exception
     {

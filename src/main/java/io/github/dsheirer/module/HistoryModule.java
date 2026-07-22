@@ -21,8 +21,9 @@ package io.github.dsheirer.module;
 
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
-import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Abstract base history module.  Maintains a history of items and constrains the total history size.  Adds support
@@ -32,16 +33,17 @@ import java.util.List;
  */
 public abstract class HistoryModule<T> extends Module implements Listener<T>
 {
-    private List<T> mItems = new ArrayList<>();
-    private Broadcaster<T> mBroadcaster = new Broadcaster<>();
-    private int mMaximumHistorySize;
+    private final ArrayDeque<T> mItems = new ArrayDeque<>();
+    private final ReentrantLock mItemsLock = new ReentrantLock();
+    private final Broadcaster<T> mBroadcaster = new Broadcaster<>();
+    private final int mMaximumHistorySize;
 
     /**
      * Constructs an instance
      */
     protected HistoryModule(int maximumHistorySize)
     {
-        mMaximumHistorySize = maximumHistorySize;
+        mMaximumHistorySize = Math.max(0, maximumHistorySize);
     }
 
     /**
@@ -49,13 +51,22 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
      */
     public List<T> getItems()
     {
-        return new ArrayList<>(mItems);
+        mItemsLock.lock();
+
+        try
+        {
+            return List.copyOf(mItems);
+        }
+        finally
+        {
+            mItemsLock.unlock();
+        }
     }
 
     @Override
     public void reset()
     {
-        mItems.clear();
+        clearItems();
     }
 
     @Override
@@ -66,7 +77,7 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     @Override
     public void stop()
     {
-        mItems.clear();
+        clearItems();
         mBroadcaster.clear();
     }
 
@@ -94,16 +105,42 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     @Override
     public void receive(T item)
     {
-        while(mItems.size() > mMaximumHistorySize)
+        if(item != null && mMaximumHistorySize > 0)
         {
-            mItems.remove(0);
-        }
+            mItemsLock.lock();
 
-        if(!mItems.contains(item))
-        {
-            mItems.add(item);
+            try
+            {
+                if(!mItems.contains(item))
+                {
+                    while(mItems.size() >= mMaximumHistorySize)
+                    {
+                        mItems.removeFirst();
+                    }
+
+                    mItems.addLast(item);
+                }
+            }
+            finally
+            {
+                mItemsLock.unlock();
+            }
         }
 
         mBroadcaster.broadcast(item);
+    }
+
+    private void clearItems()
+    {
+        mItemsLock.lock();
+
+        try
+        {
+            mItems.clear();
+        }
+        finally
+        {
+            mItemsLock.unlock();
+        }
     }
 }

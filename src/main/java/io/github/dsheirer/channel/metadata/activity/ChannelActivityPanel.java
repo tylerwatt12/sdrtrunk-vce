@@ -732,7 +732,8 @@ public class ChannelActivityPanel extends JPanel
         String decoderHint = row != null ? row.getDecoder() : selection.decoderHint();
         Channel rowChannel = row != null ? row.getChannel() : selection.rowChannel();
         ProcessingChain processingChain = frequency > 0 ?
-            mChannelProcessingManager.getProcessingChainByFrequency(frequency, timeslot) : null;
+            mChannelProcessingManager.getProcessingChainByFrequency(frequency, timeslot,
+                rowChannel != null ? rowChannel.getChannelID() : null) : null;
         ProcessingChain eventProcessingChain = selection.isSite() && selection.ownerChannel() != null ?
             mChannelProcessingManager.getProcessingChain(selection.ownerChannel()) : processingChain;
         return new SelectedFrequencyContext(frequency, timeslot, decoderHint, selection.ownerChannel(), rowChannel,

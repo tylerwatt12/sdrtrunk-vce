@@ -46,7 +46,7 @@ public interface IMessage
 
     /**
      * Indicates the timeslot for the message
-     * @return timeslot (0-based)
+     * @return 0 when the message has no timeslot, otherwise the displayed one-based timeslot
      */
     int getTimeslot();
 

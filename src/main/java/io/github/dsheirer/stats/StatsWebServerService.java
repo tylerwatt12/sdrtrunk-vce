@@ -13,6 +13,7 @@ package io.github.dsheirer.stats;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.application.service.LiveContextResolver;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -44,6 +45,7 @@ import io.github.dsheirer.web.signal.SignalWebSocketTransport;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.TlsMaterialException;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
+import io.github.dsheirer.web.live.LiveActivityService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
@@ -73,6 +75,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
     private final StatsLiveService mLiveService;
+    private final LiveActivityService mLiveActivityService;
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
@@ -117,6 +120,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase,
             channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null);
+        mLiveActivityService = channelProcessingManager != null ?
+            new LiveActivityService(new LiveContextResolver(channelProcessingManager)) : null;
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
     }
@@ -181,6 +186,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             }
 
             mLiveService.start();
+            if(mLiveActivityService != null)
+            {
+                mLiveActivityService.start();
+            }
             mWebCallService.start();
             mAssetRoot = assetRoot;
             mListenAddress = listenAddress;
@@ -228,7 +237,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 }
             };
             mHandler = new StatsWebHandler(assetRoot, mDatabase, mLiveService, mWebCallService,
-                this::status, mFeatureAccessPolicy, subjectResolver,
+                this::status, mLiveActivityService, mFeatureAccessPolicy, subjectResolver,
                 remoteAddressAdmissionPolicy);
             mAuthenticationHandler = new WebAdminAuthenticationHandler(mAuthenticationService, mHandler,
                 remoteAddressAdmissionPolicy);
@@ -323,6 +332,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mSignalSourceType = "unavailable";
 
         mLiveService.stop();
+        if(mLiveActivityService != null)
+        {
+            mLiveActivityService.stop();
+        }
         mWebCallService.stop();
         mAssetRoot = null;
         mListenAddress = null;
@@ -567,6 +580,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         MyEventBus.getGlobalEventBus().unregister(this);
         stop();
         mLiveService.close();
+        if(mLiveActivityService != null)
+        {
+            mLiveActivityService.close();
+        }
         mWebCallService.close();
     }
 }

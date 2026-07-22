@@ -130,6 +130,18 @@ class StatsWebHandlerTest
         assertEquals(200, adminStatus.statusCode());
     }
 
+    @Test
+    void gatesSelectedContextEventsAndMessagesBeforeResolvingRuntimeState() throws Exception
+    {
+        String context = "api/v1/contexts/site-00000000-0000-0000-0000-000000000000/";
+        assertEquals(401, get(context + "events").statusCode());
+        assertEquals(401, get(context + "messages/stream").statusCode());
+
+        mSubject.set(AuthorizationSubject.AUTHENTICATED_ADMIN);
+        assertEquals(503, get(context + "events").statusCode());
+        assertEquals(503, get(context + "messages").statusCode());
+    }
+
     @AfterEach
     void tearDown()
     {

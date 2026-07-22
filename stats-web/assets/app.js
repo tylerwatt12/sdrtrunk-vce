@@ -2076,12 +2076,42 @@ function liveSystemsSection() {
   addColumnResizers(tableElement, columns, columnElements, headers, 'live-systems');
   const tableScroll = node('div', 'table-scroll');
   tableScroll.append(tableElement);
+  const selectionPanel = node('div', 'live-selection-panel');
+  selectionPanel.hidden = true;
   const host = node('div', 'systems-live');
-  host.append(tabBar, tableScroll);
+  host.append(tabBar, tableScroll, selectionPanel);
   const block = section('Live Systems', host);
   block.querySelector('.section-title').append(connection);
   let activeTableId = null;
   let selectedRowKey = null;
+  let selectedSelectionId = null;
+  let selectedRow = null;
+
+  const rowSelectionId = (row) => row?.selection_id || row?.selectionId || null;
+
+  const renderSelection = (ended = false) => {
+    if (!selectedRow || !selectedSelectionId) {
+      selectionPanel.hidden = true;
+      selectionPanel.replaceChildren();
+      return;
+    }
+    const tableValue = tables.get(activeTableId) || {};
+    const copy = node('div', 'live-selection-copy');
+    const identity = selectedRow.channel_name || selectedRow.channelName || selectedRow.lcn ||
+      frequency(selectedRow.frequency_hz ?? selectedRow.frequencyHz);
+    copy.append(node('strong', '', `${tableValue.title || tableValue.channel_name || 'Live'} · ${identity}`));
+    const scope = String(selectedRow.selection_scope || selectedRow.selectionScope || '').toUpperCase() === 'SITE' ?
+      'Site-wide context' : `Exact frequency${selectedRow.timeslot == null ? '' : ` · timeslot ${selectedRow.timeslot}`}`;
+    copy.append(node('span', '', `${scope}${ended ? ' · selected channel ended' : ''}`));
+    const actions = node('div', 'live-selection-actions');
+    actions.append(anchor('Events', href('live', { context: selectedSelectionId, activity: 'events' }),
+      'button secondary'), anchor('Messages', href('live', { context: selectedSelectionId, activity: 'messages' }),
+      'button secondary'));
+    const summary = node('div', 'live-selection-summary');
+    summary.append(copy, actions);
+    selectionPanel.replaceChildren(summary);
+    selectionPanel.hidden = false;
+  };
 
   const cellText = (cell, value) => {
     const text = value === null || value === undefined ? '' : String(value);
@@ -2123,10 +2153,23 @@ function liveSystemsSection() {
   const createRow = (row) => {
     const element = node('tr');
     element.dataset.key = row.key;
+    element.tabIndex = 0;
+    element.setAttribute('role', 'button');
     for (let index = 0; index < 11; index += 1) element.append(node('td'));
-    element.addEventListener('click', () => {
+    const select = () => {
       selectedRowKey = row.key;
+      const current = (tables.get(activeTableId)?.rows || []).find((candidate) => candidate.key === row.key) || row;
+      selectedSelectionId = rowSelectionId(current);
+      selectedRow = current;
       rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
+      renderSelection();
+    };
+    element.addEventListener('click', select);
+    element.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        select();
+      }
     });
     updateRow(element, row);
     return element;
@@ -2149,6 +2192,9 @@ function liveSystemsSection() {
     if (!value) return;
     activeTableId = tableId;
     selectedRowKey = null;
+    selectedSelectionId = null;
+    selectedRow = null;
+    renderSelection();
     rowNodes.clear();
     body.replaceChildren();
     headers[2].querySelector('.table-sort-control').textContent =
@@ -2188,6 +2234,18 @@ function liveSystemsSection() {
         updateRow(element, row);
       }
     });
+    if (selectedSelectionId) {
+      const matching = (value.rows || []).find((row) => row.key === selectedRowKey) ||
+        (value.rows || []).find((row) => rowSelectionId(row) === selectedSelectionId);
+      if (matching) {
+        selectedRowKey = matching.key;
+        selectedRow = matching;
+        rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
+        renderSelection();
+      } else {
+        renderSelection(true);
+      }
+    }
     if (liveSort) reorderVisibleRows(value.rows || []);
     if (!rowNodes.size) {
       const empty = node('tr', 'empty');
@@ -2251,7 +2309,16 @@ function liveSystemsSection() {
 }
 
 async function renderLive() {
-  content.append(liveSystemsSection());
+  const contextId = route.get('context');
+  const activity = route.get('activity');
+  if (contextId && ['events', 'messages'].includes(activity) && window.LiveActivityView) {
+    const host = node('div');
+    content.append(host);
+    const view = new window.LiveActivityView(host, { contextId, activity });
+    pageConnections.add(view);
+  } else {
+    content.append(liveSystemsSection());
+  }
 }
 
 async function renderSystems() {
