@@ -3204,7 +3204,12 @@ body:not([data-view="spectrum"]) .systems-live-tab.active {
 }
 
 .systems-live .table-scroll {
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.systems-live-table th:last-child .column-resizer {
+  right: 0;
 }
 
 .systems-live-table th {

@@ -721,16 +721,16 @@ function defaultTableColumnWidth(column) {
   return Math.max(90, Math.min(220, String(column.label || '').length * 9 + 34));
 }
 
-function setTableColumnWidths(element, columnElements, widths) {
+function setTableColumnWidths(element, columnElements, widths, fitAvailableWidth = false) {
   const total = widths.reduce((sum, width) => sum + width, 0) || 1;
   widths.forEach((width, index) => {
-    columnElements[index].style.width = `${Math.round(width)}px`;
+    columnElements[index].style.width = fitAvailableWidth ? `${width / total * 100}%` : `${Math.round(width)}px`;
   });
   element.style.width = '100%';
-  element.style.minWidth = `${Math.round(total)}px`;
+  element.style.minWidth = fitAvailableWidth ? '100%' : `${Math.round(total)}px`;
 }
 
-function applyPreferredTableWidths(element, columns, columnElements, tableType) {
+function applyPreferredTableWidths(element, columns, columnElements, tableType, fitAvailableWidth = false) {
   const preferences = tableWidthPreferences[tableType];
   const widths = columns.map((column, index) => {
     const savedWidth = preferences && typeof preferences === 'object' ?
@@ -739,10 +739,10 @@ function applyPreferredTableWidths(element, columns, columnElements, tableType) 
     return Number.isFinite(width) && width >= TABLE_WIDTH_MINIMUM && width <= TABLE_WIDTH_MAXIMUM ?
       Math.round(width) : defaultTableColumnWidth(column);
   });
-  setTableColumnWidths(element, columnElements, widths);
+  setTableColumnWidths(element, columnElements, widths, fitAvailableWidth);
 }
 
-function addColumnResizers(element, columns, columnElements, headers, tableType) {
+function addColumnResizers(element, columns, columnElements, headers, tableType, fitAvailableWidth = false) {
   const saveWidths = (widths) => {
     const saved = {};
     columns.forEach((column, index) => {
@@ -764,7 +764,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType)
       widths[index] = original + appliedDelta;
       widths[adjacentIndex] = adjacent - appliedDelta;
     }
-    setTableColumnWidths(element, columnElements, widths);
+    setTableColumnWidths(element, columnElements, widths, fitAvailableWidth);
     return widths;
   };
   headers.forEach((header, index) => {
@@ -2086,8 +2086,8 @@ function liveSystemsSection() {
   head.append(headerRow);
   const body = node('tbody');
   tableElement.append(columnGroup, head, body);
-  applyPreferredTableWidths(tableElement, columns, columnElements, 'live-systems');
-  addColumnResizers(tableElement, columns, columnElements, headers, 'live-systems');
+  applyPreferredTableWidths(tableElement, columns, columnElements, 'live-systems', true);
+  addColumnResizers(tableElement, columns, columnElements, headers, 'live-systems', true);
   const tableScroll = node('div', 'table-scroll');
   tableScroll.append(tableElement);
   const selectionPanel = node('div', 'live-selection-panel');
@@ -2254,7 +2254,7 @@ function liveSystemsSection() {
       selectedRow = current;
       rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
       renderSelection();
-      openActivity('events');
+      openActivity(activityKind || 'events');
     };
     element.addEventListener('click', select);
     element.addEventListener('keydown', (event) => {
