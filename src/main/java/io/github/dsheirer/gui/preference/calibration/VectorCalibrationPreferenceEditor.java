@@ -21,9 +21,6 @@ package io.github.dsheirer.gui.preference.calibration;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
-import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.preference.CalibrateRequest;
 import io.github.dsheirer.log.TextAreaLogAppender;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
@@ -73,7 +70,6 @@ public class VectorCalibrationPreferenceEditor extends HBox
      */
     public VectorCalibrationPreferenceEditor(UserPreferences userPreferences)
     {
-        MyEventBus.getGlobalEventBus().register(this);
         mPreference = userPreferences.getVectorCalibrationPreference();
         setMaxHeight(Double.MAX_VALUE);
         setMaxWidth(Double.MAX_VALUE);
@@ -93,12 +89,6 @@ public class VectorCalibrationPreferenceEditor extends HBox
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
         vbox.getChildren().add(scrollPane);
         getChildren().add(vbox);
-    }
-
-    @Subscribe
-    public void process(CalibrateRequest request)
-    {
-        getCalibrateButton().fire();
     }
 
     private GridPane getEditorPane()

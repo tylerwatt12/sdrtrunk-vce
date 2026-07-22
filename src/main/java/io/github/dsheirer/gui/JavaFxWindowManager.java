@@ -35,7 +35,6 @@ import io.github.dsheirer.gui.configuration.channelMap.ViewChannelMapEditorReque
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.UserPreferencesEditor;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.gui.preference.calibration.CalibrationDialog;
 import io.github.dsheirer.gui.preference.encryption.EncryptionKeyPreferenceEditor;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.viewer.MessageRecordingViewer;
@@ -209,11 +208,6 @@ public class JavaFxWindowManager extends Application
         MyEventBus.getGlobalEventBus().unregister(this);
         mUserPreferences.getJavaFxPreferences().clearStageMonitors();
         Platform.exit();
-    }
-
-    public CalibrationDialog getCalibrationDialog(UserPreferences userPreferences)
-    {
-        return new CalibrationDialog(userPreferences);
     }
 
     /**

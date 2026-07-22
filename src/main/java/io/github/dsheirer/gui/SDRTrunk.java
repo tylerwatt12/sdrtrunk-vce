@@ -31,7 +31,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
@@ -41,11 +40,9 @@ import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.bugreport.BugReportDialog;
-import io.github.dsheirer.gui.preference.CalibrateRequest;
-import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.gui.preference.calibration.CalibrationDialog;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
+import io.github.dsheirer.gui.startup.CoordinatedStartupDialog;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
@@ -57,7 +54,6 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
@@ -92,8 +88,6 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
@@ -103,15 +97,11 @@ import java.net.URI;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
-import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
-import javafx.scene.control.ButtonType;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
@@ -120,25 +110,18 @@ import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
-import javax.swing.JDialog;
 import javax.swing.JFrame;
-import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
 import javax.swing.KeyStroke;
 import javax.swing.JToggleButton;
-import javax.swing.Timer;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import javax.swing.plaf.metal.MetalLookAndFeel;
@@ -203,7 +186,6 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mSpectralPanelVisible;
     private boolean mSystemsVisible;
     private boolean mMainSplitPaneDividerRestored;
-    private boolean mVaultLaunchPromptProcessed;
     private PortableDataRootLock mDataRootLock;
 
     private String mTitle;
@@ -351,7 +333,6 @@ public class SDRTrunk implements Listener<TunerEvent>
                 {
                     mMainGui.setVisible(true);
                     checkForUpdates(false);
-                    WhatsNewDialog.showOnFirstLaunch(mMainGui);
 
                     if(mSpectralPanelVisible)
                     {
@@ -368,209 +349,88 @@ public class SDRTrunk implements Listener<TunerEvent>
                         }
                     }
                 }
-
-                if(calibrating && !GraphicsEnvironment.isHeadless())
-                {
-                    Platform.runLater(() ->
-                    {
-                        CalibrationDialog calibrationDialog = mJavaFxWindowManager.getCalibrationDialog(mUserPreferences);
-                        Optional<ButtonType> calibrate = calibrationDialog.showAndWait();
-                        if(calibrate.isPresent() && calibrate.get().getText().equals("Calibrate"))
-                        {
-                            //Request focus and execute calibration
-                            MyEventBus.getGlobalEventBus().post(new ViewUserPreferenceEditorRequest(PreferenceEditorType.VECTOR_CALIBRATION));
-                            MyEventBus.getGlobalEventBus().post(new CalibrateRequest());
-                        }
-                        else
-                        {
-                            autoStartChannels();
-                        }
-                    });
-                }
-                else
-                {
-                    autoStartChannels();
-                }
             }
             catch(Exception e)
             {
-                e.printStackTrace();
+                mLog.error("Unable to finish initial GUI setup; continuing with post-launch startup", e);
+            }
+
+            try
+            {
+                startPostLaunchExperience(calibrating);
+            }
+            catch(Exception e)
+            {
+                mLog.error("Post-launch startup failed; starting configured channels without the startup dialog", e);
+                EncryptionKeyVaultService vaultService = getLockedLaunchVault();
+
+                if(vaultService != null)
+                {
+                    vaultService.disableForRun();
+                }
+
+                startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
             }
         });
     }
 
-    /**
-     * Shows a dialog that lists the channels that have been designated for auto-start, sorted by auto-start order and
-     * allows the user to start now, cancel, or allow the timer to expire and then start the channels.  The dialog will
-     * only show if there are one ore more channels designated for auto-start.
-     */
-    private void autoStartChannels()
+    private void startPostLaunchExperience(boolean calibrationRequired)
     {
-        processEncryptionVaultLaunchPrompt();
         List<Channel> channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
+        EncryptionKeyVaultService vaultService = getLockedLaunchVault();
 
-        if(channels.size() > 0)
+        if(GraphicsEnvironment.isHeadless())
         {
-            if(GraphicsEnvironment.isHeadless())
+            if(vaultService != null)
             {
-                for(Channel channel: channels)
-                {
-                    try
-                    {
-                        mLog.info("Auto-starting channel " + channel.getName());
-                        mConfigurationManager.getChannelProcessingManager().start(channel);
-                    }
-                    catch(ChannelException ce)
-                    {
-                        mLog.error("Channel: " + channel.getName() + " auto-start failed: " + ce.getMessage());
-                    }
-                }
+                vaultService.disableForRun();
             }
-            else
+
+            startChannelsWithoutDialog(channels);
+            return;
+        }
+
+        CoordinatedStartupDialog dialog = new CoordinatedStartupDialog(mMainGui, mUserPreferences,
+            WhatsNewDialog.getPendingReleaseNotes(), calibrationRequired, vaultService, channels,
+            mConfigurationManager.getChannelProcessingManager());
+
+        if(dialog.hasSteps())
+        {
+            dialog.showExperience();
+        }
+    }
+
+    private void startChannelsWithoutDialog(List<Channel> channels)
+    {
+        for(Channel channel: channels)
+        {
+            try
             {
-                new ChannelAutoStartFrame(mConfigurationManager.getChannelProcessingManager(), channels, mUserPreferences);
+                mLog.info("Auto-starting channel " + channel.getName());
+                mConfigurationManager.getChannelProcessingManager().start(channel);
+            }
+            catch(ChannelException | RuntimeException e)
+            {
+                mLog.error("Channel: " + channel.getName() + " auto-start failed: " + e.getMessage(), e);
             }
         }
     }
 
-    private void processEncryptionVaultLaunchPrompt()
+    private EncryptionKeyVaultService getLockedLaunchVault()
     {
-        if(mVaultLaunchPromptProcessed)
-        {
-            return;
-        }
-
-        mVaultLaunchPromptProcessed = true;
-
         if(!mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
         {
-            return;
+            return null;
         }
 
         EncryptionKeyVaultService vaultService = mUserPreferences.getEncryptionKeyPreference().getVaultService();
 
         if(!vaultService.hasVault() || vaultService.isUnlocked() || !vaultService.isPromptOnLaunch())
         {
-            return;
+            return null;
         }
 
-        if(GraphicsEnvironment.isHeadless())
-        {
-            vaultService.disableForRun();
-            return;
-        }
-
-        showEncryptionVaultLaunchPrompt(vaultService);
-    }
-
-    private void showEncryptionVaultLaunchPrompt(EncryptionKeyVaultService vaultService)
-    {
-        final int timeoutSeconds = 30;
-        final int[] secondsRemaining = {timeoutSeconds};
-        JLabel countdownLabel = new JLabel("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
-        JPasswordField passwordField = new JPasswordField(24);
-        JCheckBox savePasswordCheckBox = new JCheckBox("Save password (Warning! Unsafe!)");
-        JPanel panel = new JPanel(new MigLayout("insets 8", "[right][grow,fill]", "[][][]"));
-        panel.add(new JLabel("Password:"), "cell 0 0");
-        panel.add(passwordField, "cell 1 0,growx");
-        panel.add(savePasswordCheckBox, "cell 1 1");
-        panel.add(countdownLabel, "cell 0 2 2 1");
-
-        JOptionPane pane = new JOptionPane(panel, JOptionPane.QUESTION_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
-        JDialog dialog = pane.createDialog(mMainGui, "Unlock Encryption Key Vault");
-
-        Runnable resetCountdown = () -> {
-            secondsRemaining[0] = timeoutSeconds;
-            countdownLabel.setText("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
-        };
-
-        passwordField.getDocument().addDocumentListener(new DocumentListener()
-        {
-            @Override
-            public void insertUpdate(DocumentEvent e)
-            {
-                resetCountdown.run();
-            }
-
-            @Override
-            public void removeUpdate(DocumentEvent e)
-            {
-                resetCountdown.run();
-            }
-
-            @Override
-            public void changedUpdate(DocumentEvent e)
-            {
-                resetCountdown.run();
-            }
-        });
-
-        savePasswordCheckBox.addActionListener(event -> resetCountdown.run());
-        MouseAdapter interactionReset = new MouseAdapter()
-        {
-            @Override
-            public void mouseClicked(MouseEvent e)
-            {
-                resetCountdown.run();
-            }
-
-            @Override
-            public void mouseMoved(MouseEvent e)
-            {
-                resetCountdown.run();
-            }
-        };
-        panel.addMouseListener(interactionReset);
-        panel.addMouseMotionListener(interactionReset);
-        passwordField.addKeyListener(new java.awt.event.KeyAdapter()
-        {
-            @Override
-            public void keyPressed(KeyEvent e)
-            {
-                resetCountdown.run();
-            }
-        });
-
-        Timer timer = new Timer(1000, event -> {
-            secondsRemaining[0]--;
-            countdownLabel.setText("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
-
-            if(secondsRemaining[0] <= 0)
-            {
-                pane.setValue(JOptionPane.CANCEL_OPTION);
-                dialog.dispose();
-            }
-        });
-
-        timer.start();
-        dialog.setVisible(true);
-        timer.stop();
-
-        Object value = pane.getValue();
-
-        if(value instanceof Integer integer && integer == JOptionPane.OK_OPTION)
-        {
-            char[] password = passwordField.getPassword();
-
-            try
-            {
-                vaultService.unlock(password, savePasswordCheckBox.isSelected());
-            }
-            catch(EncryptionKeyVaultException e)
-            {
-                JOptionPane.showMessageDialog(mMainGui, e.getMessage(), "Encryption Vault Unlock Failed",
-                    JOptionPane.ERROR_MESSAGE);
-                vaultService.disableForRun();
-            }
-            finally
-            {
-                Arrays.fill(password, '\0');
-            }
-        }
-        else
-        {
-            vaultService.disableForRun();
-        }
+        return vaultService;
     }
 
     /**
