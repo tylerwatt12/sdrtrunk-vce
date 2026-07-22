@@ -47,6 +47,7 @@ class ApplicationSettingsStoreTest
         AirspyTunerConfiguration airspy = new AirspyTunerConfiguration("airspy-1");
         airspy.setFrequency(853_762_500L);
         airspy.setFrequencyCorrection(1.5d);
+        airspy.setCenterFrequencyLocked(true);
         TunerSettings tuners = new TunerSettings();
         tuners.setTunerConfigurations(List.of(airspy));
 
@@ -68,5 +69,6 @@ class ApplicationSettingsStoreTest
         assertEquals("airspy-1", loadedTuner.getUniqueID());
         assertEquals(853_762_500L, loadedTuner.getFrequency());
         assertEquals(1.5d, loadedTuner.getFrequencyCorrection());
+        assertTrue(loadedTuner.isCenterFrequencyLocked());
     }
 }

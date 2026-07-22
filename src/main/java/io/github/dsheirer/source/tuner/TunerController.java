@@ -62,6 +62,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     private SourceEventListenerToProcessorAdapter mSourceEventListener;
     private NativeBufferWaveRecorder mRecorder;
     private ITunerErrorListener mTunerErrorListener;
+    private volatile boolean mCenterFrequencyLocked;
     private static final DecimalFormat FREQUENCY_ERROR_PPM_FORMAT = new DecimalFormat("0.000");
     private TunerFrequencyErrorManager mTunerFrequencyErrorManager;
 
@@ -226,6 +227,27 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
         }
         setFrequencyCorrection(config.getFrequencyCorrection());
         getTunerFrequencyErrorManager().setEnabled(config.getAutoPPMCorrectionEnabled());
+        setCenterFrequencyLocked(config.isCenterFrequencyLocked());
+    }
+
+    /**
+     * Indicates if channel allocation must keep the tuner at its current center frequency.
+     *
+     * @return true if automatic center-frequency changes are disabled
+     */
+    public boolean isCenterFrequencyLocked()
+    {
+        return mCenterFrequencyLocked;
+    }
+
+    /**
+     * Sets whether channel allocation may automatically change the tuner center frequency.
+     *
+     * @param locked true to keep the current center frequency
+     */
+    public void setCenterFrequencyLocked(boolean locked)
+    {
+        mCenterFrequencyLocked = locked;
     }
 
     /**

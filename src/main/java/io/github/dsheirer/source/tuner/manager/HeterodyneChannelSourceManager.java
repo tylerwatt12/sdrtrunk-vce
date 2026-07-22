@@ -117,7 +117,7 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
         try
         {
             mTunerController.getLock().lock();
-            if(CenterFrequencyCalculator.canTune(tunerChannel, mTunerController, mTunerChannels))
+            if(canSource(tunerChannel))
             {
                 try
                 {
@@ -171,6 +171,11 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
      */
     private void updateTunerFrequency()
     {
+        if(mTunerController.isCenterFrequencyLocked())
+        {
+            return;
+        }
+
         if(!mTunerController.isTunedFor(getTunerChannels()))
         {
             long centerFrequency = CenterFrequencyCalculator.getCenterFrequency(mTunerController, getTunerChannels());
@@ -193,6 +198,27 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
                 }
             }
         }
+    }
+
+    /**
+     * Indicates if the requested channel can be allocated.  A center-frequency-locked tuner can only accept a
+     * channel when the complete resulting channel set fits in its current usable passband.
+     */
+    private boolean canSource(TunerChannel tunerChannel)
+    {
+        if(!CenterFrequencyCalculator.canTune(tunerChannel, mTunerController, mTunerChannels))
+        {
+            return false;
+        }
+
+        if(mTunerController.isCenterFrequencyLocked())
+        {
+            SortedSet<TunerChannel> tunerChannels = new TreeSet<>(mTunerChannels);
+            tunerChannels.add(tunerChannel);
+            return mTunerController.isTunedFor(tunerChannels);
+        }
+
+        return true;
     }
 
     @Override

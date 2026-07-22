@@ -489,45 +489,52 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
                 //Add the requested channel to the list
                 tunerChannels.add(tunerChannel);
 
-                if(canTune(tunerChannels))
+                long currentCenterFrequency = mTunerController.getFrequency();
+                boolean centerFrequencyLocked = mTunerController.isCenterFrequencyLocked();
+
+                if(canTune(tunerChannels) && (!centerFrequencyLocked ||
+                    isValidCenterFrequency(tunerChannels, currentCenterFrequency)))
                 {
-                    long currentCenterFrequency = mTunerController.getFrequency();
-                    long updatedCenterFrequency = 0;
-                    boolean hasBroaderContext = centerFrequencyChannels != null && !centerFrequencyChannels.isEmpty();
+                    long updatedCenterFrequency = currentCenterFrequency;
+                    boolean hasBroaderContext = !centerFrequencyLocked && centerFrequencyChannels != null &&
+                        !centerFrequencyChannels.isEmpty();
 
                     //Attempt to adjust the center frequency before we allocate the channel
                     try
                     {
-                        try
+                        if(!centerFrequencyLocked)
                         {
-                            if(hasBroaderContext)
+                            try
                             {
-                                //When a site envelope is provided, center on it exclusively so the active channel
-                                //does not shift the midpoint.  Fall back to the real channel set if the envelope
-                                //center does not also accommodate the requested channel.
-                                long envelopeCenter = getCenterFrequency(centerFrequencyChannels, 0);
-                                if(isValidCenterFrequency(tunerChannels, envelopeCenter))
+                                if(hasBroaderContext)
                                 {
-                                    updatedCenterFrequency = envelopeCenter;
+                                    //When a site envelope is provided, center on it exclusively so the active channel
+                                    //does not shift the midpoint.  Fall back to the real channel set if the envelope
+                                    //center does not also accommodate the requested channel.
+                                    long envelopeCenter = getCenterFrequency(centerFrequencyChannels, 0);
+                                    if(isValidCenterFrequency(tunerChannels, envelopeCenter))
+                                    {
+                                        updatedCenterFrequency = envelopeCenter;
+                                    }
+                                    else
+                                    {
+                                        updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
+                                    }
                                 }
                                 else
                                 {
                                     updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
                                 }
                             }
-                            else
+                            catch(IllegalArgumentException iae)
                             {
                                 updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
                             }
-                        }
-                        catch(IllegalArgumentException iae)
-                        {
-                            updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
-                        }
 
-                        if(updatedCenterFrequency != currentCenterFrequency && updatedCenterFrequency != 0)
-                        {
-                            mTunerController.setFrequency(updatedCenterFrequency);
+                            if(updatedCenterFrequency != currentCenterFrequency && updatedCenterFrequency != 0)
+                            {
+                                mTunerController.setFrequency(updatedCenterFrequency);
+                            }
                         }
 
                         //If we're successful to here, allocate the channel
