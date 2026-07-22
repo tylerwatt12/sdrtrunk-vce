@@ -51,6 +51,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -82,6 +83,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private final DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
     private final List<DiscoveredTuner> mDiscoveredTuners = new CopyOnWriteArrayList<>();
+    private final Map<Source,DiscoveredTuner.LifecycleLease> mPendingSourceAllocations =
+        Collections.synchronizedMap(new IdentityHashMap<>());
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
     private boolean mLibUsbInitialized = false;
@@ -611,10 +614,34 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                     if(source instanceof TunerChannelSource)
                     {
-                        retVal = new MultiFrequencyTunerChannelSource(this, (TunerChannelSource)source,
-                                sourceConfigTuner.getFrequencies(), channelSpecification,
-                                sourceConfigTuner.getPreferredTuner(), threadName + " MULTI FREQ",
-                                sourceConfigTuner.getMinimumFrequency(), sourceConfigTuner.getMaximumFrequency());
+                        try
+                        {
+                            MultiFrequencyTunerChannelSource multiFrequencySource =
+                                new MultiFrequencyTunerChannelSource(this, (TunerChannelSource)source,
+                                    sourceConfigTuner.getFrequencies(), channelSpecification,
+                                    sourceConfigTuner.getPreferredTuner(), threadName + " MULTI FREQ",
+                                    sourceConfigTuner.getMinimumFrequency(), sourceConfigTuner.getMaximumFrequency());
+                            transferPendingSourceAllocation(source, multiFrequencySource);
+                            retVal = multiFrequencySource;
+                        }
+                        catch(RuntimeException | Error exception)
+                        {
+                            try
+                            {
+                                source.stop();
+                                source.dispose();
+                            }
+                            catch(RuntimeException cleanupException)
+                            {
+                                exception.addSuppressed(cleanupException);
+                            }
+                            finally
+                            {
+                                completeSourceAllocation(source);
+                            }
+
+                            throw exception;
+                        }
                     }
                 }
                 break;
@@ -708,17 +735,18 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                                          ChannelSpecification channelSpecification, String threadName,
                                          SortedSet<TunerChannel> tunerChannels) throws SourceException
     {
-        //Disabling a receiver uses this same per-tuner lifecycle monitor.  Keep discovery, optional pre-tuning, and
-        //source allocation inside one lifecycle window so USB shutdown cannot remove the manager between checks.
-        synchronized(discoveredTuner)
-        {
-            if(!discoveredTuner.isEnabled() || !discoveredTuner.hasTuner())
-            {
-                return null;
-            }
+        DiscoveredTuner.LifecycleLease lifecycleLease = discoveredTuner.tryAcquireLifecycleLease();
 
-            preTunePolyphaseCenter(discoveredTuner, tunerChannels);
-            Tuner tuner = discoveredTuner.getTuner();
+        if(lifecycleLease == null)
+        {
+            return null;
+        }
+
+        TunerChannelSource allocatedSource = null;
+
+        try
+        {
+            Tuner tuner = lifecycleLease.getTuner();
             ChannelSourceManager channelSourceManager = tuner != null ? tuner.getChannelSourceManager() : null;
 
             if(channelSourceManager == null)
@@ -726,28 +754,109 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 return null;
             }
 
+            preTunePolyphaseCenter(discoveredTuner, tuner, tunerChannels);
+
             if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
                 tunerChannels != null && !tunerChannels.isEmpty())
             {
-                TunerChannelSource source = polyphaseChannelSourceManager.getSource(tunerChannel, channelSpecification,
+                allocatedSource = polyphaseChannelSourceManager.getSource(tunerChannel, channelSpecification,
                     threadName, tunerChannels);
-
-                if(source != null)
-                {
-                    mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
-                }
-
-                return source;
+            }
+            else
+            {
+                allocatedSource = channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
             }
 
-            TunerChannelSource source = channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
-
-            if(source != null && channelSourceManager instanceof PolyphaseChannelSourceManager)
+            if(allocatedSource != null && channelSourceManager instanceof PolyphaseChannelSourceManager)
             {
                 mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
             }
 
-            return source;
+            if(allocatedSource != null)
+            {
+                retainPendingSourceAllocation(allocatedSource, lifecycleLease);
+                lifecycleLease = null;
+            }
+
+            return allocatedSource;
+        }
+        catch(SourceException | RuntimeException | Error exception)
+        {
+            if(allocatedSource != null)
+            {
+                try
+                {
+                    allocatedSource.stop();
+                    allocatedSource.dispose();
+                }
+                catch(RuntimeException cleanupException)
+                {
+                    exception.addSuppressed(cleanupException);
+                }
+            }
+
+            throw exception;
+        }
+        finally
+        {
+            if(lifecycleLease != null)
+            {
+                lifecycleLease.close();
+            }
+        }
+    }
+
+    private void retainPendingSourceAllocation(Source source, DiscoveredTuner.LifecycleLease lifecycleLease)
+    {
+        DiscoveredTuner.LifecycleLease previous = mPendingSourceAllocations.put(source, lifecycleLease);
+
+        if(previous != null)
+        {
+            previous.close();
+        }
+    }
+
+    private void transferPendingSourceAllocation(Source source, Source wrapper)
+    {
+        DiscoveredTuner.LifecycleLease lifecycleLease = mPendingSourceAllocations.remove(source);
+
+        if(lifecycleLease != null)
+        {
+            retainPendingSourceAllocation(wrapper, lifecycleLease);
+        }
+    }
+
+    /**
+     * Resolves the live receiver that owns a source during its provisional allocation handoff.  This is retained only
+     * by the internal multi-frequency wrapper so it can register a shutdown hook during source-less rotation gaps.
+     */
+    public DiscoveredTuner getSourceAllocationOwner(Source source)
+    {
+        if(source == null)
+        {
+            return null;
+        }
+
+        DiscoveredTuner.LifecycleLease lifecycleLease = mPendingSourceAllocations.get(source);
+        return lifecycleLease != null ? lifecycleLease.owner() : null;
+    }
+
+    /**
+     * Completes the short source-allocation handoff after a processing chain or RF probe has registered the source.
+     * Calls are intentionally idempotent so every failure path can use the same cleanup.
+     */
+    public void completeSourceAllocation(Source source)
+    {
+        if(source == null)
+        {
+            return;
+        }
+
+        DiscoveredTuner.LifecycleLease lifecycleLease = mPendingSourceAllocations.remove(source);
+
+        if(lifecycleLease != null)
+        {
+            lifecycleLease.close();
         }
     }
 
@@ -755,16 +864,17 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      * Pre-positions an idle polyphase tuner using the full requested channel set so that the first allocated channel
      * can reuse a center frequency chosen for the overall site spread rather than a single active channel.
      */
-    private void preTunePolyphaseCenter(DiscoveredTuner discoveredTuner, SortedSet<TunerChannel> tunerChannels)
+    private void preTunePolyphaseCenter(DiscoveredTuner discoveredTuner, Tuner tuner,
+                                        SortedSet<TunerChannel> tunerChannels)
         throws SourceException
     {
-        if(tunerChannels == null || tunerChannels.isEmpty() || !discoveredTuner.hasTuner())
+        if(tunerChannels == null || tunerChannels.isEmpty() || tuner == null)
         {
             return;
         }
 
-        ChannelSourceManager channelSourceManager = discoveredTuner.getTuner().getChannelSourceManager();
-        TunerController tunerController = discoveredTuner.getTuner().getTunerController();
+        ChannelSourceManager channelSourceManager = tuner.getChannelSourceManager();
+        TunerController tunerController = tuner.getTunerController();
 
         if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
             polyphaseChannelSourceManager.getTunerChannelCount() == 0 && !tunerController.isCenterFrequencyLocked())
@@ -773,9 +883,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             {
                 long centerFrequency = polyphaseChannelSourceManager.getCenterFrequency(tunerChannels);
 
-                if(centerFrequency != discoveredTuner.getTuner().getTunerController().getFrequency())
+                if(centerFrequency != tunerController.getFrequency())
                 {
-                    discoveredTuner.getTuner().getTunerController().setFrequency(centerFrequency);
+                    tunerController.setFrequency(centerFrequency);
                     mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
                 }
             }

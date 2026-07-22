@@ -54,6 +54,7 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
     public static final String TUNER_CLASS_PROPERTY = "sdrtrunk.web.signal.tuner.class";
     private static final long CONTROL_DEBOUNCE_MILLISECONDS = 150;
     private static final long CONTROL_SHUTDOWN_SECONDS = 5;
+    private static final int CLOSE_CLEANUP_ATTEMPTS = 3;
     private static final long METADATA_REFRESH_INTERVAL_MILLISECONDS = 50;
     private static final long TARGET_LIVENESS_INTERVAL_SECONDS = 1;
 
@@ -77,6 +78,7 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
     private volatile AppliedView mAppliedView;
     private volatile long mLastViewRevision;
     private Tuner mTuner;
+    private TunerRegistry.LeasedTunerTarget mLeasedTarget;
     private ComplexDftProcessor mDftProcessor;
     private ComplexDecibelConverter mConverter;
     private boolean mSourceEventListenerRegistered;
@@ -144,18 +146,28 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
             throw new IllegalStateException("No unambiguous already-running tuner is available for the signal view");
         }
 
-        TunerController controller = tuner.getTunerController();
         TunerCandidate candidate = candidateFor(tuner);
 
-        if(controller == null || candidate == null)
+        if(candidate == null)
         {
             throw new IllegalStateException("Selected spectrum tuner is no longer available");
         }
 
+        TunerRegistry.LeasedTunerTarget leasedTarget = mTunerRegistry.acquireAvailableTarget(candidate.id())
+            .orElseThrow(() -> new IllegalStateException("Selected spectrum tuner is stopping"));
+        tuner = leasedTarget.tuner();
+        TunerController controller = tuner.getTunerController();
+        candidate = candidateFor(tuner);
+        mLeasedTarget = leasedTarget;
         mTuner = tuner;
 
         try
         {
+            if(controller == null || candidate == null)
+            {
+                throw new IllegalStateException("Selected spectrum tuner is no longer available");
+            }
+
             long centerFrequencyHz = controller.getFrequency();
             long sampleRateHz = Math.round(controller.getSampleRate());
             PreparedView preparedView = prepareView(request, candidate.id(), candidate.label(),
@@ -424,8 +436,11 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
                     catch(RuntimeException cleanupException)
                     {
                         exception.addSuppressed(cleanupException);
+                        scheduleCleanupRetryLocked();
                     }
                 }
+
+                scheduleCleanupRetryLocked();
             }
 
             mLog.warn("Unable to apply the requested web spectrum receiver or view; source was released", exception);
@@ -445,8 +460,10 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
             {
                 Tuner active = mTuner;
 
-                if(mRunning && active != null &&
-                    candidates().stream().noneMatch(candidate -> candidate.tuner() == active))
+                boolean cleanupPending = !mRunning && mLeasedTarget != null;
+
+                if(active != null && (cleanupPending ||
+                    candidates().stream().noneMatch(candidate -> candidate.tuner() == active)))
                 {
                     stopLocked();
                 }
@@ -455,6 +472,22 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
         catch(RuntimeException exception)
         {
             mPublicationErrorCount.incrementAndGet();
+
+            synchronized(mLifecycleLock)
+            {
+                //A transient listener-detach failure must not strand the lifecycle lease and permanently block tuner
+                //shutdown. Explicit close remains caller-retryable; liveness cleanup retries on this low-rate worker.
+                scheduleCleanupRetryLocked();
+            }
+        }
+    }
+
+    private void scheduleCleanupRetryLocked()
+    {
+        if(!mClosed && mLeasedTarget != null && mTargetLivenessTask == null && !mControlExecutor.isShutdown())
+        {
+            mTargetLivenessTask = mControlExecutor.schedule(this::checkTargetLiveness,
+                250, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -627,15 +660,8 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
         Tuner tuner = mTuner;
         ComplexDftProcessor processor = mDftProcessor;
         ComplexDecibelConverter converter = mConverter;
-        mTuner = null;
-        mDftProcessor = null;
-        mConverter = null;
-        boolean sourceEventListenerRegistered = mSourceEventListenerRegistered;
-        boolean bufferListenerRegistered = mBufferListenerRegistered;
         ScheduledFuture<?> metadataRefreshTask = mMetadataRefreshTask;
         ScheduledFuture<?> targetLivenessTask = mTargetLivenessTask;
-        mSourceEventListenerRegistered = false;
-        mBufferListenerRegistered = false;
         mMetadataRefreshTask = null;
         mTargetLivenessTask = null;
         RuntimeException failure = null;
@@ -654,11 +680,12 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
         {
             TunerController controller = tuner.getTunerController();
 
-            if(controller != null && sourceEventListenerRegistered)
+            if(controller != null && mSourceEventListenerRegistered)
             {
                 try
                 {
                     controller.removeListener(this);
+                    mSourceEventListenerRegistered = false;
                 }
                 catch(RuntimeException exception)
                 {
@@ -666,11 +693,12 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
                 }
             }
 
-            if(controller != null && processor != null && bufferListenerRegistered)
+            if(controller != null && processor != null && mBufferListenerRegistered)
             {
                 try
                 {
                     controller.removeBufferListener(processor);
+                    mBufferListenerRegistered = false;
                 }
                 catch(RuntimeException exception)
                 {
@@ -679,11 +707,12 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
             }
         }
 
-        if(processor != null)
+        if(failure == null && processor != null && !mBufferListenerRegistered)
         {
             try
             {
                 processor.dispose();
+                mDftProcessor = null;
             }
             catch(RuntimeException exception)
             {
@@ -691,11 +720,12 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
             }
         }
 
-        if(converter != null)
+        if(failure == null && converter != null && mDftProcessor == null)
         {
             try
             {
                 converter.dispose();
+                mConverter = null;
             }
             catch(RuntimeException exception)
             {
@@ -703,9 +733,22 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
             }
         }
 
-        if(failure != null)
+        if(failure == null && !mSourceEventListenerRegistered && !mBufferListenerRegistered &&
+            mDftProcessor == null && mConverter == null)
         {
-            throw failure;
+            TunerRegistry.LeasedTunerTarget leasedTarget = mLeasedTarget;
+            mTuner = null;
+            mLeasedTarget = null;
+
+            if(leasedTarget != null)
+            {
+                leasedTarget.close();
+            }
+        }
+        else
+        {
+            throw failure != null ? failure :
+                new IllegalStateException("Spectrum source did not finish detaching from the receiver");
         }
     }
 
@@ -753,20 +796,24 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
 
         synchronized(mLifecycleLock)
         {
-            if(mClosed)
+            if(mClosed && mLeasedTarget == null)
             {
                 return;
             }
 
             mClosed = true;
 
-            try
+            for(int attempt = 0; attempt < CLOSE_CLEANUP_ATTEMPTS && mLeasedTarget != null; attempt++)
             {
-                stopLocked();
-            }
-            catch(RuntimeException exception)
-            {
-                failure = exception;
+                try
+                {
+                    stopLocked();
+                    failure = null;
+                }
+                catch(RuntimeException exception)
+                {
+                    failure = appendFailure(failure, exception);
+                }
             }
         }
 

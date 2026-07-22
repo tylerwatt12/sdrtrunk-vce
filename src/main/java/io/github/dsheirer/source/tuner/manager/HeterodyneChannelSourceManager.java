@@ -88,6 +88,11 @@ public class HeterodyneChannelSourceManager extends ChannelSourceManager
         for(TunerChannelSource tunerChannelSource: toStop)
         {
             MyEventBus.getGlobalEventBus().post(new ChannelStopProcessingRequest(tunerChannelSource));
+
+            if(mChannelSources.contains(tunerChannelSource))
+            {
+                tunerChannelSource.stop();
+            }
         }
     }
 

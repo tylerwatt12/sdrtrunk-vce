@@ -2,6 +2,7 @@
 'use strict';
 
 const SETTINGS_CHANNELS_SCRIPT = '/assets/settings-channels.js?v=5';
+const TUNER_SETTINGS_POLL_INTERVAL_MS = 2_000;
 let settingsChannelsScriptPromise = null;
 
 function loadSettingsChannelsScript() {
@@ -46,8 +47,11 @@ class SettingsHardwareView {
     this.spectrumView = null;
     this.requestController = null;
     this.settingsRequestController = null;
+    this.settingsPollController = null;
+    this.settingsPollTimer = null;
     this.settings = null;
     this.settingsDirty = false;
+    this.settingsDirtyFields = new Set();
     this.settingsForm = null;
     this.mutationPending = false;
     this.mutationDisabledStates = null;
@@ -61,7 +65,10 @@ class SettingsHardwareView {
       if (authenticated === true && !this.authenticated) this.start();
     };
     this.onVisibilityReturn = () => {
-      if (document.visibilityState === 'visible') this.verifySession();
+      if (document.visibilityState === 'visible') {
+        this.verifySession();
+        this.scheduleSettingsPoll(0);
+      }
     };
     this.onBeforeUnload = (event) => {
       if (!this.settingsDirty) return;
@@ -184,6 +191,7 @@ class SettingsHardwareView {
   renderLogin(configured) {
     this.authenticated = false;
     this.session = null;
+    this.stopSettingsPolling();
     this.closeSpectrum();
     if (this.infoDialog?.open) this.infoDialog.close();
     this.inventory = null;
@@ -193,6 +201,7 @@ class SettingsHardwareView {
     this.settingsRequestController = null;
     this.settings = null;
     this.settingsDirty = false;
+    this.settingsDirtyFields.clear();
     this.settingsForm = null;
     this.mutationPending = false;
     this.mutationDisabledStates = null;
@@ -202,6 +211,7 @@ class SettingsHardwareView {
     this.settingsPanel = null;
     this.settingsBody = null;
     this.settingsState = null;
+    this.settingsRuntimeNotice = null;
     this.spectrumPanel = null;
     this.spectrumHost = null;
     this.infoDialog = null;
@@ -297,6 +307,7 @@ class SettingsHardwareView {
 
     const section = new URLSearchParams(window.location.search).get('section') || 'hardware';
     if (section === 'channels') {
+      this.stopSettingsPolling();
       this.mountChannels(session);
       return;
     }
@@ -496,16 +507,7 @@ class SettingsHardwareView {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Receiver inventory is unavailable.');
       if (!Array.isArray(result.tuners)) throw new Error('Receiver inventory is invalid.');
-      this.inventory = result;
-      this.tuners = result.tuners.filter((tuner) => tuner && typeof tuner.id === 'string' && tuner.id);
-      const selectedStillExists = this.tuners.some((tuner) => tuner.id === this.selectedTunerId);
-      if (!selectedStillExists) {
-        this.selectedTunerId = this.tuners.find((tuner) => tuner.available === true)?.id ||
-          this.tuners[0]?.id || null;
-      }
-      if (this.spectrumTunerId && !this.tuners.some((tuner) => tuner.id === this.spectrumTunerId)) {
-        this.closeSpectrum();
-      }
+      this.acceptInventory(result);
       this.renderInventory();
       if (this.selectedTunerId) this.loadSettings(this.selectedTunerId);
     } catch (error) {
@@ -522,6 +524,39 @@ class SettingsHardwareView {
         this.requestController = null;
         if (this.refreshButton) this.refreshButton.disabled = false;
       }
+    }
+  }
+
+  acceptInventory(result) {
+    this.inventory = result;
+    this.tuners = result.tuners.filter((tuner) => tuner && typeof tuner.id === 'string' && tuner.id);
+    const selectedStillExists = this.tuners.some((tuner) => tuner.id === this.selectedTunerId);
+    if (!selectedStillExists) {
+      this.selectedTunerId = this.tuners.find((tuner) => tuner.available === true)?.id ||
+        this.tuners[0]?.id || null;
+    }
+    if (this.spectrumTunerId && !this.tuners.some((tuner) => tuner.id === this.spectrumTunerId)) {
+      this.closeSpectrum();
+    }
+  }
+
+  async refreshInventoryCards() {
+    if (this.closed || !this.authenticated || !this.inventoryBody) return false;
+    try {
+      const response = await fetch('/api/v1/tuners', {
+        cache: 'no-store', credentials: 'same-origin'
+      });
+      if (response.status === 401 || response.status === 403) {
+        this.requireAuthentication();
+        return false;
+      }
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(result.tuners)) return false;
+      this.acceptInventory(result);
+      this.renderInventory();
+      return true;
+    } catch (error) {
+      return false;
     }
   }
 
@@ -563,6 +598,7 @@ class SettingsHardwareView {
   tunerCard(tuner, externallyBusy) {
     const selected = tuner.id === this.selectedTunerId;
     const card = this.element('article', `hardware-tuner-card${selected ? ' selected' : ''}`);
+    card.dataset.tunerId = tuner.id;
     const summary = this.element('div', 'hardware-tuner-summary');
     const heading = this.element('div', 'hardware-tuner-heading');
     const title = this.element('div');
@@ -570,10 +606,10 @@ class SettingsHardwareView {
       this.element('p', '', this.tunerDescription(tuner)));
     heading.append(title, this.statusBadge(tuner));
     const facts = this.element('dl', 'hardware-tuner-facts');
-    this.fact(facts, 'Center', this.formatFrequency(tuner.centerFrequencyHz));
-    this.fact(facts, 'Sample rate', this.formatSampleRate(tuner.sampleRateHz));
-    this.fact(facts, 'Active channels', this.integer(tuner.activeChannelCount));
-    this.fact(facts, 'Fixed center', this.onOff(tuner.centerFrequencyFixed));
+    this.fact(facts, 'Center', this.formatFrequency(tuner.centerFrequencyHz), 'center');
+    this.fact(facts, 'Sample rate', this.formatSampleRate(tuner.sampleRateHz), 'sampleRate');
+    this.fact(facts, 'Active channels', this.integer(tuner.activeChannelCount), 'activeChannels');
+    this.fact(facts, 'Fixed center', this.onOff(tuner.centerFrequencyFixed), 'fixedCenter');
     summary.append(heading, facts);
 
     const actions = this.element('div', 'hardware-tuner-actions');
@@ -633,9 +669,11 @@ class SettingsHardwareView {
     return values.join(' · ') || 'Detected receiver';
   }
 
-  fact(list, label, value) {
+  fact(list, label, value, name = '') {
     const wrapper = this.element('div');
-    wrapper.append(this.element('dt', '', label), this.element('dd', '', value));
+    const detail = this.element('dd', '', value);
+    if (name) detail.dataset.tunerFact = name;
+    wrapper.append(this.element('dt', '', label), detail);
     list.append(wrapper);
   }
 
@@ -665,15 +703,18 @@ class SettingsHardwareView {
     if (id === this.selectedTunerId || this.mutationPending) return;
     if (this.settingsDirty && !window.confirm('Discard the unsaved receiver changes?')) return;
     if (this.spectrumView) this.closeSpectrum();
+    this.stopSettingsPolling();
     this.selectedTunerId = id;
     this.settings = null;
     this.settingsDirty = false;
+    this.settingsDirtyFields.clear();
     this.renderInventory();
     this.loadSettings(id);
   }
 
   async loadSettings(id, manual = false) {
     if (this.closed || !this.authenticated || !id || !this.settingsPanel) return;
+    this.stopSettingsPolling();
     this.settingsRequestController?.abort();
     const controller = new AbortController();
     this.settingsRequestController = controller;
@@ -699,6 +740,7 @@ class SettingsHardwareView {
       if (this.closed || this.selectedTunerId !== id) return;
       this.settings = result;
       this.settingsDirty = false;
+      this.settingsDirtyFields.clear();
       this.renderSettings(manual ? 'Saved values restored.' : '');
     } catch (error) {
       if (error.name === 'AbortError' || this.closed || this.selectedTunerId !== id) return;
@@ -711,6 +753,105 @@ class SettingsHardwareView {
         'Radio processing continues normally. Try loading this receiver again.', retry));
     } finally {
       if (this.settingsRequestController === controller) this.settingsRequestController = null;
+      if (!this.closed && this.selectedTunerId === id && this.settings) this.scheduleSettingsPoll();
+    }
+  }
+
+  stopSettingsPolling() {
+    if (this.settingsPollTimer !== null) {
+      window.clearTimeout(this.settingsPollTimer);
+      this.settingsPollTimer = null;
+    }
+    this.settingsPollController?.abort();
+    this.settingsPollController = null;
+  }
+
+  scheduleSettingsPoll(delay = TUNER_SETTINGS_POLL_INTERVAL_MS) {
+    if (this.closed || !this.authenticated || !this.selectedTunerId || !this.settings) return;
+    if (this.settingsPollTimer !== null) window.clearTimeout(this.settingsPollTimer);
+    this.settingsPollTimer = window.setTimeout(() => {
+      this.settingsPollTimer = null;
+      this.pollSelectedTunerSettings();
+    }, Math.max(0, delay));
+  }
+
+  async pollSelectedTunerSettings() {
+    const id = this.selectedTunerId;
+    if (this.closed || !this.authenticated || !id || !this.settings) return;
+    if (document.visibilityState !== 'visible' || this.mutationPending ||
+        this.settingsRequestController || this.settingsPollController) {
+      this.scheduleSettingsPoll();
+      return;
+    }
+
+    const controller = new AbortController();
+    this.settingsPollController = controller;
+    try {
+      const response = await fetch(`/api/v1/tuners/${encodeURIComponent(id)}/settings`, {
+        cache: 'no-store', credentials: 'same-origin', signal: controller.signal
+      });
+      if (response.status === 401 || response.status === 403) {
+        this.requireAuthentication();
+        return;
+      }
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || this.closed || this.selectedTunerId !== id) return;
+      const preservedRevision = this.settingsDirty ? this.settings?.revision : null;
+      this.settings = preservedRevision === null || preservedRevision === undefined ? result :
+        { ...result, revision: preservedRevision };
+      if (!this.settingsForm && result.editable === true) {
+        this.settingsDirty = false;
+        this.settingsDirtyFields.clear();
+        this.renderSettings();
+      }
+      this.updatePristineSettingsFields(result);
+      this.updateSettingsRuntimeState();
+      this.syncSelectedTunerState(result);
+    } catch (error) {
+      // Polling is advisory. A temporary network failure is retried without disturbing the form.
+    } finally {
+      if (this.settingsPollController === controller) {
+        this.settingsPollController = null;
+        this.scheduleSettingsPoll();
+      }
+    }
+  }
+
+  syncSelectedTunerState(settings) {
+    const index = this.tuners.findIndex((candidate) => candidate.id === settings?.id);
+    if (index < 0) return;
+    const current = this.tuners[index];
+    const updated = {
+      ...current,
+      enabled: settings.enabled === true,
+      available: settings.available === true,
+      centerFrequencyHz: settings.centerFrequencyHz,
+      sampleRateHz: settings.device?.sampleRateHz,
+      activeChannelCount: settings.activeChannelCount,
+      sampleRateLocked: settings.radioWorkActive === true,
+      centerFrequencyFixed: settings.centerFrequencyFixed === true,
+      status: settings.shutdownIncomplete === true ? 'ERROR' : settings.enabled !== true ? 'DISABLED' :
+        (settings.available === true ? 'ENABLED' : current.status)
+    };
+    this.tuners[index] = updated;
+
+    const card = Array.from(this.inventoryBody?.querySelectorAll?.('.hardware-tuner-card') || [])
+      .find((candidate) => candidate.dataset.tunerId === settings.id);
+    if (!card) return;
+    const values = {
+      center: this.formatFrequency(updated.centerFrequencyHz),
+      sampleRate: this.formatSampleRate(updated.sampleRateHz),
+      activeChannels: this.integer(updated.activeChannelCount),
+      fixedCenter: this.onOff(updated.centerFrequencyFixed)
+    };
+    Object.entries(values).forEach(([name, value]) => {
+      const target = card.querySelector(`[data-tuner-fact="${name}"]`);
+      if (target) target.textContent = value;
+    });
+    const badge = card.querySelector('.hardware-status');
+    if (badge) {
+      badge.className = `hardware-status ${this.statusClass(updated.status || 'UNKNOWN')}`;
+      badge.textContent = this.statusLabel(updated.status || 'UNKNOWN');
     }
   }
 
@@ -723,44 +864,60 @@ class SettingsHardwareView {
     this.settingsTitle.textContent = tuner ? `${this.tunerName(tuner)} settings` : 'Receiver settings';
     const active = settings.radioWorkActive === true;
     const enabled = settings.enabled === true;
+    const shutdownIncomplete = settings.shutdownIncomplete === true;
     const editable = settings.editable === true;
-    this.settingsSubtitle.textContent = active ?
+    this.settingsSubtitle.textContent = shutdownIncomplete ? 'Receiver shutdown did not finish' : active ?
       (settings.activeChannelCount > 0 ?
         `${this.integer(settings.activeChannelCount)} active ${settings.activeChannelCount === 1 ? 'channel' : 'channels'}` :
         'Some controls locked by active receiver work') :
       (!enabled ? 'Receiver disabled · saved settings can be changed' :
         (settings.available === true ? 'Ready for changes' : 'Receiver is not running'));
-    this.settingsEnabledButton.textContent = enabled ? 'Disable receiver' : 'Enable receiver';
-    this.settingsEnabledButton.className = enabled ? 'danger-outline' : 'primary';
-    this.settingsEnabledButton.disabled = false;
+    this.settingsEnabledButton.textContent = shutdownIncomplete ? 'Retry disable' :
+      (enabled ? 'Disable receiver' : 'Enable receiver');
+    this.settingsEnabledButton.className = enabled || shutdownIncomplete ? 'danger-outline' : 'primary';
+    //The Disable action is also the recovery path after an asynchronous receiver error begins cleanup.
+    this.settingsEnabledButton.disabled = this.mutationPending;
     this.settingsState.className = 'hardware-settings-state';
     this.settingsState.textContent = message;
     this.settingsBody.replaceChildren();
 
     if (!editable) {
-      const detail = settings.device?.message || 'Detailed settings are not available for this receiver type yet.';
-      this.settingsBody.append(this.stateCard('Configuration is unavailable', detail));
+      if (shutdownIncomplete) {
+        this.settingsBody.append(this.stateCard('Receiver shutdown needs attention',
+          'Hardware cleanup did not finish. Retry disable before making more receiver changes.'));
+      } else {
+        const detail = settings.device?.message || 'Detailed settings are not available for this receiver type yet.';
+        this.settingsBody.append(this.stateCard('Configuration is unavailable', detail));
+      }
       return;
     }
 
-    if (active) {
+    this.settingsRuntimeNotice = this.element('div', 'hardware-settings-runtime');
+    this.settingsBody.append(this.settingsRuntimeNotice);
+    if (shutdownIncomplete) {
+      const notice = this.element('div', 'hardware-settings-notice failed');
+      notice.append(this.element('strong', '', 'Receiver shutdown needs attention'),
+        this.element('span', '',
+          'Hardware cleanup did not finish. Retry disable before making more receiver changes.'));
+      this.settingsRuntimeNotice.append(notice);
+    } else if (active) {
       const notice = this.element('div', 'hardware-settings-notice');
       notice.append(this.element('strong', '', 'Radio work is active'),
         this.element('span', '',
           'Center frequency, frequency correction, frequency limits, sample rate, and Bias-T are locked. Gain controls, automatic PPM, and fixed-center mode remain available.'));
-      this.settingsBody.append(notice);
+      this.settingsRuntimeNotice.append(notice);
     } else if (!enabled) {
       const notice = this.element('div', 'hardware-settings-notice');
       notice.append(this.element('strong', '', 'Receiver is disabled'),
         this.element('span', '', 'Changes are saved now and applied when this receiver is enabled.'));
-      this.settingsBody.append(notice);
+      this.settingsRuntimeNotice.append(notice);
     }
 
     const form = this.element('form', 'hardware-settings-form');
     const tuning = this.formSection('Tuning',
       'Frequency limits control where this receiver may be assigned. Values are saved in MHz.');
     const tuningGrid = this.element('div', 'hardware-field-grid');
-    const idleOnlyDisabled = active;
+    const idleOnlyDisabled = active || settings.lifecycleQuiescing === true;
     const center = this.numberField('Center frequency', this.toMHz(settings.centerFrequencyHz), {
       min: this.toMHz(settings.hardwareMinimumFrequencyHz),
       max: this.toMHz(settings.hardwareMaximumFrequencyHz), step: 0.000001, suffix: 'MHz',
@@ -809,16 +966,47 @@ class SettingsHardwareView {
     form.append(tuning, device, actions);
     this.settingsBody.append(form);
 
+    const fields = new Map();
+    const field = (name, control, read) => {
+      control.dataset.settingsField = name;
+      fields.set(name, { control, read });
+    };
+    field('centerFrequencyHz', center.input, (value) => this.toMHz(value.centerFrequencyHz));
+    field('frequencyCorrectionPpm', ppm.input, (value) =>
+      Number.isFinite(Number(value.frequencyCorrectionPpm)) ? Math.round(Number(value.frequencyCorrectionPpm)) : '');
+    field('minimumFrequencyHz', minimum.input, (value) => this.toMHz(value.minimumFrequencyHz));
+    field('maximumFrequencyHz', maximum.input, (value) => this.toMHz(value.maximumFrequencyHz));
+    field('autoPpm', autoPpm.input, (value) => value.autoPpm === true);
+    field('centerFrequencyFixed', fixedCenter.input, (value) => value.centerFrequencyFixed === true);
+    field('sampleRateHz', deviceControls.sampleRate.input, (value) => value.device?.sampleRateHz);
+    if (deviceControls.type === 'AIRSPY') {
+      field('airspyGainMode', deviceControls.airspyGainMode.input, (value) => value.device?.gainMode);
+      field('airspyGain', deviceControls.airspyGain.input, (value) => value.device?.gain);
+      field('airspyIfGain', deviceControls.airspyIfGain.input, (value) => value.device?.ifGain);
+      field('airspyMixerGain', deviceControls.airspyMixerGain.input, (value) => value.device?.mixerGain);
+      field('airspyMixerAgc', deviceControls.airspyMixerAgc.input, (value) => value.device?.mixerAgc === true);
+      field('airspyLnaGain', deviceControls.airspyLnaGain.input, (value) => value.device?.lnaGain);
+      field('airspyLnaAgc', deviceControls.airspyLnaAgc.input, (value) => value.device?.lnaAgc === true);
+    } else if (deviceControls.type === 'RTL_R8X') {
+      field('rtlBiasT', deviceControls.rtlBiasT.input, (value) => value.device?.biasT === true);
+      field('rtlMasterGain', deviceControls.rtlMasterGain.input, (value) => value.device?.masterGain);
+      field('rtlMixerGain', deviceControls.rtlMixerGain.input, (value) => value.device?.mixerGain);
+      field('rtlLnaGain', deviceControls.rtlLnaGain.input, (value) => value.device?.lnaGain);
+      field('rtlVgaGain', deviceControls.rtlVgaGain.input, (value) => value.device?.vgaGain);
+    }
+    const idleOnlyControls = [center.input, ppm.input, minimum.input, maximum.input,
+      deviceControls.sampleRate.input, deviceControls.rtlBiasT?.input].filter(Boolean);
     this.settingsForm = { form, center: center.input, ppm: ppm.input, minimum: minimum.input, maximum: maximum.input,
       autoPpm: autoPpm.input, fixedCenter: fixedCenter.input, device: deviceControls,
-      save, reset, message: actionMessage };
-    form.addEventListener('input', () => this.markSettingsDirty());
-    form.addEventListener('change', () => {
+      fields, idleOnlyControls, save, reset, message: actionMessage };
+    form.addEventListener('input', (event) => this.markSettingsDirty(event.target));
+    form.addEventListener('change', (event) => {
       this.updateDeviceFieldVisibility();
-      this.markSettingsDirty();
+      this.markSettingsDirty(event.target);
     });
     form.addEventListener('submit', (event) => this.saveSettings(event));
     this.updateDeviceFieldVisibility();
+    this.updateSettingsRuntimeState();
   }
 
   formSection(title, description) {
@@ -1014,11 +1202,99 @@ class SettingsHardwareView {
     }
   }
 
-  markSettingsDirty() {
+  updatePristineSettingsFields(settings) {
+    const form = this.settingsForm;
+    if (!form || !settings) return;
+    form.fields.forEach((field, name) => {
+      if (this.settingsDirtyFields.has(name)) return;
+      const value = field.read(settings);
+      if (field.control.type === 'checkbox') {
+        field.control.checked = value === true;
+      } else {
+        field.control.value = value === null || value === undefined ||
+          (typeof value === 'number' && !Number.isFinite(value)) ? '' : String(value);
+      }
+    });
+    this.updateDeviceFieldVisibility();
+  }
+
+  updateSettingsRuntimeState() {
+    const settings = this.settings;
+    const form = this.settingsForm;
+    if (!settings || !form) return;
+    const active = settings.radioWorkActive === true;
+    const enabled = settings.enabled === true;
+    const shutdownIncomplete = settings.shutdownIncomplete === true;
+    //A disabled receiver deliberately keeps the lifecycle gate closed while its saved settings remain editable.
+    //Only treat quiescing as a transient busy state while the receiver still reports itself enabled.
+    const lifecycleBusy = enabled && settings.lifecycleQuiescing === true;
+    const runtimeEditable = settings.editable === true && !shutdownIncomplete && !lifecycleBusy;
+    this.settingsSubtitle.textContent = shutdownIncomplete ? 'Receiver shutdown did not finish' : active ?
+      (settings.activeChannelCount > 0 ?
+        `${this.integer(settings.activeChannelCount)} active ${settings.activeChannelCount === 1 ? 'channel' : 'channels'}` :
+        'Some controls locked by active receiver work') :
+      (!enabled ? 'Receiver disabled · saved settings can be changed' :
+        (settings.available === true ? 'Ready for changes' : 'Receiver is not running'));
+    this.settingsEnabledButton.textContent = shutdownIncomplete ? 'Retry disable' :
+      (enabled ? 'Disable receiver' : 'Enable receiver');
+    this.settingsEnabledButton.className = enabled || shutdownIncomplete ? 'danger-outline' : 'primary';
+    this.settingsEnabledButton.disabled = this.mutationPending;
+    if (runtimeEditable && !this.mutationPending) {
+      form.fields.forEach((field) => {
+        field.control.disabled = false;
+      });
+      form.reset.disabled = false;
+      form.save.disabled = !this.settingsDirty || active && this.hasDirtyIdleOnlySettings();
+      if (active && this.hasDirtyIdleOnlySettings()) {
+        form.message.textContent =
+          'A channel started before these receiver-only changes were saved. Stop the channel or reset those changes.';
+      }
+    }
+    form.idleOnlyControls.forEach((control) => {
+      control.disabled = active || !runtimeEditable;
+    });
+    if (!runtimeEditable) {
+      Array.from(form.form.elements).forEach((control) => {
+        if (control !== form.reset) control.disabled = true;
+      });
+    }
+
+    if (this.settingsRuntimeNotice) {
+      this.settingsRuntimeNotice.replaceChildren();
+      if (shutdownIncomplete) {
+        const notice = this.element('div', 'hardware-settings-notice failed');
+        notice.append(this.element('strong', '', 'Receiver shutdown needs attention'),
+          this.element('span', '',
+            'Hardware cleanup did not finish. Retry disable before making more receiver changes.'));
+        this.settingsRuntimeNotice.append(notice);
+      } else if (active) {
+        const notice = this.element('div', 'hardware-settings-notice');
+        notice.append(this.element('strong', '', 'Radio work is active'),
+          this.element('span', '',
+            'Center frequency, frequency correction, frequency limits, sample rate, and Bias-T are locked. Gain controls, automatic PPM, and fixed-center mode remain available.'));
+        this.settingsRuntimeNotice.append(notice);
+      } else if (!enabled) {
+        const notice = this.element('div', 'hardware-settings-notice');
+        notice.append(this.element('strong', '', 'Receiver is disabled'),
+          this.element('span', '', 'Changes are saved now and applied when this receiver is enabled.'));
+        this.settingsRuntimeNotice.append(notice);
+      }
+    }
+  }
+
+  markSettingsDirty(control) {
     if (!this.settingsForm) return;
+    const name = control?.dataset?.settingsField;
+    if (!name) return;
+    this.settingsDirtyFields.add(name);
     this.settingsDirty = true;
     this.settingsForm.save.disabled = false;
     this.settingsForm.message.textContent = 'Unsaved changes';
+  }
+
+  hasDirtyIdleOnlySettings() {
+    return ['centerFrequencyHz', 'frequencyCorrectionPpm', 'minimumFrequencyHz', 'maximumFrequencyHz',
+      'sampleRateHz', 'rtlBiasT'].some((name) => this.settingsDirtyFields.has(name));
   }
 
   async saveSettings(event) {
@@ -1026,6 +1302,12 @@ class SettingsHardwareView {
     const form = this.settingsForm;
     const settings = this.settings;
     if (!form || !settings || form.save.disabled || this.closed) return;
+    if (settings.radioWorkActive === true && this.hasDirtyIdleOnlySettings()) {
+      form.message.textContent =
+        'A channel started before these receiver-only changes were saved. Stop the channel or reset those changes.';
+      form.save.disabled = true;
+      return;
+    }
     if (!form.form.reportValidity()) return;
     const body = this.settingsRequestBody();
     if (!body) {
@@ -1051,7 +1333,17 @@ class SettingsHardwareView {
       this.setMutationPending(false);
       this.settings = result;
       this.settingsDirty = false;
+      this.settingsDirtyFields.clear();
       this.renderSettings('Changes saved.');
+      await this.refreshInventoryCards();
+      if (this.selectedTunerId !== result.id) {
+        this.settings = null;
+        this.settingsDirty = false;
+        this.settingsDirtyFields.clear();
+        await this.loadSettings(this.selectedTunerId);
+        return;
+      }
+      this.scheduleSettingsPoll();
     } catch (error) {
       if (this.closed || !this.settingsForm) return;
       this.setMutationPending(false);
@@ -1077,12 +1369,15 @@ class SettingsHardwareView {
     const minimumMHz = form.minimum.valueAsNumber;
     const maximumMHz = form.maximum.valueAsNumber;
     const sampleRate = Number(device.sampleRate.input.value);
-    if (![ppm, centerMHz, minimumMHz, maximumMHz, sampleRate].every(Number.isFinite)) return null;
+    const ppmChanged = this.settingsDirtyFields.has('frequencyCorrectionPpm');
+    const centerChanged = this.settingsDirtyFields.has('centerFrequencyHz');
+    if (![minimumMHz, maximumMHz, sampleRate].every(Number.isFinite) ||
+        (ppmChanged && !Number.isFinite(ppm)) || (centerChanged && !Number.isFinite(centerMHz))) return null;
     const body = {
       revision: settings.revision,
-      frequencyCorrectionPpm: form.ppm.disabled ? null : ppm,
+      frequencyCorrectionPpm: ppmChanged && !form.ppm.disabled ? ppm : null,
       autoPpm: form.autoPpm.checked,
-      centerFrequencyHz: form.center.disabled ? null : Math.round(centerMHz * 1_000_000),
+      centerFrequencyHz: centerChanged && !form.center.disabled ? Math.round(centerMHz * 1_000_000) : null,
       minimumFrequencyHz: Math.round(minimumMHz * 1_000_000),
       maximumFrequencyHz: Math.round(maximumMHz * 1_000_000),
       centerFrequencyFixed: form.fixedCenter.checked,
@@ -1119,7 +1414,8 @@ class SettingsHardwareView {
     const button = this.settingsEnabledButton;
     if (!settings || !button || button.disabled || this.mutationPending) return;
     if (this.settingsDirty && !window.confirm('Discard the unsaved receiver changes?')) return;
-    const enabled = settings.enabled !== true;
+    const retryDisable = settings.shutdownIncomplete === true;
+    const enabled = retryDisable ? false : settings.enabled !== true;
     let confirmActiveStop = false;
     if (!enabled && settings.radioWorkActive === true) {
       const workDescription = settings.activeChannelCount > 0 ?
@@ -1129,10 +1425,12 @@ class SettingsHardwareView {
         `Disable this receiver and stop its ${workDescription}?`);
       if (!confirmActiveStop) return;
     }
+    if (!enabled && this.spectrumView && this.spectrumTunerId === settings.id) this.closeSpectrum();
     button.disabled = true;
     this.setMutationPending(true);
     this.settingsState.className = 'hardware-settings-state';
-    this.settingsState.textContent = enabled ? 'Enabling receiver…' : 'Disabling receiver…';
+    this.settingsState.textContent = retryDisable ? 'Retrying receiver shutdown…' :
+      (enabled ? 'Enabling receiver…' : 'Disabling receiver…');
 
     try {
       const response = await fetch(`/api/v1/tuners/${encodeURIComponent(settings.id)}/enabled`, {
@@ -1146,6 +1444,7 @@ class SettingsHardwareView {
       if (this.closed || this.selectedTunerId !== settings.id) return;
       this.settings = result;
       this.settingsDirty = false;
+      this.settingsDirtyFields.clear();
       this.setMutationPending(false);
       await this.loadInventory(true);
     } catch (error) {
@@ -1186,6 +1485,10 @@ class SettingsHardwareView {
 
   setMutationPending(pending) {
     this.mutationPending = pending;
+    if (pending && this.settingsPollController) {
+      this.settingsPollController.abort();
+      this.settingsPollController = null;
+    }
     if (this.refreshButton) this.refreshButton.disabled = pending;
     if (pending && this.settingsForm?.form) {
       this.mutationDisabledStates = new Map();
@@ -1203,6 +1506,7 @@ class SettingsHardwareView {
       this.settingsEnabledButton.disabled = pending || !this.settings;
     }
     if (this.inventoryBody && this.inventory) this.renderInventory();
+    if (!pending) this.scheduleSettingsPoll();
   }
 
   toMHz(value) {
@@ -1309,6 +1613,7 @@ class SettingsHardwareView {
     this.requestController = null;
     this.settingsRequestController?.abort();
     this.settingsRequestController = null;
+    this.stopSettingsPolling();
     window.removeEventListener('sdrtrunk:auth-changed', this.onAuthenticationChange);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
     window.removeEventListener('sdrtrunk:before-route-change', this.onBeforeRouteChange);

@@ -24,8 +24,11 @@ import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +37,7 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class DiscoveredTuner implements ITunerErrorListener
 {
+    private static final long LIFECYCLE_QUIESCE_TIMEOUT_SECONDS = 5;
     private Logger mLog = LoggerFactory.getLogger(DiscoveredTuner.class);
     private volatile TunerStatus mTunerStatus = TunerStatus.ENABLED;
     private volatile boolean mEnabled = true;
@@ -41,6 +45,10 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
     protected volatile Tuner mTuner;
     protected volatile TunerConfiguration mTunerConfiguration;
+    private final Object mLifecycleLock = new Object();
+    private boolean mLifecycleQuiescing;
+    private int mLifecycleLeaseCount;
+    private final List<Runnable> mLifecycleQuiesceListeners = new ArrayList<>();
 
     /**
      * Tuner Class
@@ -131,22 +139,292 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
      */
     public synchronized void setEnabled(boolean enabled)
     {
-        //If there was a change in state
-        if(mEnabled ^ enabled)
+        boolean retryingIncompleteStop = !enabled && !mEnabled && hasTuner() && isLifecycleQuiescing();
+
+        //Apply a normal state change, or allow a repeated disable command to finish quarantined native cleanup.
+        if((mEnabled ^ enabled) || retryingIncompleteStop)
         {
             mErrorMessage = null;
 
-            mEnabled = enabled;
-
-            if(mEnabled)
+            if(enabled)
             {
-                start();
-                setTunerStatus(TunerStatus.ENABLED);
+                if(!mEnabled && hasTuner() && isLifecycleQuiescing())
+                {
+                    throw new IllegalStateException("Receiver cleanup must finish before it can be enabled");
+                }
+
+                //Keep allocations and passive sample consumers out until startup and configuration listeners finish.
+                setLifecycleQuiescing(true);
+                mEnabled = true;
+                TunerStatus previousStatus = getTunerStatus();
+
+                try
+                {
+                    //Concrete USB discovery starts only while status is ENABLED. Publish that prerequisite silently,
+                    //open the hardware directly, and notify listeners only after a real tuner exists.
+                    setTunerStatus(TunerStatus.ENABLED, false);
+                    start();
+
+                    if(hasTuner() && getTunerStatus().isAvailable())
+                    {
+                        if(previousStatus != TunerStatus.ENABLED)
+                        {
+                            setTunerStatus(previousStatus, false);
+                            setTunerStatus(TunerStatus.ENABLED);
+                        }
+
+                        setLifecycleQuiescing(false);
+                    }
+                    else
+                    {
+                        mEnabled = false;
+
+                        if(getTunerStatus() == TunerStatus.ENABLED)
+                        {
+                            mErrorMessage = "Receiver did not finish starting";
+                            setTunerStatus(TunerStatus.ERROR);
+                        }
+
+                        throw new IllegalStateException("Receiver did not finish starting");
+                    }
+                }
+                catch(RuntimeException | Error exception)
+                {
+                    mEnabled = false;
+
+                    if(getTunerStatus() == TunerStatus.ENABLED)
+                    {
+                        mErrorMessage = "Receiver did not finish starting: " + exception.getMessage();
+                        setTunerStatus(TunerStatus.ERROR);
+                    }
+
+                    //Remain quiesced.  A failed or partially-started receiver must not accept new consumers.
+                    throw exception;
+                }
             }
             else
             {
-                stop();
-                setTunerStatus(TunerStatus.DISABLED);
+                mEnabled = false;
+
+                try
+                {
+                    //No lifecycle lock is held while channel events, DSP disposal, or native USB shutdown execute.
+                    stop();
+                    setTunerStatus(TunerStatus.DISABLED);
+                }
+                catch(RuntimeException | Error exception)
+                {
+                    //Keep a partially-stopped receiver quarantined.  A later disable command may retry cleanup, but
+                    //new allocations and a second native handle remain forbidden.
+                    mErrorMessage = "Receiver shutdown did not finish: " + exception.getMessage();
+                    setTunerStatus(TunerStatus.ERROR);
+                    throw exception;
+                }
+            }
+        }
+    }
+
+    /**
+     * Acquires a short-lived lifecycle lease for source allocation, live settings, or a passive sample consumer.
+     * The lease prevents native shutdown until the caller has either registered its new work or detached it.
+     * No radio callback, channel monitor, or controller lock is held while this bookkeeping lock is used.
+     */
+    public LifecycleLease tryAcquireLifecycleLease()
+    {
+        synchronized(mLifecycleLock)
+        {
+            Tuner tuner = mTuner;
+
+            if(mLifecycleQuiescing || !mEnabled || !mTunerStatus.isAvailable() || tuner == null)
+            {
+                return null;
+            }
+
+            mLifecycleLeaseCount++;
+            return new LifecycleLease(this, tuner);
+        }
+    }
+
+    /**
+     * Indicates that this receiver is refusing new work while it starts, stops, or remains disabled.
+     */
+    public boolean isLifecycleQuiescing()
+    {
+        synchronized(mLifecycleLock)
+        {
+            return mLifecycleQuiescing;
+        }
+    }
+
+    private boolean beginLifecycleQuiesce(long timeout, TimeUnit timeUnit)
+    {
+        long remainingNanos = timeUnit.toNanos(timeout);
+        long deadline = System.nanoTime() + remainingNanos;
+        List<Runnable> listeners;
+
+        synchronized(mLifecycleLock)
+        {
+            mLifecycleQuiescing = true;
+            listeners = List.copyOf(mLifecycleQuiesceListeners);
+            //Registrations describe work owned by this specific live tuner instance and are one-shot.
+            mLifecycleQuiesceListeners.clear();
+        }
+
+        //Notify outside the lifecycle bookkeeping lock. A channel callback may synchronously stop its processing
+        //chain and release an allocation lease that this quiesce is about to wait for.
+        for(Runnable listener: listeners)
+        {
+            try
+            {
+                listener.run();
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("Receiver lifecycle listener failed while quiescing [{}]", getId(), exception);
+            }
+        }
+
+        synchronized(mLifecycleLock)
+        {
+
+            while(mLifecycleLeaseCount > 0)
+            {
+                if(remainingNanos <= 0)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    TimeUnit.NANOSECONDS.timedWait(mLifecycleLock, remainingNanos);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+
+                remainingNanos = deadline - System.nanoTime();
+            }
+
+            return true;
+        }
+    }
+
+    /**
+     * Registers one owner callback that fires when this live receiver begins shutdown.  A null result means shutdown
+     * already began and the caller must not attach new work.
+     */
+    public LifecycleQuiesceRegistration tryRegisterLifecycleQuiesceListener(Runnable listener)
+    {
+        if(listener == null)
+        {
+            throw new IllegalArgumentException("Lifecycle listener cannot be null");
+        }
+
+        synchronized(mLifecycleLock)
+        {
+            if(mLifecycleQuiescing || !mEnabled || !mTunerStatus.isAvailable() || mTuner == null)
+            {
+                return null;
+            }
+
+            mLifecycleQuiesceListeners.add(listener);
+            return new LifecycleQuiesceRegistration(this, listener);
+        }
+    }
+
+    private void removeLifecycleQuiesceListener(Runnable listener)
+    {
+        synchronized(mLifecycleLock)
+        {
+            mLifecycleQuiesceListeners.remove(listener);
+        }
+    }
+
+    private void setLifecycleQuiescing(boolean quiescing)
+    {
+        synchronized(mLifecycleLock)
+        {
+            mLifecycleQuiescing = quiescing;
+            mLifecycleLock.notifyAll();
+        }
+    }
+
+    private void releaseLifecycleLease()
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(mLifecycleLeaseCount <= 0)
+            {
+                throw new IllegalStateException("Receiver lifecycle lease count underflow");
+            }
+
+            mLifecycleLeaseCount--;
+
+            if(mLifecycleLeaseCount == 0)
+            {
+                mLifecycleLock.notifyAll();
+            }
+        }
+    }
+
+    /**
+     * One bounded ownership handoff around a live tuner.  Close is idempotent so failure cleanup can be simple.
+     */
+    public static final class LifecycleLease implements AutoCloseable
+    {
+        private final DiscoveredTuner mOwner;
+        private final Tuner mTuner;
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+
+        private LifecycleLease(DiscoveredTuner owner, Tuner tuner)
+        {
+            mOwner = owner;
+            mTuner = tuner;
+        }
+
+        public Tuner getTuner()
+        {
+            return mTuner;
+        }
+
+        DiscoveredTuner owner()
+        {
+            return mOwner;
+        }
+
+        @Override
+        public void close()
+        {
+            if(mClosed.compareAndSet(false, true))
+            {
+                mOwner.releaseLifecycleLease();
+            }
+        }
+    }
+
+    /**
+     * Removable one-shot shutdown notification owned by one live receiver instance.
+     */
+    public static final class LifecycleQuiesceRegistration implements AutoCloseable
+    {
+        private final DiscoveredTuner mOwner;
+        private final Runnable mListener;
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+
+        private LifecycleQuiesceRegistration(DiscoveredTuner owner, Runnable listener)
+        {
+            mOwner = owner;
+            mListener = listener;
+        }
+
+        @Override
+        public void close()
+        {
+            if(mClosed.compareAndSet(false, true))
+            {
+                mOwner.removeLifecycleQuiesceListener(mListener);
             }
         }
     }
@@ -270,8 +548,22 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     {
         mErrorMessage = errorMessage;
         mLog.info("Tuner Error - Stopping - " + getId() + " Error: " + errorMessage);
-        stop();
-        setTunerStatus(TunerStatus.ERROR);
+
+        try
+        {
+            stop();
+        }
+        catch(RuntimeException | Error exception)
+        {
+            //The event callback may be the very thread that native shutdown needs to join.  Keep the tuner attached
+            //and quiesced so a control thread can retry the complete shutdown instead of clearing a live USB handle.
+            mErrorMessage = errorMessage + " (shutdown pending: " + exception.getMessage() + ")";
+            mLog.warn("Receiver shutdown remains pending for [{}]", getId(), exception);
+        }
+        finally
+        {
+            setTunerStatus(TunerStatus.ERROR);
+        }
     }
 
     @Override
@@ -315,9 +607,17 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
             if(isEnabled())
             {
+                //An error shutdown leaves the receiver quiesced so no new work can race the native teardown.  Keep
+                //that gate closed while reopening, then explicitly make the successfully restarted tuner available.
+                setLifecycleQuiescing(true);
                 //Change status to enabled so that we can attempt to start, but don't notify listeners yet.
                 setTunerStatus(TunerStatus.ENABLED);
                 start();
+
+                if(hasTuner() && getTunerStatus().isAvailable())
+                {
+                    setLifecycleQuiescing(false);
+                }
             }
             else
             {
@@ -331,6 +631,11 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
      */
     public synchronized void stop()
     {
+        if(!beginLifecycleQuiesce(LIFECYCLE_QUIESCE_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        {
+            throw new IllegalStateException("Receiver is still finishing radio work");
+        }
+
         if(hasTuner())
         {
             mLog.info("Stopping Tuner: " + getId());

@@ -646,8 +646,40 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             throw new ChannelException("No Tuner Available");
         }
 
-        ProcessingChain processingChain = new ProcessingChain(channel, mAliasModel);
+        ProcessingChain processingChain;
 
+        try
+        {
+            processingChain = new ProcessingChain(channel, mAliasModel);
+        }
+        catch(RuntimeException | Error exception)
+        {
+            try
+            {
+                source.stop();
+                source.dispose();
+            }
+            catch(RuntimeException cleanupException)
+            {
+                exception.addSuppressed(cleanupException);
+            }
+            finally
+            {
+                mTunerManager.completeSourceAllocation(source);
+            }
+
+            throw exception;
+        }
+
+        boolean sourceRegistered = false;
+        boolean unregisteredSourceReleased = false;
+        boolean parentHistoryLinked = false;
+        boolean childHistoryLinked = false;
+        boolean eventBusRegistered = false;
+        boolean channelBroadcasterRegistered = false;
+
+        try
+        {
         //Certain decoders aggregate the decode events in the parent channel that also includes any events produced
         //by the traffic channels.  Establish listener registration depending on if this channel is a traffic channel
         //and the request contains the parent event history, or if this is a parent channel and the request contains
@@ -655,16 +687,20 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         if(request.hasParentDecodeEventHistory())
         {
             processingChain.getDecodeEventHistory().addListener(request.getParentDecodeEventHistory());
+            parentHistoryLinked = true;
         }
         else if(request.hasChildDecodeEventHistory())
         {
             request.getChildDecodeEventHistory().addListener(processingChain.getDecodeEventHistory());
+            childHistoryLinked = true;
         }
 
         //Register to receive event bus requests/notifications
         processingChain.getEventBus().register(ChannelProcessingManager.this);
+        eventBusRegistered = true;
 
         mChannelEventBroadcaster.addListener(processingChain);
+        channelBroadcasterRegistered = true;
 
         /* Register global listeners */
         for(Listener<AudioCallEvent> listener : mAudioCallListeners)
@@ -772,6 +808,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         if(addProcessingChain(channel, processingChain))
         {
+            sourceRegistered = true;
+            //The source is now discoverable by synchronous tuner stop requests. Release the provisional allocation
+            //lease before decoder startup, which can perform substantial work but no longer races native shutdown.
+            mTunerManager.completeSourceAllocation(source);
             try
             {
                 processingChain.start();
@@ -800,8 +840,123 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             processingChain.removeRecordingModules();
             mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_STOP));
             mChannelEventBroadcaster.removeListener(processingChain);
+            channelBroadcasterRegistered = false;
             processingChain.getEventBus().unregister(ChannelProcessingManager.this);
+            eventBusRegistered = false;
+
+            if(parentHistoryLinked)
+            {
+                processingChain.getDecodeEventHistory().removeListener(request.getParentDecodeEventHistory());
+                parentHistoryLinked = false;
+            }
+
+            if(childHistoryLinked)
+            {
+                request.getChildDecodeEventHistory().removeListener(processingChain.getDecodeEventHistory());
+                childHistoryLinked = false;
+            }
+
+            source.stop();
             processingChain.dispose();
+            unregisteredSourceReleased = true;
+        }
+        }
+        catch(RuntimeException | Error exception)
+        {
+            if(!sourceRegistered && !unregisteredSourceReleased)
+            {
+                if(channelBroadcasterRegistered)
+                {
+                    try
+                    {
+                        mChannelEventBroadcaster.removeListener(processingChain);
+                        channelBroadcasterRegistered = false;
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+                }
+
+                if(eventBusRegistered)
+                {
+                    try
+                    {
+                        processingChain.getEventBus().unregister(ChannelProcessingManager.this);
+                        eventBusRegistered = false;
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+                }
+
+                if(parentHistoryLinked)
+                {
+                    try
+                    {
+                        processingChain.getDecodeEventHistory().removeListener(request.getParentDecodeEventHistory());
+                        parentHistoryLinked = false;
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+                }
+
+                if(childHistoryLinked)
+                {
+                    try
+                    {
+                        request.getChildDecodeEventHistory().removeListener(processingChain.getDecodeEventHistory());
+                        childHistoryLinked = false;
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+                }
+
+                boolean processingChainOwnsSource = processingChain.hasSource(source);
+
+                try
+                {
+                    source.stop();
+                }
+                catch(RuntimeException cleanupException)
+                {
+                    exception.addSuppressed(cleanupException);
+                }
+
+                if(!processingChainOwnsSource)
+                {
+                    try
+                    {
+                        source.dispose();
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+                }
+
+                try
+                {
+                    //When setSource() already ran, the chain owns and disposes the source exactly once along with all
+                    //partially-created decoder, logger, recorder, broadcaster, and event-bus resources.
+                    processingChain.dispose();
+                }
+                catch(RuntimeException cleanupException)
+                {
+                    exception.addSuppressed(cleanupException);
+                }
+            }
+
+            throw exception;
+        }
+        finally
+        {
+            mTunerManager.completeSourceAllocation(source);
         }
     }
 

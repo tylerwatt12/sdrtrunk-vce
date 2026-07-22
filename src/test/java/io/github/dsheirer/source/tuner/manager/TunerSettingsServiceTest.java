@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.source.SourceException;
@@ -19,6 +21,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.airspy.AirspySampleRate;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerController.Gain;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.EnabledRequest;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.TunerSettingsException;
@@ -61,7 +64,30 @@ class TunerSettingsServiceTest
             Map<String,Object> device = (Map<String,Object>)settings.get("device");
             assertEquals("AIRSPY", device.get("type"));
             assertEquals(10_000_000, device.get("sampleRateHz"));
+            assertEquals(4, ((List<?>)device.get("sampleRates")).size(),
+                "a cold-start disabled Airspy should retain useful standard sample-rate choices");
             assertEquals(0, saves.get(), "read-only snapshots must not write configuration state");
+        }
+    }
+
+    @Test
+    void disabledAirspyUsesPersistedDeviceSampleRates() throws Exception
+    {
+        BlockingDiscoveredTuner discovered = fixture();
+        AirspyTunerConfiguration configuration = (AirspyTunerConfiguration)discovered.getTunerConfiguration();
+        configuration.setAvailableSampleRates(List.of(10_000_000, 4_000_000));
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> device = (Map<String,Object>)settings.get("device");
+            @SuppressWarnings("unchecked")
+            List<Map<String,Object>> sampleRates = (List<Map<String,Object>>)device.get("sampleRates");
+            assertEquals(List.of(10_000_000, 4_000_000), sampleRates.stream()
+                .map(option -> (Integer)option.get("value")).toList());
         }
     }
 
@@ -316,7 +342,7 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void disableCheckAndStateChangeHoldTheTunerLifecycleMonitor() throws Exception
+    void disableDoesNotHoldTheDiscoveryMonitorAcrossChannelAndNativeShutdown() throws Exception
     {
         FakeAirspyTuner tuner = new FakeAirspyTuner();
         RaceDiscoveredTuner discovered = new RaceDiscoveredTuner(tuner, airspyConfiguration());
@@ -337,13 +363,148 @@ class TunerSettingsServiceTest
                     competingLockAcquired.countDown();
                 }
             });
-            assertFalse(competingLockAcquired.await(150, TimeUnit.MILLISECONDS));
+            assertTrue(competingLockAcquired.await(150, TimeUnit.MILLISECONDS));
             discovered.allowDisable.countDown();
             assertEquals(Boolean.FALSE, disabling.get(2, TimeUnit.SECONDS).get("enabled"));
-            assertTrue(discovered.lifecycleMonitorHeldDuringDisable.get());
-            assertTrue(competingLockAcquired.await(2, TimeUnit.SECONDS));
+            assertFalse(discovered.lifecycleMonitorHeldDuringDisable.get());
             contender.join(2_000);
         }
+    }
+
+    @Test
+    void disableQuiescesNewRadioWorkAndWaitsForAnAllocationHandoff() throws Exception
+    {
+        FakeAirspyTuner tuner = new FakeAirspyTuner();
+        ImmediateDiscoveredTuner discovered = new ImmediateDiscoveredTuner(tuner, airspyConfiguration());
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+        DiscoveredTuner.LifecycleLease allocation = discovered.tryAcquireLifecycleLease();
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            long revision = ((Number)service.settings(id).get(2, TimeUnit.SECONDS).get("revision")).longValue();
+            CompletableFuture<Map<String,Object>> disabling = service.setEnabled(id,
+                new EnabledRequest(revision, false, false), () -> true);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+
+            while(!discovered.isLifecycleQuiescing() && System.nanoTime() < deadline)
+            {
+                Thread.onSpinWait();
+            }
+
+            assertTrue(discovered.isLifecycleQuiescing());
+            assertFalse(disabling.isDone());
+            assertNull(discovered.tryAcquireLifecycleLease(), "quiescing must refuse a new source allocation");
+            allocation.close();
+            allocation = null;
+            Map<String,Object> disabled = disabling.get(2, TimeUnit.SECONDS);
+            assertEquals(Boolean.FALSE, disabled.get("enabled"));
+            assertEquals(Boolean.FALSE, disabled.get("shutdownIncomplete"));
+        }
+        finally
+        {
+            if(allocation != null)
+            {
+                allocation.close();
+            }
+        }
+    }
+
+    @Test
+    void runtimeErrorWithIncompleteHardwareStopIsExposedAsRetryableShutdown() throws Exception
+    {
+        ImmediateDiscoveredTuner discovered = new ImmediateDiscoveredTuner(new FailingStopTestTuner(),
+            airspyConfiguration());
+        discovered.setErrorMessage("synthetic receiver error");
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
+            assertEquals(Boolean.TRUE, settings.get("enabled"));
+            assertEquals(Boolean.TRUE, settings.get("lifecycleQuiescing"));
+            assertEquals(Boolean.TRUE, settings.get("shutdownIncomplete"));
+            assertEquals(Boolean.FALSE, settings.get("editable"));
+        }
+    }
+
+    @Test
+    void disableFiresOneShotSourceGapListenersBeforeTunerRemoval() throws Exception
+    {
+        FakeAirspyTuner tuner = new FakeAirspyTuner();
+        ImmediateDiscoveredTuner discovered = new ImmediateDiscoveredTuner(tuner, airspyConfiguration());
+        AtomicInteger callbacks = new AtomicInteger();
+        DiscoveredTuner.LifecycleQuiesceRegistration registration =
+            discovered.tryRegisterLifecycleQuiesceListener(callbacks::incrementAndGet);
+
+        assertTrue(registration != null);
+        discovered.setEnabled(false);
+        assertEquals(1, callbacks.get());
+        assertTrue(discovered.isLifecycleQuiescing());
+        assertFalse(discovered.hasTuner());
+        registration.close();
+        assertEquals(1, callbacks.get(), "closing a fired one-shot listener must not invoke it again");
+    }
+
+    @Test
+    void successfulErrorRestartReopensLifecycleAllocations()
+    {
+        RestartingDiscoveredTuner discovered = new RestartingDiscoveredTuner();
+        discovered.setErrorMessage("synthetic failure");
+        assertTrue(discovered.isLifecycleQuiescing());
+        assertEquals(TunerStatus.ERROR, discovered.getTunerStatus());
+
+        discovered.restart();
+
+        assertEquals(TunerStatus.ENABLED, discovered.getTunerStatus());
+        assertFalse(discovered.isLifecycleQuiescing());
+        DiscoveredTuner.LifecycleLease lease = discovered.tryAcquireLifecycleLease();
+        assertTrue(lease != null);
+        lease.close();
+    }
+
+    @Test
+    void firstEnableStartsAStatusGatedUsbStyleDiscovery()
+    {
+        StatusGatedDiscoveredTuner discovered = new StatusGatedDiscoveredTuner();
+        discovered.setEnabled(false);
+
+        discovered.setEnabled(true);
+
+        assertTrue(discovered.hasTuner());
+        assertTrue(discovered.isEnabled());
+        assertEquals(TunerStatus.ENABLED, discovered.getTunerStatus());
+        assertFalse(discovered.isLifecycleQuiescing());
+        assertEquals(1, discovered.starts.get());
+    }
+
+    @Test
+    void failedStatusGatedEnableCanRetryAndPublishesSuccessfulEnable()
+    {
+        FailingStatusGatedDiscoveredTuner discovered = new FailingStatusGatedDiscoveredTuner();
+        AtomicInteger enabledNotifications = new AtomicInteger();
+        discovered.setEnabled(false);
+        discovered.addTunerStatusListener((tuner, previous, current) ->
+        {
+            if(current == TunerStatus.ENABLED)
+            {
+                enabledNotifications.incrementAndGet();
+            }
+        });
+
+        assertThrows(IllegalStateException.class, () -> discovered.setEnabled(true));
+        assertFalse(discovered.isEnabled());
+        assertFalse(discovered.hasTuner());
+        assertEquals(TunerStatus.ERROR, discovered.getTunerStatus());
+
+        discovered.setEnabled(true);
+
+        assertTrue(discovered.isEnabled());
+        assertTrue(discovered.hasTuner());
+        assertEquals(TunerStatus.ENABLED, discovered.getTunerStatus());
+        assertEquals(1, enabledNotifications.get(), "only the completed startup should be published as enabled");
+        assertEquals(2, discovered.starts.get());
     }
 
     @Test
@@ -415,6 +576,41 @@ class TunerSettingsServiceTest
             Map<String,Object> device = (Map<String,Object>)updated.get("device");
             assertEquals(AirspyTunerController.DEFAULT_SAMPLE_RATE.getRate(), device.get("sampleRateHz"));
             assertEquals(AirspyTunerController.DEFAULT_SAMPLE_RATE.getRate(), configuration.getSampleRate());
+        }
+    }
+
+    @Test
+    void customAirspyGainKeepsTheLastPresetValueForSwitchingBack() throws Exception
+    {
+        FakeAirspyTuner tuner = new FakeAirspyTuner();
+        AirspyTunerConfiguration configuration = airspyConfiguration();
+        ImmediateDiscoveredTuner discovered = new ImmediateDiscoveredTuner(tuner, configuration);
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            long revision = ((Number)service.settings(id).get(2, TimeUnit.SECONDS).get("revision")).longValue();
+            UpdateRequest custom = new UpdateRequest(revision, 0.0, true,
+                AirspyTunerController.FREQUENCY_DEFAULT,
+                AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ,
+                AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ, false, "AIRSPY",
+                AirspyTunerController.DEFAULT_SAMPLE_RATE.getRate(), "CUSTOM", 14, 10, 10, 8,
+                false, false, null, null, null, null, null);
+            Map<String,Object> updated = service.update(id, custom, () -> true).get(2, TimeUnit.SECONDS);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> device = (Map<String,Object>)updated.get("device");
+            assertEquals("CUSTOM", device.get("gainMode"));
+            assertEquals(14, device.get("gain"));
+            assertEquals(Gain.CUSTOM, configuration.getGain());
+
+            long customRevision = ((Number)updated.get("revision")).longValue();
+            Map<String,Object> restored = service.update(id,
+                airspyRequest(customRevision, 0.0, true, 14), () -> true).get(2, TimeUnit.SECONDS);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> restoredDevice = (Map<String,Object>)restored.get("device");
+            assertEquals("LINEARITY", restoredDevice.get("gainMode"));
+            assertEquals(14, restoredDevice.get("gain"));
         }
     }
 
@@ -660,6 +856,96 @@ class TunerSettingsServiceTest
         @Override
         public void start()
         {
+        }
+    }
+
+    private static class RestartingDiscoveredTuner extends DiscoveredTuner
+    {
+        private RestartingDiscoveredTuner()
+        {
+            mTuner = new TestTuner(null);
+            mTunerConfiguration = airspyConfiguration();
+        }
+
+        @Override
+        public TunerClass getTunerClass()
+        {
+            return TunerClass.AIRSPY;
+        }
+
+        @Override
+        public String getId()
+        {
+            return "Airspy restart discovery";
+        }
+
+        @Override
+        public void start()
+        {
+            if(mTuner == null)
+            {
+                mTuner = new TestTuner(null);
+            }
+        }
+    }
+
+    private static class StatusGatedDiscoveredTuner extends DiscoveredTuner
+    {
+        protected final AtomicInteger starts = new AtomicInteger();
+
+        private StatusGatedDiscoveredTuner()
+        {
+            mTuner = new TestTuner(null);
+        }
+
+        @Override
+        public TunerClass getTunerClass()
+        {
+            return TunerClass.AIRSPY;
+        }
+
+        @Override
+        public String getId()
+        {
+            return "Status-gated USB discovery";
+        }
+
+        @Override
+        public void start()
+        {
+            if(isAvailable() && !hasTuner())
+            {
+                starts.incrementAndGet();
+                mTuner = new TestTuner(null);
+            }
+        }
+    }
+
+    private static class FailingStatusGatedDiscoveredTuner extends StatusGatedDiscoveredTuner
+    {
+        @Override
+        public void start()
+        {
+            if(starts.getAndIncrement() == 0)
+            {
+                throw new IllegalStateException("synthetic startup failure");
+            }
+
+            mTuner = new TestTuner(null);
+        }
+    }
+
+    private static class FailingStopTestTuner extends TestTuner
+    {
+        private FailingStopTestTuner() throws SourceException
+        {
+            super(null);
+        }
+
+        @Override
+        public synchronized void stop()
+        {
+            throw new IllegalStateException("synthetic native cleanup failure");
         }
     }
 

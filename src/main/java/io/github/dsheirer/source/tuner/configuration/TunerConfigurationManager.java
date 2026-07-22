@@ -23,6 +23,8 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
@@ -128,10 +130,22 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
                     if(tunerConfiguration != null)
                     {
                         discoveredTuner.setTunerConfiguration(tunerConfiguration);
+                        captureHardwareCapabilities(discoveredTuner, tunerConfiguration);
                         saveConfigurations();
                     }
                 }
             }
+        }
+    }
+
+    private static void captureHardwareCapabilities(DiscoveredTuner discoveredTuner,
+                                                    TunerConfiguration tunerConfiguration)
+    {
+        if(tunerConfiguration instanceof AirspyTunerConfiguration airspyConfiguration &&
+            discoveredTuner.getTuner().getTunerController() instanceof AirspyTunerController airspyController)
+        {
+            airspyConfiguration.setAvailableSampleRates(airspyController.getSampleRates().stream()
+                .map(sampleRate -> sampleRate.getRate()).toList());
         }
     }
 

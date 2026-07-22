@@ -77,6 +77,11 @@ public class PassThroughSourceManager extends ChannelSourceManager
         for(TunerChannelSource tunerChannelSource: toStop)
         {
             MyEventBus.getGlobalEventBus().post(new ChannelStopProcessingRequest(tunerChannelSource));
+
+            if(mTunerChannelSources.contains(tunerChannelSource))
+            {
+                tunerChannelSource.stop();
+            }
         }
     }
 

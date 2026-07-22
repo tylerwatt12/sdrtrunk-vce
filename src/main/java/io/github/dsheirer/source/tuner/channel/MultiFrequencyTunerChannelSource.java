@@ -20,6 +20,8 @@
 package io.github.dsheirer.source.tuner.channel;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.Source;
@@ -27,6 +29,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
+import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
@@ -45,7 +48,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
 {
 
     private TunerManager mTunerManager;
-    private TunerChannelSource mTunerChannelSource;
+    private volatile TunerChannelSource mTunerChannelSource;
     private List<Long> mFrequencies;
     private List<Long> mLockedFrequencies = new ArrayList<>();
     private int mFrequencyListPointer = 0;
@@ -56,7 +59,11 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     private Listener<Heartbeat> mHeartbeatListener;
     private String mPreferredTuner;
     private AtomicBoolean mChangingChannels = new AtomicBoolean();
-    private boolean mStarted;
+    private volatile boolean mStarted;
+    private final Object mSourceLock = new Object();
+    private DiscoveredTuner mSourceLifecycleOwner;
+    private DiscoveredTuner.LifecycleQuiesceRegistration mGapLifecycleRegistration;
+    private long mGapLifecycleGeneration;
     private ConsumerSourceEventAdapter mConsumerSourceEventAdapter = new ConsumerSourceEventAdapter();
 
     public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
@@ -73,6 +80,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         mPreferredTuner = preferredTuner;
         mMinimumFrequency = minimumFrequency;
         mMaximumFrequency = maximumFrequency;
+        mSourceLifecycleOwner = mTunerManager.getSourceAllocationOwner(tunerChannelSource);
     }
 
     /**
@@ -81,29 +89,40 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
      */
     private void rotate()
     {
-        if(mChangingChannels.compareAndSet(false, true))
+        synchronized(mSourceLock)
         {
-            long frequency = getNextFrequency();
-
-            if(frequency == 0)
+            if(mChangingChannels.compareAndSet(false, true))
             {
-                mChangingChannels.set(false);
-                return;
-            }
+                long frequency = getNextFrequency();
 
-            if(mTunerChannelSource != null)
-            {
-                //Shutdown the existing tuner channel source
-                mTunerChannelSource.stop();
-                mTunerChannelSource.setListener(null);
-                mTunerChannelSource.removeSourceEventListener();
-                mTunerChannelSource.removeHeartbeatListener(mHeartbeatListener);
-                mTunerChannelSource.dispose();
-                mTunerChannelSource = null;
-            }
+                if(frequency == 0)
+                {
+                    mChangingChannels.set(false);
+                    return;
+                }
 
-            //Request the next tuner channel source
-            getNextSource(getTunerChannel(frequency));
+                if(mTunerChannelSource != null)
+                {
+                    //Once the concrete source is removed, the normal channel manager cannot enumerate this wrapper.
+                    //Register a tiny one-shot owner hook before creating that gap.
+                    if(!registerGapLifecycleListener())
+                    {
+                        sourceReceiverQuiescing();
+                        return;
+                    }
+
+                    //Shutdown the existing tuner channel source
+                    mTunerChannelSource.stop();
+                    mTunerChannelSource.setListener(null);
+                    mTunerChannelSource.removeSourceEventListener();
+                    mTunerChannelSource.removeHeartbeatListener(mHeartbeatListener);
+                    mTunerChannelSource.dispose();
+                    mTunerChannelSource = null;
+                }
+
+                //Request the next tuner channel source
+                getNextSourceLocked(getTunerChannel(frequency));
+            }
         }
     }
 
@@ -116,27 +135,82 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
      */
     private void getNextSource(TunerChannel nextChannel)
     {
+        synchronized(mSourceLock)
+        {
+            getNextSourceLocked(nextChannel);
+        }
+    }
+
+    private void getNextSourceLocked(TunerChannel nextChannel)
+    {
         if(mStarted)
         {
             Source source = mTunerManager.getSource(nextChannel, mChannelSpecification, mPreferredTuner, mThreadName,
                 getAllFrequencyChannels());
+            DiscoveredTuner nextLifecycleOwner = mTunerManager.getSourceAllocationOwner(source);
 
-            if(source instanceof TunerChannelSource)
+            try
             {
-                mTunerChannelSource = (TunerChannelSource)source;
-                mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
-                mTunerChannelSource.setListener(mComplexSamplesListener);
-                mTunerChannelSource.addHeartbeatListener(mHeartbeatListener);
-                mTunerChannelSource.start();
-                mTunerChannel = nextChannel;
-                mChangingChannels.set(false);
+                if(source instanceof TunerChannelSource tunerChannelSource && mStarted)
+                {
+                    if(nextLifecycleOwner == null)
+                    {
+                        throw new IllegalStateException("Receiver began stopping during frequency rotation");
+                    }
 
-                getSourceEventListener().receive(SourceEvent.frequencyRotationSuccessNotification(this, nextChannel.getFrequency()));
+                    mTunerChannelSource = tunerChannelSource;
+                    mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
+                    mTunerChannelSource.setListener(mComplexSamplesListener);
+                    mTunerChannelSource.addHeartbeatListener(mHeartbeatListener);
+                    mTunerChannelSource.start();
+                    mTunerChannel = nextChannel;
+                    mSourceLifecycleOwner = nextLifecycleOwner;
+                    closeGapLifecycleRegistration();
+                    mChangingChannels.set(false);
+
+                    getSourceEventListener().receive(SourceEvent.frequencyRotationSuccessNotification(this,
+                        nextChannel.getFrequency()));
+                }
+                else if(source instanceof TunerChannelSource tunerChannelSource)
+                {
+                    tunerChannelSource.stop();
+                    tunerChannelSource.dispose();
+                }
+            }
+            catch(RuntimeException exception)
+            {
+                TunerChannelSource failedSource = mTunerChannelSource != null ? mTunerChannelSource :
+                    source instanceof TunerChannelSource tunerChannelSource ? tunerChannelSource : null;
+
+                if(failedSource != null)
+                {
+                    try
+                    {
+                        failedSource.stop();
+                        failedSource.dispose();
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+
+                    mTunerChannelSource = null;
+                }
+
+                if(mStarted && mGapLifecycleRegistration == null && !registerGapLifecycleListener())
+                {
+                    sourceReceiverQuiescing();
+                }
+            }
+            finally
+            {
+                //The wrapper now exposes the underlying source to stop requests, so native shutdown may proceed.
+                mTunerManager.completeSourceAllocation(source);
             }
 
             //If we don't get a channel source because a tuner is not available or none of the available tuners can
             //support the frequency, then persistently attempt to get a source by iterating the frequency list
-            if(mTunerChannelSource == null)
+            if(mTunerChannelSource == null && mStarted)
             {
                 getSourceEventListener().receive(SourceEvent.frequencyRotationFailureNotification(this, nextChannel.getFrequency()));
                 ThreadPool.SCHEDULED.schedule(() -> getNextSource(getTunerChannel(getNextFrequency())), 500, TimeUnit.MILLISECONDS);
@@ -144,28 +218,128 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         }
     }
 
+    /**
+     * Indicates whether this wrapper currently owns the supplied underlying tuner source.
+     */
+    public boolean hasSource(Source source)
+    {
+        return source == this || mTunerChannelSource == source;
+    }
+
+    private void sourceReceiverQuiescing()
+    {
+        boolean notify;
+
+        synchronized(mSourceLock)
+        {
+            notify = sourceReceiverQuiescingLocked();
+        }
+
+        if(notify)
+        {
+            MyEventBus.getGlobalEventBus().post(new ChannelStopProcessingRequest(this));
+        }
+    }
+
+    private void sourceReceiverQuiescing(long generation)
+    {
+        boolean notify = false;
+
+        synchronized(mSourceLock)
+        {
+            //An old owner's quiesce callback may already have been copied for invocation while this wrapper finishes
+            //assigning a source from a new receiver. Ignore that stale callback once the guarded gap has closed.
+            if(generation == mGapLifecycleGeneration && mGapLifecycleRegistration != null)
+            {
+                notify = sourceReceiverQuiescingLocked();
+            }
+        }
+
+        if(notify)
+        {
+            MyEventBus.getGlobalEventBus().post(new ChannelStopProcessingRequest(this));
+        }
+    }
+
+    private boolean sourceReceiverQuiescingLocked()
+    {
+        if(!mStarted && mGapLifecycleRegistration == null)
+        {
+            return false;
+        }
+
+        //This callback is especially important during the source-less interval between rotated frequencies, when a
+        //tuner channel manager has no concrete source it can enumerate for its normal stop request.
+        mStarted = false;
+        mChangingChannels.set(false);
+        closeGapLifecycleRegistration();
+        return true;
+    }
+
+    private boolean registerGapLifecycleListener()
+    {
+        closeGapLifecycleRegistration();
+        long generation = ++mGapLifecycleGeneration;
+        mGapLifecycleRegistration = mSourceLifecycleOwner != null ?
+            mSourceLifecycleOwner.tryRegisterLifecycleQuiesceListener(() -> sourceReceiverQuiescing(generation)) : null;
+        return mGapLifecycleRegistration != null;
+    }
+
+    private void closeGapLifecycleRegistration()
+    {
+        mGapLifecycleGeneration++;
+        DiscoveredTuner.LifecycleQuiesceRegistration registration = mGapLifecycleRegistration;
+        mGapLifecycleRegistration = null;
+
+        if(registration != null)
+        {
+            registration.close();
+        }
+    }
+
     @Override
     public void start()
     {
-        //The initial source should not be null
-        if(mTunerChannelSource != null)
+        synchronized(mSourceLock)
         {
-            mTunerChannelSource.start();
-            mStarted = true;
+            //The initial source should not be null
+            if(mTunerChannelSource != null)
+            {
+                mTunerChannelSource.start();
+                mStarted = true;
+            }
         }
     }
 
     @Override
     public void stop()
     {
-        mStarted = false;
-
-        if(mTunerChannelSource != null)
+        synchronized(mSourceLock)
         {
-            mTunerChannelSource.stop();
-            mTunerChannelSource.removeSourceEventListener();
-            mTunerChannelSource = null;
+            mStarted = false;
+            mChangingChannels.set(false);
+            closeGapLifecycleRegistration();
+            mSourceLifecycleOwner = null;
+
+            if(mTunerChannelSource != null)
+            {
+                mTunerChannelSource.stop();
+                mTunerChannelSource.removeSourceEventListener();
+                mTunerChannelSource = null;
+            }
         }
+    }
+
+    @Override
+    protected void performDisposal()
+    {
+        synchronized(mSourceLock)
+        {
+            closeGapLifecycleRegistration();
+            mSourceLifecycleOwner = null;
+        }
+
+        super.performDisposal();
     }
 
     /**

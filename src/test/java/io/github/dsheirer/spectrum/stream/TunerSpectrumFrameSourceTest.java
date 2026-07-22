@@ -119,6 +119,22 @@ class TunerSpectrumFrameSourceTest
     }
 
     @Test
+    void closeRetriesATransientListenerDetachFailure()
+    {
+        RemoveOnceThrowController controller = new RemoveOnceThrowController();
+        RemoveOnceThrowTuner tuner = new RemoveOnceThrowTuner(controller);
+        TunerSpectrumFrameSource source = new TunerSpectrumFrameSource(
+            new TunerSpectrumFrameSource.Configuration(DFTSize.FFT00512, 20), () -> List.of(tuner));
+
+        source.start(frame -> {});
+        source.close();
+
+        assertEquals(2, controller.removeCount);
+        assertFalse(controller.hasBufferListeners());
+        assertTrue(source.isControlExecutorTerminated());
+    }
+
+    @Test
     void selectsTunerByNonIdentifyingClassAndFailsClosedWhenUnavailable() throws Exception
     {
         String originalPreferred = System.getProperty(TunerSpectrumFrameSource.PREFERRED_TUNER_PROPERTY);
@@ -515,6 +531,69 @@ class TunerSpectrumFrameSourceTest
         private boolean isTestListenerRegistered()
         {
             return mTestListenerRegistered;
+        }
+    }
+
+    private static class RemoveOnceThrowController extends TestTunerController
+    {
+        private int removeCount;
+
+        @Override
+        public void removeBufferListener(Listener<INativeBuffer> listener)
+        {
+            removeCount++;
+
+            if(removeCount == 1)
+            {
+                throw new IllegalStateException("simulated transient detach failure");
+            }
+
+            super.removeBufferListener(listener);
+        }
+    }
+
+    private static class RemoveOnceThrowTuner extends Tuner
+    {
+        private RemoveOnceThrowTuner(RemoveOnceThrowController controller)
+        {
+            super(controller, null);
+            setChannelSourceManager(new TestPolyphaseChannelSourceManager(controller));
+        }
+
+        @Override
+        public int getMaximumUSBBitsPerSecond()
+        {
+            return 0;
+        }
+
+        @Override
+        public String getUniqueID()
+        {
+            return "remove-once-throw";
+        }
+
+        @Override
+        public TunerClass getTunerClass()
+        {
+            return TunerClass.TEST_TUNER;
+        }
+
+        @Override
+        public TunerType getTunerType()
+        {
+            return TunerType.TEST;
+        }
+
+        @Override
+        public String getPreferredName()
+        {
+            return "Remove Once Throw";
+        }
+
+        @Override
+        public double getSampleSize()
+        {
+            return 16;
         }
     }
 

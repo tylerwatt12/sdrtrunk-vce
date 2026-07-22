@@ -164,6 +164,14 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         for(TunerChannelSource tunerChannelSource: toStop)
         {
             MyEventBus.getGlobalEventBus().post(new ChannelStopProcessingRequest(tunerChannelSource));
+
+            //RF probes and a source still being handed to a processing chain have no registered channel owner.  The
+            //global stop request is synchronous; if it did not remove this source, stop it directly before the tuner
+            //controller and USB handle are released.
+            if(mChannelSources.contains(tunerChannelSource))
+            {
+                tunerChannelSource.stop();
+            }
         }
     }
 

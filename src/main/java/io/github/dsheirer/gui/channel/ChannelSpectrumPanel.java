@@ -610,23 +610,50 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
                 RF_PROBE_BANDWIDTH / 2.0d, RF_PROBE_BANDWIDTH * 0.60d),
             null, "now-playing-rf-probe-" + frequency);
 
-        if(source instanceof TunerChannelSource tunerChannelSource)
+        try
         {
-            mRfProbeSource = tunerChannelSource;
-            mRfProbeSource.setSourceEventListener(mSourceEventProcessor);
-            mRfProbeSource.setListener(mSampleStreamTapModule);
-            mRfProbeSource.start();
-            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
-            mFrequencyOverlayPanel.process(SourceEvent.frequencyChange(mRfProbeSource, mRfProbeSource.getFrequency()));
-            mFrequencyOverlayPanel.process(SourceEvent.sampleRateChange(mRfProbeSource.getSampleRate()));
-            mFrequencyOverlayPanel.setChannelBandwidth(RF_PROBE_BANDWIDTH);
-            updateViewedFrequency(mRfProbeSource.getFrequency());
+            if(source instanceof TunerChannelSource tunerChannelSource)
+            {
+                mRfProbeSource = tunerChannelSource;
+                mRfProbeSource.setSourceEventListener(mSourceEventProcessor);
+                mRfProbeSource.setListener(mSampleStreamTapModule);
+                mRfProbeSource.start();
+                mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+                mFrequencyOverlayPanel.process(SourceEvent.frequencyChange(mRfProbeSource,
+                    mRfProbeSource.getFrequency()));
+                mFrequencyOverlayPanel.process(SourceEvent.sampleRateChange(mRfProbeSource.getSampleRate()));
+                mFrequencyOverlayPanel.setChannelBandwidth(RF_PROBE_BANDWIDTH);
+                updateViewedFrequency(mRfProbeSource.getFrequency());
+            }
+            else
+            {
+                mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
+                updateViewedFrequency(frequency);
+                mFrequencyOverlayPanel.setChannelBandwidth(RF_PROBE_BANDWIDTH);
+            }
         }
-        else
+        catch(RuntimeException | Error exception)
         {
-            mRightCardLayout.show(mRightCardPanel, CARD_EMPTY);
-            updateViewedFrequency(frequency);
-            mFrequencyOverlayPanel.setChannelBandwidth(RF_PROBE_BANDWIDTH);
+            if(mRfProbeSource != null)
+            {
+                try
+                {
+                    mRfProbeSource.stop();
+                    mRfProbeSource.dispose();
+                }
+                catch(RuntimeException cleanupException)
+                {
+                    exception.addSuppressed(cleanupException);
+                }
+
+                mRfProbeSource = null;
+            }
+
+            throw exception;
+        }
+        finally
+        {
+            mTunerManager.completeSourceAllocation(source);
         }
 
         updateInspectRfButton();

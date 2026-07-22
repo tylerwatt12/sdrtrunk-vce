@@ -92,13 +92,13 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
             }
             catch(SourceException se)
             {
-                mRunning.set(false);
+                cleanupFailedStart(se);
                 //Rethrow the source exception
                 throw se;
             }
             catch(Exception e)
             {
-                mRunning.set(false);
+                cleanupFailedStart(e);
                 //Wrap any other exceptions in a new source exception
                 mLog.error("Error starting " + getTunerClass() + " tuner", e);
                 throw new SourceException("Unable to start " + getTunerClass() + " tuner", e);
@@ -107,11 +107,38 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
     }
 
     /**
+     * Releases a partially-open controller after startup fails.  If native cleanup itself fails, retain the running
+     * state so the discovered tuner error path can retry the complete stop instead of losing the USB handle.
+     */
+    private void cleanupFailedStart(Throwable startupFailure)
+    {
+        try
+        {
+            //The channel manager is constructed before the controller starts and owns listeners/executors even when
+            //no channel was ever allocated.  Tear it down before declaring this failed tuner stopped.
+            if(getChannelSourceManager() != null)
+            {
+                getChannelSourceManager().stopAllChannels();
+                getChannelSourceManager().dispose();
+                mChannelSourceManager = null;
+            }
+
+            getTunerController().stop();
+            getTunerController().dispose();
+            mRunning.set(false);
+        }
+        catch(RuntimeException | Error cleanupFailure)
+        {
+            startupFailure.addSuppressed(cleanupFailure);
+        }
+    }
+
+    /**
      * Perform shutdown and disposal operations.
      */
-    public void stop()
+    public synchronized void stop()
     {
-        if(mRunning.compareAndSet(true, false))
+        if(mRunning.get())
         {
             broadcast(new TunerEvent(this, Event.NOTIFICATION_SHUTTING_DOWN));
 
@@ -127,6 +154,10 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
 
             mTunerEventBroadcaster.clear();
             mTunerErrorListener = null;
+            //Only advertise stopped after every channel and native controller stage completed.  If an exception is
+            //raised above, the running state remains true so a later lifecycle command can retry cleanup instead of
+            //silently abandoning a partially-open device.
+            mRunning.set(false);
         }
     }
 
@@ -151,11 +182,19 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
     @Override
     public void tunerRemoved()
     {
-        stop();
-
-        if(mTunerErrorListener != null)
+        ITunerErrorListener tunerErrorListener = mTunerErrorListener;
+        try
         {
-            mTunerErrorListener.tunerRemoved();
+            stop();
+        }
+        finally
+        {
+            //Physical removal must be reported even if native cancellation is incomplete.  The stop exception still
+            //propagates so the receiver remains quarantined for cleanup rather than being reported as safely closed.
+            if(tunerErrorListener != null)
+            {
+                tunerErrorListener.tunerRemoved();
+            }
         }
     }
 

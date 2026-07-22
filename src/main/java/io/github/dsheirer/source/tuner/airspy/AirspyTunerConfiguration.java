@@ -21,6 +21,8 @@ package io.github.dsheirer.source.tuner.airspy;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController.Gain;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import java.util.ArrayList;
+import java.util.List;
 
 public class AirspyTunerConfiguration extends TunerConfiguration
 {
@@ -31,6 +33,7 @@ public class AirspyTunerConfiguration extends TunerConfiguration
     private int mLNAGain = AirspyTunerController.LNA_GAIN_DEFAULT;
     private boolean mMixerAGC = false;
     private boolean mLNAAGC = false;
+    private List<Integer> mAvailableSampleRates = new ArrayList<>();
 
     /**
      * Default constructor for deserialization
@@ -59,6 +62,21 @@ public class AirspyTunerConfiguration extends TunerConfiguration
     public void setSampleRate(int sampleRate)
     {
         mSampleRate = sampleRate;
+    }
+
+    /**
+     * Last sample-rate capabilities reported by this receiver.  Retaining this small device fact lets a disabled
+     * receiver expose its valid choices without reopening USB hardware merely to render a settings page.
+     */
+    public List<Integer> getAvailableSampleRates()
+    {
+        return List.copyOf(mAvailableSampleRates);
+    }
+
+    public void setAvailableSampleRates(List<Integer> availableSampleRates)
+    {
+        mAvailableSampleRates = availableSampleRates != null ? availableSampleRates.stream()
+            .filter(rate -> rate != null && rate > 0).distinct().toList() : new ArrayList<>();
     }
 
     public Gain getGain()

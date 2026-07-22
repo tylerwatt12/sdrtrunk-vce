@@ -27,6 +27,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /**
@@ -128,6 +129,51 @@ public final class TunerRegistry
 
         String requested = id.strip().toUpperCase(Locale.ROOT);
         return availableTargets().stream().filter(target -> target.id().equals(requested)).findFirst();
+    }
+
+    /**
+     * Acquires one available runtime target and prevents its native controller from stopping until the returned
+     * handle is closed.  Production discovery entries use a real lifecycle lease; legacy test adapters use a no-op
+     * lease because they have no discovered-tuner owner.
+     */
+    public Optional<LeasedTunerTarget> acquireAvailableTarget(String id)
+    {
+        if(id == null)
+        {
+            return Optional.empty();
+        }
+
+        String requested = id.strip().toUpperCase(Locale.ROOT);
+        Optional<Entry> resolved = entries().stream().filter(entry -> entry.snapshot().id().equals(requested))
+            .filter(entry -> entry.tuner() != null && entry.snapshot().available()).findFirst();
+
+        if(resolved.isEmpty())
+        {
+            return Optional.empty();
+        }
+
+        Entry entry = resolved.get();
+
+        if(entry.discoveredTuner() == null)
+        {
+            return Optional.of(new LeasedTunerTarget(entry.snapshot().id(), entry.snapshot().label(),
+                entry.snapshot().tunerClass(), entry.tuner(), null));
+        }
+
+        DiscoveredTuner.LifecycleLease lifecycleLease = entry.discoveredTuner().tryAcquireLifecycleLease();
+
+        if(lifecycleLease == null || lifecycleLease.getTuner() != entry.tuner())
+        {
+            if(lifecycleLease != null)
+            {
+                lifecycleLease.close();
+            }
+
+            return Optional.empty();
+        }
+
+        return Optional.of(new LeasedTunerTarget(entry.snapshot().id(), entry.snapshot().label(),
+            entry.snapshot().tunerClass(), entry.tuner(), lifecycleLease));
     }
 
     /**
@@ -256,7 +302,8 @@ public final class TunerRegistry
         String id = opaqueId(tunerClass, discoveryIdentity);
         Tuner tuner = discoveredTuner.getTuner();
         TunerStatus status = Objects.requireNonNullElse(discoveredTuner.getTunerStatus(), TunerStatus.ERROR);
-        boolean available = status.isAvailable() && tuner != null;
+        boolean available = discoveredTuner.isEnabled() && !discoveredTuner.isLifecycleQuiescing() &&
+            status.isAvailable() && tuner != null;
         TunerConfiguration configuration = discoveredTuner.getTunerConfiguration();
         TunerType tunerType = tunerType(configuration);
         String label = label(tunerClass, tunerType);
@@ -407,6 +454,58 @@ public final class TunerRegistry
             Objects.requireNonNull(label, "Available tuner target label cannot be null");
             Objects.requireNonNull(tunerClass, "Available tuner target class cannot be null");
             Objects.requireNonNull(tuner, "Available tuner target cannot be null");
+        }
+    }
+
+    /**
+     * Internal runtime target whose close releases shutdown ownership.  Never serialize this value.
+     */
+    public static final class LeasedTunerTarget implements AutoCloseable
+    {
+        private final String mId;
+        private final String mLabel;
+        private final TunerClass mTunerClass;
+        private final Tuner mTuner;
+        private final DiscoveredTuner.LifecycleLease mLifecycleLease;
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+
+        private LeasedTunerTarget(String id, String label, TunerClass tunerClass, Tuner tuner,
+                                  DiscoveredTuner.LifecycleLease lifecycleLease)
+        {
+            mId = Objects.requireNonNull(id);
+            mLabel = Objects.requireNonNull(label);
+            mTunerClass = Objects.requireNonNull(tunerClass);
+            mTuner = Objects.requireNonNull(tuner);
+            mLifecycleLease = lifecycleLease;
+        }
+
+        public String id()
+        {
+            return mId;
+        }
+
+        public String label()
+        {
+            return mLabel;
+        }
+
+        public TunerClass tunerClass()
+        {
+            return mTunerClass;
+        }
+
+        public Tuner tuner()
+        {
+            return mTuner;
+        }
+
+        @Override
+        public void close()
+        {
+            if(mClosed.compareAndSet(false, true) && mLifecycleLease != null)
+            {
+                mLifecycleLease.close();
+            }
         }
     }
 

@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.usb4java.Context;
@@ -68,7 +69,11 @@ public abstract class USBTunerController extends TunerController
     private TransferManager mTransferManager = new TransferManager();
     private UsbEventProcessor mEventProcessor = new UsbEventProcessor();
     private AtomicBoolean mStreaming = new AtomicBoolean();
-    private boolean mRunning = false;
+    private AtomicBoolean mStreamingShutdownComplete = new AtomicBoolean(true);
+    private AtomicBoolean mStopping = new AtomicBoolean();
+    private ReentrantLock mStreamingLifecycleLock = new ReentrantLock();
+    private volatile boolean mRunning = false;
+    private volatile Thread mNativeCleanupThread;
 
     /**
      * USB tuner controller class. Provides auto-start and auto-stop function when complex buffer listeners are added
@@ -150,113 +155,203 @@ public abstract class USBTunerController extends TunerController
             throw new SourceException("Device cannot be reused once it has been shutdown");
         }
 
-        int status = LibUsb.init(mDeviceContext);
-
-        if(status != LibUsb.SUCCESS)
-        {
-            throw new SourceException("Can't initialize libusb library - " + LibUsb.errorName(status));
-        }
-
-        mDevice = findDevice();
-
-        if(mDevice == null)
-        {
-            throw new SourceException("Couldn't find USB device at bus [" + mBus + "] port [" + mPortAddress + "]");
-        }
-
-        mDeviceDescriptor = new DeviceDescriptor();
-        status = LibUsb.getDeviceDescriptor(mDevice, mDeviceDescriptor);
-
-        if(status != LibUsb.SUCCESS)
-        {
-            mDeviceDescriptor = null;
-            throw new SourceException("Can't obtain tuner's device descriptor - " + LibUsb.errorName(status));
-        }
-
-        mDeviceHandle = new DeviceHandle();
-        status = LibUsb.open(mDevice, mDeviceHandle);
-
-        //Now that we have opened the device and added an additional reference, remove the original reference placed on
-        // the device during the findDevice() operation
-        LibUsb.unrefDevice(mDevice);
-
-        if(status == LibUsb.ERROR_ACCESS)
-        {
-            mDeviceHandle = null;
-            mDeviceDescriptor = null;
-
-            mLog.error("Access to USB tuner denied - (windows) reinstall zadig driver or (linux) blacklist driver and/or check udev rules");
-            throw new SourceException("access denied - if using linux, blacklist the default driver and/or install udev rules");
-        }
-        else if(status != LibUsb.SUCCESS)
-        {
-            mDeviceHandle = null;
-            mDeviceDescriptor = null;
-
-            mLog.error("Can't open USB tuner - check driver or Linux udev rules");
-            throw new SourceException("Can't open USB tuner - reinstall driver? - " + LibUsb.errorName(status));
-        }
-
-        //Detach the kernel driver if active and detach is supported.  Otherwise, let the claim interface fail.
-        status = LibUsb.kernelDriverActive(mDeviceHandle, USB_INTERFACE);
-
-        if(status == 1) //kernel driver is attached and detach operation is supported
-        {
-            status = LibUsb.detachKernelDriver(mDeviceHandle, USB_INTERFACE);
-
-            if(status != LibUsb.SUCCESS)
-            {
-                mLog.error("Unable to detach kernel driver for USB tuner device - bus:" + mBus + " port:" + mPortAddress);
-                mDeviceHandle = null;
-                mDeviceDescriptor = null;
-                throw new SourceException("Can't detach kernel driver");
-            }
-        }
-
-        //Set the configuration which also invokes a soft reset on the device
-        status = LibUsb.setConfiguration(mDeviceHandle, USB_CONFIGURATION);
-
-        if(status == LibUsb.ERROR_BUSY)
-        {
-            mLog.error("Unable to set USB configuration on tuner - device is busy (in use by another application)");
-            mDeviceHandle = null;
-            mDeviceDescriptor = null;
-            throw new SourceException("USB tuner is in-use by another application");
-        }
-        else if(status != LibUsb.SUCCESS)
-        {
-            mDeviceHandle = null;
-            mDeviceDescriptor = null;
-            throw new SourceException("Can't set configuration (ie reset) on the USB tuner - " + LibUsb.errorName(status));
-        }
-
-        //Claim the interface
-        status = LibUsb.claimInterface(mDeviceHandle, USB_INTERFACE);
-
-        if(status == LibUsb.ERROR_BUSY)
-        {
-            mDeviceHandle = null;
-            mDeviceDescriptor = null;
-            throw new SourceException("USB tuner is in-use by another application");
-        }
-        else if(status != LibUsb.SUCCESS)
-        {
-            mDeviceHandle = null;
-            mDeviceDescriptor = null;
-            throw new SourceException("Can't claim interface on USB tuner - " + LibUsb.errorName(status));
-        }
-
-        //Set running true for deviceStart() operations that require it.
-        mRunning = true;
+        boolean contextInitialized = false;
+        boolean deviceReferenceOwned = false;
+        boolean handleOpened = false;
+        boolean interfaceClaimed = false;
+        boolean deviceStartBegan = false;
 
         try
         {
+            int status = LibUsb.init(mDeviceContext);
+
+            if(status != LibUsb.SUCCESS)
+            {
+                throw new SourceException("Can't initialize libusb library - " + LibUsb.errorName(status));
+            }
+
+            contextInitialized = true;
+            mDevice = findDevice();
+            deviceReferenceOwned = true;
+            mDeviceDescriptor = new DeviceDescriptor();
+            status = LibUsb.getDeviceDescriptor(mDevice, mDeviceDescriptor);
+
+            if(status != LibUsb.SUCCESS)
+            {
+                throw new SourceException("Can't obtain tuner's device descriptor - " + LibUsb.errorName(status));
+            }
+
+            mDeviceHandle = new DeviceHandle();
+            status = LibUsb.open(mDevice, mDeviceHandle);
+            handleOpened = status == LibUsb.SUCCESS;
+
+            //A successful open owns the handle reference.  The discovery reference is no longer needed in either the
+            //success or failure case and must not survive a later startup exception.
+            LibUsb.unrefDevice(mDevice);
+            deviceReferenceOwned = false;
+            mDevice = null;
+
+            if(status == LibUsb.ERROR_ACCESS)
+            {
+                mLog.error("Access to USB tuner denied - (windows) reinstall zadig driver or (linux) blacklist driver and/or check udev rules");
+                throw new SourceException("access denied - if using linux, blacklist the default driver and/or install udev rules");
+            }
+            else if(status != LibUsb.SUCCESS)
+            {
+                mLog.error("Can't open USB tuner - check driver or Linux udev rules");
+                throw new SourceException("Can't open USB tuner - reinstall driver? - " + LibUsb.errorName(status));
+            }
+
+            //Detach the kernel driver if active and detach is supported.  Otherwise, let the claim interface fail.
+            status = LibUsb.kernelDriverActive(mDeviceHandle, USB_INTERFACE);
+
+            if(status == 1) //kernel driver is attached and detach operation is supported
+            {
+                status = LibUsb.detachKernelDriver(mDeviceHandle, USB_INTERFACE);
+
+                if(status != LibUsb.SUCCESS)
+                {
+                    mLog.error("Unable to detach kernel driver for USB tuner device - bus:" + mBus + " port:" + mPortAddress);
+                    throw new SourceException("Can't detach kernel driver");
+                }
+            }
+
+            //Set the configuration which also invokes a soft reset on the device
+            status = LibUsb.setConfiguration(mDeviceHandle, USB_CONFIGURATION);
+
+            if(status == LibUsb.ERROR_BUSY)
+            {
+                mLog.error("Unable to set USB configuration on tuner - device is busy (in use by another application)");
+                throw new SourceException("USB tuner is in-use by another application");
+            }
+            else if(status != LibUsb.SUCCESS)
+            {
+                throw new SourceException("Can't set configuration (ie reset) on the USB tuner - " + LibUsb.errorName(status));
+            }
+
+            //Claim the interface
+            status = LibUsb.claimInterface(mDeviceHandle, USB_INTERFACE);
+
+            if(status == LibUsb.ERROR_BUSY)
+            {
+                throw new SourceException("USB tuner is in-use by another application");
+            }
+            else if(status != LibUsb.SUCCESS)
+            {
+                throw new SourceException("Can't claim interface on USB tuner - " + LibUsb.errorName(status));
+            }
+
+            interfaceClaimed = true;
+            //Set running true for deviceStart() operations that require it.
+            mRunning = true;
+            deviceStartBegan = true;
             deviceStart();
         }
-        catch(Exception se)
+        catch(SourceException | RuntimeException | Error exception)
         {
-            mRunning = false;
-            throw se;
+            cleanupFailedStart(contextInitialized, deviceReferenceOwned, handleOpened, interfaceClaimed,
+                deviceStartBegan, exception);
+            throw exception;
+        }
+    }
+
+    /**
+     * Releases every native resource acquired by a failed startup in reverse order.  In particular, never discard an
+     * open handle before closing it; doing so can make the physical receiver unavailable until the JVM exits.
+     */
+    private void cleanupFailedStart(boolean contextInitialized, boolean deviceReferenceOwned, boolean handleOpened,
+                                    boolean interfaceClaimed, boolean deviceStartBegan, Throwable startupFailure)
+    {
+        if(deviceStartBegan)
+        {
+            cleanupFailedStartStep(startupFailure, this::stopDeviceForCleanup);
+        }
+
+        mRunning = false;
+        mStreaming.set(false);
+        mTransferManager.setAutoResubmitTransfers(false);
+
+        if(interfaceClaimed && mDeviceHandle != null)
+        {
+            cleanupFailedStartStep(startupFailure, () ->
+            {
+                int status = LibUsb.releaseInterface(mDeviceHandle, USB_INTERFACE);
+
+                if(status != LibUsb.SUCCESS)
+                {
+                    throw new IllegalStateException("Unable to release USB interface after failed startup: " +
+                        LibUsb.errorName(status));
+                }
+            });
+        }
+
+        if(handleOpened && mDeviceHandle != null)
+        {
+            if(cleanupFailedStartStep(startupFailure, () -> LibUsb.close(mDeviceHandle)))
+            {
+                mDeviceHandle = null;
+            }
+        }
+        else
+        {
+            //LibUsb.open did not create a native handle; discard only the empty Java wrapper.
+            mDeviceHandle = null;
+        }
+
+        if(deviceReferenceOwned && mDevice != null)
+        {
+            if(cleanupFailedStartStep(startupFailure, () -> LibUsb.unrefDevice(mDevice)))
+            {
+                mDevice = null;
+            }
+        }
+
+        if(contextInitialized && mDeviceContext != null && mDeviceHandle == null && mDevice == null)
+        {
+            if(cleanupFailedStartStep(startupFailure, () -> LibUsb.exit(mDeviceContext)))
+            {
+                mDeviceContext = null;
+            }
+        }
+        else if(!contextInitialized)
+        {
+            //LibUsb.init failed, so there is no native context to exit or retry.
+            mDeviceContext = null;
+        }
+
+        mDeviceDescriptor = null;
+        mStreamingShutdownComplete.set(true);
+    }
+
+    private static boolean cleanupFailedStartStep(Throwable startupFailure, Runnable cleanup)
+    {
+        try
+        {
+            cleanup.run();
+            return true;
+        }
+        catch(RuntimeException | Error cleanupFailure)
+        {
+            startupFailure.addSuppressed(cleanupFailure);
+            return false;
+        }
+    }
+
+    /**
+     * Runs the model-specific receiver-off command with native access granted only to this cleanup thread.  Ordinary
+     * settings calls continue to see the controller as stopped and cannot write between receiver-off and handle close.
+     */
+    private void stopDeviceForCleanup()
+    {
+        mNativeCleanupThread = Thread.currentThread();
+
+        try
+        {
+            deviceStop();
+        }
+        finally
+        {
+            mNativeCleanupThread = null;
         }
     }
 
@@ -265,7 +360,41 @@ public abstract class USBTunerController extends TunerController
      */
     public final void stop()
     {
-        mRunning = false;
+        //An error can request full tuner shutdown from a native-buffer callback.  Move the entire operation off the
+        //event thread so this method never waits for the callback thread that invoked it.
+        if(mEventProcessor.isEventThread())
+        {
+            ThreadPool.CACHED.submit(this::stop);
+            throw new IllegalStateException("USB tuner shutdown was deferred until the native callback returns");
+        }
+
+        if(!mStopping.compareAndSet(false, true))
+        {
+            mLog.warn("USB tuner shutdown is already in progress for bus [{}] port [{}]", mBus, mPortAddress);
+            throw new IllegalStateException("USB tuner shutdown is already in progress");
+        }
+
+        //Block configuration changes only long enough to publish the stopping state.  Do not hold this controller lock
+        //while joining the LibUsb event thread because a final sample callback can itself need the controller lock.
+        getLock().lock();
+
+        try
+        {
+            if(mDeviceContext == null)
+            {
+                mStopping.set(false);
+                return;
+            }
+
+            mRunning = false;
+            mStreaming.set(false);
+            mTransferManager.setAutoResubmitTransfers(false);
+        }
+        finally
+        {
+            getLock().unlock();
+        }
+
         AtomicBoolean safeToRelease = new AtomicBoolean();
 
         //USB transfers and the event loop must be completely quiescent before their native handle is released.
@@ -273,20 +402,65 @@ public abstract class USBTunerController extends TunerController
         {
             try
             {
-                if(stopStreaming())
+                if(stopStreaming(true))
                 {
-                    mNativeBufferBroadcaster.clear();
-                    deviceStop();
-                    safeToRelease.set(true);
+                    //All callbacks and transfers are now quiescent.  Coordinate the remaining native device operations
+                    //with normal controller configuration changes without making callbacks wait on this lock.
+                    getLock().lock();
+
+                    try
+                    {
+                        mNativeBufferBroadcaster.clear();
+                        stopDeviceForCleanup();
+
+                        //Only release native memory and the device handle after the event loop and every transfer have
+                        //been proven quiescent.  Keeping this in the same controller-lock phase prevents a configuration
+                        //write from slipping between deviceStop() and handle closure.
+                        mTransferManager.freeTransfers();
+
+                        if(mDeviceHandle != null)
+                        {
+                            LibUsb.releaseInterface(mDeviceHandle, USB_INTERFACE);
+                            LibUsb.close(mDeviceHandle);
+                            mDeviceHandle = null;
+                            mDeviceDescriptor = null;
+                        }
+
+                        if(mDevice != null)
+                        {
+                            LibUsb.unrefDevice(mDevice);
+                            mDevice = null;
+                        }
+
+                        LibUsb.exit(mDeviceContext);
+                        mDeviceContext = null;
+                        safeToRelease.set(true);
+                    }
+                    finally
+                    {
+                        getLock().unlock();
+                    }
                 }
             }
             catch(Throwable throwable)
             {
                 mLog.error("Error while preparing USB tuner for shutdown", throwable);
             }
+            finally
+            {
+                mStopping.set(false);
+            }
         }, "sdrtrunk USB tuner shutdown - bus [" + mBus + "] port [" + mPortAddress + "]");
 
-        t.start();
+        try
+        {
+            t.start();
+        }
+        catch(RuntimeException | Error throwable)
+        {
+            mStopping.set(false);
+            throw throwable;
+        }
 
         try
         {
@@ -296,37 +470,23 @@ public abstract class USBTunerController extends TunerController
             {
                 mLog.error("USB tuner shutdown did not quiesce within {} ms; native resources will remain open " +
                     "instead of risking an unsafe forced close", USB_SHUTDOWN_WAIT_MS);
-                return;
+                throw new IllegalStateException("USB tuner shutdown did not quiesce within " +
+                    USB_SHUTDOWN_WAIT_MS + " ms");
             }
         }
         catch(InterruptedException ie)
         {
             Thread.currentThread().interrupt();
             mLog.warn("Interrupted while waiting for USB tuner shutdown; native resources will remain open", ie);
-            return;
+            throw new IllegalStateException("Interrupted while waiting for USB tuner shutdown", ie);
         }
 
         if(!safeToRelease.get())
         {
             mLog.error("USB tuner transfers did not quiesce; native resources will remain open instead of risking " +
                 "an unsafe forced close");
-            return;
+            throw new IllegalStateException("USB tuner transfers did not quiesce; native resources remain open");
         }
-
-        //Release transfers
-        mTransferManager.freeTransfers();
-
-        if(mDeviceHandle != null)
-        {
-            LibUsb.releaseInterface(mDeviceHandle, USB_INTERFACE);
-            LibUsb.close(mDeviceHandle);
-            mDeviceHandle = null;
-            mDevice = null;
-            mDeviceDescriptor = null;
-        }
-
-        LibUsb.exit(mDeviceContext);
-        mDeviceContext = null;
     }
 
     /**
@@ -334,20 +494,66 @@ public abstract class USBTunerController extends TunerController
      */
     private void startStreaming()
     {
-        if(mStreaming.compareAndSet(false, true))
+        //A listener can be registered from a native-buffer callback.  Never make that callback wait behind a
+        //streaming shutdown which may itself be joining the LibUsb event thread.
+        if(mEventProcessor.isEventThread())
         {
-            try
+            ThreadPool.CACHED.submit(this::startStreaming);
+            return;
+        }
+
+        mStreamingLifecycleLock.lock();
+
+        try
+        {
+            if(!isRunning() || !hasBufferListeners())
             {
-                prepareStreaming();
-                List<Transfer> transfers = mTransferManager.getTransfers();
-                mEventProcessor.start();
-                mTransferManager.setAutoResubmitTransfers(true);
-                mTransferManager.submitTransfers(transfers);
+                return;
             }
-            catch(SourceException se)
+
+            //A remove-last/add-first handoff can ask for a start before the older remove request reaches this lock.
+            //The existing stream already satisfies the new listener, so do not drain and strand that live stream.
+            if(mStreaming.get())
             {
-                mLog.error("Error starting streaming on USB tuner", se);
+                return;
             }
+
+            //A previous stop may have timed out after the requested-streaming flag was cleared.  Finish that shutdown
+            //before reusing any native transfer or event-loop state.
+            if(!mStreamingShutdownComplete.get() && !finishStreamingShutdown())
+            {
+                mLog.error("Unable to restart USB streaming because the previous shutdown is incomplete");
+                return;
+            }
+
+            if(mStreaming.compareAndSet(false, true))
+            {
+                mStreamingShutdownComplete.set(false);
+
+                try
+                {
+                    prepareStreaming();
+                    List<Transfer> transfers = mTransferManager.getTransfers();
+                    mEventProcessor.start();
+                    mTransferManager.setAutoResubmitTransfers(true);
+                    mTransferManager.submitTransfers(transfers);
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error starting streaming on USB tuner", e);
+                    mStreaming.set(false);
+                    mTransferManager.setAutoResubmitTransfers(false);
+
+                    if(!finishStreamingShutdown())
+                    {
+                        mLog.error("USB streaming startup cleanup is incomplete");
+                    }
+                }
+            }
+        }
+        finally
+        {
+            mStreamingLifecycleLock.unlock();
         }
     }
 
@@ -362,42 +568,82 @@ public abstract class USBTunerController extends TunerController
     /**
      * Stop streaming data from the tuner
      */
-    private boolean stopStreaming()
+    private boolean stopStreaming(boolean force)
     {
-        if(mStreaming.compareAndSet(true, false))
+        //Never join the event-processing thread from one of its callbacks.  Complete the stop on a worker after the
+        //callback returns to LibUsb.
+        if(mEventProcessor.isEventThread())
         {
-            //Turn off auto-resubmit of USB transfer buffers
+            mStreaming.set(false);
             mTransferManager.setAutoResubmitTransfers(false);
-
-            //Stop event processing thread to put all submitted tranfers in a stable state - blocks until stopped
-            if(!mEventProcessor.stop())
-            {
-                return false;
-            }
-
-            //Cancel all currently submitted transfers
-            mTransferManager.cancelTransfers();
-
-            //Continue processing cancellation callbacks until every submitted transfer is returned.  Freeing a
-            //transfer or closing its handle while libusb still owns it can terminate the entire JVM.
-            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(USB_TRANSFER_DRAIN_WAIT_MS);
-
-            while(mTransferManager.hasInProgressTransfers() && System.nanoTime() < deadline)
-            {
-                mEventProcessor.handleFinalEvents();
-            }
-
-            if(mTransferManager.hasInProgressTransfers())
-            {
-                mLog.error("Timed out waiting for [{}] cancelled USB transfers to return",
-                    mTransferManager.getInProgressTransferCount());
-                return false;
-            }
-
-            streamingCleanup();
+            ThreadPool.CACHED.submit(() -> stopStreaming(force));
+            return false;
         }
 
-        return !mTransferManager.hasInProgressTransfers();
+        mStreamingLifecycleLock.lock();
+
+        try
+        {
+            //A listener may have been added after the last-listener transition requested this stop.
+            if(!force && hasBufferListeners())
+            {
+                return true;
+            }
+
+            mStreaming.set(false);
+            return finishStreamingShutdown();
+        }
+        finally
+        {
+            mStreamingLifecycleLock.unlock();
+        }
+    }
+
+    /**
+     * Completes a requested streaming shutdown.  This method is deliberately independent of {@link #mStreaming}: that
+     * flag records the requested streaming state and is cleared before shutdown begins.  If any shutdown stage times
+     * out, a later call retries the unfinished native teardown.
+     *
+     * Caller must hold {@link #mStreamingLifecycleLock} and must not be the LibUsb event-processing thread.
+     */
+    private boolean finishStreamingShutdown()
+    {
+        if(mStreamingShutdownComplete.get())
+        {
+            return true;
+        }
+
+        //Turn off auto-resubmit before stopping the event loop so that the final callbacks cannot create new work.
+        mTransferManager.setAutoResubmitTransfers(false);
+
+        //Stop event processing to put all submitted transfers in a stable state.
+        if(!mEventProcessor.stop())
+        {
+            return false;
+        }
+
+        //Cancel all currently submitted transfers.
+        mTransferManager.cancelTransfers();
+
+        //Continue processing cancellation callbacks until every submitted transfer is returned.  Freeing a transfer
+        //or closing its handle while libusb still owns it can terminate the entire JVM.
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(USB_TRANSFER_DRAIN_WAIT_MS);
+
+        while(mTransferManager.hasInProgressTransfers() && System.nanoTime() < deadline)
+        {
+            mEventProcessor.handleFinalEvents();
+        }
+
+        if(mTransferManager.hasInProgressTransfers())
+        {
+            mLog.error("Timed out waiting for [{}] cancelled USB transfers to return",
+                mTransferManager.getInProgressTransferCount());
+            return false;
+        }
+
+        streamingCleanup();
+        mStreamingShutdownComplete.set(true);
+        return true;
     }
 
     /**
@@ -506,7 +752,7 @@ public abstract class USBTunerController extends TunerController
      */
     protected boolean isRunning()
     {
-        return mRunning;
+        return mRunning || Thread.currentThread() == mNativeCleanupThread && mDeviceHandle != null;
     }
 
     /**
@@ -515,11 +761,14 @@ public abstract class USBTunerController extends TunerController
     @Override
     public void addBufferListener(Listener<INativeBuffer> listener)
     {
-        if(isRunning())
-        {
-            getLock().lock();
+        boolean startStreaming = false;
+        getLock().lock();
 
-            try
+        try
+        {
+            //Full tuner shutdown publishes mRunning=false under this same lock before it clears listeners and closes
+            //the native handle.  Rechecking here prevents a stale outer read from registering work during teardown.
+            if(isRunning())
             {
                 boolean hasExistingListeners = hasBufferListeners();
 
@@ -527,13 +776,19 @@ public abstract class USBTunerController extends TunerController
 
                 if(!hasExistingListeners)
                 {
-                    startStreaming();
+                    startStreaming = true;
                 }
             }
-            finally
-            {
-                getLock().unlock();
-            }
+        }
+        finally
+        {
+            getLock().unlock();
+        }
+
+        //Starting can complete an unfinished previous shutdown and must not do that while holding the controller lock.
+        if(startStreaming)
+        {
+            startStreaming();
         }
     }
 
@@ -543,6 +798,7 @@ public abstract class USBTunerController extends TunerController
     @Override
     public void removeBufferListener(Listener<INativeBuffer> listener)
     {
+        boolean stopStreaming = false;
         getLock().lock();
 
         try
@@ -551,12 +807,18 @@ public abstract class USBTunerController extends TunerController
 
             if(!hasBufferListeners())
             {
-                stopStreaming();
+                stopStreaming = true;
             }
         }
         finally
         {
             getLock().unlock();
+        }
+
+        //Stopping joins the event thread and drains final callbacks, so never hold the controller lock while waiting.
+        if(stopStreaming)
+        {
+            stopStreaming(false);
         }
     }
 
@@ -650,7 +912,7 @@ public abstract class USBTunerController extends TunerController
 
                     if(resubmitStatus == LibUsb.SUCCESS)
                     {
-                        mInProgressTransfers.add(transfer);
+                        mInProgressTransfers.add(toResubmit);
 
                         //Only log this if more than half of the total transfer buffers are in error-holding
                         if(mErrorTransfers.size() >= (mAvailableTransfers.size() / 2))
@@ -667,7 +929,7 @@ public abstract class USBTunerController extends TunerController
                     else
                     {
                         //Add it back to the queue to try again later.
-                        mErrorTransfers.add(transfer);
+                        mErrorTransfers.add(toResubmit);
                         mTransferErrorCount++;
                     }
                 }
@@ -828,12 +1090,12 @@ public abstract class USBTunerController extends TunerController
         /**
          * Start the event processing thread
          */
-        public void start()
+        public synchronized void start()
         {
             if(mThread == null)
             {
                 mProcessing = true;
-                mThread = new Thread(this);
+                mThread = createUsbEventThread(this);
                 mThread.setName("sdrtrunk USB tuner - bus [" + mBus + "] port [" + mPortAddress + "]");
                 mThread.setPriority(Thread.MAX_PRIORITY);
                 mThread.start();
@@ -845,12 +1107,22 @@ public abstract class USBTunerController extends TunerController
          */
         public boolean stop()
         {
-            mProcessing = false;
-            Thread thread = mThread;
+            Thread thread;
+
+            synchronized(this)
+            {
+                mProcessing = false;
+                thread = mThread;
+            }
 
             if(thread == null)
             {
                 return true;
+            }
+
+            if(Thread.currentThread() == thread)
+            {
+                return false;
             }
 
             try
@@ -872,8 +1144,31 @@ public abstract class USBTunerController extends TunerController
                 return false;
             }
 
-            mThread = null;
+            synchronized(this)
+            {
+                if(mThread == thread)
+                {
+                    mThread = null;
+                }
+            }
+
             return true;
+        }
+
+        /**
+         * Indicates if this invocation is running on the LibUsb event thread.
+         */
+        public synchronized boolean isEventThread()
+        {
+            return Thread.currentThread() == mThread;
+        }
+
+        /**
+         * Processing-state access used by focused lifecycle tests.
+         */
+        boolean isProcessing()
+        {
+            return mProcessing;
         }
 
         /**
@@ -886,7 +1181,7 @@ public abstract class USBTunerController extends TunerController
             try
             {
                 //Use a short timeout since this is a shutdown operation
-                LibUsb.handleEventsTimeout(mDeviceContext, 50);
+                handleUsbEvents(50);
             }
             catch(Throwable throwable)
             {
@@ -900,19 +1195,50 @@ public abstract class USBTunerController extends TunerController
         @Override
         public void run()
         {
-            mProcessing = true;
-
-            while(mProcessing)
+            try
             {
-                try
+                //start() owns the transition to true.  In particular, do not turn processing back on here: stop() may
+                //have already cleared it while this newly-created thread was waiting to be scheduled.
+                while(mProcessing)
                 {
-                    LibUsb.handleEventsTimeout(mDeviceContext, 250);
+                    try
+                    {
+                        handleUsbEvents(250);
+                    }
+                    catch(Throwable throwable)
+                    {
+                        mLog.error("Error while processing LibUsb timeout events", throwable);
+                    }
                 }
-                catch(Throwable throwable)
+            }
+            finally
+            {
+                synchronized(this)
                 {
-                    mLog.error("Error while processing LibUsb timeout events", throwable);
+                    mProcessing = false;
+
+                    if(mThread == Thread.currentThread())
+                    {
+                        mThread = null;
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Creates the dedicated LibUsb event thread.  Extracted so event lifecycle races can be tested without USB hardware.
+     */
+    protected Thread createUsbEventThread(Runnable runnable)
+    {
+        return new Thread(runnable);
+    }
+
+    /**
+     * Processes LibUsb events for this tuner's private context.
+     */
+    protected void handleUsbEvents(long timeoutMilliseconds)
+    {
+        LibUsb.handleEventsTimeout(mDeviceContext, timeoutMilliseconds);
     }
 }

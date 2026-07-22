@@ -69,6 +69,11 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
     private static final String DEVICE_AIRSPY = "AIRSPY";
     private static final String DEVICE_R8X = "RTL_R8X";
     private static final String DEVICE_UNSUPPORTED = "UNSUPPORTED";
+    private static final List<AirspyRate> AIRSPY_FALLBACK_SAMPLE_RATES = List.of(
+        new AirspyRate(10_000_000, "10.00 MHz"),
+        new AirspyRate(6_000_000, "6.00 MHz"),
+        new AirspyRate(3_000_000, "3.00 MHz"),
+        new AirspyRate(2_500_000, "2.50 MHz"));
 
     private final Runnable mSaveConfigurations;
     private final TunerRegistry mTunerRegistry;
@@ -78,6 +83,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
     private final AtomicBoolean mAccepting = new AtomicBoolean(true);
     private final Map<Object,Long> mRuntimeGenerations = new WeakHashMap<>();
     private final Map<DiscoveredTuner,List<AirspyRate>> mAirspySampleRates = new WeakHashMap<>();
+    private final Map<DiscoveredTuner,Integer> mAirspyPresetGains = new WeakHashMap<>();
     private long mNextRuntimeGeneration = ThreadLocalRandom.current().nextLong(1, MAXIMUM_BROWSER_SAFE_REVISION);
 
     public TunerSettingsService(TunerManager tunerManager, TunerRegistry tunerRegistry)
@@ -157,6 +163,8 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         DiscoveredTuner discoveredTuner = resolve(tunerId);
         TunerConfiguration configuration = requireConfiguration(discoveredTuner);
         long currentRevision = revision(discoveredTuner, configuration);
+        boolean shutdownIncomplete = discoveredTuner.hasTuner() && discoveredTuner.isLifecycleQuiescing() &&
+            (!discoveredTuner.isEnabled() || discoveredTuner.getTunerStatus() == TunerStatus.ERROR);
 
         if(request.revision() == null)
         {
@@ -169,7 +177,11 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         }
 
         validateCommon(request);
-        Tuner tuner = discoveredTuner.getTuner();
+        if(shutdownIncomplete)
+        {
+            throw error(409, "receiver_shutdown_incomplete",
+                "Finish disabling this receiver before changing its settings.");
+        }
 
         if(!discoveredTuner.isEnabled())
         {
@@ -199,14 +211,22 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             return snapshot(resolve(tunerId), normalizeId(tunerId));
         }
 
-        if(tuner == null || !discoveredTuner.getTunerStatus().isAvailable())
+        DiscoveredTuner.LifecycleLease lifecycleLease = discoveredTuner.tryAcquireLifecycleLease();
+
+        if(lifecycleLease == null)
         {
             throw error(409, "receiver_not_running",
                 "Disable the receiver to edit its saved settings, or re-enable it to restore hardware control.");
         }
 
-        TunerController controller = Objects.requireNonNull(tuner.getTunerController(),
-            "Available tuner controller cannot be null");
+        Tuner tuner = lifecycleLease.getTuner();
+        TunerController controller = tuner.getTunerController();
+
+        if(controller == null)
+        {
+            lifecycleLease.close();
+            throw error(409, "receiver_not_running", "The receiver controller is unavailable.");
+        }
         ReentrantLock controllerLock = controller.getLock();
         boolean locked;
 
@@ -217,11 +237,13 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         catch(InterruptedException exception)
         {
             Thread.currentThread().interrupt();
+            lifecycleLease.close();
             throw unavailable();
         }
 
         if(!locked)
         {
+            lifecycleLease.close();
             throw error(409, "receiver_busy", "The receiver is busy. Try saving again in a moment.");
         }
 
@@ -252,6 +274,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         finally
         {
             controllerLock.unlock();
+            lifecycleLease.close();
         }
 
         //Do configuration serialization and response assembly after releasing the radio allocation lock.
@@ -293,42 +316,40 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             throw error(412, "settings_changed", "Receiver settings changed. Reload them and try again.");
         }
 
-        if(discoveredTuner.isEnabled() == request.enabled())
+        boolean incompleteStop = !request.enabled() && !discoveredTuner.isEnabled() &&
+            discoveredTuner.hasTuner() && discoveredTuner.isLifecycleQuiescing();
+
+        if(discoveredTuner.isEnabled() == request.enabled() && !incompleteStop)
         {
             return snapshot(discoveredTuner, normalizeId(tunerId));
         }
 
         try
         {
-            //Channel allocation uses this same per-tuner lifecycle monitor.  Holding it across the final state check
-            //and stop prevents a grant from retaining a tuner while its channel manager and USB handle are removed.
             DiscoveredTuner lifecycleTarget = discoveredTuner;
-            synchronized(lifecycleTarget)
+            ensureAccepting();
+            requireSession(sessionIsValid);
+            discoveredTuner = resolve(tunerId);
+            configuration = discoveredTuner.getTunerConfiguration();
+
+            if(discoveredTuner != lifecycleTarget || revision(discoveredTuner, configuration) != currentRevision)
             {
-                ensureAccepting();
-                requireSession(sessionIsValid);
-                discoveredTuner = resolve(tunerId);
-                configuration = discoveredTuner.getTunerConfiguration();
-
-                if(discoveredTuner != lifecycleTarget || revision(discoveredTuner, configuration) != currentRevision)
-                {
-                    throw error(412, "settings_changed", "Receiver settings changed. Reload them and try again.");
-                }
-
-                Tuner currentTuner = discoveredTuner.getTuner();
-                TunerController currentController = currentTuner != null ? currentTuner.getTunerController() : null;
-                boolean radioWorkActive = activeChannelCount(currentTuner) > 0 ||
-                    currentController != null && currentController.isLockedSampleRate();
-
-                if(!request.enabled() && radioWorkActive && !Boolean.TRUE.equals(request.confirmActiveStop()))
-                {
-                    throw error(409, "active_channels",
-                        "This receiver is in use. Confirm that its active channels may stop.");
-                }
-
-                ensureAccepting();
-                discoveredTuner.setEnabled(request.enabled());
+                throw error(412, "settings_changed", "Receiver settings changed. Reload them and try again.");
             }
+
+            Tuner currentTuner = discoveredTuner.getTuner();
+            TunerController currentController = currentTuner != null ? currentTuner.getTunerController() : null;
+            boolean radioWorkActive = activeChannelCount(currentTuner) > 0 ||
+                currentController != null && currentController.isLockedSampleRate();
+
+            if(!request.enabled() && radioWorkActive && !Boolean.TRUE.equals(request.confirmActiveStop()))
+            {
+                throw error(409, "active_channels",
+                    "This receiver is in use. Confirm that its active channels may stop.");
+            }
+
+            ensureAccepting();
+            discoveredTuner.setEnabled(request.enabled());
         }
         catch(TunerSettingsException exception)
         {
@@ -352,7 +373,11 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
 
         DiscoveredTuner current = resolve(tunerId);
 
-        if(current.isEnabled() != request.enabled())
+        boolean reachedRequestedState = request.enabled() ? current.isEnabled() && current.hasTuner() &&
+            current.getTunerStatus().isAvailable() && !current.isLifecycleQuiescing() :
+            !current.isEnabled() && !current.hasTuner() && current.getTunerStatus() == TunerStatus.DISABLED;
+
+        if(!reachedRequestedState)
         {
             throw error(503, "receiver_command_failed", "The receiver did not reach the requested state.");
         }
@@ -365,9 +390,9 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
     {
         int activeChannels = activeChannelCount(tuner);
         boolean radioWorkActive = activeChannels > 0 || controller.isLockedSampleRate();
-        DeviceChange deviceChange = validateDevice(configuration, controller, request);
+        DeviceChange deviceChange = validateDevice(discoveredTuner, configuration, controller, request);
         boolean ppmChanged = request.frequencyCorrectionPpm() != null &&
-            Double.compare(configuration.getFrequencyCorrection(), request.frequencyCorrectionPpm()) != 0;
+            Double.compare(controller.getFrequencyCorrection(), request.frequencyCorrectionPpm()) != 0;
         long currentMinimum = effectiveMinimum(configuration, controller);
         long currentMaximum = effectiveMaximum(configuration, controller);
         long currentCenterFrequency = controller.getFrequency();
@@ -406,47 +431,60 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         double originalPpm = controller.getFrequencyCorrection();
         boolean originalAutoPpm = controller.getTunerFrequencyErrorManager().isEnabled();
         boolean originalCenterFrequencyFixed = controller.isCenterFrequencyLocked();
+        boolean deviceAttempted = false;
+        boolean ppmApplied = false;
+        boolean extentsApplied = false;
+        boolean centerFrequencyApplied = false;
+        boolean autoPpmApplied = false;
+        boolean centerFrequencyFixedApplied = false;
 
         //Potentially blocking hardware work comes first. Configuration changes only after every device call succeeds.
         try
         {
             ensureAccepting();
+            deviceAttempted = true;
             deviceChange.applyHardware().run();
 
             if(ppmChanged)
             {
                 ensureAccepting();
+                ppmApplied = true;
                 controller.setFrequencyCorrection(request.frequencyCorrectionPpm());
             }
 
             if(extentsChanged)
             {
                 ensureAccepting();
+                extentsApplied = true;
                 controller.setFrequencyExtents(request.minimumFrequencyHz(), request.maximumFrequencyHz());
             }
 
             if(centerFrequencyChanged)
             {
                 ensureAccepting();
+                centerFrequencyApplied = true;
                 controller.setFrequency(requestedCenterFrequency);
             }
 
             if(originalAutoPpm != request.autoPpm())
             {
                 ensureAccepting();
+                autoPpmApplied = true;
                 controller.getTunerFrequencyErrorManager().setEnabled(request.autoPpm());
             }
 
             if(originalCenterFrequencyFixed != request.centerFrequencyFixed())
             {
                 ensureAccepting();
+                centerFrequencyFixedApplied = true;
                 controller.setCenterFrequencyLocked(request.centerFrequencyFixed());
             }
         }
         catch(Exception | LinkageError exception)
         {
             rollbackHardware(controller, deviceChange, originalPpm, currentCenterFrequency, currentMinimum, currentMaximum,
-                originalAutoPpm, originalCenterFrequencyFixed, tuner);
+                originalAutoPpm, originalCenterFrequencyFixed, tuner, deviceAttempted, ppmApplied, extentsApplied,
+                centerFrequencyApplied, autoPpmApplied, centerFrequencyFixedApplied);
             throw exception;
         }
 
@@ -510,21 +548,43 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
      */
     private void rollbackHardware(TunerController controller, DeviceChange deviceChange, double frequencyCorrection,
                                   long centerFrequency, long minimumFrequency, long maximumFrequency, boolean autoPpm,
-                                  boolean centerFrequencyFixed, Tuner expectedTuner)
+                                  boolean centerFrequencyFixed, Tuner expectedTuner, boolean deviceAttempted,
+                                  boolean ppmApplied, boolean extentsApplied, boolean centerFrequencyApplied,
+                                  boolean autoPpmApplied, boolean centerFrequencyFixedApplied)
     {
         if(expectedTuner.getTunerController() != controller)
         {
             return;
         }
 
-        rollbackStep("device settings", deviceChange.restoreHardware());
-        rollbackStep("frequency correction", () -> controller.setFrequencyCorrection(frequencyCorrection));
-        rollbackStep("frequency limits", () -> controller.setFrequencyExtents(minimumFrequency, maximumFrequency));
-        rollbackStep("center frequency", () -> controller.setFrequency(centerFrequency));
-        rollbackStep("automatic frequency correction",
-            () -> controller.getTunerFrequencyErrorManager().setEnabled(autoPpm));
-        rollbackStep("fixed center-frequency state",
-            () -> controller.setCenterFrequencyLocked(centerFrequencyFixed));
+        if(centerFrequencyFixedApplied)
+        {
+            rollbackStep("fixed center-frequency state",
+                () -> controller.setCenterFrequencyLocked(centerFrequencyFixed));
+        }
+        if(autoPpmApplied)
+        {
+            rollbackStep("automatic frequency correction",
+                () -> controller.getTunerFrequencyErrorManager().setEnabled(autoPpm));
+        }
+        if(extentsApplied)
+        {
+            //Restore the old legal range before the old center. The requested range may exclude that center, which
+            //would otherwise make rollback fail and leave live hardware inconsistent with the saved configuration.
+            rollbackStep("frequency limits", () -> controller.setFrequencyExtents(minimumFrequency, maximumFrequency));
+        }
+        if(centerFrequencyApplied)
+        {
+            rollbackStep("center frequency", () -> controller.setFrequency(centerFrequency));
+        }
+        if(ppmApplied)
+        {
+            rollbackStep("frequency correction", () -> controller.setFrequencyCorrection(frequencyCorrection));
+        }
+        if(deviceAttempted)
+        {
+            rollbackStep("device settings", deviceChange.restoreHardware());
+        }
     }
 
     private static void rollbackStep(String setting, CheckedOperation operation)
@@ -539,13 +599,14 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         }
     }
 
-    private DeviceChange validateDevice(TunerConfiguration configuration, TunerController controller,
+    private DeviceChange validateDevice(DiscoveredTuner discoveredTuner, TunerConfiguration configuration,
+                                        TunerController controller,
                                         UpdateRequest request)
     {
         if(configuration instanceof AirspyTunerConfiguration airspy &&
             controller instanceof AirspyTunerController airspyController)
         {
-            return validateAirspy(airspy, airspyController, request);
+            return validateAirspy(discoveredTuner, airspy, airspyController, request);
         }
 
         if(configuration instanceof R8xTunerConfiguration rtl &&
@@ -591,6 +652,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             return new SavedDeviceChange(sampleRateHz, () ->
             {
                 airspy.setSampleRate(sampleRateHz);
+                rememberAirspyPresetGain(discoveredTuner, airspy.getGain(), gainMode, gainValue);
                 airspy.setGain(gain);
                 airspy.setIFGain(ifGain);
                 airspy.setMixerGain(mixerGain);
@@ -630,7 +692,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             "Detailed settings are not available for this receiver type yet.");
     }
 
-    private DeviceChange validateAirspy(AirspyTunerConfiguration configuration,
+    private DeviceChange validateAirspy(DiscoveredTuner discoveredTuner, AirspyTunerConfiguration configuration,
                                         AirspyTunerController controller, UpdateRequest request)
     {
         requireDeviceType(request, DEVICE_AIRSPY);
@@ -691,6 +753,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         }, () ->
         {
             configuration.setSampleRate(sampleRateHz);
+            rememberAirspyPresetGain(discoveredTuner, configuration.getGain(), gainMode, gainValue);
             configuration.setGain(gain);
             configuration.setIFGain(ifGain);
             configuration.setMixerGain(mixerGain);
@@ -698,6 +761,34 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             configuration.setMixerAGC(mixerAgc);
             configuration.setLNAAGC(lnaAgc);
         });
+    }
+
+    private void rememberAirspyPresetGain(DiscoveredTuner discoveredTuner, Gain currentGain, GainMode requestedMode,
+                                           int requestedValue)
+    {
+        if(currentGain != null && currentGain.getGainMode() != GainMode.CUSTOM)
+        {
+            mAirspyPresetGains.put(discoveredTuner, currentGain.getValue());
+        }
+
+        if(requestedMode != GainMode.CUSTOM)
+        {
+            mAirspyPresetGains.put(discoveredTuner, requestedValue);
+        }
+    }
+
+    private int airspyPresetGain(DiscoveredTuner discoveredTuner, AirspyTunerConfiguration configuration)
+    {
+        Gain gain = configuration.getGain();
+
+        if(gain != null && gain.getGainMode() != GainMode.CUSTOM)
+        {
+            mAirspyPresetGains.put(discoveredTuner, gain.getValue());
+            return gain.getValue();
+        }
+
+        return mAirspyPresetGains.getOrDefault(discoveredTuner,
+            AirspyTunerController.LINEARITY_GAIN_DEFAULT.getValue());
     }
 
     private static void applyAirspyGain(AirspyTunerController controller, Gain gain, int ifGain, int mixerGain,
@@ -811,14 +902,20 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         Tuner tuner = discoveredTuner.getTuner();
         TunerController controller = tuner != null ? tuner.getTunerController() : null;
         int activeChannels = activeChannelCount(tuner);
-        boolean available = discoveredTuner.getTunerStatus().isAvailable() && controller != null;
+        boolean shutdownIncomplete = discoveredTuner.hasTuner() && discoveredTuner.isLifecycleQuiescing() &&
+            (!discoveredTuner.isEnabled() || discoveredTuner.getTunerStatus() == TunerStatus.ERROR);
+        boolean available = discoveredTuner.isEnabled() && !discoveredTuner.isLifecycleQuiescing() &&
+            discoveredTuner.getTunerStatus().isAvailable() && controller != null;
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("id", tunerId);
         response.put("revision", revision(discoveredTuner, configuration));
         response.put("enabled", discoveredTuner.isEnabled());
         response.put("available", available);
+        response.put("lifecycleQuiescing", discoveredTuner.isLifecycleQuiescing());
+        response.put("shutdownIncomplete", shutdownIncomplete);
         response.put("editable", configuration != null && supportedConfiguration(configuration) &&
-            (!discoveredTuner.isEnabled() || available && supportedRuntime(configuration, controller)));
+            !shutdownIncomplete && (!discoveredTuner.isEnabled() ||
+                available && supportedRuntime(configuration, controller)));
         response.put("activeChannelCount", activeChannels);
         response.put("radioWorkActive", activeChannels > 0 || controller != null && controller.isLockedSampleRate());
 
@@ -865,7 +962,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             device.put("sampleRateHz", airspy.getSampleRate());
             device.put("sampleRates", sampleRates);
             device.put("gainMode", airspy.getGain().getGainMode().name());
-            device.put("gain", airspy.getGain().getValue());
+            device.put("gain", airspyPresetGain(discoveredTuner, airspy));
             device.put("ifGain", airspy.getIFGain());
             device.put("mixerGain", airspy.getMixerGain());
             device.put("lnaGain", airspy.getLNAGain());
@@ -917,8 +1014,15 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         }
         else
         {
+            configuration.getAvailableSampleRates().forEach(rate ->
+                rates.put(rate, new AirspyRate(rate, formatRate(rate))));
             mAirspySampleRates.getOrDefault(discoveredTuner, List.of()).forEach(rate ->
                 rates.put(rate.value(), rate));
+
+            if(rates.isEmpty())
+            {
+                AIRSPY_FALLBACK_SAMPLE_RATES.forEach(rate -> rates.put(rate.value(), rate));
+            }
         }
 
         rates.putIfAbsent(configuration.getSampleRate(),
@@ -1130,7 +1234,6 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         else
         {
             value.append('|').append(configuration.getClass().getName()).append('|')
-                .append(configuration.getFrequency()).append('|').append(configuration.getFrequencyCorrection()).append('|')
             .append(configuration.getAutoPPMCorrectionEnabled()).append('|')
             .append(configuration.getMinimumFrequency()).append('|').append(configuration.getMaximumFrequency())
             .append('|').append(configuration.isCenterFrequencyLocked());

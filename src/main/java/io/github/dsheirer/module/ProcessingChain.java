@@ -67,6 +67,7 @@ import io.github.dsheirer.source.ISourceEventListener;
 import io.github.dsheirer.source.ISourceEventProvider;
 import io.github.dsheirer.source.RealSource;
 import io.github.dsheirer.source.Source;
+import io.github.dsheirer.source.tuner.channel.MultiFrequencyTunerChannelSource;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
@@ -279,7 +280,9 @@ public class ProcessingChain implements Listener<ChannelEvent>
      */
     public boolean hasSource(Source source)
     {
-        return mSource != null && mSource.equals(source);
+        return mSource != null && (mSource.equals(source) ||
+            mSource instanceof MultiFrequencyTunerChannelSource multiFrequencySource &&
+                multiFrequencySource.hasSource(source));
     }
 
     /**
