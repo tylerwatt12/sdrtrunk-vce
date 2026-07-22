@@ -56,6 +56,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -79,6 +80,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
+    private final List<DiscoveredTuner> mDiscoveredTuners = new CopyOnWriteArrayList<>();
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
     private boolean mLibUsbInitialized = false;
@@ -92,7 +94,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     {
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = new TunerConfigurationManager();
-        mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager);
+        mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager, mDiscoveredTuners);
     }
 
     /**
@@ -554,6 +556,17 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public List<DiscoveredTuner> getAvailableTuners()
     {
         return mDiscoveredTunerModel.getAvailableTuners();
+    }
+
+    /**
+     * Supplies the current discovery collection to the neutral read-only tuner registry.
+     *
+     * <p>Package visibility deliberately prevents HTTP adapters from reaching through to mutable discovered-tuner
+     * objects.  Web callers consume immutable {@link TunerSnapshot} values from {@link TunerRegistry} instead.</p>
+     */
+    List<DiscoveredTuner> getDiscoveredTunersForRegistry()
+    {
+        return List.copyOf(mDiscoveredTuners);
     }
 
     /**

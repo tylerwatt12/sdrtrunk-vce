@@ -34,6 +34,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.Lock;
@@ -62,7 +63,7 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     private static final String MHZ = " MHz";
     private static final String[] COLUMN_HEADERS = {"Status","Class", "Type", "Frequency", "Channels"};
 
-    private List<DiscoveredTuner> mDiscoveredTuners = new CopyOnWriteArrayList<>();
+    private final List<DiscoveredTuner> mDiscoveredTuners;
     private List<Listener<TunerEvent>> mTunerEventListeners = new ArrayList<>();
     private DecimalFormat mFrequencyFormat = new DecimalFormat("0.00000");
     private transient Lock mLock = new ReentrantLock();
@@ -74,7 +75,18 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
      */
     public DiscoveredTunerModel(TunerConfigurationManager tunerConfigurationManager)
     {
+        this(tunerConfigurationManager, new CopyOnWriteArrayList<>());
+    }
+
+    /**
+     * Constructs the Swing adapter over a shared thread-safe discovery collection.  The tuner manager can expose a
+     * neutral immutable view of this collection without an HTTP request calling this table model.
+     */
+    public DiscoveredTunerModel(TunerConfigurationManager tunerConfigurationManager,
+                                List<DiscoveredTuner> discoveredTuners)
+    {
         mTunerConfigurationManager = tunerConfigurationManager;
+        mDiscoveredTuners = Objects.requireNonNull(discoveredTuners, "Discovered tuner collection cannot be null");
     }
 
     /**

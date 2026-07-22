@@ -14,8 +14,16 @@ const SIGNAL_PALETTE_MAXIMUM_DB = 40;
 const SIGNAL_PALETTE_STEP_DB = 0.5;
 
 class WidebandSignalView {
-  constructor(root) {
+  constructor(root, options = {}) {
     this.root = root;
+    this.options = {
+      initialTargetId: typeof options.initialTargetId === 'string' ? options.initialTargetId : null,
+      lockedTarget: options.lockedTarget === true,
+      embedded: options.embedded === true,
+      authenticationControls: options.authenticationControls !== false,
+      onAuthenticationRequired: typeof options.onAuthenticationRequired === 'function' ?
+        options.onAuthenticationRequired : null
+    };
     this.closed = false;
     this.paused = false;
     this.hidden = document.hidden;
@@ -108,7 +116,7 @@ class WidebandSignalView {
   }
 
   build() {
-    this.root.className = 'wideband-page';
+    this.root.className = `wideband-page${this.options.embedded ? ' embedded' : ''}`;
     const pageHeading = this.element('h1', 'visually-hidden', 'Spectrum');
     this.access = this.element('span', 'wideband-access', 'ADMIN ONLY');
 
@@ -124,6 +132,10 @@ class WidebandSignalView {
     this.targetSelect.append(targetPlaceholder);
     this.targetSelect.addEventListener('change', () => this.changeTarget());
     this.targetName = this.element('span', 'wideband-target-summary', 'Waiting for receiver inventory');
+    if (this.options.lockedTarget) {
+      targetLabel.hidden = true;
+      this.targetSelect.hidden = true;
+    }
     target.append(targetLabel, this.targetSelect, this.targetName, this.access);
 
     this.status = this.element('div', 'wideband-status connecting', 'Connecting to admin spectrum');
@@ -141,7 +153,8 @@ class WidebandSignalView {
     this.logoutButton.type = 'button';
     this.logoutButton.hidden = true;
     this.logoutButton.onclick = () => this.logout();
-    commands.append(this.resetButton, this.pauseButton, this.logoutButton);
+    commands.append(this.resetButton, this.pauseButton);
+    if (this.options.authenticationControls) commands.append(this.logoutButton);
     toolbar.append(target, this.status, commands);
 
     const displayControls = this.element('div', 'wideband-display-controls');
@@ -322,7 +335,7 @@ class WidebandSignalView {
   }
 
   selectedTargetId() {
-    return this.targetSelect.value || null;
+    return this.targetSelect.value || this.options.initialTargetId || null;
   }
 
   subscribeOrConnect() {
@@ -435,7 +448,7 @@ class WidebandSignalView {
       window.clearTimeout(this.readyTimer);
       this.protocolReady = true;
       this.retryCount = 0;
-      this.logoutButton.hidden = false;
+      this.logoutButton.hidden = !this.options.authenticationControls;
 
       if (!this.updateTargetInventory(message.targets, message.targetId)) {
         this.showNoReceiver();
@@ -554,10 +567,11 @@ class WidebandSignalView {
     this.setUnavailable('locked', 'Administrator sign-in required',
       'Spectrum is available only to the single administrator account. Account setup and recovery stay in the receiver\'s local Web Server settings utility.');
     this.logoutButton.hidden = true;
-    this.loginForm.hidden = false;
+    this.loginForm.hidden = !this.options.authenticationControls;
     this.blockerRetry.hidden = true;
     this.loginMessage.textContent = '';
-    this.loginUsername.focus();
+    if (this.options.authenticationControls) this.loginUsername.focus();
+    this.options.onAuthenticationRequired?.();
   }
 
   showAdminSetupRequired() {
@@ -575,7 +589,7 @@ class WidebandSignalView {
 
   showNoReceiver() {
     this.setUnavailable('degraded', 'No receiver is available',
-      'Enable one Airspy or RTL-SDR receiver, then try again. The spectrum slot has been released.');
+      'Enable the selected receiver, or close spectrum and choose another available receiver. The spectrum slot has been released.');
     this.targetName.textContent = 'No running receiver';
   }
 
@@ -624,7 +638,10 @@ class WidebandSignalView {
       this.loginPassword.value = '';
       if (response.ok) {
         this.loginMessage.textContent = 'Signed in';
-        this.logoutButton.hidden = false;
+        this.logoutButton.hidden = !this.options.authenticationControls;
+        window.dispatchEvent(new CustomEvent('sdrtrunk:auth-changed', {
+          detail: { authenticated: true }
+        }));
         this.retryNow();
         return;
       }
@@ -662,6 +679,9 @@ class WidebandSignalView {
     } finally {
       this.logoutButton.hidden = true;
       this.logoutButton.disabled = false;
+      window.dispatchEvent(new CustomEvent('sdrtrunk:auth-changed', {
+        detail: { authenticated: false }
+      }));
       this.showAdminRequired();
     }
   }
@@ -729,7 +749,8 @@ class WidebandSignalView {
       this.targetName.textContent = 'No running receiver';
       return false;
     }
-    const previous = selectedId || this.selectedTargetId();
+    const previous = this.options.lockedTarget ? this.options.initialTargetId :
+      (selectedId || this.selectedTargetId());
     this.targetSelect.replaceChildren();
     targets.forEach((target) => {
       if (!target || typeof target.id !== 'string' || typeof target.label !== 'string') return;
@@ -740,8 +761,11 @@ class WidebandSignalView {
     if (!this.targetSelect.options.length) return false;
     if (previous && Array.from(this.targetSelect.options).some((option) => option.value === previous)) {
       this.targetSelect.value = previous;
+    } else if (this.options.lockedTarget) {
+      this.targetName.textContent = 'Selected receiver is no longer available';
+      return false;
     }
-    this.targetSelect.disabled = this.targetSelect.options.length < 2;
+    this.targetSelect.disabled = this.options.lockedTarget || this.targetSelect.options.length < 2;
     this.targetName.textContent = this.targetSelect.selectedOptions[0]?.textContent || 'Available receiver';
     return true;
   }

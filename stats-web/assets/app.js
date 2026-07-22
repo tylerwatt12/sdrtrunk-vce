@@ -609,7 +609,7 @@ function detailedHistoryAvailable() {
 }
 
 function databaseLoggingNotice(view) {
-  if (tableOnly || ['live', 'credits'].includes(view)) return null;
+  if (tableOnly || ['live', 'credits', 'settings'].includes(view)) return null;
   const logging = statsLoggingState();
   if (!logging.available) return node('div', 'logging-notice warning',
     'Logging status is unavailable. Database-backed views may not be current.');
@@ -2956,10 +2956,11 @@ function renderCredits() {
   content.append(section('Open-source acknowledgements', acknowledgements));
 }
 
-function renderSpectrum() {
+function renderSettings() {
   const host = node('div');
   content.append(host);
-  const view = new window.WidebandSignalView(host);
+  if (!window.SettingsHardwareView) throw new Error('Hardware settings are unavailable.');
+  const view = new window.SettingsHardwareView(host);
   pageConnections.add(view);
 }
 
@@ -3009,7 +3010,7 @@ async function loadStatus(refreshCurrentView = false) {
 
   const currentView = route.get('view') || 'dashboard';
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'credits'].includes(currentView)) {
+      !['live', 'credits', 'settings'].includes(currentView)) {
     render();
   }
 }
@@ -3018,6 +3019,15 @@ async function render() {
   const expectedRenderRevision = ++renderRevision;
   if (route.get('view') === 'sites') {
     route.set('view', 'systems');
+    window.history.replaceState({}, '', `${window.location.pathname}?${route}`);
+  }
+  if (route.get('view') === 'spectrum') {
+    route.set('view', 'settings');
+    route.set('section', 'hardware');
+    window.history.replaceState({}, '', `${window.location.pathname}?${route}`);
+  }
+  if (route.get('view') === 'settings' && route.get('section') !== 'hardware') {
+    route.set('section', 'hardware');
     window.history.replaceState({}, '', `${window.location.pathname}?${route}`);
   }
   const view = route.get('view') || 'dashboard';
@@ -3031,7 +3041,7 @@ async function render() {
     const handlers = {
       dashboard: renderDashboard,
       live: renderLive,
-      spectrum: renderSpectrum,
+      settings: renderSettings,
       systems: renderSystems,
       sites: renderSites,
       system: renderSystem,

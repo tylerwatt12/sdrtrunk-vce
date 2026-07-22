@@ -50,6 +50,8 @@ import io.github.dsheirer.web.tls.TlsMaterialException;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
 import io.github.dsheirer.web.live.LiveActivityService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.source.tuner.manager.TunerRegistry;
+import io.github.dsheirer.source.tuner.manager.TunerSnapshot;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import java.io.IOException;
@@ -59,6 +61,7 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -96,6 +99,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private SingleAdminAuthenticationService mAuthenticationService;
     private WebAdminAuthenticationHandler mAuthenticationHandler;
     private TunerSpectrumFrameSource mTunerSpectrumFrameSource;
+    private TunerRegistry mTunerRegistry;
     private String mSignalSourceType = "unavailable";
     private Path mAssetRoot;
     private WebListenAddress mListenAddress;
@@ -206,8 +210,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
             if(mTunerManager != null)
             {
+                mTunerRegistry = new TunerRegistry(mTunerManager);
                 mTunerSpectrumFrameSource = new TunerSpectrumFrameSource(
-                    TunerSpectrumFrameSource.Configuration.defaults(), mTunerManager);
+                    TunerSpectrumFrameSource.Configuration.defaults(), mTunerRegistry);
                 frameSource = mTunerSpectrumFrameSource;
                 mSignalSourceType = "tuner";
             }
@@ -246,7 +251,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             };
             mHandler = new StatsWebHandler(assetRoot, mDatabase, mLiveService, mWebCallService,
                 this::status, mLiveActivityService, mFeatureAccessPolicy, subjectResolver,
-                remoteAddressAdmissionPolicy);
+                remoteAddressAdmissionPolicy, this::tunerInventory);
             mAuthenticationHandler = new WebAdminAuthenticationHandler(mAuthenticationService, mHandler,
                 remoteAddressAdmissionPolicy);
             authenticationHandler.set(mAuthenticationHandler);
@@ -391,6 +396,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         mTunerSpectrumFrameSource = null;
+        mTunerRegistry = null;
         mSignalSourceType = "unavailable";
 
         mLiveService.stop();
@@ -412,6 +418,41 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private synchronized boolean isRunning()
     {
         return mWebApplicationService != null && mWebApplicationService.isRunning();
+    }
+
+    /**
+     * Builds one bounded, read-only administrator response.  The revision is a transient content fingerprint; no
+     * tuner history or browser access information is retained.
+     */
+    private Map<String,Object> tunerInventory()
+    {
+        TunerRegistry registry = mTunerRegistry;
+        List<TunerSnapshot> snapshots = registry != null ? registry.snapshots() : List.of();
+        List<Map<String,Object>> tuners = snapshots.stream().map(snapshot ->
+        {
+            Map<String,Object> tuner = new LinkedHashMap<>();
+            tuner.put("id", snapshot.id());
+            tuner.put("displayName", snapshot.label());
+            tuner.put("tunerClass", snapshot.tunerClass().name());
+            tuner.put("tunerType", snapshot.tunerType().getLabel());
+            tuner.put("status", snapshot.status().name());
+            tuner.put("enabled", snapshot.enabled());
+            tuner.put("available", snapshot.available());
+            tuner.put("spectrumAvailable", snapshot.available());
+            tuner.put("centerFrequencyHz", snapshot.centerFrequencyHz());
+            tuner.put("sampleRateHz", snapshot.sampleRateHz());
+            tuner.put("activeChannelCount", snapshot.activeChannelCount());
+            tuner.put("sampleRateLocked", snapshot.sampleRateLocked());
+            tuner.put("centerFrequencyFixed", snapshot.centerFrequencyFixed());
+            tuner.put("hardwareIdentifier", snapshot.hardwareIdentifier());
+            tuner.put("errorMessage", snapshot.errorMessage());
+            return tuner;
+        }).toList();
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("revision", Integer.toUnsignedLong(snapshots.hashCode()));
+        response.put("tuners", tuners);
+        response.put("spectrum", Map.of("exclusive", true, "busy", mDiagnosticWorkspaceLease.isActive()));
+        return response;
     }
 
     private Map<String,Object> status()

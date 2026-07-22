@@ -99,7 +99,11 @@ class StatsWebHandlerTest
             }
         };
         mHandler = new StatsWebHandler(assets, database, mLiveService, mWebCallService,
-            () -> Map.of("server", Map.of("enabled", true)), mAccessPolicy, subjectResolver);
+            () -> Map.of("server", Map.of("enabled", true)), null, mAccessPolicy, subjectResolver,
+            io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy.allowAll(),
+            () -> Map.of("revision", 7,
+                "tuners", List.of(Map.of("id", "AIRSPY-TEST", "displayName", "Airspy")),
+                "spectrum", Map.of("exclusive", true, "busy", false)));
         mWebApplicationService = new WebApplicationService(
             WebApplicationService.Configuration.ephemeralLoopback(), mHandler, container -> {});
         mWebApplicationService.start();
@@ -128,6 +132,23 @@ class StatsWebHandlerTest
         HttpResponse<String> adminStatus = mHttpClient.send(HttpRequest.newBuilder(root.resolve("api/status")).build(),
             HttpResponse.BodyHandlers.ofString());
         assertEquals(200, adminStatus.statusCode());
+    }
+
+    @Test
+    void keepsTunerInventoryPermanentlyAdministratorOnly() throws Exception
+    {
+        HttpResponse<String> anonymous = get("api/v1/tuners");
+        assertEquals(401, anonymous.statusCode());
+        assertTrue(anonymous.headers().firstValue("WWW-Authenticate").isPresent());
+
+        mSubject.set(AuthorizationSubject.AUTHENTICATED_ADMIN);
+        HttpResponse<String> administrator = get("api/v1/tuners");
+        assertEquals(200, administrator.statusCode());
+        assertTrue(administrator.body().contains("\"revision\":7"));
+        assertTrue(administrator.body().contains("\"id\":\"AIRSPY-TEST\""));
+
+        mSessionValid.set(false);
+        assertEquals(401, get("api/v1/tuners").statusCode());
     }
 
     @Test

@@ -17,17 +17,15 @@ import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.manager.ChannelSourceManager;
-import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.source.tuner.manager.TunerRegistry;
 import io.github.dsheirer.spectrum.ComplexDftProcessor;
 import io.github.dsheirer.spectrum.DFTSize;
 import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -60,7 +58,7 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
     private static final long TARGET_LIVENESS_INTERVAL_SECONDS = 1;
 
     private final Configuration mConfiguration;
-    private final Supplier<List<Tuner>> mTunersSupplier;
+    private final TunerRegistry mTunerRegistry;
     private final Object mLifecycleLock = new Object();
     private final Object mControlLock = new Object();
     private final AtomicLong mSequence = new AtomicLong();
@@ -89,21 +87,16 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
 
     public TunerSpectrumFrameSource(Configuration configuration, TunerManager tunerManager)
     {
-        this(configuration, tunerSupplier(tunerManager));
+        this(configuration, new TunerRegistry(tunerManager));
     }
 
-    private static Supplier<List<Tuner>> tunerSupplier(TunerManager tunerManager)
-    {
-        TunerManager manager = Objects.requireNonNull(tunerManager, "Tuner manager cannot be null");
-        return () -> manager.getAvailableTuners().stream().filter(Objects::nonNull)
-            .filter(DiscoveredTuner::isAvailable).filter(DiscoveredTuner::hasTuner)
-            .map(DiscoveredTuner::getTuner).filter(Objects::nonNull).toList();
-    }
-
-    TunerSpectrumFrameSource(Configuration configuration, Supplier<List<Tuner>> tunersSupplier)
+    /**
+     * Creates a demand-owned spectrum source over the shared neutral tuner registry.
+     */
+    public TunerSpectrumFrameSource(Configuration configuration, TunerRegistry tunerRegistry)
     {
         mConfiguration = Objects.requireNonNull(configuration, "Tuner spectrum configuration cannot be null");
-        mTunersSupplier = Objects.requireNonNull(tunersSupplier, "Tuner supplier cannot be null");
+        mTunerRegistry = Objects.requireNonNull(tunerRegistry, "Tuner registry cannot be null");
         mControlExecutor = new ScheduledThreadPoolExecutor(1, runnable ->
         {
             Thread thread = new Thread(runnable, "sdrtrunk spectrum control");
@@ -113,6 +106,11 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
         mControlExecutor.setRemoveOnCancelPolicy(true);
         mControlExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
         mControlExecutor.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
+    }
+
+    TunerSpectrumFrameSource(Configuration configuration, Supplier<List<Tuner>> tunersSupplier)
+    {
+        this(configuration, TunerRegistry.fromTuners(tunersSupplier));
     }
 
     @Override
@@ -160,7 +158,7 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
         {
             long centerFrequencyHz = controller.getFrequency();
             long sampleRateHz = Math.round(controller.getSampleRate());
-            PreparedView preparedView = prepareView(request, candidate.id(), candidate.classLabel(),
+            PreparedView preparedView = prepareView(request, candidate.id(), candidate.label(),
                 centerFrequencyHz, sampleRateHz);
             ComplexDftProcessor processor = new ComplexDftProcessor();
             mDftProcessor = processor;
@@ -174,7 +172,7 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
 
             mFrameConsumer = frameConsumer;
             mTargetId = candidate.id();
-            mTargetLabel = candidate.classLabel();
+            mTargetLabel = candidate.label();
             long generation = mGeneration.incrementAndGet();
             mPreparedView = preparedView.withTargetGeneration(generation);
             mLastViewRevision = preparedView.revision();
@@ -229,43 +227,36 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
 
         if(!requested.isEmpty())
         {
-            for(TunerCandidate candidate: candidates)
-            {
-                if(requested.equalsIgnoreCase(candidate.tuner().getPreferredName()))
-                {
-                    return candidate.tuner();
-                }
-            }
+            List<TunerCandidate> matches = candidates.stream().filter(candidate ->
+                requested.equalsIgnoreCase(candidate.id()) || requested.equalsIgnoreCase(candidate.label())).toList();
 
-            // An explicit selection is fail-closed so that a stale identity never taps a different receiver.
-            return null;
+            // Passive target IDs/labels replace hardware-backed preferred-name reads.  Ambiguity fails closed.
+            return matches.size() == 1 ? matches.getFirst().tuner() : null;
         }
 
         String requestedClass = System.getProperty(TUNER_CLASS_PROPERTY, "").trim();
 
         if(!requestedClass.isEmpty())
         {
-            for(TunerCandidate candidate: candidates)
-            {
-                if(requestedClass.equalsIgnoreCase(candidate.id()) ||
-                    requestedClass.equalsIgnoreCase(candidate.classLabel()))
-                {
-                    return candidate.tuner();
-                }
-            }
+            List<TunerCandidate> matches = candidates.stream().filter(candidate ->
+                    requestedClass.equalsIgnoreCase(candidate.id()) ||
+                    requestedClass.equalsIgnoreCase(candidate.tunerClass().name()) ||
+                    requestedClass.equalsIgnoreCase(candidate.tunerClass().toString()))
+                .toList();
 
-            // Class selectors use stable, non-identifying values such as AIRSPY or RTL2832 and also fail closed.
-            return null;
+            // Class selectors use stable, non-identifying values and fail closed when duplicate hardware is present.
+            return matches.size() == 1 ? matches.getFirst().tuner() : null;
         }
 
         // Prefer the least-loaded already-running device, keeping the first web FFT away from active decoder chains.
         return candidates.stream().min(Comparator.comparingInt(TunerCandidate::channelCount)
-            .thenComparing(TunerCandidate::classLabel)).map(TunerCandidate::tuner).orElse(null);
+            .thenComparing(TunerCandidate::label, String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(TunerCandidate::id)).map(TunerCandidate::tuner).orElse(null);
     }
 
     private List<TunerCandidate> candidates()
     {
-        List<Tuner> supplied = mTunersSupplier.get();
+        List<TunerRegistry.AvailableTunerTarget> supplied = mTunerRegistry.availableTargets();
 
         if(supplied == null || supplied.isEmpty())
         {
@@ -273,29 +264,25 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
         }
 
         List<TunerCandidate> candidates = new ArrayList<>(supplied.size());
-        Map<String,Integer> counts = new HashMap<>();
 
-        for(Tuner tuner: supplied)
+        for(TunerRegistry.AvailableTunerTarget target: supplied)
         {
+            Tuner tuner = target.tuner();
+
             if(tuner != null)
             {
                 TunerController controller = tuner.getTunerController();
                 ChannelSourceManager channelSourceManager = tuner.getChannelSourceManager();
-                TunerClass tunerClass = tuner.getTunerClass();
 
-                if(controller != null && channelSourceManager != null && tunerClass != null)
+                if(controller != null && channelSourceManager != null)
                 {
-                    String id = tunerClass.name();
-                    candidates.add(new TunerCandidate(tuner, channelSourceManager.getTunerChannelCount(), id,
-                        tunerClass.toString()));
-                    counts.merge(id, 1, Integer::sum);
+                    candidates.add(new TunerCandidate(tuner, channelSourceManager.getTunerChannelCount(), target.id(),
+                        target.label(), target.tunerClass()));
                 }
             }
         }
 
-        // Class IDs intentionally reveal no serial/preferred-name information.  A duplicated class is omitted instead
-        // of silently selecting one of two indistinguishable devices.
-        return candidates.stream().filter(candidate -> counts.getOrDefault(candidate.id(), 0) == 1).toList();
+        return candidates;
     }
 
     private TunerCandidate candidateFor(Tuner tuner)
@@ -306,9 +293,9 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
     @Override
     public List<Target> getTargets()
     {
-        return candidates().stream().sorted(Comparator.comparing(TunerCandidate::classLabel)
+        return candidates().stream().sorted(Comparator.comparing(TunerCandidate::label, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(TunerCandidate::id))
-            .map(candidate -> new Target(candidate.id(), candidate.classLabel())).toList();
+            .map(candidate -> new Target(candidate.id(), candidate.label())).toList();
     }
 
     @Override
@@ -402,7 +389,7 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
                 return;
             }
 
-            PreparedView prepared = prepareView(requested, candidate.id(), candidate.classLabel(),
+            PreparedView prepared = prepareView(requested, candidate.id(), candidate.label(),
                 controller.getFrequency(), Math.round(controller.getSampleRate())).withTargetGeneration(mGeneration.get());
             ComplexDftProcessor processor = mDftProcessor;
 
@@ -833,7 +820,7 @@ public final class TunerSpectrumFrameSource implements InteractiveSpectrumFrameS
         }
     }
 
-    private record TunerCandidate(Tuner tuner, int channelCount, String id, String classLabel)
+    private record TunerCandidate(Tuner tuner, int channelCount, String id, String label, TunerClass tunerClass)
     {
     }
 

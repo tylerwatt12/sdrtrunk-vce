@@ -8,6 +8,7 @@ package io.github.dsheirer.spectrum.stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -156,6 +157,33 @@ class TunerSpectrumFrameSourceTest
     }
 
     @Test
+    void legacyClassSelectorFailsClosedWhenTwoReceiversShareTheClass()
+    {
+        String originalPreferred = System.getProperty(TunerSpectrumFrameSource.PREFERRED_TUNER_PROPERTY);
+        String originalClass = System.getProperty(TunerSpectrumFrameSource.TUNER_CLASS_PROPERTY);
+        ClassedTestTuner first = new ClassedTestTuner(TunerClass.AIRSPY, "first fixture");
+        ClassedTestTuner second = new ClassedTestTuner(TunerClass.AIRSPY, "second fixture");
+
+        try
+        {
+            System.clearProperty(TunerSpectrumFrameSource.PREFERRED_TUNER_PROPERTY);
+            System.setProperty(TunerSpectrumFrameSource.TUNER_CLASS_PROPERTY, "AIRSPY");
+
+            try(TunerSpectrumFrameSource source = new TunerSpectrumFrameSource(
+                TunerSpectrumFrameSource.Configuration.defaults(), () -> List.of(first, second)))
+            {
+                assertThrows(IllegalStateException.class, () -> source.start(frame -> {}));
+                assertFalse(source.isRunning());
+            }
+        }
+        finally
+        {
+            restoreProperty(TunerSpectrumFrameSource.PREFERRED_TUNER_PROPERTY, originalPreferred);
+            restoreProperty(TunerSpectrumFrameSource.TUNER_CLASS_PROPERTY, originalClass);
+        }
+    }
+
+    @Test
     void coalescesZoomRequestsAndPublishesOnlyCroppedLatestRevision() throws Exception
     {
         String originalPreferred = System.getProperty(TunerSpectrumFrameSource.PREFERRED_TUNER_PROPERTY);
@@ -171,17 +199,17 @@ class TunerSpectrumFrameSourceTest
             try(TunerSpectrumFrameSource source = new TunerSpectrumFrameSource(
                 TunerSpectrumFrameSource.Configuration.defaults(), () -> List.of(airspy)))
             {
-                assertEquals(List.of(new InteractiveSpectrumFrameSource.Target("AIRSPY", "Airspy")),
-                    source.getTargets());
-                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(1, "AIRSPY", null));
+                String airspyId = targetId(source, "Airspy");
+                assertTrue(airspyId.matches("TNR_[A-F0-9]{28}"));
+                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(1, airspyId, null));
                 source.start(frames::offer);
                 SpectrumFrame full = frameForRevision(frames, 1);
                 long center = full.getCenterFrequencyHz();
                 long sampleRate = full.getSampleRateHz();
 
-                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(2, "AIRSPY",
+                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(2, airspyId,
                     centeredViewport(center, sampleRate / 2)));
-                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(3, "AIRSPY",
+                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(3, airspyId,
                     centeredViewport(center, sampleRate / 8)));
 
                 SpectrumFrame zoomed = nextNewRevision(frames, 1);
@@ -203,17 +231,23 @@ class TunerSpectrumFrameSourceTest
     }
 
     @Test
-    void duplicateNonIdentifyingTargetIdsFailClosed()
+    void duplicateSameClassTunersRemainIndividuallySelectable() throws Exception
     {
         ClassedTestTuner first = new ClassedTestTuner(TunerClass.AIRSPY, "first secret identity");
         ClassedTestTuner second = new ClassedTestTuner(TunerClass.AIRSPY, "second secret identity");
-        TunerSpectrumFrameSource source = new TunerSpectrumFrameSource(
-            TunerSpectrumFrameSource.Configuration.defaults(), () -> List.of(first, second));
+        BlockingQueue<SpectrumFrame> frames = new ArrayBlockingQueue<>(64);
 
-        assertTrue(source.getTargets().isEmpty());
-        assertThrows(IllegalStateException.class, () -> source.start(frame -> {}));
-        source.close();
-        assertTrue(source.isControlExecutorTerminated());
+        try(TunerSpectrumFrameSource source = new TunerSpectrumFrameSource(
+            TunerSpectrumFrameSource.Configuration.defaults(), () -> List.of(first, second)))
+        {
+            assertEquals(2, source.getTargets().size());
+            String secondId = targetId(source, "Airspy 2");
+            assertNotEquals(targetId(source, "Airspy 1"), secondId);
+            source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(1, secondId, null));
+            source.start(frames::offer);
+            frameForRevision(frames, 1);
+            assertEquals(secondId, source.getAppliedView().targetId());
+        }
     }
 
     @Test
@@ -251,11 +285,13 @@ class TunerSpectrumFrameSourceTest
         try(TunerSpectrumFrameSource source = new TunerSpectrumFrameSource(
             TunerSpectrumFrameSource.Configuration.defaults(), () -> List.of(airspy, failingTuner)))
         {
-            source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(1, "AIRSPY", null));
+            String airspyId = targetId(source, "Airspy");
+            String failingId = targetId(source, "Test");
+            source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(1, airspyId, null));
             source.start(frames::offer);
             frameForRevision(frames, 1);
 
-            source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(2, "TEST_TUNER", null));
+            source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(2, failingId, null));
             awaitPublicationError(source);
             awaitStopped(source);
 
@@ -264,7 +300,7 @@ class TunerSpectrumFrameSourceTest
             assertFalse(failingController.isTestListenerRegistered());
             assertTrue(source.getPublicationErrorCount() >= 1);
 
-            source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(3, "AIRSPY", null));
+            source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(3, airspyId, null));
             source.start(frames::offer);
             frameForRevision(frames, 3);
             assertTrue(source.isRunning());
@@ -288,16 +324,18 @@ class TunerSpectrumFrameSourceTest
             try(TunerSpectrumFrameSource source = new TunerSpectrumFrameSource(
                 TunerSpectrumFrameSource.Configuration.defaults(), () -> List.of(airspy, rtl)))
             {
-                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(1, "AIRSPY", null));
+                String airspyId = targetId(source, "Airspy");
+                String rtlId = targetId(source, "RTL-2832");
+                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(1, airspyId, null));
                 source.start(frames::offer);
                 SpectrumFrame airspyFrame = frameForRevision(frames, 1);
-                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(2, "RTL2832", null));
+                source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(2, rtlId, null));
                 SpectrumFrame rtlFrame = frameForRevision(frames, 2);
 
                 assertTrue(rtlFrame.getTargetGeneration() > airspyFrame.getTargetGeneration());
                 assertEquals(DFTSize.FFT04096.getSize(), rtlFrame.getFftSize());
                 assertEquals(0, rtlFrame.getFirstBin());
-                assertEquals("RTL2832", source.getAppliedView().targetId());
+                assertEquals(rtlId, source.getAppliedView().targetId());
                 assertEquals("RTL-2832", source.getAppliedView().targetLabel());
             }
         }
@@ -311,6 +349,11 @@ class TunerSpectrumFrameSourceTest
     private static InteractiveSpectrumFrameSource.Viewport centeredViewport(long center, long span)
     {
         return new InteractiveSpectrumFrameSource.Viewport(center - span / 2, center + span / 2);
+    }
+
+    private static String targetId(TunerSpectrumFrameSource source, String label)
+    {
+        return source.getTargets().stream().filter(target -> target.label().equals(label)).findFirst().orElseThrow().id();
     }
 
     private static SpectrumFrame frameForRevision(BlockingQueue<SpectrumFrame> frames, long revision)

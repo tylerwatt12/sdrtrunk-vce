@@ -72,6 +72,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private static final long STREAM_SHUTDOWN_SECONDS = 2;
     private static final long SSE_AUTHORIZATION_RECHECK_MILLISECONDS = 250;
     private static final long SSE_HEARTBEAT_SECONDS = 15;
+    static final String TUNER_INVENTORY_PATH = "/api/v1/tuners";
     private static final FeatureAuthorization UNRESTRICTED_AUTHORIZATION =
         new FeatureAuthorization(null, null, WebAuthorization.permanent(AuthorizationSubject.ANONYMOUS));
 
@@ -82,6 +83,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private final StatsWebCallService mWebCallService;
     private final LiveActivityService mLiveActivityService;
     private final Supplier<Map<String,Object>> mStatusSupplier;
+    private final Supplier<?> mTunerInventorySupplier;
     private final FeatureAccessGateway mFeatureAccessGateway;
     private final WebRequestSubjectResolver mSubjectResolver;
     private final Set<StatsLiveEventHub.Subscription> mActiveSubscriptions =
@@ -98,15 +100,15 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     {
         this(assetRoot, database, liveService, webCallService, statusSupplier,
             null, InMemoryFeatureAccessPolicy.currentProfileDefaults(), WebRequestSubjectResolver.anonymous(),
-            RemoteAddressAdmissionPolicy.allowAll());
+            RemoteAddressAdmissionPolicy.allowAll(), StatsWebHandler::emptyTunerInventory);
     }
 
     StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
                     StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier,
                     FeatureAccessGateway featureAccessGateway, WebRequestSubjectResolver subjectResolver)
     {
-        this(assetRoot, database, liveService, webCallService, statusSupplier, featureAccessGateway,
-            subjectResolver, RemoteAddressAdmissionPolicy.allowAll());
+        this(assetRoot, database, liveService, webCallService, statusSupplier, null, featureAccessGateway,
+            subjectResolver, RemoteAddressAdmissionPolicy.allowAll(), StatsWebHandler::emptyTunerInventory);
     }
 
     StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
@@ -115,7 +117,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                     RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
     {
         this(assetRoot, database, liveService, webCallService, statusSupplier, null, featureAccessGateway,
-            subjectResolver, remoteAddressAdmissionPolicy);
+            subjectResolver, remoteAddressAdmissionPolicy, StatsWebHandler::emptyTunerInventory);
     }
 
     StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
@@ -124,6 +126,17 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                     WebRequestSubjectResolver subjectResolver,
                     RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
     {
+        this(assetRoot, database, liveService, webCallService, statusSupplier, liveActivityService,
+            featureAccessGateway, subjectResolver, remoteAddressAdmissionPolicy, StatsWebHandler::emptyTunerInventory);
+    }
+
+    StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
+                    StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier,
+                    LiveActivityService liveActivityService, FeatureAccessGateway featureAccessGateway,
+                    WebRequestSubjectResolver subjectResolver,
+                    RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
+                    Supplier<?> tunerInventorySupplier)
+    {
         mAssetRoot = Objects.requireNonNull(assetRoot, "Stats web asset root cannot be null")
             .toAbsolutePath().normalize();
         mDatabase = Objects.requireNonNull(database, "Stats web database cannot be null");
@@ -131,6 +144,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         mWebCallService = Objects.requireNonNull(webCallService, "Stats web call service cannot be null");
         mLiveActivityService = liveActivityService;
         mStatusSupplier = Objects.requireNonNull(statusSupplier, "Stats status supplier cannot be null");
+        mTunerInventorySupplier = Objects.requireNonNull(tunerInventorySupplier,
+            "Tuner inventory supplier cannot be null");
         mFeatureAccessGateway = Objects.requireNonNull(featureAccessGateway,
             "Feature access gateway cannot be null");
         mSubjectResolver = Objects.requireNonNull(subjectResolver, "Web request subject resolver cannot be null");
@@ -192,6 +207,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                 switch(path)
                 {
                     case "/api/status" -> handleJson(request, response, callback, mStatusSupplier::get);
+                    case TUNER_INVENTORY_PATH -> handleJson(request, response, callback,
+                        mTunerInventorySupplier::get);
                     case "/api/dashboard" -> handleJson(request, response, callback, mDatabase::dashboard);
                     case "/api/quality" -> handleJson(request, response, callback,
                         () -> mDatabase.qualityHistory(statsRequest(request)));
@@ -276,6 +293,20 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private FeatureAuthorization authorizeFeature(Request request, Response response, Callback callback, String path,
                                                   ContextRoute contextRoute)
     {
+        if(TUNER_INVENTORY_PATH.equals(path))
+        {
+            WebAuthorization authorization = resolveAuthorization(request);
+
+            if(authorization.isSessionValid() && authorization.subject().isAuthenticatedAdmin())
+            {
+                return new FeatureAuthorization(null, null, authorization);
+            }
+
+            response.getHeaders().put(HttpHeader.WWW_AUTHENTICATE, "Bearer realm=\"sdrtrunk-admin\"");
+            sendText(response, callback, 401, "Administrator sign-in required");
+            return null;
+        }
+
         WebFeature feature;
         WebTransport transport;
 
@@ -300,17 +331,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             return UNRESTRICTED_AUTHORIZATION;
         }
 
-        WebAuthorization authorization;
-
-        try
-        {
-            authorization = Objects.requireNonNull(mSubjectResolver.resolveAuthorization(request),
-                "Subject resolver returned null authorization");
-        }
-        catch(RuntimeException exception)
-        {
-            authorization = WebAuthorization.permanent(AuthorizationSubject.ANONYMOUS);
-        }
+        WebAuthorization authorization = resolveAuthorization(request);
 
         FeatureAuthorization featureAuthorization = new FeatureAuthorization(feature, transport, authorization);
 
@@ -322,6 +343,25 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         response.getHeaders().put(HttpHeader.WWW_AUTHENTICATE, "Bearer realm=\"sdrtrunk-admin\"");
         sendText(response, callback, 401, "Administrator sign-in required");
         return null;
+    }
+
+    private WebAuthorization resolveAuthorization(Request request)
+    {
+        try
+        {
+            return Objects.requireNonNull(mSubjectResolver.resolveAuthorization(request),
+                "Subject resolver returned null authorization");
+        }
+        catch(RuntimeException exception)
+        {
+            return WebAuthorization.permanent(AuthorizationSubject.ANONYMOUS);
+        }
+    }
+
+    private static Map<String,Object> emptyTunerInventory()
+    {
+        return Map.of("revision", 0, "tuners", java.util.List.of(),
+            "spectrum", Map.of("exclusive", true, "busy", false));
     }
 
     private static StatsRequest statsRequest(Request request)
