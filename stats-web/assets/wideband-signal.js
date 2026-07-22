@@ -83,14 +83,16 @@ class WidebandSignalView {
     this.waterfallSpeed = signalStoredNumber(SIGNAL_WATERFALL_SPEED_STORAGE_KEY, 1, 0.25, 4);
     this.waterfallScrollAccumulator = 0;
     this.activeChannelTables = new Map();
+    this.pendingActiveChannelRows = new Map();
+    this.previousActiveChannelBounds = new Map();
     this.activeChannelSource = null;
-    this.activeChannelRenderRequest = null;
     this.paletteLut = new Uint8ClampedArray(
       (Math.round((SIGNAL_PALETTE_MAXIMUM_DB - SIGNAL_PALETTE_MINIMUM_DB) / SIGNAL_PALETTE_STEP_DB) + 1) * 3);
     this.binRange = { start: 0, end: 0 };
     this.waterfallRow = null;
     this.fftScratch = document.createElement('canvas');
     this.waterfallScratch = document.createElement('canvas');
+    this.activeChannelScratch = document.createElement('canvas');
     this.worker = new Worker('/assets/signal-worker.js?v=3');
     this.worker.onmessage = (event) => this.onWorkerMessage(event.data);
     this.worker.onerror = () => this.onWorkerFailure();
@@ -243,7 +245,7 @@ class WidebandSignalView {
       'Live waterfall plot. Wheel to zoom and drag to pan when zoomed.');
     this.waterfallGuide = this.element('div', 'wideband-cursor-guide');
     this.waterfallGuide.hidden = true;
-    this.activeChannelOverlay = this.element('div', 'wideband-active-channels');
+    this.activeChannelOverlay = this.element('canvas', 'wideband-active-channels');
     this.activeChannelOverlay.setAttribute('aria-hidden', 'true');
     waterfallWrap.append(this.waterfall, this.activeChannelOverlay, this.waterfallGuide);
 
@@ -360,7 +362,8 @@ class WidebandSignalView {
   resize() {
     const fftChanged = this.resizeCanvas(this.fft, 250);
     const waterfallChanged = this.resizeCanvas(this.waterfall, 310);
-    if (waterfallChanged) {
+    const activeChannelsChanged = this.resizeCanvas(this.activeChannelOverlay, 310);
+    if (waterfallChanged || activeChannelsChanged) {
       this.waterfallRow = null;
       this.clearWaterfall();
     }
@@ -1010,7 +1013,6 @@ class WidebandSignalView {
     }
     this.resetButton.disabled = zoom <= 1.0001;
     this.plotArea.classList.toggle('zoomed', zoom > 1.0001);
-    this.queueActiveChannelRender();
   }
 
   formatFrequency(frequencyHz) {
@@ -1138,6 +1140,7 @@ class WidebandSignalView {
       data[offset + 3] = 255;
     }
     for (let row = 0; row < rowCount; row += 1) context.putImageData(this.waterfallRow, 0, row);
+    this.addActiveChannelOutlineRows(rowCount);
   }
 
   visibleBinRange() {
@@ -1191,37 +1194,28 @@ class WidebandSignalView {
       (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
         if (table?.table_id) this.activeChannelTables.set(String(table.table_id), table);
       });
-      this.queueActiveChannelRender();
+      this.capturePendingActiveChannels();
     }));
     source.addEventListener('activity_table', (event) => read(event, (update) => {
       const id = String(update?.table_id || update?.table?.table_id || '');
       if (!id) return;
       if (update.operation === 'remove') this.activeChannelTables.delete(id);
       else if (update.table) this.activeChannelTables.set(id, update.table);
-      this.queueActiveChannelRender();
+      this.capturePendingActiveChannels();
     }));
   }
 
   disconnectActiveChannels() {
     this.activeChannelSource?.close();
     this.activeChannelSource = null;
+    this.activeChannelTables.clear();
+    this.pendingActiveChannelRows.clear();
+    this.previousActiveChannelBounds.clear();
   }
 
-  queueActiveChannelRender() {
-    if (this.closed || this.activeChannelRenderRequest !== null) return;
-    this.activeChannelRenderRequest = requestAnimationFrame(() => {
-      this.activeChannelRenderRequest = null;
-      this.renderActiveChannels();
-    });
-  }
-
-  renderActiveChannels() {
-    if (!this.activeChannelOverlay) return;
+  activeChannelRows() {
     const viewport = this.viewport || this.fullViewport;
-    if (!viewport || viewport.endHz <= viewport.startHz) {
-      this.activeChannelOverlay.replaceChildren();
-      return;
-    }
+    if (!viewport || viewport.endHz <= viewport.startHz) return [];
     const statusPriority = { ENCRYPTED: 4, CALL: 3, DATA: 2, CONTROL: 1 };
     const channels = new Map();
     this.activeChannelTables.forEach((table) => {
@@ -1236,17 +1230,125 @@ class WidebandSignalView {
         }
       });
     });
-    const span = viewport.endHz - viewport.startHz;
-    const markers = [...channels.entries()].sort((left, right) => left[0] - right[0]).slice(0, 48)
-      .map(([frequencyHz, row], index) => {
-        const marker = this.element('div', `wideband-active-channel status-${row.status.toLowerCase()}`);
-        marker.style.left = `${(frequencyHz - viewport.startHz) / span * 100}%`;
-        marker.style.setProperty('--channel-label-lane', String(index % 3));
-        marker.append(this.element('span', 'wideband-active-channel-label',
-          row.target_alias || row.target_id || row.channel_name || row.lcn || row.status));
-        return marker;
-      });
-    this.activeChannelOverlay.replaceChildren(...markers);
+    return [...channels.entries()].sort((left, right) => left[0] - right[0]).slice(0, 48)
+      .map(([frequencyHz, row]) => ({ ...row, frequencyHz }));
+  }
+
+  activeChannelKey(row) {
+    return `${row.frequencyHz}:${row.target_id || row.target_alias || row.channel_name || row.status}`;
+  }
+
+  capturePendingActiveChannels() {
+    this.activeChannelRows().forEach((row) => this.pendingActiveChannelRows.set(this.activeChannelKey(row), row));
+  }
+
+  addActiveChannelOutlineRows(rowCount) {
+    const canvas = this.activeChannelOverlay;
+    if (!canvas?.width || !canvas.height || !this.frame || rowCount < 1) return;
+    const context = canvas.getContext('2d');
+    context.drawImage(canvas, 0, 0, canvas.width, canvas.height - rowCount,
+      0, rowCount, canvas.width, canvas.height - rowCount);
+    context.clearRect(0, 0, canvas.width, rowCount);
+
+    const rows = new Map(this.pendingActiveChannelRows);
+    this.activeChannelRows().forEach((row) => rows.set(this.activeChannelKey(row), row));
+    this.pendingActiveChannelRows.clear();
+    const currentBounds = new Map();
+    rows.forEach((row, key) => {
+      const bounds = this.activeSignalBounds(row, canvas.width);
+      if (!bounds) return;
+      currentBounds.set(key, bounds);
+      this.drawActiveSignalOutline(context, bounds, rowCount, !this.previousActiveChannelBounds.has(key));
+    });
+    this.previousActiveChannelBounds.forEach((bounds, key) => {
+      if (currentBounds.has(key)) return;
+      context.strokeStyle = bounds.color;
+      context.lineWidth = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+      context.beginPath();
+      context.moveTo(bounds.leftX, 0.5);
+      context.lineTo(bounds.rightX, 0.5);
+      context.stroke();
+    });
+    this.previousActiveChannelBounds = currentBounds;
+  }
+
+  activeSignalBounds(row, canvasWidth) {
+    const bins = this.frame?.bins;
+    const binWidthHz = this.frameBinWidthHz();
+    if (!bins?.length || !Number.isFinite(binWidthHz) || binWidthHz <= 0) return null;
+    const center = Math.round((row.frequencyHz - this.frameStartHz()) / binWidthHz);
+    const visible = this.visibleBinRange();
+    if (center < visible.start || center >= visible.end) return null;
+    const searchRadius = Math.max(2, Math.min(128, Math.ceil(15_000 / binWidthHz)));
+    const searchStart = Math.max(visible.start, center - searchRadius);
+    const searchEnd = Math.min(visible.end - 1, center + searchRadius);
+    const seedRadius = Math.max(1, Math.min(searchRadius, Math.ceil(3_000 / binWidthHz)));
+    let seed = center;
+    for (let index = Math.max(searchStart, center - seedRadius);
+      index <= Math.min(searchEnd, center + seedRadius); index += 1) {
+      if (bins[index] > bins[seed]) seed = index;
+    }
+    let noiseTotal = 0;
+    let noiseCount = 0;
+    const noiseWidth = Math.min(8, Math.max(2, Math.floor(searchRadius / 3)));
+    for (let offset = 0; offset < noiseWidth; offset += 1) {
+      const left = searchStart + offset;
+      const right = searchEnd - offset;
+      noiseTotal += bins[left];
+      noiseCount += 1;
+      if (right !== left) {
+        noiseTotal += bins[right];
+        noiseCount += 1;
+      }
+    }
+    const noise = noiseCount ? noiseTotal / noiseCount : this.dbFloor;
+    const threshold = Math.max(this.dbFloor + 6, noise + 6, bins[seed] - 18);
+    let left = seed;
+    let right = seed;
+    let quiet = 0;
+    for (let index = seed - 1; index >= searchStart; index -= 1) {
+      if (bins[index] >= threshold) {
+        left = index;
+        quiet = 0;
+      } else if (++quiet >= 3) break;
+    }
+    quiet = 0;
+    for (let index = seed + 1; index <= searchEnd; index += 1) {
+      if (bins[index] >= threshold) {
+        right = index;
+        quiet = 0;
+      } else if (++quiet >= 3) break;
+    }
+    const visibleBins = visible.end - visible.start;
+    const centerX = (center - visible.start + 0.5) / visibleBins * canvasWidth;
+    let leftX = (left - visible.start) / visibleBins * canvasWidth;
+    let rightX = (right - visible.start + 1) / visibleBins * canvasWidth;
+    const minimumWidth = Math.max(3, Math.min(window.devicePixelRatio || 1, 2) * 3);
+    if (rightX - leftX < minimumWidth) {
+      leftX = centerX - minimumWidth / 2;
+      rightX = centerX + minimumWidth / 2;
+    }
+    const colors = { ENCRYPTED: '#ff9b8b', CONTROL: '#f1c86b', DATA: '#69ddff' };
+    return {
+      leftX: Math.max(0.5, leftX),
+      rightX: Math.min(canvasWidth - 0.5, rightX),
+      color: colors[row.status] || '#6ee7a5'
+    };
+  }
+
+  drawActiveSignalOutline(context, bounds, rowCount, starting) {
+    context.strokeStyle = bounds.color;
+    context.lineWidth = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+    context.beginPath();
+    context.moveTo(bounds.leftX, 0);
+    context.lineTo(bounds.leftX, rowCount);
+    context.moveTo(bounds.rightX, 0);
+    context.lineTo(bounds.rightX, rowCount);
+    if (starting) {
+      context.moveTo(bounds.leftX, rowCount - 0.5);
+      context.lineTo(bounds.rightX, rowCount - 0.5);
+    }
+    context.stroke();
   }
 
   clearWaterfall() {
@@ -1255,6 +1357,10 @@ class WidebandSignalView {
       context.fillStyle = '#071018';
       context.fillRect(0, 0, this.waterfall.width, this.waterfall.height);
     }
+    const activeContext = this.activeChannelOverlay?.getContext('2d');
+    if (activeContext) activeContext.clearRect(0, 0,
+      this.activeChannelOverlay.width, this.activeChannelOverlay.height);
+    this.previousActiveChannelBounds.clear();
   }
 
   clearPlots() {
@@ -1445,19 +1551,24 @@ class WidebandSignalView {
   transformPlots(fromViewport, toViewport) {
     this.transformCanvas(this.fft, this.fftScratch, fromViewport, toViewport);
     this.transformCanvas(this.waterfall, this.waterfallScratch, fromViewport, toViewport);
+    this.transformCanvas(this.activeChannelOverlay, this.activeChannelScratch, fromViewport, toViewport, true);
   }
 
-  transformCanvas(canvas, scratch, fromViewport, toViewport) {
+  transformCanvas(canvas, scratch, fromViewport, toViewport, transparent = false) {
     if (!canvas.width || !canvas.height) return;
     if (scratch.width !== canvas.width || scratch.height !== canvas.height) {
       scratch.width = canvas.width;
       scratch.height = canvas.height;
     }
-    const scratchContext = scratch.getContext('2d', { alpha: false });
+    const scratchContext = scratch.getContext('2d', { alpha: transparent });
+    scratchContext.clearRect(0, 0, scratch.width, scratch.height);
     scratchContext.drawImage(canvas, 0, 0);
-    const context = canvas.getContext('2d', { alpha: false });
-    context.fillStyle = '#071018';
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    const context = canvas.getContext('2d', { alpha: transparent });
+    if (transparent) context.clearRect(0, 0, canvas.width, canvas.height);
+    else {
+      context.fillStyle = '#071018';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
     const overlapStart = Math.max(fromViewport.startHz, toViewport.startHz);
     const overlapEnd = Math.min(fromViewport.endHz, toViewport.endHz);
     if (overlapEnd <= overlapStart) return;
@@ -1589,7 +1700,6 @@ class WidebandSignalView {
     window.clearTimeout(this.refinementTimer);
     window.clearInterval(this.statusTimer);
     if (this.renderRequest !== null) cancelAnimationFrame(this.renderRequest);
-    if (this.activeChannelRenderRequest !== null) cancelAnimationFrame(this.activeChannelRenderRequest);
     this.disconnectActiveChannels();
     this.disconnectSocket('page closed');
     this.worker.terminate();

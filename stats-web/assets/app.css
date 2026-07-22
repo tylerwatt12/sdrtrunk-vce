@@ -2481,12 +2481,7 @@ body[data-view="spectrum"] .content { max-width: none; padding: 12px; }
 .wideband-canvas.dragging { cursor: grabbing; }
 .wideband-canvas:focus-visible { box-shadow: inset 0 0 0 2px #8ff3e6; }
 .wideband-plot.waterfall .wideband-canvas { height: 310px; }
-.wideband-active-channels { position: absolute; z-index: 2; inset: 0; overflow: hidden; pointer-events: none; }
-.wideband-active-channel { position: absolute; top: 0; bottom: 0; width: 1px; background: #69ddff; box-shadow: 0 0 0 1px rgb(0 0 0 / 38%); }
-.wideband-active-channel.status-call { background: #6ee7a5; }
-.wideband-active-channel.status-encrypted { background: #ff9b8b; }
-.wideband-active-channel.status-control { background: #f1c86b; }
-.wideband-active-channel-label { position: absolute; top: calc(7px + var(--channel-label-lane) * 22px); left: 4px; max-width: 150px; padding: 2px 5px; overflow: hidden; color: #f2f7fa; background: rgb(7 16 24 / 88%); border: 1px solid currentColor; border-radius: 3px; font: 10px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.wideband-active-channels { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
 .wideband-cursor-guide { position: absolute; z-index: 3; top: 0; bottom: 0; width: 1px; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 42%); pointer-events: none; }
 .wideband-cursor-guide[hidden] { display: none; }
 .wideband-cursor-popup { position: absolute; z-index: 4; display: flex; gap: 9px; padding: 5px 8px; color: #f2f7fa; background: rgb(8 18 26 / 96%); border: 1px solid #5f7887; border-radius: 4px; box-shadow: 0 3px 12px rgb(0 0 0 / 42%); font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
