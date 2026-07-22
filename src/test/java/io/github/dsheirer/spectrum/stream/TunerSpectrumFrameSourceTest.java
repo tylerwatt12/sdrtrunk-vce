@@ -256,6 +256,7 @@ class TunerSpectrumFrameSourceTest
             frameForRevision(frames, 1);
 
             source.requestView(new InteractiveSpectrumFrameSource.ViewRequest(2, "TEST_TUNER", null));
+            awaitPublicationError(source);
             awaitStopped(source);
 
             assertEquals(1, failingController.getAddCount());
@@ -383,6 +384,19 @@ class TunerSpectrumFrameSourceTest
         }
 
         assertFalse(source.isRunning(), "removed tuner was not released before timeout");
+    }
+
+    private static void awaitPublicationError(TunerSpectrumFrameSource source) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
+
+        while(source.getPublicationErrorCount() == 0 && System.nanoTime() < deadline)
+        {
+            Thread.sleep(20);
+        }
+
+        assertTrue(source.getPublicationErrorCount() > 0,
+            "scheduled receiver transfer failure was not observed before timeout");
     }
 
     private static void awaitDelivery(AtomicInteger deliveries) throws InterruptedException
