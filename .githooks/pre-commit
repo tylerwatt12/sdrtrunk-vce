@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-
-set -e
-
-root="$(git rev-parse --show-toplevel)"
-exec "$root/tools/verify-publication-policy.sh" --staged

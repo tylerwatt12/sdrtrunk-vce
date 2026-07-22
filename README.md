@@ -383,9 +383,6 @@ Cross-platform package tasks:
 
 Build output is written under `build/image`.
 
-See [RELEASING.md](RELEASING.md) for the complete checklist for testing, packaging, checksumming, tagging, and
-publishing a numbered alpha release on GitHub.
-
 ## Changelog
 
 ### 0.6.2-alpha-6 - 2026-07-21
@@ -529,7 +526,6 @@ publishing a numbered alpha release on GitHub.
 - Expanded P25 site telemetry for BSI callsigns, LRA, MFID, broadcast clock, service availability, data access,
   Working Unit ID lease time, TDMA/u-Slots, and registration status.
 - External P25 history v16-to-v17 migration tooling.
-- Automated publication-policy and release-content safeguards.
 
 #### Changed
 
