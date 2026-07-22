@@ -77,6 +77,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
     private final Set<CommandTask<?>> mCommands = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean mAccepting = new AtomicBoolean(true);
     private final Map<Object,Long> mRuntimeGenerations = new WeakHashMap<>();
+    private final Map<DiscoveredTuner,List<AirspyRate>> mAirspySampleRates = new WeakHashMap<>();
     private long mNextRuntimeGeneration = ThreadLocalRandom.current().nextLong(1, MAXIMUM_BROWSER_SAFE_REVISION);
 
     public TunerSettingsService(TunerManager tunerManager, TunerRegistry tunerRegistry)
@@ -170,9 +171,38 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         validateCommon(request);
         Tuner tuner = discoveredTuner.getTuner();
 
-        if(!discoveredTuner.isEnabled() || tuner == null || !discoveredTuner.getTunerStatus().isAvailable())
+        if(!discoveredTuner.isEnabled())
         {
-            throw error(409, "receiver_not_running", "Enable the receiver before changing its settings.");
+            ensureAccepting();
+            requireSession(sessionIsValid);
+            discoveredTuner = resolve(tunerId);
+            configuration = requireConfiguration(discoveredTuner);
+
+            if(discoveredTuner.isEnabled() || revision(discoveredTuner, configuration) != currentRevision)
+            {
+                throw error(412, "settings_changed", "Receiver settings changed. Reload them and try again.");
+            }
+
+            applyDisabledUpdate(discoveredTuner, configuration, request);
+
+            try
+            {
+                mSaveConfigurations.run();
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("Unable to queue persistence for disabled web tuner settings [{}]", tunerId, exception);
+                throw error(503, "settings_save_failed",
+                    "The receiver settings changed for this run, but they could not be saved.");
+            }
+
+            return snapshot(resolve(tunerId), normalizeId(tunerId));
+        }
+
+        if(tuner == null || !discoveredTuner.getTunerStatus().isAvailable())
+        {
+            throw error(409, "receiver_not_running",
+                "Disable the receiver to edit its saved settings, or re-enable it to restore hardware control.");
         }
 
         TunerController controller = Objects.requireNonNull(tuner.getTunerController(),
@@ -368,12 +398,12 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         long currentMaximum = effectiveMaximum(configuration, controller);
         boolean extentsChanged = currentMinimum != request.minimumFrequencyHz() ||
             currentMaximum != request.maximumFrequencyHz();
-        boolean unsafeChange = ppmChanged || extentsChanged || deviceChange.hardwareChange();
+        boolean unsafeChange = ppmChanged || extentsChanged || deviceChange.requiresIdle();
 
         if(radioWorkActive && unsafeChange)
         {
             throw error(409, "active_channels",
-                "Stop this receiver’s active channels before changing tuning, sample-rate, gain, or Bias-T settings.");
+                "Stop this receiver’s active channels before changing frequency correction, limits, sample rate, or Bias-T.");
         }
 
         if(deviceChange.sampleRateHz() > request.maximumFrequencyHz() - request.minimumFrequencyHz())
@@ -446,6 +476,43 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
     }
 
     /**
+     * Validates and saves configuration while a receiver is deliberately disabled.  No tuner, controller, USB, or
+     * channel-allocation operation is performed; the normal receiver startup applies these values later.
+     */
+    private void applyDisabledUpdate(DiscoveredTuner discoveredTuner, TunerConfiguration configuration,
+                                     UpdateRequest request)
+    {
+        SavedDeviceChange deviceChange = validateDisabledDevice(discoveredTuner, configuration, request);
+
+        if(deviceChange.sampleRateHz() > request.maximumFrequencyHz() - request.minimumFrequencyHz())
+        {
+            throw invalid("The minimum and maximum frequencies must be at least one sample-rate apart.");
+        }
+
+        long hardwareMinimum = hardwareMinimum(configuration);
+        long hardwareMaximum = hardwareMaximum(configuration);
+
+        if(request.minimumFrequencyHz() < hardwareMinimum || request.maximumFrequencyHz() > hardwareMaximum)
+        {
+            throw invalid("The minimum and maximum frequencies must stay inside this receiver’s supported range.");
+        }
+
+        long savedCenterFrequency = configuration.getFrequency();
+
+        if(savedCenterFrequency < request.minimumFrequencyHz() || savedCenterFrequency > request.maximumFrequencyHz())
+        {
+            throw invalid("The receiver’s saved center frequency must remain inside the minimum and maximum range.");
+        }
+
+        configuration.setFrequencyCorrection(request.frequencyCorrectionPpm());
+        configuration.setMinimumFrequency(request.minimumFrequencyHz());
+        configuration.setMaximumFrequency(request.maximumFrequencyHz());
+        configuration.setAutoPPMCorrectionEnabled(request.autoPpm());
+        configuration.setCenterFrequencyLocked(request.centerFrequencyFixed());
+        deviceChange.updateConfiguration().run();
+    }
+
+    /**
      * Best-effort restoration after a device write fails partway through. Saved configuration remains untouched, and
      * the receiver is only rolled back while the same runtime tuner is still attached.
      */
@@ -499,6 +566,77 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             "Detailed settings are not available for this receiver type yet.");
     }
 
+    private SavedDeviceChange validateDisabledDevice(DiscoveredTuner discoveredTuner,
+                                                       TunerConfiguration configuration, UpdateRequest request)
+    {
+        if(configuration instanceof AirspyTunerConfiguration airspy)
+        {
+            requireDeviceType(request, DEVICE_AIRSPY);
+            int sampleRateHz = requirePositive(request.sampleRateHz(), "A sample rate is required.");
+            boolean supportedRate = airspyRates(discoveredTuner, airspy, null).stream()
+                .anyMatch(rate -> rate.value() == sampleRateHz);
+
+            if(!supportedRate)
+            {
+                throw invalid("Choose an Airspy sample rate discovered while this receiver was running.");
+            }
+
+            GainMode gainMode = enumValue(GainMode.class, request.airspyGainMode(),
+                "Choose an Airspy gain mode.");
+            int gainValue = requireRange(request.airspyGain(), AirspyTunerController.GAIN_MIN,
+                AirspyTunerController.GAIN_MAX, "Airspy gain");
+            int ifGain = requireRange(request.airspyIfGain(), AirspyTunerController.IF_GAIN_MIN,
+                AirspyTunerController.IF_GAIN_MAX, "Airspy IF gain");
+            int mixerGain = requireRange(request.airspyMixerGain(), AirspyTunerController.MIXER_GAIN_MIN,
+                AirspyTunerController.MIXER_GAIN_MAX, "Airspy mixer gain");
+            int lnaGain = requireRange(request.airspyLnaGain(), AirspyTunerController.LNA_GAIN_MIN,
+                AirspyTunerController.LNA_GAIN_MAX, "Airspy LNA gain");
+            boolean mixerAgc = requireBoolean(request.airspyMixerAgc(), "Airspy mixer AGC is required.");
+            boolean lnaAgc = requireBoolean(request.airspyLnaAgc(), "Airspy LNA AGC is required.");
+            Gain gain = Gain.getGain(gainMode, gainValue);
+
+            return new SavedDeviceChange(sampleRateHz, () ->
+            {
+                airspy.setSampleRate(sampleRateHz);
+                airspy.setGain(gain);
+                airspy.setIFGain(ifGain);
+                airspy.setMixerGain(mixerGain);
+                airspy.setLNAGain(lnaGain);
+                airspy.setMixerAGC(mixerAgc);
+                airspy.setLNAAGC(lnaAgc);
+            });
+        }
+
+        if(configuration instanceof R8xTunerConfiguration rtl)
+        {
+            requireDeviceType(request, DEVICE_R8X);
+            int sampleRateHz = requirePositive(request.sampleRateHz(), "A sample rate is required.");
+            RTL2832TunerController.SampleRate sampleRate = enumForRate(sampleRateHz);
+            boolean biasT = requireBoolean(request.rtlBiasT(), "Bias-T state is required.");
+            R8xEmbeddedTuner.MasterGain masterGain = enumValue(R8xEmbeddedTuner.MasterGain.class,
+                request.rtlMasterGain(), "Choose an RTL-SDR master gain.");
+            R8xEmbeddedTuner.MixerGain mixerGain = enumValue(R8xEmbeddedTuner.MixerGain.class,
+                request.rtlMixerGain(), "Choose an RTL-SDR mixer gain.");
+            R8xEmbeddedTuner.LNAGain lnaGain = enumValue(R8xEmbeddedTuner.LNAGain.class,
+                request.rtlLnaGain(), "Choose an RTL-SDR LNA gain.");
+            R8xEmbeddedTuner.VGAGain vgaGain = enumValue(R8xEmbeddedTuner.VGAGain.class,
+                request.rtlVgaGain(), "Choose an RTL-SDR VGA gain.");
+
+            return new SavedDeviceChange(sampleRateHz, () ->
+            {
+                rtl.setSampleRate(sampleRate);
+                rtl.setBiasT(biasT);
+                rtl.setMasterGain(masterGain);
+                rtl.setMixerGain(mixerGain);
+                rtl.setLNAGain(lnaGain);
+                rtl.setVGAGain(vgaGain);
+            });
+        }
+
+        throw error(409, "settings_not_supported",
+            "Detailed settings are not available for this receiver type yet.");
+    }
+
     private DeviceChange validateAirspy(AirspyTunerConfiguration configuration,
                                         AirspyTunerController controller, UpdateRequest request)
     {
@@ -534,7 +672,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         boolean originalMixerAgc = configuration.isMixerAGC();
         boolean originalLnaAgc = configuration.isLNAAGC();
 
-        return new DeviceChange(sampleRateHz, sampleRateChanged || gainChanged, () ->
+        return new DeviceChange(sampleRateHz, sampleRateChanged, () ->
         {
             if(sampleRateChanged)
             {
@@ -614,7 +752,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         R8xEmbeddedTuner.LNAGain originalLnaGain = configuration.getLNAGain();
         R8xEmbeddedTuner.VGAGain originalVgaGain = configuration.getVGAGain();
 
-        return new DeviceChange(sampleRateHz, sampleRateChanged || biasTChanged || gainChanged, () ->
+        return new DeviceChange(sampleRateHz, sampleRateChanged || biasTChanged, () ->
         {
             if(sampleRateChanged)
             {
@@ -686,7 +824,8 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         response.put("revision", revision(discoveredTuner, configuration));
         response.put("enabled", discoveredTuner.isEnabled());
         response.put("available", available);
-        response.put("editable", configuration != null && available && supported(configuration, controller));
+        response.put("editable", configuration != null && supportedConfiguration(configuration) &&
+            (!discoveredTuner.isEnabled() || available && supportedRuntime(configuration, controller)));
         response.put("activeChannelCount", activeChannels);
         response.put("radioWorkActive", activeChannels > 0 || controller != null && controller.isLockedSampleRate());
 
@@ -700,7 +839,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             response.put("hardwareMinimumFrequencyHz", null);
             response.put("hardwareMaximumFrequencyHz", null);
             response.put("device", Map.of("type", DEVICE_UNSUPPORTED,
-                "message", "Enable this receiver to load its hardware settings."));
+                "message", "This receiver does not have saved hardware settings yet."));
             return response;
         }
 
@@ -711,25 +850,20 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         response.put("centerFrequencyFixed", configuration.isCenterFrequencyLocked());
         response.put("hardwareMinimumFrequencyHz", hardwareMinimum(configuration));
         response.put("hardwareMaximumFrequencyHz", hardwareMaximum(configuration));
-        response.put("device", deviceSnapshot(configuration, controller));
+        response.put("device", deviceSnapshot(discoveredTuner, configuration, controller));
         return response;
     }
 
-    private Map<String,Object> deviceSnapshot(TunerConfiguration configuration, TunerController controller)
+    private Map<String,Object> deviceSnapshot(DiscoveredTuner discoveredTuner, TunerConfiguration configuration,
+                                               TunerController controller)
     {
         if(configuration instanceof AirspyTunerConfiguration airspy)
         {
             List<Map<String,Object>> sampleRates = new ArrayList<>();
-
-            if(controller instanceof AirspyTunerController airspyController)
-            {
-                airspyController.getSampleRates().forEach(rate -> sampleRates.add(option(rate.getRate(), rate.toString())));
-            }
-
-            if(sampleRates.stream().noneMatch(option -> Objects.equals(option.get("value"), airspy.getSampleRate())))
-            {
-                sampleRates.add(option(airspy.getSampleRate(), formatRate(airspy.getSampleRate())));
-            }
+            AirspyTunerController airspyController = controller instanceof AirspyTunerController candidate ?
+                candidate : null;
+            airspyRates(discoveredTuner, airspy, airspyController)
+                .forEach(rate -> sampleRates.add(option(rate.value(), rate.label())));
 
             Map<String,Object> device = new LinkedHashMap<>();
             device.put("type", DEVICE_AIRSPY);
@@ -776,7 +910,40 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             "message", "Detailed settings are not available for this receiver type yet.");
     }
 
-    private static boolean supported(TunerConfiguration configuration, TunerController controller)
+    private List<AirspyRate> airspyRates(DiscoveredTuner discoveredTuner, AirspyTunerConfiguration configuration,
+                                          AirspyTunerController controller)
+    {
+        LinkedHashMap<Integer,AirspyRate> rates = new LinkedHashMap<>();
+
+        if(controller != null)
+        {
+            controller.getSampleRates().forEach(rate ->
+                rates.put(rate.getRate(), new AirspyRate(rate.getRate(), rate.toString())));
+        }
+        else
+        {
+            mAirspySampleRates.getOrDefault(discoveredTuner, List.of()).forEach(rate ->
+                rates.put(rate.value(), rate));
+        }
+
+        rates.putIfAbsent(configuration.getSampleRate(),
+            new AirspyRate(configuration.getSampleRate(), formatRate(configuration.getSampleRate())));
+        List<AirspyRate> result = List.copyOf(rates.values());
+
+        if(controller != null)
+        {
+            mAirspySampleRates.put(discoveredTuner, result);
+        }
+
+        return result;
+    }
+
+    private static boolean supportedConfiguration(TunerConfiguration configuration)
+    {
+        return configuration instanceof AirspyTunerConfiguration || configuration instanceof R8xTunerConfiguration;
+    }
+
+    private static boolean supportedRuntime(TunerConfiguration configuration, TunerController controller)
     {
         return configuration instanceof AirspyTunerConfiguration && controller instanceof AirspyTunerController ||
             configuration instanceof R8xTunerConfiguration && controller instanceof RTL2832TunerController;
@@ -1176,8 +1343,16 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         void run() throws Exception;
     }
 
-    private record DeviceChange(int sampleRateHz, boolean hardwareChange, CheckedOperation applyHardware,
+    private record DeviceChange(int sampleRateHz, boolean requiresIdle, CheckedOperation applyHardware,
                                 CheckedOperation restoreHardware, CheckedOperation updateConfiguration)
+    {
+    }
+
+    private record SavedDeviceChange(int sampleRateHz, Runnable updateConfiguration)
+    {
+    }
+
+    private record AirspyRate(int value, String label)
     {
     }
 

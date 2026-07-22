@@ -22,6 +22,9 @@ import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.EnabledRequest;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.TunerSettingsException;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.UpdateRequest;
+import io.github.dsheirer.source.tuner.rtl.RTL2832TunerController;
+import io.github.dsheirer.source.tuner.rtl.r8x.R8xEmbeddedTuner;
+import io.github.dsheirer.source.tuner.rtl.r8x.r820t.R820TTunerConfiguration;
 import io.github.dsheirer.source.tuner.test.TestTuner;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -51,12 +54,66 @@ class TunerSettingsServiceTest
             Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
             assertEquals(id, settings.get("id"));
             assertEquals(Boolean.FALSE, settings.get("enabled"));
-            assertEquals(Boolean.FALSE, settings.get("editable"));
+            assertEquals(Boolean.TRUE, settings.get("editable"));
             @SuppressWarnings("unchecked")
             Map<String,Object> device = (Map<String,Object>)settings.get("device");
             assertEquals("AIRSPY", device.get("type"));
             assertEquals(10_000_000, device.get("sampleRateHz"));
             assertEquals(0, saves.get(), "read-only snapshots must not write configuration state");
+        }
+    }
+
+    @Test
+    void editsSavedSettingsWhileReceiverIsDisabledWithoutStartingHardware() throws Exception
+    {
+        BlockingDiscoveredTuner discovered = fixture();
+        AirspyTunerConfiguration configuration = (AirspyTunerConfiguration)discovered.getTunerConfiguration();
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, saves::incrementAndGet))
+        {
+            String id = registry.snapshots().getFirst().id();
+            Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
+            long revision = ((Number)settings.get("revision")).longValue();
+            UpdateRequest request = airspyRequest(revision, 1.5, false, 18);
+            Map<String,Object> updated = service.update(id, request, () -> true).get(2, TimeUnit.SECONDS);
+            assertEquals(Boolean.FALSE, updated.get("enabled"));
+            assertEquals(Boolean.TRUE, updated.get("editable"));
+            assertEquals(1.5, configuration.getFrequencyCorrection());
+            assertFalse(configuration.getAutoPPMCorrectionEnabled());
+            assertEquals(18, configuration.getGain().getValue());
+            assertEquals(1, saves.get());
+            assertEquals(1, discovered.startEntered.getCount(),
+                "editing a disabled receiver must not initialize or query its hardware");
+        }
+    }
+
+    @Test
+    void editsSavedRtlSettingsWhileReceiverIsDisabledWithoutStartingHardware() throws Exception
+    {
+        R820TTunerConfiguration configuration = new R820TTunerConfiguration();
+        configuration.setUniqueID("rtl-test");
+        DisabledRtlDiscoveredTuner discovered = new DisabledRtlDiscoveredTuner(configuration);
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
+            assertEquals(Boolean.TRUE, settings.get("editable"));
+            long revision = ((Number)settings.get("revision")).longValue();
+            UpdateRequest request = new UpdateRequest(revision, 0.0, true,
+                R8xEmbeddedTuner.MINIMUM_TUNABLE_FREQUENCY_HZ,
+                R8xEmbeddedTuner.MAXIMUM_TUNABLE_FREQUENCY_HZ, false, "RTL_R8X",
+                RTL2832TunerController.SampleRate.RATE_2_400MHZ.getRate(), null, null, null, null, null,
+                null, null, true, "MANUAL", "GAIN_105", "GAIN_222", "GAIN_210");
+            Map<String,Object> updated = service.update(id, request, () -> true).get(2, TimeUnit.SECONDS);
+            assertEquals(Boolean.FALSE, updated.get("enabled"));
+            assertTrue(configuration.isBiasT());
+            assertEquals(R8xEmbeddedTuner.MasterGain.MANUAL, configuration.getMasterGain());
+            assertEquals(0, discovered.starts.get(),
+                "editing a disabled RTL-SDR must not initialize or query its hardware");
         }
     }
 
@@ -188,6 +245,34 @@ class TunerSettingsServiceTest
             long revision = ((Number)settings.get("revision")).longValue();
             ExecutionException failure = org.junit.jupiter.api.Assertions.assertThrows(ExecutionException.class,
                 () -> service.setEnabled(id, new EnabledRequest(revision, false, false), () -> true)
+                    .get(2, TimeUnit.SECONDS));
+            TunerSettingsException active = assertInstanceOf(TunerSettingsException.class, failure.getCause());
+            assertEquals(409, active.status());
+            assertEquals("active_channels", active.code());
+        }
+    }
+
+    @Test
+    void activeReceiverAllowsGainButStillRejectsRetuningSettings() throws Exception
+    {
+        FakeAirspyTuner tuner = new FakeAirspyTuner();
+        tuner.controller().setLockedSampleRate(true);
+        AirspyTunerConfiguration configuration = airspyConfiguration();
+        ImmediateDiscoveredTuner discovered = new ImmediateDiscoveredTuner(tuner, configuration);
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
+            long revision = ((Number)settings.get("revision")).longValue();
+            Map<String,Object> updated = service.update(id, airspyRequest(revision, 0.0, true, 18),
+                () -> true).get(2, TimeUnit.SECONDS);
+            assertEquals(18, configuration.getGain().getValue());
+
+            long updatedRevision = ((Number)updated.get("revision")).longValue();
+            ExecutionException failure = org.junit.jupiter.api.Assertions.assertThrows(ExecutionException.class,
+                () -> service.update(id, airspyRequest(updatedRevision, 1.0, true, 18), () -> true)
                     .get(2, TimeUnit.SECONDS));
             TunerSettingsException active = assertInstanceOf(TunerSettingsException.class, failure.getCause());
             assertEquals(409, active.status());
@@ -365,6 +450,35 @@ class TunerSettingsServiceTest
             AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ, false, "AIRSPY",
             AirspyTunerController.DEFAULT_SAMPLE_RATE.getRate(), "LINEARITY", gain, 9, 9, 7,
             false, false, null, null, null, null, null);
+    }
+
+    private static class DisabledRtlDiscoveredTuner extends DiscoveredTuner
+    {
+        private final AtomicInteger starts = new AtomicInteger();
+
+        private DisabledRtlDiscoveredTuner(R820TTunerConfiguration configuration)
+        {
+            mTunerConfiguration = configuration;
+            setEnabled(false);
+        }
+
+        @Override
+        public TunerClass getTunerClass()
+        {
+            return TunerClass.RTL2832;
+        }
+
+        @Override
+        public String getId()
+        {
+            return "RTL disabled discovery";
+        }
+
+        @Override
+        public void start()
+        {
+            starts.incrementAndGet();
+        }
     }
 
     private static class BlockingDiscoveredTuner extends DiscoveredTuner

@@ -722,23 +722,23 @@ class SettingsHardwareView {
     this.settingsPanel.hidden = false;
     this.settingsTitle.textContent = tuner ? `${this.tunerName(tuner)} settings` : 'Receiver settings';
     const active = settings.radioWorkActive === true;
+    const enabled = settings.enabled === true;
     const editable = settings.editable === true;
     this.settingsSubtitle.textContent = active ?
       (settings.activeChannelCount > 0 ?
         `${this.integer(settings.activeChannelCount)} active ${settings.activeChannelCount === 1 ? 'channel' : 'channels'}` :
-        'Controls locked by active receiver work') :
-      (settings.available === true ? 'Ready for changes' : 'Receiver is not running');
-    this.settingsEnabledButton.textContent = settings.enabled === true ? 'Disable receiver' : 'Enable receiver';
-    this.settingsEnabledButton.className = settings.enabled === true ? 'danger-outline' : 'primary';
+        'Some controls locked by active receiver work') :
+      (!enabled ? 'Receiver disabled · saved settings can be changed' :
+        (settings.available === true ? 'Ready for changes' : 'Receiver is not running'));
+    this.settingsEnabledButton.textContent = enabled ? 'Disable receiver' : 'Enable receiver';
+    this.settingsEnabledButton.className = enabled ? 'danger-outline' : 'primary';
     this.settingsEnabledButton.disabled = false;
     this.settingsState.className = 'hardware-settings-state';
     this.settingsState.textContent = message;
     this.settingsBody.replaceChildren();
 
     if (!editable) {
-      const detail = settings.enabled === false ?
-        'Enable this receiver to load its supported sample rates and apply configuration changes.' :
-        (settings.device?.message || 'Detailed settings are not available for this receiver type yet.');
+      const detail = settings.device?.message || 'Detailed settings are not available for this receiver type yet.';
       this.settingsBody.append(this.stateCard('Configuration is unavailable', detail));
       return;
     }
@@ -747,7 +747,12 @@ class SettingsHardwareView {
       const notice = this.element('div', 'hardware-settings-notice');
       notice.append(this.element('strong', '', 'Radio work is active'),
         this.element('span', '',
-          'Tuning, sample-rate, gain, and Bias-T controls are locked to protect live decoding. Automatic PPM and fixed-center mode remain available.'));
+          'Frequency correction, frequency limits, sample rate, and Bias-T are locked. Gain controls, automatic PPM, and fixed-center mode remain available.'));
+      this.settingsBody.append(notice);
+    } else if (!enabled) {
+      const notice = this.element('div', 'hardware-settings-notice');
+      notice.append(this.element('strong', '', 'Receiver is disabled'),
+        this.element('span', '', 'Changes are saved now and applied when this receiver is enabled.'));
       this.settingsBody.append(notice);
     }
 
@@ -755,21 +760,21 @@ class SettingsHardwareView {
     const tuning = this.formSection('Tuning',
       'Frequency limits control where this receiver may be assigned. Values are saved in MHz.');
     const tuningGrid = this.element('div', 'hardware-field-grid');
-    const unsafeDisabled = active;
+    const idleOnlyDisabled = active;
     const ppm = this.numberField('Frequency correction', settings.frequencyCorrectionPpm, {
-      min: -1000, max: 1000, step: 0.1, suffix: 'PPM', disabled: unsafeDisabled,
+      min: -1000, max: 1000, step: 0.1, suffix: 'PPM', disabled: idleOnlyDisabled,
       help: 'Compensates for a receiver oscillator that is slightly off frequency. Changing it retunes the hardware.'
     });
     const minimum = this.numberField('Minimum frequency', this.toMHz(settings.minimumFrequencyHz), {
       min: this.toMHz(settings.hardwareMinimumFrequencyHz),
       max: this.toMHz(settings.hardwareMaximumFrequencyHz), step: 0.000001, suffix: 'MHz',
-      disabled: unsafeDisabled,
+      disabled: idleOnlyDisabled,
       help: 'The lowest center frequency that automatic channel assignment may use for this receiver.'
     });
     const maximum = this.numberField('Maximum frequency', this.toMHz(settings.maximumFrequencyHz), {
       min: this.toMHz(settings.hardwareMinimumFrequencyHz),
       max: this.toMHz(settings.hardwareMaximumFrequencyHz), step: 0.000001, suffix: 'MHz',
-      disabled: unsafeDisabled,
+      disabled: idleOnlyDisabled,
       help: 'The highest center frequency that automatic channel assignment may use for this receiver.'
     });
     const autoPpm = this.checkboxField('Automatic PPM correction', settings.autoPpm === true,
@@ -781,7 +786,7 @@ class SettingsHardwareView {
 
     const device = this.formSection('Device settings', 'Only controls supported by this receiver are shown.');
     const deviceGrid = this.element('div', 'hardware-field-grid');
-    const deviceControls = this.renderDeviceFields(settings.device, deviceGrid, unsafeDisabled);
+    const deviceControls = this.renderDeviceFields(settings.device, deviceGrid, idleOnlyDisabled);
     device.append(deviceGrid);
 
     const actions = this.element('footer', 'hardware-settings-actions');
@@ -932,39 +937,38 @@ class SettingsHardwareView {
     return { wrapper, input };
   }
 
-  renderDeviceFields(device, host, disabled) {
+  renderDeviceFields(device, host, idleOnlyDisabled) {
     const controls = { type: device?.type || 'UNSUPPORTED' };
     controls.sampleRate = this.selectField('Sample rate', device.sampleRateHz, device.sampleRates,
       'Controls how much radio spectrum the receiver captures at once. It cannot change while channels are active.',
-      disabled);
+      idleOnlyDisabled);
     host.append(controls.sampleRate.wrapper);
 
     if (device?.type === 'AIRSPY') {
       controls.airspyGainMode = this.selectField('Gain mode', device.gainMode,
         ['LINEARITY', 'SENSITIVITY', 'CUSTOM'].map((value) => ({ value,
           label: value.charAt(0) + value.slice(1).toLowerCase() })),
-        'Linearity resists strong-signal distortion, Sensitivity favors weak signals, and Custom exposes each gain stage.',
-        disabled);
+        'Linearity resists strong-signal distortion, Sensitivity favors weak signals, and Custom exposes each gain stage. Gain may be adjusted while radio channels are active.');
       controls.airspyGain = this.numberField('Preset gain', device.gain, {
-        min: device.gainMinimum, max: device.gainMaximum, step: 1, suffix: '', disabled,
+        min: device.gainMinimum, max: device.gainMaximum, step: 1, suffix: '', disabled: false,
         help: 'Selects the strength of the Linearity or Sensitivity preset from 1 through 22.'
       });
       controls.airspyIfGain = this.numberField('IF gain', device.ifGain, {
-        min: device.ifGainMinimum, max: device.ifGainMaximum, step: 1, suffix: '', disabled,
+        min: device.ifGainMinimum, max: device.ifGainMaximum, step: 1, suffix: '', disabled: false,
         help: 'Custom-mode gain applied in the receiver’s intermediate-frequency stage.'
       });
       controls.airspyMixerGain = this.numberField('Mixer gain', device.mixerGain, {
-        min: device.mixerGainMinimum, max: device.mixerGainMaximum, step: 1, suffix: '', disabled,
+        min: device.mixerGainMinimum, max: device.mixerGainMaximum, step: 1, suffix: '', disabled: false,
         help: 'Custom-mode gain applied in the frequency mixer.'
       });
       controls.airspyMixerAgc = this.checkboxField('Mixer automatic gain', device.mixerAgc === true,
-        'Lets the Airspy adjust mixer gain automatically in Custom mode.', disabled);
+        'Lets the Airspy adjust mixer gain automatically in Custom mode.');
       controls.airspyLnaGain = this.numberField('LNA gain', device.lnaGain, {
-        min: device.lnaGainMinimum, max: device.lnaGainMaximum, step: 1, suffix: '', disabled,
+        min: device.lnaGainMinimum, max: device.lnaGainMaximum, step: 1, suffix: '', disabled: false,
         help: 'Custom-mode gain applied by the low-noise amplifier closest to the antenna.'
       });
       controls.airspyLnaAgc = this.checkboxField('LNA automatic gain', device.lnaAgc === true,
-        'Lets the Airspy adjust low-noise-amplifier gain automatically in Custom mode.', disabled);
+        'Lets the Airspy adjust low-noise-amplifier gain automatically in Custom mode.');
       controls.airspyPreset = this.element('div', 'hardware-device-subgrid');
       controls.airspyPreset.append(controls.airspyGain.wrapper);
       controls.airspyCustom = this.element('div', 'hardware-device-subgrid');
@@ -973,16 +977,15 @@ class SettingsHardwareView {
       host.append(controls.airspyGainMode.wrapper, controls.airspyPreset, controls.airspyCustom);
     } else if (device?.type === 'RTL_R8X') {
       controls.rtlBiasT = this.checkboxField('Bias-T', device.biasT === true,
-        'Supplies DC power through the antenna connector for compatible active antennas or amplifiers.', disabled);
+        'Supplies DC power through the antenna connector for compatible active antennas or amplifiers.', idleOnlyDisabled);
       controls.rtlMasterGain = this.selectField('Master gain', device.masterGain, device.masterGains,
-        'Automatic lets the receiver choose gain, a numbered preset chooses a fixed gain, and Manual exposes each stage.',
-        disabled);
+        'Automatic lets the receiver choose gain, a numbered preset chooses a fixed gain, and Manual exposes each stage. Gain may be adjusted while radio channels are active.');
       controls.rtlMixerGain = this.selectField('Mixer gain', device.mixerGain, device.mixerGains,
-        'Manual-mode gain applied in the RTL-SDR frequency mixer.', disabled);
+        'Manual-mode gain applied in the RTL-SDR frequency mixer.');
       controls.rtlLnaGain = this.selectField('LNA gain', device.lnaGain, device.lnaGains,
-        'Manual-mode gain applied by the low-noise amplifier closest to the antenna.', disabled);
+        'Manual-mode gain applied by the low-noise amplifier closest to the antenna.');
       controls.rtlVgaGain = this.selectField('VGA gain', device.vgaGain, device.vgaGains,
-        'Manual-mode gain applied after the tuner’s mixer and filtering stages.', disabled);
+        'Manual-mode gain applied after the tuner’s mixer and filtering stages.');
       controls.rtlManual = this.element('div', 'hardware-device-subgrid');
       controls.rtlManual.append(controls.rtlLnaGain.wrapper, controls.rtlMixerGain.wrapper,
         controls.rtlVgaGain.wrapper);
