@@ -1,7 +1,7 @@
 /* global AbortController, document, fetch, queueMicrotask, window */
 'use strict';
 
-const SETTINGS_CHANNELS_SCRIPT = '/assets/settings-channels.js?v=3';
+const SETTINGS_CHANNELS_SCRIPT = '/assets/settings-channels.js?v=4';
 let settingsChannelsScriptPromise = null;
 
 function loadSettingsChannelsScript() {

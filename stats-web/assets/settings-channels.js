@@ -2014,7 +2014,7 @@ class SettingsChannelsView {
       }
     });
     const updated = result.detail || result.channel;
-    if (updated?.id === this.detail?.id && !this.revisionConflict) {
+    if (updated?.id && this.detail?.id === updated.id && !this.revisionConflict) {
       this.detail.autoStartOrder = updated.autoStartOrder;
       this.detail.revision = updated.revision ?? this.detail.revision;
       if (this.originalDetail?.id === updated.id) {

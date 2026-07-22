@@ -3213,9 +3213,9 @@ body:not([data-view="spectrum"]) .systems-live-tab.active {
 }
 
 .systems-live-table td {
-  height: 39px;
-  padding: 6px 8px;
-  font-size: .73rem;
+  height: 29px;
+  padding: 3px 8px;
+  font-size: inherit;
 }
 
 .systems-live-table tr.selected td,
@@ -3459,7 +3459,7 @@ body:not([data-view="spectrum"]) .systems-live-tab.active {
   }
 
   .systems-live-table td {
-    height: 36px;
+    height: 29px;
   }
 }
 
@@ -3696,7 +3696,7 @@ body:not([data-view="spectrum"]) .diagnostic-info-button {
   width: 100%;
   height: 350px;
   display: block;
-  touch-action: none;
+  touch-action: pan-y;
   cursor: crosshair;
   user-select: none;
 }

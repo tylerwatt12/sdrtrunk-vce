@@ -337,12 +337,12 @@
       const card = element('section', 'diagnostic-chart-card');
       const head = element('header', 'diagnostic-chart-head');
       head.append(element('strong', '', 'Channel spectrum'),
-        element('span', '', 'Wheel or +/− to zoom · drag or arrow keys to pan'));
+        element('span', '', '+/− to zoom · drag or arrow keys to pan'));
       const wrap = element('div', 'diagnostic-canvas-wrap');
       this.canvas = element('canvas', 'diagnostic-canvas');
       this.canvas.tabIndex = 0;
       this.canvas.setAttribute('aria-label',
-        'Channel FFT. Use plus and minus to zoom, arrow keys to pan, and R to reset.');
+        'Channel FFT. Scroll normally, use plus and minus to zoom, arrow keys to pan, and R to reset.');
       this.cursorPopup = element('div', 'diagnostic-cursor-popup');
       this.cursorPopup.hidden = true;
       wrap.append(this.canvas, this.cursorPopup);
@@ -380,11 +380,12 @@
       const card = element('section', 'diagnostic-chart-card');
       const head = element('header', 'diagnostic-chart-head');
       this.symbolTitle = element('strong', '', 'Demodulated symbols');
-      head.append(this.symbolTitle, element('span', '', 'Rolling phase · −π to π'));
+      head.append(this.symbolTitle, element('span', '', 'Left-to-right sweep · −π to π'));
       const wrap = element('div', 'diagnostic-canvas-wrap');
       this.canvas = element('canvas', 'diagnostic-canvas diagnostic-symbol-canvas');
       this.canvas.tabIndex = 0;
-      this.canvas.setAttribute('aria-label', 'Rolling demodulated symbol phase graph from minus pi to pi.');
+      this.canvas.setAttribute('aria-label',
+        'Demodulated symbol phase graph scanning from left to right with a marker at the latest symbol.');
       this.canvas.addEventListener('contextmenu', (event) => {
         event.preventDefault();
         this.openStats();
@@ -851,13 +852,6 @@
 
     bindSignalCanvas() {
       const canvas = this.canvas;
-      canvas.addEventListener('wheel', (event) => {
-        event.preventDefault();
-        const rect = canvas.getBoundingClientRect();
-        const plotWidth = Math.max(1, rect.width - 58 - 16);
-        const anchor = Math.max(0, Math.min(1, (event.clientX - rect.left - 58) / plotWidth));
-        this.zoomAt(anchor, event.deltaY < 0 ? 1.25 : 0.8);
-      }, { passive: false });
       canvas.addEventListener('pointerdown', (event) => {
         if (this.zoom <= 1) return;
         this.dragging = true;
@@ -1101,21 +1095,38 @@
         context.fillText(label, padding.left - 8 * dpr, y);
       });
       if (this.symbolCount) {
-        const start = (this.symbolWriteIndex - this.symbolCount + MAXIMUM_SYMBOLS) % MAXIMUM_SYMBOLS;
         context.fillStyle = 'rgba(84, 205, 190, .78)';
         const size = Math.max(1, 1.25 * dpr);
-        for (let index = 0; index < this.symbolCount; index += 1) {
-          const value = this.symbols[(start + index) % MAXIMUM_SYMBOLS];
-          const ratio = this.symbolCount === 1 ? 1 : index / (this.symbolCount - 1);
+        const visibleSlots = this.symbolCount === MAXIMUM_SYMBOLS ? MAXIMUM_SYMBOLS : this.symbolWriteIndex;
+        for (let index = 0; index < visibleSlots; index += 1) {
+          const value = this.symbols[index];
+          const ratio = index / (MAXIMUM_SYMBOLS - 1);
           const x = padding.left + ratio * plotWidth;
           const y = padding.top + (Math.PI - value) / (2 * Math.PI) * plotHeight;
           context.fillRect(x, y, size, size);
         }
+
+        const latestIndex = (this.symbolWriteIndex - 1 + MAXIMUM_SYMBOLS) % MAXIMUM_SYMBOLS;
+        const latestValue = this.symbols[latestIndex];
+        const markerX = padding.left + latestIndex / (MAXIMUM_SYMBOLS - 1) * plotWidth;
+        context.strokeStyle = '#f2cf66';
+        context.lineWidth = dpr;
+        context.beginPath();
+        context.moveTo(markerX, padding.top);
+        context.lineTo(markerX, padding.top + plotHeight);
+        context.stroke();
+
+        context.fillStyle = '#f2cf66';
+        context.textBaseline = 'top';
+        const markerLabel = `Latest ${latestValue >= 0 ? '+' : ''}${latestValue.toFixed(3)} rad`;
+        const markerLabelX = markerX > padding.left + plotWidth / 2 ? markerX - 5 * dpr : markerX + 5 * dpr;
+        context.textAlign = markerX > padding.left + plotWidth / 2 ? 'right' : 'left';
+        context.fillText(markerLabel, markerLabelX, padding.top + 5 * dpr);
       }
       context.textAlign = 'center';
       context.textBaseline = 'top';
       context.fillStyle = '#9fb2bf';
-      context.fillText('Newest symbols →', padding.left + plotWidth / 2,
+      context.fillText('Sweep position', padding.left + plotWidth / 2,
         padding.top + plotHeight + 10 * dpr);
     }
   }
