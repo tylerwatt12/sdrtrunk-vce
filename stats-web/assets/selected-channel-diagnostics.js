@@ -1107,21 +1107,13 @@
         }
 
         const latestIndex = (this.symbolWriteIndex - 1 + MAXIMUM_SYMBOLS) % MAXIMUM_SYMBOLS;
-        const latestValue = this.symbols[latestIndex];
         const markerX = padding.left + latestIndex / (MAXIMUM_SYMBOLS - 1) * plotWidth;
-        context.strokeStyle = '#f2cf66';
+        context.strokeStyle = 'rgba(84, 205, 190, .78)';
         context.lineWidth = dpr;
         context.beginPath();
         context.moveTo(markerX, padding.top);
         context.lineTo(markerX, padding.top + plotHeight);
         context.stroke();
-
-        context.fillStyle = '#f2cf66';
-        context.textBaseline = 'top';
-        const markerLabel = `Latest ${latestValue >= 0 ? '+' : ''}${latestValue.toFixed(3)} rad`;
-        const markerLabelX = markerX > padding.left + plotWidth / 2 ? markerX - 5 * dpr : markerX + 5 * dpr;
-        context.textAlign = markerX > padding.left + plotWidth / 2 ? 'right' : 'left';
-        context.fillText(markerLabel, markerLabelX, padding.top + 5 * dpr);
       }
       context.textAlign = 'center';
       context.textBaseline = 'top';
