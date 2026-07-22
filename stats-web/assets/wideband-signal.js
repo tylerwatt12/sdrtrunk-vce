@@ -84,6 +84,7 @@ class WidebandSignalView {
     this.waterfallScrollAccumulator = 0;
     this.activeChannelTables = new Map();
     this.activeChannelLabelRows = [];
+    this.activeChannelPeakHolds = new Map();
     this.activeChannelLabelSignature = '';
     this.activeChannelLabelViewportKey = '';
     this.activeChannelSource = null;
@@ -760,6 +761,7 @@ class WidebandSignalView {
     this.hoverRatio = null;
     this.hoverCanvas = null;
     this.hoverYRatio = null;
+    this.activeChannelPeakHolds.clear();
     this.dropped = 0;
     this.framesThisSecond = 0;
     this.fps = 0;
@@ -1218,6 +1220,7 @@ class WidebandSignalView {
     this.activeChannelSource = null;
     this.activeChannelTables.clear();
     this.activeChannelLabelRows = [];
+    this.activeChannelPeakHolds.clear();
     this.activeChannelLabelSignature = '';
     this.activeChannelLabelViewportKey = '';
     this.activeChannelLabels?.replaceChildren();
@@ -1237,7 +1240,7 @@ class WidebandSignalView {
             !status || status === 'IDLE') return;
         const previous = channels.get(frequencyHz);
         if (!previous || (statusPriority[status] || 0) > (statusPriority[previous.status] || 0)) {
-          channels.set(frequencyHz, { ...row, status });
+          channels.set(frequencyHz, { ...row, status, tableId: table.table_id });
         }
       });
     });
@@ -1250,6 +1253,7 @@ class WidebandSignalView {
     const viewport = this.viewport || this.fullViewport;
     if (!viewport || viewport.endHz <= viewport.startHz) {
       this.activeChannelLabelRows = [];
+      this.activeChannelPeakHolds.clear();
       this.activeChannelLabels.replaceChildren();
       this.clearActiveChannelConnectors();
       return;
@@ -1263,7 +1267,16 @@ class WidebandSignalView {
     this.activeChannelLabelRows = rows.map((row, index) => {
       const lane = index % laneCount;
       const slot = Math.floor(index / laneCount);
-      return { ...row, lane, labelRatio: (slot + 0.5) / Math.max(1, laneCounts[lane]) };
+      return {
+        ...row,
+        lane,
+        labelRatio: (slot + 0.5) / Math.max(1, laneCounts[lane]),
+        peakHoldKey: this.activeChannelPeakHoldKey(row)
+      };
+    });
+    const activePeakHoldKeys = new Set(this.activeChannelLabelRows.map((row) => row.peakHoldKey));
+    this.activeChannelPeakHolds.forEach((value, key) => {
+      if (!activePeakHoldKeys.has(key)) this.activeChannelPeakHolds.delete(key);
     });
     const signature = `${Math.round(availableWidth)}|${this.activeChannelLabelRows.map((row) =>
       `${row.frequencyHz}:${row.status}:${row.target_alias || row.target_id || row.channel_name || row.lcn || ''}:${row.lane}:${row.labelRatio}`).join('|')}`;
@@ -1284,6 +1297,11 @@ class WidebandSignalView {
     const context = this.activeChannelConnectors?.getContext('2d');
     if (context) context.clearRect(0, 0,
       this.activeChannelConnectors.width, this.activeChannelConnectors.height);
+  }
+
+  activeChannelPeakHoldKey(row) {
+    return [row.tableId || '', row.key || row.selection_id || '', row.frequencyHz,
+      row.timeslot || '', row.status || '', row.target_id || ''].join('|');
   }
 
   drawActiveChannelConnectors() {
@@ -1326,10 +1344,20 @@ class WidebandSignalView {
     for (let index = start; index <= end; index += 1) {
       if (bins[index] > bins[peak]) peak = index;
     }
+    const currentPower = Number(bins[peak]);
     const visibleBins = visible.end - visible.start;
+    const visibleStartHz = this.frameStartHz() + visible.start * binWidthHz;
+    const visibleEndHz = visibleStartHz + visibleBins * binWidthHz;
+    const currentPeakFrequencyHz = this.frameStartHz() + (peak + 0.5) * binWidthHz;
+    let heldPeak = this.activeChannelPeakHolds.get(row.peakHoldKey);
+    if (!heldPeak || heldPeak.frequencyHz < visibleStartHz || heldPeak.frequencyHz > visibleEndHz ||
+        currentPower > heldPeak.powerDb) {
+      heldPeak = { frequencyHz: currentPeakFrequencyHz, powerDb: currentPower };
+      this.activeChannelPeakHolds.set(row.peakHoldKey, heldPeak);
+    }
     return {
-      x: (peak - visible.start + 0.5) / visibleBins * canvasWidth,
-      y: this.powerY(bins[peak], canvasHeight)
+      x: (heldPeak.frequencyHz - visibleStartHz) / (visibleEndHz - visibleStartHz) * canvasWidth,
+      y: this.powerY(heldPeak.powerDb, canvasHeight)
     };
   }
 
