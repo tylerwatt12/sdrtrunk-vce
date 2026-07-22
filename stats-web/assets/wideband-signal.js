@@ -83,7 +83,9 @@ class WidebandSignalView {
     this.waterfallSpeed = signalStoredNumber(SIGNAL_WATERFALL_SPEED_STORAGE_KEY, 1, 0.25, 4);
     this.waterfallScrollAccumulator = 0;
     this.activeChannelTables = new Map();
-    this.pendingActiveChannelRows = new Map();
+    this.activeChannelLabelRows = [];
+    this.activeChannelLabelSignature = '';
+    this.activeChannelLabelViewportKey = '';
     this.activeChannelSource = null;
     this.paletteLut = new Uint8ClampedArray(
       (Math.round((SIGNAL_PALETTE_MAXIMUM_DB - SIGNAL_PALETTE_MINIMUM_DB) / SIGNAL_PALETTE_STEP_DB) + 1) * 3);
@@ -235,9 +237,11 @@ class WidebandSignalView {
       'Live spectrum plot. Wheel to zoom and drag to pan when zoomed.');
     this.fftGuide = this.element('div', 'wideband-cursor-guide');
     this.fftGuide.hidden = true;
+    this.activeChannelConnectors = this.element('canvas', 'wideband-active-channel-connectors');
+    this.activeChannelConnectors.setAttribute('aria-hidden', 'true');
     this.activeChannelLabels = this.element('div', 'wideband-active-channel-labels');
     this.activeChannelLabels.setAttribute('aria-hidden', 'true');
-    fftWrap.append(this.fft, this.activeChannelLabels, this.fftGuide);
+    fftWrap.append(this.fft, this.activeChannelConnectors, this.activeChannelLabels, this.fftGuide);
 
     const waterfallWrap = this.element('section', 'wideband-plot waterfall');
     this.waterfall = this.element('canvas', 'wideband-canvas');
@@ -245,9 +249,7 @@ class WidebandSignalView {
       'Live waterfall plot. Wheel to zoom and drag to pan when zoomed.');
     this.waterfallGuide = this.element('div', 'wideband-cursor-guide');
     this.waterfallGuide.hidden = true;
-    this.activeChannelOverlay = this.element('canvas', 'wideband-active-channels');
-    this.activeChannelOverlay.setAttribute('aria-hidden', 'true');
-    waterfallWrap.append(this.waterfall, this.activeChannelOverlay, this.waterfallGuide);
+    waterfallWrap.append(this.waterfall, this.waterfallGuide);
 
     this.cursorPopup = this.element('div', 'wideband-cursor-popup');
     this.cursorPopup.hidden = true;
@@ -361,13 +363,14 @@ class WidebandSignalView {
 
   resize() {
     const fftChanged = this.resizeCanvas(this.fft, 250);
+    const connectorChanged = this.resizeCanvas(this.activeChannelConnectors, 250);
     const waterfallChanged = this.resizeCanvas(this.waterfall, 310);
-    const activeChannelsChanged = this.resizeCanvas(this.activeChannelOverlay, 310);
-    if (waterfallChanged || activeChannelsChanged) {
+    if (waterfallChanged) {
       this.waterfallRow = null;
       this.clearWaterfall();
     }
-    if (fftChanged || waterfallChanged) this.requestFftRender();
+    if (fftChanged || connectorChanged) this.renderActiveChannelLabels();
+    if (fftChanged || connectorChanged || waterfallChanged) this.requestFftRender();
   }
 
   webSocketUrl() {
@@ -1013,7 +1016,11 @@ class WidebandSignalView {
     }
     this.resetButton.disabled = zoom <= 1.0001;
     this.plotArea.classList.toggle('zoomed', zoom > 1.0001);
-    this.renderActiveChannelLabels();
+    const labelViewportKey = `${viewport.startHz}:${viewport.endHz}:${this.fft?.clientWidth || 0}`;
+    if (labelViewportKey !== this.activeChannelLabelViewportKey) {
+      this.activeChannelLabelViewportKey = labelViewportKey;
+      this.renderActiveChannelLabels();
+    }
   }
 
   formatFrequency(frequencyHz) {
@@ -1063,6 +1070,7 @@ class WidebandSignalView {
       if (x === 0) context.moveTo(x, y); else context.lineTo(x, y);
     }
     context.stroke();
+    this.drawActiveChannelConnectors();
   }
 
   drawDbGrid(context, width, height) {
@@ -1141,7 +1149,6 @@ class WidebandSignalView {
       data[offset + 3] = 255;
     }
     for (let row = 0; row < rowCount; row += 1) context.putImageData(this.waterfallRow, 0, row);
-    this.addActiveChannelOutlineRows(rowCount);
   }
 
   visibleBinRange() {
@@ -1195,7 +1202,6 @@ class WidebandSignalView {
       (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
         if (table?.table_id) this.activeChannelTables.set(String(table.table_id), table);
       });
-      this.capturePendingActiveChannels();
       this.renderActiveChannelLabels();
     }));
     source.addEventListener('activity_table', (event) => read(event, (update) => {
@@ -1203,7 +1209,6 @@ class WidebandSignalView {
       if (!id) return;
       if (update.operation === 'remove') this.activeChannelTables.delete(id);
       else if (update.table) this.activeChannelTables.set(id, update.table);
-      this.capturePendingActiveChannels();
       this.renderActiveChannelLabels();
     }));
   }
@@ -1212,8 +1217,11 @@ class WidebandSignalView {
     this.activeChannelSource?.close();
     this.activeChannelSource = null;
     this.activeChannelTables.clear();
-    this.pendingActiveChannelRows.clear();
+    this.activeChannelLabelRows = [];
+    this.activeChannelLabelSignature = '';
+    this.activeChannelLabelViewportKey = '';
     this.activeChannelLabels?.replaceChildren();
+    this.clearActiveChannelConnectors();
   }
 
   activeChannelRows() {
@@ -1237,123 +1245,92 @@ class WidebandSignalView {
       .map(([frequencyHz, row]) => ({ ...row, frequencyHz }));
   }
 
-  activeChannelKey(row) {
-    return String(row.frequencyHz);
-  }
-
-  capturePendingActiveChannels() {
-    this.activeChannelRows().forEach((row) => this.pendingActiveChannelRows.set(this.activeChannelKey(row), row));
-  }
-
   renderActiveChannelLabels() {
     if (!this.activeChannelLabels) return;
     const viewport = this.viewport || this.fullViewport;
     if (!viewport || viewport.endHz <= viewport.startHz) {
+      this.activeChannelLabelRows = [];
       this.activeChannelLabels.replaceChildren();
+      this.clearActiveChannelConnectors();
       return;
     }
-    const span = viewport.endHz - viewport.startHz;
-    const labels = this.activeChannelRows().slice(0, 24).map((row, index) => {
+    const rows = this.activeChannelRows().slice(0, 24);
+    const availableWidth = Math.max(320, this.fft?.clientWidth || 320);
+    const maximumPerLane = Math.max(1, Math.floor(availableWidth / 150));
+    const laneCount = Math.max(1, Math.min(4, Math.ceil(rows.length / maximumPerLane)));
+    const laneCounts = Array.from({ length: laneCount }, (_, lane) =>
+      rows.filter((row, index) => index % laneCount === lane).length);
+    this.activeChannelLabelRows = rows.map((row, index) => {
+      const lane = index % laneCount;
+      const slot = Math.floor(index / laneCount);
+      return { ...row, lane, labelRatio: (slot + 0.5) / Math.max(1, laneCounts[lane]) };
+    });
+    const signature = `${Math.round(availableWidth)}|${this.activeChannelLabelRows.map((row) =>
+      `${row.frequencyHz}:${row.status}:${row.target_alias || row.target_id || row.channel_name || row.lcn || ''}:${row.lane}:${row.labelRatio}`).join('|')}`;
+    if (signature === this.activeChannelLabelSignature) return;
+    this.activeChannelLabelSignature = signature;
+    const labels = this.activeChannelLabelRows.map((row) => {
       const label = this.element('span', `wideband-active-channel-label status-${row.status.toLowerCase()}`,
         row.target_alias || row.target_id || row.channel_name || row.lcn || row.status);
-      label.style.left = `${(row.frequencyHz - viewport.startHz) / span * 100}%`;
-      label.style.setProperty('--channel-label-lane', String(index % 3));
+      label.style.left = `${row.labelRatio * 100}%`;
+      label.style.setProperty('--channel-label-lane', String(row.lane));
       return label;
     });
     this.activeChannelLabels.replaceChildren(...labels);
+    this.requestFftRender();
   }
 
-  addActiveChannelOutlineRows(rowCount) {
-    const canvas = this.activeChannelOverlay;
-    if (!canvas?.width || !canvas.height || !this.frame || rowCount < 1) return;
-    const context = canvas.getContext('2d');
-    context.drawImage(canvas, 0, 0, canvas.width, canvas.height - rowCount,
-      0, rowCount, canvas.width, canvas.height - rowCount);
-    context.clearRect(0, 0, canvas.width, rowCount);
+  clearActiveChannelConnectors() {
+    const context = this.activeChannelConnectors?.getContext('2d');
+    if (context) context.clearRect(0, 0,
+      this.activeChannelConnectors.width, this.activeChannelConnectors.height);
+  }
 
-    const rows = new Map(this.pendingActiveChannelRows);
-    this.activeChannelRows().forEach((row) => rows.set(this.activeChannelKey(row), row));
-    this.pendingActiveChannelRows.clear();
-    rows.forEach((row) => {
-      const bounds = this.activeSignalBounds(row, canvas.width);
-      if (!bounds) return;
-      this.drawActiveSignalOutline(context, bounds, rowCount);
+  drawActiveChannelConnectors() {
+    const canvas = this.activeChannelConnectors;
+    if (!canvas?.width || !canvas.height) return;
+    const context = canvas.getContext('2d');
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!this.frame || !this.activeChannelLabelRows.length) return;
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const colors = { ENCRYPTED: '#ff9b8b', CONTROL: '#f1c86b', DATA: '#69ddff' };
+    this.activeChannelLabelRows.forEach((row) => {
+      const peak = this.activeSignalPeak(row, canvas.width, canvas.height);
+      if (!peak) return;
+      const labelX = row.labelRatio * canvas.width;
+      const labelY = (7 + row.lane * 24 + 18) * ratio;
+      context.strokeStyle = colors[row.status] || '#6ee7a5';
+      context.fillStyle = context.strokeStyle;
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(labelX, labelY);
+      context.lineTo(peak.x, peak.y);
+      context.stroke();
+      context.beginPath();
+      context.arc(peak.x, peak.y, Math.max(1.5, ratio), 0, Math.PI * 2);
+      context.fill();
     });
   }
 
-  activeSignalBounds(row, canvasWidth) {
+  activeSignalPeak(row, canvasWidth, canvasHeight) {
     const bins = this.frame?.bins;
     const binWidthHz = this.frameBinWidthHz();
     if (!bins?.length || !Number.isFinite(binWidthHz) || binWidthHz <= 0) return null;
     const center = Math.round((row.frequencyHz - this.frameStartHz()) / binWidthHz);
     const visible = this.visibleBinRange();
     if (center < visible.start || center >= visible.end) return null;
-    const searchRadius = Math.max(2, Math.min(96, Math.ceil(10_000 / binWidthHz)));
-    const searchStart = Math.max(visible.start, center - searchRadius);
-    const searchEnd = Math.min(visible.end - 1, center + searchRadius);
-    const seedRadius = Math.max(1, Math.min(searchRadius, Math.ceil(3_000 / binWidthHz)));
-    let seed = center;
-    for (let index = Math.max(searchStart, center - seedRadius);
-      index <= Math.min(searchEnd, center + seedRadius); index += 1) {
-      if (bins[index] > bins[seed]) seed = index;
-    }
-    let noiseTotal = 0;
-    let noiseCount = 0;
-    const noiseWidth = Math.min(8, Math.max(2, Math.floor(searchRadius / 3)));
-    for (let offset = 0; offset < noiseWidth; offset += 1) {
-      const left = searchStart + offset;
-      const right = searchEnd - offset;
-      noiseTotal += bins[left];
-      noiseCount += 1;
-      if (right !== left) {
-        noiseTotal += bins[right];
-        noiseCount += 1;
-      }
-    }
-    const noise = noiseCount ? noiseTotal / noiseCount : this.dbFloor;
-    const threshold = Math.max(this.dbFloor + 8, noise + 8, bins[seed] - 12);
-    let left = seed;
-    let right = seed;
-    let quiet = 0;
-    for (let index = seed - 1; index >= searchStart; index -= 1) {
-      if (bins[index] >= threshold) {
-        left = index;
-        quiet = 0;
-      } else if (++quiet >= 2) break;
-    }
-    quiet = 0;
-    for (let index = seed + 1; index <= searchEnd; index += 1) {
-      if (bins[index] >= threshold) {
-        right = index;
-        quiet = 0;
-      } else if (++quiet >= 2) break;
+    const radius = Math.max(1, Math.min(32, Math.ceil(5_000 / binWidthHz)));
+    const start = Math.max(visible.start, center - radius);
+    const end = Math.min(visible.end - 1, center + radius);
+    let peak = center;
+    for (let index = start; index <= end; index += 1) {
+      if (bins[index] > bins[peak]) peak = index;
     }
     const visibleBins = visible.end - visible.start;
-    const centerX = (center - visible.start + 0.5) / visibleBins * canvasWidth;
-    let leftX = (left - visible.start) / visibleBins * canvasWidth;
-    let rightX = (right - visible.start + 1) / visibleBins * canvasWidth;
-    const minimumWidth = Math.max(3, Math.min(window.devicePixelRatio || 1, 2) * 3);
-    if (rightX - leftX < minimumWidth) {
-      leftX = centerX - minimumWidth / 2;
-      rightX = centerX + minimumWidth / 2;
-    }
-    const colors = { ENCRYPTED: '#ff9b8b', CONTROL: '#f1c86b', DATA: '#69ddff' };
     return {
-      leftX: Math.max(0.5, leftX),
-      rightX: Math.min(canvasWidth - 0.5, rightX),
-      color: colors[row.status] || '#6ee7a5'
+      x: (peak - visible.start + 0.5) / visibleBins * canvasWidth,
+      y: this.powerY(bins[peak], canvasHeight)
     };
-  }
-
-  drawActiveSignalOutline(context, bounds, rowCount) {
-    context.strokeStyle = bounds.color;
-    context.lineWidth = 1;
-    context.beginPath();
-    context.moveTo(bounds.leftX, 0);
-    context.lineTo(bounds.leftX, rowCount);
-    context.moveTo(bounds.rightX, 0);
-    context.lineTo(bounds.rightX, rowCount);
-    context.stroke();
   }
 
   clearWaterfall() {
@@ -1362,13 +1339,6 @@ class WidebandSignalView {
       context.fillStyle = '#071018';
       context.fillRect(0, 0, this.waterfall.width, this.waterfall.height);
     }
-    this.clearActiveChannelOutlines();
-  }
-
-  clearActiveChannelOutlines() {
-    const activeContext = this.activeChannelOverlay?.getContext('2d');
-    if (activeContext) activeContext.clearRect(0, 0,
-      this.activeChannelOverlay.width, this.activeChannelOverlay.height);
   }
 
   clearPlots() {
@@ -1559,7 +1529,6 @@ class WidebandSignalView {
   transformPlots(fromViewport, toViewport) {
     this.transformCanvas(this.fft, this.fftScratch, fromViewport, toViewport);
     this.transformCanvas(this.waterfall, this.waterfallScratch, fromViewport, toViewport);
-    this.clearActiveChannelOutlines();
   }
 
   transformCanvas(canvas, scratch, fromViewport, toViewport, transparent = false) {
