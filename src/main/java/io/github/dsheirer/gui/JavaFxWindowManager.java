@@ -21,6 +21,7 @@ package io.github.dsheirer.gui;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.controller.channel.map.ChannelRange;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -51,6 +52,8 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebNavigationState;
+import java.net.URI;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.net.URI;
 import java.util.function.Consumer;

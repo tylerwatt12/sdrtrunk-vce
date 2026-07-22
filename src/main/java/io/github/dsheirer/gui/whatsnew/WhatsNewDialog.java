@@ -17,6 +17,7 @@ import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JEditorPane;
 import javax.swing.JOptionPane;
@@ -52,26 +53,19 @@ public class WhatsNewDialog extends JDialog
     }
 
     /**
-     * Shows the current approved notes once. The version is recorded before opening the modal window so the automatic
-     * message cannot repeat during the same launch.
+     * Returns the approved release notes when they have not yet been shown automatically for this version.
      */
-    public static void showOnFirstLaunch(Frame owner)
+    public static Optional<ReleaseNotes> getPendingReleaseNotes()
     {
-        Optional<ReleaseNotes> current = ReleaseNotes.currentApproved();
+        return ReleaseNotes.currentApproved().filter(notes ->
+            ReleaseNotes.shouldShow(notes.version(), PREFERENCES.get(LAST_SHOWN_VERSION, null)));
+    }
 
-        if(current.isEmpty())
-        {
-            return;
-        }
-
-        ReleaseNotes notes = current.get();
-        String lastShown = PREFERENCES.get(LAST_SHOWN_VERSION, null);
-
-        if(!ReleaseNotes.shouldShow(notes.version(), lastShown))
-        {
-            return;
-        }
-
+    /**
+     * Records that the supplied release notes have been presented by the automatic startup experience.
+     */
+    public static void markShown(ReleaseNotes notes)
+    {
         PREFERENCES.put(LAST_SHOWN_VERSION, notes.version());
 
         try
@@ -83,7 +77,6 @@ public class WhatsNewDialog extends JDialog
             mLog.warn("Unable to immediately save the displayed What's New version [{}]", notes.version(), e);
         }
 
-        new WhatsNewDialog(owner, notes).setVisible(true);
     }
 
     /**
@@ -106,7 +99,23 @@ public class WhatsNewDialog extends JDialog
     {
         JPanel panel = new JPanel(new BorderLayout(0, 12));
         panel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        panel.add(createReleaseNotesView(releaseNotes), BorderLayout.CENTER);
 
+        JButton close = new JButton("Continue");
+        close.addActionListener(event -> dispose());
+        JPanel buttons = new JPanel(new BorderLayout());
+        buttons.add(close, BorderLayout.EAST);
+        panel.add(buttons, BorderLayout.SOUTH);
+        getRootPane().setDefaultButton(close);
+        SwingUtilities.invokeLater(close::requestFocusInWindow);
+        return panel;
+    }
+
+    /**
+     * Creates the reusable release-note document used by both the Help dialog and coordinated startup experience.
+     */
+    public static JComponent createReleaseNotesView(ReleaseNotes releaseNotes)
+    {
         JEditorPane document = new JEditorPane();
         document.setEditable(false);
         document.setContentType("text/html");
@@ -118,19 +127,10 @@ public class WhatsNewDialog extends JDialog
         document.addHyperlinkListener(event -> {
             if(event.getEventType() == HyperlinkEvent.EventType.ACTIVATED && event.getURL() != null)
             {
-                openLink(event.getURL().toString());
+                openLink(document, event.getURL().toString());
             }
         });
-        panel.add(new JScrollPane(document), BorderLayout.CENTER);
-
-        JButton close = new JButton("Continue");
-        close.addActionListener(event -> dispose());
-        JPanel buttons = new JPanel(new BorderLayout());
-        buttons.add(close, BorderLayout.EAST);
-        panel.add(buttons, BorderLayout.SOUTH);
-        getRootPane().setDefaultButton(close);
-        SwingUtilities.invokeLater(close::requestFocusInWindow);
-        return panel;
+        return new JScrollPane(document);
     }
 
     private static HTMLEditorKit createEditorKit(Font font)
@@ -148,7 +148,7 @@ public class WhatsNewDialog extends JDialog
         return editorKit;
     }
 
-    private void openLink(String value)
+    private static void openLink(JComponent owner, String value)
     {
         try
         {
@@ -160,7 +160,7 @@ public class WhatsNewDialog extends JDialog
         catch(Exception e)
         {
             mLog.error("Unable to open What's New link [{}]", value, e);
-            JOptionPane.showMessageDialog(this, "Unable to open this link:\n" + value, "Can't Open Link",
+            JOptionPane.showMessageDialog(owner, "Unable to open this link:\n" + value, "Can't Open Link",
                 JOptionPane.ERROR_MESSAGE);
         }
     }

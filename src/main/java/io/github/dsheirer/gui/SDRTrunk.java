@@ -45,6 +45,7 @@ import io.github.dsheirer.gui.bugreport.BugReportDialog;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.nodeadmin.LocalNodeAdministrationApplication;
+import io.github.dsheirer.gui.startup.CoordinatedStartupDialog;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
@@ -101,8 +102,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
-import java.util.prefs.Preferences;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.prefs.Preferences;
 import javafx.embed.swing.JFXPanel;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
@@ -213,8 +214,10 @@ public class SDRTrunk implements Listener<TunerEvent>
             mUserPreferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
         }
 
-        //Initialize calibration metadata before the web status endpoint can query it.  This does not run calibration.
-        CalibrationManager.getInstance(mUserPreferences);
+        //Initialize calibration metadata before the web status endpoint can query it. This does not run calibration.
+        CalibrationManager calibrationManager = CalibrationManager.getInstance(mUserPreferences);
+        final boolean calibrationRequired = !headless && !calibrationManager.isCalibrated() &&
+            !mUserPreferences.getVectorCalibrationPreference().isHideCalibrationDialog();
 
         //Note: invoke this early in the application lifecycle, before the TunerManager causes the sdrplay classes
         //to be loaded since the jextract auto-generated code attempts to load the library by name and that can fail
@@ -333,7 +336,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mLog.info("Starting temporary legacy desktop adapter");
             initGUI();
-            EventQueue.invokeLater(this::finishLegacyDesktopStartup);
+            EventQueue.invokeLater(() -> finishLegacyDesktopStartup(calibrationRequired));
         }
     }
 
@@ -371,7 +374,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
     }
 
-    private void finishLegacyDesktopStartup()
+    private void finishLegacyDesktopStartup(boolean calibrationRequired)
     {
         try
         {
@@ -395,10 +398,56 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
         catch(Exception e)
         {
-            mLog.error("Unable to finish temporary desktop setup; continuing unattended radio startup", e);
+            mLog.error("Unable to finish temporary desktop setup; continuing with post-launch startup", e);
         }
 
-        startUnattendedRadio(evaluateHeadlessStartupPolicy());
+        try
+        {
+            startDesktopPostLaunchExperience(calibrationRequired);
+        }
+        catch(Exception e)
+        {
+            mLog.error("Post-launch startup failed; starting configured channels without the startup dialog", e);
+            EncryptionKeyVaultService vaultService = getLockedLaunchVault();
+
+            if(vaultService != null)
+            {
+                vaultService.disableForRun();
+            }
+
+            startConfiguredChannels(mConfigurationManager.getChannelModel().getAutoStartChannels());
+        }
+    }
+
+    private void startDesktopPostLaunchExperience(boolean calibrationRequired)
+    {
+        List<Channel> channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
+        EncryptionKeyVaultService vaultService = getLockedLaunchVault();
+        CoordinatedStartupDialog dialog = new CoordinatedStartupDialog(mMainGui, mUserPreferences,
+            WhatsNewDialog.getPendingReleaseNotes(), calibrationRequired, vaultService, channels,
+            mConfigurationManager.getChannelProcessingManager());
+
+        if(dialog.hasSteps())
+        {
+            dialog.showExperience();
+        }
+    }
+
+    private EncryptionKeyVaultService getLockedLaunchVault()
+    {
+        if(!mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
+        {
+            return null;
+        }
+
+        EncryptionKeyVaultService vaultService = mUserPreferences.getEncryptionKeyPreference().getVaultService();
+
+        if(!vaultService.hasVault() || vaultService.isUnlocked() || !vaultService.isPromptOnLaunch())
+        {
+            return null;
+        }
+
+        return vaultService;
     }
 
     private HeadlessStartupPolicy evaluateHeadlessStartupPolicy()
@@ -1428,14 +1477,28 @@ public class SDRTrunk implements Listener<TunerEvent>
             }
 
             Path dataRoot = PortableApplicationPaths.getDataRoot();
-            dataRootLock = PortableDataRootLock.acquire(dataRoot);
             Path databasePath = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-            boolean newProfile = !Files.isRegularFile(databasePath);
 
-            if(!SdrTrunkDatabaseBootstrap.run(args))
+            if(Files.isRegularFile(databasePath))
             {
-                dataRootLock.close();
+                dataRootLock = PortableDataRootLock.acquire(dataRoot);
+            }
+
+            SdrTrunkDatabaseBootstrap.BootstrapResult bootstrap = SdrTrunkDatabaseBootstrap.run(args);
+
+            if(!bootstrap.startApplication())
+            {
+                if(dataRootLock != null)
+                {
+                    dataRootLock.close();
+                }
+
                 return;
+            }
+
+            if(dataRootLock == null)
+            {
+                dataRootLock = PortableDataRootLock.acquire(dataRoot);
             }
 
             SqlitePreferencesFactory.install(databasePath);
@@ -1450,7 +1513,7 @@ public class SDRTrunk implements Listener<TunerEvent>
 
             UserPreferences userPreferences = new UserPreferences();
 
-            if(newProfile)
+            if(bootstrap.initializeNewPreferences())
             {
                 userPreferences.getApplicationPreference().setStatsLoggingEnabled(true);
             }
@@ -1461,6 +1524,18 @@ public class SDRTrunk implements Listener<TunerEvent>
         catch(Exception e)
         {
             SqlitePreferencesFactory.shutdown();
+
+            if(dataRootLock != null)
+            {
+                try
+                {
+                    dataRootLock.close();
+                }
+                catch(IOException closeFailure)
+                {
+                    e.addSuppressed(closeFailure);
+                }
+            }
 
             String message = "sdrtrunk-vce could not start.\n\n" + e.getMessage();
             System.err.println(message);

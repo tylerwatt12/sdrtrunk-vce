@@ -23,7 +23,7 @@ import java.util.Objects;
 /**
  * Exclusive process lock for a portable application data root.
  *
- * <p>The lock file remains in place after this lock is closed. Ownership is represented by the operating system file
+ * <p>The lock file remains in place after this lock is closed. Ownership is represented by the operating-system file
  * lock, not by the presence of the file.</p>
  */
 public final class PortableDataRootLock implements AutoCloseable
@@ -86,9 +86,9 @@ public final class PortableDataRootLock implements AutoCloseable
             {
                 channel.close();
             }
-            catch(IOException closeException)
+            catch(IOException closeFailure)
             {
-                e.addSuppressed(closeException);
+                e.addSuppressed(closeFailure);
             }
 
             throw e;

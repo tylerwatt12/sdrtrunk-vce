@@ -15,8 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -96,8 +96,9 @@ class PortableDataRootLockTest
     void rejectsLockOwnedByAnotherProcess() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("cross-process-data");
-        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        Process process = new ProcessBuilder(javaExecutable, "-cp", System.getProperty("java.class.path"),
+        Path java = Path.of(System.getProperty("java.home"), "bin",
+            System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java");
+        Process process = new ProcessBuilder(java.toString(), "-cp", System.getProperty("java.class.path"),
             LockHolderProcess.class.getName(), dataRoot.toString()).redirectErrorStream(true).start();
 
         try(BufferedReader output = new BufferedReader(new InputStreamReader(process.getInputStream(),

@@ -26,8 +26,8 @@ import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceE
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultState;
 import io.github.dsheirer.stats.StatsWebNavigationState;
-import java.util.Objects;
 import java.net.URI;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javafx.animation.Animation;

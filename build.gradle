@@ -204,6 +204,7 @@ def publicPackagingTasks = ['runtimeZipCurrent', 'runtimeZipWindows', 'runtimeZi
 tasks.configureEach { candidate ->
     if(publicPackagingTasks.contains(candidate.name)) {
         candidate.dependsOn('verifyApprovedReleaseNotes')
+        candidate.dependsOn('verifyBundledDatabaseUpgradeHelper')
     }
 }
 
@@ -480,6 +481,27 @@ jar {
     }
 }
 
+tasks.register('verifyBundledDatabaseUpgradeHelper') {
+    group = 'verification'
+    description = 'Verifies that packaged builds contain the compiled SQLite upgrade helper.'
+    dependsOn jar
+    inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
+
+    doLast {
+        def archive = inputs.files.singleFile
+        def helperEntry = 'io/github/dsheirer/database/upgrade/P25ActivityV19ToV20Upgrade.class'
+        def zip = new java.util.zip.ZipFile(archive)
+
+        try {
+            if(zip.getEntry(helperEntry) == null) {
+                throw new GradleException("Packaged database upgrade helper is missing from ${archive.name}")
+            }
+        } finally {
+            zip.close()
+        }
+    }
+}
+
 tasks.register('verifyNoBundledVoiceDecryption') {
     dependsOn jar
     inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
@@ -516,6 +538,7 @@ tasks.register('verifyNoBundledVoiceDecryption') {
 }
 
 check.dependsOn tasks.named('verifyNoBundledVoiceDecryption')
+check.dependsOn tasks.named('verifyBundledDatabaseUpgradeHelper')
 
 idea {
     module {

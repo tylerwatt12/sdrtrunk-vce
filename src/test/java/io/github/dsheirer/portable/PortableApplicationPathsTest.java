@@ -64,7 +64,7 @@ class PortableApplicationPathsTest
         PortableApplicationPaths.resetForTest();
 
         assertEquals(dataRoot, PortableApplicationPaths.getDataRoot());
-        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--fresh", "--server-admin-ui"}));
+        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--fresh", "--server-admin-ui"}).startApplication());
         assertEquals(dataRoot.resolve("database/sdrtrunk.sqlite"), SdrTrunkDatabasePath.getDatabasePath());
         assertTrue(Files.isRegularFile(dataRoot.resolve("database/sdrtrunk.sqlite")));
         assertTrue(Files.isRegularFile(dataRoot.resolve("vault/encryption-key-vault.sqlite")));

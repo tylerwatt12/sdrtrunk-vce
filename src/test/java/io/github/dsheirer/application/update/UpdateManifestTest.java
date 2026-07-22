@@ -34,6 +34,9 @@ class UpdateManifestTest
             UpdateManifest.parse("build=-1\nversion=test\nurl=" + RELEASE_URL));
         assertThrows(IOException.class, () ->
             UpdateManifest.parse("build=2\nversion=test\nurl=https://example.com/releases/test"));
+        assertThrows(IOException.class, () ->
+            UpdateManifest.parse("build=2\nversion=test\nurl=" +
+                "https://github.com/tylerwatt12/sdrtrunk-vce/releases-elsewhere/test"));
     }
 
     @Test

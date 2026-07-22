@@ -64,7 +64,7 @@ record UpdateManifest(int build, String version, URI releaseUri)
         if(!"https".equalsIgnoreCase(releaseUri.getScheme()) ||
             !"github.com".equalsIgnoreCase(releaseUri.getHost()) ||
             releaseUri.getPath() == null ||
-            !releaseUri.getPath().startsWith("/tylerwatt12/sdrtrunk-vce/releases"))
+            !releaseUri.getPath().startsWith("/tylerwatt12/sdrtrunk-vce/releases/"))
         {
             throw new IOException("Update manifest release URL is not an allowed sdrtrunk-vce release page");
         }
