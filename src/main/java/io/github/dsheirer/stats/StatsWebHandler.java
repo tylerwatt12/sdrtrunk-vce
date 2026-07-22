@@ -18,6 +18,16 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.core.util.JsonRecyclerPools;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationOperations;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.AutoStartRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.BulkRuntimeRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.ChannelConfigurationException;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.ChannelDeleteRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.ChannelListRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.ChannelWriteRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.RevisionRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.RuntimeRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.TimeoutRequest;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsOperations;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.EnabledRequest;
@@ -82,6 +92,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebHandler.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int MAXIMUM_TUNER_SETTINGS_BODY_BYTES = 4_096;
+    private static final int MAXIMUM_CHANNEL_SETTINGS_BODY_BYTES = 128 * 1_024;
     private static final ObjectMapper TUNER_SETTINGS_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
         .recyclerPool(JsonRecyclerPools.nonRecyclingPool())
@@ -94,6 +105,18 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             .build())
         .build()).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    private static final ObjectMapper CHANNEL_SETTINGS_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
+        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+        .recyclerPool(JsonRecyclerPools.nonRecyclingPool())
+        .streamReadConstraints(StreamReadConstraints.builder()
+            .maxDocumentLength(MAXIMUM_CHANNEL_SETTINGS_BODY_BYTES)
+            .maxNestingDepth(6)
+            .maxNameLength(64)
+            .maxStringLength(512)
+            .maxTokenCount(4_096)
+            .build())
+        .build()).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0).asReadOnlyBuffer();
     private static final int STATIC_CHUNK_BYTES = 32 * 1024;
     private static final int MAXIMUM_ASYNC_STREAMS = 128;
@@ -101,6 +124,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private static final long SSE_AUTHORIZATION_RECHECK_MILLISECONDS = 250;
     private static final long SSE_HEARTBEAT_SECONDS = 15;
     static final String TUNER_INVENTORY_PATH = "/api/v1/tuners";
+    static final String CHANNEL_SETTINGS_PATH = "/api/v1/configuration/channels";
     private static final FeatureAuthorization UNRESTRICTED_AUTHORIZATION =
         new FeatureAuthorization(null, null, WebAuthorization.permanent(AuthorizationSubject.ANONYMOUS));
 
@@ -113,6 +137,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private final Supplier<Map<String,Object>> mStatusSupplier;
     private final Supplier<?> mTunerInventorySupplier;
     private final TunerSettingsOperations mTunerSettingsService;
+    private final ChannelConfigurationOperations mChannelConfigurationService;
     private final Function<Request,MutationAuthorization> mMutationAuthorizer;
     private final FeatureAccessGateway mFeatureAccessGateway;
     private final WebRequestSubjectResolver mSubjectResolver;
@@ -180,6 +205,20 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                     Supplier<?> tunerInventorySupplier, TunerSettingsOperations tunerSettingsService,
                     Function<Request,MutationAuthorization> mutationAuthorizer)
     {
+        this(assetRoot, database, liveService, webCallService, statusSupplier, liveActivityService,
+            featureAccessGateway, subjectResolver, remoteAddressAdmissionPolicy, tunerInventorySupplier,
+            tunerSettingsService, null, mutationAuthorizer);
+    }
+
+    StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
+                    StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier,
+                    LiveActivityService liveActivityService, FeatureAccessGateway featureAccessGateway,
+                    WebRequestSubjectResolver subjectResolver,
+                    RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
+                    Supplier<?> tunerInventorySupplier, TunerSettingsOperations tunerSettingsService,
+                    ChannelConfigurationOperations channelConfigurationService,
+                    Function<Request,MutationAuthorization> mutationAuthorizer)
+    {
         mAssetRoot = Objects.requireNonNull(assetRoot, "Stats web asset root cannot be null")
             .toAbsolutePath().normalize();
         mDatabase = Objects.requireNonNull(database, "Stats web database cannot be null");
@@ -190,6 +229,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         mTunerInventorySupplier = Objects.requireNonNull(tunerInventorySupplier,
             "Tuner inventory supplier cannot be null");
         mTunerSettingsService = tunerSettingsService;
+        mChannelConfigurationService = channelConfigurationService;
         mMutationAuthorizer = Objects.requireNonNull(mutationAuthorizer,
             "Administrator mutation authorizer cannot be null");
         mFeatureAccessGateway = Objects.requireNonNull(featureAccessGateway,
@@ -247,6 +287,22 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                 if(contextRoute != null)
                 {
                     handleContextActivity(request, response, callback, contextRoute, authorization);
+                    return true;
+                }
+
+                ChannelSettingsRoute channelSettingsRoute = ChannelSettingsRoute.parse(path);
+
+                if(channelSettingsRoute != null)
+                {
+                    handleChannelSettings(request, response, callback, channelSettingsRoute);
+                    return true;
+                }
+
+                if(path.startsWith(CHANNEL_SETTINGS_PATH + "/"))
+                {
+                    sendJson(response, callback, 404,
+                        Map.of("error", "Channel settings route was not found.", "code", "route_not_found",
+                            "status", 404));
                     return true;
                 }
 
@@ -355,7 +411,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private FeatureAuthorization authorizeFeature(Request request, Response response, Callback callback, String path,
                                                   ContextRoute contextRoute)
     {
-        if(TUNER_INVENTORY_PATH.equals(path) || path.startsWith(TUNER_INVENTORY_PATH + "/"))
+        if(TUNER_INVENTORY_PATH.equals(path) || path.startsWith(TUNER_INVENTORY_PATH + "/") ||
+            CHANNEL_SETTINGS_PATH.equals(path) || path.startsWith(CHANNEL_SETTINGS_PATH + "/"))
         {
             WebAuthorization authorization = resolveAuthorization(request);
 
@@ -611,6 +668,250 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                         "status", 503));
             }
         });
+    }
+
+    private void handleChannelSettings(Request request, Response response, Callback callback,
+                                       ChannelSettingsRoute route)
+    {
+        ChannelConfigurationOperations service = mChannelConfigurationService;
+
+        if(service == null)
+        {
+            sendJson(response, callback, 503,
+                Map.of("error", "Channel settings are unavailable.", "code", "settings_unavailable",
+                    "status", 503));
+            return;
+        }
+
+        String method = request.getMethod();
+
+        if(route.kind() == ChannelSettingsRoute.Kind.BASE && "GET".equals(method))
+        {
+            try
+            {
+                StatsRequest parameters = statsRequest(request);
+                Integer offset = parameters.optionalInt("offset");
+                Integer limit = parameters.optionalInt("limit");
+                ChannelListRequest listRequest = new ChannelListRequest(parameters.text("q"),
+                    valueOr(parameters.text("sort"), "startOrder"),
+                    valueOr(parameters.text("direction"), "ascending"),
+                    offset != null ? offset : 0, limit != null ? limit : 50);
+                completeChannelCommand(response, callback, 200, service.list(listRequest));
+            }
+            catch(RuntimeException exception)
+            {
+                sendJson(response, callback, 400,
+                    Map.of("error", "Channel list options are invalid.", "code", "invalid_request",
+                        "status", 400));
+            }
+
+            return;
+        }
+
+        if(route.kind() == ChannelSettingsRoute.Kind.TEMPLATE && "GET".equals(method))
+        {
+            completeChannelCommand(response, callback, 200, service.template(route.protocol()));
+            return;
+        }
+
+        if(route.kind() == ChannelSettingsRoute.Kind.DETAIL && "GET".equals(method))
+        {
+            completeChannelCommand(response, callback, 200, service.detail(route.channelId()));
+            return;
+        }
+
+        if(route.kind() == ChannelSettingsRoute.Kind.EXPORT && "GET".equals(method))
+        {
+            completeChannelCommand(response, callback, 200, service.export(route.channelId()));
+            return;
+        }
+
+        if(!route.isMutationMethod(method))
+        {
+            response.getHeaders().put(HttpHeader.ALLOW, route.allowedMethods());
+            sendJson(response, callback, 405,
+                Map.of("error", "Method not allowed.", "code", "method_not_allowed", "status", 405));
+            return;
+        }
+
+        MutationAuthorization authorization = mMutationAuthorizer.apply(request);
+
+        if(authorization == null || !authorization.authorized())
+        {
+            sendJson(response, callback, 403,
+                Map.of("error", "The settings request was rejected.", "code", "request_rejected", "status", 403));
+            return;
+        }
+
+        if(!isJsonContentType(request.getHeaders().get(HttpHeader.CONTENT_TYPE)))
+        {
+            sendJson(response, callback, 415,
+                Map.of("error", "A JSON request body is required.", "code", "invalid_request", "status", 415));
+            return;
+        }
+
+        if(request.getLength() > MAXIMUM_CHANNEL_SETTINGS_BODY_BYTES)
+        {
+            response.getHeaders().put(HttpHeader.CONNECTION, "close");
+            sendJson(response, callback, 413,
+                Map.of("error", "The settings request is too large.", "code", "invalid_request", "status", 413));
+            return;
+        }
+
+        Promise<RetainableByteBuffer> bodyCompletion = Promise.from(body ->
+            completeChannelBody(response, callback, route, method, authorization, body.takeByteArray(), null),
+            failure -> completeChannelBody(response, callback, route, method, authorization, null, failure));
+        Content.Source.asRetainableByteBuffer(request, null, false, MAXIMUM_CHANNEL_SETTINGS_BODY_BYTES,
+            bodyCompletion);
+    }
+
+    private void completeChannelBody(Response response, Callback callback, ChannelSettingsRoute route,
+                                     String method, MutationAuthorization authorization, byte[] body,
+                                     Throwable failure)
+    {
+        if(failure != null)
+        {
+            response.getHeaders().put(HttpHeader.CONNECTION, "close");
+            int status = failure instanceof IllegalStateException ? 413 : 400;
+            sendJson(response, callback, status,
+                Map.of("error", status == 413 ? "The settings request is too large." :
+                        "The settings request could not be read.",
+                    "code", "invalid_request", "status", status));
+            return;
+        }
+
+        if(body == null || body.length == 0)
+        {
+            sendJson(response, callback, 400,
+                Map.of("error", "A settings request body is required.", "code", "invalid_request", "status", 400));
+            return;
+        }
+
+        try
+        {
+            CompletableFuture<Map<String,Object>> completion;
+            int successStatus = 200;
+
+            switch(route.kind())
+            {
+                case BASE ->
+                {
+                    ChannelWriteRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body,
+                        ChannelWriteRequest.class);
+                    completion = mChannelConfigurationService.create(update, authorization::isSessionValid);
+                    successStatus = 201;
+                }
+                case DETAIL ->
+                {
+                    if("DELETE".equals(method))
+                    {
+                        ChannelDeleteRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body,
+                            ChannelDeleteRequest.class);
+                        completion = mChannelConfigurationService.delete(route.channelId(), update,
+                            authorization::isSessionValid);
+                    }
+                    else
+                    {
+                        ChannelWriteRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body,
+                            ChannelWriteRequest.class);
+                        completion = mChannelConfigurationService.update(route.channelId(), update,
+                            authorization::isSessionValid);
+                    }
+                }
+                case CLONE ->
+                {
+                    RevisionRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body, RevisionRequest.class);
+                    completion = mChannelConfigurationService.cloneChannel(route.channelId(), update,
+                        authorization::isSessionValid);
+                    successStatus = 201;
+                }
+                case AUTO_START ->
+                {
+                    AutoStartRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body, AutoStartRequest.class);
+                    completion = mChannelConfigurationService.autoStart(route.channelId(), update,
+                        authorization::isSessionValid);
+                }
+                case RUNTIME ->
+                {
+                    RuntimeRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body, RuntimeRequest.class);
+                    completion = mChannelConfigurationService.runtime(route.channelId(), update,
+                        authorization::isSessionValid);
+                }
+                case BULK_RUNTIME ->
+                {
+                    BulkRuntimeRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body,
+                        BulkRuntimeRequest.class);
+                    completion = mChannelConfigurationService.bulkRuntime(update, authorization::isSessionValid);
+                }
+                case AUTO_START_TIMEOUT ->
+                {
+                    TimeoutRequest update = CHANNEL_SETTINGS_OBJECT_MAPPER.readValue(body, TimeoutRequest.class);
+                    completion = mChannelConfigurationService.setAutoStartTimeout(update,
+                        authorization::isSessionValid);
+                }
+                default -> throw new IllegalArgumentException("Channel route does not accept a request body");
+            }
+
+            completeChannelCommand(response, callback, successStatus, completion);
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            sendJson(response, callback, 400,
+                Map.of("error", "The settings request is invalid.", "code", "invalid_request", "status", 400));
+        }
+    }
+
+    private static void completeChannelCommand(Response response, Callback callback, int successStatus,
+                                               CompletableFuture<Map<String,Object>> completion)
+    {
+        completion.whenComplete((value, failure) ->
+        {
+            Throwable cause = unwrapCompletionFailure(failure);
+
+            if(cause == null)
+            {
+                sendJson(response, callback, successStatus, value);
+            }
+            else if(cause instanceof ChannelConfigurationException exception)
+            {
+                if(exception.status() == 401)
+                {
+                    response.getHeaders().put(HttpHeader.WWW_AUTHENTICATE, "Bearer realm=\"sdrtrunk-admin\"");
+                }
+
+                if(exception.status() == 503)
+                {
+                    response.getHeaders().put(HttpHeader.RETRY_AFTER, "1");
+                }
+
+                sendJson(response, callback, exception.status(),
+                    Map.of("error", exception.getMessage(), "code", exception.code(), "status", exception.status()));
+            }
+            else
+            {
+                sendJson(response, callback, 503,
+                    Map.of("error", "Channel settings are unavailable.", "code", "settings_unavailable",
+                        "status", 503));
+            }
+        });
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable failure)
+    {
+        Throwable cause = failure;
+
+        while(cause != null && (cause instanceof java.util.concurrent.CompletionException ||
+            cause instanceof ExecutionException) && cause.getCause() != null)
+        {
+            cause = cause.getCause();
+        }
+
+        return cause;
+    }
+
+    private static String valueOr(String value, String fallback)
+    {
+        return value != null ? value : fallback;
     }
 
     private static boolean isJsonContentType(String contentType)
@@ -1580,6 +1881,106 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             {
                 return null;
             }
+        }
+    }
+
+    private record ChannelSettingsRoute(String channelId, Kind kind, String protocol)
+    {
+        private static final String PREFIX = CHANNEL_SETTINGS_PATH + "/";
+
+        private static ChannelSettingsRoute parse(String path)
+        {
+            if(CHANNEL_SETTINGS_PATH.equals(path))
+            {
+                return new ChannelSettingsRoute(null, Kind.BASE, null);
+            }
+
+            if(path == null || !path.startsWith(PREFIX))
+            {
+                return null;
+            }
+
+            String[] segments = path.substring(PREFIX.length()).split("/", -1);
+
+            if(segments.length == 1)
+            {
+                if("runtime".equals(segments[0]))
+                {
+                    return new ChannelSettingsRoute(null, Kind.BULK_RUNTIME, null);
+                }
+
+                if("auto-start-timeout".equals(segments[0]))
+                {
+                    return new ChannelSettingsRoute(null, Kind.AUTO_START_TIMEOUT, null);
+                }
+
+                return channelId(segments[0]) ?
+                    new ChannelSettingsRoute(segments[0].toUpperCase(java.util.Locale.ROOT), Kind.DETAIL, null) :
+                    null;
+            }
+
+            if(segments.length == 2 && "templates".equals(segments[0]) &&
+                segments[1].matches("[A-Za-z0-9_]{1,32}"))
+            {
+                return new ChannelSettingsRoute(null, Kind.TEMPLATE,
+                    segments[1].toUpperCase(java.util.Locale.ROOT));
+            }
+
+            if(segments.length != 2 || !channelId(segments[0]))
+            {
+                return null;
+            }
+
+            String id = segments[0].toUpperCase(java.util.Locale.ROOT);
+            return switch(segments[1])
+            {
+                case "clone" -> new ChannelSettingsRoute(id, Kind.CLONE, null);
+                case "auto-start" -> new ChannelSettingsRoute(id, Kind.AUTO_START, null);
+                case "runtime" -> new ChannelSettingsRoute(id, Kind.RUNTIME, null);
+                case "export" -> new ChannelSettingsRoute(id, Kind.EXPORT, null);
+                default -> null;
+            };
+        }
+
+        private static boolean channelId(String value)
+        {
+            return value != null && value.matches("CHN_[0-9A-Fa-f]{28}");
+        }
+
+        private boolean isMutationMethod(String method)
+        {
+            return switch(kind)
+            {
+                case BASE, CLONE -> "POST".equals(method);
+                case DETAIL -> "PUT".equals(method) || "DELETE".equals(method);
+                case AUTO_START, RUNTIME, BULK_RUNTIME, AUTO_START_TIMEOUT -> "PUT".equals(method);
+                case TEMPLATE, EXPORT -> false;
+            };
+        }
+
+        private String allowedMethods()
+        {
+            return switch(kind)
+            {
+                case BASE -> "GET, POST";
+                case DETAIL -> "GET, PUT, DELETE";
+                case TEMPLATE, EXPORT -> "GET";
+                case CLONE -> "POST";
+                case AUTO_START, RUNTIME, BULK_RUNTIME, AUTO_START_TIMEOUT -> "PUT";
+            };
+        }
+
+        private enum Kind
+        {
+            BASE,
+            TEMPLATE,
+            DETAIL,
+            EXPORT,
+            CLONE,
+            AUTO_START,
+            RUNTIME,
+            BULK_RUNTIME,
+            AUTO_START_TIMEOUT
         }
     }
 

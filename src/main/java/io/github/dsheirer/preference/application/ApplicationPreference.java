@@ -23,6 +23,7 @@ import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.web.config.WebListenAddress;
+import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 
 /**
@@ -94,6 +95,23 @@ public class ApplicationPreference extends Preference
         mChannelAutoStartTimeout = timeout;
         mPreferences.putInt(PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT, timeout);
         notifyPreferenceUpdated();
+    }
+
+    /**
+     * Flushes pending application-preference changes to portable storage.
+     *
+     * @throws IllegalStateException when the backing store cannot persist the current values
+     */
+    public void flush()
+    {
+        try
+        {
+            mPreferences.flush();
+        }
+        catch(BackingStoreException exception)
+        {
+            throw new IllegalStateException("Application preferences could not be saved", exception);
+        }
     }
 
     /**

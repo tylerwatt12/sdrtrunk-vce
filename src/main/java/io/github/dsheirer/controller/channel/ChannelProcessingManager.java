@@ -596,7 +596,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      * @param request containing channel and other details
      * @throws ChannelException if a source is not available for the channel
      */
-    private synchronized void startProcessing(ChannelStartProcessingRequest request) throws ChannelException
+    private void startProcessing(ChannelStartProcessingRequest request) throws ChannelException
+    {
+        Channel channel = Objects.requireNonNull(request.getChannel(), "Channel cannot be null");
+
+        //Configuration edits and lifecycle changes for the same saved channel share this monitor.  The monitor is
+        //per-channel, so a slow administrator save cannot delay grants or traffic-channel starts for other channels.
+        synchronized(channel)
+        {
+            startProcessingLocked(request);
+        }
+    }
+
+    private synchronized void startProcessingLocked(ChannelStartProcessingRequest request) throws ChannelException
     {
         Channel channel = request.getChannel();
 
@@ -864,6 +876,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      * @param channel to stop
      */
     private void stopProcessing(Channel channel) throws ChannelException
+    {
+        if(channel == null)
+        {
+            return;
+        }
+
+        synchronized(channel)
+        {
+            stopProcessingLocked(channel);
+        }
+    }
+
+    private void stopProcessingLocked(Channel channel) throws ChannelException
     {
         ProcessingChain processingChain = removeProcessingChain(channel);
 

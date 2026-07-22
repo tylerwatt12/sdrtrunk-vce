@@ -15,6 +15,8 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.application.service.LiveContextResolver;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.PreferenceType;
@@ -86,6 +88,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final LiveActivityService mLiveActivityService;
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
+    private final ConfigurationManager mConfigurationManager;
     private final P25ActivityLogService mActivityLogService;
     private final TunerManager mTunerManager;
     private final InMemoryFeatureAccessPolicy mFeatureAccessPolicy =
@@ -102,6 +105,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private TunerSpectrumFrameSource mTunerSpectrumFrameSource;
     private TunerRegistry mTunerRegistry;
     private TunerSettingsService mTunerSettingsService;
+    private ChannelConfigurationService mChannelConfigurationService;
     private String mSignalSourceType = "unavailable";
     private Path mAssetRoot;
     private WebListenAddress mListenAddress;
@@ -109,27 +113,35 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
-        this(userPreferences, null, null, null);
+        this(userPreferences, null, null, null, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager)
     {
-        this(userPreferences, channelProcessingManager, null, null);
+        this(userPreferences, channelProcessingManager, null, null, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
                                  P25ActivityLogService activityLogService)
     {
-        this(userPreferences, channelProcessingManager, activityLogService, null);
+        this(userPreferences, channelProcessingManager, activityLogService, null, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
                                  P25ActivityLogService activityLogService, TunerManager tunerManager)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, tunerManager, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 P25ActivityLogService activityLogService, TunerManager tunerManager,
+                                 ConfigurationManager configurationManager)
+    {
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mTunerManager = tunerManager;
+        mConfigurationManager = configurationManager;
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase,
             channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null);
@@ -227,6 +239,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 mSignalSourceType = "synthetic";
             }
 
+            if(mConfigurationManager != null)
+            {
+                mChannelConfigurationService = new ChannelConfigurationService(mConfigurationManager,
+                    mUserPreferences);
+            }
+
             mSpectrumStreamService = new SpectrumStreamService(
                 new SpectrumStreamService.Configuration(1, Duration.ofSeconds(3),
                     "sdrtrunk spectrum lifecycle"), frameSource);
@@ -254,7 +272,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             };
             mHandler = new StatsWebHandler(assetRoot, mDatabase, mLiveService, mWebCallService,
                 this::status, mLiveActivityService, mFeatureAccessPolicy, subjectResolver,
-                remoteAddressAdmissionPolicy, this::tunerInventory, mTunerSettingsService, request ->
+                remoteAddressAdmissionPolicy, this::tunerInventory, mTunerSettingsService,
+                mChannelConfigurationService, request ->
                 {
                     WebAdminAuthenticationHandler current = authenticationHandler.get();
                     return current != null ? current.authorizeMutation(request) :
@@ -311,6 +330,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private synchronized void stop()
     {
         RuntimeException tunerSettingsStopFailure = null;
+        RuntimeException channelSettingsStopFailure = null;
         SelectedChannelDiagnosticWebSocketTransport selectedChannelDiagnosticTransport =
             mSelectedChannelDiagnosticTransport;
         mSelectedChannelDiagnosticTransport = null;
@@ -363,6 +383,23 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(handler != null)
         {
             handler.close();
+        }
+
+        ChannelConfigurationService channelConfigurationService = mChannelConfigurationService;
+
+        if(channelConfigurationService != null)
+        {
+            try
+            {
+                channelConfigurationService.close();
+                mChannelConfigurationService = null;
+            }
+            catch(RuntimeException exception)
+            {
+                //Retain the service so a later stop can confirm termination before any replacement worker starts.
+                channelSettingsStopFailure = exception;
+                mLog.warn("Unable to stop web channel control cleanly; web restart remains blocked", exception);
+            }
         }
 
         TunerSettingsService tunerSettingsService = mTunerSettingsService;
@@ -438,6 +475,16 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(mChannelProcessingManager != null)
         {
             mChannelProcessingManager.setChannelActivityEnabled("stats-web", false);
+        }
+
+        if(channelSettingsStopFailure != null)
+        {
+            if(tunerSettingsStopFailure != null)
+            {
+                channelSettingsStopFailure.addSuppressed(tunerSettingsStopFailure);
+            }
+
+            throw channelSettingsStopFailure;
         }
 
         if(tunerSettingsStopFailure != null)

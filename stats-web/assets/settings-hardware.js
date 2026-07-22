@@ -1,6 +1,38 @@
 /* global AbortController, document, fetch, queueMicrotask, window */
 'use strict';
 
+const SETTINGS_CHANNELS_SCRIPT = '/assets/settings-channels.js?v=2';
+let settingsChannelsScriptPromise = null;
+
+function loadSettingsChannelsScript() {
+  if (window.SettingsChannelsView) return Promise.resolve(window.SettingsChannelsView);
+  if (settingsChannelsScriptPromise) return settingsChannelsScriptPromise;
+
+  const script = document.createElement('script');
+  script.src = SETTINGS_CHANNELS_SCRIPT;
+  script.async = true;
+  script.dataset.settingsChannels = 'true';
+  const attempt = new Promise((resolve, reject) => {
+    script.addEventListener('load', () => {
+      if (window.SettingsChannelsView) resolve(window.SettingsChannelsView);
+      else {
+        script.remove();
+        reject(new Error('The Channels editor did not initialize.'));
+      }
+    }, { once: true });
+    script.addEventListener('error', () => {
+      script.remove();
+      reject(new Error('The Channels editor file could not be loaded.'));
+    }, { once: true });
+    document.head.append(script);
+  });
+  settingsChannelsScriptPromise = attempt;
+  attempt.catch(() => {
+    if (settingsChannelsScriptPromise === attempt) settingsChannelsScriptPromise = null;
+  });
+  return attempt;
+}
+
 class SettingsHardwareView {
   constructor(root) {
     this.root = root;
@@ -39,17 +71,23 @@ class SettingsHardwareView {
     this.onTopLevelNavigation = (event) => {
       if (!this.settingsDirty || event.defaultPrevented || event.button !== 0 || event.metaKey ||
           event.ctrlKey || event.shiftKey || event.altKey) return;
-      const link = event.target?.closest?.('.primary-nav a, a.brand');
+      const link = event.target?.closest?.('.primary-nav a, .settings-navigation a, a.brand');
       if (!link || link.target || link.hasAttribute('download')) return;
       const target = new URL(link.href, window.location.href);
       if (target.origin === window.location.origin && target.pathname === '/' &&
-          target.searchParams.get('view') === 'settings') return;
+          target.searchParams.get('view') === 'settings' &&
+          target.searchParams.get('section') === 'hardware') return;
       if (window.confirm('Discard the unsaved receiver changes?')) {
         this.settingsDirty = false;
         return;
       }
       event.preventDefault();
       event.stopImmediatePropagation();
+    };
+    this.onBeforeRouteChange = (event) => {
+      if (!this.settingsDirty) return;
+      if (window.confirm('Discard the unsaved receiver changes?')) this.settingsDirty = false;
+      else event.preventDefault();
     };
     this.onDocumentPointerDown = (event) => {
       if (!this.helpPinned || !this.helpOwner) return;
@@ -59,6 +97,7 @@ class SettingsHardwareView {
     };
     window.addEventListener('sdrtrunk:auth-changed', this.onAuthenticationChange);
     window.addEventListener('beforeunload', this.onBeforeUnload);
+    window.addEventListener('sdrtrunk:before-route-change', this.onBeforeRouteChange);
     document.addEventListener('visibilitychange', this.onVisibilityReturn);
     document.addEventListener('click', this.onTopLevelNavigation, true);
     document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
@@ -255,6 +294,13 @@ class SettingsHardwareView {
     if (this.closed) return;
     this.authenticated = true;
     this.session = session;
+
+    const section = new URLSearchParams(window.location.search).get('section') || 'hardware';
+    if (section === 'channels') {
+      this.mountChannels(session);
+      return;
+    }
+
     this.root.className = 'settings-page';
 
     const layout = this.element('div', 'settings-layout');
@@ -266,7 +312,9 @@ class SettingsHardwareView {
     const hardwareLink = this.element('a', 'active', 'Hardware');
     hardwareLink.href = '/?view=settings&section=hardware';
     hardwareLink.setAttribute('aria-current', 'page');
-    group.append(hardwareLink);
+    const channelsLink = this.element('a', '', 'Channels');
+    channelsLink.href = '/?view=settings&section=channels';
+    group.append(hardwareLink, channelsLink);
     navigation.append(group);
 
     const main = this.element('div', 'settings-main');
@@ -344,6 +392,40 @@ class SettingsHardwareView {
     this.loadInventory();
   }
 
+  async mountChannels(session) {
+    const revision = this.sessionRevision;
+    this.showLoading('Loading Channels settings');
+    try {
+      const ChannelsView = await loadSettingsChannelsScript();
+      if (this.closed || !this.authenticated || revision !== this.sessionRevision) return;
+      this.channelsView?.close();
+      this.channelsView = new ChannelsView(this.root, session, {
+        requireAuthentication: () => this.requireAuthentication(),
+        logout: (button) => this.logout(button)
+      });
+    } catch (error) {
+      if (!this.closed && this.authenticated && revision === this.sessionRevision) {
+        this.renderChannelsUnavailable(session, error.message);
+      }
+    }
+  }
+
+  renderChannelsUnavailable(session, message) {
+    this.root.className = 'settings-page settings-access-page';
+    const card = this.element('section', 'settings-access-card');
+    card.append(this.element('span', 'settings-admin-label', 'ADMINISTRATOR'),
+      this.element('h1', '', 'Channels settings unavailable'),
+      this.element('p', '', message || 'The Channels editor could not be loaded.'));
+    const actions = this.element('div', 'settings-access-actions');
+    const retry = this.button('Try again', 'primary');
+    retry.addEventListener('click', () => this.mountChannels(session));
+    const hardware = this.element('a', '', 'Open Hardware settings');
+    hardware.href = '/?view=settings&section=hardware';
+    actions.append(retry, hardware);
+    card.append(actions);
+    this.root.replaceChildren(card);
+  }
+
   async logout(button) {
     if (button.disabled || this.closed) return;
     button.disabled = true;
@@ -366,8 +448,12 @@ class SettingsHardwareView {
       this.requireAuthentication(true);
     } catch (error) {
       button.disabled = false;
-      this.inventoryState.textContent = 'Sign out failed. Try again.';
-      this.inventoryState.className = 'hardware-inventory-state failed';
+      if (this.inventoryState) {
+        this.inventoryState.textContent = 'Sign out failed. Try again.';
+        this.inventoryState.className = 'hardware-inventory-state failed';
+      } else {
+        this.channelsView?.toast('Sign out failed. Try again.', true);
+      }
     }
   }
 
@@ -379,6 +465,8 @@ class SettingsHardwareView {
     this.settingsRequestController?.abort();
     this.settingsRequestController = null;
     this.authenticated = false;
+    this.channelsView?.close();
+    this.channelsView = null;
     this.renderLogin(true);
     if (notify) {
       window.dispatchEvent(new CustomEvent('sdrtrunk:auth-changed', {
@@ -1211,11 +1299,14 @@ class SettingsHardwareView {
     this.settingsRequestController = null;
     window.removeEventListener('sdrtrunk:auth-changed', this.onAuthenticationChange);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
+    window.removeEventListener('sdrtrunk:before-route-change', this.onBeforeRouteChange);
     document.removeEventListener('visibilitychange', this.onVisibilityReturn);
     document.removeEventListener('click', this.onTopLevelNavigation, true);
     document.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
     this.spectrumView?.close();
     this.spectrumView = null;
+    this.channelsView?.close();
+    this.channelsView = null;
     if (this.infoDialog?.open) this.infoDialog.close();
     this.hideFieldHelp();
   }

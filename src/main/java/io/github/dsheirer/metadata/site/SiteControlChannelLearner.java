@@ -53,7 +53,23 @@ public class SiteControlChannelLearner implements SiteMetadataListener
 
         Channel channel = event.channel();
 
-        if(channel == null || !channel.isStandardChannel() ||
+        if(channel == null)
+        {
+            return;
+        }
+
+        //This listener already runs on ChannelProcessingManager's asynchronous metadata executor.  Sharing the
+        //per-channel monitor with lifecycle and web configuration commands prevents a learned frequency from being
+        //lost during a save without ever making the decoder or sample-delivery thread wait.
+        synchronized(channel)
+        {
+            receiveSiteMetadataLocked(event, channel);
+        }
+    }
+
+    private void receiveSiteMetadataLocked(SiteMetadataEvent event, Channel channel)
+    {
+        if(!channel.isStandardChannel() ||
             !(channel.getDecodeConfiguration() instanceof DecodeConfigP25 decodeConfig) ||
             !decodeConfig.getLearnAnnouncedControlChannels() ||
             !(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sourceConfig))

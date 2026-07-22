@@ -3026,7 +3026,7 @@ async function render() {
     route.set('section', 'hardware');
     window.history.replaceState({}, '', `${window.location.pathname}?${route}`);
   }
-  if (route.get('view') === 'settings' && route.get('section') !== 'hardware') {
+  if (route.get('view') === 'settings' && !['hardware', 'channels'].includes(route.get('section'))) {
     route.set('section', 'hardware');
     window.history.replaceState({}, '', `${window.location.pathname}?${route}`);
   }
@@ -3080,6 +3080,11 @@ document.addEventListener('click', (event) => {
   render();
 });
 window.addEventListener('popstate', () => {
+  const guard = new CustomEvent('sdrtrunk:before-route-change', { cancelable: true });
+  if (!window.dispatchEvent(guard)) {
+    window.history.pushState({}, '', `${window.location.pathname}?${route}`);
+    return;
+  }
   route = new URLSearchParams(window.location.search);
   render();
 });

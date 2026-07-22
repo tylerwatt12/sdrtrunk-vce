@@ -14,6 +14,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationOperations;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.AutoStartRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.BulkRuntimeRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.ChannelDeleteRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.ChannelListRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.ChannelWriteRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.NbfmRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.RevisionRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.RuntimeRequest;
+import io.github.dsheirer.configuration.channel.ChannelConfigurationService.TimeoutRequest;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -59,6 +69,7 @@ import org.junit.jupiter.api.io.TempDir;
 class StatsWebHandlerTest
 {
     private static final String TUNER_ID = "TNR_0123456789ABCDEF0123456789AB";
+    private static final String CHANNEL_ID = "CHN_0123456789ABCDEF0123456789AB";
     @TempDir
     Path mTemporaryFolder;
     private StatsLiveService mLiveService;
@@ -73,6 +84,9 @@ class StatsWebHandlerTest
     private AtomicReference<UpdateRequest> mTunerUpdate;
     private AtomicReference<EnabledRequest> mEnabledUpdate;
     private AtomicInteger mTunerMutationCalls;
+    private AtomicReference<ChannelListRequest> mChannelListRequest;
+    private AtomicReference<ChannelWriteRequest> mChannelWriteRequest;
+    private AtomicInteger mChannelMutationCalls;
 
     @BeforeEach
     void setUp() throws Exception
@@ -96,6 +110,9 @@ class StatsWebHandlerTest
         mTunerUpdate = new AtomicReference<>();
         mEnabledUpdate = new AtomicReference<>();
         mTunerMutationCalls = new AtomicInteger();
+        mChannelListRequest = new AtomicReference<>();
+        mChannelWriteRequest = new AtomicReference<>();
+        mChannelMutationCalls = new AtomicInteger();
         WebRequestSubjectResolver subjectResolver = new WebRequestSubjectResolver()
         {
             @Override
@@ -141,12 +158,107 @@ class StatsWebHandlerTest
                     "sessionValid", sessionIsValid.getAsBoolean()));
             }
         };
+        ChannelConfigurationOperations channelSettings = new ChannelConfigurationOperations()
+        {
+            @Override
+            public CompletableFuture<Map<String,Object>> list(ChannelListRequest request)
+            {
+                mChannelListRequest.set(request);
+                return CompletableFuture.completedFuture(Map.of("generation", "test", "items", List.of(),
+                    "total", 0, "queueRevision", "QUE_TEST"));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> template(String protocol)
+            {
+                return CompletableFuture.completedFuture(Map.of("template", true, "protocol", protocol));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> detail(String channelId)
+            {
+                return CompletableFuture.completedFuture(Map.of("id", channelId, "revision", "REV_TEST"));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> export(String channelId)
+            {
+                return CompletableFuture.completedFuture(Map.of("fileName", "channel.json"));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> create(ChannelWriteRequest request,
+                                                                  BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                mChannelWriteRequest.set(request);
+                return CompletableFuture.completedFuture(Map.of("id", CHANNEL_ID, "created", true,
+                    "sessionValid", sessionIsValid.getAsBoolean()));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> update(String channelId, ChannelWriteRequest request,
+                                                                  BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                mChannelWriteRequest.set(request);
+                return CompletableFuture.completedFuture(Map.of("id", channelId, "updated", true));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> cloneChannel(String channelId, RevisionRequest request,
+                                                                        BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(Map.of("id", CHANNEL_ID, "cloned", true));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> delete(String channelId, ChannelDeleteRequest request,
+                                                                  BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(Map.of("id", channelId, "deleted", request.confirm()));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> autoStart(String channelId, AutoStartRequest request,
+                                                                     BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(Map.of("id", channelId, "action", request.action().name()));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> runtime(String channelId, RuntimeRequest request,
+                                                                   BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(Map.of("id", channelId, "action", request.action().name()));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> bulkRuntime(BulkRuntimeRequest request,
+                                                                       BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(Map.of("selected", request.channels().size()));
+            }
+
+            @Override
+            public CompletableFuture<Map<String,Object>> setAutoStartTimeout(TimeoutRequest request,
+                                                                               BooleanSupplier sessionIsValid)
+            {
+                mChannelMutationCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(Map.of("autoStartTimeoutSeconds", request.seconds()));
+            }
+        };
         mHandler = new StatsWebHandler(assets, database, mLiveService, mWebCallService,
             () -> Map.of("server", Map.of("enabled", true)), null, mAccessPolicy, subjectResolver,
             io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy.allowAll(),
             () -> Map.of("revision", 7,
                 "tuners", List.of(Map.of("id", "AIRSPY-TEST", "displayName", "Airspy")),
-                "spectrum", Map.of("exclusive", true, "busy", false)), tunerSettings,
+                "spectrum", Map.of("exclusive", true, "busy", false)), tunerSettings, channelSettings,
             request -> new io.github.dsheirer.web.auth.WebAdminAuthenticationHandler.MutationAuthorization(
                 mMutationAuthorized.get(), mSessionValid::get));
         mWebApplicationService = new WebApplicationService(
@@ -256,6 +368,57 @@ class StatsWebHandlerTest
         assertEquals(Boolean.FALSE, mEnabledUpdate.get().enabled());
         assertEquals(405, get(enabledPath).statusCode());
         assertEquals(404, get("api/v1/tuners/" + TUNER_ID + "/unknown").statusCode());
+    }
+
+    @Test
+    void keepsChannelSettingsAdministratorOnlyAndStrictlyBounded() throws Exception
+    {
+        String base = "api/v1/configuration/channels";
+        assertEquals(401, get(base).statusCode());
+        assertEquals(401, get(base + "/templates/NBFM").statusCode());
+
+        mSubject.set(AuthorizationSubject.AUTHENTICATED_ADMIN);
+        HttpResponse<String> list = get(base + "?q=North&sort=name&direction=descending&offset=2&limit=20");
+        assertEquals(200, list.statusCode());
+        assertEquals("North", mChannelListRequest.get().query());
+        assertEquals("name", mChannelListRequest.get().sort());
+        assertEquals("descending", mChannelListRequest.get().direction());
+        assertEquals(2, mChannelListRequest.get().offset());
+        assertEquals(20, mChannelListRequest.get().limit());
+        assertEquals(200, get(base + "/templates/NBFM").statusCode());
+        assertEquals(200, get(base + "/" + CHANNEL_ID).statusCode());
+
+        String body = channelWriteJson();
+        assertEquals(403, sendJson("POST", base, "application/json", body).statusCode());
+        assertEquals(0, mChannelMutationCalls.get());
+        mMutationAuthorized.set(true);
+        HttpResponse<String> created = sendJson("POST", base, "application/json; charset=utf-8", body);
+        assertEquals(201, created.statusCode());
+        assertTrue(created.body().contains("\"created\":true"));
+        assertTrue(mChannelWriteRequest.get().decoder() instanceof NbfmRequest);
+        assertEquals(Boolean.FALSE, mChannelWriteRequest.get().confirmGuidChange());
+        assertEquals(1, mChannelMutationCalls.get());
+
+        int calls = mChannelMutationCalls.get();
+        assertEquals(400, sendJson("POST", base, "application/json",
+            body.replace("\"name\":\"Dispatch\",", "\"name\":\"Dispatch\",\"name\":\"Duplicate\","))
+            .statusCode());
+        assertEquals(calls, mChannelMutationCalls.get());
+        assertEquals(400, sendJson("POST", base, "application/json",
+            body.replace("\"system\":", "\"unexpected\":true,\"system\":" )).statusCode());
+        assertEquals(calls, mChannelMutationCalls.get());
+        assertEquals(415, sendJson("POST", base, "text/plain", body).statusCode());
+
+        assertEquals(200, sendJson("PUT", base + "/" + CHANNEL_ID, "application/json", body).statusCode());
+        assertEquals(200, sendJson("PUT", base + "/" + CHANNEL_ID + "/runtime", "application/json",
+            "{\"revision\":\"REV_TEST\",\"action\":\"START\"}").statusCode());
+        assertEquals(200, sendJson("DELETE", base + "/" + CHANNEL_ID, "application/json",
+            "{\"revision\":\"REV_TEST\",\"confirm\":true}").statusCode());
+        assertEquals(405, get(base + "/runtime").statusCode());
+        assertEquals(404, get(base + "/" + CHANNEL_ID + "/unknown").statusCode());
+
+        mSessionValid.set(false);
+        assertEquals(401, get(base).statusCode());
     }
 
     @Test
@@ -424,6 +587,57 @@ class StatsWebHandlerTest
             .timeout(Duration.ofSeconds(5)).header("Origin", origin)
             .header("Content-Type", contentType).header("X-CSRF-Token", "test-token")
             .PUT(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> sendJson(String method, String relativePath, String contentType, String body)
+        throws Exception
+    {
+        URI baseUri = mWebApplicationService.getBaseUri();
+        String origin = baseUri.getScheme() + "://" + baseUri.getAuthority();
+        return mHttpClient.send(HttpRequest.newBuilder(baseUri.resolve(relativePath))
+            .timeout(Duration.ofSeconds(5)).header("Origin", origin)
+            .header("Content-Type", contentType).header("X-CSRF-Token", "test-token")
+            .method(method, HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String channelWriteJson()
+    {
+        return """
+            {
+              "revision":null,
+              "applyPolicy":"APPLY",
+              "system":"County",
+              "site":"North",
+              "name":"Dispatch",
+              "guid":"9c3f805d-78f4-4c3b-bc62-f07e9c5acabc",
+              "confirmGuidChange":false,
+              "aliasList":"Default",
+              "source":{
+                "kind":"SINGLE",
+                "frequenciesHz":[155100000],
+                "preferredTuner":"",
+                "rotationDelayMs":null
+              },
+              "decoder":{
+                "type":"NBFM",
+                "bandwidth":"BW_12_5",
+                "talkgroup":1,
+                "deemphasis":"NONE",
+                "outputGain":1.0,
+                "highPassEnabled":true,
+                "lowPassEnabled":false,
+                "lowPassCutoffHz":3400,
+                "voiceEnhancePercent":30.0,
+                "squelchTrimEnabled":false,
+                "tailTrimMs":180,
+                "headTrimMs":0,
+                "bassBoostDb":0.0
+              },
+              "auxiliaries":[],
+              "logging":[],
+              "recording":[]
+            }
+            """;
     }
 
     private InputStream openSse(String relativePath) throws Exception

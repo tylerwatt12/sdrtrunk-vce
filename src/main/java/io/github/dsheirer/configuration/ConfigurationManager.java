@@ -74,6 +74,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private AtomicBoolean mConfigurationStateDirty = new AtomicBoolean();
     private ScheduledFuture<?> mConfigurationSaveFuture;
     private boolean mConfigurationLoading = false;
+    private volatile boolean mInitialized;
     private List<IAliasListRefreshListener> mAliasListRefreshListeners = new ArrayList<>();
 
     /**
@@ -264,7 +265,17 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     public void init()
     {
+        mInitialized = false;
         transferStateToModels(load());
+        mInitialized = true;
+    }
+
+    /**
+     * Indicates that persisted aliases, streams, channel maps, and channels have finished loading into the models.
+     */
+    public boolean isInitialized()
+    {
+        return mInitialized;
     }
 
     /**
@@ -274,6 +285,22 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public void flushConfiguration()
     {
         saveNow();
+    }
+
+    /**
+     * Completes the current configuration save and reports a durable-write failure to the caller.
+     *
+     * <p>This is intended for explicit administrator commands that must not report success until the updated
+     * configuration is stored.  Normal model listeners continue to use the coalesced background save path.</p>
+     *
+     * @throws IllegalStateException when the attempted SQLite write did not complete successfully
+     */
+    public void flushConfigurationOrThrow()
+    {
+        if(!saveNow())
+        {
+            throw new IllegalStateException("Configuration could not be saved to SQLite");
+        }
     }
 
     /**
@@ -299,7 +326,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mConfigurationLoading = false;
     }
 
-    private synchronized void saveNow()
+    private synchronized boolean saveNow()
     {
         //Complete any pending configuration save.
         if(mConfigurationSaveFuture != null)
@@ -316,15 +343,19 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             mConfigurationSaveFuture = null;
         }
 
+        boolean saved = true;
+
         if(mConfigurationSavePending.getAndSet(false) || mAliasesDirty.get() || mConfigurationStateDirty.get())
         {
-            save();
+            saved = save();
         }
 
         if(hasDirtyConfiguration())
         {
             scheduleSave(false, false);
         }
+
+        return saved;
     }
 
     /**
@@ -377,14 +408,14 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     /**
      * Saves the current runtime configuration state to the global SDRTrunk database.
      */
-    private synchronized void save()
+    private synchronized boolean save()
     {
         boolean saveAliases = mAliasesDirty.getAndSet(false);
         boolean saveConfigurationState = mConfigurationStateDirty.getAndSet(false);
 
         if(!saveAliases && !saveConfigurationState)
         {
-            return;
+            return true;
         }
 
         boolean aliasesSavedToDatabase = !saveAliases || saveAliasesToDatabase();
@@ -405,6 +436,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             mLog.error("Configuration state was not fully saved to SQLite [{}]",
                 mConfigurationDatabaseStore.getDatabasePath());
         }
+
+        return aliasesSavedToDatabase && configurationSavedToDatabase;
     }
 
     private ConfigurationState loadConfigurationState(ConfigurationState databaseState)
