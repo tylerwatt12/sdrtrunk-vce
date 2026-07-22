@@ -29,6 +29,7 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.mixer.MixerManager;
 import io.github.dsheirer.source.tuner.TunerClass;
+import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
@@ -737,9 +738,10 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
 
         ChannelSourceManager channelSourceManager = discoveredTuner.getTuner().getChannelSourceManager();
+        TunerController tunerController = discoveredTuner.getTuner().getTunerController();
 
         if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
-            polyphaseChannelSourceManager.getTunerChannelCount() == 0)
+            polyphaseChannelSourceManager.getTunerChannelCount() == 0 && !tunerController.isCenterFrequencyLocked())
         {
             try
             {

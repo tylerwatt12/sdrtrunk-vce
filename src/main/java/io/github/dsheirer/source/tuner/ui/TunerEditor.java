@@ -93,6 +93,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     private JLabel mRecordingStatusLabel;
     private JLabel mTunerStatusLabel;
     private JLabel mTunerLockedStatusLabel;
+    private JCheckBox mCenterFrequencyLockCheckBox;
     private FrequencyTextField mMinimumFrequencyTextField;
     private FrequencyTextField mMaximumFrequencyTextField;
     private JButton mResetFrequenciesButton;
@@ -258,6 +259,36 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         }
 
         return mAutoPPMCheckBox;
+    }
+
+    /**
+     * Check box for preventing automatic center-frequency changes during channel allocation.
+     */
+    protected JCheckBox getCenterFrequencyLockCheckBox()
+    {
+        if(mCenterFrequencyLockCheckBox == null)
+        {
+            mCenterFrequencyLockCheckBox = new JCheckBox("Lock Center Frequency");
+            mCenterFrequencyLockCheckBox.setToolTipText("Prevents automatic tuner retuning. Only channels within " +
+                "the current usable passband will be assigned.");
+            mCenterFrequencyLockCheckBox.addActionListener(event ->
+            {
+                if(!isLoading() && hasTuner())
+                {
+                    boolean locked = getCenterFrequencyLockCheckBox().isSelected();
+                    getTuner().getTunerController().setCenterFrequencyLocked(locked);
+
+                    if(hasConfiguration())
+                    {
+                        getConfiguration().setCenterFrequencyLocked(locked);
+                    }
+
+                    save();
+                }
+            });
+        }
+
+        return mCenterFrequencyLockCheckBox;
     }
 
     /**
@@ -899,6 +930,8 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             minMaxPanel.add(getResetFrequenciesButton());
             add(minMaxPanel, "span");
 
+            add(getCenterFrequencyLockCheckBox(), "span");
+
             add(getTunerLockedStatusLabel(), "span");
         }
 
@@ -917,6 +950,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             getTunerLockedStatusLabel().setVisible(hasTuner() && getTuner().getTunerController().isLockedSampleRate());
             getFrequencyCorrectionSpinner().setEnabled(hasTuner());
             getAutoPPMCheckBox().setEnabled(hasTuner());
+            getCenterFrequencyLockCheckBox().setEnabled(hasTuner());
 
             Tuner tuner = getTuner();
 
@@ -927,6 +961,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 getMaximumFrequencyTextField().setFrequency(tuner.getTunerController().getMaximumFrequency());
                 getFrequencyCorrectionSpinner().setValue(tuner.getTunerController().getFrequencyCorrection());
                 getAutoPPMCheckBox().setSelected(tuner.getTunerController().getTunerFrequencyErrorManager().isEnabled());
+                getCenterFrequencyLockCheckBox().setSelected(tuner.getTunerController().isCenterFrequencyLocked());
                 getFrequencyControl().addListener(getTuner().getTunerController());
                 getTuner().getTunerController().addListener(getFrequencyControl());
                 getMeasuredPPMLabel().setText(tuner.getTunerController().getMeasuredErrorStatus());
@@ -936,6 +971,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 getFrequencyControl().setFrequency(0, false);
                 getFrequencyCorrectionSpinner().setValue(0);
                 getAutoPPMCheckBox().setSelected(false);
+                getCenterFrequencyLockCheckBox().setSelected(false);
                 getMeasuredPPMLabel().setText("");
             }
         }

@@ -62,6 +62,7 @@ public abstract class TunerConfiguration
     private long mMaximumFrequency;
     private double mFrequencyCorrection = 0.0d;
     private boolean mAutoPPMCorrection = true;
+    private boolean mCenterFrequencyLocked;
 
     /**
      * Default constructor to support Jackson
@@ -139,6 +140,26 @@ public abstract class TunerConfiguration
     public void setAutoPPMCorrectionEnabled(boolean enabled)
     {
         mAutoPPMCorrection = enabled;
+    }
+
+    /**
+     * Indicates if automatic center-frequency changes are disabled for this tuner.
+     *
+     * @return true if the tuner must remain at its current center frequency
+     */
+    public boolean isCenterFrequencyLocked()
+    {
+        return mCenterFrequencyLocked;
+    }
+
+    /**
+     * Sets whether automatic channel allocation may change this tuner's center frequency.
+     *
+     * @param locked true to keep the tuner at its current center frequency
+     */
+    public void setCenterFrequencyLocked(boolean locked)
+    {
+        mCenterFrequencyLocked = locked;
     }
 
     /**
