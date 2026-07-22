@@ -2077,6 +2077,9 @@ function liveSystemsSection() {
   const tableScroll = node('div', 'table-scroll');
   tableScroll.append(tableElement);
   const selectionPanel = node('div', 'live-selection-panel');
+  const selectionSummary = node('div', 'live-selection-summary');
+  const selectionActivity = node('div', 'live-selection-activity');
+  selectionPanel.append(selectionSummary, selectionActivity);
   selectionPanel.hidden = true;
   const host = node('div', 'systems-live');
   host.append(tabBar, tableScroll, selectionPanel);
@@ -2086,13 +2089,49 @@ function liveSystemsSection() {
   let selectedRowKey = null;
   let selectedSelectionId = null;
   let selectedRow = null;
+  let activityView = null;
+  let activityKind = null;
+  let activityContextId = null;
 
   const rowSelectionId = (row) => row?.selection_id || row?.selectionId || null;
 
+  const closeActivity = () => {
+    if (activityView) {
+      activityView.close();
+      pageConnections.delete(activityView);
+    }
+    activityView = null;
+    activityKind = null;
+    activityContextId = null;
+    selectionActivity.replaceChildren();
+  };
+
+  const openActivity = (kind = 'events') => {
+    const requestedKind = kind === 'messages' ? 'messages' : 'events';
+    if (!selectedSelectionId || !window.LiveActivityView) {
+      closeActivity();
+      return;
+    }
+    if (activityView && activityContextId === selectedSelectionId && activityKind === requestedKind) return;
+    closeActivity();
+    activityKind = requestedKind;
+    activityContextId = selectedSelectionId;
+    const activityHost = node('div');
+    selectionActivity.replaceChildren(activityHost);
+    activityView = new window.LiveActivityView(activityHost, {
+      contextId: selectedSelectionId,
+      activity: requestedKind,
+      embedded: true,
+      onActivityChange: openActivity
+    });
+    pageConnections.add(activityView);
+  };
+
   const renderSelection = (ended = false) => {
     if (!selectedRow || !selectedSelectionId) {
+      closeActivity();
       selectionPanel.hidden = true;
-      selectionPanel.replaceChildren();
+      selectionSummary.replaceChildren();
       return;
     }
     const tableValue = tables.get(activeTableId) || {};
@@ -2103,13 +2142,7 @@ function liveSystemsSection() {
     const scope = String(selectedRow.selection_scope || selectedRow.selectionScope || '').toUpperCase() === 'SITE' ?
       'Site-wide context' : `Exact frequency${selectedRow.timeslot == null ? '' : ` · timeslot ${selectedRow.timeslot}`}`;
     copy.append(node('span', '', `${scope}${ended ? ' · selected channel ended' : ''}`));
-    const actions = node('div', 'live-selection-actions');
-    actions.append(anchor('Events', href('live', { context: selectedSelectionId, activity: 'events' }),
-      'button secondary'), anchor('Messages', href('live', { context: selectedSelectionId, activity: 'messages' }),
-      'button secondary'));
-    const summary = node('div', 'live-selection-summary');
-    summary.append(copy, actions);
-    selectionPanel.replaceChildren(summary);
+    selectionSummary.replaceChildren(copy);
     selectionPanel.hidden = false;
   };
 
@@ -2163,6 +2196,7 @@ function liveSystemsSection() {
       selectedRow = current;
       rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
       renderSelection();
+      openActivity('events');
     };
     element.addEventListener('click', select);
     element.addEventListener('keydown', (event) => {
@@ -2283,7 +2317,13 @@ function liveSystemsSection() {
       activeTableId = null;
       const next = tables.has('conventional') ? 'conventional' : tables.keys().next().value;
       if (next) showTable(next);
-      else body.replaceChildren();
+      else {
+        selectedRowKey = null;
+        selectedSelectionId = null;
+        selectedRow = null;
+        renderSelection();
+        body.replaceChildren();
+      }
     }
   };
 

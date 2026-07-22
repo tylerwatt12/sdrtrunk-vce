@@ -156,6 +156,8 @@
       this.host = host;
       this.contextId = String(options.contextId || '');
       this.kind = options.activity === 'messages' ? 'messages' : 'events';
+      this.embedded = options.embedded === true;
+      this.onActivityChange = typeof options.onActivityChange === 'function' ? options.onActivityChange : null;
       this.closed = false;
       this.source = null;
       this.rows = new Map();
@@ -196,7 +198,7 @@
     }
 
     build() {
-      this.host.className = 'live-activity-root';
+      this.host.className = `live-activity-root${this.embedded ? ' live-activity-embedded' : ''}`;
 
       const heading = element('header', 'live-activity-heading');
       const headingCopy = element('div');
@@ -233,12 +235,26 @@
         const target = new URLSearchParams({ view: 'live', context: this.contextId, activity: kind });
         link.href = `/?${target}`;
         if (kind === this.kind) link.setAttribute('aria-current', 'page');
+        if (this.embedded && this.onActivityChange) {
+          link.addEventListener('click', (event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            this.onActivityChange(kind);
+          });
+        }
         tabs.append(link);
+      }
+
+      if (this.embedded) {
+        const tabStatus = element('div', 'live-activity-tab-status');
+        tabStatus.append(this.age, this.connection);
+        tabs.append(tabStatus);
       }
 
       this.activityBody = element('div', 'live-activity-body');
       this.workspace.append(tabs, this.activityBody);
-      this.host.replaceChildren(heading, this.notice, this.contextCard, this.workspace);
+      this.host.replaceChildren(...(this.embedded ? [this.notice, this.workspace] :
+        [heading, this.notice, this.contextCard, this.workspace]));
       this.showLoading();
     }
 
