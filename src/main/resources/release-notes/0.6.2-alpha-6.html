@@ -32,20 +32,3 @@
   <li>Legacy DMR XML imports retain large Tier III frequency maps, decoder options, traffic-channel limits, and optional uplink frequencies.</li>
   <li>Matching P25 band IDs advertised by different foreign systems no longer collide with each other or with the monitored home system.</li>
 </ul>
-
-<h2>Removed</h2>
-
-<p>No user-facing feature, setting, channel, alias, recording, or stored statistic is intentionally removed by this release. The experimental <code>webfirst</code> browser spectrum and web-first interface work remains separate and is not included in Alpha 6.</p>
-
-<h2>Before You Upgrade</h2>
-
-<ul>
-  <li><b>A database migration is required from Alpha 5.</b> Alpha 6 advances the P25 activity schema from version 19 to version 20. Stop SDRTrunk and run the supplied external <code>migrate-v19-to-v20-foreign-system-bands</code> tool before launching Alpha 6 against an existing Alpha 5 portable database.</li>
-  <li><b>Normal startup will not perform the migration.</b> The external tool checks database integrity, checkpoints pending WAL data, creates a timestamped backup, adds the bounded foreign-system band tables, updates the schema version, and verifies the result.</li>
-  <li>Back up the complete portable <code>data</code> folder before upgrading. Returning to Alpha 5 requires restoring the pre-migration database backup as well as the earlier application.</li>
-  <li>Replace the application files instead of merging two releases together. Keep the portable data directory in its existing location.</li>
-  <li>The legacy-playlist importer creates its own pre-import database backup, but that does not replace the full data-directory backup required before an application upgrade.</li>
-  <li>After upgrading, confirm that expected tuners and channels start, then verify audio, recording, streaming, statistics, and browser access.</li>
-</ul>
-
-<p><b>Downloads:</b> Use the package that matches your operating system and processor. Java 25 is included. JMBE remains a separate setup under Preferences &gt; Decoder &gt; JMBE Audio Library. Verify the downloaded ZIP with <code>SHA256SUMS.txt</code> before installing.</p>
