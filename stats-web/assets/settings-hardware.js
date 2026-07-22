@@ -1,7 +1,7 @@
 /* global AbortController, document, fetch, queueMicrotask, window */
 'use strict';
 
-const SETTINGS_CHANNELS_SCRIPT = '/assets/settings-channels.js?v=4';
+const SETTINGS_CHANNELS_SCRIPT = '/assets/settings-channels.js?v=5';
 let settingsChannelsScriptPromise = null;
 
 function loadSettingsChannelsScript() {
@@ -762,7 +762,7 @@ class SettingsHardwareView {
     const tuningGrid = this.element('div', 'hardware-field-grid');
     const idleOnlyDisabled = active;
     const ppm = this.numberField('Frequency correction', settings.frequencyCorrectionPpm, {
-      min: -1000, max: 1000, step: 0.1, suffix: 'PPM', disabled: idleOnlyDisabled,
+      min: -1000, max: 1000, step: 'any', suffix: 'PPM', disabled: idleOnlyDisabled,
       help: 'Compensates for a receiver oscillator that is slightly off frequency. Changing it retunes the hardware.'
     });
     const minimum = this.numberField('Minimum frequency', this.toMHz(settings.minimumFrequencyHz), {

@@ -497,6 +497,10 @@ public final class ChannelConfigurationService implements ChannelConfigurationOp
 
         Channel before = copy(live);
         Channel replacement = copy(live);
+        //The Saved Channels queue owns these fields.  A normal editor save must never alter the channel's
+        //automatic-start membership or position, even if a future copy/serialization change omits them.
+        replacement.setAutoStart(live.isAutoStart());
+        replacement.setAutoStartOrder(live.hasAutoStartOrder() ? live.getAutoStartOrder() : null);
         applyWrite(replacement, write, live);
         ensureUniqueGuid(replacement.getRadresGuid(), live);
         boolean running = isProcessing(live);

@@ -238,6 +238,28 @@ class ChannelConfigurationServiceTest
     }
 
     @Test
+    void normalChannelEditPreservesAutomaticStartPosition() throws Exception
+    {
+        Map<String,Object> first = create(nbfmWrite("One", null, ApplyPolicy.APPLY, 155_100_000L));
+        Map<String,Object> second = create(nbfmWrite("Two", null, ApplyPolicy.APPLY, 155_200_000L));
+        String queue = String.valueOf(mService.list(ChannelListRequest.defaults()).get().get("queueRevision"));
+        queue = String.valueOf(autoStart(first, queue, AutoStartAction.ENABLE).get("queueRevision"));
+        autoStart(second, queue, AutoStartAction.ENABLE);
+
+        Map<String,Object> before = mService.detail(String.valueOf(first.get("id"))).get();
+        assertEquals(2, before.get("autoStartOrder"));
+        ChannelWriteRequest renamed = preserveIdentity(
+            nbfmWrite("One Renamed", String.valueOf(before.get("revision")), ApplyPolicy.APPLY, 155_100_000L),
+            String.valueOf(before.get("revision")), String.valueOf(before.get("guid")));
+        Map<String,Object> saved = mService.update(String.valueOf(before.get("id")), renamed, () -> true).get();
+
+        assertEquals("One Renamed", saved.get("name"));
+        assertEquals(2, saved.get("autoStartOrder"));
+        assertTrue(mBackend.channels.get(0).isAutoStart());
+        assertEquals(2, mBackend.channels.get(0).getAutoStartOrder());
+    }
+
+    @Test
     void rollsBackFailedPersistenceAndRejectsStaleEdits() throws Exception
     {
         Map<String,Object> created = create(nbfmWrite("Stable", null, ApplyPolicy.APPLY, 155_100_000L));

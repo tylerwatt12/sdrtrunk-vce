@@ -1072,8 +1072,6 @@ class SettingsChannelsView {
         <input id="channel-name" name="name" type="text" maxlength="160" value="${this.escape(channel.name)}">${this.errorMarkup('channel-name')}</div>
       <div class="channels-field">${this.labelMarkup('Alias List', 'Select an existing Alias List for talkgroup and radio matching. Alias Lists are managed on the Aliases page.', 'channel-alias-list')}
         <select id="channel-alias-list" name="aliasList">${aliasOptions}</select></div>
-      <div class="channels-field">${this.labelMarkup('Automatic start order', 'Plus adds the channel at position 1. The left down-chevron moves it later. The right up-chevron moves it earlier. At position 1, minus removes it from automatic start.')}
-        <div data-editor-auto-start>${this.autoStartMarkup(channel, 'editor')}</div><span class="channels-field-hint">A blank number means this channel does not start automatically.</span></div>
       <div class="channels-field full">${this.labelMarkup('Site GUID', 'This permanent identifier links the site to saved statistics and web pages. Normal edits preserve it; a clone receives a new GUID.', 'channel-guid')}
         <div class="channels-guid-row"><input id="channel-guid" name="guid" type="text" required value="${this.escape(channel.guid)}"${this.guidUnlocked ? '' : ' readonly'}>
         <button type="button" data-action="unlock-guid"${this.isRunning(channel) ? ' disabled' : ''}>${this.guidUnlocked ? 'Unlocked' : 'Unlock GUID'}</button></div>${this.errorMarkup('channel-guid')}
@@ -1332,11 +1330,9 @@ class SettingsChannelsView {
     form.querySelectorAll('[data-frequency-row]').forEach((row) => this.bindFrequencyRow(row));
     form.querySelector('[data-action="map-add"]')?.addEventListener('click', () => this.addMapRow());
     form.querySelectorAll('[data-map-row]').forEach((row) => this.bindMapRow(row));
-    this.bindAutoStart(form.querySelector('[data-editor-auto-start]'));
   }
 
   onFormChanged(event) {
-    if (event.target.closest('[data-editor-auto-start]')) return;
     if (event.target.matches('[data-action]')) return;
     this.markDirty();
     const name = event.target.name;
@@ -1967,7 +1963,6 @@ class SettingsChannelsView {
 
   bindAutoStart(scope) {
     scope?.querySelectorAll?.('[data-auto-action]').forEach((button) => {
-      button.disabled = Boolean(this.detail?.isNew && button.closest('[data-editor-auto-start]'));
       button.addEventListener('click', () => this.changeAutoStart(button.dataset.autoId,
         button.dataset.autoAction, button.dataset.autoLocation));
     });
@@ -2027,11 +2022,6 @@ class SettingsChannelsView {
 
   refreshEditorChrome() {
     if (!this.detail || !this.editorPanel.isConnected) return;
-    const holder = this.editorPanel.querySelector('[data-editor-auto-start]');
-    if (holder) {
-      holder.innerHTML = this.autoStartMarkup(this.detail, 'editor');
-      this.bindAutoStart(holder);
-    }
     const state = this.editorPanel.querySelector('.channels-editor-badges .channels-status-badge:first-child');
     if (state) {
       state.className = `channels-status-badge ${this.stateClass(this.detail.state)}`;
@@ -2078,7 +2068,9 @@ class SettingsChannelsView {
     this.nextPage.disabled = pending || this.offset + this.items.length >= this.total;
     this.tableBody?.querySelectorAll('button, input').forEach((control) => {
       if (pending) {
-        control.dataset.wasDisabled = String(control.disabled);
+        if (control.dataset.wasDisabled === undefined) {
+          control.dataset.wasDisabled = String(control.disabled);
+        }
         control.disabled = true;
       } else if (control.dataset.wasDisabled !== undefined) {
         control.disabled = control.dataset.wasDisabled === 'true';
@@ -2095,7 +2087,9 @@ class SettingsChannelsView {
     if (form) form.querySelectorAll('input, select, textarea, button').forEach((control) => {
       if (control.classList.contains('channels-help-button')) return;
       if (pending) {
-        control.dataset.wasDisabled = String(control.disabled);
+        if (control.dataset.wasDisabled === undefined) {
+          control.dataset.wasDisabled = String(control.disabled);
+        }
         control.disabled = true;
       } else if (control.dataset.wasDisabled !== undefined) {
         control.disabled = control.dataset.wasDisabled === 'true';
@@ -2104,7 +2098,9 @@ class SettingsChannelsView {
     });
     this.editorPanel.querySelectorAll(':scope > .channels-editor-actions button').forEach((button) => {
       if (pending) {
-        button.dataset.wasDisabled = String(button.disabled);
+        if (button.dataset.wasDisabled === undefined) {
+          button.dataset.wasDisabled = String(button.disabled);
+        }
         button.disabled = true;
       } else if (button.dataset.wasDisabled !== undefined) {
         button.disabled = button.dataset.wasDisabled === 'true';
