@@ -9,6 +9,9 @@ const SIGNAL_MAXIMUM_ZOOM = 8;
 const SIGNAL_ZOOM_FACTOR = 1.5;
 const SIGNAL_REFINEMENT_DELAY_MS = 180;
 const SIGNAL_FIRST_FRAME_TIMEOUT_MS = 15000;
+const SIGNAL_ACTIVE_SLOT_REUSE_DELAY_MS = 750;
+const SIGNAL_ACTIVE_LABEL_LANES = 4;
+const SIGNAL_ACTIVE_LABEL_MAXIMUM_COLUMNS = 6;
 const SIGNAL_PALETTE_MINIMUM_DB = -220;
 const SIGNAL_PALETTE_MAXIMUM_DB = 40;
 const SIGNAL_PALETTE_STEP_DB = 0.5;
@@ -84,6 +87,9 @@ class WidebandSignalView {
     this.waterfallScrollAccumulator = 0;
     this.activeChannelTables = new Map();
     this.activeChannelLabelRows = [];
+    this.activeChannelLabelElements = new Map();
+    this.activeChannelSlots = new Map();
+    this.activeChannelSlotLayoutKey = '';
     this.activeChannelPeakHolds = new Map();
     this.activeChannelLabelSignature = '';
     this.activeChannelLabelViewportKey = '';
@@ -761,6 +767,8 @@ class WidebandSignalView {
     this.hoverRatio = null;
     this.hoverCanvas = null;
     this.hoverYRatio = null;
+    this.activeChannelSlots.clear();
+    this.activeChannelSlotLayoutKey = '';
     this.activeChannelPeakHolds.clear();
     this.dropped = 0;
     this.framesThisSecond = 0;
@@ -1220,6 +1228,9 @@ class WidebandSignalView {
     this.activeChannelSource = null;
     this.activeChannelTables.clear();
     this.activeChannelLabelRows = [];
+    this.activeChannelLabelElements.clear();
+    this.activeChannelSlots.clear();
+    this.activeChannelSlotLayoutKey = '';
     this.activeChannelPeakHolds.clear();
     this.activeChannelLabelSignature = '';
     this.activeChannelLabelViewportKey = '';
@@ -1253,43 +1264,97 @@ class WidebandSignalView {
     const viewport = this.viewport || this.fullViewport;
     if (!viewport || viewport.endHz <= viewport.startHz) {
       this.activeChannelLabelRows = [];
+      this.activeChannelLabelElements.clear();
+      this.activeChannelSlots.clear();
+      this.activeChannelSlotLayoutKey = '';
       this.activeChannelPeakHolds.clear();
+      this.activeChannelLabelSignature = '';
       this.activeChannelLabels.replaceChildren();
       this.clearActiveChannelConnectors();
       return;
     }
-    const rows = this.activeChannelRows().slice(0, 24);
     const availableWidth = Math.max(320, this.fft?.clientWidth || 320);
-    const maximumPerLane = Math.max(1, Math.floor(availableWidth / 150));
-    const laneCount = Math.max(1, Math.min(4, Math.ceil(rows.length / maximumPerLane)));
-    const laneCounts = Array.from({ length: laneCount }, (_, lane) =>
-      rows.filter((row, index) => index % laneCount === lane).length);
-    this.activeChannelLabelRows = rows.map((row, index) => {
-      const lane = index % laneCount;
-      const slot = Math.floor(index / laneCount);
-      return {
+    const columnCount = Math.max(1, Math.min(SIGNAL_ACTIVE_LABEL_MAXIMUM_COLUMNS,
+      Math.floor(availableWidth / 150)));
+    const slotCapacity = columnCount * SIGNAL_ACTIVE_LABEL_LANES;
+    const slotLayoutKey = `${columnCount}:${slotCapacity}`;
+    if (slotLayoutKey !== this.activeChannelSlotLayoutKey) {
+      this.activeChannelSlots.clear();
+      this.activeChannelSlotLayoutKey = slotLayoutKey;
+    }
+    const now = performance.now();
+    const availableRows = this.activeChannelRows().map((row) => ({
+      ...row, layoutKey: this.activeChannelLayoutKey(row)
+    }));
+    const availableKeys = new Set(availableRows.map((row) => row.layoutKey));
+    this.activeChannelSlots.forEach((slot, key) => {
+      if (availableKeys.has(key)) slot.releasedAt = null;
+      else if (slot.releasedAt === null) slot.releasedAt = now;
+      else if (now - slot.releasedAt >= SIGNAL_ACTIVE_SLOT_REUSE_DELAY_MS) this.activeChannelSlots.delete(key);
+    });
+    const existingRows = availableRows.filter((row) => this.activeChannelSlots.has(row.layoutKey));
+    const newRows = availableRows.filter((row) => !this.activeChannelSlots.has(row.layoutKey));
+    const rows = [...existingRows, ...newRows].slice(0, slotCapacity);
+    const usedSlots = new Set([...this.activeChannelSlots.values()].map((slot) => slot.index));
+    this.activeChannelLabelRows = rows.flatMap((row) => {
+      let slot = this.activeChannelSlots.get(row.layoutKey);
+      if (!slot) {
+        let slotIndex = this.availableActiveChannelSlot(row, usedSlots, columnCount, viewport);
+        if (slotIndex === null) {
+          const reusable = [...this.activeChannelSlots.entries()]
+            .filter((entry) => entry[1].releasedAt !== null)
+            .sort((left, right) => left[1].releasedAt - right[1].releasedAt)[0];
+          if (reusable) {
+            this.activeChannelSlots.delete(reusable[0]);
+            slotIndex = reusable[1].index;
+          }
+        }
+        if (slotIndex === null) return [];
+        slot = { index: slotIndex, releasedAt: null };
+        this.activeChannelSlots.set(row.layoutKey, slot);
+        usedSlots.add(slotIndex);
+      } else {
+        slot.releasedAt = null;
+      }
+      const lane = slot.index % SIGNAL_ACTIVE_LABEL_LANES;
+      const column = Math.floor(slot.index / SIGNAL_ACTIVE_LABEL_LANES);
+      return [{
         ...row,
         lane,
-        labelRatio: (slot + 0.5) / Math.max(1, laneCounts[lane]),
+        labelRatio: (column + 0.5) / columnCount,
         peakHoldKey: this.activeChannelPeakHoldKey(row)
-      };
+      }];
     });
     const activePeakHoldKeys = new Set(this.activeChannelLabelRows.map((row) => row.peakHoldKey));
     this.activeChannelPeakHolds.forEach((value, key) => {
       if (!activePeakHoldKeys.has(key)) this.activeChannelPeakHolds.delete(key);
     });
-    const signature = `${Math.round(availableWidth)}|${this.activeChannelLabelRows.map((row) =>
-      `${row.frequencyHz}:${row.status}:${row.target_alias || row.target_id || row.channel_name || row.lcn || ''}:${row.lane}:${row.labelRatio}`).join('|')}`;
+    const signature = `${this.activeChannelLabelRows.map((row) =>
+      `${row.layoutKey}:${row.status}:${row.target_alias || row.target_id || row.channel_name || row.lcn || ''}:${row.lane}:${row.labelRatio}`).join('|')}`;
     if (signature === this.activeChannelLabelSignature) return;
     this.activeChannelLabelSignature = signature;
-    const labels = this.activeChannelLabelRows.map((row) => {
-      const label = this.element('span', `wideband-active-channel-label status-${row.status.toLowerCase()}`,
-        row.target_alias || row.target_id || row.channel_name || row.lcn || row.status);
+    const activeLabelKeys = new Set(this.activeChannelLabelRows.map((row) => row.layoutKey));
+    this.activeChannelLabelElements.forEach((label, key) => {
+      if (!activeLabelKeys.has(key)) {
+        label.remove();
+        this.activeChannelLabelElements.delete(key);
+      }
+    });
+    this.activeChannelLabelRows.forEach((row) => {
+      const className = `wideband-active-channel-label status-${row.status.toLowerCase()}`;
+      const text = row.target_alias || row.target_id || row.channel_name || row.lcn || row.status;
+      let label = this.activeChannelLabelElements.get(row.layoutKey);
+      if (!label) {
+        label = this.element('span', className, text);
+        this.activeChannelLabelElements.set(row.layoutKey, label);
+        this.activeChannelLabels.append(label);
+      } else {
+        if (label.className !== className) label.className = className;
+        if (label.textContent !== String(text)) label.textContent = String(text);
+      }
       label.style.left = `${row.labelRatio * 100}%`;
       label.style.setProperty('--channel-label-lane', String(row.lane));
-      return label;
     });
-    this.activeChannelLabels.replaceChildren(...labels);
     this.requestFftRender();
   }
 
@@ -1302,6 +1367,27 @@ class WidebandSignalView {
   activeChannelPeakHoldKey(row) {
     return [row.tableId || '', row.key || row.selection_id || '', row.frequencyHz,
       row.timeslot || '', row.status || '', row.target_id || ''].join('|');
+  }
+
+  activeChannelLayoutKey(row) {
+    return [row.tableId || '', row.key || row.selection_id || '', row.frequencyHz,
+      row.timeslot || ''].join('|');
+  }
+
+  availableActiveChannelSlot(row, usedSlots, columnCount, viewport) {
+    const ratio = Math.max(0, Math.min(0.999999,
+      (row.frequencyHz - viewport.startHz) / (viewport.endHz - viewport.startHz)));
+    const preferredColumn = Math.floor(ratio * columnCount);
+    let best = null;
+    for (let column = 0; column < columnCount; column += 1) {
+      for (let lane = 0; lane < SIGNAL_ACTIVE_LABEL_LANES; lane += 1) {
+        const index = column * SIGNAL_ACTIVE_LABEL_LANES + lane;
+        if (usedSlots.has(index)) continue;
+        const score = Math.abs(column - preferredColumn) * SIGNAL_ACTIVE_LABEL_LANES + lane;
+        if (!best || score < best.score) best = { index, score };
+      }
+    }
+    return best?.index ?? null;
   }
 
   drawActiveChannelConnectors() {
