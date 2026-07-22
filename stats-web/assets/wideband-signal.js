@@ -235,7 +235,9 @@ class WidebandSignalView {
       'Live spectrum plot. Wheel to zoom and drag to pan when zoomed.');
     this.fftGuide = this.element('div', 'wideband-cursor-guide');
     this.fftGuide.hidden = true;
-    fftWrap.append(this.fft, this.fftGuide);
+    this.activeChannelLabels = this.element('div', 'wideband-active-channel-labels');
+    this.activeChannelLabels.setAttribute('aria-hidden', 'true');
+    fftWrap.append(this.fft, this.activeChannelLabels, this.fftGuide);
 
     const waterfallWrap = this.element('section', 'wideband-plot waterfall');
     this.waterfall = this.element('canvas', 'wideband-canvas');
@@ -245,9 +247,7 @@ class WidebandSignalView {
     this.waterfallGuide.hidden = true;
     this.activeChannelOverlay = this.element('canvas', 'wideband-active-channels');
     this.activeChannelOverlay.setAttribute('aria-hidden', 'true');
-    this.activeChannelLabels = this.element('div', 'wideband-active-channel-labels');
-    this.activeChannelLabels.setAttribute('aria-hidden', 'true');
-    waterfallWrap.append(this.waterfall, this.activeChannelOverlay, this.activeChannelLabels, this.waterfallGuide);
+    waterfallWrap.append(this.waterfall, this.activeChannelOverlay, this.waterfallGuide);
 
     this.cursorPopup = this.element('div', 'wideband-cursor-popup');
     this.cursorPopup.hidden = true;
