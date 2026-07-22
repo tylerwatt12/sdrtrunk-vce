@@ -25,6 +25,19 @@ is_publication_path()
     esac
 }
 
+is_publication_exception()
+{
+    case "$1" in
+        # This format specification must name the exact serialized metadata fields. Keep this exception path-specific.
+        docs/mbe-call-sequence-recording-format.md)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 scan_stream()
 {
     local label="$1"
@@ -79,7 +92,7 @@ scan_tree()
     local failed=0
 
     while IFS= read -r -d '' path; do
-        if is_publication_path "$path"; then
+        if is_publication_path "$path" && ! is_publication_exception "$path"; then
             if ! scan_value "$ref path" "$path"; then
                 failed=1
             fi
@@ -98,7 +111,7 @@ scan_staged()
     local failed=0
 
     while IFS= read -r -d '' path; do
-        if is_publication_path "$path"; then
+        if is_publication_path "$path" && ! is_publication_exception "$path"; then
             if ! scan_value "staged path" "$path"; then
                 failed=1
             fi
@@ -124,7 +137,8 @@ scan_commit()
     fi
 
     while IFS= read -r -d '' path; do
-        if is_publication_path "$path" && git cat-file -e "$commit:$path" 2>/dev/null; then
+        if is_publication_path "$path" && ! is_publication_exception "$path" &&
+            git cat-file -e "$commit:$path" 2>/dev/null; then
             if ! scan_value "commit $commit path" "$path"; then
                 failed=1
             fi
