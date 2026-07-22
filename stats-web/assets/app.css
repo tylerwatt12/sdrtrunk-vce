@@ -2482,6 +2482,11 @@ body[data-view="spectrum"] .content { max-width: none; padding: 12px; }
 .wideband-canvas:focus-visible { box-shadow: inset 0 0 0 2px #8ff3e6; }
 .wideband-plot.waterfall .wideband-canvas { height: 310px; }
 .wideband-active-channels { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.wideband-active-channel-labels { position: absolute; z-index: 2; inset: 0; overflow: hidden; pointer-events: none; }
+.wideband-active-channel-label { position: absolute; top: calc(7px + var(--channel-label-lane) * 20px); max-width: 150px; padding: 2px 5px; overflow: hidden; color: #dce8ee; background: rgb(7 16 24 / 84%); border: 1px solid #6ee7a5; border-radius: 3px; font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; transform: translateX(-50%); }
+.wideband-active-channel-label.status-encrypted { border-color: #ff9b8b; }
+.wideband-active-channel-label.status-control { border-color: #f1c86b; }
+.wideband-active-channel-label.status-data { border-color: #69ddff; }
 .wideband-cursor-guide { position: absolute; z-index: 3; top: 0; bottom: 0; width: 1px; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 42%); pointer-events: none; }
 .wideband-cursor-guide[hidden] { display: none; }
 .wideband-cursor-popup { position: absolute; z-index: 4; display: flex; gap: 9px; padding: 5px 8px; color: #f2f7fa; background: rgb(8 18 26 / 96%); border: 1px solid #5f7887; border-radius: 4px; box-shadow: 0 3px 12px rgb(0 0 0 / 42%); font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }

@@ -91,7 +91,6 @@ class WidebandSignalView {
     this.waterfallRow = null;
     this.fftScratch = document.createElement('canvas');
     this.waterfallScratch = document.createElement('canvas');
-    this.activeChannelScratch = document.createElement('canvas');
     this.worker = new Worker('/assets/signal-worker.js?v=3');
     this.worker.onmessage = (event) => this.onWorkerMessage(event.data);
     this.worker.onerror = () => this.onWorkerFailure();
@@ -246,7 +245,9 @@ class WidebandSignalView {
     this.waterfallGuide.hidden = true;
     this.activeChannelOverlay = this.element('canvas', 'wideband-active-channels');
     this.activeChannelOverlay.setAttribute('aria-hidden', 'true');
-    waterfallWrap.append(this.waterfall, this.activeChannelOverlay, this.waterfallGuide);
+    this.activeChannelLabels = this.element('div', 'wideband-active-channel-labels');
+    this.activeChannelLabels.setAttribute('aria-hidden', 'true');
+    waterfallWrap.append(this.waterfall, this.activeChannelOverlay, this.activeChannelLabels, this.waterfallGuide);
 
     this.cursorPopup = this.element('div', 'wideband-cursor-popup');
     this.cursorPopup.hidden = true;
@@ -1012,6 +1013,7 @@ class WidebandSignalView {
     }
     this.resetButton.disabled = zoom <= 1.0001;
     this.plotArea.classList.toggle('zoomed', zoom > 1.0001);
+    this.renderActiveChannelLabels();
   }
 
   formatFrequency(frequencyHz) {
@@ -1194,6 +1196,7 @@ class WidebandSignalView {
         if (table?.table_id) this.activeChannelTables.set(String(table.table_id), table);
       });
       this.capturePendingActiveChannels();
+      this.renderActiveChannelLabels();
     }));
     source.addEventListener('activity_table', (event) => read(event, (update) => {
       const id = String(update?.table_id || update?.table?.table_id || '');
@@ -1201,6 +1204,7 @@ class WidebandSignalView {
       if (update.operation === 'remove') this.activeChannelTables.delete(id);
       else if (update.table) this.activeChannelTables.set(id, update.table);
       this.capturePendingActiveChannels();
+      this.renderActiveChannelLabels();
     }));
   }
 
@@ -1209,6 +1213,7 @@ class WidebandSignalView {
     this.activeChannelSource = null;
     this.activeChannelTables.clear();
     this.pendingActiveChannelRows.clear();
+    this.activeChannelLabels?.replaceChildren();
   }
 
   activeChannelRows() {
@@ -1238,6 +1243,24 @@ class WidebandSignalView {
 
   capturePendingActiveChannels() {
     this.activeChannelRows().forEach((row) => this.pendingActiveChannelRows.set(this.activeChannelKey(row), row));
+  }
+
+  renderActiveChannelLabels() {
+    if (!this.activeChannelLabels) return;
+    const viewport = this.viewport || this.fullViewport;
+    if (!viewport || viewport.endHz <= viewport.startHz) {
+      this.activeChannelLabels.replaceChildren();
+      return;
+    }
+    const span = viewport.endHz - viewport.startHz;
+    const labels = this.activeChannelRows().slice(0, 24).map((row, index) => {
+      const label = this.element('span', `wideband-active-channel-label status-${row.status.toLowerCase()}`,
+        row.target_alias || row.target_id || row.channel_name || row.lcn || row.status);
+      label.style.left = `${(row.frequencyHz - viewport.startHz) / span * 100}%`;
+      label.style.setProperty('--channel-label-lane', String(index % 3));
+      return label;
+    });
+    this.activeChannelLabels.replaceChildren(...labels);
   }
 
   addActiveChannelOutlineRows(rowCount) {
@@ -1339,6 +1362,10 @@ class WidebandSignalView {
       context.fillStyle = '#071018';
       context.fillRect(0, 0, this.waterfall.width, this.waterfall.height);
     }
+    this.clearActiveChannelOutlines();
+  }
+
+  clearActiveChannelOutlines() {
     const activeContext = this.activeChannelOverlay?.getContext('2d');
     if (activeContext) activeContext.clearRect(0, 0,
       this.activeChannelOverlay.width, this.activeChannelOverlay.height);
@@ -1532,7 +1559,7 @@ class WidebandSignalView {
   transformPlots(fromViewport, toViewport) {
     this.transformCanvas(this.fft, this.fftScratch, fromViewport, toViewport);
     this.transformCanvas(this.waterfall, this.waterfallScratch, fromViewport, toViewport);
-    this.transformCanvas(this.activeChannelOverlay, this.activeChannelScratch, fromViewport, toViewport, true);
+    this.clearActiveChannelOutlines();
   }
 
   transformCanvas(canvas, scratch, fromViewport, toViewport, transparent = false) {
