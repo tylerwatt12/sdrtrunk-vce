@@ -21,6 +21,9 @@ class ReleaseNotesTest
         assertEquals("0.6.2-alpha-5", notes.version());
         assertEquals("sdrtrunk-vce 0.6.2 Alpha 5", notes.title());
         assertTrue(notes.html().contains("<h1>What&rsquo;s New in Alpha 5</h1>"));
+        assertFalse(notes.html().contains("Before You Upgrade"));
+        assertFalse(notes.html().contains("<b>Downloads:</b>"));
+        assertFalse(notes.html().contains("<h2>Removed</h2>"));
     }
 
     @Test

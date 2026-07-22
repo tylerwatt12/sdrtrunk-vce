@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.spectrum.stream.InteractiveSpectrumFrameSource;
 import io.github.dsheirer.spectrum.stream.SpectrumFrame;
 import io.github.dsheirer.spectrum.stream.SpectrumFrameCodec;
 import io.github.dsheirer.spectrum.stream.SpectrumStreamService;
@@ -20,6 +21,7 @@ import io.github.dsheirer.web.WebResponses;
 import io.github.dsheirer.web.access.AuthorizationSubject;
 import io.github.dsheirer.web.access.FeatureAccessMode;
 import io.github.dsheirer.web.access.InMemoryFeatureAccessPolicy;
+import io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy;
 import io.github.dsheirer.web.access.WebFeature;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
@@ -35,6 +37,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
@@ -48,12 +51,17 @@ class SignalWebSocketTransportTest
     private static final Duration TEST_TIMEOUT = Duration.ofSeconds(8);
 
     @Test
-    void publicAnonymousControlsAndReconnectReuseOneSyntheticSource() throws Exception
+    void permanentAdminPolicyRejectsAnonymousAndReconnectReusesSyntheticSource() throws Exception
     {
         try(TestRig rig = TestRig.publicSignal())
         {
+            ExecutionException denied = assertThrows(ExecutionException.class,
+                () -> rig.connect(new TestListener(), false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                    TimeUnit.MILLISECONDS));
+            assertEquals(401, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
+
             TestListener firstListener = new TestListener();
-            WebSocket first = rig.connect(firstListener, false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+            WebSocket first = rig.connect(firstListener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
                 TimeUnit.MILLISECONDS);
             first.sendText("{\"action\":\"subscribe\",\"maxFps\":30}", true).join();
             SpectrumFrame firstFrame = SpectrumFrameCodec.decode(firstListener.takeBinary());
@@ -69,7 +77,7 @@ class SignalWebSocketTransportTest
             firstListener.closed.get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
 
             TestListener secondListener = new TestListener();
-            WebSocket second = rig.connect(secondListener, false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+            WebSocket second = rig.connect(secondListener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
                 TimeUnit.MILLISECONDS);
             second.sendText("{\"action\":\"subscribe\"}", true).join();
             SpectrumFrameCodec.decode(secondListener.takeBinary());
@@ -107,10 +115,26 @@ class SignalWebSocketTransportTest
         try(TestRig rig = TestRig.publicSignal())
         {
             ExecutionException denied = assertThrows(ExecutionException.class,
-                () -> rig.connect(new TestListener(), false, "https://foreign.invalid").get(TEST_TIMEOUT.toMillis(),
+                () -> rig.connect(new TestListener(), true, "https://foreign.invalid").get(TEST_TIMEOUT.toMillis(),
                     TimeUnit.MILLISECONDS));
             assertTrue(denied.getCause() instanceof WebSocketHandshakeException);
             assertEquals(403, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
+            assertEquals(0, rig.transport.getActiveSessionCount());
+            assertEquals(0, rig.source.getStartCount());
+        }
+    }
+
+    @Test
+    void remoteAddressPolicyRejectsUpgradeBeforeStartingProducer() throws Exception
+    {
+        try(TestRig rig = TestRig.publicSignalWithRemotePolicy(request -> false))
+        {
+            ExecutionException denied = assertThrows(ExecutionException.class,
+                () -> rig.connect(new TestListener(), true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                    TimeUnit.MILLISECONDS));
+            assertTrue(denied.getCause() instanceof WebSocketHandshakeException);
+            assertEquals(403, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
+            assertEquals(1, rig.transport.getRejectedHandshakeCount());
             assertEquals(0, rig.transport.getActiveSessionCount());
             assertEquals(0, rig.source.getStartCount());
         }
@@ -125,7 +149,7 @@ class SignalWebSocketTransportTest
             SignalOriginPolicy.sameOriginOr(List.of(URI.create(trustedOrigin)))))
         {
             TestListener listener = new TestListener();
-            WebSocket socket = rig.connect(listener, false, trustedOrigin).get(TEST_TIMEOUT.toMillis(),
+            WebSocket socket = rig.connect(listener, true, trustedOrigin).get(TEST_TIMEOUT.toMillis(),
                 TimeUnit.MILLISECONDS);
             socket.sendText("{\"action\":\"subscribe\"}", true).join();
             SpectrumFrameCodec.decode(listener.takeBinary());
@@ -134,28 +158,17 @@ class SignalWebSocketTransportTest
     }
 
     @Test
-    void publicToAdminOnlyRevokesAnonymousLiveSession() throws Exception
+    void compatibilityPolicyCannotBeChangedToPublic() throws Exception
     {
-        try(TestRig rig = TestRig.publicSignal())
+        try(TestRig rig = TestRig.adminOnlySignal())
         {
-            TestListener anonymousListener = new TestListener();
-            WebSocket anonymous = rig.connect(anonymousListener, false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
-                TimeUnit.MILLISECONDS);
-            TestListener adminListener = new TestListener();
-            WebSocket admin = rig.connect(adminListener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
-                TimeUnit.MILLISECONDS);
-            anonymous.sendText("{\"action\":\"subscribe\"}", true).join();
-            admin.sendText("{\"action\":\"subscribe\"}", true).join();
-            anonymousListener.takeBinary();
-            adminListener.takeBinary();
-
-            rig.policy.setMode(WebFeature.WIDEBAND_SIGNAL, FeatureAccessMode.ADMIN_ONLY);
-            CloseEvent close = anonymousListener.closed.get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-            assertEquals(StatusCode.POLICY_VIOLATION, close.statusCode());
-            SpectrumFrameCodec.decode(adminListener.takeBinary());
-            await(() -> rig.transport.getActiveSessionCount() == 1 && rig.stream.getSubscriberCount() == 1);
-            assertFalse(admin.isInputClosed());
-            assertEquals(1, rig.transport.getRevokedSessionCount());
+            assertThrows(IllegalArgumentException.class,
+                () -> rig.policy.setMode(WebFeature.WIDEBAND_SIGNAL, FeatureAccessMode.PUBLIC));
+            ExecutionException denied = assertThrows(ExecutionException.class,
+                () -> rig.connect(new TestListener(), false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                    TimeUnit.MILLISECONDS));
+            assertEquals(401, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
+            assertEquals(0, rig.transport.getActiveSessionCount());
         }
     }
 
@@ -165,67 +178,150 @@ class SignalWebSocketTransportTest
         try(TestRig rig = TestRig.publicSignal())
         {
             TestListener listener = new TestListener();
-            WebSocket socket = rig.connect(listener, false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+            WebSocket socket = rig.connect(listener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
                 TimeUnit.MILLISECONDS);
             socket.sendText("{\"action\":\"update\",\"maxFps\":3.5}", true).join();
             CloseEvent close = listener.closed.get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-            assertEquals(StatusCode.POLICY_VIOLATION, close.statusCode());
+            assertEquals(1008, close.statusCode(), "malformed control must use the standard policy-violation code");
             assertEquals(0, rig.source.getStartCount());
         }
     }
 
     @Test
-    void handshakeSessionCountIsBounded() throws Exception
+    void exactlyOneAdminSessionIsAdmittedNodeWide() throws Exception
     {
-        try(TestRig rig = TestRig.publicSignal(SignalOriginPolicy.sameOrigin(), 2))
+        try(TestRig rig = TestRig.publicSignal())
         {
-            rig.connect(new TestListener(), false, rig.origin()).get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-            rig.connect(new TestListener(), false, rig.origin()).get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            rig.connect(new TestListener(), true, rig.origin()).get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
 
             ExecutionException denied = assertThrows(ExecutionException.class,
-                () -> rig.connect(new TestListener(), false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                () -> rig.connect(new TestListener(), true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
                     TimeUnit.MILLISECONDS));
             assertTrue(denied.getCause() instanceof WebSocketHandshakeException);
-            assertEquals(503, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
-            assertEquals(2, rig.transport.getActiveSessionCount());
+            assertEquals(409, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
+            assertEquals(1, rig.transport.getActiveSessionCount());
         }
     }
 
     @Test
-    void tenViewersShareOneProducerAndBoundedLatestOnlyFanout() throws Exception
+    void secondAdminCannotStartAnotherProducerOrSubscription() throws Exception
     {
         try(TestRig rig = TestRig.publicSignal())
         {
-            List<TestListener> listeners = new ArrayList<>();
-            List<WebSocket> sockets = new ArrayList<>();
-
-            for(int x = 0; x < 10; x++)
-            {
-                TestListener listener = new TestListener();
-                listeners.add(listener);
-                sockets.add(rig.connect(listener, false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+            TestListener listener = new TestListener();
+            WebSocket socket = rig.connect(listener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                TimeUnit.MILLISECONDS);
+            socket.sendText("{\"action\":\"subscribe\",\"requestId\":1}", true).join();
+            SpectrumFrameCodec.decode(listener.takeBinary());
+            assertThrows(ExecutionException.class,
+                () -> rig.connect(new TestListener(), true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
                     TimeUnit.MILLISECONDS));
-            }
-
-            for(WebSocket socket: sockets)
-            {
-                socket.sendText("{\"action\":\"subscribe\"}", true).join();
-            }
-
-            for(TestListener listener: listeners)
-            {
-                SpectrumFrameCodec.decode(listener.takeBinary());
-            }
-
-            assertEquals(10, rig.transport.getActiveSessionCount());
-            assertEquals(10, rig.stream.getSubscriberCount());
+            assertEquals(1, rig.transport.getActiveSessionCount());
+            assertEquals(1, rig.stream.getSubscriberCount());
             assertEquals(1, rig.source.getStartCount());
             assertEquals(1, rig.stream.getSourceStartCount());
-            long publishedBefore = rig.stream.getPublishedFrameCount();
-            long deliveredBefore = rig.transport.getDeliveredFrameCount();
-            await(() -> rig.transport.getDeliveredFrameCount() - deliveredBefore >
-                rig.stream.getPublishedFrameCount() - publishedBefore);
         }
+    }
+
+    @Test
+    void logoutOrExpiryRevokesAnAlreadyOpenSignalSession() throws Exception
+    {
+        AtomicBoolean sessionIsValid = new AtomicBoolean(true);
+        SignalSubjectResolver resolver = new SignalSubjectResolver()
+        {
+            @Override
+            public AuthorizationSubject resolve(org.eclipse.jetty.websocket.server.ServerUpgradeRequest request)
+            {
+                return AuthorizationSubject.AUTHENTICATED_ADMIN;
+            }
+
+            @Override
+            public SignalAuthorization resolveAuthorization(
+                org.eclipse.jetty.websocket.server.ServerUpgradeRequest request)
+            {
+                return new SignalAuthorization(AuthorizationSubject.AUTHENTICATED_ADMIN, sessionIsValid::get);
+            }
+        };
+
+        try(TestRig rig = TestRig.adminOnlySignal(resolver))
+        {
+            TestListener listener = new TestListener();
+            WebSocket socket = rig.connect(listener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                TimeUnit.MILLISECONDS);
+            socket.sendText("{\"action\":\"subscribe\"}", true).join();
+            listener.takeBinary();
+
+            sessionIsValid.set(false);
+
+            CloseEvent close = listener.closed.get(TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            assertEquals(SignalWebSocketTransport.ACCESS_REVOKED_CLOSE_CODE, close.statusCode());
+            await(() -> rig.transport.getActiveSessionCount() == 0 && rig.stream.getSubscriberCount() == 0);
+            assertEquals(1, rig.transport.getRevokedSessionCount());
+        }
+    }
+
+    @Test
+    void requestedRateDoesNotCollapseWhenSourceCadenceMatchesPacingInterval() throws Exception
+    {
+        try(TestRig rig = TestRig.publicSignal(Duration.ofMillis(50)))
+        {
+            TestListener listener = new TestListener();
+            WebSocket socket = rig.connect(listener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                TimeUnit.MILLISECONDS);
+            socket.sendText("{\"action\":\"subscribe\",\"maxFps\":20}", true).join();
+            listener.takeBinary();
+            long deliveredBefore = rig.transport.getDeliveredFrameCount();
+            Thread.sleep(1_200);
+            long delivered = rig.transport.getDeliveredFrameCount() - deliveredBefore;
+
+            assertTrue(delivered >= 18, "20 FPS source should not collapse to approximately 10 FPS");
+            assertTrue(delivered <= 26, "per-viewer maximum FPS must remain bounded");
+        }
+    }
+
+    @Test
+    void emitsReadyRefiningAndLiveStateBoundToBinaryViewRevision() throws Exception
+    {
+        try(TestRig rig = TestRig.adminOnlySignal())
+        {
+            TestListener listener = new TestListener();
+            WebSocket socket = rig.connect(listener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                TimeUnit.MILLISECONDS);
+            assertTrue(listener.takeTextContaining("\"state\":\"ready\"").contains("\"exclusive\":true"));
+
+            socket.sendText("{\"action\":\"subscribe\",\"requestId\":7,\"targetId\":\"SYNTHETIC\"}",
+                true).join();
+            assertTrue(listener.takeTextContaining("\"state\":\"refining\"").contains("\"requestId\":7"));
+            assertTrue(listener.takeTextContaining("\"state\":\"live\"").contains("\"viewRevision\":7"));
+            SpectrumFrame frame = SpectrumFrameCodec.decode(listener.takeBinary());
+            assertEquals(7, frame.getViewRevision());
+            assertEquals(128, frame.getFftSize());
+            assertEquals(0, frame.getFirstBin());
+
+            socket.sendText("{\"action\":\"update\",\"requestId\":8," +
+                "\"viewport\":{\"startHz\":850412500,\"endHz\":851612500}}", true).join();
+            SpectrumFrame zoomed = SpectrumFrameCodec.decode(listener.takeBinaryForRevision(8));
+            assertEquals(8, zoomed.getViewRevision());
+            assertTrue(zoomed.getBinCount() <= InteractiveSpectrumFrameSource.MAXIMUM_TRANSMITTED_BINS);
+        }
+    }
+
+    @Test
+    void liveStateKeyChangesWhenFrequencyDomainChanges()
+    {
+        SpectrumFrame baseline = SpectrumFrame.float32(0, 1, 1, 10, 0, 851_000_000L, 2_400_000L,
+            7, 8_192, 2_048, new float[]{-100.0f, -90.0f});
+        SignalWebSocketTransport.LiveStateKey key = SignalWebSocketTransport.LiveStateKey.from(baseline);
+
+        assertFalse(key.equals(SignalWebSocketTransport.LiveStateKey.from(SpectrumFrame.float32(
+            0, 1, 2, 20, 0, 852_000_000L, 2_400_000L, 7, 8_192, 2_048,
+            new float[]{-100.0f, -90.0f}))));
+        assertFalse(key.equals(SignalWebSocketTransport.LiveStateKey.from(SpectrumFrame.float32(
+            0, 1, 2, 20, 0, 851_000_000L, 2_048_000L, 7, 8_192, 2_048,
+            new float[]{-100.0f, -90.0f}))));
+        assertFalse(key.equals(SignalWebSocketTransport.LiveStateKey.from(SpectrumFrame.float32(
+            0, 2, 2, 20, 0, 851_000_000L, 2_400_000L, 7, 8_192, 2_048,
+            new float[]{-100.0f, -90.0f}))));
     }
 
     @Test
@@ -233,7 +329,7 @@ class SignalWebSocketTransportTest
     {
         TestRig rig = TestRig.publicSignal();
         TestListener listener = new TestListener();
-        WebSocket socket = rig.connect(listener, false, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+        WebSocket socket = rig.connect(listener, true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
             TimeUnit.MILLISECONDS);
         socket.sendText("{\"action\":\"subscribe\"}", true).join();
         listener.takeBinary();
@@ -270,8 +366,10 @@ class SignalWebSocketTransportTest
     private static final class TestListener implements WebSocket.Listener
     {
         private final BlockingQueue<byte[]> binaryMessages = new LinkedBlockingQueue<>();
+        private final BlockingQueue<String> textMessages = new LinkedBlockingQueue<>();
         private final CompletableFuture<CloseEvent> closed = new CompletableFuture<>();
         private final ByteArrayOutputStream partialBinary = new ByteArrayOutputStream();
+        private final StringBuilder partialText = new StringBuilder();
 
         @Override
         public void onOpen(WebSocket webSocket)
@@ -296,6 +394,20 @@ class SignalWebSocketTransportTest
         }
 
         @Override
+        public synchronized CompletableFuture<?> onText(WebSocket webSocket, CharSequence data, boolean last)
+        {
+            partialText.append(data);
+
+            if(last)
+            {
+                textMessages.add(partialText.toString());
+                partialText.setLength(0);
+            }
+
+            return null;
+        }
+
+        @Override
         public CompletableFuture<?> onClose(WebSocket webSocket, int statusCode, String reason)
         {
             closed.complete(new CloseEvent(statusCode, reason));
@@ -314,6 +426,40 @@ class SignalWebSocketTransportTest
             assertTrue(frame != null, "expected an SFFT binary frame before timeout");
             return frame;
         }
+
+        private byte[] takeBinaryForRevision(long revision) throws InterruptedException
+        {
+            long deadline = System.nanoTime() + TEST_TIMEOUT.toNanos();
+
+            while(System.nanoTime() < deadline)
+            {
+                byte[] encoded = binaryMessages.poll(250, TimeUnit.MILLISECONDS);
+
+                if(encoded != null && SpectrumFrameCodec.decode(encoded).getViewRevision() == revision)
+                {
+                    return encoded;
+                }
+            }
+
+            throw new AssertionError("expected an SFFT binary frame for revision " + revision);
+        }
+
+        private String takeTextContaining(String expected) throws InterruptedException
+        {
+            long deadline = System.nanoTime() + TEST_TIMEOUT.toNanos();
+
+            while(System.nanoTime() < deadline)
+            {
+                String message = textMessages.poll(250, TimeUnit.MILLISECONDS);
+
+                if(message != null && message.contains(expected))
+                {
+                    return message;
+                }
+            }
+
+            throw new AssertionError("expected signal state containing " + expected);
+        }
     }
 
     private static final class TestRig implements AutoCloseable
@@ -321,11 +467,8 @@ class SignalWebSocketTransportTest
         private static final String ADMIN_HEADER = "X-Sdrtrunk-Test-Admin";
 
         private final InMemoryFeatureAccessPolicy policy = InMemoryFeatureAccessPolicy.currentProfileDefaults();
-        private final SyntheticSpectrumFrameSource source = new SyntheticSpectrumFrameSource(
-            new SyntheticSpectrumFrameSource.Configuration(1, 851_012_500L, 2_400_000L, 128,
-                Duration.ofMillis(25), "test synthetic spectrum"));
-        private final SpectrumStreamService stream = new SpectrumStreamService(
-            new SpectrumStreamService.Configuration(16, Duration.ofSeconds(2), "test spectrum grace"), source);
+        private final SyntheticSpectrumFrameSource source;
+        private final SpectrumStreamService stream;
         private final SignalWebSocketTransport transport;
         private final HttpClient client = HttpClient.newBuilder().connectTimeout(TEST_TIMEOUT).build();
         private final WebApplicationService application;
@@ -334,12 +477,43 @@ class SignalWebSocketTransportTest
 
         private TestRig(FeatureAccessMode accessMode, SignalOriginPolicy originPolicy, int maximumSessions)
         {
-            policy.setMode(WebFeature.WIDEBAND_SIGNAL, accessMode);
+            this(accessMode, originPolicy, maximumSessions, Duration.ofMillis(25),
+                RemoteAddressAdmissionPolicy.allowAll());
+        }
+
+        private TestRig(FeatureAccessMode accessMode, SignalOriginPolicy originPolicy, int maximumSessions,
+                        Duration sourceInterval)
+        {
+            this(accessMode, originPolicy, maximumSessions, sourceInterval,
+                RemoteAddressAdmissionPolicy.allowAll());
+        }
+
+        private TestRig(FeatureAccessMode accessMode, SignalOriginPolicy originPolicy, int maximumSessions,
+                        Duration sourceInterval, RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
+        {
+            this(accessMode, originPolicy, maximumSessions, sourceInterval, remoteAddressAdmissionPolicy,
+                request -> "true".equals(request.getHeaders().get(ADMIN_HEADER)) ?
+                    AuthorizationSubject.AUTHENTICATED_ADMIN : AuthorizationSubject.ANONYMOUS);
+        }
+
+        private TestRig(FeatureAccessMode accessMode, SignalOriginPolicy originPolicy, int maximumSessions,
+                        Duration sourceInterval, RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
+                        SignalSubjectResolver subjectResolver)
+        {
+            source = new SyntheticSpectrumFrameSource(
+                new SyntheticSpectrumFrameSource.Configuration(1, 851_012_500L, 2_400_000L, 128,
+                    sourceInterval, "test synthetic spectrum"));
+            stream = new SpectrumStreamService(
+                new SpectrumStreamService.Configuration(1, Duration.ofSeconds(2), "test spectrum grace"), source);
+            if(accessMode != FeatureAccessMode.ADMIN_ONLY)
+            {
+                assertThrows(IllegalArgumentException.class,
+                    () -> policy.setMode(WebFeature.WIDEBAND_SIGNAL, accessMode));
+            }
             transport = new SignalWebSocketTransport(
                 new SignalWebSocketTransport.Configuration(maximumSessions, 20, 30, Duration.ofMillis(100),
                     Duration.ofSeconds(2), Duration.ofSeconds(3), "test signal sender-"), stream, policy,
-                request -> "true".equals(request.getHeaders().get(ADMIN_HEADER)) ?
-                    AuthorizationSubject.AUTHENTICATED_ADMIN : AuthorizationSubject.ANONYMOUS, originPolicy);
+                subjectResolver, originPolicy, remoteAddressAdmissionPolicy);
             application = new WebApplicationService(WebApplicationService.Configuration.ephemeralLoopback(),
                 new NotFoundHandler(), transport::configure);
             application.start();
@@ -352,7 +526,14 @@ class SignalWebSocketTransportTest
 
         private static TestRig publicSignal(SignalOriginPolicy originPolicy)
         {
-            return publicSignal(originPolicy, 16);
+            return publicSignal(originPolicy, 1);
+        }
+
+        private static TestRig publicSignalWithRemotePolicy(
+            RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
+        {
+            return new TestRig(FeatureAccessMode.PUBLIC, SignalOriginPolicy.sameOrigin(), 1,
+                Duration.ofMillis(25), remoteAddressAdmissionPolicy);
         }
 
         private static TestRig publicSignal(SignalOriginPolicy originPolicy, int maximumSessions)
@@ -360,9 +541,20 @@ class SignalWebSocketTransportTest
             return new TestRig(FeatureAccessMode.PUBLIC, originPolicy, maximumSessions);
         }
 
+        private static TestRig publicSignal(Duration sourceInterval)
+        {
+            return new TestRig(FeatureAccessMode.PUBLIC, SignalOriginPolicy.sameOrigin(), 1, sourceInterval);
+        }
+
         private static TestRig adminOnlySignal()
         {
-            return new TestRig(FeatureAccessMode.ADMIN_ONLY, SignalOriginPolicy.sameOrigin(), 16);
+            return new TestRig(FeatureAccessMode.ADMIN_ONLY, SignalOriginPolicy.sameOrigin(), 1);
+        }
+
+        private static TestRig adminOnlySignal(SignalSubjectResolver subjectResolver)
+        {
+            return new TestRig(FeatureAccessMode.ADMIN_ONLY, SignalOriginPolicy.sameOrigin(), 1,
+                Duration.ofMillis(25), RemoteAddressAdmissionPolicy.allowAll(), subjectResolver);
         }
 
         private String origin()

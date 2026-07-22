@@ -32,6 +32,15 @@ import org.junit.jupiter.api.Test;
 class ChannelWebLinkPanelTest
 {
     @Test
+    void preservesConfiguredHttpsHostAndPortInDesktopNavigation()
+    {
+        StatsWebNavigationState state = new StatsWebNavigationState(true,
+            URI.create("https://bosgame.example:8443/"), true, true);
+        URI uri = ChannelWebLinkPanel.buildUri(state, ChannelWebLinkPanel.Destination.SITE_INFO, "site-guid");
+        assertEquals("https://bosgame.example:8443/?view=site&guid=site-guid&tab=info", uri.toString());
+    }
+
+    @Test
     void opensSiteAndSystemPagesWithStableOwnerGuidAndGatesActivityHistory() throws Exception
     {
         String ownerGuid = UUID.randomUUID().toString();

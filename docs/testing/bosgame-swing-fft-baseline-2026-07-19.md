@@ -63,15 +63,17 @@ observed. Live RF variability means this is still a smoke baseline rather than d
 
 - With zero web signal subscribers, synthetic and real spectrum services must be stopped after the short grace period;
   idle cost should track the FFT-off state rather than retaining visualization work.
-- One and ten passive viewers of the same target must use one producer and one encoded-frame fan-out. Viewer count must
-  not multiply DFT work.
+- One authenticated spectrum owner uses one producer and selected target. A second browser is rejected without
+  starting DSP. Exercise adaptive 4K-32K calculation/cropped-wire tiers while ten separate users listen to call audio.
 - Candidate process CPU, allocation/GC behavior, threads, handles, sockets, queue depth, and dropped frames must be
   compared with this baseline while control/grant decoding, four-call recording/upload, activity tracking, and ten
   audio listeners remain healthy.
 - A longer BOSGAME soak and deterministic replay are still required to establish memory, decoder, recording, and upload
   non-regression. This short result cannot replace those gates.
 
-## Final BOSGAME state
+## State after baseline capture
 
 The original FFT/waterfall enabled state was restored. Exactly one approved alpha-5 Java process remained running under
 the unchanged `SDRTrunk BOSGAME Launch` scheduled task with both tuners enabled and the existing Stats API responding.
+This records the state at the end of the baseline window, not the current node state. The later
+[packaged web-first canary](bosgame-webfirst-wideband-canary-2026-07-19.md) replaced it in an isolated review run.

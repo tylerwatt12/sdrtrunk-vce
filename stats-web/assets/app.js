@@ -2807,8 +2807,21 @@ async function loadStatus(refreshCurrentView = false) {
       (logging.summaryConfigured ? 'Summaries unavailable' : 'Summaries off');
     const historyLabel = logging.historyActive ? 'History on' : (logging.historyRetained ? 'History paused' :
       (logging.historyConfigured ? 'History unavailable' : 'History off'));
+    const runtime = serviceStatus.runtime || {};
+    const calibration = runtime.calibration || {};
+    const voiceDecryption = runtime.voiceDecryption || {};
+    const runtimeAlerts = [];
+    const pendingCalibrations = Number(calibration.pending);
+    if (calibration.available && pendingCalibrations > 0) {
+      runtimeAlerts.push(`${number(pendingCalibrations)} calibrations pending`);
+    }
+    const vaultState = String(voiceDecryption.vaultState || '').toLowerCase();
+    if (voiceDecryption.moduleLoaded && voiceDecryption.vaultPresent && vaultState !== 'unlocked') {
+      runtimeAlerts.push(`Vault ${vaultState || 'unavailable'}`);
+    }
     document.getElementById('server-status').textContent =
-      `${summaryLabel} · ${historyLabel} · ${size} MB`;
+      `${summaryLabel} · ${historyLabel} · ${size} MB` +
+      (runtimeAlerts.length ? ` · ${runtimeAlerts.join(' · ')}` : '');
   } catch (error) {
     serviceStatus = null;
     document.getElementById('server-status').textContent = 'Database unavailable';

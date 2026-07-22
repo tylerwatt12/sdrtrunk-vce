@@ -1,0 +1,1669 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce Settings — Streaming mockup</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #edf1f4;
+      --surface: #fff;
+      --surface-2: #f5f7f9;
+      --surface-3: #e8edf1;
+      --ink: #18212a;
+      --muted: #65717d;
+      --line: #c9d1d8;
+      --line-strong: #9ba8b3;
+      --header: #202a33;
+      --header-2: #2c3944;
+      --accent: #0b7168;
+      --accent-hover: #095d56;
+      --accent-soft: #d9efec;
+      --blue: #075eaa;
+      --blue-soft: #e7f1fb;
+      --warning: #8a5200;
+      --warning-soft: #fff1d6;
+      --danger: #9b2743;
+      --danger-soft: #fbe8ed;
+      --success: #176b3a;
+      --success-soft: #e2f3e9;
+      --shadow: 0 6px 20px rgb(20 32 44 / 9%);
+      --radius: 10px;
+      font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111820;
+        --surface: #18212a;
+        --surface-2: #202b35;
+        --surface-3: #2b3742;
+        --ink: #e5ebf0;
+        --muted: #aeb8c1;
+        --line: #3b4854;
+        --line-strong: #596976;
+        --header: #0d1318;
+        --header-2: #24313b;
+        --accent: #55c7ba;
+        --accent-hover: #79d6cc;
+        --accent-soft: #193d39;
+        --blue: #82bff3;
+        --blue-soft: #18324a;
+        --warning: #f0bd67;
+        --warning-soft: #48351c;
+        --danger: #ff99b0;
+        --danger-soft: #4a222c;
+        --success: #85d6a2;
+        --success-soft: #193b27;
+        --shadow: 0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page); }
+    body { min-height: 100vh; margin: 0; color: var(--ink); background: var(--page); font-size: 14px; }
+    button, input, select, textarea { font: inherit; }
+    button, input, select, textarea {
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+    }
+    button { min-height: 34px; padding: 6px 11px; cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .58; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
+    summary:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+      outline-offset: 2px;
+    }
+    [hidden] { display: none !important; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      min-height: 50px;
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr) max-content;
+      align-items: center;
+      gap: 24px;
+      padding: 0 18px;
+      color: #fff;
+      background: var(--header);
+      border-bottom: 1px solid #0e151b;
+      box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+    }
+    .brand { font-size: 17px; font-weight: 750; letter-spacing: -.01em; }
+    .global-nav { align-self: stretch; display: flex; min-width: 0; gap: 2px; overflow-x: auto; }
+    .global-nav button {
+      min-height: 49px;
+      padding: 0 13px;
+      color: #dce4eb;
+      background: transparent;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+    }
+    .global-nav button:hover, .global-nav button[aria-current="page"] {
+      color: #fff;
+      background: var(--header-2);
+      border-bottom-color: #35b8a9;
+    }
+    .admin-summary { display: flex; align-items: center; gap: 9px; color: #dce4eb; white-space: nowrap; font-size: 12px; }
+    .admin-dot { width: 8px; height: 8px; border-radius: 50%; background: #54d177; box-shadow: 0 0 0 3px rgb(84 209 119 / 16%); }
+
+    .settings-shell { min-height: calc(100vh - 50px); display: grid; grid-template-columns: 238px minmax(0, 1fr); }
+    .settings-nav {
+      position: sticky;
+      top: 50px;
+      height: calc(100vh - 50px);
+      overflow-y: auto;
+      padding: 18px 12px 30px;
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+    }
+    .settings-nav h2 { margin: 0 8px 18px; font-size: 1.08rem; }
+    .nav-group { margin: 0 0 21px; }
+    .nav-group h3 { margin: 0 9px 7px; color: var(--muted); font-size: .7rem; letter-spacing: .075em; text-transform: uppercase; }
+    .settings-nav button {
+      width: 100%;
+      min-height: 37px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 7px;
+      padding: 7px 10px;
+      text-align: left;
+      background: transparent;
+      border: 0;
+      border-radius: 7px;
+    }
+    .settings-nav button:hover { background: var(--surface-2); }
+    .settings-nav button[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+    .future-tag { color: var(--muted); font-size: .68rem; font-weight: 600; }
+
+    .settings-main { min-width: 0; padding: 18px clamp(14px, 2.2vw, 30px) 60px; }
+    .page-head {
+      max-width: 1600px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 0 auto 14px;
+    }
+    .breadcrumbs { margin: 0 0 6px; color: var(--muted); font-size: .78rem; }
+    .page-head h1 { margin: 0; font-size: clamp(1.45rem, 2.5vw, 2rem); line-height: 1.15; }
+    .page-head p { max-width: 820px; margin: 7px 0 0; color: var(--muted); line-height: 1.45; }
+    .page-actions, .panel-actions, .editor-actions, .footer-actions, .test-actions, .secret-status,
+    .provider-status-line, .review-footer-buttons, .modal-footer, .scenario-control {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .page-actions { justify-content: flex-end; }
+    .button-primary, .review-button { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .button-primary:hover:not(:disabled), .review-button:hover:not(:disabled) { background: var(--accent-hover); }
+    .button-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); background: var(--surface); }
+    .button-link { color: var(--blue); background: transparent; border-color: transparent; }
+
+    .prototype-banner {
+      max-width: 1600px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 18px;
+      margin: 0 auto 14px;
+      padding: 10px 13px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+      border-radius: 8px;
+    }
+    .prototype-banner strong { color: var(--ink); }
+    .scenario-control label { font-size: .78rem; font-weight: 700; }
+    .scenario-control select { min-height: 34px; padding: 5px 30px 5px 8px; }
+
+    .streaming-workspace {
+      max-width: 1600px;
+      min-height: 650px;
+      display: grid;
+      grid-template-columns: minmax(285px, 360px) minmax(0, 1fr);
+      align-items: start;
+      gap: 14px;
+      margin: 0 auto;
+    }
+    .panel { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .panel-head {
+      min-height: 58px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 14px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .panel-head h2, .panel-head h3 { margin: 0; font-size: 1rem; }
+    .panel-head p { margin: 3px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+
+    .provider-panel { position: sticky; top: 68px; overflow: hidden; }
+    .provider-count { color: var(--muted); font-size: .72rem; }
+    .provider-list { display: grid; max-height: calc(100vh - 220px); overflow-y: auto; }
+    .provider-list > button {
+      width: 100%;
+      min-height: 86px;
+      display: grid;
+      grid-template-columns: 13px minmax(0, 1fr);
+      align-items: start;
+      gap: 9px;
+      padding: 11px 13px;
+      text-align: left;
+      background: var(--surface);
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+    }
+    .provider-list > button:last-child { border-bottom: 0; }
+    .provider-list > button:hover { background: var(--surface-2); }
+    .provider-list > button[aria-selected="true"] { background: var(--accent-soft); box-shadow: inset 4px 0 0 var(--accent); }
+    .status-dot { width: 10px; height: 10px; margin-top: 5px; background: var(--muted); border-radius: 50%; }
+    .status-dot.connected { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent); }
+    .status-dot.error { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
+    .status-dot.connecting { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 18%, transparent); }
+    .provider-copy { min-width: 0; }
+    .provider-name-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .provider-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 760; }
+    .enabled-mark { flex: 0 0 auto; color: var(--success); font-size: .66rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+    .enabled-mark.off { color: var(--muted); }
+    .provider-type { display: block; margin-top: 3px; color: var(--muted); font-size: .74rem; }
+    .provider-status-line { justify-content: space-between; margin-top: 8px; color: var(--muted); font-size: .7rem; }
+    .provider-status-line .error-copy { color: var(--danger); }
+
+    .empty-state { padding: 48px 20px; text-align: center; }
+    .empty-state h2, .empty-state h3 { margin: 0; }
+    .empty-state p { max-width: 560px; margin: 8px auto 16px; color: var(--muted); line-height: 1.5; }
+    .provider-panel .empty-state { padding: 30px 15px; }
+
+    .editor-panel { overflow: hidden; }
+    .editor-head-main { min-width: 0; }
+    .editor-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .editor-title-row h2 { overflow-wrap: anywhere; }
+    .header-enabled {
+      min-height: 36px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 9px;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .header-enabled input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+    .header-enabled strong { font-size: .78rem; }
+    .type-badge, .status-badge, .secret-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: .69rem;
+      font-weight: 750;
+    }
+    .type-badge { color: var(--blue); background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--line)); }
+    .status-badge { color: var(--muted); background: var(--surface-3); border: 1px solid var(--line); }
+    .status-badge.connected { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 35%, var(--line)); }
+    .status-badge.error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+    .status-badge.connecting { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
+
+    .editor-body { display: grid; gap: 12px; padding: 14px; }
+    .form-section { min-width: 0; border: 1px solid var(--line); border-radius: 9px; }
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      border-radius: 9px 9px 0 0;
+    }
+    .section-head h3 { margin: 0; font-size: .9rem; }
+    .section-head p { margin: 3px 0 0; color: var(--muted); font-size: .73rem; }
+    .section-title-row { display: flex; align-items: center; gap: 6px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; padding: 12px; }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    .field-label { display: flex; align-items: center; gap: 6px; min-height: 24px; margin-bottom: 5px; font-weight: 740; }
+    .field-label label { min-width: 0; }
+    .field input:not([type="checkbox"]), .field select, .field textarea { width: 100%; min-height: 39px; padding: 8px 10px; }
+    .field textarea { min-height: 76px; resize: vertical; }
+    .field-hint, .field-error { margin: 5px 0 0; color: var(--muted); font-size: .71rem; line-height: 1.38; }
+    .field-error { color: var(--danger); font-weight: 700; }
+    .unit-control { display: grid; grid-template-columns: minmax(0, 1fr) max-content; }
+    .unit-control input { min-width: 0; border-radius: 7px 0 0 7px; }
+    .unit {
+      min-width: 68px;
+      display: grid;
+      place-items: center;
+      margin-left: -1px;
+      padding: 0 10px;
+      color: var(--muted);
+      background: var(--surface-2);
+      border: 1px solid var(--line-strong);
+      border-radius: 0 7px 7px 0;
+      font-size: .72rem;
+    }
+    .endpoint-control { display: grid; grid-template-columns: minmax(0, 1fr) max-content; }
+    .endpoint-control input { min-width: 0; border-radius: 7px 0 0 7px; }
+    .endpoint-suffix {
+      display: grid;
+      place-items: center;
+      margin-left: -1px;
+      padding: 0 10px;
+      color: var(--muted);
+      background: var(--surface-2);
+      border: 1px solid var(--line-strong);
+      border-radius: 0 7px 7px 0;
+      font-size: .72rem;
+    }
+    .endpoint-preview { margin-top: 7px; padding: 8px 10px; color: var(--muted); background: var(--surface-2); border-radius: 7px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .71rem; overflow-wrap: anywhere; }
+
+    .help-button {
+      width: 22px;
+      min-width: 22px;
+      min-height: 22px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      color: var(--blue);
+      background: transparent;
+      border-color: var(--blue);
+      border-radius: 50%;
+      font-size: .74rem;
+      font-weight: 850;
+      line-height: 1;
+    }
+    .help-popover {
+      position: fixed;
+      z-index: 150;
+      width: min(330px, calc(100vw - 24px));
+      padding: 11px;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      box-shadow: 0 12px 38px rgb(0 0 0 / 25%);
+    }
+    .help-popover strong { display: block; margin-bottom: 5px; }
+    .help-popover p { margin: 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
+
+    .switch-field { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .switch-field input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); }
+    .switch-field strong, .switch-field span { display: block; }
+    .switch-field span { margin-top: 2px; color: var(--muted); font-size: .72rem; line-height: 1.38; }
+
+    .secret-panel { padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .secret-status { justify-content: space-between; margin-bottom: 8px; }
+    .secret-badge { color: var(--success); background: var(--success-soft); border: 1px solid color-mix(in srgb, var(--success) 35%, var(--line)); }
+    .secret-badge.missing { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
+    .secret-copy { color: var(--muted); font-size: .71rem; }
+    .secret-control { display: grid; grid-template-columns: minmax(0, 1fr) max-content; }
+    .secret-control input { min-width: 0; border-radius: 7px 0 0 7px; }
+    .secret-control button { min-width: 62px; margin-left: -1px; border-radius: 0 7px 7px 0; }
+
+    .inline-notice { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; color: var(--blue); background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); border-radius: 8px; }
+    .inline-notice.warning { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
+    .inline-notice.error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+    .inline-notice strong, .inline-notice span { display: block; }
+    .inline-notice span { margin-top: 2px; color: var(--ink); font-size: .74rem; line-height: 1.42; }
+
+    .test-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+    .test-card h3 { margin: 0; font-size: .9rem; }
+    .test-card p { margin: 4px 0 0; color: var(--muted); font-size: .73rem; line-height: 1.42; }
+    .test-result { min-width: min(100%, 280px); padding: 9px 10px; color: var(--success); background: var(--success-soft); border-radius: 7px; font-size: .74rem; }
+    .test-result.error { color: var(--danger); background: var(--danger-soft); }
+    .test-result.testing { color: var(--warning); background: var(--warning-soft); }
+
+    .editor-footer {
+      position: sticky;
+      bottom: 0;
+      z-index: 5;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 14px;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(7px);
+    }
+    .save-state { color: var(--muted); font-size: .73rem; }
+    .save-state.dirty { color: var(--warning); font-weight: 740; }
+
+    dialog {
+      width: min(650px, calc(100vw - 28px));
+      max-height: min(84vh, 800px);
+      padding: 0;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      box-shadow: 0 20px 70px rgb(0 0 0 / 38%);
+      overflow: auto;
+    }
+    dialog::backdrop { background: rgb(6 12 18 / 58%); backdrop-filter: blur(2px); }
+    .modal-head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; gap: 12px; padding: 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+    .modal-head h2 { margin: 0; font-size: 1.1rem; }
+    .modal-head p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+    .modal-close { min-width: 36px; padding: 0; font-size: 1.25rem; }
+    .modal-body { min-width: 0; padding: 14px; overflow-wrap: anywhere; }
+    .modal-footer { position: sticky; bottom: 0; justify-content: flex-end; padding: 11px 14px; background: var(--surface-2); border-top: 1px solid var(--line); }
+    .provider-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .provider-type-card { position: relative; }
+    .provider-type-card input { position: absolute; opacity: 0; pointer-events: none; }
+    .provider-type-card span { min-height: 70px; display: block; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+    .provider-type-card strong, .provider-type-card small { display: block; }
+    .provider-type-card small { margin-top: 4px; color: var(--muted); line-height: 1.35; }
+    .provider-type-card input:checked + span { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .provider-type-card input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+    .impact-grid { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 8px; margin: 0 0 12px; }
+    .impact-grid > div { padding: 9px; background: var(--surface-2); border-radius: 7px; }
+    .impact-grid dt { color: var(--muted); font-size: .72rem; }
+    .impact-grid dt { display: flex; align-items: center; gap: 5px; }
+    .impact-grid dt .help-button { width: 18px; min-width: 18px; min-height: 18px; font-size: .64rem; }
+    .impact-grid dd { margin: 3px 0 0; font-weight: 750; }
+
+    .review-scrim { position: fixed; inset: 0; z-index: 80; background: rgb(6 12 18 / 48%); }
+    .review-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 90; width: min(540px, 100vw); display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line); box-shadow: -10px 0 35px rgb(0 0 0 / 26%); }
+    .review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 15px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+    .review-head h2 { margin: 0; font-size: 1.15rem; }
+    .review-head p { margin: 5px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+    .review-content { flex: 1; overflow-y: auto; padding: 12px; }
+    .review-card { margin-bottom: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; }
+    .review-card h3 { margin: 0; font-size: .92rem; }
+    .review-card p { margin: 5px 0 9px; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+    .review-card select, .review-card textarea { width: 100%; padding: 7px; }
+    .review-card textarea { min-height: 72px; margin-top: 7px; resize: vertical; }
+    .review-card-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: var(--muted); font-size: .68rem; }
+    .review-footer { padding: 12px; background: var(--surface-2); border-top: 1px solid var(--line); }
+    .review-save-state { margin: 0 0 8px; color: var(--muted); font-size: .75rem; }
+    .review-save-state.warning { color: var(--warning); }
+    .review-footer-buttons { justify-content: flex-end; }
+
+    .toast { position: fixed; left: 50%; bottom: 22px; z-index: 160; max-width: min(540px, calc(100vw - 28px)); transform: translateX(-50%); padding: 10px 13px; color: #fff; background: #172028; border-radius: 8px; box-shadow: var(--shadow); }
+
+    @media (max-width: 980px) {
+      .settings-shell { grid-template-columns: 1fr; }
+      .settings-nav { position: static; height: auto; display: flex; gap: 7px; overflow-x: auto; padding: 9px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .settings-nav h2, .nav-group h3 { display: none; }
+      .nav-group { display: flex; flex: 0 0 auto; margin: 0; }
+      .settings-nav button { width: auto; white-space: nowrap; }
+      .provider-panel { position: static; }
+      .provider-list { max-height: 360px; }
+    }
+    @media (max-width: 760px) {
+      .streaming-workspace { grid-template-columns: 1fr; }
+      .provider-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; }
+      .provider-list > button { border-right: 1px solid var(--line); }
+      .form-grid { grid-template-columns: 1fr; }
+      .field.full { grid-column: auto; }
+    }
+    @media (max-width: 560px) {
+      .topbar { grid-template-columns: minmax(0, 1fr) max-content; gap: 10px; padding: 0 10px; }
+      .global-nav { grid-column: 1 / -1; grid-row: 2; }
+      .topbar { padding-bottom: 0; }
+      .admin-summary span:last-child { display: none; }
+      .page-actions { width: 100%; justify-content: flex-start; }
+      .page-actions button { flex: 1 1 auto; }
+      .provider-list { grid-template-columns: 1fr; }
+      .provider-type-grid, .impact-grid { grid-template-columns: 1fr; }
+      .editor-actions { width: 100%; }
+      .editor-actions button { flex: 1 1 auto; }
+      .editor-footer { align-items: stretch; }
+      .footer-actions { width: 100%; }
+      .footer-actions button { flex: 1 1 auto; }
+      .endpoint-control { grid-template-columns: 1fr; }
+      .endpoint-control input { border-radius: 7px 7px 0 0; }
+      .endpoint-suffix { margin: -1px 0 0; border-radius: 0 0 7px 7px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">sdrtrunk-vce</div>
+    <nav class="global-nav" aria-label="Primary">
+      <button type="button">Live</button>
+      <button type="button">Systems</button>
+      <button type="button">Events</button>
+      <button type="button">Messages</button>
+      <button type="button" aria-current="page">Settings</button>
+    </nav>
+    <div class="admin-summary"><span class="admin-dot" aria-hidden="true"></span><span>Administrator</span></div>
+  </header>
+
+  <div class="settings-shell">
+    <aside class="settings-nav" aria-label="Settings sections">
+      <h2>Settings</h2>
+      <div class="nav-group">
+        <h3>Playlist Settings</h3>
+        <button type="button" data-future-page="Hardware">Hardware</button>
+        <button type="button" data-future-page="Channels">Channels</button>
+        <button type="button" data-future-page="Aliases">Aliases</button>
+        <button type="button" data-future-page="Listen lists">Listen lists</button>
+        <button type="button" aria-current="page">Streaming</button>
+        <button type="button" data-future-page="RadioReference">RadioReference</button>
+      </div>
+      <div class="nav-group">
+        <h3>General Settings</h3>
+        <button type="button" data-future-page="Radio and audio">Radio &amp; Audio <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Storage">Storage <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Diagnostics">Diagnostics <span class="future-tag">Later</span></button>
+      </div>
+    </aside>
+
+    <main class="settings-main">
+      <header class="page-head">
+        <div>
+          <p class="breadcrumbs">Settings / Playlist Settings / Streaming</p>
+          <h1>Streaming</h1>
+          <p>Configure where recorded calls or live audio are sent. Provider status is current-only, credentials are never shown again, and Alias assignments remain on the Aliases page.</p>
+        </div>
+        <div class="page-actions">
+          <button id="refresh-broadcastify" type="button">Refresh Broadcastify feeds</button>
+          <button id="add-provider" class="button-primary" type="button">Add provider</button>
+          <button id="open-review" class="review-button" type="button">Review this mockup</button>
+        </div>
+      </header>
+
+      <section class="prototype-banner" aria-label="Prototype notice">
+        <div><strong>Interactive design mockup.</strong> All providers and status values are examples. No receiver, playlist, credential, website, or database is contacted.</div>
+        <div class="scenario-control">
+          <label for="preview-scenario">Preview</label>
+          <select id="preview-scenario">
+            <option value="normal">Configured providers</option>
+            <option value="empty">No providers</option>
+            <option value="error">Provider error</option>
+            <option value="loading">Loading</option>
+            <option value="unavailable">Settings unavailable</option>
+            <option value="unknown">Imported unknown provider</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="streaming-workspace" aria-label="Streaming provider workspace">
+        <aside class="panel provider-panel" aria-labelledby="provider-list-title">
+          <div class="panel-head">
+            <div>
+              <h2 id="provider-list-title">Providers</h2>
+              <p id="provider-count" class="provider-count"></p>
+            </div>
+          </div>
+          <div id="provider-list" class="provider-list" role="listbox" aria-label="Streaming providers"></div>
+        </aside>
+
+        <section id="provider-editor" class="panel editor-panel" aria-live="polite"></section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="app-dialog" aria-labelledby="dialog-title">
+    <div class="modal-head">
+      <div><h2 id="dialog-title"></h2><p id="dialog-subtitle"></p></div>
+      <button id="dialog-close" class="modal-close" type="button" aria-label="Close">×</button>
+    </div>
+    <div id="dialog-body" class="modal-body"></div>
+    <div id="dialog-footer" class="modal-footer"></div>
+  </dialog>
+
+  <div id="help-popover" class="help-popover" role="dialog" aria-modal="false" aria-labelledby="help-title" hidden>
+    <strong id="help-title"></strong>
+    <p id="help-copy"></p>
+  </div>
+
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" aria-labelledby="review-title" aria-modal="true" hidden>
+    <div class="review-head">
+      <div><h2 id="review-title">Review Streaming</h2><p>Record decisions and notes directly in this browser. Nothing is sent to SDRTrunk.</p></div>
+      <button id="close-review" type="button" aria-label="Close review">×</button>
+    </div>
+    <div id="review-content" class="review-content"></div>
+    <div class="review-footer">
+      <p id="review-save-state" class="review-save-state"></p>
+      <div class="review-footer-buttons">
+        <button id="clear-review" class="button-danger" type="button">Clear</button>
+        <button id="download-review" type="button">Download notes</button>
+        <button id="done-review" class="button-primary" type="button">Done</button>
+      </div>
+    </div>
+  </aside>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var PROVIDER_TYPES = [
+        { id: "broadcastify-call", label: "Broadcastify Calls", group: "Call uploads", description: "Upload individual recorded calls to a Broadcastify Calls system." },
+        { id: "rdio", label: "Rdio Scanner", group: "Call uploads", description: "Upload individual recorded calls to an Rdio Scanner server." },
+        { id: "openmhz", label: "OpenMHz", group: "Call uploads", description: "Upload individual recorded calls to an OpenMHz system." },
+        { id: "radioresolve", label: "RadioResolve", group: "Call uploads", description: "Send recorded calls and live metadata, or metadata only, to RadioResolve." },
+        { id: "icecast-http", label: "Icecast 2 (v2.4+)", group: "Continuous audio feeds", description: "Send a continuous MP3 stream using the current Icecast HTTP protocol." },
+        { id: "icecast-tcp", label: "Icecast (v2.3)", group: "Continuous audio feeds", description: "Send a continuous MP3 stream to an older Icecast TCP server." },
+        { id: "shoutcast", label: "Shoutcast v1.x", group: "Continuous audio feeds", description: "Send a continuous MP3 stream to a Shoutcast v1 server." }
+      ];
+
+      var providerSeeds = [
+        {
+          id: "stream-1", type: "radioresolve", name: "RadioResolve Calls", enabled: true,
+          status: "connected", statusLabel: "Connected", lastError: "None", currentActivity: "Upload 18 seconds ago",
+          queue: 0, retry: "None", agedOut: 0, aliases: 32, secretStored: true,
+          fields: { mode: "calls", url: "https://calls.radioresolve.com", nodeName: "BOSGAME", timezone: "America/New_York", maxAge: 600, concurrent: 4, ignoreCertificateErrors: false }
+        },
+        {
+          id: "stream-2", type: "broadcastify-call", name: "County Calls", enabled: true,
+          status: "connecting", statusLabel: "Connecting", lastError: "None", currentActivity: "Waiting for provider",
+          queue: 2, retry: "In 12 seconds", agedOut: 0, aliases: 18, secretStored: true,
+          fields: { systemId: 12345, url: "https://api.broadcastify.com/call-upload", maxAge: 600, keepAlive: true, pingInterval: 15 }
+        },
+        {
+          id: "stream-3", type: "icecast-http", name: "Dispatch Monitor", enabled: false,
+          status: "disabled", statusLabel: "Disabled", lastError: "None", currentActivity: "Not started",
+          queue: 0, retry: "None", agedOut: 0, aliases: 6, secretStored: true,
+          fields: { server: "stream.example.net", port: 8000, mount: "/dispatch", inlineMetadata: true, username: "source", maxAge: 600, delay: 0, description: "Dispatch monitor", genre: "Scanner", directoryUrl: "https://example.net/dispatch" }
+        }
+      ];
+
+      var REVIEW_STORAGE_KEY = "sdrtrunk-vce.mockup.settings-streaming-v1.review";
+      var REVIEW_VERSION = 1;
+      var MAX_NOTE_LENGTH = 2000;
+      var reviewSections = [
+        ["provider-list", "Provider list and selection", "Does the compact provider list make Enabled, type, current status, and latest error easy to scan?"],
+        ["runtime-status", "Current status and activity", "Status, queue depth, retries, age-outs, and the latest sanitized error are current-only. No history is proposed."],
+        ["radioresolve", "RadioResolve layout", "Review Mode, URL, write-only API key, node identity, timezone, maximum age, concurrent uploads, and certificate handling."],
+        ["other-providers", "Other provider layouts", "Use Add provider or select the example Icecast entry to inspect the changing field layout."],
+        ["credentials", "Credentials", "The browser learns only Configured or Missing. Replacement starts empty; clearing is explicit."],
+        ["add-refresh", "Add and Broadcastify refresh", "Normal providers are added directly. Broadcastify Feed discovery is a separate temporary RadioReference refresh."],
+        ["clone", "Clone behavior", "The recommended clone is disabled and never copies the credential or Alias assignments."],
+        ["alias-impact", "Rename and delete impacts", "Provider identity changes update Alias references in the same save; delete previews queue and Alias impact."],
+        ["save-test", "Save, restart, and connection test", "Only the selected provider restarts. Tests run separately and never pause radio decoding, recording, or uploads."],
+        ["states", "Loading, error, and compatibility states", "Use Preview to inspect empty, unavailable, error, and imported unknown-provider handling."],
+        ["help-layout", "Help and responsive layout", "Every setting has the same information control, and the master/detail layout becomes stacked on smaller screens."]
+      ];
+
+      var HELP = {
+        providerType: "Determines which service this destination connects to and which connection settings are used. Choose the type when creating the provider; changing it later requires creating a replacement.",
+        providerName: "The unique name used throughout SDRTrunk for this streaming destination. Aliases route recordings to providers by name, so linked Alias assignments are updated if this name changes.",
+        enabled: "When enabled, SDRTrunk creates and starts this provider. When disabled, its settings remain saved, but it does not send calls or continuous audio. Radio decoding and recording continue either way.",
+        currentStatus: "The broadcaster reports its current connection state, such as Connected, Connecting, Disabled, or an error. It is live status only and is not kept as a history.",
+        mode: "Calls + Metadata uploads completed call recordings, including their talkgroup and radio information, and also sends RF and site updates. Metadata Only sends RF and site updates only; it does not send completed calls or their per-call metadata.",
+        radioResolveUrl: "The base address of the RadioResolve server. SDRTrunk adds the separate test, call-upload, and site-metadata paths. If the scheme is omitted, the saved address is normalized to HTTPS.",
+        nodeName: "A label sent with each RadioResolve call and site-metadata update so the receiving service can tell which SDRTrunk node observed it. If blank, SDRTrunk uses the computer's host name.",
+        nodeTimezone: "The node's timezone name is sent with RadioResolve calls and site metadata. It describes the node to the receiving service; it does not change the computer clock or rewrite call timestamps.",
+        maximumAge: "The oldest a queued call may be, measured from the beginning of the call. Older calls are removed instead of uploaded. The current default is 600 seconds. This is a live queue limit, not saved history.",
+        continuousMaximumAge: "How long a recording may remain queued after its Delay has passed. If it is still waiting beyond Delay plus this limit, it is discarded. The current default is 600 seconds.",
+        concurrentUploads: "The maximum number of RadioResolve call recordings that may upload at the same time. A higher value can clear a backlog faster, but uses more network capacity and some additional CPU and memory. The allowed range is 1 through 16 and the current default is 4. This is unused in Metadata Only mode.",
+        ignoreCertificateErrors: "Disables both certificate trust checks and server-name checks for this provider's RadioResolve connections. It applies to connection tests, call uploads, and RF and site updates.",
+        broadcastifyUrl: "The complete Broadcastify Calls upload address. SDRTrunk posts both connection tests and completed calls to this address; the normal production endpoint is https://api.broadcastify.com/call-upload.",
+        broadcastifySystemId: "The positive system number assigned by Broadcastify. SDRTrunk includes it in both connection tests and every uploaded call so Broadcastify files the call under the correct system.",
+        keepAlive: "Schedules a small Broadcastify test while the provider is running so an inactive radio feed is not marked offline simply because no calls have occurred.",
+        pingInterval: "How often the scheduled Broadcastify keep-alive test runs, in minutes. It applies only while Periodic keep-alive is on; the existing default is 15 minutes.",
+        server: "The host name or IP address SDRTrunk opens a network connection to for this continuous audio feed.",
+        port: "The network port SDRTrunk uses on the selected streaming server. The saved value must be a whole number from 1 through 65,535; new stream configurations currently default to port 80.",
+        mount: "The path that identifies this stream on an Icecast-compatible server. SDRTrunk adds a leading slash when it is missing. The server may reject a missing mount or one already used by another source.",
+        username: "The Icecast source account used with the password when SDRTrunk opens the stream. New Icecast configurations use source unless the server administrator provided another name.",
+        inlineMetadata: "Controls how the current call title is sent. When enabled, metadata is inserted into the MP3 stream. When disabled, SDRTrunk sends separate metadata updates through the Icecast administration address.",
+        delay: "How long after a recording begins to wait before adding it to the continuous stream. Recordings remain in first-in, first-out order. The current default is 0 seconds.",
+        description: "Descriptive text sent to the streaming server when the source connects. Compatible Icecast or Shoutcast directories may display it; it does not change the SDRTrunk provider name.",
+        genre: "The stream category sent to Icecast or Shoutcast when the source connects. A server or public directory may use it to group the feed.",
+        publicUrlHttp: "An optional web page associated with this stream. It is sent to Icecast 2.4 or newer as stream information and is not the server connection address.",
+        publicUrlTcp: "This value is preserved in the configuration, but the current Icecast 2.3 connection does not send it to the server.",
+        openMhzUrl: "The base OpenMHz API address. SDRTrunk appends the system short name and then /authorize when testing or /upload when sending a completed call.",
+        openMhzSystemName: "The short system name assigned by OpenMHz. SDRTrunk places it in the request path so authorization tests and call uploads go to the correct system.",
+        rdioUrl: "The Rdio Scanner server's base address. SDRTrunk appends /api/call-upload exactly once for both tests and completed-call uploads.",
+        rdioSystemId: "The positive system number configured in Rdio Scanner. SDRTrunk includes it in connection tests and uploaded calls so the server assigns them to the correct system.",
+        publicStream: "Tells the Shoutcast server whether this stream may be listed by compatible stream directories. It does not control public access to the SDRTrunk website.",
+        feedServer: "The Broadcastify source server returned by RadioReference for this feed.",
+        feedPort: "The source port returned by RadioReference for this Broadcastify feed.",
+        feedMount: "The feed-specific stream path returned by RadioReference. Together with the server, port, and password, it determines where audio is sent.",
+        feedId: "The Broadcastify feed number returned by RadioReference and saved with this configuration. The current streaming connection does not use this number; the server, port, mount point, and password route the audio.",
+        verbose: "Logs detailed connection events, audio chunk sizes, and inline metadata. This can create a large amount of log output during an active feed and should be used only briefly for troubleshooting. Before the web release exposes this option, connection credentials must be removed from those log messages.",
+        secret: "The credential authenticates this provider. The web page shows only whether one is saved. Leave the replacement blank to keep it, or enter a new value to replace it when saving.",
+        radioResolveSecret: "The API key authenticates this node when testing the RadioResolve connection, uploading calls, and sending RF and site updates. The web page never displays a saved key.",
+        broadcastifySecret: "The API key issued by Broadcastify is sent with the System ID during connection tests and every call upload. The web page never displays a saved key.",
+        openMhzSecret: "The API key issued by OpenMHz for this system is used to test authorization and upload completed calls. The web page never displays a saved key.",
+        rdioSecret: "The API key configured by the Rdio Scanner server is sent with every completed call upload. The web page never displays a saved key.",
+        streamPassword: "The source password is used to authenticate before streaming audio to this server. The web page never displays a saved password.",
+        feedPassword: "The feed password returned by RadioReference authenticates the Broadcastify source connection. The web page never displays a saved password.",
+        queue: "The number of completed recordings currently waiting for this provider. It is a live in-memory count and returns to zero as calls are sent, aged off, or the provider stops.",
+        retry: "Shows the next scheduled connection or upload retry for this provider. Retry timing is current runtime state and is not saved as history.",
+        agedOff: "The number of recordings this broadcaster has released without sending because they became too old or could not be used. The counter belongs to the running broadcaster and resets when it is recreated.",
+        latestError: "The most recent sanitized provider problem. It helps explain the current state but is replaced by later status and is not stored as an error history.",
+        testConnection: "Checks the destination using the values currently in this form. It runs separately from live radio processing, can be cancelled, and shows only the latest temporary result."
+      };
+
+      var SECTION_HELP = {
+        "Provider": "Identifies this saved destination. Provider type determines which form is shown, while its unique name is used throughout SDRTrunk.",
+        "Connection": "Contains the remote address and the provider-specific values SDRTrunk uses to authenticate and send audio or calls.",
+        "Node identity": "Values RadioResolve receives with call and site-metadata messages to identify the SDRTrunk node that observed them.",
+        "Call upload limits": "Bounds RadioResolve call-upload age and parallel work. These controls do not affect metadata-only publishing.",
+        "Security": "Changes how this provider verifies the remote server's HTTPS certificate.",
+        "Keep-alive": "Optional Broadcastify health checks used during periods with no calls.",
+        "Timing": "Controls how long completed recordings wait and how long they remain useful to this continuous feed.",
+        "Directory metadata": "Optional descriptive values sent when a continuous stream connects. A compatible server or directory may display them.",
+        "Feed connection": "Connection details supplied for a Broadcastify continuous audio feed discovered through RadioReference.",
+        "Preserved identity": "Safe read-only information for an imported provider type this version cannot operate. Unsupported fields remain preserved until an explicit replacement or deletion."
+      };
+
+      var providers = deepClone(providerSeeds);
+      var selectedProviderId = providers[0].id;
+      var selectedSnapshot = deepClone(providers[0]);
+      var scenario = "normal";
+      var dirty = false;
+      var testState = null;
+      var testTimer = null;
+      var toastTimer = null;
+      var helpPinned = false;
+      var activeHelpButton = null;
+      var reviewStorageAvailable = true;
+      var reviewData = loadReview();
+
+      var providerList = document.getElementById("provider-list");
+      var providerEditor = document.getElementById("provider-editor");
+      var providerCount = document.getElementById("provider-count");
+      var appDialog = document.getElementById("app-dialog");
+      var dialogTitle = document.getElementById("dialog-title");
+      var dialogSubtitle = document.getElementById("dialog-subtitle");
+      var dialogBody = document.getElementById("dialog-body");
+      var dialogFooter = document.getElementById("dialog-footer");
+      var helpPopover = document.getElementById("help-popover");
+
+      function deepClone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+
+      function escapeHtml(value) {
+        return String(value == null ? "" : value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function typeDefinition(type) {
+        return PROVIDER_TYPES.find(function (item) { return item.id === type; }) || { id: type, label: type === "broadcastify-feed" ? "Broadcastify Feed" : "Unknown provider", group: "Compatibility", description: "Imported provider configuration." };
+      }
+
+      function selectedProvider() {
+        return providers.find(function (provider) { return provider.id === selectedProviderId; }) || null;
+      }
+
+      function providerStatus(provider) {
+        if (!provider.enabled && provider.status !== "unknown" && provider.status !== "needs-setup") return { key: "disabled", label: "Disabled" };
+        return { key: provider.status, label: provider.statusLabel };
+      }
+
+      function helpButton(title, copy) {
+        return '<button class="help-button" type="button" aria-label="About ' + escapeHtml(title) + '" aria-expanded="false" data-help-title="' + escapeHtml(title) + '" data-help="' + escapeHtml(copy) + '">i</button>';
+      }
+
+      function fieldLabel(id, label, help) {
+        return '<div class="field-label"><label for="' + id + '">' + escapeHtml(label) + '</label>' + helpButton(label, help) + '</div>';
+      }
+
+      function textField(name, label, value, help, hint, options) {
+        var config = options || {};
+        var id = "field-" + name;
+        var classes = "field" + (config.full ? " full" : "");
+        var attributes = [
+          'id="' + id + '"',
+          'name="' + name + '"',
+          'type="' + (config.type || "text") + '"',
+          'data-provider-field'
+        ];
+        if (config.required) attributes.push("data-required");
+        if (config.readonly) attributes.push("readonly");
+        if (config.disabled) attributes.push("disabled");
+        if (config.placeholder || value !== "") attributes.push('placeholder="' + escapeHtml(config.placeholder || value) + '"');
+        if (config.maxlength) attributes.push('maxlength="' + config.maxlength + '"');
+        if (config.extra) attributes.push(config.extra);
+        return '<div class="' + classes + '"' + (config.wrapperExtra || "") + '>' + fieldLabel(id, label, help) + '<input ' + attributes.join(" ") + ' value="">' + (hint ? '<p class="field-hint">' + hint + '</p>' : "") + '<p class="field-error" data-error-for="' + name + '" hidden></p></div>';
+      }
+
+      function numberField(name, label, value, unit, help, hint, options) {
+        var config = options || {};
+        var id = "field-" + name;
+        var classes = "field" + (config.full ? " full" : "");
+        var attributes = [
+          'id="' + id + '"',
+          'name="' + name + '"',
+          'type="number"',
+          'inputmode="numeric"',
+          'data-provider-field'
+        ];
+        if (config.required !== false) attributes.push("data-required");
+        if (config.min != null) attributes.push('min="' + config.min + '"');
+        if (config.max != null) attributes.push('max="' + config.max + '"');
+        attributes.push('step="' + (config.step || 1) + '"');
+        attributes.push('placeholder="' + escapeHtml(config.placeholder != null ? config.placeholder : value) + '"');
+        if (config.readonly) attributes.push("readonly");
+        if (config.disabled) attributes.push("disabled");
+        if (config.extra) attributes.push(config.extra);
+        return '<div class="' + classes + '"' + (config.wrapperExtra || "") + '>' + fieldLabel(id, label, help) + '<div class="unit-control"><input ' + attributes.join(" ") + ' value=""><span class="unit">' + escapeHtml(unit) + '</span></div>' + (hint ? '<p class="field-hint">' + hint + '</p>' : "") + '<p class="field-error" data-error-for="' + name + '" hidden></p></div>';
+      }
+
+      function selectField(name, label, value, options, help, hint, config) {
+        var settings = config || {};
+        var id = "field-" + name;
+        return '<div class="field' + (settings.full ? " full" : "") + '"' + (settings.wrapperExtra || "") + '>' + fieldLabel(id, label, help) + '<select id="' + id + '" name="' + name + '" data-provider-field' + (settings.disabled ? " disabled" : "") + '>' + options.map(function (option) { var key = Array.isArray(option) ? option[0] : option; var copy = Array.isArray(option) ? option[1] : option; return '<option value="' + escapeHtml(key) + '"' + (String(key) === String(value) ? " selected" : "") + '>' + escapeHtml(copy) + '</option>'; }).join("") + '</select>' + (hint ? '<p class="field-hint">' + hint + '</p>' : "") + '</div>';
+      }
+
+      function checkField(name, label, checked, help, copy, options) {
+        var config = options || {};
+        var id = "field-" + name;
+        return '<div class="field' + (config.full ? " full" : "") + '"' + (config.wrapperExtra || "") + '><div class="field-label"><span>' + escapeHtml(label) + '</span>' + helpButton(label, help) + '</div><label class="switch-field" for="' + id + '"><input id="' + id + '" name="' + name + '" type="checkbox" data-provider-field' + (checked ? " checked" : "") + (config.disabled ? " disabled" : "") + '><span><strong>' + escapeHtml(config.actionLabel || label) + '</strong><span>' + copy + '</span></span></label></div>';
+      }
+
+      function secretField(provider, label, help) {
+        var configured = provider.secretStored && !provider.clearSecret;
+        var copy = configured ? "The stored value stays on the server and was not sent to this page." : "Enter a new value before enabling this provider.";
+        return '<div class="field full"><div class="field-label"><span>' + escapeHtml(label) + '</span>' + helpButton(label, help || HELP.secret) + '</div><div class="secret-panel"><div class="secret-status"><span class="secret-badge' + (configured ? "" : " missing") + '" data-secret-badge>' + (configured ? "Configured" : "Missing") + '</span><span class="secret-copy" data-secret-copy>' + copy + '</span>' + (configured ? '<button class="button-link" type="button" data-clear-secret>Clear stored credential</button>' : "") + '</div><div class="secret-control"><label class="sr-only" for="replacement-secret">New ' + escapeHtml(label) + '</label><input id="replacement-secret" name="replacementSecret" type="password" autocomplete="new-password" placeholder="' + (configured ? "Leave blank to keep the stored value" : "Enter " + escapeHtml(label).toLowerCase()) + '"><button type="button" data-show-secret aria-pressed="false">Show</button></div></div><p id="secret-error" class="field-error" hidden></p></div>';
+      }
+
+      function section(title, subtitle, body) {
+        return '<section class="form-section"><div class="section-head"><div><div class="section-title-row"><h3>' + escapeHtml(title) + '</h3>' + helpButton(title, SECTION_HELP[title] || subtitle || "Settings for this provider.") + '</div>' + (subtitle ? '<p>' + subtitle + '</p>' : "") + '</div></div><div class="form-grid">' + body + '</div></section>';
+      }
+
+      function renderProviderList() {
+        if (scenario === "loading") {
+          providerCount.textContent = "Loading current configuration…";
+          providerList.innerHTML = '<div class="empty-state"><h3>Loading providers</h3><p>Requesting the current bounded provider list.</p></div>';
+          return;
+        }
+        if (scenario === "unavailable") {
+          providerCount.textContent = "Unavailable";
+          providerList.innerHTML = '<div class="empty-state"><h3>Providers unavailable</h3><p>The saved playlist was not changed. Retry when Settings reconnects.</p><button type="button" data-retry-list>Retry</button></div>';
+          return;
+        }
+        if (!providers.length) {
+          providerCount.textContent = "0 configured";
+          providerList.innerHTML = '<div class="empty-state"><h3>No providers</h3><p>Add a provider, or refresh Broadcastify feeds after signing into RadioReference.</p><button class="button-primary" type="button" data-empty-add>Add provider</button></div>';
+          return;
+        }
+
+        var ordered = providers.slice().sort(function (left, right) {
+          if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+          return left.name.localeCompare(right.name);
+        });
+        providerCount.textContent = providers.length + (providers.length === 1 ? " configured provider" : " configured providers");
+        providerList.innerHTML = ordered.map(function (provider) {
+          var definition = typeDefinition(provider.type);
+          var status = providerStatus(provider);
+          var statusCopy = provider.lastError && provider.lastError !== "None" ? '<span class="error-copy">' + escapeHtml(provider.lastError) + '</span>' : '<span>' + escapeHtml(status.label) + '</span>';
+          return '<button type="button" role="option" aria-selected="' + (provider.id === selectedProviderId ? "true" : "false") + '" data-provider-id="' + escapeHtml(provider.id) + '"><span class="status-dot ' + escapeHtml(status.key) + '" aria-hidden="true"></span><span class="provider-copy"><span class="provider-name-row"><span class="provider-name">' + escapeHtml(provider.name) + '</span><span class="enabled-mark' + (provider.enabled ? "" : " off") + '">' + (provider.enabled ? "On" : "Off") + '</span></span><span class="provider-type">' + escapeHtml(definition.label) + '</span><span class="provider-status-line">' + statusCopy + '<span>' + escapeHtml(provider.currentActivity) + '</span></span></span></button>';
+        }).join("");
+      }
+
+      function commonFields(provider) {
+        return textField("name", "Name", provider.name, HELP.providerName, "Names must be unique so Alias destinations remain unambiguous.", { required: true, maxlength: 80, full: true, placeholder: "Example: County Calls" });
+      }
+
+      function radioResolveFields(provider) {
+        var fields = provider.fields;
+        var metadataOnly = fields.mode === "metadata";
+        return section("Connection", "RadioResolve calls and metadata settings.",
+          selectField("mode", "Mode", fields.mode, [["calls", "Calls + Metadata"], ["metadata", "Metadata Only"]], HELP.mode, "Metadata Only sends RF and site updates but does not upload call audio or its per-call details.", { full: true }) +
+          textField("url", "RadioResolve URL", fields.url, HELP.radioResolveUrl, "A missing scheme is normalized to HTTPS when saved, and trailing slashes are removed.", { type: "url", required: true, full: true, placeholder: "https://calls.radioresolve.com" }) +
+          secretField(provider, "API key", HELP.radioResolveSecret)
+        ) + section("Node identity", "Identifies this receiver when RadioResolve receives activity.",
+          textField("nodeName", "Node name", fields.nodeName, HELP.nodeName, "A short name for this receiver node. It does not rename the computer.", { required: true, placeholder: "Example: BOSGAME" }) +
+          selectField("timezone", "Node timezone", fields.timezone, ["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "UTC"], HELP.nodeTimezone, "Used for node context. Saved values must be recognized timezone names.")
+        ) + section("Call upload limits", "These settings are preserved but inactive in Metadata Only mode.",
+          numberField("maxAge", "Maximum recording age", fields.maxAge, "seconds", HELP.maximumAge, "Queued recordings older than this are dropped rather than uploaded late. This does not create long-term history.", { min: 0, wrapperExtra: ' data-call-only' + (metadataOnly ? ' data-inactive="true"' : ""), disabled: metadataOnly, placeholder: "600" }) +
+          numberField("concurrent", "Concurrent uploads", fields.concurrent, "uploads", HELP.concurrentUploads, "Choose a whole number from 1 through 16.", { min: 1, max: 16, wrapperExtra: ' data-call-only' + (metadataOnly ? ' data-inactive="true"' : ""), disabled: metadataOnly, placeholder: "4" }) +
+          '<div class="field full"><div id="metadata-mode-note" class="inline-notice"' + (metadataOnly ? "" : " hidden") + '><div><strong>Metadata Only</strong><span>Call recordings are not uploaded, so recording age and concurrent upload controls are inactive. Their saved values are preserved.</span></div></div></div>'
+        ) + section("Security", "Connection certificate behavior.",
+          checkField("ignoreCertificateErrors", "Ignore certificate errors", fields.ignoreCertificateErrors, HELP.ignoreCertificateErrors, "This accepts invalid or untrusted certificates for this provider only.", "Use only when the destination intentionally uses a certificate this node cannot validate.", { full: true, actionLabel: "Accept certificate errors for this provider" }) +
+          '<div id="certificate-warning" class="field full"' + (fields.ignoreCertificateErrors ? "" : " hidden") + '><div class="inline-notice warning"><div><strong>Certificate checks are bypassed</strong><span>The API key and uploads could be sent to an unverified endpoint.</span></div></div></div>'
+        );
+      }
+
+      function broadcastifyCallFields(provider) {
+        var fields = provider.fields;
+        return section("Connection", "Broadcastify Calls destination and credential.",
+          textField("url", "Broadcastify URL", fields.url, HELP.broadcastifyUrl, "The normal production endpoint is used for new providers. Change it only for an approved alternate or test endpoint.", { type: "url", required: true, full: true, placeholder: "https://api.broadcastify.com/call-upload" }) +
+          secretField(provider, "API key", HELP.broadcastifySecret) +
+          numberField("systemId", "System ID", fields.systemId, "ID", HELP.broadcastifySystemId, "Enter the positive Broadcastify Calls system number.", { min: 1, max: 2147483647, placeholder: "Example: 12345" }) +
+          numberField("maxAge", "Maximum recording age", fields.maxAge, "seconds", HELP.maximumAge, "Older calls are removed instead of uploaded late.", { min: 0, placeholder: "600" })
+        ) + section("Keep-alive", "Optional provider health ping.",
+          checkField("keepAlive", "Periodic keep-alive", fields.keepAlive, HELP.keepAlive, "Send a small provider test without waiting for a call.", "It runs only while this provider is enabled.", { full: true, actionLabel: "Send periodic keep-alive" }) +
+          numberField("pingInterval", "Ping interval", fields.pingInterval, "minutes", HELP.pingInterval, "Used only while periodic keep-alive is on.", { min: 1, full: true, disabled: !fields.keepAlive, wrapperExtra: ' data-keepalive-field', placeholder: "15" })
+        );
+      }
+
+      function icecastFields(provider) {
+        var fields = provider.fields;
+        var isLegacyTcp = provider.type === "icecast-tcp";
+        return section("Connection", "Server address, mount, and write-only credential.",
+          textField("server", "Server", fields.server, HELP.server, "Enter the host name or IP address only; the port and mount point are separate.", { required: true, placeholder: "Example: stream.example.net" }) +
+          numberField("port", "Port", fields.port, "port", HELP.port, "Whole number from 1 through 65,535.", { min: 1, max: 65535, placeholder: "80" }) +
+          textField("mount", "Mount point", fields.mount, HELP.mount, "A leading slash is added when it is missing.", { required: true, placeholder: "/dispatch" }) +
+          textField("username", "User name", fields.username, HELP.username, "Use the source account configured by the Icecast server.", { required: true, placeholder: "source" }) +
+          secretField(provider, "Password", HELP.streamPassword) +
+          checkField("inlineMetadata", "Inline metadata", fields.inlineMetadata, HELP.inlineMetadata, "Choose whether title updates travel inside the MP3 stream or through separate Icecast requests.", "Turning this off does not stop metadata updates.", { full: true, actionLabel: "Insert metadata into the MP3 stream" })
+        ) + section("Timing", "Bound the continuous-stream queue.",
+          numberField("maxAge", "Maximum recording age", fields.maxAge, "seconds", HELP.continuousMaximumAge, "Remove audio from the queue when it is too old to be useful.", { min: 0, placeholder: "600" }) +
+          numberField("delay", "Delay", fields.delay, "seconds", HELP.delay, "Wait before adding recorded audio to the stream.", { min: 0, placeholder: "0" })
+        ) + section("Directory metadata", "Descriptive fields sent to compatible stream directories.",
+          textField("description", "Description", fields.description, HELP.description, "Optional description shown by compatible servers or directories.", { placeholder: "Example: County dispatch monitor" }) +
+          textField("genre", "Genre", fields.genre, HELP.genre, "Optional directory category.", { placeholder: "Example: Scanner" }) +
+          textField("directoryUrl", isLegacyTcp ? "Public URL (preserved)" : "Public URL", fields.directoryUrl, isLegacyTcp ? HELP.publicUrlTcp : HELP.publicUrlHttp, isLegacyTcp ? "Icecast 2.3 keeps this saved value but does not send it." : "Optional information page for this stream.", { type: "url", full: true, readonly: isLegacyTcp, placeholder: "https://example.net/dispatch" }) +
+          '<div class="field full"><div class="inline-notice"><div><strong>Compatibility value preserved</strong><span>An imported Icecast Public flag is kept unchanged even though the current desktop editor does not expose it. Review notes can request a visible control.</span></div></div></div>'
+        );
+      }
+
+      function openMHzFields(provider) {
+        var fields = provider.fields;
+        return section("Connection", "OpenMHz call-upload destination.",
+          textField("url", "Upload server URL", fields.url, HELP.openMhzUrl, "Enter the base OpenMHz API address.", { type: "url", required: true, full: true, placeholder: "https://api.openmhz.com" }) +
+          secretField(provider, "API key", HELP.openMhzSecret) +
+          textField("systemName", "System short name", fields.systemName, HELP.openMhzSystemName, "Use the short name assigned by OpenMHz.", { required: true, placeholder: "Example: metro-p25" }) +
+          numberField("maxAge", "Maximum recording age", fields.maxAge, "seconds", HELP.maximumAge, "Older calls are removed instead of uploaded late.", { min: 0, placeholder: "600" })
+        );
+      }
+
+      function rdioFields(provider) {
+        var fields = provider.fields;
+        var base = String(fields.url || "").replace(/\/api\/call-upload\/?$/i, "").replace(/\/$/, "");
+        return section("Connection", "Rdio Scanner call-upload destination.",
+          '<div class="field full">' + fieldLabel("field-url", "Rdio Scanner base URL", HELP.rdioUrl) + '<div class="endpoint-control"><input id="field-url" name="url" type="url" data-required data-provider-field value="" placeholder="' + escapeHtml(base || "http://scanner.example.net") + '"><span class="endpoint-suffix">/api/call-upload</span></div><div id="rdio-endpoint" class="endpoint-preview">Enter a base URL to preview the full upload address.</div><p class="field-error" data-error-for="url" hidden></p></div>' +
+          secretField(provider, "API key", HELP.rdioSecret) +
+          numberField("systemId", "System ID", fields.systemId, "ID", HELP.rdioSystemId, "Enter the positive system number configured in Rdio Scanner.", { min: 1, max: 2147483647, placeholder: "Example: 12" }) +
+          numberField("maxAge", "Maximum recording age", fields.maxAge, "seconds", HELP.maximumAge, "Older calls are removed instead of uploaded late.", { min: 0, placeholder: "600" })
+        );
+      }
+
+      function shoutcastFields(provider) {
+        var fields = provider.fields;
+        return section("Connection", "Shoutcast v1 server and write-only password.",
+          textField("server", "Server", fields.server, HELP.server, "Enter the host name or IP address only; the port is separate.", { required: true, placeholder: "Example: stream.example.net" }) +
+          numberField("port", "Port", fields.port, "port", HELP.port, "Whole number from 1 through 65,535.", { min: 1, max: 65535, placeholder: "80" }) +
+          secretField(provider, "Password", HELP.streamPassword) +
+          checkField("public", "Public", fields.public, HELP.publicStream, "Allow compatible Shoutcast directories to list this stream.", "This does not change access to SDRTrunk's web pages.", { full: true, actionLabel: "List this stream publicly" })
+        ) + section("Timing", "Bound and optionally delay the stream queue.",
+          numberField("maxAge", "Maximum recording age", fields.maxAge, "seconds", HELP.continuousMaximumAge, "Remove queued audio when it becomes too old.", { min: 0, placeholder: "600" }) +
+          numberField("delay", "Delay", fields.delay, "seconds", HELP.delay, "Wait before adding recorded audio to the stream.", { min: 0, placeholder: "0" })
+        ) + section("Directory metadata", "Descriptive Shoutcast fields.",
+          textField("description", "Description", fields.description, HELP.description, "Optional description shown by compatible servers or directories.", { placeholder: "Example: County dispatch monitor" }) +
+          textField("genre", "Genre", fields.genre, HELP.genre, "Optional directory category.", { placeholder: "Example: Scanner" })
+        );
+      }
+
+      function broadcastifyFeedFields(provider) {
+        var fields = provider.fields;
+        return '<div class="inline-notice"><div><strong>Created from RadioReference</strong><span>Refreshing feeds retrieves a temporary list. Saved fields remain editable, while the feed password is never returned to the browser.</span></div></div>' + section("Feed connection", "Broadcastify continuous-feed configuration.",
+          textField("server", "Server", fields.server, HELP.feedServer, "This value comes from the selected RadioReference feed.", { required: true, placeholder: "Example: audio.broadcastify.com" }) +
+          numberField("port", "Port", fields.port, "port", HELP.feedPort, "This value comes from the selected RadioReference feed.", { min: 1, max: 65535, placeholder: "80" }) +
+          textField("mount", "Mount point", fields.mount, HELP.feedMount, "This value comes from the selected RadioReference feed.", { required: true, placeholder: "/feed-path" }) +
+          numberField("feedId", "Feed ID", fields.feedId, "ID", HELP.feedId, "Saved for identification; changing it does not reroute the audio connection.", { min: 1, max: 2147483647, readonly: true, placeholder: "Example: 24680" }) +
+          secretField(provider, "Password", HELP.feedPassword) +
+          checkField("verbose", "Verbose logging", fields.verbose, HELP.verbose, "Leave off during normal operation.", "Use only briefly while troubleshooting because an active feed can produce a large log.", { full: true, actionLabel: "Enable detailed troubleshooting logs" })
+        ) + section("Timing", "Continuous-feed queue limits.",
+          numberField("maxAge", "Maximum recording age", fields.maxAge, "seconds", HELP.continuousMaximumAge, "Remove queued audio when it is too old.", { min: 0, placeholder: "600" }) +
+          numberField("delay", "Delay", fields.delay, "seconds", HELP.delay, "Wait before adding recorded audio to the stream.", { min: 0, placeholder: "0" })
+        );
+      }
+
+      function specificFields(provider) {
+        if (provider.type === "radioresolve") return radioResolveFields(provider);
+        if (provider.type === "broadcastify-call") return broadcastifyCallFields(provider);
+        if (provider.type === "icecast-http" || provider.type === "icecast-tcp") return icecastFields(provider);
+        if (provider.type === "openmhz") return openMHzFields(provider);
+        if (provider.type === "rdio") return rdioFields(provider);
+        if (provider.type === "shoutcast") return shoutcastFields(provider);
+        if (provider.type === "broadcastify-feed") return broadcastifyFeedFields(provider);
+        return "";
+      }
+
+      function activityMarkup(provider) {
+        return '<section class="form-section"><div class="section-head"><div><div class="section-title-row"><h3>Current activity</h3>' + helpButton("Current activity", "Live values from the selected provider since it started. They help explain what it is doing now and are not stored as history.") + '</div><p>Bounded runtime values since launch; this is not an activity history.</p></div></div><div class="form-grid"><div class="field full"><dl class="impact-grid"><div><dt>Queue' + helpButton("Queue", HELP.queue) + '</dt><dd>' + provider.queue + ' pending</dd></div><div><dt>Retry' + helpButton("Retry", HELP.retry) + '</dt><dd>' + escapeHtml(provider.retry) + '</dd></div><div><dt>Age-outs since launch' + helpButton("Age-outs since launch", HELP.agedOff) + '</dt><dd>' + provider.agedOut + '</dd></div><div><dt>Latest error' + helpButton("Latest error", HELP.latestError) + '</dt><dd>' + escapeHtml(provider.lastError) + '</dd></div></dl></div></div></section>';
+      }
+
+      function testActionsMarkup() {
+        var result = "";
+        if (testState) result = '<div id="test-result" class="test-result ' + escapeHtml(testState.kind) + '" role="status">' + escapeHtml(testState.copy) + '</div>';
+        return result + '<button type="button" data-test-provider' + (testState && testState.kind === "testing" ? " disabled" : "") + '>Test connection</button>' + (testState && testState.kind === "testing" ? '<button type="button" data-cancel-test>Cancel test</button>' : "");
+      }
+
+      function testMarkup(provider) {
+        return '<section class="test-card"><div><div class="section-title-row"><h3>Test connection</h3>' + helpButton("Test connection", HELP.testConnection) + '</div><p>Uses the current form without saving it. The test runs separately from live radio processing and can be cancelled.</p></div><div class="test-actions">' + testActionsMarkup() + '</div></section>';
+      }
+
+      function renderUnknownEditor(provider) {
+        var preservedIdentity = '<div class="field full"><dl class="impact-grid"><div><dt>Imported type' + helpButton("Imported type", "The saved provider type that this version of SDRTrunk does not recognize. It is shown for identification, but an unsupported provider cannot run.") + '</dt><dd>LegacyCustomUploader</dd></div><div><dt>Name' + helpButton("Imported provider name", "The preserved name from the unsupported provider configuration. It remains read-only until that provider is replaced.") + '</dt><dd>' + escapeHtml(provider.name) + '</dd></div></dl></div><div class="field full"><div class="inline-notice"><div><strong>Hidden compatibility fields</strong><span>4 non-secret fields and 1 possible credential remain stored, but are not returned to this page.</span></div></div></div>';
+        providerEditor.innerHTML = '<div class="panel-head"><div class="editor-head-main"><div class="editor-title-row"><h2>' + escapeHtml(provider.name) + '</h2><span class="type-badge">Unknown imported type</span><span class="status-badge error">Cannot start</span></div><p>Compatibility state preserves unsupported configuration without exposing stored fields or credentials.</p></div><div class="editor-actions"><button type="button" data-safe-export>Export safe summary</button><button type="button" data-replace-unknown>Choose replacement</button><button class="button-danger" type="button" data-delete-provider>Delete</button></div></div><div class="editor-body"><div class="inline-notice error"><div><strong>This provider type is not supported</strong><span>It cannot be enabled, edited, cloned, or tested. The imported configuration is kept losslessly until you explicitly replace or delete it.</span></div></div>' + section("Preserved identity", "Read-only values safe to show in a browser.", preservedIdentity) + '</div>';
+        wireHelpButtons(providerEditor);
+      }
+
+      function renderEditor() {
+        if (scenario === "loading") {
+          providerEditor.innerHTML = '<div class="empty-state"><h2>Loading provider details</h2><p>The form opens after the current configuration arrives.</p></div>';
+          return;
+        }
+        if (scenario === "unavailable") {
+          providerEditor.innerHTML = '<div class="empty-state"><h2>Streaming settings unavailable</h2><p>No configuration was changed. Radio decoding, recording, and already-running providers continue independently.</p><button type="button" data-retry-list>Retry</button></div>';
+          return;
+        }
+        var provider = selectedProvider();
+        if (!provider) {
+          providerEditor.innerHTML = '<div class="empty-state"><h2>No provider selected</h2><p>Add a provider to configure where calls or continuous audio are sent.</p><button class="button-primary" type="button" data-empty-add>Add provider</button></div>';
+          return;
+        }
+        if (provider.type === "unknown") {
+          renderUnknownEditor(provider);
+          return;
+        }
+
+        var definition = typeDefinition(provider.type);
+        var status = providerStatus(provider);
+        var saveLabel = provider.isNew ? "Create provider" : provider.enabled ? "Save and restart provider" : "Save provider";
+        providerEditor.innerHTML = '<form id="provider-form" novalidate><div class="panel-head"><div class="editor-head-main"><div class="editor-title-row"><h2>' + escapeHtml(provider.name) + '</h2><span class="type-badge">' + escapeHtml(definition.label) + '</span>' + helpButton("Provider type", HELP.providerType) + '<span class="status-badge ' + escapeHtml(status.key) + '">' + escapeHtml(status.label) + '</span>' + helpButton("Current status", HELP.currentStatus) + '</div><p>' + escapeHtml(provider.currentActivity) + '. Latest provider error: ' + escapeHtml(provider.lastError) + '.</p></div><div class="editor-actions"><label class="header-enabled" for="header-enabled"><input id="header-enabled" name="enabled" type="checkbox" data-provider-field' + (provider.enabled ? " checked" : "") + '><strong>Enabled</strong></label>' + helpButton("Enabled", HELP.enabled) + '<button type="button" data-clone-provider>Clone</button><button class="button-danger" type="button" data-delete-provider>Delete</button></div></div><div class="editor-body">' +
+          '<div class="inline-notice"><div><strong>Alias assignments live on the Aliases page</strong><span>' + provider.aliases + ' Alias assignments currently use this destination. Manage destination assignments from the Aliases page.</span></div><button type="button" data-open-aliases>Open Aliases</button></div>' +
+          activityMarkup(provider) +
+          section("Provider", "Provider identity.", commonFields(provider)) +
+          specificFields(provider) +
+          testMarkup(provider) +
+          '</div><div class="editor-footer"><span id="save-state" class="save-state' + (dirty ? " dirty" : "") + '">' + (dirty ? "Unsaved changes" : "Showing saved configuration") + '</span><div class="footer-actions"><button type="button" data-cancel-edit' + (dirty || provider.isNew ? "" : " disabled") + '>Cancel</button><button class="button-primary" type="submit"' + (dirty || provider.isNew ? "" : " disabled") + '>' + saveLabel + '</button></div></div></form>';
+        wireEditor(provider);
+      }
+
+      function renderAll() {
+        renderProviderList();
+        renderEditor();
+        wireHelpButtons(document);
+      }
+
+      function markDirty() {
+        if (!dirty) {
+          dirty = true;
+          var saveState = document.getElementById("save-state");
+          if (saveState) { saveState.textContent = "Unsaved changes"; saveState.classList.add("dirty"); }
+          var form = document.getElementById("provider-form");
+          if (form) {
+            var submit = form.querySelector('[type="submit"]');
+            var cancel = form.querySelector("[data-cancel-edit]");
+            if (submit) submit.disabled = false;
+            if (cancel) cancel.disabled = false;
+          }
+        }
+      }
+
+      function updateConditionalFields(provider) {
+        var form = document.getElementById("provider-form");
+        if (!form) return;
+        var mode = form.elements.mode;
+        if (mode) {
+          var metadataOnly = mode.value === "metadata";
+          form.querySelectorAll("[data-call-only]").forEach(function (wrapper) {
+            wrapper.dataset.inactive = metadataOnly ? "true" : "false";
+            var input = wrapper.querySelector("input");
+            if (input) input.disabled = metadataOnly;
+          });
+          var note = document.getElementById("metadata-mode-note");
+          if (note) note.hidden = !metadataOnly;
+        }
+        var keepAlive = form.elements.keepAlive;
+        var pingWrapper = form.querySelector("[data-keepalive-field]");
+        if (keepAlive && pingWrapper) {
+          var ping = pingWrapper.querySelector("input");
+          if (ping) ping.disabled = !keepAlive.checked;
+        }
+        var ignore = form.elements.ignoreCertificateErrors;
+        var warning = document.getElementById("certificate-warning");
+        if (ignore && warning) warning.hidden = !ignore.checked;
+        var rdioUrl = form.elements.url;
+        var endpoint = document.getElementById("rdio-endpoint");
+        if (provider.type === "rdio" && rdioUrl && endpoint) {
+          var base = rdioUrl.value.replace(/\/api\/call-upload\/?$/i, "").replace(/\/$/, "");
+          endpoint.textContent = base ? base + "/api/call-upload" : "Enter a base URL to preview the full upload address.";
+        }
+      }
+
+      function wireEditor(provider) {
+        var form = document.getElementById("provider-form");
+        if (!form) return;
+        form.addEventListener("input", function (event) {
+          if (event.target.matches("[data-provider-field]")) event.target.dataset.touched = "true";
+          markDirty();
+          updateConditionalFields(provider);
+        });
+        form.addEventListener("change", function (event) {
+          if (event.target.matches("[data-provider-field]")) event.target.dataset.touched = "true";
+          markDirty();
+          updateConditionalFields(provider);
+        });
+        form.addEventListener("submit", function (event) { event.preventDefault(); saveProvider(provider, form); });
+
+        var showSecret = form.querySelector("[data-show-secret]");
+        if (showSecret) showSecret.addEventListener("click", function () {
+          var input = document.getElementById("replacement-secret");
+          var showing = input.type === "text";
+          input.type = showing ? "password" : "text";
+          showSecret.textContent = showing ? "Show" : "Hide";
+          showSecret.setAttribute("aria-pressed", showing ? "false" : "true");
+        });
+        var clearSecret = form.querySelector("[data-clear-secret]");
+        if (clearSecret) clearSecret.addEventListener("click", function () { confirmClearCredential(provider); });
+        form.querySelector("[data-cancel-edit]").addEventListener("click", cancelEdit);
+        wireTestControls(provider, form);
+        var openAliases = form.querySelector("[data-open-aliases]");
+        if (openAliases) openAliases.addEventListener("click", function () { showToast("Aliases would open filtered to this destination."); });
+        providerEditor.querySelector("[data-clone-provider]").addEventListener("click", function () { showCloneDialog(provider); });
+        providerEditor.querySelector("[data-delete-provider]").addEventListener("click", function () { showDeleteDialog(provider); });
+        updateConditionalFields(provider);
+        wireHelpButtons(providerEditor);
+      }
+
+      function validateProvider(provider, form, forTest) {
+        form.querySelectorAll(".field-error").forEach(function (error) { error.hidden = true; error.textContent = ""; });
+        if (!form.reportValidity()) return false;
+        var missingRequired = Array.from(form.querySelectorAll("[data-required]")).find(function (control) {
+          if (control.disabled) return false;
+          var entered = String(control.value == null ? "" : control.value).trim();
+          if (entered !== "") return false;
+          if (control.dataset.touched === "true") return true;
+          var saved = control.name === "name" ? provider.name : provider.fields[control.name];
+          return saved == null || String(saved).trim() === "";
+        });
+        if (missingRequired) {
+          var requiredError = form.querySelector('[data-error-for="' + missingRequired.name + '"]');
+          if (requiredError) {
+            requiredError.textContent = "Enter a value for this setting.";
+            requiredError.hidden = false;
+          }
+          missingRequired.focus();
+          return false;
+        }
+        var name = form.elements.name.value.trim() || provider.name;
+        var duplicate = providers.some(function (item) { return item.id !== provider.id && item.name.toLowerCase() === name.toLowerCase(); });
+        if (duplicate) {
+          var nameError = form.querySelector('[data-error-for="name"]');
+          nameError.textContent = "Use a unique provider name.";
+          nameError.hidden = false;
+          form.elements.name.focus();
+          return false;
+        }
+        var replacement = form.elements.replacementSecret ? form.elements.replacementSecret.value : "";
+        var hasCredential = (provider.secretStored && !provider.clearSecret) || replacement.length > 0;
+        if (!hasCredential && (forTest || form.elements.enabled.checked)) {
+          var secretError = document.getElementById("secret-error");
+          secretError.textContent = forTest ? "Enter a credential before testing." : "Enter a credential or turn Enabled off before saving.";
+          secretError.hidden = false;
+          if (form.elements.replacementSecret) form.elements.replacementSecret.focus();
+          return false;
+        }
+        return true;
+      }
+
+      function formValue(control) {
+        if (control.type === "checkbox") return control.checked;
+        if (control.type === "number") return control.value === "" ? null : Number(control.value);
+        return control.value;
+      }
+
+      function saveProvider(provider, form) {
+        if (!validateProvider(provider, form, false)) return;
+        var nextName = form.elements.name.value.trim() || provider.name;
+        if (!provider.isNew && nextName !== provider.name && provider.aliases > 0 && form.dataset.renameConfirmed !== "true") {
+          openDialog({
+            title: "Rename this provider?",
+            subtitle: "Alias destinations keep working because their references change in the same save.",
+            body: '<dl class="impact-grid"><div><dt>Current name</dt><dd>' + escapeHtml(provider.name) + '</dd></div><div><dt>New name</dt><dd>' + escapeHtml(nextName) + '</dd></div><div><dt>Alias references updated</dt><dd>' + provider.aliases + '</dd></div><div><dt>Broken references</dt><dd>0</dd></div></dl>',
+            buttons: [
+              { label: "Cancel", action: closeDialog },
+              { label: "Rename and save", className: "button-primary", action: function () { form.dataset.renameConfirmed = "true"; closeDialog(); saveProvider(provider, form); } }
+            ]
+          });
+          return;
+        }
+        provider.name = nextName;
+        provider.enabled = form.elements.enabled.checked;
+        form.querySelectorAll("[data-provider-field]").forEach(function (control) {
+          if (control.name === "providerType" || control.name === "name" || control.name === "enabled" || control.disabled) return;
+          if (control.type !== "checkbox" && control.tagName !== "SELECT" && String(control.value).trim() === "" && control.dataset.touched !== "true") return;
+          provider.fields[control.name] = formValue(control);
+        });
+        if (form.elements.replacementSecret && form.elements.replacementSecret.value) provider.secretStored = true;
+        if (provider.clearSecret && !(form.elements.replacementSecret && form.elements.replacementSecret.value)) provider.secretStored = false;
+        provider.clearSecret = false;
+        provider.isNew = false;
+        provider.status = provider.enabled ? "connecting" : "disabled";
+        provider.statusLabel = provider.enabled ? "Restarting" : "Disabled";
+        provider.currentActivity = provider.enabled ? "Provider restart queued" : "Not started";
+        provider.lastError = "None";
+        dirty = false;
+        selectedSnapshot = deepClone(provider);
+        renderAll();
+        showToast(provider.enabled ? "Provider saved; only this provider would restart." : "Provider saved and left disabled.");
+      }
+
+      function cancelEdit() {
+        var provider = selectedProvider();
+        if (!provider) return;
+        if (provider.isNew) {
+          providers = providers.filter(function (item) { return item.id !== provider.id; });
+          selectedProviderId = providers[0] ? providers[0].id : null;
+        } else if (selectedSnapshot) {
+          var index = providers.findIndex(function (item) { return item.id === provider.id; });
+          if (index >= 0) providers[index] = deepClone(selectedSnapshot);
+        }
+        dirty = false;
+        testState = null;
+        selectedSnapshot = selectedProvider() ? deepClone(selectedProvider()) : null;
+        renderAll();
+        showToast("Unsaved provider changes discarded.");
+      }
+
+      function confirmClearCredential(provider) {
+        openDialog({
+          title: "Clear stored credential?",
+          subtitle: "The saved value is never shown in this browser.",
+          body: '<div class="inline-notice warning"><div><strong>Clearing also disables this provider.</strong><span>You can enter a replacement and turn Enabled back on before Save. Other providers and radio processing are unaffected.</span></div></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Clear and disable on Save", className: "button-danger", action: function () {
+              provider.clearSecret = true;
+              closeDialog();
+              var badge = document.querySelector("[data-secret-badge]");
+              var copy = document.querySelector("[data-secret-copy]");
+              var clear = document.querySelector("[data-clear-secret]");
+              if (badge) { badge.textContent = "Will be cleared"; badge.classList.add("missing"); }
+              if (copy) copy.textContent = "Enter a replacement before saving this provider.";
+              if (clear) clear.hidden = true;
+              var form = document.getElementById("provider-form");
+              if (form && form.elements.enabled) form.elements.enabled.checked = false;
+              markDirty();
+            } }
+          ]
+        });
+      }
+
+      function testProvider(provider, form) {
+        if (!validateProvider(provider, form, true)) return;
+        testState = { kind: "testing", copy: "Testing with the current unsaved form…" };
+        updateTestControls(provider, form);
+        testTimer = window.setTimeout(function () {
+          testTimer = null;
+          testState = scenario === "error" ? { kind: "error", copy: "Test failed: provider returned a sanitized connection error." } : { kind: "success", copy: "Connection succeeded. Result is current-only and was not saved." };
+          updateTestControls(provider, form);
+        }, 900);
+      }
+
+      function cancelConnectionTest() {
+        if (testTimer) window.clearTimeout(testTimer);
+        testTimer = null;
+        testState = { kind: "error", copy: "Connection test cancelled. No result was saved." };
+        var form = document.getElementById("provider-form");
+        if (form) updateTestControls(selectedProvider(), form);
+      }
+
+      function wireTestControls(provider, form) {
+        var testButton = form.querySelector("[data-test-provider]");
+        if (testButton) testButton.addEventListener("click", function () { testProvider(provider, form); });
+        var cancelTest = form.querySelector("[data-cancel-test]");
+        if (cancelTest) cancelTest.addEventListener("click", cancelConnectionTest);
+      }
+
+      function updateTestControls(provider, form) {
+        var actions = form.querySelector(".test-actions");
+        if (!actions) return;
+        actions.innerHTML = testActionsMarkup();
+        wireTestControls(provider, form);
+      }
+
+      function defaultFields(type) {
+        if (type === "radioresolve") return { mode: "calls", url: "https://calls.radioresolve.com", nodeName: "BOSGAME", timezone: "America/New_York", maxAge: 600, concurrent: 4, ignoreCertificateErrors: false };
+        if (type === "broadcastify-call") return { systemId: 1, url: "https://api.broadcastify.com/call-upload", maxAge: 600, keepAlive: false, pingInterval: 15 };
+        if (type === "openmhz") return { systemName: "", url: "https://api.openmhz.com", maxAge: 600 };
+        if (type === "rdio") return { systemId: 1, url: "http://localhost", maxAge: 600 };
+        if (type === "icecast-http" || type === "icecast-tcp") return { server: "", port: 80, mount: "/stream", inlineMetadata: true, username: "source", maxAge: 600, delay: 0, description: "", genre: "Scanner", directoryUrl: "" };
+        if (type === "shoutcast") return { public: false, server: "", port: 80, maxAge: 600, delay: 0, description: "", genre: "Scanner" };
+        return {};
+      }
+
+      function showAddDialog(preselectedType) {
+        var groups = ["Call uploads", "Continuous audio feeds"];
+        var cards = groups.map(function (group) {
+          return '<h3>' + escapeHtml(group) + '</h3><div class="provider-type-grid">' + PROVIDER_TYPES.filter(function (type) { return type.group === group; }).map(function (type, index) {
+            var checked = preselectedType ? type.id === preselectedType : group === "Call uploads" && index === 0;
+            return '<label class="provider-type-card"><input type="radio" name="new-provider-type" value="' + type.id + '"' + (checked ? " checked" : "") + '><span><strong>' + escapeHtml(type.label) + '</strong><small>' + escapeHtml(type.description) + '</small></span></label>';
+          }).join("") + '</div>';
+        }).join("");
+        openDialog({
+          title: "Add streaming provider",
+          subtitle: "Provider type is fixed after creation. The new provider starts disabled.",
+          body: cards + '<div class="field" style="margin-top:14px">' + fieldLabel("new-provider-name", "Provider name", HELP.providerName) + '<input id="new-provider-name" maxlength="80" required value="" placeholder="Example: County Calls"></div><div class="inline-notice" style="margin-top:12px"><div><strong>Broadcastify Feed is added differently</strong><span>Use Refresh Broadcastify feeds so the server can retrieve temporary feed choices from the signed-in RadioReference account without exposing feed credentials here.</span></div></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Create draft", className: "button-primary", action: function () {
+              var checked = appDialog.querySelector('[name="new-provider-type"]:checked');
+              var nameInput = document.getElementById("new-provider-name");
+              if (!checked || !nameInput.value.trim()) { nameInput.reportValidity(); return; }
+              var name = nameInput.value.trim();
+              if (providers.some(function (provider) { return provider.name.toLowerCase() === name.toLowerCase(); })) { nameInput.setCustomValidity("Use a unique provider name."); nameInput.reportValidity(); nameInput.setCustomValidity(""); return; }
+              var provider = { id: "stream-" + Date.now(), type: checked.value, name: name, enabled: false, status: "needs-setup", statusLabel: "Needs setup", lastError: "None", currentActivity: "Draft not saved", queue: 0, retry: "None", agedOut: 0, aliases: 0, secretStored: false, isNew: true, fields: defaultFields(checked.value) };
+              providers.push(provider);
+              selectedProviderId = provider.id;
+              selectedSnapshot = null;
+              dirty = true;
+              testState = null;
+              closeDialog();
+              renderAll();
+            } }
+          ]
+        });
+      }
+
+      function showCloneDialog(provider) {
+        openDialog({
+          title: "Clone " + provider.name,
+          subtitle: "The clone uses the same provider type but starts safely disconnected.",
+          body: '<dl class="impact-grid"><div><dt>Provider type' + helpButton("Provider type", HELP.providerType) + '</dt><dd>' + escapeHtml(typeDefinition(provider.type).label) + '</dd></div><div><dt>Alias assignments copied</dt><dd>No</dd></div><div><dt>Credential copied</dt><dd>No</dd></div><div><dt>Initial state</dt><dd>Disabled</dd></div></dl><div class="field">' + fieldLabel("clone-name", "Clone name", "A unique name for the new provider. Existing Alias assignments remain connected to the original provider unless they are reassigned.") + '<input id="clone-name" maxlength="80" required value="" placeholder="Enter a unique name for the clone"></div><div class="inline-notice"><div><strong>Non-secret settings are copied.</strong><span>Enter a credential in the new draft, review its fields, then save. No existing provider or Alias assignment changes.</span></div></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Clone provider", className: "button-primary", action: function () {
+              var input = document.getElementById("clone-name");
+              var name = input.value.trim();
+              if (!name) { input.reportValidity(); return; }
+              if (providers.some(function (item) { return item.name.toLowerCase() === name.toLowerCase(); })) { input.setCustomValidity("Use a unique provider name."); input.reportValidity(); input.setCustomValidity(""); return; }
+              var clone = deepClone(provider);
+              clone.id = "stream-" + Date.now();
+              clone.name = name;
+              clone.enabled = false;
+              clone.status = "needs-setup";
+              clone.statusLabel = "Needs setup";
+              clone.lastError = "None";
+              clone.currentActivity = "Clone not saved";
+              clone.queue = 0;
+              clone.retry = "None";
+              clone.agedOut = 0;
+              clone.aliases = 0;
+              clone.secretStored = false;
+              clone.isNew = true;
+              delete clone.clearSecret;
+              providers.push(clone);
+              selectedProviderId = clone.id;
+              selectedSnapshot = null;
+              dirty = true;
+              closeDialog();
+              renderAll();
+            } }
+          ]
+        });
+      }
+
+      function showDeleteDialog(provider) {
+        openDialog({
+          title: "Delete " + provider.name + "?",
+          subtitle: "Review current runtime and Alias impact before removing this destination.",
+          body: '<dl class="impact-grid"><div><dt>Current state</dt><dd>' + escapeHtml(providerStatus(provider).label) + '</dd></div><div><dt>Queued uploads</dt><dd>' + provider.queue + '</dd></div><div><dt>Alias assignments removed</dt><dd>' + provider.aliases + '</dd></div><div><dt>History created</dt><dd>None</dd></div></dl><div class="inline-notice error"><div><strong>This provider and its current queue are removed.</strong><span>Alias destination references are removed in the same operation, so no broken references remain. Other providers and all radio processing continue.</span></div></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Delete provider", className: "button-danger", action: function () {
+              providers = providers.filter(function (item) { return item.id !== provider.id; });
+              selectedProviderId = providers[0] ? providers[0].id : null;
+              selectedSnapshot = selectedProvider() ? deepClone(selectedProvider()) : null;
+              dirty = false;
+              closeDialog();
+              renderAll();
+              showToast("Provider deletion simulated; no playlist was changed.");
+            } }
+          ]
+        });
+      }
+
+      function showRefreshBroadcastifyDialog() {
+        openDialog({
+          title: "Refresh Broadcastify feeds",
+          subtitle: "RadioReference is signed in for this example-only workflow.",
+          body: '<div class="inline-notice"><div><strong>Feed choices are temporary</strong><span>The refresh response is used for this picker and is not stored as a database cache or history.</span></div></div><div class="field" style="margin-top:12px">' + fieldLabel("broadcastify-feed-choice", "Broadcastify feed", "Shows the continuous feeds available to the signed-in RadioReference account. Choosing one creates a configuration using the returned description, server, port, mount point, feed number, and password.") + '<select id="broadcastify-feed-choice"><option value="24680">Metro County Public Safety · Feed 24680</option><option value="13579">Regional Interop · Feed 13579</option></select></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Refresh and add", className: "button-primary", action: function () {
+              var select = document.getElementById("broadcastify-feed-choice");
+              var feedId = Number(select.value);
+              var name = select.options[select.selectedIndex].text.split(" · ")[0];
+              var provider = { id: "stream-" + Date.now(), type: "broadcastify-feed", name: name, enabled: false, status: "disabled", statusLabel: "Disabled", lastError: "None", currentActivity: "New feed not started", queue: 0, retry: "None", agedOut: 0, aliases: 0, secretStored: true, fields: { server: "audio.example.invalid", port: 80, mount: "/stream", feedId: feedId, verbose: false, maxAge: 600, delay: 0 } };
+              providers.push(provider);
+              selectedProviderId = provider.id;
+              selectedSnapshot = deepClone(provider);
+              dirty = false;
+              closeDialog();
+              renderAll();
+              showToast("Temporary feed choice added to this mockup only.");
+            } }
+          ]
+        });
+      }
+
+      function openDialog(config) {
+        dialogTitle.textContent = config.title || "";
+        dialogSubtitle.textContent = config.subtitle || "";
+        dialogBody.innerHTML = config.body || "";
+        dialogFooter.innerHTML = "";
+        (config.buttons || []).forEach(function (buttonConfig) {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.textContent = buttonConfig.label;
+          if (buttonConfig.className) button.className = buttonConfig.className;
+          button.addEventListener("click", buttonConfig.action);
+          dialogFooter.appendChild(button);
+        });
+        wireHelpButtons(appDialog);
+        if (!appDialog.open) appDialog.showModal();
+      }
+
+      function closeDialog() {
+        if (appDialog.open) appDialog.close();
+      }
+
+      function continueAfterUnsaved(action) {
+        if (!dirty) { action(); return; }
+        openDialog({
+          title: "Discard unsaved provider changes?",
+          subtitle: "The selected provider has changes that exist only in this browser form.",
+          body: "<p>Discard the form changes to continue, or stay here and save them first.</p>",
+          buttons: [
+            { label: "Stay here", action: closeDialog },
+            { label: "Discard changes", className: "button-danger", action: function () {
+              var current = selectedProvider();
+              if (current && current.isNew) providers = providers.filter(function (item) { return item.id !== current.id; });
+              else if (current && selectedSnapshot) {
+                var index = providers.findIndex(function (item) { return item.id === current.id; });
+                if (index >= 0) providers[index] = deepClone(selectedSnapshot);
+              }
+              dirty = false;
+              closeDialog();
+              action();
+            } }
+          ]
+        });
+      }
+
+      function applyScenario(nextScenario) {
+        scenario = nextScenario;
+        providers = deepClone(providerSeeds);
+        dirty = false;
+        testState = null;
+        if (scenario === "empty") providers = [];
+        if (scenario === "error") {
+          providers[0].status = "error";
+          providers[0].statusLabel = "Retrying";
+          providers[0].lastError = "HTTPS connection failed";
+          providers[0].currentActivity = "Retry scheduled";
+          providers[0].queue = 3;
+          providers[0].retry = "In 24 seconds";
+          providers[0].agedOut = 1;
+        }
+        if (scenario === "unknown") {
+          providers = [{ id: "unknown-1", type: "unknown", name: "Imported Legacy Provider", enabled: false, status: "unknown", statusLabel: "Unsupported", lastError: "Unsupported provider type", currentActivity: "Preserved but inactive", queue: 0, retry: "None", agedOut: 0, aliases: 4, secretStored: true, fields: {} }];
+        }
+        selectedProviderId = providers[0] ? providers[0].id : null;
+        selectedSnapshot = selectedProvider() ? deepClone(selectedProvider()) : null;
+        renderAll();
+      }
+
+      function showHelp(button, pinned) {
+        activeHelpButton = button;
+        helpPinned = Boolean(pinned);
+        document.querySelectorAll(".help-button[aria-expanded='true']").forEach(function (item) { if (item !== button) item.setAttribute("aria-expanded", "false"); });
+        button.setAttribute("aria-expanded", "true");
+        document.getElementById("help-title").textContent = button.dataset.helpTitle;
+        document.getElementById("help-copy").textContent = button.dataset.help;
+        helpPopover.hidden = false;
+        var rect = button.getBoundingClientRect();
+        var left = Math.min(window.innerWidth - helpPopover.offsetWidth - 12, Math.max(12, rect.left));
+        var top = rect.bottom + 8;
+        if (top + helpPopover.offsetHeight > window.innerHeight - 12) top = Math.max(12, rect.top - helpPopover.offsetHeight - 8);
+        helpPopover.style.left = left + "px";
+        helpPopover.style.top = top + "px";
+      }
+
+      function hideHelp(force) {
+        if (helpPinned && !force) return;
+        helpPopover.hidden = true;
+        if (activeHelpButton) activeHelpButton.setAttribute("aria-expanded", "false");
+        activeHelpButton = null;
+        helpPinned = false;
+      }
+
+      function wireHelpButtons(root) {
+        root.querySelectorAll(".help-button:not([data-help-wired])").forEach(function (button) {
+          button.dataset.helpWired = "true";
+          button.addEventListener("mouseenter", function () { if (!helpPinned) showHelp(button, false); });
+          button.addEventListener("mouseleave", function () { window.setTimeout(function () { if (!helpPopover.matches(":hover")) hideHelp(false); }, 80); });
+          button.addEventListener("focus", function () { if (!helpPinned) showHelp(button, false); });
+          button.addEventListener("blur", function () { window.setTimeout(function () { if (!helpPopover.contains(document.activeElement)) hideHelp(false); }, 80); });
+          button.addEventListener("click", function (event) { event.stopPropagation(); if (helpPinned && activeHelpButton === button) hideHelp(true); else showHelp(button, true); });
+        });
+      }
+
+      function showToast(copy) {
+        var toast = document.getElementById("toast");
+        toast.textContent = copy;
+        toast.hidden = false;
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(function () { toast.hidden = true; }, 3200);
+      }
+
+      function loadReview() {
+        try {
+          var parsed = JSON.parse(window.localStorage.getItem(REVIEW_STORAGE_KEY) || "null");
+          if (parsed && parsed.version === REVIEW_VERSION && parsed.entries) return parsed;
+        } catch (error) {
+          reviewStorageAvailable = false;
+        }
+        return { version: REVIEW_VERSION, updatedAt: null, entries: {} };
+      }
+
+      function reviewOptions(selected) {
+        return [["", "Not reviewed"], ["approved", "Looks good"], ["change", "Change requested"], ["question", "Question"], ["later", "Review later"]].map(function (option) { return '<option value="' + option[0] + '"' + (selected === option[0] ? " selected" : "") + '>' + option[1] + '</option>'; }).join("");
+      }
+
+      function renderReview() {
+        document.getElementById("review-content").innerHTML = reviewSections.map(function (section) {
+          var entry = reviewData.entries[section[0]] || { state: "", note: "" };
+          return '<section class="review-card"><h3>' + escapeHtml(section[1]) + '</h3><p>' + escapeHtml(section[2]) + '</p><label class="sr-only" for="review-state-' + section[0] + '">Decision for ' + escapeHtml(section[1]) + '</label><select id="review-state-' + section[0] + '" data-review-state="' + section[0] + '">' + reviewOptions(entry.state || "") + '</select><label class="sr-only" for="review-note-' + section[0] + '">Notes for ' + escapeHtml(section[1]) + '</label><textarea id="review-note-' + section[0] + '" data-review-note="' + section[0] + '" maxlength="' + MAX_NOTE_LENGTH + '" placeholder="Add a decision, requested change, or question…">' + escapeHtml(entry.note || "") + '</textarea><div class="review-card-foot"><span>Saved only in this browser</span><span data-review-count="' + section[0] + '">' + (entry.note || "").length + ' / ' + MAX_NOTE_LENGTH + '</span></div></section>';
+        }).join("");
+        updateReviewStatus();
+      }
+
+      function saveReviewEntry(id, patch) {
+        var entry = reviewData.entries[id] || { state: "", note: "" };
+        Object.keys(patch).forEach(function (key) { entry[key] = patch[key]; });
+        reviewData.entries[id] = entry;
+        reviewData.updatedAt = new Date().toISOString();
+        try { window.localStorage.setItem(REVIEW_STORAGE_KEY, JSON.stringify(reviewData)); reviewStorageAvailable = true; }
+        catch (error) { reviewStorageAvailable = false; }
+        updateReviewStatus();
+      }
+
+      function updateReviewStatus() {
+        var status = document.getElementById("review-save-state");
+        if (!reviewStorageAvailable) { status.textContent = "Browser storage is unavailable. Download notes before closing this page."; status.classList.add("warning"); return; }
+        var reviewed = reviewSections.filter(function (section) { return reviewData.entries[section[0]] && reviewData.entries[section[0]].state; }).length;
+        status.textContent = reviewed + " of " + reviewSections.length + " sections reviewed · saved in this browser";
+        status.classList.remove("warning");
+      }
+
+      function openReview() {
+        renderReview();
+        document.getElementById("review-scrim").hidden = false;
+        document.getElementById("review-drawer").hidden = false;
+        document.getElementById("close-review").focus();
+      }
+
+      function closeReview() {
+        document.getElementById("review-scrim").hidden = true;
+        document.getElementById("review-drawer").hidden = true;
+        document.getElementById("open-review").focus();
+      }
+
+      function downloadReview() {
+        var payload = { format: "sdrtrunk-vce-mockup-review", version: REVIEW_VERSION, mockup: "settings-shell-streaming-v1", exportedAt: new Date().toISOString(), evidence: ["CFG-08", "STR-001–016"], entries: reviewData.entries };
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+        link.download = "sdrtrunk-streaming-mockup-review-" + new Date().toISOString().slice(0, 10) + ".json";
+        link.click();
+        window.setTimeout(function () { URL.revokeObjectURL(link.href); }, 0);
+      }
+
+      providerList.addEventListener("click", function (event) {
+        var button = event.target.closest("[data-provider-id]");
+        if (button) {
+          var nextId = button.dataset.providerId;
+          if (nextId === selectedProviderId) return;
+          continueAfterUnsaved(function () {
+            selectedProviderId = nextId;
+            selectedSnapshot = deepClone(selectedProvider());
+            testState = null;
+            renderAll();
+          });
+          return;
+        }
+        if (event.target.closest("[data-empty-add]")) showAddDialog();
+        if (event.target.closest("[data-retry-list]")) { document.getElementById("preview-scenario").value = "normal"; applyScenario("normal"); }
+      });
+
+      providerEditor.addEventListener("click", function (event) {
+        if (event.target.closest("[data-empty-add]")) showAddDialog();
+        if (event.target.closest("[data-retry-list]")) { document.getElementById("preview-scenario").value = "normal"; applyScenario("normal"); }
+        var provider = selectedProvider();
+        if (!provider) return;
+        if (event.target.closest("[data-safe-export]")) showToast("Safe summary prepared without provider fields or credentials.");
+        if (event.target.closest("[data-replace-unknown]")) showAddDialog("radioresolve");
+        if (event.target.closest("[data-delete-provider]") && provider.type === "unknown") showDeleteDialog(provider);
+      });
+
+      document.getElementById("add-provider").addEventListener("click", function () { continueAfterUnsaved(function () { showAddDialog(); }); });
+      document.getElementById("refresh-broadcastify").addEventListener("click", function () { continueAfterUnsaved(showRefreshBroadcastifyDialog); });
+      document.getElementById("preview-scenario").addEventListener("change", function (event) {
+        var next = event.target.value;
+        event.target.value = scenario;
+        continueAfterUnsaved(function () { document.getElementById("preview-scenario").value = next; applyScenario(next); });
+      });
+      document.getElementById("dialog-close").addEventListener("click", closeDialog);
+      appDialog.addEventListener("cancel", function (event) { event.preventDefault(); closeDialog(); });
+      document.querySelectorAll("[data-future-page]").forEach(function (button) { button.addEventListener("click", function () { showToast(button.dataset.futurePage + " is outside this Streaming mockup."); }); });
+      document.addEventListener("click", function (event) { if (!event.target.closest(".help-button") && !event.target.closest("#help-popover")) hideHelp(true); });
+      window.addEventListener("resize", function () { hideHelp(true); });
+      helpPopover.addEventListener("mouseleave", function () { hideHelp(false); });
+
+      document.getElementById("open-review").addEventListener("click", openReview);
+      document.getElementById("close-review").addEventListener("click", closeReview);
+      document.getElementById("done-review").addEventListener("click", closeReview);
+      document.getElementById("review-scrim").addEventListener("click", closeReview);
+      document.getElementById("download-review").addEventListener("click", downloadReview);
+      document.getElementById("clear-review").addEventListener("click", function () {
+        openDialog({ title: "Clear this browser review?", subtitle: "This affects only Streaming mockup notes on this browser.", body: "<p>Download a copy first if you may want these notes later.</p>", buttons: [{ label: "Cancel", action: closeDialog }, { label: "Clear review", className: "button-danger", action: function () { reviewData = { version: REVIEW_VERSION, updatedAt: null, entries: {} }; try { window.localStorage.removeItem(REVIEW_STORAGE_KEY); reviewStorageAvailable = true; } catch (error) { reviewStorageAvailable = false; } closeDialog(); renderReview(); } }] });
+      });
+      document.getElementById("review-content").addEventListener("change", function (event) {
+        if (event.target.matches("[data-review-state]")) saveReviewEntry(event.target.dataset.reviewState, { state: event.target.value });
+      });
+      document.getElementById("review-content").addEventListener("input", function (event) {
+        if (!event.target.matches("[data-review-note]")) return;
+        var id = event.target.dataset.reviewNote;
+        var count = document.querySelector('[data-review-count="' + id + '"]');
+        if (count) count.textContent = event.target.value.length + " / " + MAX_NOTE_LENGTH;
+        saveReviewEntry(id, { note: event.target.value });
+      });
+
+      renderAll();
+      wireHelpButtons(document);
+    }());
+  </script>
+</body>
+</html>

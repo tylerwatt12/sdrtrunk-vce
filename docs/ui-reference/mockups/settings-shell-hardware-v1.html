@@ -1,0 +1,3502 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce Settings — Hardware mockup</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #edf1f4;
+      --surface: #ffffff;
+      --surface-2: #f5f7f9;
+      --surface-3: #e8edf1;
+      --ink: #18212a;
+      --muted: #65717d;
+      --line: #c9d1d8;
+      --line-strong: #9ba8b3;
+      --header: #202a33;
+      --header-2: #2c3944;
+      --accent: #0b7168;
+      --accent-hover: #095d56;
+      --accent-soft: #d9efec;
+      --blue: #075eaa;
+      --blue-soft: #e7f1fb;
+      --warning: #8a5200;
+      --warning-soft: #fff1d6;
+      --danger: #9b2743;
+      --danger-soft: #fbe8ed;
+      --success: #176b3a;
+      --success-soft: #e2f3e9;
+      --shadow: 0 6px 20px rgb(20 32 44 / 9%);
+      --radius: 10px;
+      font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111820;
+        --surface: #18212a;
+        --surface-2: #202b35;
+        --surface-3: #2b3742;
+        --ink: #e5ebf0;
+        --muted: #aeb8c1;
+        --line: #3b4854;
+        --line-strong: #596976;
+        --header: #0d1318;
+        --header-2: #24313b;
+        --accent: #55c7ba;
+        --accent-hover: #79d6cc;
+        --accent-soft: #193d39;
+        --blue: #82bff3;
+        --blue-soft: #18324a;
+        --warning: #f0bd67;
+        --warning-soft: #48351c;
+        --danger: #ff99b0;
+        --danger-soft: #4a222c;
+        --success: #85d6a2;
+        --success-soft: #193b27;
+        --shadow: 0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--page);
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      color: var(--ink);
+      background: var(--surface);
+    }
+
+    button {
+      min-height: 34px;
+      padding: 6px 11px;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+      outline-offset: 2px;
+    }
+
+    button:disabled,
+    input:disabled,
+    select:disabled {
+      cursor: not-allowed;
+      opacity: .58;
+    }
+
+    a {
+      color: var(--blue);
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      min-height: 50px;
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr) max-content;
+      align-items: center;
+      gap: 24px;
+      padding: 0 18px;
+      color: #fff;
+      background: var(--header);
+      border-bottom: 1px solid #0e151b;
+      box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+    }
+
+    .brand {
+      font-size: 17px;
+      font-weight: 750;
+      letter-spacing: -.01em;
+    }
+
+    .global-nav {
+      align-self: stretch;
+      display: flex;
+      min-width: 0;
+      gap: 2px;
+      overflow-x: auto;
+    }
+
+    .global-nav button {
+      min-height: 49px;
+      padding: 0 13px;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+      color: #dce4eb;
+      background: transparent;
+    }
+
+    .global-nav button:hover,
+    .global-nav button[aria-current="page"] {
+      color: #fff;
+      background: var(--header-2);
+      border-bottom-color: #35b8a9;
+    }
+
+    .admin-summary {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #dce4eb;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .admin-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #54d177;
+      box-shadow: 0 0 0 3px rgb(84 209 119 / 16%);
+    }
+
+    .settings-shell {
+      min-height: calc(100vh - 50px);
+      display: grid;
+      grid-template-columns: 238px minmax(0, 1fr);
+    }
+
+    .settings-nav {
+      position: sticky;
+      top: 50px;
+      height: calc(100vh - 50px);
+      overflow-y: auto;
+      padding: 18px 12px 30px;
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+    }
+
+    .settings-nav h2 {
+      margin: 0 8px 18px;
+      font-size: 1.08rem;
+    }
+
+    .nav-group {
+      margin: 0 0 21px;
+    }
+
+    .nav-group h3 {
+      margin: 0 9px 7px;
+      color: var(--muted);
+      font-size: .7rem;
+      letter-spacing: .075em;
+      text-transform: uppercase;
+    }
+
+    .settings-nav button {
+      width: 100%;
+      min-height: 37px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 7px;
+      padding: 7px 10px;
+      border: 0;
+      border-radius: 7px;
+      text-align: left;
+      background: transparent;
+    }
+
+    .settings-nav button:hover {
+      background: var(--surface-2);
+    }
+
+    .settings-nav button[aria-current="page"] {
+      color: var(--accent);
+      background: var(--accent-soft);
+      font-weight: 700;
+    }
+
+    .future-tag {
+      color: var(--muted);
+      font-size: .68rem;
+      font-weight: 600;
+    }
+
+    .settings-main {
+      min-width: 0;
+      padding: 18px clamp(14px, 2.2vw, 30px) 60px;
+    }
+
+    .page-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 0 auto 14px;
+      max-width: 1550px;
+    }
+
+    .breadcrumbs {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+
+    .page-head h1 {
+      margin: 0;
+      font-size: clamp(1.45rem, 2.5vw, 2rem);
+      line-height: 1.15;
+    }
+
+    .page-head p {
+      max-width: 760px;
+      margin: 7px 0 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .page-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .review-button {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+
+    .prototype-banner {
+      max-width: 1550px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 18px;
+      margin: 0 auto 14px;
+      padding: 10px 13px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+      border-radius: 8px;
+    }
+
+    .prototype-banner strong {
+      color: var(--ink);
+    }
+
+    .scenario-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .scenario-control label {
+      font-size: .78rem;
+      font-weight: 700;
+    }
+
+    .scenario-control select {
+      min-height: 34px;
+      padding: 5px 30px 5px 8px;
+    }
+
+    .hardware-workspace {
+      max-width: 1550px;
+      margin: 0 auto;
+    }
+
+    .upper-workspace {
+      display: grid;
+      grid-template-columns: minmax(310px, 370px) minmax(500px, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .panel {
+      min-width: 0;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      min-height: 55px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 14px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .panel-head h2,
+    .panel-head h3 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .panel-head p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+
+    .receiver-list {
+      min-height: 380px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .receiver-card {
+      width: 100%;
+      min-height: 105px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) max-content;
+      gap: 8px 12px;
+      padding: 12px;
+      text-align: left;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .receiver-card:hover {
+      background: var(--surface-2);
+    }
+
+    .receiver-card[aria-pressed="true"] {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+
+    .receiver-name {
+      min-width: 0;
+    }
+
+    .receiver-name strong,
+    .receiver-name span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .receiver-name strong {
+      margin-bottom: 3px;
+      font-size: .95rem;
+    }
+
+    .receiver-name span {
+      color: var(--muted);
+      font-size: .76rem;
+    }
+
+    .receiver-metrics {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1.35fr .8fr .8fr;
+      gap: 8px;
+      margin: 2px 0 0;
+    }
+
+    .receiver-metrics div {
+      min-width: 0;
+    }
+
+    .receiver-metrics dt {
+      color: var(--muted);
+      font-size: .66rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .receiver-metrics dd {
+      margin: 2px 0 0;
+      overflow: hidden;
+      font-size: .78rem;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status-badge {
+      align-self: start;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 22px;
+      padding: 2px 7px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: .68rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .status-badge.enabled,
+    .status-badge.available {
+      color: var(--success);
+      background: var(--success-soft);
+    }
+
+    .status-badge.locked,
+    .status-badge.busy {
+      color: var(--warning);
+      background: var(--warning-soft);
+    }
+
+    .status-badge.error,
+    .status-badge.disconnected,
+    .status-badge.unsupported {
+      color: var(--danger);
+      background: var(--danger-soft);
+    }
+
+    .status-badge.disabled {
+      color: var(--muted);
+      background: var(--surface-3);
+    }
+
+    .empty-state {
+      min-height: 260px;
+      display: grid;
+      place-content: center;
+      gap: 8px;
+      padding: 34px 22px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .empty-state strong {
+      color: var(--ink);
+      font-size: 1rem;
+    }
+
+    .selected-panel {
+      overflow: hidden;
+    }
+
+    .selected-head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .selected-title-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .selected-title-line h2 {
+      margin: 0;
+      font-size: 1.18rem;
+    }
+
+    .hardware-identity {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(105px, 1fr));
+      gap: 8px;
+      margin: 13px 0 0;
+    }
+
+    .status-grid div {
+      min-width: 0;
+      padding: 8px 9px;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+    }
+
+    .status-grid dt {
+      color: var(--muted);
+      font-size: .66rem;
+      font-weight: 700;
+      letter-spacing: .045em;
+      text-transform: uppercase;
+    }
+
+    .status-grid dd {
+      margin: 3px 0 0;
+      overflow: hidden;
+      font-size: .84rem;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .inline-notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      margin: 12px 0 0;
+      padding: 9px 10px;
+      color: var(--warning);
+      background: var(--warning-soft);
+      border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--line));
+      border-radius: 7px;
+      font-size: .8rem;
+      line-height: 1.4;
+    }
+
+    .inline-notice.error {
+      color: var(--danger);
+      background: var(--danger-soft);
+      border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+    }
+
+    .selected-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 7px;
+      padding: 10px 16px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .button-primary {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+
+    .button-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .button-danger {
+      color: var(--danger);
+      border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+      background: var(--surface);
+    }
+
+    .button-link {
+      color: var(--blue);
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .more-menu {
+      position: relative;
+      margin-left: auto;
+    }
+
+    .more-menu summary {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .more-menu summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .more-menu div {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      z-index: 8;
+      width: 180px;
+      padding: 5px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .more-menu button {
+      width: 100%;
+      border: 0;
+      text-align: left;
+      background: transparent;
+    }
+
+    .editor-body {
+      max-height: 690px;
+      overflow: auto;
+      padding: 0 16px 16px;
+    }
+
+    .form-section {
+      padding: 15px 0 3px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .form-section:last-child {
+      border-bottom: 0;
+    }
+
+    .form-section-title {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin: 0 0 12px;
+      font-size: .9rem;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(190px, 1fr));
+      gap: 13px 16px;
+    }
+
+    .field {
+      min-width: 0;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .field-label {
+      min-height: 25px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: .74rem;
+      font-weight: 700;
+    }
+
+    .field input:not([type="checkbox"]):not([type="range"]),
+    .field select {
+      width: 100%;
+      min-height: 37px;
+      padding: 7px 9px;
+    }
+
+    .input-with-unit {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) max-content;
+      align-items: stretch;
+    }
+
+    .input-with-unit input {
+      border-radius: 7px 0 0 7px !important;
+    }
+
+    .input-unit {
+      display: grid;
+      place-items: center;
+      min-width: 52px;
+      padding: 0 9px;
+      color: var(--muted);
+      background: var(--surface-2);
+      border: 1px solid var(--line-strong);
+      border-left: 0;
+      border-radius: 0 7px 7px 0;
+      font-size: .74rem;
+      font-weight: 700;
+    }
+
+    .field-hint,
+    .field-error {
+      display: block;
+      margin-top: 4px;
+      font-size: .7rem;
+      line-height: 1.35;
+    }
+
+    .field-hint {
+      color: var(--muted);
+    }
+
+    .field-hint.warning {
+      color: var(--warning);
+      font-weight: 700;
+    }
+
+    .field-error {
+      color: var(--danger);
+      font-weight: 650;
+    }
+
+    .checkbox-row {
+      min-height: 37px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+    }
+
+    .checkbox-row input {
+      width: 17px;
+      height: 17px;
+    }
+
+    .range-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 55px;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .range-row input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .range-output {
+      min-height: 34px;
+      display: grid;
+      place-items: center;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-weight: 700;
+    }
+
+    .help-button {
+      width: 26px;
+      min-width: 26px;
+      height: 26px;
+      min-height: 26px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      color: var(--blue);
+      background: var(--surface);
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-family: Georgia, serif;
+      font-size: .78rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .help-button[aria-expanded="true"] {
+      color: #fff;
+      background: var(--blue);
+    }
+
+    .help-popover {
+      position: fixed;
+      z-index: 80;
+      width: min(330px, calc(100vw - 24px));
+      padding: 12px 13px;
+      background: var(--surface);
+      border: 1px solid var(--blue);
+      border-radius: 9px;
+      box-shadow: 0 10px 30px rgb(0 0 0 / 24%);
+    }
+
+    .help-popover strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: .84rem;
+    }
+
+    .help-popover p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .78rem;
+      line-height: 1.45;
+    }
+
+    .form-footer {
+      position: sticky;
+      bottom: 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 9px;
+      margin: 14px -16px -16px;
+      padding: 10px 16px;
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(6px);
+    }
+
+    .form-save-status {
+      color: var(--muted);
+      font-size: .75rem;
+    }
+
+    .form-buttons {
+      display: flex;
+      gap: 7px;
+    }
+
+    .unsupported-detail {
+      min-height: 440px;
+      display: grid;
+      place-content: center;
+      gap: 9px;
+      padding: 35px;
+      text-align: center;
+    }
+
+    .unsupported-detail h2 {
+      margin: 0;
+    }
+
+    .unsupported-detail p {
+      max-width: 560px;
+      margin: 0 auto;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .spectrum-panel {
+      position: relative;
+      margin-top: 14px;
+      overflow: hidden;
+      background: #071019;
+      border-color: #334653;
+      color: #dce7ed;
+    }
+
+    .spectrum-panel .panel-head {
+      color: #edf6fa;
+      background: #14212a;
+      border-bottom-color: #334653;
+    }
+
+    .spectrum-panel .panel-head p {
+      color: #9fb1bc;
+    }
+
+    .spectrum-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 13px;
+      color: #c4d1d8;
+      background: #0b151d;
+      border-bottom: 1px solid #334653;
+    }
+
+    .spectrum-toolbar button,
+    .spectrum-toolbar select {
+      min-height: 32px;
+      color: #e0e9ee;
+      background: #1b2a34;
+      border-color: #4f6573;
+    }
+
+    .spectrum-toolbar .spacer {
+      flex: 1 1 20px;
+    }
+
+    .spectrum-control {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: .74rem;
+    }
+
+    .spectrum-control input[type="range"] {
+      width: 135px;
+      accent-color: #54c7b9;
+    }
+
+    .spectrum-control output {
+      min-width: 52px;
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .spectrum-plots {
+      position: relative;
+      min-height: 520px;
+      display: grid;
+      grid-template-rows: minmax(210px, .85fr) minmax(270px, 1.15fr);
+      background: #04090d;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .plot {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+      border-bottom: 1px solid #31444f;
+    }
+
+    .plot:last-child {
+      border-bottom: 0;
+    }
+
+    .plot-label {
+      position: absolute;
+      top: 8px;
+      left: 10px;
+      z-index: 2;
+      padding: 2px 5px;
+      color: #9fb1bc;
+      background: rgb(7 16 25 / 72%);
+      border-radius: 3px;
+      font-size: .68rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .spectrum-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+      transition: filter .16s ease-out, transform .16s ease-out;
+    }
+
+    .spectrum-canvas.dragging {
+      cursor: grabbing;
+    }
+
+    .spectrum-plots.refining .spectrum-canvas {
+      filter: blur(1.2px);
+      transform: scale(1.002);
+    }
+
+    .cursor-guide {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      z-index: 4;
+      width: 1px;
+      background: rgb(255 255 255 / 72%);
+      pointer-events: none;
+    }
+
+    .cursor-popup {
+      position: fixed;
+      z-index: 50;
+      display: grid;
+      gap: 1px;
+      min-width: 122px;
+      padding: 6px 8px;
+      color: #f7fbfd;
+      background: rgb(4 10 14 / 94%);
+      border: 1px solid #68808d;
+      border-radius: 6px;
+      box-shadow: 0 4px 14px rgb(0 0 0 / 38%);
+      font-size: .72rem;
+      pointer-events: none;
+    }
+
+    .cursor-popup strong {
+      color: #67d7cb;
+    }
+
+    .spectrum-blocker {
+      position: absolute;
+      inset: 55px 0 0;
+      z-index: 8;
+      display: grid;
+      place-content: center;
+      gap: 8px;
+      padding: 25px;
+      color: #dfe8ed;
+      background: rgb(4 10 14 / 91%);
+      text-align: center;
+    }
+
+    .spectrum-blocker strong {
+      font-size: 1rem;
+    }
+
+    .spectrum-blocker span {
+      max-width: 520px;
+      color: #aebdc5;
+      line-height: 1.5;
+    }
+
+    .spectrum-blocker button {
+      justify-self: center;
+      color: #e3eef2;
+      background: #1b2a34;
+      border-color: #68808d;
+    }
+
+    .spectrum-stats {
+      position: fixed;
+      z-index: 70;
+      width: 255px;
+      padding: 12px;
+      color: #dfe9ee;
+      background: #101c24;
+      border: 1px solid #526a78;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgb(0 0 0 / 38%);
+    }
+
+    .spectrum-stats-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .spectrum-stats h3 {
+      margin: 0;
+      font-size: .86rem;
+    }
+
+    .spectrum-stats button {
+      min-height: 26px;
+      padding: 2px 6px;
+      color: #dfe9ee;
+      background: transparent;
+      border-color: #526a78;
+      font-size: .7rem;
+    }
+
+    .spectrum-stats dl {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 5px 11px;
+      margin: 0;
+      font-size: .72rem;
+    }
+
+    .spectrum-stats dt {
+      color: #9fb1bc;
+    }
+
+    .spectrum-stats dd {
+      margin: 0;
+      font-weight: 700;
+    }
+
+    dialog {
+      width: min(600px, calc(100vw - 28px));
+      max-height: min(760px, calc(100vh - 28px));
+      padding: 0;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 11px;
+      box-shadow: 0 18px 52px rgb(0 0 0 / 34%);
+    }
+
+    dialog::backdrop {
+      background: rgb(6 12 18 / 58%);
+      backdrop-filter: blur(2px);
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 15px 17px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .modal-head h2 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .modal-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: .78rem;
+      line-height: 1.4;
+    }
+
+    .modal-close {
+      width: 32px;
+      min-width: 32px;
+      padding: 0;
+      font-size: 1.1rem;
+    }
+
+    .modal-body {
+      padding: 17px;
+      overflow: auto;
+    }
+
+    .modal-body dl {
+      display: grid;
+      grid-template-columns: minmax(130px, .7fr) 1.3fr;
+      gap: 9px 15px;
+      margin: 0;
+    }
+
+    .modal-body dt {
+      color: var(--muted);
+      font-weight: 650;
+    }
+
+    .modal-body dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 17px;
+      background: var(--surface-2);
+      border-top: 1px solid var(--line);
+    }
+
+    .recording-list {
+      display: grid;
+      gap: 8px;
+      margin: 0 0 15px;
+    }
+
+    .recording-list label {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      gap: 3px 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+    }
+
+    .recording-list input {
+      grid-row: 1 / span 2;
+      align-self: center;
+    }
+
+    .recording-list small {
+      color: var(--muted);
+    }
+
+    .review-scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 88;
+      background: rgb(6 12 18 / 42%);
+    }
+
+    .review-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 90;
+      width: min(480px, 100vw);
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      box-shadow: -12px 0 36px rgb(0 0 0 / 22%);
+    }
+
+    .review-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 17px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .review-head h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+
+    .review-head p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: .78rem;
+      line-height: 1.45;
+    }
+
+    .review-content {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .review-card {
+      margin-bottom: 10px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .review-card h3 {
+      margin: 0 0 3px;
+      font-size: .88rem;
+    }
+
+    .review-card p {
+      margin: 0 0 9px;
+      color: var(--muted);
+      font-size: .74rem;
+      line-height: 1.4;
+    }
+
+    .review-card select,
+    .review-card textarea {
+      width: 100%;
+      padding: 7px 9px;
+    }
+
+    .review-card textarea {
+      min-height: 76px;
+      margin-top: 7px;
+      resize: vertical;
+      line-height: 1.4;
+    }
+
+    .review-card-foot {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .68rem;
+    }
+
+    .review-foot {
+      padding: 12px 17px;
+      background: var(--surface-2);
+      border-top: 1px solid var(--line);
+    }
+
+    .review-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .review-save-state {
+      min-height: 18px;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: .72rem;
+    }
+
+    .review-save-state.warning {
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    .toast-region {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 100;
+      display: grid;
+      gap: 7px;
+      width: min(360px, calc(100vw - 32px));
+      pointer-events: none;
+    }
+
+    .toast {
+      padding: 10px 12px;
+      color: #fff;
+      background: #26343e;
+      border: 1px solid #596b78;
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      animation: toast-in .16s ease-out;
+    }
+
+    @keyframes toast-in {
+      from { transform: translateY(8px); opacity: 0; }
+    }
+
+    @media (max-width: 1050px) {
+      .settings-shell {
+        grid-template-columns: 205px minmax(0, 1fr);
+      }
+
+      .upper-workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .receiver-list {
+        min-height: 0;
+        grid-template-columns: repeat(2, minmax(260px, 1fr));
+      }
+
+      .editor-body {
+        max-height: none;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .topbar {
+        position: static;
+        grid-template-columns: 1fr max-content;
+        gap: 8px;
+        padding: 9px 12px;
+      }
+
+      .global-nav {
+        grid-column: 1 / -1;
+        grid-row: 2;
+      }
+
+      .global-nav button {
+        min-height: 39px;
+      }
+
+      .admin-summary span:last-child {
+        display: none;
+      }
+
+      .settings-shell {
+        display: block;
+      }
+
+      .settings-nav {
+        position: static;
+        width: 100%;
+        height: auto;
+        display: flex;
+        gap: 7px;
+        padding: 9px 12px;
+        overflow-x: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .settings-nav > h2,
+      .nav-group h3 {
+        display: none;
+      }
+
+      .nav-group {
+        display: contents;
+      }
+
+      .settings-nav button {
+        width: auto;
+        flex: 0 0 auto;
+      }
+
+      .future-tag {
+        display: none;
+      }
+
+      .settings-main {
+        padding: 14px 10px 44px;
+      }
+
+      .page-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .prototype-banner {
+        align-items: flex-start;
+      }
+
+      .scenario-control {
+        width: 100%;
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .scenario-control select {
+        width: 100%;
+      }
+
+      .receiver-list {
+        grid-template-columns: 1fr;
+      }
+
+      .form-grid,
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .field.full {
+        grid-column: auto;
+      }
+
+      .selected-actions {
+        align-items: stretch;
+      }
+
+      .selected-actions > button {
+        flex: 1 1 145px;
+      }
+
+      .more-menu {
+        flex: 1 1 145px;
+        margin-left: 0;
+      }
+
+      .more-menu summary {
+        justify-content: center;
+      }
+
+      .spectrum-toolbar {
+        align-items: flex-start;
+      }
+
+      .spectrum-control {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .spectrum-control input[type="range"] {
+        flex: 1 1 auto;
+      }
+
+      .spectrum-plots {
+        min-height: 470px;
+        grid-template-rows: 200px 270px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">sdrtrunk-vce</div>
+    <nav class="global-nav" aria-label="Main navigation">
+      <button type="button" data-future-page="Dashboard">Dashboard</button>
+      <button type="button" data-future-page="Live">Live</button>
+      <button type="button" data-future-page="Systems">Systems</button>
+      <button type="button" data-future-page="Events">Events</button>
+      <button type="button" data-future-page="Messages">Messages</button>
+      <button type="button" aria-current="page">Settings</button>
+    </nav>
+    <div class="admin-summary"><span class="admin-dot" aria-hidden="true"></span><span>Administrator</span></div>
+  </header>
+
+  <div class="settings-shell">
+    <nav class="settings-nav" aria-label="Settings sections">
+      <h2>Settings</h2>
+      <section class="nav-group" aria-labelledby="playlist-nav-title">
+        <h3 id="playlist-nav-title">Playlist Settings</h3>
+        <button type="button" aria-current="page">Hardware</button>
+        <button type="button" data-future-page="Channels">Channels <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Aliases">Aliases <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Listen lists">Listen lists <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Streaming">Streaming <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="RadioReference">RadioReference <span class="future-tag">Later</span></button>
+      </section>
+      <section class="nav-group" aria-labelledby="general-nav-title">
+        <h3 id="general-nav-title">General Settings</h3>
+        <button type="button" data-future-page="Calls">Calls <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Audio">Audio <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Voice decoders and keys">Voice decoders &amp; keys <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Performance">Performance <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Display and radio IDs">Display &amp; radio IDs <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Storage">Storage <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Statistics">Statistics <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Public access">Public access <span class="future-tag">Later</span></button>
+        <button type="button" data-future-page="Logs">Logs <span class="future-tag">Later</span></button>
+      </section>
+    </nav>
+
+    <main class="settings-main">
+      <header class="page-head">
+        <div>
+          <div class="breadcrumbs">Settings / Playlist Settings / Hardware</div>
+          <h1>Hardware</h1>
+          <p>Select a receiver to see only the controls that hardware supports. The actual model and serial number remain visible even when you add a shorter name.</p>
+        </div>
+        <div class="page-actions">
+          <span class="status-badge locked">Admin only</span>
+          <button id="open-review" class="review-button" type="button">Review this mockup</button>
+        </div>
+      </header>
+
+      <aside class="prototype-banner" aria-label="Prototype notice">
+        <div><strong>Design prototype</strong> — all receiver data and control responses are synthetic. Nothing here connects to or changes SDRTrunk, BOSGAME, or a tuner.</div>
+        <div class="scenario-control">
+          <label for="preview-scenario">Preview a state</label>
+          <select id="preview-scenario">
+            <option value="normal">Normal — active Airspy + idle RTL-SDR</option>
+            <option value="airspy-error">Airspy error — restart available</option>
+            <option value="rtl-disconnected">RTL-SDR disconnected</option>
+            <option value="rtl-failed">RTL-SDR detected but initialization failed</option>
+            <option value="unsupported">Detected but unsupported receiver</option>
+            <option value="disabled">Disabled receiver</option>
+            <option value="empty">No receivers found</option>
+            <option value="spectrum-busy">Spectrum in use elsewhere</option>
+          </select>
+        </div>
+      </aside>
+
+      <div class="hardware-workspace">
+        <div class="upper-workspace">
+          <section class="panel" aria-labelledby="receiver-list-title">
+            <header class="panel-head">
+              <div>
+                <h2 id="receiver-list-title">Receivers</h2>
+                <p>2 detected on this node</p>
+              </div>
+              <button id="add-recording-tuner" type="button">Add recording tuner</button>
+            </header>
+            <div id="receiver-list" class="receiver-list" aria-label="Detected receivers"></div>
+          </section>
+
+          <section id="selected-panel" class="panel selected-panel" aria-live="polite"></section>
+        </div>
+
+        <section id="spectrum-panel" class="panel spectrum-panel" aria-labelledby="spectrum-title" hidden>
+          <header class="panel-head">
+            <div>
+              <h2 id="spectrum-title">Spectrum</h2>
+              <p id="spectrum-target-label">Selected receiver</p>
+            </div>
+            <div class="page-actions">
+              <span id="spectrum-state" class="status-badge available" role="status" aria-live="polite">Synthetic preview</span>
+              <button id="close-spectrum" type="button">Close spectrum</button>
+            </div>
+          </header>
+          <div class="spectrum-toolbar" aria-label="Spectrum display controls">
+            <button id="spectrum-pause" type="button">Pause</button>
+            <button id="spectrum-reset" type="button">Reset zoom</button>
+            <div class="spectrum-control">
+              <label for="spectrum-overlays">Channel overlays</label>
+              <button class="help-button" type="button" aria-label="More information about channel overlays" aria-controls="context-help" aria-describedby="context-help" aria-expanded="false" data-help-title="Channel overlays" data-help="Shows configured channel ranges over the FFT. Enabled channels shows only channels currently allowed to run; All channels also includes disabled configurations; None hides the overlay.">i</button>
+              <select id="spectrum-overlays">
+                <option>Enabled channels</option>
+                <option>All channels</option>
+                <option>None</option>
+              </select>
+            </div>
+            <div class="spectrum-control">
+              <label for="spectrum-floor">Lower display limit</label>
+              <button class="help-button" type="button" aria-label="More information about lower display limit" aria-controls="context-help" aria-describedby="context-help" aria-expanded="false" data-help-title="Lower display limit" data-help="Changes browser display contrast only. It does not change receiver gain or decoder thresholds. Existing waterfall rows keep their original colors and scroll away normally; the new limit applies to new rows.">i</button>
+              <input id="spectrum-floor" type="range" min="-200" max="-40" step="5" value="-140">
+              <output id="spectrum-floor-output" for="spectrum-floor">−140 dB</output>
+            </div>
+            <div class="spacer"></div>
+            <button id="spectrum-display-options" type="button">Display options</button>
+          </div>
+          <div id="spectrum-plots" class="spectrum-plots">
+            <section class="plot">
+              <span class="plot-label">FFT · relative dB</span>
+              <canvas id="fft-canvas" class="spectrum-canvas" tabindex="0" aria-label="Synthetic FFT plot. Use the mouse wheel or plus and minus keys to zoom. Drag or use left and right arrows to pan. Press R to reset. Click a channel overlay to open its channel editor. Right-click or press Shift plus F10 for technical statistics."></canvas>
+              <span id="fft-guide" class="cursor-guide" hidden></span>
+            </section>
+            <section class="plot">
+              <span class="plot-label">Waterfall</span>
+              <canvas id="waterfall-canvas" class="spectrum-canvas" tabindex="0" aria-label="Synthetic waterfall plot. Use the mouse wheel or plus and minus keys to zoom. Drag or use left and right arrows to pan. Press R to reset. Right-click or press Shift plus F10 for technical statistics."></canvas>
+              <span id="waterfall-guide" class="cursor-guide" hidden></span>
+            </section>
+            <div id="spectrum-blocker" class="spectrum-blocker" hidden>
+              <strong>Spectrum is currently in use</strong>
+              <span>The single administrator spectrum workspace is open in another tab, window, or spectrum view. Closing that view releases it.</span>
+              <button id="spectrum-busy-close" type="button">Return to tuner settings</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="context-help" class="help-popover" role="tooltip" hidden>
+    <strong id="context-help-title"></strong>
+    <p id="context-help-copy"></p>
+  </div>
+
+  <div id="cursor-popup" class="cursor-popup" role="tooltip" hidden>
+    <strong id="cursor-frequency"></strong>
+    <span id="cursor-power"></span>
+  </div>
+
+  <aside id="spectrum-stats" class="spectrum-stats" role="dialog" aria-label="Spectrum technical statistics" hidden>
+    <div class="spectrum-stats-head">
+      <h3>Stats for nerds</h3>
+      <button id="close-spectrum-stats" type="button">Close</button>
+    </div>
+    <dl>
+      <dt>Peak</dt><dd id="stats-peak">—</dd>
+      <dt>Center</dt><dd id="stats-center">—</dd>
+      <dt>Visible span</dt><dd id="stats-span">—</dd>
+      <dt>Zoom</dt><dd id="stats-zoom">1.00×</dd>
+      <dt>Sent bins</dt><dd>4,096</dd>
+      <dt>FFT detail</dt><dd id="stats-fft">8,192</dd>
+      <dt>Rate</dt><dd>20 fps</dd>
+      <dt>Dropped</dt><dd>0</dd>
+      <dt>Generation</dt><dd>synthetic-v1</dd>
+    </dl>
+  </aside>
+
+  <dialog id="app-dialog" aria-labelledby="dialog-title">
+    <header class="modal-head">
+      <div>
+        <h2 id="dialog-title">Dialog</h2>
+        <p id="dialog-subtitle"></p>
+      </div>
+      <button id="dialog-close" class="modal-close" type="button" aria-label="Close dialog">×</button>
+    </header>
+    <div id="dialog-body" class="modal-body"></div>
+    <footer id="dialog-footer" class="modal-footer"></footer>
+  </dialog>
+
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" role="dialog" aria-modal="true" aria-labelledby="review-title" hidden>
+    <header class="review-head">
+      <div>
+        <h2 id="review-title">Hardware mockup review</h2>
+        <p>Choices and notes save only in this browser. They never change SDRTrunk or its database. Reference evidence:
+          MAIN-08 receiver inventory, MAIN-09 Airspy, MAIN-10 RTL-SDR, MAIN-11 recording tuner, and MAIN-12
+          spectrum/waterfall.</p>
+      </div>
+      <button id="close-review" class="modal-close" type="button" aria-label="Close review">×</button>
+    </header>
+    <div id="review-content" class="review-content"></div>
+    <footer class="review-foot">
+      <div class="review-actions">
+        <button id="download-review" type="button">Download review backup</button>
+        <button id="clear-review" class="button-danger" type="button">Clear review</button>
+      </div>
+      <div id="review-save-state" class="review-save-state" role="status" aria-live="polite">Checking browser storage…</div>
+    </footer>
+  </aside>
+
+  <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var baseReceivers = [
+        {
+          id: "airspy-637862dc",
+          kind: "airspy",
+          friendlyName: "Roof Airspy",
+          family: "Airspy",
+          model: "Airspy R820T",
+          serial: "637862DC-2E5DB5D7",
+          status: "Enabled",
+          connected: true,
+          frequency: 856.0625,
+          channels: 4,
+          locked: true,
+          sampleRate: 10,
+          ppm: -0.046,
+          measuredHz: -11,
+          measuredPpm: -0.013,
+          autoPpm: true,
+          centerFrequencyLocked: false,
+          minimum: 24,
+          maximum: 1800,
+          gainMode: "Linearity",
+          masterGain: 14,
+          ifGain: 0,
+          mixerAgc: true,
+          mixerGain: 8,
+          lnaAgc: true,
+          lnaGain: 8,
+          recording: false,
+          information: [
+            ["Device", "Airspy R820T"],
+            ["Serial", "637862DC-2E5DB5D7"],
+            ["Firmware", "v1.0.0-rc10-6-g4008185"],
+            ["Part", "6906002B00000030"],
+            ["Board", "Airspy"]
+          ]
+        },
+        {
+          id: "rtl-00000001",
+          kind: "rtl",
+          friendlyName: "RTL-SDR 1",
+          family: "RTL-2832",
+          model: "RTL-2832 / R828D Blog V4",
+          serial: "00000001",
+          status: "Enabled",
+          connected: true,
+          frequency: 867.775,
+          channels: 0,
+          locked: false,
+          sampleRate: 2.4,
+          ppm: -0.1,
+          measuredHz: 0,
+          measuredPpm: 0,
+          autoPpm: true,
+          centerFrequencyLocked: false,
+          minimum: 3.18,
+          maximum: 1782.03,
+          biasT: false,
+          gainMode: "Preset 327",
+          mixerGain: 9,
+          lnaGain: 222,
+          vgaGain: 210,
+          recording: false,
+          information: [
+            ["Device", "RTL-2832 / R828D Blog V4"],
+            ["USB ID", "0BDA:2838"],
+            ["Vendor", "RTLSDRBlog"],
+            ["Product", "Blog V4"],
+            ["Serial", "00000001"],
+            ["IR enabled", "Yes"],
+            ["Remote wake", "No"]
+          ]
+        }
+      ];
+
+      var unsupportedReceiver = {
+        id: "rtl-fc2580",
+        kind: "unsupported",
+        friendlyName: "",
+        family: "RTL-2832",
+        model: "RTL-2832 / FC2580",
+        serial: "DETECTED-03",
+        status: "Unsupported",
+        connected: true,
+        frequency: null,
+        channels: 0,
+        locked: false
+      };
+
+      var reviewSections = [
+        ["shell", "Settings shell and navigation", "Does the page hierarchy make it clear that Hardware belongs under Playlist Settings?"],
+        ["inventory", "Receiver inventory", "Review naming, real model/serial visibility, status, frequency, channel count, and lock state."],
+        ["editor", "Selected receiver editor", "Review information density, section order, fixed units, the common fixed-center option, and model-specific controls."],
+        ["actions", "Actions and confirmations", "Review enable/disable, restart-after-error, baseband recording, information, and diagnostic actions."],
+        ["spectrum", "Spectrum placement and behavior", "Review the full-width lower workspace, exclusive-use state, display controls, zoom, pan, cursor, and close action."],
+        ["states", "Empty, error, and unsupported states", "Use Preview a state above to review each non-happy path."],
+        ["help", "Contextual information buttons", "Review hover/focus preview, click/tap pinning, plain-language wording, and visible inline warnings."],
+        ["responsive", "Narrow-screen layout", "Review how navigation, receiver cards, forms, actions, and charts stack on a smaller browser window."]
+      ];
+
+      var REVIEW_STORAGE_KEY = "sdrtrunk.settings-hardware-mockup-review.v1";
+      var REVIEW_FORMAT = "sdrtrunk-settings-hardware-mockup-review";
+      var REVIEW_VERSION = 1;
+      var MAX_NOTE_LENGTH = 2000;
+      var reviewData = { entries: {}, updatedAt: "" };
+      var reviewStorageAvailable = true;
+      var reviewTimers = new Map();
+      var selectedId = "airspy-637862dc";
+      var scenario = "normal";
+      var dirty = false;
+      var helpPinned = null;
+      var helpVisibleFor = null;
+      var reviewReturnFocus = null;
+      var dialogReturnFocus = null;
+      var spectrumOpen = false;
+      var spectrumPaused = false;
+      var spectrumZoom = 1;
+      var spectrumOffset = 0;
+      var spectrumFloor = -140;
+      var spectrumDrag = null;
+      var spectrumSuppressClick = false;
+      var spectrumRefineTimer = null;
+      var initialHelpShown = false;
+
+      var receiverList = document.getElementById("receiver-list");
+      var selectedPanel = document.getElementById("selected-panel");
+      var spectrumPanel = document.getElementById("spectrum-panel");
+      var spectrumPlots = document.getElementById("spectrum-plots");
+      var fftCanvas = document.getElementById("fft-canvas");
+      var waterfallCanvas = document.getElementById("waterfall-canvas");
+      var fftGuide = document.getElementById("fft-guide");
+      var waterfallGuide = document.getElementById("waterfall-guide");
+      var cursorPopup = document.getElementById("cursor-popup");
+      var spectrumStats = document.getElementById("spectrum-stats");
+      var helpPopover = document.getElementById("context-help");
+      var appDialog = document.getElementById("app-dialog");
+      var reviewDrawer = document.getElementById("review-drawer");
+      var reviewScrim = document.getElementById("review-scrim");
+      var reviewSaveState = document.getElementById("review-save-state");
+
+      function escapeHtml(value) {
+        return String(value == null ? "" : value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function escapeAttribute(value) {
+        return escapeHtml(value).replaceAll("\n", " ");
+      }
+
+      function cloneReceiver(receiver) {
+        var copy = Object.assign({}, receiver);
+        if (receiver.information) copy.information = receiver.information.map(function (entry) { return entry.slice(); });
+        return copy;
+      }
+
+      function receiversForScenario() {
+        var receivers = baseReceivers.map(cloneReceiver);
+        if (scenario === "empty") return [];
+        if (scenario === "airspy-error") {
+          receivers[0].status = "Error";
+          receivers[0].connected = true;
+          receivers[0].locked = false;
+          receivers[0].channels = 0;
+          receivers[0].error = "USB transfer stopped after repeated device read failures.";
+        } else if (scenario === "rtl-disconnected") {
+          receivers[1].status = "Disconnected";
+          receivers[1].connected = false;
+          receivers[1].locked = false;
+          receivers[1].channels = 0;
+          receivers[1].error = "The USB device is no longer present.";
+        } else if (scenario === "rtl-failed") {
+          receivers[1].kind = "failed";
+          receivers[1].model = "RTL-2832 / unknown tuner";
+          receivers[1].status = "Error";
+          receivers[1].connected = true;
+          receivers[1].locked = false;
+          receivers[1].channels = 0;
+          receivers[1].frequency = null;
+          receivers[1].error = "The USB device was detected, but its tuner chip could not be initialized.";
+        } else if (scenario === "unsupported") {
+          receivers.push(cloneReceiver(unsupportedReceiver));
+        } else if (scenario === "disabled") {
+          receivers[1].status = "Disabled";
+          receivers[1].connected = true;
+          receivers[1].locked = false;
+          receivers[1].channels = 0;
+        }
+        return receivers;
+      }
+
+      function activeReceiver() {
+        return receiversForScenario().find(function (receiver) { return receiver.id === selectedId; }) || null;
+      }
+
+      function baseReceiver(id) {
+        return baseReceivers.find(function (receiver) { return receiver.id === id; }) || null;
+      }
+
+      function formatFrequency(value, decimals) {
+        if (!Number.isFinite(value)) return "—";
+        return value.toFixed(decimals == null ? 6 : decimals) + " MHz";
+      }
+
+      function formatSigned(value, decimals) {
+        if (!Number.isFinite(value)) return "—";
+        if (value === 0) return Number(value).toFixed(decimals);
+        return (value > 0 ? "+" : "") + Number(value).toFixed(decimals);
+      }
+
+      function statusClass(receiver) {
+        var status = String(receiver.status || "").toLowerCase();
+        if (status === "enabled") return receiver.locked ? "locked" : "enabled";
+        if (status === "error") return "error";
+        if (status === "disconnected") return "disconnected";
+        if (status === "unsupported") return "unsupported";
+        if (status === "disabled") return "disabled";
+        return "disabled";
+      }
+
+      function statusText(receiver) {
+        if (receiver.status === "Enabled" && receiver.locked) return "Active · locked";
+        if (receiver.status === "Enabled") return "Enabled · available";
+        return receiver.status;
+      }
+
+      function helpButton(label, copy) {
+        return '<button class="help-button" type="button" aria-label="More information about ' +
+          escapeAttribute(label) + '" aria-controls="context-help" aria-describedby="context-help" aria-expanded="false" data-help-title="' +
+          escapeAttribute(label) + '" data-help="' + escapeAttribute(copy) + '">i</button>';
+      }
+
+      function fieldLabel(label, copy, forId) {
+        var open = forId ? '<label for="' + escapeAttribute(forId) + '">' + escapeHtml(label) + "</label>" : "<span>" + escapeHtml(label) + "</span>";
+        return '<div class="field-label">' + open + helpButton(label, copy) + "</div>";
+      }
+
+      function showToast(message) {
+        var toast = document.createElement("div");
+        toast.className = "toast";
+        toast.textContent = message;
+        document.getElementById("toast-region").append(toast);
+        window.setTimeout(function () {
+          toast.remove();
+        }, 3600);
+      }
+
+      function receiverCard(receiver) {
+        var name = receiver.friendlyName || receiver.model;
+        var actual = receiver.friendlyName ? receiver.model + " · " + receiver.serial : "Serial " + receiver.serial;
+        var lockValue = receiver.status === "Enabled" ? (receiver.locked ? "Locked" : "Available") : receiver.status;
+        return [
+          '<button class="receiver-card" type="button" data-receiver-id="', escapeAttribute(receiver.id),
+          '" aria-pressed="',
+          receiver.id === selectedId ? "true" : "false", '">',
+          '<span class="receiver-name"><strong>', escapeHtml(name), '</strong><span>', escapeHtml(actual), "</span></span>",
+          '<span class="status-badge ', statusClass(receiver), '">', escapeHtml(statusText(receiver)), "</span>",
+          '<dl class="receiver-metrics">',
+          '<div><dt>Frequency</dt><dd>', formatFrequency(receiver.frequency), "</dd></div>",
+          '<div><dt>Channels</dt><dd>', escapeHtml(receiver.channels), "</dd></div>",
+          '<div><dt>State</dt><dd>', escapeHtml(lockValue), "</dd></div>",
+          "</dl></button>"
+        ].join("");
+      }
+
+      function renderReceiverList() {
+        var receivers = receiversForScenario();
+        var countCopy = document.querySelector('[aria-labelledby="receiver-list-title"] .panel-head p');
+        if (countCopy) countCopy.textContent = receivers.length + (receivers.length === 1 ? " receiver shown" : " receivers shown");
+        if (!receivers.length) {
+          receiverList.innerHTML = '<div class="empty-state"><strong>No receivers found</strong><span>Connect a supported USB tuner or add a managed I/Q recording tuner.</span></div>';
+          return;
+        }
+        receiverList.innerHTML = receivers.map(receiverCard).join("");
+      }
+
+      function commonStatusHeader(receiver) {
+        var name = receiver.friendlyName || receiver.model;
+        var statusNotice = "";
+        if (receiver.error) {
+          statusNotice = '<div class="inline-notice error"><strong>' + escapeHtml(receiver.status) + ':</strong><span>' +
+            escapeHtml(receiver.error) + "</span></div>";
+        } else if (receiver.locked) {
+          statusNotice = '<div class="inline-notice"><strong>Active channels are using this receiver.</strong><span>Center frequency, frequency limits, and sample rate stay locked so current calls are not interrupted. Safe settings can still be staged below.</span></div>';
+        } else if (receiver.status === "Disabled") {
+          statusNotice = '<div class="inline-notice"><strong>Receiver disabled.</strong><span>Enable it before changing live tuner controls or opening spectrum.</span></div>';
+        }
+        if (receiver.recording) {
+          statusNotice += '<div class="inline-notice"><strong>Baseband recording active.</strong><span>airspy-856062500-' +
+            new Date().toISOString().slice(0, 10) + '.wav · 428 MB. Size is current-only and is not stored as history.</span></div>';
+        }
+        return [
+          '<header class="selected-head">',
+          '<div class="selected-title-line"><div><h2>', escapeHtml(name), '</h2><p class="hardware-identity">',
+          escapeHtml(receiver.model), " · Serial ", escapeHtml(receiver.serial),
+          '</p></div><span class="status-badge ', statusClass(receiver), '">', escapeHtml(statusText(receiver)), "</span></div>",
+          '<dl class="status-grid">',
+          '<div><dt>Center frequency</dt><dd>', formatFrequency(receiver.frequency), "</dd></div>",
+          '<div><dt>Active channels</dt><dd>', escapeHtml(receiver.channels), "</dd></div>",
+          '<div><dt>Receiver state</dt><dd>', receiver.locked ? "Locked by activity" : (receiver.status === "Enabled" ? "Available" : escapeHtml(receiver.status)), "</dd></div>",
+          '<div><dt>Sample rate</dt><dd>', receiver.sampleRate ? receiver.sampleRate.toFixed(3) + " MHz" : "—", "</dd></div>",
+          "</dl>", statusNotice, "</header>"
+        ].join("");
+      }
+
+      function actionBar(receiver) {
+        var enabled = receiver.status === "Enabled";
+        var enableLabel = receiver.status === "Disabled" ? "Enable receiver" : "Disable receiver";
+        var enableDisabled = receiver.status !== "Enabled" && receiver.status !== "Disabled";
+        var restart = receiver.status === "Error" ?
+          '<button type="button" data-action="restart">Restart after error</button>' : "";
+        var recordingLabel = receiver.recording ? "Stop baseband recording" : "Record baseband";
+        return [
+          '<div class="selected-actions">',
+          '<button type="button" data-action="toggle-enable"', enableDisabled ? " disabled" : "", ">", escapeHtml(enableLabel), "</button>",
+          restart,
+          '<button type="button" data-action="record"', enabled ? "" : " disabled", ">", escapeHtml(recordingLabel), "</button>",
+          '<button type="button" data-action="view-spectrum" class="button-primary"', enabled ? "" : " disabled", ">View spectrum</button>",
+          '<button type="button" data-action="info">Tuner information</button>',
+          '<details class="more-menu"><summary>More</summary><div><button type="button" data-action="log-state">Log tuner state</button></div></details>',
+          "</div>"
+        ].join("");
+      }
+
+      function commonFields(receiver) {
+        var unavailable = receiver.status !== "Enabled";
+        var disruptiveLocked = unavailable || receiver.locked;
+        return [
+          '<section class="form-section"><h3 class="form-section-title">Identity ',
+          helpButton("Identity", "A friendly name helps you recognize the receiver. The real model and serial number always remain visible and are used to distinguish identical tuners."),
+          '</h3><div class="form-grid">',
+          '<div class="field full">', fieldLabel("Friendly name", "Optional. Give this receiver a short name such as Roof Airspy. Leaving it blank shows the hardware model instead.", "friendly-name"),
+          '<input id="friendly-name" name="friendlyName" type="text" maxlength="80" value="', escapeAttribute(receiver.friendlyName), '"', unavailable ? " disabled" : "", '>',
+          '<span class="field-hint">Optional · actual model and serial remain visible</span></div>',
+          "</div></section>",
+
+          '<section class="form-section"><h3 class="form-section-title">Frequency and correction ',
+          helpButton("Frequency and correction", "Frequency chooses the receiver center. The fixed-center option prevents automatic retuning. PPM correction compensates for a small oscillator error, and decoder auto-adjust may refine it from a supported control channel."),
+          '</h3><div class="form-grid">',
+          '<div class="field">', fieldLabel("Center frequency", "The midpoint of the bandwidth received by this tuner. Changing it may interrupt active channels, so it is locked while channels are using the device.", "center-frequency"),
+          '<div class="input-with-unit"><input id="center-frequency" name="frequency" type="number" step="0.000001" min="', receiver.minimum,
+          '" max="', receiver.maximum, '" value="', receiver.frequency, '"', disruptiveLocked ? " disabled" : "", '><span class="input-unit">MHz</span></div>',
+          '<span id="frequency-error" class="field-error" hidden></span></div>',
+          '<div class="field">', fieldLabel("Keep center frequency fixed", "Prevents SDRTrunk from automatically moving this tuner to another frequency. Only channels already inside the bandwidth being received can use it; other channels must use another tuner or will not start. You can still choose a different center frequency yourself while the tuner is not in use.", "center-frequency-locked"),
+          '<label class="checkbox-row"><input id="center-frequency-locked" name="centerFrequencyLocked" type="checkbox"', receiver.centerFrequencyLocked ? " checked" : "", unavailable ? " disabled" : "", '>Prevent automatic retuning</label>',
+          '<span class="field-hint">Only channels inside the tuner’s current usable passband can be assigned to it.</span></div>',
+          '<div class="field">', fieldLabel("Manual correction", "Adjusts the tuner oscillator from −1000.0 to +1000.0 parts per million in 0.1 steps. This does not alter the displayed channel frequency.", "ppm-correction"),
+          '<div class="input-with-unit"><input id="ppm-correction" name="ppm" type="number" min="-1000" max="1000" step="0.1" value="', receiver.ppm,
+          '"', unavailable ? " disabled" : "", '><span class="input-unit">PPM</span></div><span id="ppm-error" class="field-error" hidden></span></div>',
+          '<div class="field">', fieldLabel("Decoder auto-adjust", "When supported decoders measure a consistent tuning error, they may make a small automatic correction. The measured value remains visible separately.", "auto-ppm"),
+          '<label class="checkbox-row"><input id="auto-ppm" name="autoPpm" type="checkbox"', receiver.autoPpm ? " checked" : "", unavailable ? " disabled" : "", '>Allow supported decoders to refine PPM</label></div>',
+          '<div class="field">', fieldLabel("Measured channel error", "Read-only current measurement from a supported decoder. It is shown in hertz and PPM so it is not confused with the manual correction.", "measured-error"),
+          '<input id="measured-error" type="text" readonly value="', formatSigned(receiver.measuredHz, 0), ' Hz · ', formatSigned(receiver.measuredPpm, 3), ' PPM"></div>',
+          "</div></section>",
+
+          '<section class="form-section"><h3 class="form-section-title">Usable frequency range ',
+          helpButton("Usable frequency range", "Optional limits keep this receiver inside the frequency range you want SDRTrunk to use. They must remain within the hardware limits and wide enough for the selected sample rate."),
+          '</h3><div class="form-grid">',
+          '<div class="field">', fieldLabel("Minimum frequency", "The lowest center frequency SDRTrunk may use for this receiver. The hardware limit is shown below.", "minimum-frequency"),
+          '<div class="input-with-unit"><input id="minimum-frequency" name="minimum" type="number" step="0.01" min="', receiver.kind === "airspy" ? "24" : "3.18",
+          '" max="', receiver.maximum, '" value="', receiver.minimum, '"', disruptiveLocked ? " disabled" : "", '><span class="input-unit">MHz</span></div>',
+          '<span class="field-hint">Hardware minimum: ', receiver.kind === "airspy" ? "24.00" : "3.18", ' MHz</span></div>',
+          '<div class="field">', fieldLabel("Maximum frequency", "The highest center frequency SDRTrunk may use for this receiver. The range must remain at least as wide as the selected sample rate.", "maximum-frequency"),
+          '<div class="input-with-unit"><input id="maximum-frequency" name="maximum" type="number" step="0.01" min="', receiver.minimum,
+          '" max="', receiver.kind === "airspy" ? "1800" : "1782.03", '" value="', receiver.maximum, '"', disruptiveLocked ? " disabled" : "", '><span class="input-unit">MHz</span></div>',
+          '<span class="field-hint">Hardware maximum: ', receiver.kind === "airspy" ? "1800.00" : "1782.03", ' MHz</span></div>',
+          '<div id="extent-error-wrap" class="field full" hidden><span id="extent-error" class="field-error"></span></div>',
+          '<div class="field full"><button type="button" data-action="reset-extents"', disruptiveLocked ? " disabled" : "", '>Reset to hardware limits</button></div>',
+          "</div></section>"
+        ].join("");
+      }
+
+      function airspyFields(receiver) {
+        var unavailable = receiver.status !== "Enabled";
+        return [
+          '<section class="form-section"><h3 class="form-section-title">Airspy sampling ',
+          helpButton("Airspy sampling", "The receiver reports the sample rates it supports. A higher rate covers more spectrum but uses more USB bandwidth and processing. Active channels lock this choice."),
+          '</h3><div class="form-grid"><div class="field full">',
+          fieldLabel("Sample rate", "The amount of radio spectrum captured at once. Changing this is disruptive and is unavailable while channels are active.", "airspy-sample-rate"),
+          '<select id="airspy-sample-rate" name="sampleRate"', unavailable || receiver.locked ? " disabled" : "", '>',
+          '<option value="10"', receiver.sampleRate === 10 ? " selected" : "", '>10.000 MHz</option>',
+          '<option value="6"', receiver.sampleRate === 6 ? " selected" : "", '>6.000 MHz</option>',
+          '<option value="2.5"', receiver.sampleRate === 2.5 ? " selected" : "", '>2.500 MHz</option>',
+          "</select><span class=\"field-hint\">Options come from this physical Airspy.</span></div></div></section>",
+
+          '<section class="form-section"><h3 class="form-section-title">Airspy gain ',
+          helpButton("Airspy gain", "Linearity and Sensitivity use coordinated stage presets. Custom mode exposes IF, mixer, and LNA stages. Slider changes will be combined before the real hardware is updated."),
+          '</h3><div class="form-grid">',
+          '<div class="field">', fieldLabel("Gain mode", "Linearity favors strong-signal handling. Sensitivity favors weak signals. Custom lets you set each gain stage.", "airspy-gain-mode"),
+          '<select id="airspy-gain-mode" name="gainMode"', unavailable ? " disabled" : "", '>',
+          '<option', receiver.gainMode === "Linearity" ? " selected" : "", '>Linearity</option>',
+          '<option', receiver.gainMode === "Sensitivity" ? " selected" : "", '>Sensitivity</option>',
+          '<option', receiver.gainMode === "Custom" ? " selected" : "", '>Custom</option></select></div>',
+          '<div id="airspy-master-field" class="field">', fieldLabel("Master gain", "A coordinated 1–22 gain setting used by Linearity and Sensitivity modes. It does not claim a calibrated dB value.", "airspy-master"),
+          '<div class="range-row"><input id="airspy-master" name="masterGain" type="range" min="1" max="22" step="1" value="', receiver.masterGain,
+          '"', unavailable ? " disabled" : "", '><output id="airspy-master-output" class="range-output">', receiver.masterGain, "</output></div></div>",
+          '<div id="airspy-custom-fields" class="field full"><div class="form-grid">',
+          '<div class="field">', fieldLabel("IF gain", "Custom-mode intermediate-frequency gain, from 0 to 15. Changes are combined before being sent to the tuner.", "airspy-if"),
+          '<div class="range-row"><input id="airspy-if" name="ifGain" type="range" min="0" max="15" step="1" value="', receiver.ifGain,
+          '"', unavailable ? " disabled" : "", '><output id="airspy-if-output" class="range-output">', receiver.ifGain, "</output></div></div>",
+          '<div class="field">', fieldLabel("Mixer gain", "Custom-mode mixer gain, from 0 to 15. Automatic mixer gain disables this manual slider.", "airspy-mixer"),
+          '<label class="checkbox-row"><input id="airspy-mixer-agc" name="mixerAgc" type="checkbox"', receiver.mixerAgc ? " checked" : "", unavailable ? " disabled" : "", '>Automatic mixer gain</label>',
+          '<div class="range-row"><input id="airspy-mixer" name="mixerGain" type="range" min="0" max="15" step="1" value="', receiver.mixerGain,
+          '"', unavailable || receiver.mixerAgc ? " disabled" : "", '><output id="airspy-mixer-output" class="range-output">', receiver.mixerGain, "</output></div></div>",
+          '<div class="field">', fieldLabel("LNA gain", "Custom-mode low-noise-amplifier gain, from 0 to 14. Automatic LNA gain disables this manual slider.", "airspy-lna"),
+          '<label class="checkbox-row"><input id="airspy-lna-agc" name="lnaAgc" type="checkbox"', receiver.lnaAgc ? " checked" : "", unavailable ? " disabled" : "", '>Automatic LNA gain</label>',
+          '<div class="range-row"><input id="airspy-lna" name="lnaGain" type="range" min="0" max="14" step="1" value="', receiver.lnaGain,
+          '"', unavailable || receiver.lnaAgc ? " disabled" : "", '><output id="airspy-lna-output" class="range-output">', receiver.lnaGain, "</output></div></div>",
+          "</div></div></div></section>"
+        ].join("");
+      }
+
+      function rtlSampleOptions(selected) {
+        var rates = [0.288, 0.3, 0.96, 1.024, 1.2, 1.44, 1.6, 1.8, 1.92, 2.048, 2.304, 2.4, 2.56, 2.88];
+        return rates.map(function (rate) {
+          return '<option value="' + rate + '"' + (rate === selected ? " selected" : "") + ">" + rate.toFixed(3) + " MHz</option>";
+        }).join("");
+      }
+
+      function rtlFields(receiver) {
+        var unavailable = receiver.status !== "Enabled";
+        return [
+          '<section class="form-section"><h3 class="form-section-title">RTL-SDR sampling ',
+          helpButton("RTL-SDR sampling", "This section is rendered only because the selected RTL-SDR reports these capabilities. Bias-T appears only on devices that support it."),
+          '</h3><div class="form-grid">',
+          '<div class="field">', fieldLabel("Sample rate", "The amount of spectrum captured at once. Changing it may interrupt reception and is locked while channels are active.", "rtl-sample-rate"),
+          '<select id="rtl-sample-rate" name="sampleRate"', unavailable || receiver.locked ? " disabled" : "", '>', rtlSampleOptions(receiver.sampleRate), "</select></div>",
+          '<div class="field">', fieldLabel("Bias-T power", "Supplies power through the antenna connector for compatible accessories. Enable it only when the connected hardware expects it.", "rtl-bias-t"),
+          '<label class="checkbox-row"><input id="rtl-bias-t" name="biasT" type="checkbox"', receiver.biasT ? " checked" : "", unavailable ? " disabled" : "", '>Supply antenna-line power</label>',
+          '<span class="field-hint warning">This sends DC power through the antenna connector. Confirm the connected accessory supports it.</span></div>',
+          "</div></section>",
+
+          '<section class="form-section"><h3 class="form-section-title">RTL-SDR gain ',
+          helpButton("RTL-SDR gain", "Automatic and preset modes manage the individual stages. Manual mode exposes mixer, LNA, and VGA values reported by this tuner."),
+          '</h3><div class="form-grid">',
+          '<div class="field">', fieldLabel("Gain mode", "Automatic lets the tuner choose. A supported preset fills the hardware stages. Manual allows direct stage selection.", "rtl-gain-mode"),
+          '<select id="rtl-gain-mode" name="gainMode"', unavailable ? " disabled" : "", '>',
+          '<option', receiver.gainMode === "Automatic" ? " selected" : "", '>Automatic</option>',
+          '<option', receiver.gainMode === "Preset 327" ? " selected" : "", '>Preset 327</option>',
+          '<option', receiver.gainMode === "Manual" ? " selected" : "", '>Manual</option></select></div>',
+          '<div id="rtl-manual-fields" class="field full"><div class="form-grid">',
+          '<div class="field">', fieldLabel("Mixer value", "A device-provided mixer-stage value. It is intentionally not labeled dB because the hardware has not established that unit here.", "rtl-mixer"),
+          '<select id="rtl-mixer" name="mixerGain"', unavailable ? " disabled" : "", '><option>0</option><option', receiver.mixerGain === 9 ? " selected" : "", '>9</option><option>15</option></select></div>',
+          '<div class="field">', fieldLabel("LNA value", "A device-provided low-noise-amplifier stage value. Preset modes fill and lock it.", "rtl-lna"),
+          '<select id="rtl-lna" name="lnaGain"', unavailable ? " disabled" : "", '><option>0</option><option', receiver.lnaGain === 222 ? " selected" : "", '>222</option><option>496</option></select></div>',
+          '<div class="field">', fieldLabel("VGA value", "A device-provided variable-gain-amplifier stage value. Preset modes fill and lock it.", "rtl-vga"),
+          '<select id="rtl-vga" name="vgaGain"', unavailable ? " disabled" : "", '><option>0</option><option', receiver.vgaGain === 210 ? " selected" : "", '>210</option><option>420</option></select></div>',
+          "</div></div></div></section>"
+        ].join("");
+      }
+
+      function formFooter(receiver) {
+        return [
+          '<div class="form-footer"><span id="form-save-status" class="form-save-status" role="status" aria-live="polite">',
+          receiver.locked ? "Safe fields may be staged; disruptive controls remain locked." : "No changes staged.",
+          '</span><div class="form-buttons"><button type="button" data-action="discard" disabled>Discard</button>',
+          '<button type="submit" class="button-primary" disabled>Apply changes</button></div></div>'
+        ].join("");
+      }
+
+      function renderUnavailable(receiver) {
+        var retry = receiver.status === "Disconnected" || receiver.kind === "failed" ?
+          '<button type="button" data-action="retry">' + (receiver.kind === "failed" ? "Retry initialization" : "Retry connection") + "</button>" : "";
+        var explanation;
+        if (receiver.status === "Unsupported") {
+          explanation = "SDRTrunk can identify this tuner chip but does not have a working controller for it. No settings or start action are offered, so the page does not imply support that is not present.";
+        } else if (receiver.kind === "failed") {
+          explanation = "The USB receiver was found, but tuner initialization failed. Identity, current error, and Retry are available; frequency and gain controls are not fabricated.";
+        } else {
+          explanation = "The receiver is not connected. Its last known identity is shown, but settings are hidden until the device is present again.";
+        }
+        selectedPanel.innerHTML = [
+          '<div class="unsupported-detail"><span class="status-badge ', statusClass(receiver), '">', escapeHtml(receiver.status), "</span>",
+          "<h2>", escapeHtml(receiver.friendlyName || receiver.model), "</h2>",
+          '<p>', escapeHtml(receiver.model), " · Serial ", escapeHtml(receiver.serial), "</p>",
+          "<p>", escapeHtml(explanation), "</p>",
+          retry, "</div>"
+        ].join("");
+      }
+
+      function renderRecordingEditor(receiver) {
+        selectedPanel.innerHTML = [
+          commonStatusHeader(receiver),
+          '<div class="selected-actions"><button type="button" data-action="remove-recording" class="button-danger">Remove recording tuner</button>',
+          '<button type="button" data-action="view-spectrum" class="button-primary">View spectrum</button></div>',
+          '<div class="editor-body"><section class="form-section"><h3 class="form-section-title">Managed recording source ',
+          helpButton("Managed recording source", "Recording tuners use a compatible I/Q WAV file already inside SDRTrunk's managed recordings folder. The website does not upload files or browse arbitrary computer paths."),
+          '</h3><div class="form-grid">',
+          '<div class="field full">', fieldLabel("Recording file", "Read-only file selected from SDRTrunk's managed recordings folder.", "recording-file"),
+          '<input id="recording-file" readonly value="', escapeAttribute(receiver.fileName), '"><span class="field-hint">Managed recordings / ', escapeHtml(receiver.fileName), "</span></div>",
+          '<div class="field">', fieldLabel("Recording center frequency", "The radio center frequency stored with this I/Q recording.", "recording-center"),
+          '<div class="input-with-unit"><input id="recording-center" type="number" value="', receiver.frequency,
+          '" step="0.000001"><span class="input-unit">MHz</span></div></div>',
+          '<div class="field">', fieldLabel("Keep center frequency fixed", "Prevents SDRTrunk from automatically moving this tuner to another frequency. Only channels already inside the bandwidth represented by the recording can use it. You can still choose a different center frequency yourself while the tuner is not in use.", "recording-center-frequency-locked"),
+          '<label class="checkbox-row"><input id="recording-center-frequency-locked" type="checkbox" data-recording-center-lock', receiver.centerFrequencyLocked ? " checked" : "", '>Prevent automatic retuning</label>',
+          '<span class="field-hint">This is the same shared tuner setting shown for physical receivers.</span></div>',
+          "</div></section></div>"
+        ].join("");
+      }
+
+      function renderSelectedPanel() {
+        closeHelp();
+        var receiver = activeReceiver();
+        if (!receiver) {
+          selectedPanel.innerHTML = '<div class="empty-state"><strong>Select a receiver</strong><span>Receiver settings and actions appear here.</span></div>';
+          return;
+        }
+        if (receiver.kind === "unsupported" || receiver.kind === "failed" || receiver.status === "Disconnected") {
+          renderUnavailable(receiver);
+          wireHelpButtons();
+          return;
+        }
+        if (receiver.kind === "recording") {
+          renderRecordingEditor(receiver);
+          wireHelpButtons();
+          return;
+        }
+        selectedPanel.innerHTML = [
+          commonStatusHeader(receiver),
+          actionBar(receiver),
+          '<form id="tuner-form" class="editor-body" novalidate>',
+          commonFields(receiver),
+          receiver.kind === "airspy" ? airspyFields(receiver) : rtlFields(receiver),
+          formFooter(receiver),
+          "</form>"
+        ].join("");
+        dirty = false;
+        updateCapabilityVisibility();
+        wireEditor();
+        wireHelpButtons();
+        if (!initialHelpShown) {
+          initialHelpShown = true;
+          window.setTimeout(function () {
+            var initial = selectedPanel.querySelector('.help-button[data-help-title="Friendly name"]');
+            if (initial) showHelp(initial, true);
+          }, 120);
+        }
+      }
+
+      function renderAll() {
+        renderReceiverList();
+        renderSelectedPanel();
+        if (spectrumOpen) updateSpectrumTarget();
+      }
+
+      function selectReceiver(id) {
+        if (dirty && !window.confirm("Discard the staged mock changes and select another receiver?")) return;
+        selectedId = id;
+        dirty = false;
+        if (spectrumOpen) closeSpectrum();
+        renderAll();
+      }
+
+      function updateCapabilityVisibility() {
+        var airspyMode = document.getElementById("airspy-gain-mode");
+        var airspyMaster = document.getElementById("airspy-master-field");
+        var airspyCustom = document.getElementById("airspy-custom-fields");
+        if (airspyMode && airspyMaster && airspyCustom) {
+          var custom = airspyMode.value === "Custom";
+          airspyMaster.hidden = custom;
+          airspyCustom.hidden = !custom;
+        }
+        var rtlMode = document.getElementById("rtl-gain-mode");
+        var rtlManual = document.getElementById("rtl-manual-fields");
+        if (rtlMode && rtlManual) {
+          var manual = rtlMode.value === "Manual";
+          rtlManual.hidden = !manual;
+          rtlManual.querySelectorAll("select").forEach(function (control) {
+            control.disabled = !manual || activeReceiver().status !== "Enabled";
+          });
+        }
+        var mixerAgc = document.getElementById("airspy-mixer-agc");
+        var mixer = document.getElementById("airspy-mixer");
+        if (mixerAgc && mixer) mixer.disabled = mixerAgc.disabled || mixerAgc.checked;
+        var lnaAgc = document.getElementById("airspy-lna-agc");
+        var lna = document.getElementById("airspy-lna");
+        if (lnaAgc && lna) lna.disabled = lnaAgc.disabled || lnaAgc.checked;
+      }
+
+      function updateRangeOutputs(target) {
+        var output = document.getElementById(target.id + "-output");
+        if (output) output.value = target.value;
+      }
+
+      function stagedImpact(target) {
+        var status = document.getElementById("form-save-status");
+        if (!status) return;
+        var disruptiveNames = ["frequency", "minimum", "maximum", "sampleRate"];
+        if (target.name === "centerFrequencyLocked") {
+          status.textContent = "Fixed-center choice staged. Applying it will not retune the receiver now.";
+        } else if (disruptiveNames.indexOf(target.name) >= 0) {
+          status.textContent = "Applying this would briefly interrupt reception after confirmation.";
+        } else {
+          status.textContent = "Safe change staged. The real implementation will combine rapid slider updates.";
+        }
+      }
+
+      function markDirty(event) {
+        if (!event.target.name) return;
+        dirty = true;
+        updateRangeOutputs(event.target);
+        updateCapabilityVisibility();
+        stagedImpact(event.target);
+        var form = document.getElementById("tuner-form");
+        if (form) {
+          var apply = form.querySelector('button[type="submit"]');
+          var discard = form.querySelector('[data-action="discard"]');
+          if (apply) apply.disabled = false;
+          if (discard) discard.disabled = false;
+        }
+      }
+
+      function validateForm() {
+        var receiver = activeReceiver();
+        var frequency = document.getElementById("center-frequency");
+        var minimum = document.getElementById("minimum-frequency");
+        var maximum = document.getElementById("maximum-frequency");
+        var sample = document.querySelector('#tuner-form [name="sampleRate"]');
+        var ppm = document.getElementById("ppm-correction");
+        var valid = true;
+        var frequencyError = document.getElementById("frequency-error");
+        var extentWrap = document.getElementById("extent-error-wrap");
+        var extentError = document.getElementById("extent-error");
+        var ppmError = document.getElementById("ppm-error");
+
+        [frequency, minimum, maximum, ppm].forEach(function (input) {
+          if (input) input.removeAttribute("aria-invalid");
+        });
+        if (frequencyError) frequencyError.hidden = true;
+        if (extentWrap) extentWrap.hidden = true;
+        if (ppmError) ppmError.hidden = true;
+
+        var minValue = minimum ? Number(minimum.value) : NaN;
+        var maxValue = maximum ? Number(maximum.value) : NaN;
+        var frequencyValue = frequency ? Number(frequency.value) : NaN;
+        var sampleValue = sample ? Number(sample.value) : 0;
+        var hardwareMinimum = receiver && receiver.kind === "airspy" ? 24 : 3.18;
+        var hardwareMaximum = receiver && receiver.kind === "airspy" ? 1800 : 1782.03;
+        if (frequency && (!Number.isFinite(frequencyValue) || frequencyValue < minValue || frequencyValue > maxValue)) {
+          valid = false;
+          frequency.setAttribute("aria-invalid", "true");
+          frequencyError.textContent = "Center frequency must be inside the selected minimum and maximum.";
+          frequencyError.hidden = false;
+        }
+        if (minimum && maximum && (!Number.isFinite(minValue) || !Number.isFinite(maxValue) ||
+          minValue < hardwareMinimum || maxValue > hardwareMaximum ||
+          minValue >= maxValue || maxValue - minValue < sampleValue)) {
+          valid = false;
+          minimum.setAttribute("aria-invalid", "true");
+          maximum.setAttribute("aria-invalid", "true");
+          extentError.textContent = "Range must stay inside the hardware limits (" + hardwareMinimum.toFixed(2) +
+            "–" + hardwareMaximum.toFixed(2) + " MHz), maximum must exceed minimum, and the range must be at least " +
+            sampleValue.toFixed(3) + " MHz wide.";
+          extentWrap.hidden = false;
+        }
+        if (ppm) {
+          var ppmValue = Number(ppm.value);
+          if (!Number.isFinite(ppmValue) || ppmValue < -1000 || ppmValue > 1000) {
+            valid = false;
+            ppm.setAttribute("aria-invalid", "true");
+            ppmError.textContent = "Correction must be between −1000.0 and +1000.0 PPM.";
+            ppmError.hidden = false;
+          }
+        }
+        return valid;
+      }
+
+      function commitFormData(receiver, data) {
+        var stored = baseReceiver(receiver.id);
+        if (stored) {
+          stored.friendlyName = String(data.get("friendlyName") || "").trim();
+          if (data.has("frequency")) stored.frequency = Number(data.get("frequency"));
+          if (data.has("ppm")) stored.ppm = Number(data.get("ppm"));
+          stored.autoPpm = data.has("autoPpm");
+          stored.centerFrequencyLocked = data.has("centerFrequencyLocked");
+          if (data.has("minimum")) stored.minimum = Number(data.get("minimum"));
+          if (data.has("maximum")) stored.maximum = Number(data.get("maximum"));
+          if (data.has("sampleRate")) stored.sampleRate = Number(data.get("sampleRate"));
+          if (data.has("gainMode")) stored.gainMode = String(data.get("gainMode"));
+          if (data.has("masterGain")) stored.masterGain = Number(data.get("masterGain"));
+          if (data.has("ifGain")) stored.ifGain = Number(data.get("ifGain"));
+          stored.mixerAgc = data.has("mixerAgc");
+          if (data.has("mixerGain")) stored.mixerGain = Number(data.get("mixerGain"));
+          stored.lnaAgc = data.has("lnaAgc");
+          if (data.has("lnaGain")) stored.lnaGain = Number(data.get("lnaGain"));
+          if (data.has("vgaGain")) stored.vgaGain = Number(data.get("vgaGain"));
+          stored.biasT = data.has("biasT");
+        }
+        dirty = false;
+        renderAll();
+        showToast("Mock changes applied to this page only. Reloading restores the fixture.");
+      }
+
+      function applyForm(event) {
+        event.preventDefault();
+        if (!validateForm()) return;
+        var receiver = activeReceiver();
+        var form = document.getElementById("tuner-form");
+        var data = new FormData(form);
+        var disruptive = [
+          ["frequency", receiver.frequency],
+          ["minimum", receiver.minimum],
+          ["maximum", receiver.maximum],
+          ["sampleRate", receiver.sampleRate]
+        ].some(function (entry) {
+          return data.has(entry[0]) && Number(data.get(entry[0])) !== Number(entry[1]);
+        });
+        if (receiver.kind === "rtl" && data.has("biasT") !== Boolean(receiver.biasT)) disruptive = true;
+        if (disruptive) {
+          confirmReceiverAction("Apply disruptive receiver changes?",
+            "This hardware-affecting change may briefly interrupt or retune the receiver. The real service will apply one receiver change at a time without making radio or USB processing wait, then report whether it succeeded.",
+            "Apply changes", function () {
+              commitFormData(receiver, data);
+            });
+        } else {
+          commitFormData(receiver, data);
+        }
+      }
+
+      function wireEditor() {
+        var form = document.getElementById("tuner-form");
+        if (!form) return;
+        form.addEventListener("input", markDirty);
+        form.addEventListener("change", markDirty);
+        form.addEventListener("submit", applyForm);
+      }
+
+      function resetExtents() {
+        var receiver = activeReceiver();
+        var minimum = document.getElementById("minimum-frequency");
+        var maximum = document.getElementById("maximum-frequency");
+        if (!minimum || !maximum) return;
+        minimum.value = receiver.kind === "airspy" ? "24" : "3.18";
+        maximum.value = receiver.kind === "airspy" ? "1800" : "1782.03";
+        markDirty({ target: minimum });
+      }
+
+      function informationBody(receiver) {
+        var entries = receiver.information || [
+          ["Device", receiver.model],
+          ["Serial", receiver.serial]
+        ];
+        return "<dl>" + entries.map(function (entry) {
+          return "<dt>" + escapeHtml(entry[0]) + "</dt><dd>" + escapeHtml(entry[1]) + "</dd>";
+        }).join("") + "</dl>";
+      }
+
+      function openDialog(options) {
+        closeHelp();
+        dialogReturnFocus = document.activeElement;
+        document.getElementById("dialog-title").textContent = options.title || "Dialog";
+        document.getElementById("dialog-subtitle").textContent = options.subtitle || "";
+        document.getElementById("dialog-body").innerHTML = options.body || "";
+        var footer = document.getElementById("dialog-footer");
+        footer.innerHTML = "";
+        (options.buttons || [{ label: "Close", action: closeDialog }]).forEach(function (definition) {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.textContent = definition.label;
+          if (definition.className) button.className = definition.className;
+          button.addEventListener("click", definition.action || closeDialog);
+          footer.append(button);
+        });
+        if (typeof appDialog.showModal === "function") appDialog.showModal();
+        else appDialog.setAttribute("open", "");
+        appDialog.append(helpPopover);
+        var first = footer.querySelector("button");
+        if (first) first.focus();
+      }
+
+      function closeDialog() {
+        closeHelp();
+        if (typeof appDialog.close === "function" && appDialog.open) appDialog.close();
+        else appDialog.removeAttribute("open");
+        document.body.append(helpPopover);
+        if (dialogReturnFocus && dialogReturnFocus.isConnected) dialogReturnFocus.focus();
+        dialogReturnFocus = null;
+      }
+
+      function confirmReceiverAction(title, copy, actionLabel, action) {
+        openDialog({
+          title: title,
+          subtitle: "This is a non-operational design example.",
+          body: "<p>" + escapeHtml(copy) + "</p>",
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: actionLabel, className: actionLabel.toLowerCase().includes("disable") ? "button-danger" : "button-primary", action: function () {
+              closeDialog();
+              action();
+            }}
+          ]
+        });
+      }
+
+      function toggleReceiver() {
+        var receiver = activeReceiver();
+        if (!receiver) return;
+        var disabling = receiver.status === "Enabled";
+        var impact = disabling && receiver.channels ?
+          "This receiver currently serves " + receiver.channels + " active channels. Disabling it would stop those channels and release its spectrum workspace." :
+          (disabling ? "Disabling this idle receiver would stop it and release its spectrum workspace." : "Enabling this receiver would make it available to configured channels.");
+        confirmReceiverAction(disabling ? "Disable receiver?" : "Enable receiver?", impact,
+          disabling ? "Disable receiver" : "Enable receiver", function () {
+            var stored = baseReceiver(receiver.id);
+            if (stored) {
+              stored.status = disabling ? "Disabled" : "Enabled";
+              if (disabling) {
+                stored.channels = 0;
+                stored.locked = false;
+              }
+            }
+            scenario = "normal";
+            document.getElementById("preview-scenario").value = "normal";
+            closeSpectrum();
+            renderAll();
+            showToast(disabling ? "Synthetic receiver disabled." : "Synthetic receiver enabled.");
+          });
+      }
+
+      function restartReceiver() {
+        var receiver = activeReceiver();
+        confirmReceiverAction("Restart receiver after error?", "The receiver has no active channels. Restarting would close its USB connection, reopen it, and then report the current result.", "Restart receiver", function () {
+          scenario = "normal";
+          document.getElementById("preview-scenario").value = "normal";
+          renderAll();
+          showToast("Synthetic restart completed.");
+        });
+      }
+
+      function toggleRecording() {
+        var receiver = activeReceiver();
+        var stored = baseReceiver(receiver.id);
+        if (!stored) return;
+        if (receiver.recording) {
+          stored.recording = false;
+          renderAll();
+          showToast("Synthetic baseband recording stopped.");
+          return;
+        }
+        confirmReceiverAction("Start wideband baseband recording?",
+          "This would write a large I/Q WAV file into SDRTrunk's managed recordings folder. It does not upload the file or choose an arbitrary computer path.",
+          "Start recording", function () {
+            stored.recording = true;
+            scenario = "normal";
+            document.getElementById("preview-scenario").value = "normal";
+            renderAll();
+            showToast("Synthetic baseband recording started.");
+          });
+      }
+
+      function addRecordingTunerDialog() {
+        openDialog({
+          title: "Add recording tuner",
+          subtitle: "Choose a compatible I/Q WAV already in SDRTrunk's managed recordings folder.",
+          body: [
+            '<div class="recording-list">',
+            '<label><input type="radio" name="recording-choice" value="bosgame-airspy-sample.wav"><strong>bosgame-airspy-sample.wav</strong><small>10.000 MHz sample rate · 1.2 GB</small></label>',
+            '<label><input type="radio" name="recording-choice" value="rtl-validation-867775.wav"><strong>rtl-validation-867775.wav</strong><small>2.400 MHz sample rate · 184 MB</small></label>',
+            "</div>",
+            '<div class="field">', fieldLabel("Recording center frequency", "Enter the radio center frequency represented by the I/Q recording. This value is required to place channels and spectrum correctly.", "add-recording-center"),
+            '<div class="input-with-unit"><input id="add-recording-center" type="number" min="0.001" step="0.000001" value="856.062500"><span class="input-unit">MHz</span></div>',
+            '<span class="field-hint">No upload and no arbitrary computer path.</span></div>'
+          ].join(""),
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Add recording tuner", className: "button-primary", action: addRecordingTuner }
+          ]
+        });
+        wireHelpButtons();
+      }
+
+      function addRecordingTuner() {
+        var selected = appDialog.querySelector('input[name="recording-choice"]:checked');
+        var center = document.getElementById("add-recording-center");
+        if (!selected || !center || !Number.isFinite(Number(center.value)) || Number(center.value) <= 0) {
+          showToast("Choose a managed recording and enter a valid center frequency.");
+          return;
+        }
+        var existing = baseReceivers.find(function (receiver) { return receiver.kind === "recording"; });
+        if (existing) baseReceivers = baseReceivers.filter(function (receiver) { return receiver.id !== existing.id; });
+        var recording = {
+          id: "recording-managed-1",
+          kind: "recording",
+          friendlyName: "Validation recording",
+          family: "Recording",
+          model: "I/Q WAV recording tuner",
+          serial: selected.value,
+          fileName: selected.value,
+          status: "Enabled",
+          connected: true,
+          frequency: Number(center.value),
+          channels: 0,
+          locked: false,
+          centerFrequencyLocked: false,
+          sampleRate: selected.value.indexOf("rtl") >= 0 ? 2.4 : 10
+        };
+        baseReceivers.push(recording);
+        selectedId = recording.id;
+        scenario = "normal";
+        document.getElementById("preview-scenario").value = "normal";
+        closeDialog();
+        renderAll();
+        showToast("Synthetic recording tuner added for this page.");
+      }
+
+      function removeRecordingTuner() {
+        var receiver = activeReceiver();
+        confirmReceiverAction("Remove recording tuner?", "This removes only the configured recording source. It does not delete the managed WAV file.", "Remove tuner", function () {
+          baseReceivers = baseReceivers.filter(function (candidate) { return candidate.id !== receiver.id; });
+          selectedId = baseReceivers[0] ? baseReceivers[0].id : null;
+          closeSpectrum();
+          renderAll();
+          showToast("Synthetic recording tuner removed.");
+        });
+      }
+
+      function handleSelectedAction(action) {
+        var receiver = activeReceiver();
+        if (!receiver) return;
+        if (action === "toggle-enable") toggleReceiver();
+        else if (action === "restart") restartReceiver();
+        else if (action === "record") toggleRecording();
+        else if (action === "view-spectrum") openSpectrum();
+        else if (action === "info") openDialog({
+          title: "Tuner information",
+          subtitle: (receiver.friendlyName || receiver.model) + " · read-only hardware details",
+          body: informationBody(receiver),
+          buttons: [{ label: "Close", action: closeDialog }]
+        });
+        else if (action === "log-state") {
+          showToast("The real action would write one bounded diagnostic entry to the rotating application log.");
+          var details = selectedPanel.querySelector(".more-menu");
+          if (details) details.open = false;
+        } else if (action === "discard") renderSelectedPanel();
+        else if (action === "reset-extents") resetExtents();
+        else if (action === "retry") {
+          scenario = "normal";
+          document.getElementById("preview-scenario").value = "normal";
+          renderAll();
+          showToast("Synthetic receiver reconnected.");
+        } else if (action === "remove-recording") removeRecordingTuner();
+      }
+
+      function showHelp(button, pin) {
+        if (!button || !button.isConnected) return;
+        if (helpPinned && helpPinned !== button) helpPinned.setAttribute("aria-expanded", "false");
+        if (pin) helpPinned = button;
+        helpVisibleFor = button;
+        document.getElementById("context-help-title").textContent = button.dataset.helpTitle || "More information";
+        document.getElementById("context-help-copy").textContent = button.dataset.help || "";
+        helpPopover.hidden = false;
+        button.setAttribute("aria-expanded", "true");
+        positionHelp(button);
+      }
+
+      function positionHelp(button) {
+        if (helpPopover.hidden) return;
+        var rect = button.getBoundingClientRect();
+        var gap = 7;
+        var left = Math.min(window.innerWidth - helpPopover.offsetWidth - 12, Math.max(12, rect.left));
+        var top = rect.bottom + gap;
+        if (top + helpPopover.offsetHeight > window.innerHeight - 12) {
+          top = Math.max(12, rect.top - helpPopover.offsetHeight - gap);
+        }
+        helpPopover.style.left = left + "px";
+        helpPopover.style.top = top + "px";
+      }
+
+      function closeHelp(returnFocus) {
+        if (helpVisibleFor) helpVisibleFor.setAttribute("aria-expanded", "false");
+        var previous = helpPinned || helpVisibleFor;
+        helpPinned = null;
+        helpVisibleFor = null;
+        helpPopover.hidden = true;
+        if (returnFocus && previous && previous.isConnected) previous.focus();
+      }
+
+      function wireHelpButtons() {
+        document.querySelectorAll(".help-button:not([data-help-ready])").forEach(function (button) {
+          button.dataset.helpReady = "true";
+          button.addEventListener("mouseenter", function () {
+            if (!helpPinned) showHelp(button, false);
+          });
+          button.addEventListener("mouseleave", function () {
+            if (!helpPinned && document.activeElement !== button) closeHelp();
+          });
+          button.addEventListener("focus", function () {
+            if (!helpPinned) showHelp(button, false);
+          });
+          button.addEventListener("blur", function () {
+            window.setTimeout(function () {
+              if (!helpPinned && document.activeElement !== button) closeHelp();
+            }, 0);
+          });
+          button.addEventListener("click", function (event) {
+            event.stopPropagation();
+            if (helpPinned === button) closeHelp();
+            else showHelp(button, true);
+          });
+        });
+      }
+
+      function spectrumTarget() {
+        return activeReceiver();
+      }
+
+      function spectrumView() {
+        var receiver = spectrumTarget();
+        var fullSpan = receiver && receiver.sampleRate ? receiver.sampleRate : 10;
+        var span = fullSpan / spectrumZoom;
+        var maxCenterShift = (fullSpan - span) / 2;
+        var centerShift = Math.max(-maxCenterShift, Math.min(maxCenterShift, spectrumOffset * fullSpan));
+        var center = (receiver ? receiver.frequency : 0) + centerShift;
+        return { baseCenter: receiver ? receiver.frequency : 0, fullSpan: fullSpan, span: span, center: center, start: center - span / 2, end: center + span / 2 };
+      }
+
+      function signalPower(frequency, rowPhase) {
+        var view = spectrumView();
+        var normalized = (frequency - view.baseCenter) / view.fullSpan;
+        var noise = -111 + 4 * Math.sin(normalized * 147 + rowPhase) + 2.5 * Math.sin(normalized * 521 - rowPhase * .7);
+        var peaks = [
+          [-.32, 48, .006],
+          [-.17, 27, .012],
+          [-.045, 54, .004],
+          [.065, 35, .008],
+          [.22, 48, .005],
+          [.37, 31, .01]
+        ];
+        peaks.forEach(function (peak) {
+          var distance = (normalized - peak[0]) / peak[2];
+          noise += peak[1] * Math.exp(-distance * distance);
+        });
+        return Math.min(-42, noise);
+      }
+
+      function sizeCanvas(canvas) {
+        var rect = canvas.getBoundingClientRect();
+        var width = Math.max(320, Math.floor(rect.width));
+        var height = Math.max(120, Math.floor(rect.height));
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+      }
+
+      function drawFft() {
+        if (!spectrumOpen || spectrumPanel.hidden) return;
+        sizeCanvas(fftCanvas);
+        var ctx = fftCanvas.getContext("2d");
+        var width = fftCanvas.width;
+        var height = fftCanvas.height;
+        var view = spectrumView();
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#050b10";
+        ctx.fillRect(0, 0, width, height);
+        ctx.font = "11px Segoe UI, sans-serif";
+        ctx.textBaseline = "middle";
+        ctx.strokeStyle = "#273945";
+        ctx.fillStyle = "#8296a2";
+        ctx.lineWidth = 1;
+        var topDb = -40;
+        var gridCount = 5;
+        for (var grid = 0; grid <= gridCount; grid += 1) {
+          var y = 15 + (height - 36) * (grid / gridCount);
+          var db = topDb + (spectrumFloor - topDb) * (grid / gridCount);
+          ctx.beginPath();
+          ctx.moveTo(0, Math.round(y) + .5);
+          ctx.lineTo(width, Math.round(y) + .5);
+          ctx.stroke();
+          ctx.fillText(Math.round(db) + " dB", 7, y - 8);
+        }
+        for (var vertical = 0; vertical <= 8; vertical += 1) {
+          var x = width * vertical / 8;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + .5, 0);
+          ctx.lineTo(Math.round(x) + .5, height);
+          ctx.stroke();
+          var frequency = view.start + view.span * vertical / 8;
+          ctx.fillText(frequency.toFixed(view.span < 1 ? 4 : 3), Math.min(width - 70, x + 4), height - 10);
+        }
+        ctx.strokeStyle = "#5bdb86";
+        ctx.lineWidth = 1.25;
+        ctx.beginPath();
+        for (var pixel = 0; pixel < width; pixel += 1) {
+          var ratio = pixel / Math.max(1, width - 1);
+          var frequencyAtPixel = view.start + view.span * ratio;
+          var power = signalPower(frequencyAtPixel, .4);
+          var plotY = 15 + (height - 36) * ((power - topDb) / (spectrumFloor - topDb));
+          plotY = Math.max(12, Math.min(height - 21, plotY));
+          if (pixel === 0) ctx.moveTo(pixel, plotY);
+          else ctx.lineTo(pixel, plotY);
+        }
+        ctx.stroke();
+        drawChannelOverlays(ctx, width, height, view);
+      }
+
+      function drawChannelOverlays(ctx, width, height, view) {
+        var mode = document.getElementById("spectrum-overlays").value;
+        if (mode === "None") return;
+        var offsets = [-.32, -.045, .065, .22];
+        ctx.save();
+        ctx.font = "10px Segoe UI, sans-serif";
+        offsets.forEach(function (offset, index) {
+          if (mode === "Enabled channels" && index > 2) return;
+          var frequency = view.baseCenter + view.fullSpan * offset;
+          if (frequency < view.start || frequency > view.end) return;
+          var x = (frequency - view.start) / view.span * width;
+          ctx.fillStyle = index === 0 ? "rgb(37 159 223 / 18%)" : "rgb(237 181 62 / 13%)";
+          ctx.fillRect(x - 8, 0, 16, height);
+          ctx.fillStyle = "#a7b9c2";
+          ctx.fillText(index === 0 ? "Control" : "Traffic", Math.max(4, x + 4), 25 + index * 13);
+        });
+        ctx.restore();
+      }
+
+      function waterfallColor(power) {
+        var ratio = Math.max(0, Math.min(1, (power - spectrumFloor) / (-42 - spectrumFloor)));
+        if (ratio < .34) {
+          return [4, Math.round(18 + ratio * 80), Math.round(75 + ratio * 340)];
+        }
+        if (ratio < .7) {
+          var middle = (ratio - .34) / .36;
+          return [Math.round(8 + middle * 20), Math.round(86 + middle * 165), Math.round(190 - middle * 90)];
+        }
+        var hot = (ratio - .7) / .3;
+        return [Math.round(28 + hot * 227), Math.round(251 - hot * 63), Math.round(100 - hot * 70)];
+      }
+
+      function drawWaterfall() {
+        if (!spectrumOpen || spectrumPanel.hidden) return;
+        sizeCanvas(waterfallCanvas);
+        var ctx = waterfallCanvas.getContext("2d");
+        var width = waterfallCanvas.width;
+        var height = waterfallCanvas.height;
+        var view = spectrumView();
+        var image = ctx.createImageData(width, height);
+        var basePower = new Float32Array(width);
+        for (var x = 0; x < width; x += 1) {
+          var ratio = x / Math.max(1, width - 1);
+          basePower[x] = signalPower(view.start + view.span * ratio, 0);
+        }
+        for (var y = 0; y < height; y += 1) {
+          for (var column = 0; column < width; column += 1) {
+            var power = basePower[column] + 3 * Math.sin(y * .17 + column * .031) + 1.5 * Math.sin(y * .071 - column * .013);
+            var color = waterfallColor(power);
+            var index = (y * width + column) * 4;
+            image.data[index] = color[0];
+            image.data[index + 1] = color[1];
+            image.data[index + 2] = color[2];
+            image.data[index + 3] = 255;
+          }
+        }
+        ctx.putImageData(image, 0, 0);
+        ctx.strokeStyle = "rgb(255 255 255 / 13%)";
+        for (var vertical = 0; vertical <= 8; vertical += 1) {
+          var guideX = Math.round(width * vertical / 8) + .5;
+          ctx.beginPath();
+          ctx.moveTo(guideX, 0);
+          ctx.lineTo(guideX, height);
+          ctx.stroke();
+        }
+      }
+
+      function drawSpectrum(redrawWaterfall) {
+        drawFft();
+        if (redrawWaterfall !== false) drawWaterfall();
+        updateSpectrumStats();
+      }
+
+      function updateSpectrumStats() {
+        var view = spectrumView();
+        var peakPower = -Infinity;
+        var peakFrequency = view.center;
+        for (var index = 0; index <= 512; index += 1) {
+          var frequency = view.start + view.span * index / 512;
+          var power = signalPower(frequency, .4);
+          if (power > peakPower) {
+            peakPower = power;
+            peakFrequency = frequency;
+          }
+        }
+        document.getElementById("stats-peak").textContent = peakPower.toFixed(1) + " dB @ " +
+          peakFrequency.toFixed(view.span < 1 ? 5 : 4) + " MHz";
+        document.getElementById("stats-center").textContent = formatFrequency(view.center, 6);
+        document.getElementById("stats-span").textContent = view.span.toFixed(3) + " MHz";
+        document.getElementById("stats-zoom").textContent = spectrumZoom.toFixed(2) + "×";
+        document.getElementById("stats-fft").textContent = spectrumZoom >= 4 ? "32,768" : (spectrumZoom >= 2 ? "16,384" : "8,192");
+      }
+
+      function updateSpectrumTarget() {
+        var receiver = spectrumTarget();
+        if (!receiver) return;
+        document.getElementById("spectrum-target-label").textContent =
+          (receiver.friendlyName || receiver.model) + " · " + receiver.model + " · " + receiver.serial;
+        var busy = scenario === "spectrum-busy";
+        document.getElementById("spectrum-blocker").hidden = !busy;
+        document.getElementById("spectrum-state").textContent = busy ? "Exclusive workspace busy" : (spectrumPaused ? "Paused" : "Synthetic preview");
+        document.getElementById("spectrum-state").className = "status-badge " + (busy ? "busy" : "available");
+      }
+
+      function openSpectrum() {
+        var receiver = activeReceiver();
+        if (!receiver || receiver.status !== "Enabled") return;
+        spectrumOpen = true;
+        spectrumPaused = false;
+        spectrumZoom = 1;
+        spectrumOffset = 0;
+        spectrumPanel.hidden = false;
+        document.getElementById("spectrum-pause").textContent = "Pause";
+        updateSpectrumTarget();
+        window.requestAnimationFrame(function () {
+          drawSpectrum(true);
+          spectrumPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+
+      function closeSpectrum() {
+        spectrumOpen = false;
+        spectrumPanel.hidden = true;
+        spectrumPlots.classList.remove("refining");
+        hideCursor();
+        hideSpectrumStats();
+        if (spectrumRefineTimer) window.clearTimeout(spectrumRefineTimer);
+      }
+
+      function resetSpectrum() {
+        spectrumZoom = 1;
+        spectrumOffset = 0;
+        refineSpectrum();
+      }
+
+      function refineSpectrum() {
+        if (!spectrumOpen) return;
+        var state = document.getElementById("spectrum-state");
+        spectrumPlots.classList.add("refining");
+        if (scenario !== "spectrum-busy" && !spectrumPaused) {
+          state.textContent = "Refining…";
+          state.className = "status-badge busy";
+        }
+        drawSpectrum(true);
+        if (spectrumRefineTimer) window.clearTimeout(spectrumRefineTimer);
+        spectrumRefineTimer = window.setTimeout(function () {
+          spectrumPlots.classList.remove("refining");
+          if (scenario !== "spectrum-busy") {
+            state.textContent = spectrumPaused ? "Paused" : "Detailed view ready";
+            state.className = "status-badge available";
+          }
+        }, 220);
+      }
+
+      function setZoom(nextZoom, anchorRatio) {
+        var oldView = spectrumView();
+        var clamped = Math.max(1, Math.min(8, nextZoom));
+        if (clamped === spectrumZoom) return;
+        var anchor = Number.isFinite(anchorRatio) ? anchorRatio : .5;
+        var targetFrequency = oldView.start + oldView.span * anchor;
+        spectrumZoom = clamped;
+        var nextSpan = oldView.fullSpan / spectrumZoom;
+        var nextCenter = targetFrequency - (anchor - .5) * nextSpan;
+        spectrumOffset = (nextCenter - oldView.baseCenter) / oldView.fullSpan;
+        clampSpectrumOffset();
+        refineSpectrum();
+      }
+
+      function clampSpectrumOffset() {
+        var maximum = (1 - 1 / spectrumZoom) / 2;
+        spectrumOffset = Math.max(-maximum, Math.min(maximum, spectrumOffset));
+      }
+
+      function pointerRatio(event, canvas) {
+        var rect = canvas.getBoundingClientRect();
+        return Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+      }
+
+      function moveCursor(event, canvas) {
+        if (spectrumDrag) return;
+        var ratio = pointerRatio(event, canvas);
+        var rect = canvas.getBoundingClientRect();
+        var view = spectrumView();
+        var frequency = view.start + view.span * ratio;
+        var power = signalPower(frequency, .4);
+        var guideLeft = ratio * 100 + "%";
+        fftGuide.style.left = guideLeft;
+        waterfallGuide.style.left = guideLeft;
+        fftGuide.hidden = false;
+        waterfallGuide.hidden = false;
+        document.getElementById("cursor-frequency").textContent = frequency.toFixed(view.span < 1 ? 5 : 4) + " MHz";
+        document.getElementById("cursor-power").textContent = power.toFixed(1) + " relative dB";
+        cursorPopup.hidden = false;
+        var left = Math.min(window.innerWidth - cursorPopup.offsetWidth - 8, Math.max(8, event.clientX - cursorPopup.offsetWidth / 2));
+        var top = event.clientY - cursorPopup.offsetHeight - 14;
+        if (top < 8) top = event.clientY + 14;
+        cursorPopup.style.left = left + "px";
+        cursorPopup.style.top = top + "px";
+      }
+
+      function hideCursor() {
+        fftGuide.hidden = true;
+        waterfallGuide.hidden = true;
+        cursorPopup.hidden = true;
+      }
+
+      function showSpectrumStats(event, canvas) {
+        event.preventDefault();
+        updateSpectrumStats();
+        spectrumStats.hidden = false;
+        var clientX = event.clientX || canvas.getBoundingClientRect().left + 20;
+        var clientY = event.clientY || canvas.getBoundingClientRect().top + 20;
+        spectrumStats.style.left = Math.min(window.innerWidth - spectrumStats.offsetWidth - 10, Math.max(10, clientX)) + "px";
+        spectrumStats.style.top = Math.min(window.innerHeight - spectrumStats.offsetHeight - 10, Math.max(10, clientY)) + "px";
+        document.getElementById("close-spectrum-stats").focus();
+      }
+
+      function openChannelAtPointer(event, canvas) {
+        if (spectrumSuppressClick || scenario === "spectrum-busy") return;
+        var mode = document.getElementById("spectrum-overlays").value;
+        if (mode === "None") return;
+        var view = spectrumView();
+        var rect = canvas.getBoundingClientRect();
+        var pointerX = event.clientX - rect.left;
+        var entries = [
+          { offset: -.32, name: "BOSGAME control channel", enabled: true },
+          { offset: -.045, name: "Traffic channel 1", enabled: true },
+          { offset: .065, name: "Traffic channel 2", enabled: true },
+          { offset: .22, name: "Disabled test channel", enabled: false }
+        ];
+        var selected = entries.find(function (entry) {
+          if (mode === "Enabled channels" && !entry.enabled) return false;
+          var frequency = view.baseCenter + view.fullSpan * entry.offset;
+          if (frequency < view.start || frequency > view.end) return false;
+          var entryX = (frequency - view.start) / view.span * rect.width;
+          return Math.abs(entryX - pointerX) <= 12;
+        });
+        if (!selected) return;
+        var selectedFrequency = view.baseCenter + view.fullSpan * selected.offset;
+        openDialog({
+          title: "Open channel settings?",
+          subtitle: selected.name + " · " + selectedFrequency.toFixed(6) + " MHz",
+          body: "<p>This overlay links to the matching channel editor under Settings → Channels. The Channels page is outside this first mockup, so the final navigation is represented but not built here.</p>",
+          buttons: [
+            { label: "Stay on spectrum", action: closeDialog },
+            { label: "Open channel editor", className: "button-primary", action: function () {
+              closeDialog();
+              showToast("The finished page will open " + selected.name + " in the Channels editor.");
+            }}
+          ]
+        });
+      }
+
+      function hideSpectrumStats(returnFocus) {
+        spectrumStats.hidden = true;
+        if (returnFocus) fftCanvas.focus();
+      }
+
+      function handleSpectrumKey(event, canvas) {
+        if (event.key === "+" || event.key === "=") {
+          event.preventDefault();
+          setZoom(spectrumZoom * 1.5, .5);
+        } else if (event.key === "-" || event.key === "_") {
+          event.preventDefault();
+          setZoom(spectrumZoom / 1.5, .5);
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          if (spectrumZoom <= 1) return;
+          event.preventDefault();
+          spectrumOffset += (event.key === "ArrowLeft" ? -1 : 1) * .04 / spectrumZoom;
+          clampSpectrumOffset();
+          refineSpectrum();
+        } else if (event.key.toLowerCase() === "r") {
+          event.preventDefault();
+          resetSpectrum();
+        } else if (event.shiftKey && event.key === "F10") {
+          showSpectrumStats(event, canvas);
+        }
+      }
+
+      function wireSpectrumCanvas(canvas) {
+        canvas.addEventListener("wheel", function (event) {
+          event.preventDefault();
+          var factor = event.deltaY < 0 ? 1.5 : 1 / 1.5;
+          setZoom(spectrumZoom * factor, pointerRatio(event, canvas));
+        }, { passive: false });
+        canvas.addEventListener("pointerdown", function (event) {
+          if (event.button !== 0 || spectrumZoom <= 1) return;
+          spectrumDrag = { pointerId: event.pointerId, startX: event.clientX, startOffset: spectrumOffset, canvas: canvas, moved: false };
+          canvas.setPointerCapture(event.pointerId);
+          canvas.classList.add("dragging");
+          hideCursor();
+        });
+        canvas.addEventListener("pointermove", function (event) {
+          if (spectrumDrag && spectrumDrag.pointerId === event.pointerId) {
+            var width = Math.max(1, canvas.getBoundingClientRect().width);
+            if (Math.abs(event.clientX - spectrumDrag.startX) > 4) spectrumDrag.moved = true;
+            spectrumOffset = spectrumDrag.startOffset - (event.clientX - spectrumDrag.startX) / width / spectrumZoom;
+            clampSpectrumOffset();
+            drawSpectrum(true);
+          } else {
+            moveCursor(event, canvas);
+          }
+        });
+        canvas.addEventListener("pointerup", function (event) {
+          if (!spectrumDrag || spectrumDrag.pointerId !== event.pointerId) return;
+          if (spectrumDrag.moved) {
+            spectrumSuppressClick = true;
+            window.setTimeout(function () { spectrumSuppressClick = false; }, 0);
+          }
+          canvas.releasePointerCapture(event.pointerId);
+          canvas.classList.remove("dragging");
+          spectrumDrag = null;
+          refineSpectrum();
+        });
+        canvas.addEventListener("pointercancel", function () {
+          canvas.classList.remove("dragging");
+          spectrumDrag = null;
+        });
+        canvas.addEventListener("pointerleave", function () {
+          if (!spectrumDrag) hideCursor();
+        });
+        canvas.addEventListener("contextmenu", function (event) {
+          showSpectrumStats(event, canvas);
+        });
+        if (canvas === fftCanvas) {
+          canvas.addEventListener("click", function (event) {
+            openChannelAtPointer(event, canvas);
+          });
+        }
+        canvas.addEventListener("keydown", function (event) {
+          handleSpectrumKey(event, canvas);
+        });
+      }
+
+      function openDisplayOptions() {
+        openDialog({
+          title: "Spectrum display options",
+          subtitle: "Browser-only presentation settings; no spectrum frames are saved.",
+          body: [
+            '<div class="form-grid"><div class="field">', fieldLabel("Color palette", "Changes only how the browser colors new waterfall rows. It does not change receiver gain or decoder thresholds.", "spectrum-palette"),
+            '<select id="spectrum-palette"><option>Blue → cyan → yellow</option><option>Grayscale</option></select></div>',
+            '<div class="field">', fieldLabel("Advanced averaging", "Averages a small number of FFT frames in the browser to steady the trace. Higher values react more slowly and do not alter decoding.", "spectrum-averaging"),
+            '<div class="range-row"><input id="spectrum-averaging" type="range" min="1" max="10" value="3"><output class="range-output">3</output></div></div></div>',
+            '<p class="field-hint">FFT width, frame rate, window, and smoothing use tested automatic defaults and are not exposed here.</p>'
+          ].join(""),
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Save browser display options", className: "button-primary", action: function () {
+              closeDialog();
+              showToast("Synthetic browser display options saved for this page.");
+            }}
+          ]
+        });
+        var range = document.getElementById("spectrum-averaging");
+        if (range) range.addEventListener("input", function () { range.nextElementSibling.value = range.value; });
+        wireHelpButtons();
+      }
+
+      function reviewEntry(id) {
+        return reviewData.entries[id] || { state: "", note: "", updatedAt: "" };
+      }
+
+      function cleanReviewData(candidate) {
+        var entries = {};
+        var validIds = new Set(reviewSections.map(function (section) { return section[0]; }));
+        if (candidate && typeof candidate === "object" && candidate.entries && typeof candidate.entries === "object") {
+          Object.keys(candidate.entries).forEach(function (id) {
+            var value = candidate.entries[id];
+            if (!validIds.has(id) || !value || typeof value !== "object") return;
+            var states = ["", "approved", "change", "discuss"];
+            var state = states.indexOf(value.state) >= 0 ? value.state : "";
+            var note = typeof value.note === "string" ? value.note.slice(0, MAX_NOTE_LENGTH) : "";
+            if (state || note) entries[id] = { state: state, note: note, updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "" };
+          });
+        }
+        return { entries: entries, updatedAt: candidate && typeof candidate.updatedAt === "string" ? candidate.updatedAt : "" };
+      }
+
+      function setReviewStatus(message, warning) {
+        reviewSaveState.textContent = message;
+        reviewSaveState.classList.toggle("warning", Boolean(warning));
+      }
+
+      function initializeReviewStorage() {
+        try {
+          var probe = REVIEW_STORAGE_KEY + ".probe";
+          window.localStorage.setItem(probe, "ok");
+          window.localStorage.removeItem(probe);
+          var stored = window.localStorage.getItem(REVIEW_STORAGE_KEY);
+          if (stored) reviewData = cleanReviewData(JSON.parse(stored));
+          setReviewStatus(Object.keys(reviewData.entries).length ? "Loaded your saved browser review." : "Ready — notes save automatically in this browser.");
+        } catch (error) {
+          reviewStorageAvailable = false;
+          setReviewStatus("Browser storage is unavailable. Download a backup before closing this page.", true);
+        }
+      }
+
+      function writeReview() {
+        reviewData.updatedAt = new Date().toISOString();
+        if (reviewStorageAvailable) {
+          try {
+            window.localStorage.setItem(REVIEW_STORAGE_KEY, JSON.stringify({
+              format: REVIEW_FORMAT,
+              version: REVIEW_VERSION,
+              updatedAt: reviewData.updatedAt,
+              entries: reviewData.entries
+            }));
+            setReviewStatus("Saved automatically at " + new Date(reviewData.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ".");
+          } catch (error) {
+            reviewStorageAvailable = false;
+            setReviewStatus("Could not save in this browser. Download a backup before closing this page.", true);
+          }
+        }
+      }
+
+      function saveReviewEntry(id) {
+        var state = document.getElementById("review-state-" + id);
+        var note = document.getElementById("review-note-" + id);
+        if (!state || !note) return;
+        var value = { state: state.value, note: note.value.slice(0, MAX_NOTE_LENGTH), updatedAt: new Date().toISOString() };
+        if (!value.state && !value.note) delete reviewData.entries[id];
+        else reviewData.entries[id] = value;
+        writeReview();
+      }
+
+      function flushReviewTimers() {
+        reviewTimers.forEach(function (timer, id) {
+          window.clearTimeout(timer);
+          saveReviewEntry(id);
+        });
+        reviewTimers.clear();
+      }
+
+      function reviewOptions(selected) {
+        var options = [
+          ["", "Not reviewed"],
+          ["approved", "Approve as shown"],
+          ["change", "Change requested"],
+          ["discuss", "Discuss later"]
+        ];
+        return options.map(function (option) {
+          return '<option value="' + option[0] + '"' + (option[0] === selected ? " selected" : "") + ">" + option[1] + "</option>";
+        }).join("");
+      }
+
+      function renderReview() {
+        document.getElementById("review-content").innerHTML = reviewSections.map(function (section) {
+          var entry = reviewEntry(section[0]);
+          return [
+            '<section class="review-card"><h3>', escapeHtml(section[1]), "</h3><p>", escapeHtml(section[2]), "</p>",
+            '<label class="sr-only" for="review-state-', section[0], '">Review choice for ', escapeHtml(section[1]), "</label>",
+            '<select id="review-state-', section[0], '" data-review-state="', section[0], '">', reviewOptions(entry.state), "</select>",
+            '<label class="sr-only" for="review-note-', section[0], '">Note for ', escapeHtml(section[1]), "</label>",
+            '<textarea id="review-note-', section[0], '" data-review-note="', section[0], '" maxlength="', MAX_NOTE_LENGTH,
+            '" placeholder="Add a decision, requested change, or question…">', escapeHtml(entry.note), "</textarea>",
+            '<div class="review-card-foot"><span>Saved only in this browser</span><span id="review-count-', section[0], '">', entry.note.length, " / ", MAX_NOTE_LENGTH, "</span></div>",
+            "</section>"
+          ].join("");
+        }).join("");
+      }
+
+      function openReview() {
+        closeHelp();
+        renderReview();
+        reviewReturnFocus = document.activeElement;
+        reviewDrawer.hidden = false;
+        reviewScrim.hidden = false;
+        document.body.style.overflow = "hidden";
+        document.getElementById("close-review").focus();
+      }
+
+      function closeReview() {
+        flushReviewTimers();
+        reviewDrawer.hidden = true;
+        reviewScrim.hidden = true;
+        document.body.style.overflow = "";
+        if (reviewReturnFocus && reviewReturnFocus.isConnected) reviewReturnFocus.focus();
+      }
+
+      function downloadReview() {
+        flushReviewTimers();
+        var documentValue = {
+          format: REVIEW_FORMAT,
+          version: REVIEW_VERSION,
+          mockup: "settings-shell-hardware-v1",
+          exportedAt: new Date().toISOString(),
+          evidence: ["MAIN-08", "MAIN-09", "MAIN-10", "MAIN-11", "MAIN-12"],
+          entries: reviewData.entries
+        };
+        var blob = new Blob([JSON.stringify(documentValue, null, 2)], { type: "application/json;charset=utf-8" });
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "sdrtrunk-hardware-mockup-review-" + new Date().toISOString().slice(0, 10) + ".json";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        window.setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+        setReviewStatus("Downloaded a review backup.");
+      }
+
+      function clearReview() {
+        openDialog({
+          title: "Clear this browser review?",
+          subtitle: "This affects only the notes for this mockup in this browser.",
+          body: "<p>Download a review backup first if you may want these notes later. Clearing cannot be undone from this page.</p>",
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Clear review", className: "button-danger", action: function () {
+              reviewData = { entries: {}, updatedAt: new Date().toISOString() };
+              if (reviewStorageAvailable) window.localStorage.removeItem(REVIEW_STORAGE_KEY);
+              closeDialog();
+              renderReview();
+              setReviewStatus("Review cleared from this browser.");
+            }}
+          ]
+        });
+      }
+
+      function trapReviewFocus(event) {
+        if (reviewDrawer.hidden || appDialog.open || event.key !== "Tab") return;
+        var focusable = Array.from(reviewDrawer.querySelectorAll('button:not(:disabled), select:not(:disabled), textarea:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])'));
+        if (!focusable.length) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+
+      receiverList.addEventListener("click", function (event) {
+        var card = event.target.closest("[data-receiver-id]");
+        if (card) selectReceiver(card.dataset.receiverId);
+      });
+
+      selectedPanel.addEventListener("click", function (event) {
+        var target = event.target.closest("[data-action]");
+        if (target) handleSelectedAction(target.dataset.action);
+      });
+
+      selectedPanel.addEventListener("change", function (event) {
+        if (!event.target.matches("[data-recording-center-lock]")) return;
+        var receiver = activeReceiver();
+        var stored = receiver ? baseReceiver(receiver.id) : null;
+        if (stored) stored.centerFrequencyLocked = event.target.checked;
+        showToast("Mock fixed-center setting updated for this recording tuner.");
+      });
+
+      document.getElementById("preview-scenario").addEventListener("change", function (event) {
+        if (dirty && !window.confirm("Discard the staged mock changes and preview another state?")) {
+          event.target.value = scenario;
+          return;
+        }
+        scenario = event.target.value;
+        dirty = false;
+        var selectionByScenario = {
+          normal: "airspy-637862dc",
+          "airspy-error": "airspy-637862dc",
+          "rtl-disconnected": "rtl-00000001",
+          "rtl-failed": "rtl-00000001",
+          unsupported: "rtl-fc2580",
+          disabled: "rtl-00000001",
+          empty: null,
+          "spectrum-busy": "airspy-637862dc"
+        };
+        selectedId = selectionByScenario[scenario];
+        closeSpectrum();
+        renderAll();
+      });
+
+      document.querySelectorAll("[data-future-page]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          showToast(button.dataset.futurePage + " is shown for navigation review but is outside this first mockup.");
+        });
+      });
+
+      document.getElementById("add-recording-tuner").addEventListener("click", addRecordingTunerDialog);
+      document.getElementById("dialog-close").addEventListener("click", closeDialog);
+      appDialog.addEventListener("click", function (event) {
+        if (event.target === appDialog) closeDialog();
+      });
+      appDialog.addEventListener("cancel", function (event) {
+        event.preventDefault();
+        closeDialog();
+      });
+
+      document.getElementById("close-spectrum").addEventListener("click", closeSpectrum);
+      document.getElementById("spectrum-busy-close").addEventListener("click", closeSpectrum);
+      document.getElementById("spectrum-pause").addEventListener("click", function (event) {
+        spectrumPaused = !spectrumPaused;
+        event.target.textContent = spectrumPaused ? "Resume" : "Pause";
+        updateSpectrumTarget();
+      });
+      document.getElementById("spectrum-reset").addEventListener("click", resetSpectrum);
+      document.getElementById("spectrum-overlays").addEventListener("change", function () { drawFft(); });
+      document.getElementById("spectrum-floor").addEventListener("input", function (event) {
+        spectrumFloor = Number(event.target.value);
+        document.getElementById("spectrum-floor-output").textContent = (spectrumFloor < 0 ? "−" + Math.abs(spectrumFloor) : spectrumFloor) + " dB";
+        drawFft();
+      });
+      document.getElementById("spectrum-display-options").addEventListener("click", openDisplayOptions);
+      document.getElementById("close-spectrum-stats").addEventListener("click", function () { hideSpectrumStats(true); });
+      wireSpectrumCanvas(fftCanvas);
+      wireSpectrumCanvas(waterfallCanvas);
+
+      document.getElementById("open-review").addEventListener("click", openReview);
+      document.getElementById("close-review").addEventListener("click", closeReview);
+      reviewScrim.addEventListener("click", closeReview);
+      document.getElementById("download-review").addEventListener("click", downloadReview);
+      document.getElementById("clear-review").addEventListener("click", clearReview);
+      document.getElementById("review-content").addEventListener("change", function (event) {
+        var id = event.target.dataset.reviewState;
+        if (id) saveReviewEntry(id);
+      });
+      document.getElementById("review-content").addEventListener("input", function (event) {
+        var id = event.target.dataset.reviewNote;
+        if (!id) return;
+        document.getElementById("review-count-" + id).textContent = event.target.value.length + " / " + MAX_NOTE_LENGTH;
+        setReviewStatus("Saving…");
+        if (reviewTimers.has(id)) window.clearTimeout(reviewTimers.get(id));
+        reviewTimers.set(id, window.setTimeout(function () {
+          reviewTimers.delete(id);
+          saveReviewEntry(id);
+        }, 350));
+      });
+
+      document.addEventListener("pointerdown", function (event) {
+        if (!helpPopover.hidden && !helpPopover.contains(event.target) && !event.target.closest(".help-button")) closeHelp();
+        if (!spectrumStats.hidden && !spectrumStats.contains(event.target) && !event.target.closest(".spectrum-canvas")) hideSpectrumStats();
+      });
+
+      document.addEventListener("keydown", function (event) {
+        trapReviewFocus(event);
+        if (event.key === "Escape") {
+          if (appDialog.open) return;
+          if (!reviewDrawer.hidden) closeReview();
+          else if (!spectrumStats.hidden) hideSpectrumStats(true);
+          else if (!helpPopover.hidden) closeHelp(true);
+        }
+      });
+
+      window.addEventListener("resize", function () {
+        if (helpVisibleFor) positionHelp(helpVisibleFor);
+        if (spectrumOpen) drawSpectrum(true);
+      });
+      window.addEventListener("pagehide", flushReviewTimers);
+
+      if (typeof ResizeObserver === "function") {
+        var spectrumResizeObserver = new ResizeObserver(function () {
+          if (spectrumOpen) drawSpectrum(true);
+        });
+        spectrumResizeObserver.observe(spectrumPlots);
+      }
+
+      initializeReviewStorage();
+      renderAll();
+    }());
+  </script>
+</body>
+</html>

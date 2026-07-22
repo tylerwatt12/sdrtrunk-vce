@@ -17,10 +17,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
- * Version-one binary spectrum-frame codec.
+ * Version-two binary spectrum-frame codec.
  *
  * <p>The four-byte ASCII magic is {@code SFFT}.  Every numeric header field and every payload value is little-endian.
- * The fixed 80-byte header layout is:</p>
+ * The fixed 96-byte header layout is:</p>
  *
  * <pre>
  *  0  u8[4] magic
@@ -33,22 +33,26 @@ import java.util.Arrays;
  * 36  i64   capture timestamp, Unix epoch nanoseconds (zero unless capture-valid flag is set)
  * 44  i64   center frequency, Hz
  * 52  i64   sample rate, Hz
- * 60  u32   bin count
- * 64  u8    encoding identifier
- * 65  u8[3] reserved, zero
- * 68  f32   quantization scale
- * 72  f32   quantization offset
- * 76  u32   payload byte count
- * 80         payload
+ * 60  i64   view revision
+ * 68  u32   full FFT size
+ * 72  u32   first transmitted FFT bin
+ * 76  u32   transmitted bin count
+ * 80  u8    encoding identifier
+ * 81  u8[3] reserved, zero
+ * 84  f32   quantization scale
+ * 88  f32   quantization offset
+ * 92  u32   payload byte count
+ * 96         payload
  * </pre>
  *
  * <p>A quantized payload will decode a numeric wire value as {@code value * scale + offset}.  Version one currently
- * emits only {@link SpectrumEncoding#FLOAT32}, whose required scale and offset are 1.0 and 0.0.</p>
+ * emits only {@link SpectrumEncoding#FLOAT32}, whose required scale and offset are 1.0 and 0.0.  A bin's frequency
+ * is {@code center - sampleRate / 2 + (firstBin + binIndex) * sampleRate / fftSize}.</p>
  */
 public final class SpectrumFrameCodec
 {
-    public static final int VERSION = 1;
-    public static final int HEADER_BYTE_COUNT = 80;
+    public static final int VERSION = 2;
+    public static final int HEADER_BYTE_COUNT = 96;
     public static final int MAXIMUM_BIN_COUNT = 1_048_576;
     public static final ByteOrder BYTE_ORDER = ByteOrder.LITTLE_ENDIAN;
 
@@ -61,11 +65,14 @@ public final class SpectrumFrameCodec
     public static final int OFFSET_CAPTURE_TIMESTAMP = 36;
     public static final int OFFSET_CENTER_FREQUENCY = 44;
     public static final int OFFSET_SAMPLE_RATE = 52;
-    public static final int OFFSET_BIN_COUNT = 60;
-    public static final int OFFSET_ENCODING = 64;
-    public static final int OFFSET_QUANTIZATION_SCALE = 68;
-    public static final int OFFSET_QUANTIZATION_OFFSET = 72;
-    public static final int OFFSET_PAYLOAD_BYTE_COUNT = 76;
+    public static final int OFFSET_VIEW_REVISION = 60;
+    public static final int OFFSET_FFT_SIZE = 68;
+    public static final int OFFSET_FIRST_BIN = 72;
+    public static final int OFFSET_BIN_COUNT = 76;
+    public static final int OFFSET_ENCODING = 80;
+    public static final int OFFSET_QUANTIZATION_SCALE = 84;
+    public static final int OFFSET_QUANTIZATION_OFFSET = 88;
+    public static final int OFFSET_PAYLOAD_BYTE_COUNT = 92;
 
     private static final byte[] MAGIC = "SFFT".getBytes(StandardCharsets.US_ASCII);
 
@@ -80,7 +87,7 @@ public final class SpectrumFrameCodec
             throw new IllegalArgumentException("Spectrum frame cannot be null");
         }
 
-        ByteBuffer shared = frame.getEncodedVersionOne();
+        ByteBuffer shared = frame.getEncodedVersionTwo();
         byte[] encoded = new byte[shared.remaining()];
         shared.get(encoded);
         return encoded;
@@ -97,11 +104,11 @@ public final class SpectrumFrameCodec
             throw new IllegalArgumentException("Spectrum frame cannot be null");
         }
 
-        return frame.getEncodedVersionOne();
+        return frame.getEncodedVersionTwo();
     }
 
     /**
-     * Creates the immutable version-one representation cached by {@link SpectrumFrame}.  This method is package
+     * Creates the immutable version-two representation cached by {@link SpectrumFrame}.  This method is package
      * private so transports cannot accidentally bypass the shared frame cache.
      */
     static byte[] encodeUncached(SpectrumFrame frame)
@@ -130,6 +137,9 @@ public final class SpectrumFrameCodec
         buffer.putLong(frame.getCaptureTimestampEpochNanos());
         buffer.putLong(frame.getCenterFrequencyHz());
         buffer.putLong(frame.getSampleRateHz());
+        buffer.putLong(frame.getViewRevision());
+        buffer.putInt(frame.getFftSize());
+        buffer.putInt(frame.getFirstBin());
         buffer.putInt(frame.getBinCount());
         buffer.put((byte)encoding.getWireIdentifier());
         buffer.put((byte)0);
@@ -171,7 +181,7 @@ public final class SpectrumFrameCodec
 
         if(buffer.remaining() < HEADER_BYTE_COUNT)
         {
-            throw new IllegalArgumentException("Spectrum frame is shorter than the version-one header");
+            throw new IllegalArgumentException("Spectrum frame is shorter than the version-two header");
         }
 
         byte[] magic = new byte[MAGIC.length];
@@ -193,7 +203,7 @@ public final class SpectrumFrameCodec
 
         if(headerByteCount != HEADER_BYTE_COUNT)
         {
-            throw new IllegalArgumentException("Invalid version-one spectrum header length: " + headerByteCount);
+            throw new IllegalArgumentException("Invalid version-two spectrum header length: " + headerByteCount);
         }
 
         int flags = buffer.getInt();
@@ -203,6 +213,9 @@ public final class SpectrumFrameCodec
         long captureTimestampEpochNanos = buffer.getLong();
         long centerFrequencyHz = buffer.getLong();
         long sampleRateHz = buffer.getLong();
+        long viewRevision = buffer.getLong();
+        int fftSize = buffer.getInt();
+        int firstBin = buffer.getInt();
         int binCount = buffer.getInt();
 
         if(binCount <= 0 || binCount > MAXIMUM_BIN_COUNT)
@@ -237,6 +250,11 @@ public final class SpectrumFrameCodec
             throw new IllegalArgumentException("Encoding is not implemented: " + encoding);
         }
 
+        if(Float.compare(quantizationScale, 1.0f) != 0 || Float.compare(quantizationOffset, 0.0f) != 0)
+        {
+            throw new IllegalArgumentException("FLOAT32 frames use a scale of 1.0 and offset of 0.0");
+        }
+
         float[] bins = new float[binCount];
 
         for(int x = 0; x < bins.length; x++)
@@ -244,9 +262,8 @@ public final class SpectrumFrameCodec
             bins[x] = buffer.getFloat();
         }
 
-        return new SpectrumFrame(flags, targetGeneration, sequence, monotonicTimestampNanos,
-            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, encoding, quantizationScale,
-            quantizationOffset, bins);
+        return SpectrumFrame.float32(flags, targetGeneration, sequence, monotonicTimestampNanos,
+            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, viewRevision, fftSize, firstBin, bins);
     }
 
     private static int payloadByteCount(int binCount, SpectrumEncoding encoding)

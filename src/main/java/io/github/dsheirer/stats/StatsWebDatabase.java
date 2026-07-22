@@ -201,7 +201,6 @@ class StatsWebDatabase
     {
         Path path = getDatabasePath();
         Map<String,Object> status = new LinkedHashMap<>();
-        status.put("databasePath", path.toString());
         status.put("databaseExists", Files.isRegularFile(path));
         status.put("databaseBytes", fileBytes(path));
         status.put("walBytes", fileBytes(Path.of(path + "-wal")));
@@ -217,7 +216,6 @@ class StatsWebDatabase
                 long lastDetailedHistoryMs = scalarLong(connection, """
                     SELECT COALESCE((SELECT observed_at_ms FROM p25_activity_event ORDER BY id DESC LIMIT 1), 0)
                     """);
-                details.put("logger", loggerStatus(connection));
                 details.put("detailedHistoryAvailable", lastDetailedHistoryMs > 0);
                 details.put("lastDetailedHistoryMs", lastDetailedHistoryMs);
                 return details;
@@ -225,7 +223,6 @@ class StatsWebDatabase
         }
         catch(StatsApiException e)
         {
-            status.put("logger", List.of());
             status.put("detailedHistoryAvailable", false);
             status.put("lastDetailedHistoryMs", 0);
         }
@@ -1393,11 +1390,6 @@ class StatsWebDatabase
         String name = description.isEmpty() ? null : Character.toUpperCase(description.charAt(0)) +
             description.substring(1);
         return name != null ? name + " (" + hex + ")" : hex;
-    }
-
-    private List<Map<String,Object>> loggerStatus(Connection connection) throws SQLException
-    {
-        return queryRows(connection, "SELECT key, value, updated_at_ms FROM logger_status ORDER BY key");
     }
 
     private static List<Map<String,Object>> hourlyActivity(Connection connection) throws SQLException

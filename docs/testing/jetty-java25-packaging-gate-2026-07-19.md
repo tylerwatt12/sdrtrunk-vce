@@ -18,7 +18,9 @@ SDRTrunk, exercise a tuner, or change either receiver node.
 - `org.eclipse.jetty.jmx` is an optional (`static`) dependency and is intentionally absent because this slice does not
   enable Jetty JMX instrumentation.
 - Jetty and OSHI select SLF4J 2.0.18, so the application's direct SLF4J declaration is aligned to 2.0.18.
-- `jdk.httpserver` remains in the application descriptor and runtime image while the legacy web server still exists.
+- `jdk.httpserver` remains temporarily in the application descriptor/runtime image as build residue. The compatibility
+  routes now run behind Jetty; remove this module only after a focused dependency/packaging audit confirms no unrelated
+  utility still needs it.
 
 ## Commands and results
 
@@ -44,11 +46,14 @@ resolve using that image without adding any JDK module to the existing `runtimeM
 size delta from Jetty is zero; the application distribution grows by the 2.519 MiB of Jetty jars before outer ZIP
 compression. The complete staged classpath library directory contains 52,583,894 file bytes (50.148 MiB).
 
-## BOSGAME packaging recommendation
+## Windows x86-64 follow-up
 
-Before deployment, run the existing `runtimeZipWindows` release task and select its Windows x86-64 artifact for
-BOSGAME. The Windows Java 25 target JDKs were not present in the local Gradle cache during this focused gate, so that
-task will download the configured BellSoft target JDKs on its first run. Verify the resulting x86-64 archive with the
-same no-execution checks, confirm that all nine Jetty jars are in its `lib` directory, and only then use it for the
-bounded BOSGAME lifecycle and synthetic-stream tests. The Windows aarch64 artifact is not a BOSGAME deployment
-candidate.
+The configured Java 25 Windows x86-64 target JDK was downloaded and `runtimeZipWindows` completed. The resulting image
+contained the nine Jetty jars, the signal assets, and the packaged Java 25 runtime, then passed the bounded BOSGAME
+headless and physical-tuner foundation canary. Exact foundation-artifact hashes are recorded in the
+[historical BOSGAME wideband canary report](bosgame-webfirst-wideband-canary-2026-07-19.md). The current package identity
+is recorded in the
+[exclusive interactive deployment report](bosgame-webfirst-interactive-spectrum-deployment-2026-07-19.md).
+
+This result qualifies Windows x86-64 only. Windows ARM64, Linux x86-64/ARM64, macOS x86-64/ARM64, signing,
+notarization, and release CI remain open.

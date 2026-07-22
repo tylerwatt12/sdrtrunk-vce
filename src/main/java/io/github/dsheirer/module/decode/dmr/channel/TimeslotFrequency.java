@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.dmr.channel;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import javafx.beans.Observable;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.IntegerProperty;
@@ -106,6 +107,7 @@ public class TimeslotFrequency
      * Note: lsn (logical slot number) is a legacy name for this field.  The field currently holds the LCN or logical
      * channel number.  To avoid breaking serialization, we leave this field labeled as lsn.
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "lsn")
     public int getNumber()
     {
         return mNumberProperty.get();
@@ -183,6 +185,7 @@ public class TimeslotFrequency
      * Downlink frequency
      * @return value in hertz
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "downlink")
     public long getDownlinkFrequency()
     {
         return mDownlinkFrequencyProperty.get();
@@ -202,6 +205,7 @@ public class TimeslotFrequency
      * Uplink frequency
      * @return value in hertz
      */
+    @JacksonXmlProperty(isAttribute = true, localName = "uplink")
     public long getUplinkFrequency()
     {
         return mUplinkFrequencyProperty.get();

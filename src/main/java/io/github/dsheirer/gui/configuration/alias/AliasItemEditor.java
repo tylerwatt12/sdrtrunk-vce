@@ -764,6 +764,13 @@ public class AliasItemEditor extends Editor<Alias>
             nbfmMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.NBFM));
             nbfmMenu.getItems().add(new AddDcsItem());
 
+            Menu nxdnMenu = new ProtocolMenu(Protocol.NXDN);
+            nxdnMenu.getItems().add(new AddTalkgroupItem(Protocol.NXDN));
+            nxdnMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.NXDN));
+            nxdnMenu.getItems().add(new AddRadioIdItem(Protocol.NXDN));
+            nxdnMenu.getItems().add(new AddRadioIdRangeItem(Protocol.NXDN));
+            nxdnMenu.getItems().add(new AddTonesItem("AMBE Audio Tones"));
+
             Menu passportMenu = new ProtocolMenu(Protocol.PASSPORT);
             passportMenu.getItems().add(new AddTalkgroupItem(Protocol.PASSPORT));
             passportMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.PASSPORT));
@@ -777,7 +784,7 @@ public class AliasItemEditor extends Editor<Alias>
             lojackMenu.getItems().add(new AddLojackItem());
 
             mAddIdentifierButton.getItems().addAll(amMenu, p25Menu, dmrMenu, fleetsyncMenu, ltrMenu, mdcMenu, mptMenu,
-                nbfmMenu, passportMenu, taitMenu, new SeparatorMenuItem(), lojackMenu);
+                nbfmMenu, nxdnMenu, passportMenu, taitMenu, new SeparatorMenuItem(), lojackMenu);
         }
 
         return mAddIdentifierButton;

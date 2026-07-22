@@ -57,6 +57,7 @@ repositories {
 
 def javafxVersion = "25.0.1"
 def jettyVersion = "12.1.11"
+def bouncyCastleVersion = "1.84"
 def currentJavafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ? "win" :
     (org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isMacOsX() ? "mac" : "linux")
 def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlatform
@@ -64,10 +65,22 @@ def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlat
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
+def updateTrack = (project.findProperty('updateTrack') ?: 'main').toString()
+def updateBuild = (project.findProperty('updateBuild') ?: '0').toString()
+
+if(!(updateTrack in ['main', 'webfirst'])) {
+    throw new GradleException("updateTrack must be 'main' or 'webfirst'")
+}
+
+if(!(updateBuild ==~ /\d+/)) {
+    throw new GradleException('updateBuild must be a non-negative integer')
+}
+
 def releaseVersion = version.toString()
 def releaseNotesDirectory = file('src/main/resources/release-notes')
 def releaseNotesMetadataFile = file("${releaseNotesDirectory}/${releaseVersion}.properties")
 def releaseNotesHtmlFile = file("${releaseNotesDirectory}/${releaseVersion}.html")
+def githubReleaseNotesFile = file(".github/release-notes/${releaseVersion}.md")
 def isNumberedPublicRelease = { String candidate ->
     def normalized = candidate.toLowerCase(Locale.US)
     !normalized.contains('nightly') && !normalized.contains('snapshot') && !normalized.contains('dev')
@@ -75,17 +88,17 @@ def isNumberedPublicRelease = { String candidate ->
 
 tasks.register('verifyReleaseNotesContent') {
     group = 'verification'
-    description = 'Checks that the current numbered version has complete rich-text release notes.'
+    description = 'Checks the in-application What\'s New content and pre-download GitHub release notes.'
     inputs.property('releaseVersion', releaseVersion)
-    inputs.files(releaseNotesMetadataFile, releaseNotesHtmlFile)
+    inputs.files(releaseNotesMetadataFile, releaseNotesHtmlFile, githubReleaseNotesFile)
 
     doLast {
         if(!isNumberedPublicRelease(releaseVersion)) {
             return
         }
 
-        if(!releaseNotesMetadataFile.isFile() || !releaseNotesHtmlFile.isFile()) {
-            throw new GradleException("Public release ${releaseVersion} requires ${releaseNotesMetadataFile} and ${releaseNotesHtmlFile}")
+        if(!releaseNotesMetadataFile.isFile() || !releaseNotesHtmlFile.isFile() || !githubReleaseNotesFile.isFile()) {
+            throw new GradleException("Public release ${releaseVersion} requires ${releaseNotesMetadataFile}, ${releaseNotesHtmlFile}, and ${githubReleaseNotesFile}")
         }
 
         def metadata = new Properties()
@@ -100,15 +113,68 @@ tasks.register('verifyReleaseNotesContent') {
         }
 
         def html = releaseNotesHtmlFile.getText('UTF-8')
-        ['What', 'Added', 'Changed', 'Fixed', 'Removed', 'Before You Upgrade'].each { heading ->
-            if(!html.contains(heading)) {
-                throw new GradleException("Release notes for ${releaseVersion} are missing the '${heading}' section")
+
+        if(!html.toLowerCase(Locale.US).contains('what')) {
+            throw new GradleException("In-application What's New content for ${releaseVersion} is missing its title")
+        }
+
+        def forbiddenInApplicationContent = [
+            'Before You Upgrade': ~/(?is)<h2[^>]*>\s*Before\s+You\s+(?:Upgrade|Download)\s*<\/h2>/,
+            'Downloads': ~/(?is)<(?:h2|b)[^>]*>\s*Downloads:?\s*<\/[^>]+>/,
+            'checksum instructions': ~/(?i)SHA256SUMS/,
+            'package-selection instructions': ~/(?i)package\s+that\s+matches\s+your\s+operating\s+system/,
+            'JMBE installation instructions': ~/(?i)JMBE\s+remains\s+a\s+separate\s+setup/
+        ]
+
+        forbiddenInApplicationContent.each { label, pattern ->
+            if((html =~ pattern).find()) {
+                throw new GradleException("In-application What's New content for ${releaseVersion} must not contain ${label}; put pre-download guidance in ${githubReleaseNotesFile}")
+            }
+        }
+
+        def changeHeadings = ['Added', 'Changed', 'Fixed', 'Removed'].findAll { heading ->
+            (html =~ ~/(?is)<h2[^>]*>\s*${java.util.regex.Pattern.quote(heading)}\s*<\/h2>/).find()
+        }
+
+        if(changeHeadings.isEmpty()) {
+            throw new GradleException("In-application What's New content for ${releaseVersion} needs at least one substantive change section")
+        }
+
+        changeHeadings.each { heading ->
+            def sectionMatcher = html =~ ~/(?is)<h2[^>]*>\s*${java.util.regex.Pattern.quote(heading)}\s*<\/h2>(.*?)(?=<h2[^>]*>|\z)/
+
+            if(!sectionMatcher.find()) {
+                throw new GradleException("Unable to inspect the '${heading}' section for ${releaseVersion}")
+            }
+
+            def sectionText = sectionMatcher.group(1).replaceAll('<[^>]+>', ' ').replaceAll('&[^;]+;', ' ')
+                .replaceAll('\\s+', ' ').trim()
+
+            if(sectionText.isEmpty()) {
+                throw new GradleException("Omit the empty '${heading}' section from What's New for ${releaseVersion}")
+            }
+
+            def normalizedSection = sectionText.toLowerCase(Locale.US)
+            def saysNothingChanged =
+                normalizedSection.matches('(?s)^no\\b.*\\b(?:is|are|was|were|has been|have been)\\s+(?:added|changed|fixed|removed)\\b.*') ||
+                normalizedSection.matches('(?s)^(?:nothing|none)\\b.*\\b(?:added|changed|fixed|removed)\\b.*') ||
+                normalizedSection.matches('(?s)^no\\s+(?:additions|changes|fixes|removals)\\b.*')
+
+            if(saysNothingChanged) {
+                throw new GradleException("Omit the '${heading}' section from What's New for ${releaseVersion} when it only says that nothing changed")
             }
         }
 
         def plainWords = html.replaceAll('<[^>]+>', ' ').trim().split('\\s+').findAll { !it.isBlank() }
         if(plainWords.size() < 150) {
-            throw new GradleException("Release notes for ${releaseVersion} are too brief (${plainWords.size()} words)")
+            throw new GradleException("In-application What's New content for ${releaseVersion} is too brief (${plainWords.size()} words)")
+        }
+
+        def githubNotes = githubReleaseNotesFile.getText('UTF-8')
+        ['Before You Download', 'Downloads', 'JMBE', 'SHA256SUMS.txt'].each { requiredText ->
+            if(!githubNotes.contains(requiredText)) {
+                throw new GradleException("GitHub release notes for ${releaseVersion} are missing '${requiredText}'")
+            }
         }
     }
 }
@@ -229,6 +295,7 @@ dependencies {
     implementation 'org.apache.mina:mina-core:2.2.4'
     implementation 'org.apache.mina:mina-http:2.2.4'
     implementation 'org.controlsfx:controlsfx:11.2.2'
+    implementation "org.bouncycastle:bcpkix-jdk18on:${bouncyCastleVersion}"
     implementation "org.eclipse.jetty:jetty-server:${jettyVersion}"
     implementation "org.eclipse.jetty.websocket:jetty-websocket-jetty-server:${jettyVersion}"
     // Jetty 12.1.11 resolves against SLF4J 2.0.18; keep the direct declaration aligned so packaging is deterministic.
@@ -403,6 +470,8 @@ jar {
         attributes (
                 'Implementation-Title'  : 'sdrtrunk-vce project',
                 'Implementation-Version' : archiveVersion,
+                'Update-Track'           : updateTrack,
+                'Update-Build'           : updateBuild,
                 'Created-By'            : "Gradle ${gradle.gradleVersion}",
                 'Build-Timestamp'       : new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ").format(new Date()),
                 'Build-JDK'             : "${System.properties['java.version']} (${System.properties['java.vendor']} ${System.properties['java.vm.version']}",

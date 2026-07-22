@@ -27,8 +27,8 @@ import io.github.dsheirer.web.access.AuthorizationSubject;
 import io.github.dsheirer.web.access.FeatureAccessMode;
 import io.github.dsheirer.web.access.InMemoryFeatureAccessPolicy;
 import io.github.dsheirer.web.access.WebFeature;
+import io.github.dsheirer.web.access.WebRequestSubjectResolver;
 import java.io.InputStream;
-import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -41,8 +41,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.server.Request;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +62,7 @@ class StatsWebHandlerTest
     private HttpClient mHttpClient;
     private InMemoryFeatureAccessPolicy mAccessPolicy;
     private AtomicReference<AuthorizationSubject> mSubject;
+    private AtomicBoolean mSessionValid;
 
     @BeforeEach
     void setUp() throws Exception
@@ -77,8 +81,25 @@ class StatsWebHandlerTest
         mWebCallService.start();
         mAccessPolicy = InMemoryFeatureAccessPolicy.currentProfileDefaults();
         mSubject = new AtomicReference<>(AuthorizationSubject.ANONYMOUS);
-        mHandler = new StatsWebHandler(assets, false, database, mLiveService, mWebCallService,
-            () -> Map.of("server", Map.of("enabled", true)), mAccessPolicy, request -> mSubject.get());
+        mSessionValid = new AtomicBoolean(true);
+        WebRequestSubjectResolver subjectResolver = new WebRequestSubjectResolver()
+        {
+            @Override
+            public AuthorizationSubject resolve(Request request)
+            {
+                return mSubject.get();
+            }
+
+            @Override
+            public WebAuthorization resolveAuthorization(Request request)
+            {
+                AuthorizationSubject subject = mSubject.get();
+                return subject.isAuthenticatedAdmin() ? new WebAuthorization(subject, mSessionValid::get) :
+                    WebAuthorization.permanent(subject);
+            }
+        };
+        mHandler = new StatsWebHandler(assets, database, mLiveService, mWebCallService,
+            () -> Map.of("server", Map.of("enabled", true)), mAccessPolicy, subjectResolver);
         mWebApplicationService = new WebApplicationService(
             WebApplicationService.Configuration.ephemeralLoopback(), mHandler, container -> {});
         mWebApplicationService.start();
@@ -135,6 +156,10 @@ class StatsWebHandlerTest
         assertEquals(200, status.statusCode());
         assertTrue(status.body().contains("\"enabled\":true"));
         assertEquals("application/json; charset=utf-8", status.headers().firstValue("Content-Type").orElseThrow());
+        assertEquals("nosniff", status.headers().firstValue("X-Content-Type-Options").orElse(null));
+        assertEquals("DENY", status.headers().firstValue("X-Frame-Options").orElse(null));
+        assertTrue(status.headers().firstValue("Content-Security-Policy").orElse("")
+            .contains("frame-ancestors 'none'"));
         assertEquals(200, get("api/systems").statusCode());
 
         HttpResponse<String> index = get("");
@@ -221,21 +246,96 @@ class StatsWebHandlerTest
     }
 
     @Test
-    void retainsLoopbackLanAndTailnetAddressPolicy() throws Exception
+    void closesSsePromptlyWhenItsAdminSessionIsInvalidated() throws Exception
     {
-        assertTrue(StatsWebHandler.isRemoteAllowed(InetAddress.getByName("127.0.0.1"), false));
-        assertFalse(StatsWebHandler.isRemoteAllowed(InetAddress.getByName("192.168.1.20"), false));
-        assertTrue(StatsWebHandler.isRemoteAllowed(InetAddress.getByName("192.168.1.20"), true));
-        assertTrue(StatsWebHandler.isRemoteAllowed(InetAddress.getByName("100.64.1.2"), true));
-        assertTrue(StatsWebHandler.isRemoteAllowed(InetAddress.getByName("fd7a:115c:a1e0::1"), true));
-        assertFalse(StatsWebHandler.isRemoteAllowed(InetAddress.getByName("8.8.8.8"), true));
-        assertFalse(StatsWebHandler.isRemoteAllowed(InetAddress.getByName("2001:4860:4860::8888"), true));
+        mAccessPolicy.setMode(WebFeature.STATUS_STATISTICS, FeatureAccessMode.ADMIN_ONLY);
+        mSubject.set(AuthorizationSubject.AUTHENTICATED_ADMIN);
+
+        try(InputStream stream = openSse("live/systems"))
+        {
+            assertTrue(readSseEvent(stream).startsWith("event: snapshot\n"));
+            mSessionValid.set(false);
+            assertStreamClosesWithinOneSecond(stream);
+        }
+    }
+
+    @Test
+    void closesAnonymousSsePromptlyWhenFeatureBecomesAdminOnly() throws Exception
+    {
+        try(InputStream stream = openSse("live/web-calls"))
+        {
+            assertTrue(readSseEvent(stream).startsWith("event: ready\n"));
+            mAccessPolicy.setMode(WebFeature.CALL_AUDIO, FeatureAccessMode.ADMIN_ONLY);
+            assertStreamClosesWithinOneSecond(stream);
+        }
     }
 
     private HttpResponse<String> get(String relativePath) throws Exception
     {
         return mHttpClient.send(HttpRequest.newBuilder(mWebApplicationService.getBaseUri().resolve(relativePath))
             .timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private InputStream openSse(String relativePath) throws Exception
+    {
+        HttpResponse<InputStream> response = mHttpClient.send(HttpRequest.newBuilder(
+            mWebApplicationService.getBaseUri().resolve(relativePath)).timeout(Duration.ofSeconds(5)).GET().build(),
+            HttpResponse.BodyHandlers.ofInputStream());
+        assertEquals(200, response.statusCode());
+        return response.body();
+    }
+
+    private static String readSseEvent(InputStream stream) throws Exception
+    {
+        byte[] event = new byte[64 * 1024];
+        int length = 0;
+
+        while(length < event.length)
+        {
+            int value = stream.read();
+
+            if(value < 0)
+            {
+                break;
+            }
+
+            event[length++] = (byte)value;
+
+            if(length >= 2 && event[length - 2] == '\n' && event[length - 1] == '\n')
+            {
+                return new String(event, 0, length, StandardCharsets.UTF_8);
+            }
+        }
+
+        throw new AssertionError("SSE initial event did not terminate within the bounded test buffer");
+    }
+
+    private static void assertStreamClosesWithinOneSecond(InputStream stream) throws Exception
+    {
+        CompletableFuture<Integer> nextByte = new CompletableFuture<>();
+        Thread reader = Thread.ofVirtual().name("stats SSE revocation test").start(() -> {
+            try
+            {
+                nextByte.complete(stream.read());
+            }
+            catch(Exception exception)
+            {
+                nextByte.completeExceptionally(exception);
+            }
+        });
+
+        try
+        {
+            assertEquals(-1, nextByte.get(1, TimeUnit.SECONDS));
+        }
+        finally
+        {
+            if(!nextByte.isDone())
+            {
+                stream.close();
+                reader.interrupt();
+            }
+        }
     }
 
     private static CompletedAudioCall call()

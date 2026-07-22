@@ -114,6 +114,27 @@ class SpectrumStreamServiceTest
     }
 
     @Test
+    void reconnectRestartsASourceThatStoppedItselfDuringTheGracePeriod() throws Exception
+    {
+        ManualSpectrumFrameSource source = new ManualSpectrumFrameSource();
+
+        try(SpectrumStreamService service = service(source, 1, Duration.ofSeconds(1)))
+        {
+            SpectrumStreamService.Subscription first = service.trySubscribe().orElseThrow();
+            source.fail();
+            first.close();
+
+            SpectrumStreamService.Subscription replacement = service.trySubscribe().orElseThrow();
+            assertEquals(2, source.getStartCount());
+            assertEquals(1, service.getSourceStopCount());
+            SpectrumFrame replacementFrame = frame(12);
+            source.emit(replacementFrame);
+            assertSame(replacementFrame, replacement.poll(POLL_TIMEOUT));
+            replacement.close();
+        }
+    }
+
+    @Test
     void closeTerminatesServiceAndSyntheticProducerExecutors() throws Exception
     {
         SyntheticSpectrumFrameSource source = new SyntheticSpectrumFrameSource(
@@ -219,6 +240,11 @@ class SpectrumStreamServiceTest
             }
 
             consumer.accept(frame);
+        }
+
+        void fail()
+        {
+            mRunning.set(false);
         }
 
         @Override

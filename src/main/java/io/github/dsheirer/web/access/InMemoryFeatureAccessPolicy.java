@@ -39,21 +39,21 @@ public final class InMemoryFeatureAccessPolicy implements FeatureAccessGateway
             throw new IllegalArgumentException("Maximum listeners must be positive");
         }
 
+        requirePermanentModes(modes);
         mMaximumListeners = maximumListeners;
         mSnapshot = new Snapshot(0, modes);
     }
 
     /**
      * Compatibility defaults for a profile that already exposes the current stats interface.  Existing status,
-     * statistics, and call audio remain public, and the new read-only wideband signal view starts public.  Other new
-     * monitoring features start admin-only.
+     * statistics and call audio remain public.  Interactive wideband signal and other new monitoring features start
+     * admin-only.
      */
     public static InMemoryFeatureAccessPolicy currentProfileDefaults()
     {
         EnumMap<WebFeature,FeatureAccessMode> modes = allFeatures(FeatureAccessMode.ADMIN_ONLY);
         modes.put(WebFeature.STATUS_STATISTICS, FeatureAccessMode.PUBLIC);
         modes.put(WebFeature.CALL_AUDIO, FeatureAccessMode.PUBLIC);
-        modes.put(WebFeature.WIDEBAND_SIGNAL, FeatureAccessMode.PUBLIC);
         return new InMemoryFeatureAccessPolicy(modes, DEFAULT_MAXIMUM_LISTENERS);
     }
 
@@ -127,6 +127,12 @@ public final class InMemoryFeatureAccessPolicy implements FeatureAccessGateway
     {
         Objects.requireNonNull(feature, "Feature cannot be null");
         Objects.requireNonNull(mode, "Feature access mode cannot be null");
+
+        if(feature == WebFeature.WIDEBAND_SIGNAL && mode != FeatureAccessMode.ADMIN_ONLY)
+        {
+            throw new IllegalArgumentException("Wideband signal access is permanently administrator-only");
+        }
+
         mMutationLock.lock();
 
         try
@@ -156,6 +162,16 @@ public final class InMemoryFeatureAccessPolicy implements FeatureAccessGateway
         finally
         {
             mMutationLock.unlock();
+        }
+    }
+
+    private static void requirePermanentModes(Map<WebFeature,FeatureAccessMode> modes)
+    {
+        Objects.requireNonNull(modes, "Feature modes cannot be null");
+
+        if(modes.get(WebFeature.WIDEBAND_SIGNAL) != FeatureAccessMode.ADMIN_ONLY)
+        {
+            throw new IllegalArgumentException("Wideband signal access is permanently administrator-only");
         }
     }
 

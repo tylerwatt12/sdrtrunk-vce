@@ -115,7 +115,7 @@ public class LegacyXmlConfigurationImporter
             p25ConventionalConversions);
     }
 
-    static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
+    public static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
     {
         try(InputStream inputStream = Files.newInputStream(sourceXml))
         {

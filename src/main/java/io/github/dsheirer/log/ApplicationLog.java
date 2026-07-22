@@ -143,6 +143,8 @@ public class ApplicationLog
 
             loggerContext.getLogger("org.apache.mina").setLevel(Level.INFO);
             loggerContext.getLogger("org.sqlite").setLevel(Level.WARN);
+            //Jetty DEBUG output can include raw HTTP headers (including the administrator session cookie).
+            loggerContext.getLogger("org.eclipse.jetty").setLevel(Level.INFO);
 
             Attributes atts = findManifestAttributes();
             if (atts != null) {

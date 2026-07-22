@@ -68,8 +68,9 @@ public abstract class ClearableHistoryModel<T> extends AbstractTableModel
 
             while(mItems.size() > mHistorySize)
             {
+                int removedRow = mItems.size() - 1;
                 mItems.removeLast();
-                fireTableRowsDeleted(mItems.size() - 1, mItems.size() - 1);
+                fireTableRowsDeleted(removedRow, removedRow);
             }
         }
     }

@@ -22,6 +22,10 @@ import com.jidesoft.plaf.LookAndFeelFactory;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.application.HeadlessStartupPolicy;
+import io.github.dsheirer.application.SdrTrunkLaunchOptions;
+import io.github.dsheirer.application.update.UpdateCheckResult;
+import io.github.dsheirer.application.update.UpdateCheckService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
@@ -29,20 +33,18 @@ import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.bugreport.BugReportDialog;
-import io.github.dsheirer.gui.preference.CalibrateRequest;
-import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.gui.preference.calibration.CalibrationDialog;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
+import io.github.dsheirer.gui.nodeadmin.LocalNodeAdministrationApplication;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
@@ -54,10 +56,11 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
+import io.github.dsheirer.portable.PortableApplicationPaths;
+import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
@@ -87,24 +90,20 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 import java.util.prefs.Preferences;
-import javafx.application.Platform;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javafx.embed.swing.JFXPanel;
-import javafx.scene.control.ButtonType;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
@@ -113,25 +112,18 @@ import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
-import javax.swing.JDialog;
 import javax.swing.JFrame;
-import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
 import javax.swing.KeyStroke;
 import javax.swing.JToggleButton;
-import javax.swing.Timer;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import javax.swing.plaf.metal.MetalLookAndFeel;
@@ -144,6 +136,8 @@ public class SDRTrunk implements Listener<TunerEvent>
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
     private static final String PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE = "sdrtrunk.now.playing.details.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
+    private static final String PREFERENCE_UPDATE_FOOTER_MIGRATION =
+        "sdrtrunk.resource.status.update.icon.migration.1";
     private static final String PREFERENCE_SYSTEMS_VISIBLE = "sdrtrunk.systems.visible";
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
     private static final String CONTROLLER_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".control.panel";
@@ -180,6 +174,11 @@ public class SDRTrunk implements Listener<TunerEvent>
     private ApplicationLog mApplicationLog;
     private ResourceMonitor mResourceMonitor;
     private JFXPanel mResourceStatusPanel;
+    private UpdateCheckService mUpdateCheckService;
+    private volatile UpdateCheckResult mUpdateCheckResult = UpdateCheckResult.notChecked();
+    private final AtomicBoolean mUpdateCheckInProgress = new AtomicBoolean();
+    private volatile boolean mManualUpdateFeedbackRequested;
+    private JMenuItem mCheckForUpdatesMenuItem;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
     private JMenuItem mEncryptionKeysItem;
@@ -189,17 +188,20 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mSpectralPanelVisible;
     private boolean mSystemsVisible;
     private boolean mMainSplitPaneDividerRestored;
-    private boolean mVaultLaunchPromptProcessed;
+    private PortableDataRootLock mDataRootLock;
 
     private String mTitle;
 
-    private SDRTrunk(UserPreferences userPreferences)
+    private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock)
     {
+        boolean headless = GraphicsEnvironment.isHeadless();
         mUserPreferences = userPreferences;
+        mDataRootLock = dataRootLock;
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
+        mUpdateCheckService = new UpdateCheckService();
         mIconModel = new IconModel();
 
-        if(!GraphicsEnvironment.isHeadless())
+        if(!headless)
         {
             mMainGui = new JFrame();
         }
@@ -211,6 +213,9 @@ public class SDRTrunk implements Listener<TunerEvent>
             mUserPreferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
         }
 
+        //Initialize calibration metadata before the web status endpoint can query it.  This does not run calibration.
+        CalibrationManager.getInstance(mUserPreferences);
+
         //Note: invoke this early in the application lifecycle, before the TunerManager causes the sdrplay classes
         //to be loaded since the jextract auto-generated code attempts to load the library by name and that can fail
         //when the library was not installed into a normal/default location, particularly on windows OS systems.
@@ -221,25 +226,28 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mResourceMonitor = new ResourceMonitor(mUserPreferences);
 
-        String operatingSystem = System.getProperty("os.name", "generic").toLowerCase(Locale.ENGLISH);
-
-        if(operatingSystem.contains("mac") || operatingSystem.contains("nux"))
+        if(!headless)
         {
-            try
+            String operatingSystem = System.getProperty("os.name", "generic").toLowerCase(Locale.ENGLISH);
+
+            if(operatingSystem.contains("mac") || operatingSystem.contains("nux"))
             {
-                UIManager.setLookAndFeel(MetalLookAndFeel.class.getName());
-                LookAndFeelFactory.installJideExtension();
+                try
+                {
+                    UIManager.setLookAndFeel(MetalLookAndFeel.class.getName());
+                    LookAndFeelFactory.installJideExtension();
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error trying to set Metal look and feel for OS [" + operatingSystem + "]");
+                }
             }
-            catch(Exception e)
-            {
-                mLog.error("Error trying to set Metal look and feel for OS [" + operatingSystem + "]");
-            }
+
+            //Register FontAwesome only for the temporary legacy desktop adapter.
+            IconFontSwing.register(FontAwesome.getIconFont());
         }
 
         ThreadPool.logSettings();
-
-        //Register FontAwesome so we can use the fonts in Swing windows
-        IconFontSwing.register(FontAwesome.getIconFont());
 
         mTunerManager = new TunerManager(mUserPreferences);
         mTunerManager.start();
@@ -250,14 +258,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
 
-        if(!GraphicsEnvironment.isHeadless())
+        if(!headless)
         {
             mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mConfigurationManager);
         }
-
-        CalibrationManager calibrationManager = CalibrationManager.getInstance(mUserPreferences);
-        final boolean calibrating = !calibrationManager.isCalibrated() &&
-            !mUserPreferences.getVectorCalibrationPreference().isHideCalibrationDialog();
 
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
@@ -294,7 +298,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mNowPlayingLowerViewsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, true);
         mSystemsVisible = mPreferences.getBoolean(PREFERENCE_SYSTEMS_VISIBLE, true);
 
-        if(!GraphicsEnvironment.isHeadless())
+        if(!headless)
         {
             mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
                     mSettingsManager, mTunerManager, mUserPreferences, mStatsWebServerService, mSystemsVisible,
@@ -304,254 +308,192 @@ public class SDRTrunk implements Listener<TunerEvent>
                     });
         }
 
-        mSpectralPanel = new SpectralDisplayPanel(mConfigurationManager, mSettingsManager,
-            mTunerManager.getDiscoveredTunerModel(), mUserPreferences, SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER);
+        if(!headless)
+        {
+            mSpectralPanel = new SpectralDisplayPanel(mConfigurationManager, mSettingsManager,
+                mTunerManager.getDiscoveredTunerModel(), mUserPreferences, SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER);
 
-        mTunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
-            mConfigurationManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel(), mUserPreferences);
-        mTunerManager.getDiscoveredTunerModel().addListener(mTunerSpectralDisplayManager);
-        mTunerManager.getDiscoveredTunerModel().addListener(this);
+            mTunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
+                mConfigurationManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel(), mUserPreferences);
+            mTunerManager.getDiscoveredTunerModel().addListener(mTunerSpectralDisplayManager);
+            mTunerManager.getDiscoveredTunerModel().addListener(this);
+        }
 
         mConfigurationManager.init();
 
-        if(GraphicsEnvironment.isHeadless())
+        if(headless)
         {
-            mLog.info("starting main application headless");
+            mLog.info("Starting headless radio runtime");
+            Runtime.getRuntime().addShutdownHook(Thread.ofPlatform()
+                .name("sdrtrunk headless shutdown")
+                .unstarted(this::processShutdown));
+            startHeadlessRuntime();
         }
         else
         {
-            mLog.info("starting main application gui");
-
-            //Initialize the GUI
+            mLog.info("Starting temporary legacy desktop adapter");
             initGUI();
+            EventQueue.invokeLater(this::finishLegacyDesktopStartup);
         }
-
-        //Start the gui
-        EventQueue.invokeLater(() -> {
-            try
-            {
-                if(!GraphicsEnvironment.isHeadless())
-                {
-                    mMainGui.setVisible(true);
-                    WhatsNewDialog.showOnFirstLaunch(mMainGui);
-
-                    if(mSpectralPanelVisible)
-                    {
-                        Tuner tuner = mTunerSpectralDisplayManager.showFirstTuner();
-
-                        if(tuner != null)
-                        {
-                            updateTitle(tuner.getPreferredName());
-                        }
-                        else
-                        {
-                            // Allow delayed tuner startup paths up to about 20 seconds to populate the first display.
-                            mTunerSpectralDisplayManager.retryShowFirstTuner(1, java.util.concurrent.TimeUnit.SECONDS, 20);
-                        }
-                    }
-                }
-
-                if(calibrating && !GraphicsEnvironment.isHeadless())
-                {
-                    Platform.runLater(() ->
-                    {
-                        CalibrationDialog calibrationDialog = mJavaFxWindowManager.getCalibrationDialog(mUserPreferences);
-                        Optional<ButtonType> calibrate = calibrationDialog.showAndWait();
-                        if(calibrate.isPresent() && calibrate.get().getText().equals("Calibrate"))
-                        {
-                            //Request focus and execute calibration
-                            MyEventBus.getGlobalEventBus().post(new ViewUserPreferenceEditorRequest(PreferenceEditorType.VECTOR_CALIBRATION));
-                            MyEventBus.getGlobalEventBus().post(new CalibrateRequest());
-                        }
-                        else
-                        {
-                            autoStartChannels();
-                        }
-                    });
-                }
-                else
-                {
-                    autoStartChannels();
-                }
-            }
-            catch(Exception e)
-            {
-                e.printStackTrace();
-            }
-        });
     }
 
     /**
-     * Shows a dialog that lists the channels that have been designated for auto-start, sorted by auto-start order and
-     * allows the user to start now, cancel, or allow the timer to expire and then start the channels.  The dialog will
-     * only show if there are one ore more channels designated for auto-start.
+     * Applies the explicit unattended startup policy without scheduling AWT or JavaFX work.
      */
-    private void autoStartChannels()
+    private void startHeadlessRuntime()
     {
-        processEncryptionVaultLaunchPrompt();
-        List<Channel> channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
+        HeadlessStartupPolicy policy = evaluateHeadlessStartupPolicy();
 
-        if(channels.size() > 0)
+        if(policy.calibrationAction() ==
+            HeadlessStartupPolicy.CalibrationAction.CONTINUE_WITH_CURRENT_IMPLEMENTATIONS)
         {
-            if(GraphicsEnvironment.isHeadless())
+            logHeadlessCalibrationState();
+        }
+
+        startUnattendedRadio(policy);
+    }
+
+    private void logHeadlessCalibrationState()
+    {
+        try
+        {
+            int pending = CalibrationManager.getInstance(mUserPreferences).getUncalibrated().size();
+
+            if(pending > 0)
             {
-                for(Channel channel: channels)
+                mLog.info("[{}] CPU vector calibrations are pending; headless startup will continue with the current " +
+                    "implementations and will not block radio startup", pending);
+            }
+        }
+        catch(RuntimeException e)
+        {
+            mLog.warn("Unable to inspect CPU calibration state; continuing headless startup", e);
+        }
+    }
+
+    private void finishLegacyDesktopStartup()
+    {
+        try
+        {
+            mMainGui.setVisible(true);
+            checkForUpdates(false);
+
+            if(mSpectralPanelVisible)
+            {
+                Tuner tuner = mTunerSpectralDisplayManager.showFirstTuner();
+
+                if(tuner != null)
                 {
-                    try
-                    {
-                        mLog.info("Auto-starting channel " + channel.getName());
-                        mConfigurationManager.getChannelProcessingManager().start(channel);
-                    }
-                    catch(ChannelException ce)
-                    {
-                        mLog.error("Channel: " + channel.getName() + " auto-start failed: " + ce.getMessage());
-                    }
+                    updateTitle(tuner.getPreferredName());
+                }
+                else
+                {
+                    // Allow delayed tuner startup paths up to about 20 seconds to populate the first display.
+                    mTunerSpectralDisplayManager.retryShowFirstTuner(1, java.util.concurrent.TimeUnit.SECONDS, 20);
                 }
             }
-            else
+        }
+        catch(Exception e)
+        {
+            mLog.error("Unable to finish temporary desktop setup; continuing unattended radio startup", e);
+        }
+
+        startUnattendedRadio(evaluateHeadlessStartupPolicy());
+    }
+
+    private HeadlessStartupPolicy evaluateHeadlessStartupPolicy()
+    {
+        try
+        {
+            boolean moduleLoaded =
+                mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded();
+
+            if(!moduleLoaded)
             {
-                new ChannelAutoStartFrame(mConfigurationManager.getChannelProcessingManager(), channels, mUserPreferences);
+                return HeadlessStartupPolicy.evaluate(false, false, false);
             }
+
+            EncryptionKeyVaultService vaultService =
+                mUserPreferences.getEncryptionKeyPreference().getVaultService();
+            return HeadlessStartupPolicy.evaluate(moduleLoaded, vaultService.hasVault(), vaultService.isUnlocked());
+        }
+        catch(RuntimeException e)
+        {
+            mLog.warn("Unable to inspect encryption-vault startup state; applying the fail-closed headless policy", e);
+            return HeadlessStartupPolicy.evaluate(true, true, false);
         }
     }
 
-    private void processEncryptionVaultLaunchPrompt()
+    private void startUnattendedRadio(HeadlessStartupPolicy policy)
     {
-        if(mVaultLaunchPromptProcessed)
+        disableLockedVaultForRun(policy);
+
+        if(policy.channelAction() !=
+            HeadlessStartupPolicy.ChannelAction.START_CONFIGURED_CHANNELS_IMMEDIATELY)
         {
             return;
         }
 
-        mVaultLaunchPromptProcessed = true;
+        List<Channel> channels;
 
-        if(!mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
+        try
         {
+            channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
+        }
+        catch(RuntimeException e)
+        {
+            mLog.error("Unable to load configured auto-start channels", e);
             return;
         }
 
-        EncryptionKeyVaultService vaultService = mUserPreferences.getEncryptionKeyPreference().getVaultService();
-
-        if(!vaultService.hasVault() || vaultService.isUnlocked() || !vaultService.isPromptOnLaunch())
-        {
-            return;
-        }
-
-        if(GraphicsEnvironment.isHeadless())
-        {
-            vaultService.disableForRun();
-            return;
-        }
-
-        showEncryptionVaultLaunchPrompt(vaultService);
+        startConfiguredChannels(channels);
     }
 
-    private void showEncryptionVaultLaunchPrompt(EncryptionKeyVaultService vaultService)
+    private void disableLockedVaultForRun(HeadlessStartupPolicy policy)
     {
-        final int timeoutSeconds = 30;
-        final int[] secondsRemaining = {timeoutSeconds};
-        JLabel countdownLabel = new JLabel("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
-        JPasswordField passwordField = new JPasswordField(24);
-        JCheckBox savePasswordCheckBox = new JCheckBox("Save password (Warning! Unsafe!)");
-        JPanel panel = new JPanel(new MigLayout("insets 8", "[right][grow,fill]", "[][][]"));
-        panel.add(new JLabel("Password:"), "cell 0 0");
-        panel.add(passwordField, "cell 1 0,growx");
-        panel.add(savePasswordCheckBox, "cell 1 1");
-        panel.add(countdownLabel, "cell 0 2 2 1");
-
-        JOptionPane pane = new JOptionPane(panel, JOptionPane.QUESTION_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
-        JDialog dialog = pane.createDialog(mMainGui, "Unlock Encryption Key Vault");
-
-        Runnable resetCountdown = () -> {
-            secondsRemaining[0] = timeoutSeconds;
-            countdownLabel.setText("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
-        };
-
-        passwordField.getDocument().addDocumentListener(new DocumentListener()
+        if(policy.vaultAction() != HeadlessStartupPolicy.VaultAction.DISABLE_FOR_RUN)
         {
-            @Override
-            public void insertUpdate(DocumentEvent e)
-            {
-                resetCountdown.run();
-            }
+            return;
+        }
 
-            @Override
-            public void removeUpdate(DocumentEvent e)
-            {
-                resetCountdown.run();
-            }
-
-            @Override
-            public void changedUpdate(DocumentEvent e)
-            {
-                resetCountdown.run();
-            }
-        });
-
-        savePasswordCheckBox.addActionListener(event -> resetCountdown.run());
-        MouseAdapter interactionReset = new MouseAdapter()
+        try
         {
-            @Override
-            public void mouseClicked(MouseEvent e)
+            EncryptionKeyVaultService vaultService =
+                mUserPreferences.getEncryptionKeyPreference().getVaultService();
+
+            if(vaultService.hasVault() && !vaultService.isUnlocked())
             {
-                resetCountdown.run();
-            }
-
-            @Override
-            public void mouseMoved(MouseEvent e)
-            {
-                resetCountdown.run();
-            }
-        };
-        panel.addMouseListener(interactionReset);
-        panel.addMouseMotionListener(interactionReset);
-        passwordField.addKeyListener(new java.awt.event.KeyAdapter()
-        {
-            @Override
-            public void keyPressed(KeyEvent e)
-            {
-                resetCountdown.run();
-            }
-        });
-
-        Timer timer = new Timer(1000, event -> {
-            secondsRemaining[0]--;
-            countdownLabel.setText("Decryption will stay disabled in " + secondsRemaining[0] + " seconds.");
-
-            if(secondsRemaining[0] <= 0)
-            {
-                pane.setValue(JOptionPane.CANCEL_OPTION);
-                dialog.dispose();
-            }
-        });
-
-        timer.start();
-        dialog.setVisible(true);
-        timer.stop();
-
-        Object value = pane.getValue();
-
-        if(value instanceof Integer integer && integer == JOptionPane.OK_OPTION)
-        {
-            char[] password = passwordField.getPassword();
-
-            try
-            {
-                vaultService.unlock(password, savePasswordCheckBox.isSelected());
-            }
-            catch(EncryptionKeyVaultException e)
-            {
-                JOptionPane.showMessageDialog(mMainGui, e.getMessage(), "Encryption Vault Unlock Failed",
-                    JOptionPane.ERROR_MESSAGE);
+                mLog.warn("Encryption vault remained [{}] after saved-password auto-unlock; decryption is disabled " +
+                    "for this unattended run until an administrator explicitly unlocks the vault",
+                    vaultService.getState());
                 vaultService.disableForRun();
             }
-            finally
-            {
-                Arrays.fill(password, '\0');
-            }
         }
-        else
+        catch(RuntimeException e)
         {
-            vaultService.disableForRun();
+            mLog.warn("Unable to apply the unattended encryption-vault policy; continuing with decryption unavailable",
+                e);
+        }
+    }
+
+    private void startConfiguredChannels(List<Channel> channels)
+    {
+        if(!channels.isEmpty())
+        {
+            mLog.info("Starting [{}] configured auto-start channels without an interactive countdown", channels.size());
+        }
+
+        for(Channel channel: channels)
+        {
+            try
+            {
+                mLog.info("Auto-starting channel [{}]", channel.getName());
+                mConfigurationManager.getChannelProcessingManager().start(channel);
+            }
+            catch(ChannelException | RuntimeException e)
+            {
+                mLog.error("Channel [{}] auto-start failed", channel.getName(), e);
+            }
         }
     }
 
@@ -654,7 +596,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mMainGui.add(mSplitPane, "cell 0 1,grow");
 
         mResourceMonitor.start();
-        mResourceStatusVisible = mPreferences.getBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, true);
+        mResourceStatusVisible = initializeResourceStatusVisibility();
         if(mResourceStatusVisible)
         {
             mMainGui.add(getResourceStatusPanel(), "cell 0 2,growx");
@@ -668,6 +610,12 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         JMenu fileMenu = new JMenu("File");
         menuBar.add(fileMenu);
+
+        JMenuItem importLegacyPlaylistMenu = new JMenuItem("Import Legacy Playlist XML...");
+        importLegacyPlaylistMenu.addActionListener(event -> LegacyPlaylistImportDialog.show(mMainGui,
+            mConfigurationManager, mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot()));
+        fileMenu.add(importLegacyPlaylistMenu);
+        fileMenu.addSeparator();
 
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> {
@@ -801,6 +749,21 @@ public class SDRTrunk implements Listener<TunerEvent>
             helpMenu.add(new JSeparator());
         }
 
+        mCheckForUpdatesMenuItem = new JMenuItem("Check for Updates");
+        mCheckForUpdatesMenuItem.setIcon(IconFontSwing.buildIcon(FontAwesome.DOWNLOAD, 12));
+        mCheckForUpdatesMenuItem.addActionListener(event -> {
+            if(mUpdateCheckResult.isUpdateAvailable())
+            {
+                openUpdateReleasePage(mUpdateCheckResult.releaseUri());
+            }
+            else
+            {
+                checkForUpdates(true);
+            }
+        });
+        helpMenu.add(mCheckForUpdatesMenuItem);
+        helpMenu.add(new JSeparator());
+
         JMenuItem bugReportItem = new JMenuItem("Submit Bug Report...");
         bugReportItem.setIcon(IconFontSwing.buildIcon(FontAwesome.BUG, 12));
         bugReportItem.addActionListener(event ->
@@ -811,6 +774,98 @@ public class SDRTrunk implements Listener<TunerEvent>
         creditsItem.addActionListener(event -> new CreditsDialog(mMainGui).setVisible(true));
         helpMenu.add(creditsItem);
         menuBar.add(helpMenu);
+    }
+
+    private boolean initializeResourceStatusVisibility()
+    {
+        if(!mPreferences.getBoolean(PREFERENCE_UPDATE_FOOTER_MIGRATION, false))
+        {
+            mPreferences.putBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, true);
+            mPreferences.putBoolean(PREFERENCE_UPDATE_FOOTER_MIGRATION, true);
+            return true;
+        }
+
+        return mPreferences.getBoolean(PREFERENCE_RESOURCE_STATUS_VISIBLE, true);
+    }
+
+    private void checkForUpdates(boolean manual)
+    {
+        if(manual)
+        {
+            mManualUpdateFeedbackRequested = true;
+        }
+
+        if(!mUpdateCheckInProgress.compareAndSet(false, true))
+        {
+            if(manual)
+            {
+                mCheckForUpdatesMenuItem.setText("Checking for Updates...");
+                mCheckForUpdatesMenuItem.setEnabled(false);
+            }
+
+            return;
+        }
+
+        if(manual)
+        {
+            mCheckForUpdatesMenuItem.setText("Checking for Updates...");
+            mCheckForUpdatesMenuItem.setEnabled(false);
+        }
+
+        ThreadPool.CACHED.execute(() -> {
+            UpdateCheckResult result = mUpdateCheckService.check();
+            mUpdateCheckResult = result;
+            mUpdateCheckInProgress.set(false);
+            boolean showNonAvailableResult = mManualUpdateFeedbackRequested;
+            mManualUpdateFeedbackRequested = false;
+
+            if(result.state() == UpdateCheckResult.State.UNAVAILABLE)
+            {
+                mLog.warn("Unable to check for updates: {}", result.detail());
+            }
+
+            EventQueue.invokeLater(() -> updateCheckMenuItem(result, showNonAvailableResult));
+        });
+    }
+
+    private void updateCheckMenuItem(UpdateCheckResult result, boolean showNonAvailableResult)
+    {
+        mCheckForUpdatesMenuItem.setEnabled(true);
+
+        if(result.isUpdateAvailable())
+        {
+            mCheckForUpdatesMenuItem.setText("Update Available — " + result.version());
+        }
+        else if(showNonAvailableResult && result.state() == UpdateCheckResult.State.CURRENT)
+        {
+            mCheckForUpdatesMenuItem.setText("Check for Updates — Up to Date");
+        }
+        else if(showNonAvailableResult)
+        {
+            mCheckForUpdatesMenuItem.setText("Check for Updates — Unable to Check");
+        }
+        else
+        {
+            mCheckForUpdatesMenuItem.setText("Check for Updates");
+        }
+    }
+
+    private void openUpdateReleasePage(URI releaseUri)
+    {
+        EventQueue.invokeLater(() -> {
+            try
+            {
+                if(releaseUri != null && Desktop.isDesktopSupported() &&
+                    Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
+                {
+                    Desktop.getDesktop().browse(releaseUri);
+                }
+            }
+            catch(Exception e)
+            {
+                mLog.error("Unable to open update release page", e);
+            }
+        });
     }
 
     /**
@@ -832,7 +887,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
     }
 
-    private void processShutdown()
+    private synchronized void processShutdown()
     {
         if(mShutdownProcessed)
         {
@@ -841,28 +896,50 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mShutdownProcessed = true;
         mLog.info("Application shutdown started ...");
-        mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
-        mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
-        mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
-            (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
-        mPreferences.putBoolean(PREFERENCE_SYSTEMS_VISIBLE, mSystemsVisible);
-        if(mSpectralPanelVisible)
+        if(mMainGui != null)
         {
-            mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
-            mUserPreferences.getSwingPreference().setInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER,
-                getMainSplitPaneDividerLocation());
+            mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
+            mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
+            mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
+                (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
+            mPreferences.putBoolean(PREFERENCE_SYSTEMS_VISIBLE, mSystemsVisible);
+
+            if(mSpectralPanelVisible && mSpectralPanel != null)
+            {
+                mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER,
+                    mSpectralPanel.getSize());
+                mUserPreferences.getSwingPreference().setInt(MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER,
+                    getMainSplitPaneDividerLocation());
+            }
+
+            if(mControllerPanel != null)
+            {
+                mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER,
+                    mControllerPanel.getSize());
+                mUserPreferences.getSwingPreference().setInt(NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER,
+                    mControllerPanel.getNowPlayingPanel().getSplitPaneDividerLocation());
+                mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
+                    mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
+            }
+
+            if(mSpectralPanel != null)
+            {
+                mUserPreferences.getSwingPreference().setInt(SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER,
+                    mSpectralPanel.getSplitPaneDividerLocation());
+            }
+
+            mUserPreferences.getSwingPreference().flush();
         }
 
-        mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
-        mUserPreferences.getSwingPreference().setInt(SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER,
-            mSpectralPanel.getSplitPaneDividerLocation());
-        mUserPreferences.getSwingPreference().setInt(NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER,
-            mControllerPanel.getNowPlayingPanel().getSplitPaneDividerLocation());
-        mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
-            mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
-        mUserPreferences.getSwingPreference().flush();
-        mControllerPanel.dispose();
-        mJavaFxWindowManager.shutdown();
+        if(mControllerPanel != null)
+        {
+            mControllerPanel.dispose();
+        }
+
+        if(mJavaFxWindowManager != null)
+        {
+            mJavaFxWindowManager.shutdown();
+        }
         mLog.info("Stopping channels ...");
         if(mStatsWebServerService != null)
         {
@@ -893,16 +970,33 @@ public class SDRTrunk implements Listener<TunerEvent>
             mAudioPlaybackManager.dispose();
             mAudioPlaybackManager = null;
         }
-        mAudioRecordingManager.stop();
-        mResourceMonitor.stop();
+        if(mAudioRecordingManager != null)
+        {
+            mAudioRecordingManager.stop();
+        }
 
-        mLog.info("Stopping spectral display ...");
-        mSpectralPanel.clearTuner();
+        if(mAudioStreamingManager != null)
+        {
+            mAudioStreamingManager.stop();
+        }
+
+        if(mResourceMonitor != null)
+        {
+            mResourceMonitor.stop();
+        }
+
+        if(mSpectralPanel != null)
+        {
+            mLog.info("Stopping spectral display ...");
+            mSpectralPanel.clearTuner();
+        }
         mLog.info("Stopping tuners ...");
         mTunerManager.stop();
         mLog.info("Shutdown complete.");
         mApplicationLog.stop();
         SqlitePreferencesFactory.shutdown();
+        //Keep the OS file lock until process termination. Global shutdown hooks and bounded background writers may
+        //still finish after this method returns; releasing early could let a replacement process overlap that tail.
     }
 
     private void registerQuitHandler()
@@ -1161,7 +1255,8 @@ public class SDRTrunk implements Listener<TunerEvent>
             mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor,
                 mUserPreferences.getEncryptionKeyPreference().getVaultService(),
                 mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager(),
-                mStatsWebServerService::getNavigationState);
+                mStatsWebServerService::getNavigationState, () -> mUpdateCheckResult,
+                this::openUpdateReleasePage);
         }
 
         return mResourceStatusPanel;
@@ -1314,18 +1409,45 @@ public class SDRTrunk implements Listener<TunerEvent>
     public static void main(String[] args)
     {
         System.setProperty("apple.awt.application.name", "sdrtrunk-vce");
+        PortableDataRootLock dataRootLock = null;
 
         try
         {
-            Path databasePath = SdrTrunkDatabasePath.getDatabasePath();
+            SdrTrunkLaunchOptions launchOptions = SdrTrunkLaunchOptions.parse(args);
+
+            if(launchOptions.headlessRuntime())
+            {
+                System.setProperty("java.awt.headless", "true");
+            }
+
+            if(launchOptions.serverAdminUi() && GraphicsEnvironment.isHeadless())
+            {
+                throw new IllegalStateException("The local Web Server settings window cannot open while " +
+                    "java.awt.headless=true. Stop the normal receiver process and launch " +
+                    SdrTrunkLaunchOptions.SERVER_ADMIN_UI_ARGUMENT + " from its local desktop launcher.");
+            }
+
+            Path dataRoot = PortableApplicationPaths.getDataRoot();
+            dataRootLock = PortableDataRootLock.acquire(dataRoot);
+            Path databasePath = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
             boolean newProfile = !Files.isRegularFile(databasePath);
 
             if(!SdrTrunkDatabaseBootstrap.run(args))
             {
+                dataRootLock.close();
                 return;
             }
 
             SqlitePreferencesFactory.install(databasePath);
+
+            if(launchOptions.serverAdminUi())
+            {
+                LocalNodeAdministrationApplication.launchApplication(args);
+                SqlitePreferencesFactory.shutdown();
+                dataRootLock.close();
+                return;
+            }
+
             UserPreferences userPreferences = new UserPreferences();
 
             if(newProfile)
@@ -1333,10 +1455,13 @@ public class SDRTrunk implements Listener<TunerEvent>
                 userPreferences.getApplicationPreference().setStatsLoggingEnabled(true);
             }
 
-            new SDRTrunk(userPreferences);
+            new SDRTrunk(userPreferences, dataRootLock);
+            dataRootLock = null;
         }
         catch(Exception e)
         {
+            SqlitePreferencesFactory.shutdown();
+
             String message = "sdrtrunk-vce could not start.\n\n" + e.getMessage();
             System.err.println(message);
             e.printStackTrace(System.err);

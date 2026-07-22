@@ -6,11 +6,16 @@
 
 package io.github.dsheirer.web.signal;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.spectrum.stream.SpectrumEncoding;
 import io.github.dsheirer.spectrum.stream.SpectrumFrameCodec;
+import io.github.dsheirer.web.auth.Pbkdf2PasswordHasher;
+import io.github.dsheirer.web.auth.WebAdminAuthenticationHandler;
 import java.io.ByteArrayOutputStream;
+import java.io.Console;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -24,6 +29,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -42,31 +48,41 @@ import java.util.concurrent.atomic.LongAdder;
  * Read-only load probe for an already-running receiver node.
  *
  * <p>This manually invoked utility is deliberately located in the test source set and is absent from normal JUnit
- * discovery. It opens the same public resources as a browser: the binary wideband signal WebSocket and the completed
- * call SSE/audio routes. It does not send tuner commands, change application settings, write a database, or retain
+ * discovery. It opens one exclusive administrator spectrum workspace plus the public completed-call SSE/audio routes.
+ * It does not send tuner commands, change application settings, write a database, or retain
  * received data after the process exits.</p>
  *
  * <p>Run it with the {@code remoteWebLoadProbe} Gradle task. Example:</p>
  *
  * <pre>
- * ./gradlew remoteWebLoadProbe --args='--base-url http://receiver:8090 --viewers 10 --feed-clients 10 --duration-seconds 120'
+ * ssh -N -L 18090:127.0.0.1:8090 receiver
+ * ./gradlew remoteWebLoadProbe --args='--base-url http://127.0.0.1:18090 --viewers 1 --feed-clients 10 --duration-seconds 120 --target AIRSPY'
  * </pre>
+ *
+ * <p>The administrator name and password are read only from a real interactive console.  Clear HTTP is accepted only
+ * through a literal loopback URL (normally an SSH tunnel); a remote URL must use HTTPS.  The administrator cookie is
+ * attached only to the exclusive spectrum WebSocket.  Public call-feed and audio requests remain anonymous.</p>
  */
 public final class RemoteWebLoadProbe implements AutoCloseable
 {
-    static final int MAXIMUM_VIEWERS = 10;
+    static final int MAXIMUM_VIEWERS = 1;
     static final int MAXIMUM_FEED_CLIENTS = 10;
     static final int MAXIMUM_DURATION_SECONDS = 15 * 60;
     static final int MAXIMUM_FRAME_BYTES = 8 * 1024 * 1024;
     static final int MAXIMUM_AUDIO_BYTES = 16 * 1024 * 1024;
     static final int MAXIMUM_SSE_LINE_BYTES = 64 * 1024;
+    static final double MINIMUM_FRAME_RATE_RATIO = 0.90;
+    static final int MAXIMUM_AUTH_RESPONSE_BYTES = 16 * 1024;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(8);
     private static final Duration FIRST_DATA_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final Configuration mConfiguration;
-    private final HttpClient mHttpClient;
+    private final CredentialPrompt mCredentialPrompt;
+    private final HttpClient mStatusClient;
+    private final HttpClient mSpectrumClient;
+    private final List<HttpClient> mAnonymousFeedClients = new ArrayList<>();
     private final ExecutorService mClientExecutor = Executors.newThreadPerTaskExecutor(
         Thread.ofVirtual().name("remote web load probe-", 0).factory());
     private final List<SignalListener> mSignalListeners = new ArrayList<>();
@@ -74,12 +90,27 @@ public final class RemoteWebLoadProbe implements AutoCloseable
     private final List<FeedClient> mFeedClients = new ArrayList<>();
     private final ConcurrentLinkedQueue<String> mFailures = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean mClosing = new AtomicBoolean();
+    private AdminSession mAdminSession;
 
-    private RemoteWebLoadProbe(Configuration configuration)
+    private RemoteWebLoadProbe(Configuration configuration, CredentialPrompt credentialPrompt)
     {
         mConfiguration = Objects.requireNonNull(configuration);
+        mCredentialPrompt = Objects.requireNonNull(credentialPrompt);
         System.setProperty("jdk.httpclient.allowRestrictedHeaders", "origin");
-        mHttpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT)
+        mStatusClient = newClient();
+        mSpectrumClient = newClient();
+
+        for(int index = 0; index < configuration.feedClientCount(); index++)
+        {
+            // One client per simulated browser avoids introducing a shared client-side connection/executor bottleneck
+            // that ten independent end-user browsers would not have.  These clients never receive the admin cookie.
+            mAnonymousFeedClients.add(newClient());
+        }
+    }
+
+    private static HttpClient newClient()
+    {
+        return HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT)
             .followRedirects(HttpClient.Redirect.NEVER).build();
     }
 
@@ -92,8 +123,16 @@ public final class RemoteWebLoadProbe implements AutoCloseable
         }
 
         Configuration configuration = Configuration.parse(args);
+        Console console = System.console();
 
-        try(RemoteWebLoadProbe probe = new RemoteWebLoadProbe(configuration))
+        if(console == null)
+        {
+            throw new IllegalStateException("A real interactive console is required for administrator login. " +
+                "Run this probe from a terminal attached directly to the Java process; credentials are never " +
+                "accepted from command-line options, environment variables, or files.");
+        }
+
+        try(RemoteWebLoadProbe probe = new RemoteWebLoadProbe(configuration, new ConsoleCredentialPrompt(console)))
         {
             Result result = probe.run();
             result.print();
@@ -108,9 +147,9 @@ public final class RemoteWebLoadProbe implements AutoCloseable
     private Result run() throws Exception
     {
         long statusStart = System.nanoTime();
-        HttpResponse<Void> status = mHttpClient.send(HttpRequest.newBuilder(mConfiguration.statusUri())
+        HttpResponse<String> status = mStatusClient.send(HttpRequest.newBuilder(mConfiguration.statusUri())
             .timeout(REQUEST_TIMEOUT).header("Accept", "application/json").GET().build(),
-            HttpResponse.BodyHandlers.discarding());
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         long statusMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - statusStart);
 
         if(status.statusCode() != 200)
@@ -118,6 +157,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             throw new IOException("Status endpoint returned HTTP " + status.statusCode());
         }
 
+        ServerSnapshot initialServer = ServerSnapshot.from(OBJECT_MAPPER.readTree(status.body()));
         openSignalViewers();
         awaitFirstSignalFrames();
         openFeedClients();
@@ -125,7 +165,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
 
         mSignalListeners.forEach(SignalListener::beginMeasurement);
         List<SignalSnapshot> initialSignal = mSignalListeners.stream().map(SignalListener::snapshot).toList();
-        FeedSnapshot initialFeed = FeedSnapshot.combine(mFeedClients);
+        List<FeedSnapshot> initialFeed = mFeedClients.stream().map(FeedClient::snapshot).toList();
         long started = System.nanoTime();
         System.out.printf("PROBE phase=READY viewers=%d feedClients=%d maxFps=%d statusMillis=%d " +
                 "centerHz=%d sampleRateHz=%d bins=%d%n",
@@ -144,26 +184,62 @@ public final class RemoteWebLoadProbe implements AutoCloseable
         }
 
         long elapsedNanos = Math.max(1, System.nanoTime() - started);
+        ServerSnapshot finalServer;
+
+        try
+        {
+            finalServer = readServerSnapshot();
+        }
+        catch(Exception exception)
+        {
+            recordFailure("final-status " + exception.getClass().getSimpleName());
+            finalServer = initialServer;
+        }
+
         stopClients();
         List<SignalSnapshot> finalSignal = mSignalListeners.stream().map(SignalListener::snapshot).toList();
-        FeedSnapshot finalFeed = FeedSnapshot.combine(mFeedClients);
+        List<FeedSnapshot> finalFeed = mFeedClients.stream().map(FeedClient::snapshot).toList();
         return Result.from(mConfiguration, statusMillis, elapsedNanos, initialSignal, finalSignal,
-            initialFeed, finalFeed, List.copyOf(mFailures));
+            initialFeed, finalFeed, initialServer, finalServer, List.copyOf(mFailures));
+    }
+
+    private ServerSnapshot readServerSnapshot() throws IOException, InterruptedException
+    {
+        HttpResponse<String> response = mStatusClient.send(HttpRequest.newBuilder(mConfiguration.statusUri())
+            .timeout(REQUEST_TIMEOUT).header("Accept", "application/json").GET().build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+        if(response.statusCode() != 200)
+        {
+            throw new IOException("Status endpoint returned HTTP " + response.statusCode());
+        }
+
+        return ServerSnapshot.from(OBJECT_MAPPER.readTree(response.body()));
     }
 
     private void openSignalViewers() throws Exception
     {
+        if(mConfiguration.viewerCount() != 1)
+        {
+            throw new IllegalStateException("The administrator spectrum probe requires exactly one viewer");
+        }
+
+        mAdminSession = loginAdministrator(mSpectrumClient, mConfiguration, mCredentialPrompt);
+
         for(int index = 0; index < mConfiguration.viewerCount(); index++)
         {
             SignalListener listener = new SignalListener(index + 1, this::recordFailure);
-            WebSocket socket = mHttpClient.newWebSocketBuilder().connectTimeout(CONNECT_TIMEOUT)
+            WebSocket socket = mSpectrumClient.newWebSocketBuilder().connectTimeout(CONNECT_TIMEOUT)
                 .header("Origin", mConfiguration.origin())
+                .header("Cookie", mAdminSession.cookieHeader())
                 .buildAsync(mConfiguration.webSocketUri(), listener)
                 .get(CONNECT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
             mSignalListeners.add(listener);
             mSignalSockets.add(socket);
-            socket.sendText("{\"action\":\"subscribe\",\"maxFps\":" +
-                mConfiguration.maximumFramesPerSecond() + "}", true)
+            String target = mConfiguration.targetId() != null ?
+                ",\"targetId\":\"" + mConfiguration.targetId() + "\"" : "";
+            socket.sendText("{\"action\":\"subscribe\",\"requestId\":1,\"maxFps\":" +
+                mConfiguration.maximumFramesPerSecond() + target + "}", true)
                 .get(CONNECT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         }
     }
@@ -181,7 +257,8 @@ public final class RemoteWebLoadProbe implements AutoCloseable
         {
             HttpRequest request = HttpRequest.newBuilder(mConfiguration.feedUri())
                 .header("Accept", "text/event-stream").GET().build();
-            HttpResponse<InputStream> response = mHttpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            HttpClient browserClient = mAnonymousFeedClients.get(index);
+            HttpResponse<InputStream> response = browserClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
             if(response.statusCode() != 200)
             {
@@ -197,7 +274,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
                 throw new IOException("Live call feed did not return text/event-stream");
             }
 
-            FeedClient feedClient = new FeedClient(index + 1, response.body(), mHttpClient, mClientExecutor,
+            FeedClient feedClient = new FeedClient(index + 1, response.body(), browserClient, mClientExecutor,
                 mConfiguration.baseUri(), this::recordFailure);
             mFeedClients.add(feedClient);
             feedClient.start();
@@ -268,7 +345,419 @@ public final class RemoteWebLoadProbe implements AutoCloseable
     public void close()
     {
         stopClients();
-        mHttpClient.close();
+        logoutAdministrator();
+
+        for(HttpClient browserClient: mAnonymousFeedClients)
+        {
+            browserClient.close();
+        }
+
+        mSpectrumClient.close();
+        mStatusClient.close();
+    }
+
+    private void logoutAdministrator()
+    {
+        AdminSession session = mAdminSession;
+        mAdminSession = null;
+
+        if(session == null)
+        {
+            return;
+        }
+
+        try
+        {
+            HttpRequest request = HttpRequest.newBuilder(mConfiguration.logoutUri())
+                .timeout(REQUEST_TIMEOUT)
+                .header("Origin", mConfiguration.origin())
+                .header("Cookie", session.cookieHeader())
+                .header(WebAdminAuthenticationHandler.CSRF_HEADER_NAME, session.csrfToken())
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+            HttpResponse<Void> response = mSpectrumClient.send(request,
+                HttpResponse.BodyHandlers.discarding());
+
+            if(response.statusCode() != 200 && response.statusCode() != 401)
+            {
+                // Logout is best effort during teardown.  Never include a response body, cookie, or token here.
+                mFailures.add("admin-logout http-" + response.statusCode());
+            }
+        }
+        catch(Exception exception)
+        {
+            mFailures.add("admin-logout " + exception.getClass().getSimpleName());
+        }
+    }
+
+    static AdminSession loginAdministrator(HttpClient client, Configuration configuration,
+                                           CredentialPrompt credentialPrompt) throws Exception
+    {
+        Objects.requireNonNull(client, "HTTP client cannot be null");
+        Objects.requireNonNull(configuration, "Probe configuration cannot be null");
+        Objects.requireNonNull(credentialPrompt, "Credential prompt cannot be null");
+
+        try(AdminCredentials credentials = credentialPrompt.read())
+        {
+            byte[] requestBody = loginRequestBody(credentials.username(), credentials.password());
+
+            try
+            {
+                if(requestBody.length > WebAdminAuthenticationHandler.Configuration.defaults()
+                    .maximumLoginBodyBytes())
+                {
+                    throw new IOException("Administrator credentials exceed the bounded login request size");
+                }
+
+                HttpRequest request = HttpRequest.newBuilder(configuration.loginUri())
+                    .timeout(REQUEST_TIMEOUT)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .header("Origin", configuration.origin())
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
+                    .build();
+                HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+
+                try(InputStream responseBody = response.body())
+                {
+                    if(response.statusCode() != 200)
+                    {
+                        throw new IOException("Administrator login returned HTTP " + response.statusCode() +
+                            "; verify the credentials and use HTTPS or a loopback SSH tunnel");
+                    }
+
+                    byte[] body = responseBody.readNBytes(MAXIMUM_AUTH_RESPONSE_BYTES + 1);
+
+                    try
+                    {
+                        if(body.length > MAXIMUM_AUTH_RESPONSE_BYTES)
+                        {
+                            throw new IOException("Administrator login response exceeded the probe limit");
+                        }
+
+                        String csrfToken = parseLoginCsrfToken(body);
+                        String cookieHeader = parseSessionCookie(response.headers()
+                            .allValues("Set-Cookie"), configuration.isSecureTransport());
+                        return new AdminSession(cookieHeader, csrfToken);
+                    }
+                    finally
+                    {
+                        Arrays.fill(body, (byte)0);
+                    }
+                }
+            }
+            finally
+            {
+                Arrays.fill(requestBody, (byte)0);
+            }
+        }
+    }
+
+    static byte[] loginRequestBody(String username, char[] password)
+    {
+        Objects.requireNonNull(username, "Administrator username cannot be null");
+        Objects.requireNonNull(password, "Administrator password cannot be null");
+        WipeableByteArrayOutputStream output = new WipeableByteArrayOutputStream();
+
+        try
+        {
+            writeAscii(output, "{\"username\":");
+            writeJsonString(output, username);
+            writeAscii(output, ",\"password\":");
+            writeJsonString(output, password);
+            output.write('}');
+            return output.toByteArray();
+        }
+        finally
+        {
+            output.wipe();
+        }
+    }
+
+    static String parseLoginCsrfToken(byte[] body) throws IOException
+    {
+        boolean authenticated = false;
+        boolean sawAuthenticated = false;
+        String csrfToken = null;
+
+        try(JsonParser parser = OBJECT_MAPPER.getFactory().createParser(body))
+        {
+            if(parser.nextToken() != JsonToken.START_OBJECT)
+            {
+                throw new IOException("Administrator login response was invalid");
+            }
+
+            while(parser.nextToken() != JsonToken.END_OBJECT)
+            {
+                if(parser.currentToken() != JsonToken.FIELD_NAME)
+                {
+                    throw new IOException("Administrator login response was invalid");
+                }
+
+                String name = parser.currentName();
+                JsonToken value = parser.nextToken();
+
+                if("authenticated".equals(name))
+                {
+                    if(sawAuthenticated || (value != JsonToken.VALUE_TRUE && value != JsonToken.VALUE_FALSE))
+                    {
+                        throw new IOException("Administrator login response was invalid");
+                    }
+
+                    sawAuthenticated = true;
+                    authenticated = value == JsonToken.VALUE_TRUE;
+                }
+                else if("csrfToken".equals(name))
+                {
+                    if(csrfToken != null || value != JsonToken.VALUE_STRING)
+                    {
+                        throw new IOException("Administrator login response was invalid");
+                    }
+
+                    csrfToken = parser.getText();
+                }
+                else
+                {
+                    parser.skipChildren();
+                }
+            }
+
+            if(parser.nextToken() != null || !sawAuthenticated || !authenticated || !isBoundedToken(csrfToken))
+            {
+                throw new IOException("Administrator login response was invalid");
+            }
+        }
+
+        return csrfToken;
+    }
+
+    static String parseSessionCookie(List<String> setCookieHeaders, boolean secureTransport) throws IOException
+    {
+        String cookieHeader = null;
+
+        for(String header: setCookieHeaders)
+        {
+            String[] attributes = header.split(";", -1);
+            int separator = attributes[0].indexOf('=');
+
+            if(separator < 1 || !WebAdminAuthenticationHandler.SESSION_COOKIE_NAME.equals(
+                attributes[0].substring(0, separator).strip()))
+            {
+                continue;
+            }
+
+            if(cookieHeader != null)
+            {
+                throw new IOException("Administrator login returned multiple session cookies");
+            }
+
+            String value = attributes[0].substring(separator + 1).strip();
+            boolean httpOnly = false;
+            boolean sameSiteStrict = false;
+            boolean rootPath = false;
+            boolean secure = false;
+
+            for(int index = 1; index < attributes.length; index++)
+            {
+                String attribute = attributes[index].strip();
+                httpOnly |= "HttpOnly".equalsIgnoreCase(attribute);
+                sameSiteStrict |= "SameSite=Strict".equalsIgnoreCase(attribute);
+                rootPath |= "Path=/".equalsIgnoreCase(attribute);
+                secure |= "Secure".equalsIgnoreCase(attribute);
+            }
+
+            if(!isBoundedToken(value) || !httpOnly || !sameSiteStrict || !rootPath ||
+                (secureTransport && !secure))
+            {
+                throw new IOException("Administrator login returned an unusable session cookie");
+            }
+
+            cookieHeader = WebAdminAuthenticationHandler.SESSION_COOKIE_NAME + "=" + value;
+        }
+
+        if(cookieHeader == null)
+        {
+            throw new IOException("Administrator login did not return a session cookie");
+        }
+
+        return cookieHeader;
+    }
+
+    private static boolean isBoundedToken(String value)
+    {
+        return value != null && value.length() >= 32 && value.length() <= 256 &&
+            value.chars().allMatch(character -> (character >= 'A' && character <= 'Z') ||
+                (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') ||
+                character == '_' || character == '-');
+    }
+
+    private static void writeJsonString(ByteArrayOutputStream output, CharSequence value)
+    {
+        output.write('"');
+
+        for(int index = 0; index < value.length(); index++)
+        {
+            writeJsonCharacter(output, value.charAt(index));
+        }
+
+        output.write('"');
+    }
+
+    private static void writeJsonString(ByteArrayOutputStream output, char[] value)
+    {
+        output.write('"');
+
+        for(char character: value)
+        {
+            writeJsonCharacter(output, character);
+        }
+
+        output.write('"');
+    }
+
+    private static void writeJsonCharacter(ByteArrayOutputStream output, char character)
+    {
+        switch(character)
+        {
+            case '"' -> writeAscii(output, "\\\"");
+            case '\\' -> writeAscii(output, "\\\\");
+            case '\b' -> writeAscii(output, "\\b");
+            case '\f' -> writeAscii(output, "\\f");
+            case '\n' -> writeAscii(output, "\\n");
+            case '\r' -> writeAscii(output, "\\r");
+            case '\t' -> writeAscii(output, "\\t");
+            default ->
+            {
+                if(character < 0x20 || Character.isSurrogate(character))
+                {
+                    writeAscii(output, "\\u");
+                    output.write(Character.forDigit(character >>> 12 & 0xF, 16));
+                    output.write(Character.forDigit(character >>> 8 & 0xF, 16));
+                    output.write(Character.forDigit(character >>> 4 & 0xF, 16));
+                    output.write(Character.forDigit(character & 0xF, 16));
+                }
+                else if(character <= 0x7F)
+                {
+                    output.write(character);
+                }
+                else if(character <= 0x7FF)
+                {
+                    output.write(0xC0 | character >>> 6);
+                    output.write(0x80 | character & 0x3F);
+                }
+                else
+                {
+                    output.write(0xE0 | character >>> 12);
+                    output.write(0x80 | character >>> 6 & 0x3F);
+                    output.write(0x80 | character & 0x3F);
+                }
+            }
+        }
+    }
+
+    private static void writeAscii(ByteArrayOutputStream output, String value)
+    {
+        for(int index = 0; index < value.length(); index++)
+        {
+            output.write(value.charAt(index));
+        }
+    }
+
+    interface CredentialPrompt
+    {
+        AdminCredentials read();
+    }
+
+    record AdminCredentials(String username, char[] password) implements AutoCloseable
+    {
+        AdminCredentials
+        {
+            username = Objects.requireNonNull(username, "Administrator username cannot be null").strip();
+            password = Objects.requireNonNull(password, "Administrator password cannot be null");
+
+            if(username.isBlank() || username.length() > 64)
+            {
+                throw new IllegalArgumentException("Administrator username is invalid");
+            }
+
+            if(password.length < 1 || password.length > Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS)
+            {
+                throw new IllegalArgumentException("Administrator password length is invalid");
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            Arrays.fill(password, '\0');
+        }
+
+        @Override
+        public String toString()
+        {
+            return "AdminCredentials[username=<redacted>, password=<redacted>]";
+        }
+    }
+
+    record AdminSession(String cookieHeader, String csrfToken)
+    {
+        AdminSession
+        {
+            Objects.requireNonNull(cookieHeader, "Administrator session cookie cannot be null");
+            Objects.requireNonNull(csrfToken, "Administrator CSRF token cannot be null");
+        }
+
+        @Override
+        public String toString()
+        {
+            return "AdminSession[cookie=<redacted>, csrf=<redacted>]";
+        }
+    }
+
+    private static final class ConsoleCredentialPrompt implements CredentialPrompt
+    {
+        private final Console mConsole;
+
+        private ConsoleCredentialPrompt(Console console)
+        {
+            mConsole = Objects.requireNonNull(console);
+        }
+
+        @Override
+        public AdminCredentials read()
+        {
+            String username = mConsole.readLine("Administrator username: ");
+            char[] password = mConsole.readPassword("Administrator password: ");
+
+            if(username == null || password == null)
+            {
+                if(password != null)
+                {
+                    Arrays.fill(password, '\0');
+                }
+
+                throw new IllegalStateException("Administrator login was cancelled");
+            }
+
+            try
+            {
+                return new AdminCredentials(username, password);
+            }
+            catch(RuntimeException exception)
+            {
+                Arrays.fill(password, '\0');
+                throw exception;
+            }
+        }
+    }
+
+    private static final class WipeableByteArrayOutputStream extends ByteArrayOutputStream
+    {
+        private void wipe()
+        {
+            Arrays.fill(buf, (byte)0);
+            reset();
+        }
     }
 
     static FrameHeader inspectFrame(ByteBuffer source)
@@ -312,7 +801,9 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             throw new IllegalArgumentException("SFFT frame bin count or encoding is invalid");
         }
 
-        if(frame.get(65) != 0 || frame.get(66) != 0 || frame.get(67) != 0 ||
+        if(frame.get(SpectrumFrameCodec.OFFSET_ENCODING + 1) != 0 ||
+            frame.get(SpectrumFrameCodec.OFFSET_ENCODING + 2) != 0 ||
+            frame.get(SpectrumFrameCodec.OFFSET_ENCODING + 3) != 0 ||
             Float.compare(frame.getFloat(SpectrumFrameCodec.OFFSET_QUANTIZATION_SCALE), 1.0f) != 0 ||
             Float.compare(frame.getFloat(SpectrumFrameCodec.OFFSET_QUANTIZATION_OFFSET), 0.0f) != 0)
         {
@@ -330,12 +821,26 @@ public final class RemoteWebLoadProbe implements AutoCloseable
     }
 
     record Configuration(URI baseUri, String origin, int viewerCount, int feedClientCount, Duration duration,
-                         int maximumFramesPerSecond)
+                         int maximumFramesPerSecond, String targetId)
     {
         Configuration
         {
             baseUri = validateHttpOrigin(baseUri, "base URL");
-            validateOrigin(origin);
+            URI originUri = validateHttpOrigin(URI.create(Objects.requireNonNull(origin,
+                "Origin cannot be null")), "origin");
+
+            if(!sameOrigin(baseUri, originUri))
+            {
+                throw new IllegalArgumentException("Origin must exactly match the base URL origin");
+            }
+
+            origin = httpOrigin(originUri);
+
+            if("http".equalsIgnoreCase(baseUri.getScheme()) && !isLiteralLoopbackHost(baseUri.getHost()))
+            {
+                throw new IllegalArgumentException("Clear HTTP is allowed only through a literal loopback URL. " +
+                    "Use HTTPS for a remote node or connect through an SSH tunnel to 127.0.0.1/localhost.");
+            }
 
             if(viewerCount < 1 || viewerCount > MAXIMUM_VIEWERS)
             {
@@ -360,6 +865,16 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             {
                 throw new IllegalArgumentException("Maximum frame rate must be between 1 and 30 FPS");
             }
+
+            if(targetId != null)
+            {
+                targetId = targetId.strip().toUpperCase(Locale.ROOT);
+
+                if(targetId.isBlank() || targetId.length() > 32 || !targetId.matches("[A-Z0-9_\\-]+"))
+                {
+                    throw new IllegalArgumentException("Target ID is invalid");
+                }
+            }
         }
 
         static Configuration parse(String[] args)
@@ -370,6 +885,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             int feedClients = 10;
             int durationSeconds = 60;
             int maximumFramesPerSecond = 20;
+            String targetId = null;
 
             for(int index = 0; index < args.length; index += 2)
             {
@@ -389,6 +905,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
                     case "--feed-clients" -> feedClients = parseInteger(value, "feed client count");
                     case "--duration-seconds" -> durationSeconds = parseInteger(value, "duration");
                     case "--max-fps" -> maximumFramesPerSecond = parseInteger(value, "maximum frame rate");
+                    case "--target" -> targetId = value;
                     default -> throw new IllegalArgumentException("Unknown option: " + key + "\n" + usage());
                 }
             }
@@ -401,7 +918,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             URI validatedBase = validateHttpOrigin(baseUri, "base URL");
             String effectiveOrigin = origin != null ? origin : httpOrigin(validatedBase);
             return new Configuration(validatedBase, effectiveOrigin, viewers, feedClients,
-                Duration.ofSeconds(durationSeconds), maximumFramesPerSecond);
+                Duration.ofSeconds(durationSeconds), maximumFramesPerSecond, targetId);
         }
 
         URI statusUri()
@@ -412,6 +929,21 @@ public final class RemoteWebLoadProbe implements AutoCloseable
         URI feedUri()
         {
             return baseUri.resolve("/live/web-calls");
+        }
+
+        URI loginUri()
+        {
+            return baseUri.resolve(WebAdminAuthenticationHandler.LOGIN_PATH);
+        }
+
+        URI logoutUri()
+        {
+            return baseUri.resolve(WebAdminAuthenticationHandler.LOGOUT_PATH);
+        }
+
+        boolean isSecureTransport()
+        {
+            return "https".equalsIgnoreCase(baseUri.getScheme());
         }
 
         URI webSocketUri()
@@ -431,8 +963,11 @@ public final class RemoteWebLoadProbe implements AutoCloseable
 
         static String usage()
         {
-            return "Usage: --base-url http://host:port [--origin http://host:port] " +
-                "[--viewers 1..10] [--feed-clients 0..10] [--duration-seconds 5..900] [--max-fps 1..30]";
+            return "Usage: --base-url https://host:port [--origin https://same-host:port] " +
+                "[--viewers 1] [--feed-clients 0..10] [--duration-seconds 5..900] [--max-fps 1..30] " +
+                "[--target AIRSPY|RTL2832]\n" +
+                "Administrator credentials are prompted from a real console. For clear HTTP, use a loopback " +
+                "base URL through an SSH tunnel; no credential options or files are supported.";
         }
 
         private static int parseInteger(String value, String label)
@@ -471,9 +1006,38 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             }
         }
 
-        private static void validateOrigin(String value)
+        private static boolean isLiteralLoopbackHost(String value)
         {
-            validateHttpOrigin(URI.create(Objects.requireNonNull(value, "Origin cannot be null")), "origin");
+            String host = Objects.requireNonNull(value).toLowerCase(Locale.ROOT);
+
+            if("localhost".equals(host) || "[::1]".equals(host) || "::1".equals(host))
+            {
+                return true;
+            }
+
+            String[] octets = host.split("\\.", -1);
+
+            if(octets.length != 4 || !"127".equals(octets[0]))
+            {
+                return false;
+            }
+
+            for(String octet: octets)
+            {
+                try
+                {
+                    if(octet.isEmpty() || octet.length() > 3 || Integer.parseInt(octet) > 255)
+                    {
+                        return false;
+                    }
+                }
+                catch(NumberFormatException exception)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static String httpOrigin(URI uri)
@@ -850,7 +1414,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
     record FeedSnapshot(long callEvents, long audioRequests, long audioSuccesses, long audioFailures,
                         long audioSkippedBusy, long audioBytes)
     {
-        private static FeedSnapshot combine(List<FeedClient> clients)
+        private static FeedSnapshot combine(List<FeedSnapshot> snapshots)
         {
             long callEvents = 0;
             long audioRequests = 0;
@@ -859,9 +1423,8 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             long audioSkippedBusy = 0;
             long audioBytes = 0;
 
-            for(FeedClient client: clients)
+            for(FeedSnapshot snapshot: snapshots)
             {
-                FeedSnapshot snapshot = client.snapshot();
                 callEvents += snapshot.callEvents;
                 audioRequests += snapshot.audioRequests;
                 audioSuccesses += snapshot.audioSuccesses;
@@ -879,6 +1442,38 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             return new FeedSnapshot(callEvents - earlier.callEvents, audioRequests - earlier.audioRequests,
                 audioSuccesses - earlier.audioSuccesses, audioFailures - earlier.audioFailures,
                 audioSkippedBusy - earlier.audioSkippedBusy, audioBytes - earlier.audioBytes);
+        }
+    }
+
+    record ServerSnapshot(long publishedFrames, long deliveredFrames, long failedSends, long sourceStarts,
+                          long sourceStops, long tunerFrames, long tunerPublicationErrors, long maximumSendMicros,
+                          long maximumDeliveryGapMicros, int threadPoolBusy, int threadPoolQueued)
+    {
+        private static ServerSnapshot from(JsonNode status)
+        {
+            JsonNode metrics = status.path("signal").path("metrics");
+            JsonNode threadPool = status.path("server").path("threadPool");
+
+            if(metrics.isMissingNode() || threadPool.isMissingNode())
+            {
+                throw new IllegalArgumentException("Status response is missing bounded signal metrics");
+            }
+
+            return new ServerSnapshot(metrics.path("publishedFrames").asLong(),
+                metrics.path("deliveredFrames").asLong(), metrics.path("failedSends").asLong(),
+                metrics.path("sourceStarts").asLong(), metrics.path("sourceStops").asLong(),
+                metrics.path("tunerFrames").asLong(), metrics.path("tunerPublicationErrors").asLong(),
+                metrics.path("maximumSendMicros").asLong(), metrics.path("maximumDeliveryGapMicros").asLong(),
+                threadPool.path("busy").asInt(), threadPool.path("queued").asInt());
+        }
+
+        private ServerSnapshot subtract(ServerSnapshot earlier)
+        {
+            return new ServerSnapshot(publishedFrames - earlier.publishedFrames,
+                deliveredFrames - earlier.deliveredFrames, failedSends - earlier.failedSends,
+                sourceStarts - earlier.sourceStarts, sourceStops - earlier.sourceStops,
+                tunerFrames - earlier.tunerFrames, tunerPublicationErrors - earlier.tunerPublicationErrors,
+                maximumSendMicros, maximumDeliveryGapMicros, threadPoolBusy, threadPoolQueued);
         }
     }
 
@@ -981,12 +1576,15 @@ public final class RemoteWebLoadProbe implements AutoCloseable
 
     record Result(int viewers, int feedClients, int maximumFramesPerSecond, long statusMillis, long elapsedNanos,
                   long totalFrames, long minimumViewerFrames, long maximumViewerFrames, long totalFrameBytes,
-                  long sequenceSkips, long outOfOrderFrames, long targetChanges, long maximumInterFrameNanos,
-                  FeedSnapshot feed, List<String> failures)
+                  long sequenceSkips, long outOfOrderFrames, long targetChanges, int stalledViewers,
+                  long maximumInterFrameNanos, FeedSnapshot feed, List<FeedSnapshot> feedByClient,
+                  ServerSnapshot server, List<String> failures)
     {
         private static Result from(Configuration configuration, long statusMillis, long elapsedNanos,
                                    List<SignalSnapshot> initialSignal, List<SignalSnapshot> finalSignal,
-                                   FeedSnapshot initialFeed, FeedSnapshot finalFeed, List<String> failures)
+                                   List<FeedSnapshot> initialFeed, List<FeedSnapshot> finalFeed,
+                                   ServerSnapshot initialServer,
+                                   ServerSnapshot finalServer, List<String> failures)
         {
             long totalFrames = 0;
             long minimumViewerFrames = Long.MAX_VALUE;
@@ -995,6 +1593,7 @@ public final class RemoteWebLoadProbe implements AutoCloseable
             long sequenceSkips = 0;
             long outOfOrderFrames = 0;
             long targetChanges = 0;
+            int stalledViewers = 0;
             long maximumInterFrameNanos = 0;
 
             for(int index = 0; index < finalSignal.size(); index++)
@@ -1008,44 +1607,104 @@ public final class RemoteWebLoadProbe implements AutoCloseable
                 outOfOrderFrames += delta.outOfOrderFrames;
                 targetChanges += delta.targetChanges;
                 maximumInterFrameNanos = Math.max(maximumInterFrameNanos, delta.maximumInterFrameNanos);
+
+                if(delta.maximumInterFrameNanos > TimeUnit.SECONDS.toNanos(5))
+                {
+                    stalledViewers++;
+                }
+            }
+
+            List<FeedSnapshot> feedByClient = new ArrayList<>(finalFeed.size());
+
+            for(int index = 0; index < finalFeed.size(); index++)
+            {
+                feedByClient.add(finalFeed.get(index).subtract(initialFeed.get(index)));
             }
 
             return new Result(configuration.viewerCount(), configuration.feedClientCount(),
                 configuration.maximumFramesPerSecond(), statusMillis, elapsedNanos, totalFrames,
                 minimumViewerFrames == Long.MAX_VALUE ? 0 : minimumViewerFrames, maximumViewerFrames,
-                totalFrameBytes, sequenceSkips, outOfOrderFrames, targetChanges, maximumInterFrameNanos,
-                finalFeed.subtract(initialFeed), failures);
+                totalFrameBytes, sequenceSkips, outOfOrderFrames, targetChanges, stalledViewers,
+                maximumInterFrameNanos, FeedSnapshot.combine(feedByClient), List.copyOf(feedByClient),
+                finalServer.subtract(initialServer), failures);
         }
 
         boolean passed()
         {
-            double seconds = elapsedNanos / 1_000_000_000.0;
-            long minimumExpectedFrames = Math.max(1,
-                (long)Math.floor(seconds * maximumFramesPerSecond * 0.25));
+            long minimumExpectedFrames = minimumExpectedFrames(elapsedNanos, maximumFramesPerSecond);
             boolean audioCovered = feed.callEvents() == 0 || feedClients == 0 ||
-                feed.audioSuccesses() >= feedClients;
+                coveredAudioClients() == feedClients;
             return failures.isEmpty() && minimumViewerFrames >= minimumExpectedFrames && outOfOrderFrames == 0 &&
-                maximumInterFrameNanos <= TimeUnit.SECONDS.toNanos(5) && feed.audioFailures() == 0 && audioCovered;
+                stalledViewers == 0 && server.failedSends() == 0 && server.tunerPublicationErrors() == 0 &&
+                server.maximumDeliveryGapMicros() <= TimeUnit.SECONDS.toMicros(5) &&
+                feed.audioFailures() == 0 && audioCovered;
         }
 
         void print()
         {
             double seconds = elapsedNanos / 1_000_000_000.0;
             double framesPerViewerSecond = totalFrames / Math.max(0.001, seconds * viewers);
+            int coveredAudioClients = coveredAudioClients();
+            int requiredAudioClients = feed.callEvents() == 0 ? 0 : feedClients;
             String audioCoverage = feed.callEvents() == 0 ? "no-calls-observed" :
-                (feed.audioSuccesses() > 0 ? "covered" : "failed");
+                (coveredAudioClients == requiredAudioClients ? "covered" : "partial");
             String firstFailure = failures.isEmpty() ? "none" : failures.getFirst().replace(' ', '_');
             System.out.printf(Locale.US, "PROBE phase=RESULT passed=%s elapsedSeconds=%.3f viewers=%d " +
                     "feedClients=%d maxFps=%d frames=%d minViewerFrames=%d maxViewerFrames=%d " +
                     "framesPerViewerSecond=%.3f frameBytes=%d sequenceSkips=%d outOfOrder=%d targetChanges=%d " +
-                    "maxInterFrameMillis=%.3f callEvents=%d audioRequests=%d audioSuccesses=%d audioFailures=%d " +
-                    "audioSkippedBusy=%d audioBytes=%d audioCoverage=%s statusMillis=%d failures=%d " +
-                    "firstFailure=%s%n",
+                    "stalledViewers=%d maxInterFrameMillis=%.3f serverPublishedFrames=%d " +
+                    "serverDeliveredFrames=%d serverFailedSends=%d sourceStarts=%d sourceStops=%d tunerFrames=%d " +
+                    "tunerPublicationErrors=%d maxServerSendMillis=%.3f maxServerDeliveryGapMillis=%.3f " +
+                    "jettyBusy=%d jettyQueued=%d callEvents=%d audioRequests=%d " +
+                    "audioSuccesses=%d audioFailures=%d " +
+                    "audioSkippedBusy=%d audioBytes=%d audioCoverage=%s audioCoveredClients=%d " +
+                    "audioRequiredClients=%d audioPerClient=%s statusMillis=%d failures=%d firstFailure=%s%n",
                 passed(), seconds, viewers, feedClients, maximumFramesPerSecond, totalFrames, minimumViewerFrames,
                 maximumViewerFrames, framesPerViewerSecond, totalFrameBytes, sequenceSkips, outOfOrderFrames,
-                targetChanges, maximumInterFrameNanos / 1_000_000.0, feed.callEvents(), feed.audioRequests(),
-                feed.audioSuccesses(), feed.audioFailures(), feed.audioSkippedBusy(), feed.audioBytes(), audioCoverage,
-                statusMillis, failures.size(), firstFailure);
+                targetChanges, stalledViewers, maximumInterFrameNanos / 1_000_000.0, server.publishedFrames(),
+                server.deliveredFrames(), server.failedSends(), server.sourceStarts(), server.sourceStops(),
+                server.tunerFrames(), server.tunerPublicationErrors(), server.maximumSendMicros() / 1_000.0,
+                server.maximumDeliveryGapMicros() / 1_000.0, server.threadPoolBusy(), server.threadPoolQueued(),
+                feed.callEvents(), feed.audioRequests(), feed.audioSuccesses(),
+                feed.audioFailures(), feed.audioSkippedBusy(), feed.audioBytes(), audioCoverage, coveredAudioClients,
+                requiredAudioClients, audioPerClient(), statusMillis, failures.size(), firstFailure);
+        }
+
+        private static long minimumExpectedFrames(long elapsedNanos, int maximumFramesPerSecond)
+        {
+            double seconds = elapsedNanos / 1_000_000_000.0;
+            return Math.max(1,
+                (long)Math.floor(seconds * maximumFramesPerSecond * MINIMUM_FRAME_RATE_RATIO));
+        }
+
+        private int coveredAudioClients()
+        {
+            return (int)feedByClient.stream().filter(snapshot -> snapshot.audioSuccesses() > 0).count();
+        }
+
+        private String audioPerClient()
+        {
+            if(feedByClient.isEmpty())
+            {
+                return "none";
+            }
+
+            StringBuilder coverage = new StringBuilder();
+
+            for(int index = 0; index < feedByClient.size(); index++)
+            {
+                if(index > 0)
+                {
+                    coverage.append(';');
+                }
+
+                FeedSnapshot snapshot = feedByClient.get(index);
+                coverage.append(index + 1).append("[events:").append(snapshot.callEvents())
+                    .append(",successes:").append(snapshot.audioSuccesses())
+                    .append(",failures:").append(snapshot.audioFailures()).append(']');
+            }
+
+            return coverage.toString();
         }
     }
 

@@ -11,15 +11,21 @@
 
 package io.github.dsheirer.web;
 
+import io.github.dsheirer.web.tls.TlsMaterial;
 import java.net.InetAddress;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.Consumer;
 import org.eclipse.jetty.server.Handler;
+import org.eclipse.jetty.server.HttpConfiguration;
+import org.eclipse.jetty.server.HttpConnectionFactory;
+import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
+import org.eclipse.jetty.server.SslConnectionFactory;
 import org.eclipse.jetty.server.handler.ContextHandler;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.websocket.server.ServerWebSocketContainer;
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeHandler;
@@ -73,42 +79,69 @@ public final class WebApplicationService implements AutoCloseable
         server.setStopTimeout(mConfiguration.stopTimeout().toMillis());
         server.setStopAtShutdown(false);
 
-        ServerConnector connector = new ServerConnector(server, mConfiguration.acceptorThreads(),
-            mConfiguration.selectorThreads());
-        connector.setHost(mConfiguration.bindAddress().getHostAddress());
-        connector.setPort(mConfiguration.port());
-        connector.setAcceptQueueSize(mConfiguration.acceptQueueSize());
-        connector.setIdleTimeout(mConfiguration.connectionIdleTimeout().toMillis());
-        connector.setAcceptedTcpNoDelay(true);
-        server.addConnector(connector);
-
-        ContextHandler contextHandler = new ContextHandler("/");
-        WebSocketUpgradeHandler upgradeHandler = WebSocketUpgradeHandler.from(server, contextHandler, container ->
-        {
-            container.setIdleTimeout(mConfiguration.webSocketIdleTimeout());
-            container.setMaxTextMessageSize(mConfiguration.maximumWebSocketTextBytes());
-            container.setMaxBinaryMessageSize(mConfiguration.maximumWebSocketBinaryBytes());
-            container.setMaxFrameSize(mConfiguration.maximumWebSocketFrameBytes());
-            container.setMaxOutgoingFrames(mConfiguration.maximumPendingWebSocketFrames());
-            mWebSocketConfigurer.accept(container);
-        });
-        upgradeHandler.setHandler(mHttpHandler);
-        contextHandler.setHandler(upgradeHandler);
-        server.setHandler(contextHandler);
-
         try
         {
+            ServerConnector connector = createConnector(server);
+            connector.setHost(mConfiguration.bindAddress().getHostAddress());
+            connector.setPort(mConfiguration.port());
+            connector.setAcceptQueueSize(mConfiguration.acceptQueueSize());
+            connector.setIdleTimeout(mConfiguration.connectionIdleTimeout().toMillis());
+            connector.setAcceptedTcpNoDelay(true);
+            server.addConnector(connector);
+
+            ContextHandler contextHandler = new ContextHandler("/");
+            WebSocketUpgradeHandler upgradeHandler = WebSocketUpgradeHandler.from(server, contextHandler, container ->
+            {
+                container.setIdleTimeout(mConfiguration.webSocketIdleTimeout());
+                container.setMaxTextMessageSize(mConfiguration.maximumWebSocketTextBytes());
+                container.setMaxBinaryMessageSize(mConfiguration.maximumWebSocketBinaryBytes());
+                container.setMaxFrameSize(mConfiguration.maximumWebSocketFrameBytes());
+                container.setMaxOutgoingFrames(mConfiguration.maximumPendingWebSocketFrames());
+                mWebSocketConfigurer.accept(container);
+            });
+            upgradeHandler.setHandler(mHttpHandler);
+            contextHandler.setHandler(upgradeHandler);
+            server.setHandler(contextHandler);
             server.start();
             mThreadPool = threadPool;
             mConnector = connector;
             mServer = server;
-            mLog.info("Web application started at http://{}:{}", mConfiguration.bindAddress().getHostAddress(),
-                connector.getLocalPort());
+            mLog.info("Web application started at {}://{}:{}", mConfiguration.scheme(),
+                mConfiguration.browserHost(), connector.getLocalPort());
         }
         catch(Exception exception)
         {
             stopFailedStart(server);
             throw new IllegalStateException("Unable to start web application", exception);
+        }
+    }
+
+    private ServerConnector createConnector(Server server)
+    {
+        TlsMaterial tlsMaterial = mConfiguration.tlsMaterial();
+
+        if(tlsMaterial == null)
+        {
+            return new ServerConnector(server, mConfiguration.acceptorThreads(), mConfiguration.selectorThreads());
+        }
+
+        try
+        {
+            SslContextFactory.Server sslContextFactory = new SslContextFactory.Server();
+            sslContextFactory.setSslContext(tlsMaterial.createServerSslContext());
+            sslContextFactory.setNeedClientAuth(false);
+            sslContextFactory.setWantClientAuth(false);
+            HttpConfiguration httpConfiguration = new HttpConfiguration();
+            SecureRequestCustomizer secureRequestCustomizer = new SecureRequestCustomizer();
+            secureRequestCustomizer.setSniHostCheck(false);
+            httpConfiguration.addCustomizer(secureRequestCustomizer);
+            return new ServerConnector(server, mConfiguration.acceptorThreads(), mConfiguration.selectorThreads(),
+                new SslConnectionFactory(sslContextFactory, "http/1.1"),
+                new HttpConnectionFactory(httpConfiguration));
+        }
+        catch(Exception exception)
+        {
+            throw new IllegalStateException("Unable to initialize the HTTPS connector", exception);
         }
     }
 
@@ -143,9 +176,15 @@ public final class WebApplicationService implements AutoCloseable
             throw new IllegalStateException("Web application is not running");
         }
 
-        String host = mConfiguration.bindAddress().isAnyLocalAddress() ? "127.0.0.1" :
-            mConfiguration.bindAddress().getHostAddress();
-        return URI.create("http://" + host + ":" + mConnector.getLocalPort() + "/");
+        try
+        {
+            return new URI(mConfiguration.scheme(), null, mConfiguration.browserHost(),
+                mConnector.getLocalPort(), "/", null, null);
+        }
+        catch(java.net.URISyntaxException exception)
+        {
+            throw new IllegalStateException("Unable to construct the embedded web-server URI", exception);
+        }
     }
 
     public synchronized ThreadPoolSnapshot getThreadPoolSnapshot()
@@ -203,8 +242,22 @@ public final class WebApplicationService implements AutoCloseable
                                 Duration threadIdleTimeout, Duration connectionIdleTimeout, Duration webSocketIdleTimeout,
                                 Duration stopTimeout, long maximumWebSocketTextBytes,
                                 long maximumWebSocketBinaryBytes, long maximumWebSocketFrameBytes,
-                                int maximumPendingWebSocketFrames, String threadName)
+                                int maximumPendingWebSocketFrames, String threadName, TlsMaterial tlsMaterial,
+                                String browserHost)
     {
+        public Configuration(InetAddress bindAddress, int port, int maximumThreads, int minimumThreads,
+                             int reservedThreads, int acceptorThreads, int selectorThreads, int acceptQueueSize,
+                             Duration threadIdleTimeout, Duration connectionIdleTimeout,
+                             Duration webSocketIdleTimeout, Duration stopTimeout, long maximumWebSocketTextBytes,
+                             long maximumWebSocketBinaryBytes, long maximumWebSocketFrameBytes,
+                             int maximumPendingWebSocketFrames, String threadName)
+        {
+            this(bindAddress, port, maximumThreads, minimumThreads, reservedThreads, acceptorThreads,
+                selectorThreads, acceptQueueSize, threadIdleTimeout, connectionIdleTimeout, webSocketIdleTimeout,
+                stopTimeout, maximumWebSocketTextBytes, maximumWebSocketBinaryBytes, maximumWebSocketFrameBytes,
+                maximumPendingWebSocketFrames, threadName, null, defaultBrowserHost(bindAddress));
+        }
+
         public Configuration
         {
             Objects.requireNonNull(bindAddress, "Bind address cannot be null");
@@ -250,6 +303,12 @@ public final class WebApplicationService implements AutoCloseable
             {
                 throw new IllegalArgumentException("Jetty thread name cannot be blank");
             }
+
+            if(browserHost == null || browserHost.isBlank() || browserHost.indexOf('[') >= 0 ||
+                browserHost.indexOf(']') >= 0)
+            {
+                throw new IllegalArgumentException("Browser host must be a non-bracketed host or IP address");
+            }
         }
 
         private static void requirePositive(Duration duration, String label)
@@ -273,9 +332,49 @@ public final class WebApplicationService implements AutoCloseable
          */
         public static Configuration application(InetAddress bindAddress, int port)
         {
+            return application(bindAddress, port, null);
+        }
+
+        /**
+         * Resource-bounded receiver-node defaults with optional validated HTTPS material.
+         */
+        public static Configuration application(InetAddress bindAddress, int port, TlsMaterial tlsMaterial)
+        {
+            return application(bindAddress, port, defaultBrowserHost(bindAddress), tlsMaterial);
+        }
+
+        /**
+         * Receiver-node defaults preserving the configured hostname/IP for browser navigation and certificate match.
+         */
+        public static Configuration application(InetAddress bindAddress, int port, String browserHost,
+                                                TlsMaterial tlsMaterial)
+        {
             return new Configuration(bindAddress, port, 16, 2, 1, 1, 1, 32,
                 Duration.ofSeconds(30), Duration.ofSeconds(30), Duration.ofSeconds(30), Duration.ofSeconds(5),
-                4_096, 256 * 1024L, 256 * 1024L, 2, "sdrtrunk web");
+                4_096, 256 * 1024L, 256 * 1024L, 2, "sdrtrunk web", tlsMaterial,
+                browserHost);
+        }
+
+        public boolean httpsEnabled()
+        {
+            return tlsMaterial != null;
+        }
+
+        public String scheme()
+        {
+            return httpsEnabled() ? "https" : "http";
+        }
+
+        private static String defaultBrowserHost(InetAddress bindAddress)
+        {
+            Objects.requireNonNull(bindAddress, "Bind address cannot be null");
+
+            if(bindAddress.isAnyLocalAddress())
+            {
+                return bindAddress.getAddress().length == 16 ? "::1" : "127.0.0.1";
+            }
+
+            return bindAddress.getHostAddress();
         }
     }
 }

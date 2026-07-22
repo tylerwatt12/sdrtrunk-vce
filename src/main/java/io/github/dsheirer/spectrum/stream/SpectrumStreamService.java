@@ -82,6 +82,14 @@ public final class SpectrumStreamService implements AutoCloseable
             }
 
             cancelPendingStopLocked();
+
+            //An interactive source can stop itself when its selected tuner is disabled, removed, or errors.  Do not
+            //preserve that stopped instance through the reconnect grace period; the next owner gets a fresh start.
+            if(mSourceStarted && !mFrameSource.isRunning())
+            {
+                stopSourceLocked();
+            }
+
             Subscription subscription = new Subscription(this);
             mSubscriptions.add(subscription);
 
@@ -199,6 +207,43 @@ public final class SpectrumStreamService implements AutoCloseable
     public long getSourceStopCount()
     {
         return mSourceStopCount.get();
+    }
+
+    public boolean isInteractive()
+    {
+        return mFrameSource instanceof InteractiveSpectrumFrameSource;
+    }
+
+    public List<InteractiveSpectrumFrameSource.Target> getTargets()
+    {
+        if(mFrameSource instanceof InteractiveSpectrumFrameSource interactive)
+        {
+            return interactive.getTargets();
+        }
+
+        return List.of(new InteractiveSpectrumFrameSource.Target("DEFAULT", "Spectrum"));
+    }
+
+    public void requestView(InteractiveSpectrumFrameSource.ViewRequest request)
+    {
+        Objects.requireNonNull(request, "Spectrum view request cannot be null");
+
+        if(mFrameSource instanceof InteractiveSpectrumFrameSource interactive)
+        {
+            interactive.requestView(request);
+            return;
+        }
+
+        if(request.viewport() != null || request.targetId() != null && !"DEFAULT".equals(request.targetId()))
+        {
+            throw new IllegalArgumentException("Spectrum source does not support interactive views");
+        }
+    }
+
+    public InteractiveSpectrumFrameSource.AppliedView getAppliedView()
+    {
+        return mFrameSource instanceof InteractiveSpectrumFrameSource interactive ? interactive.getAppliedView() :
+            null;
     }
 
     public boolean isLifecycleExecutorTerminated()

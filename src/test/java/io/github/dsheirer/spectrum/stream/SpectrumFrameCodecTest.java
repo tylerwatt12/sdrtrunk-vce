@@ -24,7 +24,7 @@ class SpectrumFrameCodecTest
         ByteBuffer first = SpectrumFrameCodec.encodeReadOnly(frame);
         ByteBuffer second = SpectrumFrameCodec.encodeReadOnly(frame);
 
-        assertSame(frame.getOrCreateEncodedVersionOneBytes(), frame.getOrCreateEncodedVersionOneBytes());
+        assertSame(frame.getOrCreateEncodedVersionTwoBytes(), frame.getOrCreateEncodedVersionTwoBytes());
         assertTrue(first.isReadOnly());
         assertTrue(second.isReadOnly());
         assertEquals(first, second);
@@ -48,6 +48,9 @@ class SpectrumFrameCodecTest
         assertEquals(original.getCaptureTimestampEpochNanos(), decoded.getCaptureTimestampEpochNanos());
         assertEquals(original.getCenterFrequencyHz(), decoded.getCenterFrequencyHz());
         assertEquals(original.getSampleRateHz(), decoded.getSampleRateHz());
+        assertEquals(original.getViewRevision(), decoded.getViewRevision());
+        assertEquals(original.getFftSize(), decoded.getFftSize());
+        assertEquals(original.getFirstBin(), decoded.getFirstBin());
         assertEquals(SpectrumEncoding.FLOAT32, decoded.getEncoding());
         assertEquals(1.0f, decoded.getQuantizationScale());
         assertEquals(0.0f, decoded.getQuantizationOffset());
@@ -55,7 +58,7 @@ class SpectrumFrameCodecTest
     }
 
     @Test
-    void versionOneHeaderUsesNormativeOffsetsAndLittleEndianNumbers()
+    void versionTwoHeaderUsesNormativeOffsetsAndLittleEndianNumbers()
     {
         SpectrumFrame frame = testFrame(42, new float[]{-100.5f, -80.25f});
         byte[] encoded = SpectrumFrameCodec.encode(frame);
@@ -75,12 +78,15 @@ class SpectrumFrameCodecTest
             buffer.getLong(SpectrumFrameCodec.OFFSET_CAPTURE_TIMESTAMP));
         assertEquals(frame.getCenterFrequencyHz(), buffer.getLong(SpectrumFrameCodec.OFFSET_CENTER_FREQUENCY));
         assertEquals(frame.getSampleRateHz(), buffer.getLong(SpectrumFrameCodec.OFFSET_SAMPLE_RATE));
+        assertEquals(frame.getViewRevision(), buffer.getLong(SpectrumFrameCodec.OFFSET_VIEW_REVISION));
+        assertEquals(frame.getFftSize(), buffer.getInt(SpectrumFrameCodec.OFFSET_FFT_SIZE));
+        assertEquals(frame.getFirstBin(), buffer.getInt(SpectrumFrameCodec.OFFSET_FIRST_BIN));
         assertEquals(frame.getBinCount(), buffer.getInt(SpectrumFrameCodec.OFFSET_BIN_COUNT));
         assertEquals(SpectrumEncoding.FLOAT32.getWireIdentifier(),
             Byte.toUnsignedInt(buffer.get(SpectrumFrameCodec.OFFSET_ENCODING)));
-        assertEquals(0, encoded[65]);
-        assertEquals(0, encoded[66]);
-        assertEquals(0, encoded[67]);
+        assertEquals(0, encoded[SpectrumFrameCodec.OFFSET_ENCODING + 1]);
+        assertEquals(0, encoded[SpectrumFrameCodec.OFFSET_ENCODING + 2]);
+        assertEquals(0, encoded[SpectrumFrameCodec.OFFSET_ENCODING + 3]);
         assertEquals(1.0f, buffer.getFloat(SpectrumFrameCodec.OFFSET_QUANTIZATION_SCALE));
         assertEquals(0.0f, buffer.getFloat(SpectrumFrameCodec.OFFSET_QUANTIZATION_OFFSET));
         assertEquals(frame.getBinCount() * Float.BYTES,
@@ -96,7 +102,7 @@ class SpectrumFrameCodecTest
         assertThrows(IllegalArgumentException.class, () -> SpectrumFrameCodec.decode(badMagic));
 
         byte[] badReservedByte = SpectrumFrameCodec.encode(testFrame(2, new float[]{-100.0f}));
-        badReservedByte[65] = 1;
+        badReservedByte[SpectrumFrameCodec.OFFSET_ENCODING + 1] = 1;
         assertThrows(IllegalArgumentException.class, () -> SpectrumFrameCodec.decode(badReservedByte));
 
         byte[] badPayloadLength = SpectrumFrameCodec.encode(testFrame(3, new float[]{-100.0f}));
@@ -123,6 +129,6 @@ class SpectrumFrameCodecTest
         return SpectrumFrame.float32(
             SpectrumFrame.FLAG_CAPTURE_TIMESTAMP_VALID | SpectrumFrame.FLAG_SYNTHETIC,
             7, sequence, -123_456_789L, 1_770_000_000_123_000_000L,
-            851_012_500L, 10_000_000L, bins);
+            851_012_500L, 10_000_000L, 11, 4_096, 200, bins);
     }
 }

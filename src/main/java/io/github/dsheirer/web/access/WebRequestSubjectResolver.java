@@ -6,6 +6,8 @@
 
 package io.github.dsheirer.web.access;
 
+import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import org.eclipse.jetty.server.Request;
 
 /**
@@ -17,8 +19,44 @@ public interface WebRequestSubjectResolver
 {
     AuthorizationSubject resolve(Request request);
 
+    /**
+     * Resolves both the request subject and a cheap check that remains valid for the lifetime of a long-lived HTTP
+     * response.  Stateless resolvers inherit a permanent check.  Session-backed resolvers override this so logout,
+     * credential reset, or session expiration revokes an already-open SSE stream.
+     */
+    default WebAuthorization resolveAuthorization(Request request)
+    {
+        return WebAuthorization.permanent(resolve(request));
+    }
+
     static WebRequestSubjectResolver anonymous()
     {
         return request -> AuthorizationSubject.ANONYMOUS;
+    }
+
+    record WebAuthorization(AuthorizationSubject subject, BooleanSupplier sessionIsValid)
+    {
+        public WebAuthorization
+        {
+            Objects.requireNonNull(subject, "Web authorization subject cannot be null");
+            Objects.requireNonNull(sessionIsValid, "Web session validity check cannot be null");
+        }
+
+        public boolean isSessionValid()
+        {
+            try
+            {
+                return sessionIsValid.getAsBoolean();
+            }
+            catch(RuntimeException exception)
+            {
+                return false;
+            }
+        }
+
+        public static WebAuthorization permanent(AuthorizationSubject subject)
+        {
+            return new WebAuthorization(subject, () -> true);
+        }
     }
 }

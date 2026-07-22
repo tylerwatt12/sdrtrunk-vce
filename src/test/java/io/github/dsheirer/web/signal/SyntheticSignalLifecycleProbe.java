@@ -12,6 +12,7 @@ import io.github.dsheirer.spectrum.stream.SyntheticSpectrumFrameSource;
 import io.github.dsheirer.web.WebApplicationService;
 import io.github.dsheirer.web.WebResponses;
 import io.github.dsheirer.web.access.InMemoryFeatureAccessPolicy;
+import io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy;
 import java.io.ByteArrayOutputStream;
 import java.lang.management.ManagementFactory;
 import java.net.URI;
@@ -48,11 +49,12 @@ public final class SyntheticSignalLifecycleProbe
             new SyntheticSpectrumFrameSource.Configuration(1, 851_000_000L, 10_000_000L, 4_096,
                 Duration.ofMillis(50), "probe synthetic spectrum"));
         SpectrumStreamService stream = new SpectrumStreamService(
-            new SpectrumStreamService.Configuration(16, Duration.ofSeconds(2), "probe spectrum lifecycle"), source);
+            new SpectrumStreamService.Configuration(1, Duration.ofSeconds(2), "probe spectrum lifecycle"), source);
         SignalWebSocketTransport transport = new SignalWebSocketTransport(
             SignalWebSocketTransport.Configuration.defaults(), stream,
-            InMemoryFeatureAccessPolicy.currentProfileDefaults(), SignalSubjectResolver.anonymous(),
-            SignalOriginPolicy.sameOrigin());
+            InMemoryFeatureAccessPolicy.currentProfileDefaults(),
+            request -> io.github.dsheirer.web.access.AuthorizationSubject.AUTHENTICATED_ADMIN,
+            SignalOriginPolicy.sameOrigin(), RemoteAddressAdmissionPolicy.allowAll());
         WebApplicationService web = new WebApplicationService(
             WebApplicationService.Configuration.ephemeralLoopback(), new NotFoundHandler(), transport::configure);
         List<WebSocket> sockets = new ArrayList<>();
@@ -68,18 +70,15 @@ public final class SyntheticSignalLifecycleProbe
             String origin = "http://127.0.0.1:" + web.getLocalPort();
             HttpClient client = HttpClient.newHttpClient();
 
-            for(int x = 0; x < 10; x++)
-            {
-                ProbeListener listener = new ProbeListener();
-                WebSocket socket = client.newWebSocketBuilder().header("Origin", origin)
-                    .connectTimeout(TIMEOUT).buildAsync(uri, listener).get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-                sockets.add(socket);
-                socket.sendText("{\"action\":\"subscribe\",\"maxFps\":20}", true).join();
-                SpectrumFrameCodec.decode(listener.firstFrame.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS));
-            }
+            ProbeListener listener = new ProbeListener();
+            WebSocket socket = client.newWebSocketBuilder().header("Origin", origin)
+                .connectTimeout(TIMEOUT).buildAsync(uri, listener).get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            sockets.add(socket);
+            socket.sendText("{\"action\":\"subscribe\",\"requestId\":1,\"maxFps\":20}", true).join();
+            SpectrumFrameCodec.decode(listener.firstFrame.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS));
 
             forceGc();
-            report("TEN_VIEWERS", transport, stream, source);
+            report("ONE_VIEWER", transport, stream, source);
             Thread.sleep(5_000);
 
             closeSockets(sockets);

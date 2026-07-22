@@ -34,24 +34,28 @@ public final class SpectrumFrame
     private final long mCaptureTimestampEpochNanos;
     private final long mCenterFrequencyHz;
     private final long mSampleRateHz;
+    private final long mViewRevision;
+    private final int mFftSize;
+    private final int mFirstBin;
     private final SpectrumEncoding mEncoding;
     private final float mQuantizationScale;
     private final float mQuantizationOffset;
     private final float[] mBins;
-    private volatile byte[] mEncodedVersionOne;
+    private volatile byte[] mEncodedVersionTwo;
 
     public SpectrumFrame(int flags, long targetGeneration, long sequence, long monotonicTimestampNanos,
                          long captureTimestampEpochNanos, long centerFrequencyHz, long sampleRateHz,
                          SpectrumEncoding encoding, float quantizationScale, float quantizationOffset, float[] bins)
     {
         this(flags, targetGeneration, sequence, monotonicTimestampNanos, captureTimestampEpochNanos,
-            centerFrequencyHz, sampleRateHz, encoding, quantizationScale, quantizationOffset, bins, true);
+            centerFrequencyHz, sampleRateHz, 0, bins != null ? bins.length : 0, 0, encoding, quantizationScale,
+            quantizationOffset, bins, true);
     }
 
     private SpectrumFrame(int flags, long targetGeneration, long sequence, long monotonicTimestampNanos,
                           long captureTimestampEpochNanos, long centerFrequencyHz, long sampleRateHz,
-                          SpectrumEncoding encoding, float quantizationScale, float quantizationOffset, float[] bins,
-                          boolean copyBins)
+                          long viewRevision, int fftSize, int firstBin, SpectrumEncoding encoding,
+                          float quantizationScale, float quantizationOffset, float[] bins, boolean copyBins)
     {
         if(targetGeneration < 0)
         {
@@ -85,6 +89,11 @@ public final class SpectrumFrame
             throw new IllegalArgumentException("Sample rate must be positive");
         }
 
+        if(viewRevision < 0)
+        {
+            throw new IllegalArgumentException("View revision cannot be negative");
+        }
+
         if(!Float.isFinite(quantizationScale) || quantizationScale <= 0.0f)
         {
             throw new IllegalArgumentException("Quantization scale must be finite and positive");
@@ -111,6 +120,16 @@ public final class SpectrumFrame
                 SpectrumFrameCodec.MAXIMUM_BIN_COUNT);
         }
 
+        if(fftSize < bins.length || fftSize > SpectrumFrameCodec.MAXIMUM_BIN_COUNT)
+        {
+            throw new IllegalArgumentException("FFT size must contain all transmitted bins");
+        }
+
+        if(firstBin < 0 || firstBin > fftSize - bins.length)
+        {
+            throw new IllegalArgumentException("First transmitted FFT bin is outside the FFT bounds");
+        }
+
         mFlags = flags;
         mTargetGeneration = targetGeneration;
         mSequence = sequence;
@@ -118,6 +137,9 @@ public final class SpectrumFrame
         mCaptureTimestampEpochNanos = captureTimestampEpochNanos;
         mCenterFrequencyHz = centerFrequencyHz;
         mSampleRateHz = sampleRateHz;
+        mViewRevision = viewRevision;
+        mFftSize = fftSize;
+        mFirstBin = firstBin;
         mQuantizationScale = quantizationScale;
         mQuantizationOffset = quantizationOffset;
         mBins = copyBins ? Arrays.copyOf(bins, bins.length) : bins;
@@ -128,7 +150,18 @@ public final class SpectrumFrame
                                         long centerFrequencyHz, long sampleRateHz, float[] bins)
     {
         return new SpectrumFrame(flags, targetGeneration, sequence, monotonicTimestampNanos,
-            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, SpectrumEncoding.FLOAT32, 1.0f, 0.0f, bins);
+            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, 0, bins != null ? bins.length : 0, 0,
+            SpectrumEncoding.FLOAT32, 1.0f, 0.0f, bins, true);
+    }
+
+    public static SpectrumFrame float32(int flags, long targetGeneration, long sequence,
+                                        long monotonicTimestampNanos, long captureTimestampEpochNanos,
+                                        long centerFrequencyHz, long sampleRateHz, long viewRevision, int fftSize,
+                                        int firstBin, float[] bins)
+    {
+        return new SpectrumFrame(flags, targetGeneration, sequence, monotonicTimestampNanos,
+            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, viewRevision, fftSize, firstBin,
+            SpectrumEncoding.FLOAT32, 1.0f, 0.0f, bins, true);
     }
 
     /**
@@ -140,8 +173,18 @@ public final class SpectrumFrame
                                       long centerFrequencyHz, long sampleRateHz, float[] bins)
     {
         return new SpectrumFrame(flags, targetGeneration, sequence, monotonicTimestampNanos,
-            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, SpectrumEncoding.FLOAT32, 1.0f, 0.0f, bins,
-            false);
+            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, 0, bins != null ? bins.length : 0, 0,
+            SpectrumEncoding.FLOAT32, 1.0f, 0.0f, bins, false);
+    }
+
+    static SpectrumFrame float32Owned(int flags, long targetGeneration, long sequence,
+                                      long monotonicTimestampNanos, long captureTimestampEpochNanos,
+                                      long centerFrequencyHz, long sampleRateHz, long viewRevision, int fftSize,
+                                      int firstBin, float[] bins)
+    {
+        return new SpectrumFrame(flags, targetGeneration, sequence, monotonicTimestampNanos,
+            captureTimestampEpochNanos, centerFrequencyHz, sampleRateHz, viewRevision, fftSize, firstBin,
+            SpectrumEncoding.FLOAT32, 1.0f, 0.0f, bins, false);
     }
 
     public int getFlags()
@@ -177,6 +220,21 @@ public final class SpectrumFrame
     public long getSampleRateHz()
     {
         return mSampleRateHz;
+    }
+
+    public long getViewRevision()
+    {
+        return mViewRevision;
+    }
+
+    public int getFftSize()
+    {
+        return mFftSize;
+    }
+
+    public int getFirstBin()
+    {
+        return mFirstBin;
     }
 
     public int getBinCount()
@@ -218,30 +276,30 @@ public final class SpectrumFrame
     }
 
     /**
-     * Returns a new read-only view over this frame's shared version-one wire representation.  Encoding is performed
+     * Returns a new read-only view over this frame's shared version-two wire representation.  Encoding is performed
      * lazily on a transport thread, at most once for the frame, so publishing a frame never serializes data and ten
      * viewers do not create ten payload arrays.
      */
-    public ByteBuffer getEncodedVersionOne()
+    public ByteBuffer getEncodedVersionTwo()
     {
-        return ByteBuffer.wrap(getOrCreateEncodedVersionOneBytes()).asReadOnlyBuffer()
+        return ByteBuffer.wrap(getOrCreateEncodedVersionTwoBytes()).asReadOnlyBuffer()
             .order(SpectrumFrameCodec.BYTE_ORDER);
     }
 
-    byte[] getOrCreateEncodedVersionOneBytes()
+    byte[] getOrCreateEncodedVersionTwoBytes()
     {
-        byte[] encoded = mEncodedVersionOne;
+        byte[] encoded = mEncodedVersionTwo;
 
         if(encoded == null)
         {
             synchronized(this)
             {
-                encoded = mEncodedVersionOne;
+                encoded = mEncodedVersionTwo;
 
                 if(encoded == null)
                 {
                     encoded = SpectrumFrameCodec.encodeUncached(this);
-                    mEncodedVersionOne = encoded;
+                    mEncodedVersionTwo = encoded;
                 }
             }
         }

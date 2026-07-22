@@ -191,6 +191,8 @@ class StatsWebDatabaseTest
         Map<String,Object> status = mDatabase.status();
         assertTrue((Boolean)status.get("detailedHistoryAvailable"));
         assertEquals(2001L, number(status.get("lastDetailedHistoryMs")));
+        assertFalse(status.containsKey("logger"));
+        assertFalse(status.toString().contains(mDatabasePath.toString()));
     }
 
     @Test

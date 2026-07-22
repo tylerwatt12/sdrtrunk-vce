@@ -12,9 +12,11 @@
 package io.github.dsheirer.portable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
@@ -52,13 +54,22 @@ class PortableApplicationPathsTest
     @Test
     void explicitFreshBootstrapCreatesCompletePortableDatabases() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("portable-data");
-        System.setProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY, dataRoot.toString());
+        Path productionRoot = mTemporaryFolder.resolve("production-data");
+        Files.createDirectories(productionRoot);
+        Path sentinel = productionRoot.resolve("untouched.txt");
+        Files.writeString(sentinel, "production");
+        Path configuredRoot = mTemporaryFolder.resolve("isolated/nested/../portable-data");
+        Path dataRoot = configuredRoot.toAbsolutePath().normalize();
+        System.setProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY, configuredRoot.toString());
         PortableApplicationPaths.resetForTest();
 
-        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--fresh"}));
+        assertEquals(dataRoot, PortableApplicationPaths.getDataRoot());
+        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--fresh", "--server-admin-ui"}));
+        assertEquals(dataRoot.resolve("database/sdrtrunk.sqlite"), SdrTrunkDatabasePath.getDatabasePath());
         assertTrue(Files.isRegularFile(dataRoot.resolve("database/sdrtrunk.sqlite")));
         assertTrue(Files.isRegularFile(dataRoot.resolve("vault/encryption-key-vault.sqlite")));
+        assertTrue(Files.isRegularFile(sentinel));
+        assertFalse(Files.exists(productionRoot.resolve("database")));
     }
 
     @Test

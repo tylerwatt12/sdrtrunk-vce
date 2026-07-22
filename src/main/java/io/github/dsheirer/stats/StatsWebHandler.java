@@ -17,14 +17,13 @@ import io.github.dsheirer.web.WebResponses;
 import io.github.dsheirer.web.access.AuthorizationSubject;
 import io.github.dsheirer.web.access.FeatureAccessGateway;
 import io.github.dsheirer.web.access.InMemoryFeatureAccessPolicy;
+import io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy;
 import io.github.dsheirer.web.access.WebFeature;
 import io.github.dsheirer.web.access.WebRequestSubjectResolver;
+import io.github.dsheirer.web.access.WebRequestSubjectResolver.WebAuthorization;
 import io.github.dsheirer.web.access.WebTransport;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -69,9 +68,13 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private static final int STATIC_CHUNK_BYTES = 32 * 1024;
     private static final int MAXIMUM_ASYNC_STREAMS = 128;
     private static final long STREAM_SHUTDOWN_SECONDS = 2;
+    private static final long SSE_AUTHORIZATION_RECHECK_MILLISECONDS = 250;
+    private static final long SSE_HEARTBEAT_SECONDS = 15;
+    private static final FeatureAuthorization UNRESTRICTED_AUTHORIZATION =
+        new FeatureAuthorization(null, null, WebAuthorization.permanent(AuthorizationSubject.ANONYMOUS));
 
     private final Path mAssetRoot;
-    private final boolean mLanEnabled;
+    private final RemoteAddressAdmissionPolicy mRemoteAddressAdmissionPolicy;
     private final StatsWebDatabase mDatabase;
     private final StatsLiveService mLiveService;
     private final StatsWebCallService mWebCallService;
@@ -85,20 +88,29 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private final AtomicBoolean mAcceptingStreams = new AtomicBoolean();
     private ExecutorService mStreamExecutor;
 
-    StatsWebHandler(Path assetRoot, boolean lanEnabled, StatsWebDatabase database, StatsLiveService liveService,
+    StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
                     StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier)
     {
-        this(assetRoot, lanEnabled, database, liveService, webCallService, statusSupplier,
-            InMemoryFeatureAccessPolicy.currentProfileDefaults(), WebRequestSubjectResolver.anonymous());
+        this(assetRoot, database, liveService, webCallService, statusSupplier,
+            InMemoryFeatureAccessPolicy.currentProfileDefaults(), WebRequestSubjectResolver.anonymous(),
+            RemoteAddressAdmissionPolicy.allowAll());
     }
 
-    StatsWebHandler(Path assetRoot, boolean lanEnabled, StatsWebDatabase database, StatsLiveService liveService,
+    StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
                     StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier,
                     FeatureAccessGateway featureAccessGateway, WebRequestSubjectResolver subjectResolver)
     {
+        this(assetRoot, database, liveService, webCallService, statusSupplier, featureAccessGateway,
+            subjectResolver, RemoteAddressAdmissionPolicy.allowAll());
+    }
+
+    StatsWebHandler(Path assetRoot, StatsWebDatabase database, StatsLiveService liveService,
+                    StatsWebCallService webCallService, Supplier<Map<String,Object>> statusSupplier,
+                    FeatureAccessGateway featureAccessGateway, WebRequestSubjectResolver subjectResolver,
+                    RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
+    {
         mAssetRoot = Objects.requireNonNull(assetRoot, "Stats web asset root cannot be null")
             .toAbsolutePath().normalize();
-        mLanEnabled = lanEnabled;
         mDatabase = Objects.requireNonNull(database, "Stats web database cannot be null");
         mLiveService = Objects.requireNonNull(liveService, "Stats live service cannot be null");
         mWebCallService = Objects.requireNonNull(webCallService, "Stats web call service cannot be null");
@@ -106,6 +118,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         mFeatureAccessGateway = Objects.requireNonNull(featureAccessGateway,
             "Feature access gateway cannot be null");
         mSubjectResolver = Objects.requireNonNull(subjectResolver, "Web request subject resolver cannot be null");
+        mRemoteAddressAdmissionPolicy = Objects.requireNonNull(remoteAddressAdmissionPolicy,
+            "Remote-address admission policy cannot be null");
     }
 
     @Override
@@ -129,6 +143,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     {
         try
         {
+            prepareSecurityHeaders(response);
+
             if(!isAllowed(request, response, callback))
             {
                 return true;
@@ -140,12 +156,15 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             {
                 sendText(response, callback, 400, "Invalid request path");
             }
-            else if(!authorizeFeature(request, response, callback, path))
-            {
-                return true;
-            }
             else
             {
+                FeatureAuthorization authorization = authorizeFeature(request, response, callback, path);
+
+                if(authorization == null)
+                {
+                    return true;
+                }
+
                 switch(path)
                 {
                     case "/api/status" -> handleJson(request, response, callback, mStatusSupplier::get);
@@ -198,9 +217,9 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                         () -> mDatabase.conventional(statsRequest(request)));
                     case "/api/conventional/detail" -> handleJson(request, response, callback,
                         () -> mDatabase.conventionalDetail(statsRequest(request)));
-                    case "/live/systems" -> handleSystemsSse(request, response, callback);
-                    case "/live/web-calls" -> handleWebCallsSse(request, response, callback);
-                    case "/live/activity" -> handleActivitySse(request, response, callback);
+                    case "/live/systems" -> handleSystemsSse(request, response, callback, authorization);
+                    case "/live/web-calls" -> handleWebCallsSse(request, response, callback, authorization);
+                    case "/live/activity" -> handleActivitySse(request, response, callback, authorization);
                     default -> {
                         if(path.startsWith("/api/web-player/calls/"))
                         {
@@ -230,7 +249,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         return true;
     }
 
-    private boolean authorizeFeature(Request request, Response response, Callback callback, String path)
+    private FeatureAuthorization authorizeFeature(Request request, Response response, Callback callback, String path)
     {
         WebFeature feature;
         WebTransport transport;
@@ -248,28 +267,31 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         else
         {
             // The public shell and immutable assets must load so a locked feature can present its sign-in state.
-            return true;
+            return UNRESTRICTED_AUTHORIZATION;
         }
 
-        AuthorizationSubject subject;
+        WebAuthorization authorization;
 
         try
         {
-            subject = Objects.requireNonNull(mSubjectResolver.resolve(request), "Subject resolver returned null");
+            authorization = Objects.requireNonNull(mSubjectResolver.resolveAuthorization(request),
+                "Subject resolver returned null authorization");
         }
         catch(RuntimeException exception)
         {
-            subject = AuthorizationSubject.ANONYMOUS;
+            authorization = WebAuthorization.permanent(AuthorizationSubject.ANONYMOUS);
         }
 
-        if(mFeatureAccessGateway.authorize(feature, subject, transport).isAllowed())
+        FeatureAuthorization featureAuthorization = new FeatureAuthorization(feature, transport, authorization);
+
+        if(isAuthorized(featureAuthorization))
         {
-            return true;
+            return featureAuthorization;
         }
 
         response.getHeaders().put(HttpHeader.WWW_AUTHENTICATE, "Bearer realm=\"sdrtrunk-admin\"");
         sendText(response, callback, 401, "Administrator sign-in required");
-        return false;
+        return null;
     }
 
     private static StatsRequest statsRequest(Request request)
@@ -314,7 +336,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         }
     }
 
-    private void handleSystemsSse(Request request, Response response, Callback callback)
+    private void handleSystemsSse(Request request, Response response, Callback callback,
+                                  FeatureAuthorization authorization)
     {
         if(!requireMethod(request, response, callback, "GET"))
         {
@@ -329,10 +352,12 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             return;
         }
 
-        streamSse(request, response, callback, subscription, "snapshot", mLiveService.snapshot(), event -> true);
+        streamSse(request, response, callback, subscription, "snapshot", mLiveService.snapshot(), event -> true,
+            authorization);
     }
 
-    private void handleWebCallsSse(Request request, Response response, Callback callback)
+    private void handleWebCallsSse(Request request, Response response, Callback callback,
+                                   FeatureAuthorization authorization)
     {
         if(!requireMethod(request, response, callback, "GET"))
         {
@@ -348,10 +373,11 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         }
 
         streamSse(request, response, callback, subscription, "ready", Map.of("state", "live"),
-            event -> "call".equals(event.name()));
+            event -> "call".equals(event.name()), authorization);
     }
 
-    private void handleActivitySse(Request request, Response response, Callback callback)
+    private void handleActivitySse(Request request, Response response, Callback callback,
+                                   FeatureAuthorization authorization)
     {
         if(!requireMethod(request, response, callback, "GET"))
         {
@@ -379,13 +405,21 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         }
 
         streamSse(request, response, callback, subscription, "ready", Map.of("state", "live"),
-            event -> event.data() instanceof Map<?,?> row && matchesActivity(row, statsRequest));
+            event -> event.data() instanceof Map<?,?> row && matchesActivity(row, statsRequest), authorization);
     }
 
     private void streamSse(Request request, Response response, Callback callback,
                            StatsLiveEventHub.Subscription subscription, String initialEvent, Object initialData,
-                           Predicate<StatsLiveEventHub.LiveEvent> filter)
+                           Predicate<StatsLiveEventHub.LiveEvent> filter, FeatureAuthorization authorization)
     {
+        if(!isAuthorized(authorization))
+        {
+            subscription.close();
+            response.getHeaders().put(HttpHeader.WWW_AUTHENTICATE, "Bearer realm=\"sdrtrunk-admin\"");
+            sendText(response, callback, 401, "Administrator sign-in required");
+            return;
+        }
+
         if(!mAcceptingStreams.get() || !mAsyncStreamPermits.tryAcquire())
         {
             subscription.close();
@@ -401,7 +435,8 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
         mActiveSubscriptions.add(subscription);
         request.addFailureListener(failure -> subscription.close());
 
-        if(!executeStream(() -> runSse(response, callback, subscription, initialEvent, initialData, filter)))
+        if(!executeStream(() -> runSse(response, callback, subscription, initialEvent, initialData, filter,
+            authorization)))
         {
             mActiveSubscriptions.remove(subscription);
             subscription.close();
@@ -411,26 +446,51 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     }
 
     private void runSse(Response response, Callback callback, StatsLiveEventHub.Subscription subscription,
-                        String initialEvent, Object initialData, Predicate<StatsLiveEventHub.LiveEvent> filter)
+                        String initialEvent, Object initialData, Predicate<StatsLiveEventHub.LiveEvent> filter,
+                        FeatureAuthorization authorization)
     {
         Throwable failure = null;
 
         try(subscription)
         {
+            if(!isAuthorized(authorization))
+            {
+                writeChunk(response, new byte[0], true);
+                return;
+            }
+
             writeChunk(response, sseEvent(initialEvent, initialData), false);
+            long lastWriteNanos = System.nanoTime();
 
             while(mAcceptingStreams.get() && !subscription.isClosed())
             {
-                StatsLiveEventHub.LiveEvent event = subscription.poll(15, TimeUnit.SECONDS);
+                if(!isAuthorized(authorization))
+                {
+                    break;
+                }
 
-                if(event == null)
+                StatsLiveEventHub.LiveEvent event = subscription.poll(SSE_AUTHORIZATION_RECHECK_MILLISECONDS,
+                    TimeUnit.MILLISECONDS);
+
+                if(event != null)
+                {
+                    // Recheck after the blocking poll so a revocation can never race with delivery of a queued event.
+                    if(!isAuthorized(authorization))
+                    {
+                        break;
+                    }
+
+                    if(filter.test(event))
+                    {
+                        writeChunk(response, sseEvent(event.name(), event.data()), false);
+                        lastWriteNanos = System.nanoTime();
+                    }
+                }
+                else if(System.nanoTime() - lastWriteNanos >= TimeUnit.SECONDS.toNanos(SSE_HEARTBEAT_SECONDS))
                 {
                     writeChunk(response, (": heartbeat " + System.currentTimeMillis() + "\n\n")
                         .getBytes(StandardCharsets.UTF_8), false);
-                }
-                else if(filter.test(event))
-                {
-                    writeChunk(response, sseEvent(event.name(), event.data()), false);
+                    lastWriteNanos = System.nanoTime();
                 }
             }
 
@@ -460,6 +520,29 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
             {
                 callback.failed(failure);
             }
+        }
+    }
+
+    private boolean isAuthorized(FeatureAuthorization authorization)
+    {
+        if(authorization == null || !authorization.authorization().isSessionValid())
+        {
+            return false;
+        }
+
+        if(authorization.feature() == null)
+        {
+            return true;
+        }
+
+        try
+        {
+            return mFeatureAccessGateway.authorize(authorization.feature(), authorization.authorization().subject(),
+                authorization.transport()).isAllowed();
+        }
+        catch(RuntimeException exception)
+        {
+            return false;
         }
     }
 
@@ -752,61 +835,25 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
 
     private boolean isAllowed(Request request, Response response, Callback callback)
     {
-        SocketAddress socketAddress = request.getConnectionMetaData().getRemoteSocketAddress();
-        InetAddress remoteAddress = socketAddress instanceof InetSocketAddress inetSocketAddress ?
-            inetSocketAddress.getAddress() : null;
-
-        if(remoteAddress != null && isRemoteAllowed(remoteAddress, mLanEnabled))
+        if(mRemoteAddressAdmissionPolicy.isAllowed(request))
         {
             return true;
         }
 
-        if(!mLanEnabled)
-        {
-            sendText(response, callback, 403, "Stats web server is limited to this computer.");
-        }
-        else
-        {
-            sendText(response, callback, 403,
-                "Stats web server only allows loopback, LAN, link-local, and Tailscale clients.");
-        }
+        sendText(response, callback, 403, "Request source is not admitted.");
 
         return false;
     }
 
-    static boolean isRemoteAllowed(InetAddress address, boolean lanEnabled)
+    private static void prepareSecurityHeaders(Response response)
     {
-        if(address == null)
-        {
-            return false;
-        }
-
-        if(address.isLoopbackAddress())
-        {
-            return true;
-        }
-
-        return lanEnabled && isPrivateOrTailnet(address);
-    }
-
-    static boolean isPrivateOrTailnet(InetAddress address)
-    {
-        if(address.isSiteLocalAddress() || address.isLinkLocalAddress())
-        {
-            return true;
-        }
-
-        byte[] bytes = address.getAddress();
-
-        if(bytes.length == 4)
-        {
-            int first = bytes[0] & 0xFF;
-            int second = bytes[1] & 0xFF;
-            return first == 100 && second >= 64 && second <= 127;
-        }
-
-        int first = bytes[0] & 0xFF;
-        return (first & 0xFE) == 0xFC;
+        response.getHeaders().put("X-Content-Type-Options", "nosniff");
+        response.getHeaders().put("X-Frame-Options", "DENY");
+        response.getHeaders().put("Referrer-Policy", "no-referrer");
+        response.getHeaders().put("Permissions-Policy", "camera=(), microphone=(), geolocation=(), usb=()");
+        response.getHeaders().put("Content-Security-Policy",
+            "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; " +
+                "form-action 'self'; connect-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'");
     }
 
     private static boolean requireMethod(Request request, Response response, Callback callback, String... methods)
@@ -933,5 +980,19 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
     private interface JsonSupplier
     {
         Map<String,Object> get();
+    }
+
+    private record FeatureAuthorization(WebFeature feature, WebTransport transport,
+                                        WebAuthorization authorization)
+    {
+        private FeatureAuthorization
+        {
+            Objects.requireNonNull(authorization, "Web authorization cannot be null");
+
+            if((feature == null) != (transport == null))
+            {
+                throw new IllegalArgumentException("Feature and transport must either both be present or both absent");
+            }
+        }
     }
 }

@@ -22,6 +22,7 @@ package io.github.dsheirer.preference.application;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.web.config.WebListenAddress;
 import java.util.prefs.Preferences;
 
 /**
@@ -36,16 +37,14 @@ public class ApplicationPreference extends Preference
     private static final String PREFERENCE_KEY_STATS_LOGGING_RETENTION_DAYS =
         "p25.activity.logging.retention.days";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED = "stats.web.server.enabled";
-    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_PORT = "stats.web.server.port";
-    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED = "stats.web.server.lan.enabled";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_LISTEN_ADDRESS = "stats.web.server.listen.address";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED = "stats.web.server.https.enabled";
     public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
     public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
     public static final int MAX_STATS_LOGGING_RETENTION_DAYS = 365;
     public static final int DEFAULT_STATS_LOGGING_RETENTION_DAYS = 30;
-    public static final int MIN_STATS_WEB_SERVER_PORT = 1024;
-    public static final int MAX_STATS_WEB_SERVER_PORT = 65535;
-    public static final int DEFAULT_STATS_WEB_SERVER_PORT = 8090;
+    public static final String DEFAULT_STATS_WEB_SERVER_LISTEN_ADDRESS = "127.0.0.1:8090";
 
     private Preferences mPreferences = Preferences.userNodeForPackage(ApplicationPreference.class);
     private Integer mChannelAutoStartTimeout;
@@ -53,8 +52,8 @@ public class ApplicationPreference extends Preference
     private Boolean mStatsDetailedHistoryEnabled;
     private Integer mStatsLoggingRetentionDays;
     private Boolean mStatsWebServerEnabled;
-    private Integer mStatsWebServerPort;
-    private Boolean mStatsWebServerLanEnabled;
+    private String mStatsWebServerListenAddress;
+    private Boolean mStatsWebServerHttpsEnabled;
 
     /**
      * Constructs an instance
@@ -195,49 +194,60 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Port for the embedded stats web server.
+     * Host/IP and port used by the embedded web server.  The value is kept as one canonical setting so network
+     * exposure is controlled exclusively by the socket binding instead of a second LAN/Tailscale mode.
      */
-    public int getStatsWebServerPort()
+    public String getStatsWebServerListenAddress()
     {
-        if(mStatsWebServerPort == null)
+        if(mStatsWebServerListenAddress == null)
         {
-            mStatsWebServerPort = clampStatsWebServerPort(
-                mPreferences.getInt(PREFERENCE_KEY_STATS_WEB_SERVER_PORT, DEFAULT_STATS_WEB_SERVER_PORT));
+            String saved = mPreferences.get(PREFERENCE_KEY_STATS_WEB_SERVER_LISTEN_ADDRESS,
+                DEFAULT_STATS_WEB_SERVER_LISTEN_ADDRESS);
+
+            try
+            {
+                mStatsWebServerListenAddress = WebListenAddress.parse(saved).toString();
+            }
+            catch(IllegalArgumentException exception)
+            {
+                mStatsWebServerListenAddress = DEFAULT_STATS_WEB_SERVER_LISTEN_ADDRESS;
+            }
         }
 
-        return mStatsWebServerPort;
+        return mStatsWebServerListenAddress;
     }
 
     /**
-     * Sets the port for the embedded stats web server.
+     * Sets the embedded web-server host/IP and port.
      */
-    public void setStatsWebServerPort(int port)
+    public void setStatsWebServerListenAddress(String listenAddress)
     {
-        mStatsWebServerPort = clampStatsWebServerPort(port);
-        mPreferences.putInt(PREFERENCE_KEY_STATS_WEB_SERVER_PORT, mStatsWebServerPort);
+        mStatsWebServerListenAddress = WebListenAddress.parse(listenAddress).toString();
+        mPreferences.put(PREFERENCE_KEY_STATS_WEB_SERVER_LISTEN_ADDRESS, mStatsWebServerListenAddress);
         notifyPreferenceUpdated();
     }
 
     /**
-     * Indicates if non-loopback clients can reach the embedded stats web server.
+     * Indicates whether the one embedded web connector uses HTTPS rather than HTTP.
      */
-    public boolean isStatsWebServerLanEnabled()
+    public boolean isStatsWebServerHttpsEnabled()
     {
-        if(mStatsWebServerLanEnabled == null)
+        if(mStatsWebServerHttpsEnabled == null)
         {
-            mStatsWebServerLanEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED, false);
+            mStatsWebServerHttpsEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED,
+                false);
         }
 
-        return mStatsWebServerLanEnabled;
+        return mStatsWebServerHttpsEnabled;
     }
 
     /**
-     * Enables or disables LAN/Tailscale access for the embedded stats web server.
+     * Chooses HTTPS or HTTP for the one embedded web connector.
      */
-    public void setStatsWebServerLanEnabled(boolean enabled)
+    public void setStatsWebServerHttpsEnabled(boolean enabled)
     {
-        mStatsWebServerLanEnabled = enabled;
-        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED, enabled);
+        mStatsWebServerHttpsEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, enabled);
         notifyPreferenceUpdated();
     }
 
@@ -246,8 +256,4 @@ public class ApplicationPreference extends Preference
         return Math.max(MIN_STATS_LOGGING_RETENTION_DAYS, Math.min(MAX_STATS_LOGGING_RETENTION_DAYS, days));
     }
 
-    private static int clampStatsWebServerPort(int port)
-    {
-        return Math.max(MIN_STATS_WEB_SERVER_PORT, Math.min(MAX_STATS_WEB_SERVER_PORT, port));
-    }
 }

@@ -12,17 +12,20 @@
 package io.github.dsheirer.spectrum.stream;
 
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
  * Lightweight deterministic spectrum source for lifecycle, transport, and browser development.
  */
-public final class SyntheticSpectrumFrameSource implements SpectrumFrameSource
+public final class SyntheticSpectrumFrameSource implements InteractiveSpectrumFrameSource
 {
     private static final Duration EXECUTOR_SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
 
@@ -34,7 +37,9 @@ public final class SyntheticSpectrumFrameSource implements SpectrumFrameSource
     private final AtomicLong mProductionErrorCount = new AtomicLong();
     private final AtomicLong mStartCount = new AtomicLong();
     private final AtomicLong mStopCount = new AtomicLong();
+    private final AtomicReference<ViewRequest> mRequestedView = new AtomicReference<>();
     private volatile Consumer<SpectrumFrame> mFrameConsumer;
+    private volatile AppliedView mAppliedView;
     private volatile boolean mRunning;
     private volatile boolean mClosed;
     private long mRunGeneration;
@@ -94,11 +99,35 @@ public final class SyntheticSpectrumFrameSource implements SpectrumFrameSource
             long sequence = mSequence.getAndIncrement();
             long monotonicTimestampNanos = System.nanoTime();
             long captureTimestampEpochNanos = TimeUnit.MILLISECONDS.toNanos(System.currentTimeMillis());
-            float[] bins = createBins(sequence, mConfiguration.binCount());
+            ViewRequest view = mRequestedView.get();
+
+            if(view == null)
+            {
+                view = new ViewRequest(0, "SYNTHETIC", null);
+            }
+
+            int fftSize = syntheticFftSize(view.viewport());
+            float[] fullBins = createBins(sequence, fftSize);
+            int firstBin = 0;
+            int binCount = Math.min(fftSize, MAXIMUM_TRANSMITTED_BINS);
+
+            if(view.viewport() != null)
+            {
+                Crop crop = crop(view.viewport(), fftSize);
+                firstBin = crop.firstBin();
+                binCount = crop.binCount();
+            }
+
+            float[] bins = firstBin == 0 && binCount == fullBins.length ? fullBins :
+                Arrays.copyOfRange(fullBins, firstBin, firstBin + binCount);
             SpectrumFrame frame = SpectrumFrame.float32Owned(
                 SpectrumFrame.FLAG_CAPTURE_TIMESTAMP_VALID | SpectrumFrame.FLAG_SYNTHETIC,
                 mConfiguration.targetGeneration(), sequence, monotonicTimestampNanos, captureTimestampEpochNanos,
-                mConfiguration.centerFrequencyHz(), mConfiguration.sampleRateHz(), bins);
+                mConfiguration.centerFrequencyHz(), mConfiguration.sampleRateHz(), view.revision(), fftSize,
+                firstBin, bins);
+            mAppliedView = new AppliedView(view.revision(), "SYNTHETIC", "Synthetic signal source",
+                mConfiguration.targetGeneration(), mConfiguration.centerFrequencyHz(), mConfiguration.sampleRateHz(),
+                fftSize, firstBin, binCount);
 
             if(mRunning && !mClosed && consumer == mFrameConsumer && runGeneration == mRunGeneration)
             {
@@ -144,6 +173,45 @@ public final class SyntheticSpectrumFrameSource implements SpectrumFrameSource
         }
 
         return bins;
+    }
+
+    private int syntheticFftSize(Viewport viewport)
+    {
+        int baseSize = mConfiguration.binCount();
+
+        if(baseSize != BASE_FFT_SIZE || viewport == null)
+        {
+            return baseSize;
+        }
+
+        double span = Math.min(mConfiguration.sampleRateHz(),
+            (double)viewport.endFrequencyHz() - viewport.startFrequencyHz());
+        double zoom = mConfiguration.sampleRateHz() / span;
+        int fftSize = baseSize;
+
+        while(fftSize < MAXIMUM_FFT_SIZE && zoom >= 2.0)
+        {
+            fftSize *= 2;
+            zoom /= 2.0;
+        }
+
+        return fftSize;
+    }
+
+    private Crop crop(Viewport viewport, int fftSize)
+    {
+        double fullStart = mConfiguration.centerFrequencyHz() - mConfiguration.sampleRateHz() / 2.0;
+        double fullEnd = fullStart + mConfiguration.sampleRateHz();
+        double requestedSpan = Math.min(mConfiguration.sampleRateHz(),
+            (double)viewport.endFrequencyHz() - viewport.startFrequencyHz());
+        double requestedCenter = ((double)viewport.startFrequencyHz() + viewport.endFrequencyHz()) / 2.0;
+        double halfSpan = requestedSpan / 2.0;
+        double boundedCenter = Math.max(fullStart + halfSpan, Math.min(fullEnd - halfSpan, requestedCenter));
+        double binWidth = (double)mConfiguration.sampleRateHz() / fftSize;
+        int binCount = Math.max(1, Math.min(MAXIMUM_TRANSMITTED_BINS,
+            (int)Math.round(requestedSpan / binWidth)));
+        int firstBin = (int)Math.round((boundedCenter - fullStart) / binWidth - binCount / 2.0);
+        return new Crop(Math.max(0, Math.min(fftSize - binCount, firstBin)), binCount);
     }
 
     @Override
@@ -199,6 +267,31 @@ public final class SyntheticSpectrumFrameSource implements SpectrumFrameSource
     public long getStopCount()
     {
         return mStopCount.get();
+    }
+
+    @Override
+    public List<Target> getTargets()
+    {
+        return List.of(new Target("SYNTHETIC", "Synthetic signal source"));
+    }
+
+    @Override
+    public void requestView(ViewRequest request)
+    {
+        Objects.requireNonNull(request, "Synthetic spectrum view request cannot be null");
+
+        if(request.targetId() != null && !"SYNTHETIC".equals(request.targetId()))
+        {
+            throw new IllegalArgumentException("Synthetic spectrum target is unavailable");
+        }
+
+        mRequestedView.set(request);
+    }
+
+    @Override
+    public AppliedView getAppliedView()
+    {
+        return mAppliedView;
     }
 
     public boolean isExecutorTerminated()
@@ -282,5 +375,9 @@ public final class SyntheticSpectrumFrameSource implements SpectrumFrameSource
                 throw new IllegalArgumentException("Producer thread name cannot be blank");
             }
         }
+    }
+
+    private record Crop(int firstBin, int binCount)
+    {
     }
 }

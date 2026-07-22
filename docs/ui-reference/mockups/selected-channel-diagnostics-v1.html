@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce — Selected-channel diagnostics mockup</title>
+  <style>
+    :root {
+      color-scheme:light dark;
+      --page:#edf1f4; --surface:#fff; --surface-2:#f5f7f9; --surface-3:#e8edf1;
+      --ink:#18212a; --muted:#65717d; --line:#c9d1d8; --line-strong:#9ba8b3;
+      --header:#202a33; --header-2:#2c3944; --accent:#0b7168; --accent-hover:#095d56;
+      --accent-soft:#d9efec; --blue:#075eaa; --blue-soft:#e7f1fb; --warning:#8a5200;
+      --warning-soft:#fff1d6; --danger:#9b2743; --danger-soft:#fbe8ed;
+      --success:#176b3a; --success-soft:#e2f3e9; --violet:#6d3ba3; --violet-soft:#f0e8fa;
+      --chart:#071118; --chart-grid:#253946; --chart-text:#9fb2bf; --chart-line:#65d48c;
+      --chart-fill:rgb(48 178 106 / 24%); --chart-cursor:#f2cf66; --chart-band:rgb(65 148 213 / 16%);
+      --shadow:0 6px 20px rgb(20 32 44 / 9%);
+      font-family:"Segoe UI",Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+    }
+    @media (prefers-color-scheme:dark) {
+      :root {
+        --page:#111820; --surface:#18212a; --surface-2:#202b35; --surface-3:#2b3742;
+        --ink:#e5ebf0; --muted:#aeb8c1; --line:#3b4854; --line-strong:#596976;
+        --header:#0d1318; --header-2:#24313b; --accent:#55c7ba; --accent-hover:#79d6cc;
+        --accent-soft:#193d39; --blue:#82bff3; --blue-soft:#18324a; --warning:#f0bd67;
+        --warning-soft:#48351c; --danger:#ff99b0; --danger-soft:#4a222c;
+        --success:#85d6a2; --success-soft:#193b27; --violet:#d2a8ff; --violet-soft:#342446;
+        --shadow:0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+    * { box-sizing:border-box; }
+    html { min-width:320px; background:var(--page); }
+    body { min-height:100vh; margin:0; color:var(--ink); background:var(--page); font-size:14px; }
+    button,input,select,textarea { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:7px; }
+    button { min-height:36px; padding:7px 12px; cursor:pointer; }
+    button:hover:not(:disabled) { border-color:var(--accent); }
+    .button-link { min-height:36px; display:inline-flex; align-items:center; justify-content:center; padding:7px 12px; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:7px; text-decoration:none; }
+    .button-link:hover { border-color:var(--accent); }
+    button:disabled { cursor:not-allowed; opacity:.5; }
+    button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible,canvas:focus-visible {
+      outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent); outline-offset:2px;
+    }
+    [hidden] { display:none !important; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+    .topbar { position:sticky; top:0; z-index:30; min-height:52px; display:grid; grid-template-columns:max-content minmax(0,1fr) max-content; align-items:center; gap:20px; padding:0 18px; color:#fff; background:var(--header); border-bottom:1px solid #0e151b; box-shadow:0 2px 8px rgb(0 0 0 / 18%); }
+    .brand { color:#fff; font-size:17px; font-weight:760; text-decoration:none; white-space:nowrap; }
+    .main-nav { align-self:stretch; display:flex; min-width:0; gap:2px; overflow-x:auto; }
+    .main-nav a { min-height:51px; display:flex; align-items:center; padding:0 13px; color:#dce4eb; border-bottom:3px solid transparent; text-decoration:none; white-space:nowrap; }
+    .main-nav a:hover,.main-nav a.active { color:#fff; background:var(--header-2); border-bottom-color:#35b8a9; }
+    .account-area { display:flex; align-items:center; gap:8px; color:#dce4eb; white-space:nowrap; font-size:12px; }
+    .account-dot { width:8px; height:8px; border-radius:50%; background:#54d177; box-shadow:0 0 0 3px rgb(84 209 119 / 16%); }
+    .topbar .settings-link { min-height:32px; display:flex; align-items:center; padding:4px 9px; color:#fff; background:#2e625e; border:1px solid #5c918b; border-radius:7px; text-decoration:none; }
+    .review-strip { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:9px 18px; padding:9px 18px; color:var(--blue); background:var(--blue-soft); border-bottom:1px solid color-mix(in srgb,var(--blue) 35%,var(--line)); }
+    .review-strip strong { color:var(--ink); }
+    .review-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    .review-actions label { color:var(--ink); font-size:.76rem; font-weight:720; }
+    .review-actions select { min-height:34px; max-width:330px; padding:5px 30px 5px 8px; }
+    .primary { color:#fff; background:var(--accent); border-color:var(--accent); font-weight:720; }
+    .primary:hover:not(:disabled) { background:var(--accent-hover); }
+
+    .page { width:min(1540px,100%); margin:0 auto; padding:20px clamp(10px,2vw,26px) 48px; }
+    .page-head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:14px; margin-bottom:13px; }
+    .page-head h1 { margin:0; font-size:clamp(1.5rem,3vw,2.05rem); letter-spacing:-.025em; }
+    .page-head p { max-width:840px; margin:6px 0 0; color:var(--muted); line-height:1.45; }
+    .actions,.status-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    .badge,.pill { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:.7rem; font-weight:760; white-space:nowrap; }
+    .badge::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+    .good { color:var(--success); background:var(--success-soft); }
+    .warn { color:var(--warning); background:var(--warning-soft); }
+    .bad { color:var(--danger); background:var(--danger-soft); }
+    .info { color:var(--blue); background:var(--blue-soft); }
+    .neutral { color:var(--muted); background:var(--surface-3); }
+    .admin { color:var(--violet); background:var(--violet-soft); }
+
+    .context-card { display:grid; grid-template-columns:minmax(220px,1.35fr) minmax(180px,1fr) repeat(3,minmax(130px,.65fr)); gap:1px; margin-bottom:12px; overflow:hidden; background:var(--line); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); }
+    .context-cell { min-width:0; padding:11px 13px; background:var(--surface); }
+    .context-cell span { display:block; color:var(--muted); font-size:.65rem; font-weight:740; letter-spacing:.04em; text-transform:uppercase; }
+    .context-cell strong { display:block; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.79rem; }
+    .notice { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; padding:11px 13px; color:var(--warning); background:var(--warning-soft); border:1px solid color-mix(in srgb,var(--warning) 38%,var(--line)); border-radius:9px; }
+    .notice strong { display:block; color:var(--ink); }
+    .notice p { margin:3px 0 0; font-size:.75rem; line-height:1.4; }
+
+    .workspace { overflow:hidden; background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); }
+    .workspace-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .view-tabs { display:flex; }
+    .view-tab { min-height:49px; padding:0 18px; border:0; border-right:1px solid var(--line); border-radius:0; background:transparent; font-weight:760; }
+    .view-tab[aria-selected="true"] { color:var(--accent); background:var(--surface); box-shadow:inset 0 -3px 0 var(--accent); }
+    .workspace-status { display:flex; flex-wrap:wrap; gap:7px; padding:8px 12px; }
+    .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:9px 12px; border-bottom:1px solid var(--line); }
+    .toolbar .spacer { flex:1 1 auto; }
+    .slider-field { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:.7rem; font-weight:720; }
+    .slider-field input { width:150px; accent-color:var(--accent); }
+    .help { width:20px; height:20px; min-width:20px; min-height:20px; max-width:20px; max-height:20px; flex:0 0 20px; aspect-ratio:1; align-self:center; padding:0; display:inline-grid; place-items:center; color:var(--blue); background:transparent; border:1px solid currentColor; border-radius:50%; font-size:.7rem; font-weight:800; line-height:1; }
+    .toolbar > button.help { flex:0 0 20px; }
+
+    .chart-layout { display:grid; grid-template-columns:minmax(0,1fr) 245px; gap:12px; padding:12px; }
+    .chart-card { min-width:0; overflow:hidden; background:var(--chart); border:1px solid #314652; border-radius:9px; }
+    .chart-head { min-height:42px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:8px 11px; color:#d9e4eb; background:#101e27; border-bottom:1px solid #30434f; }
+    .chart-head strong { font-size:.8rem; }
+    .chart-head span { color:#9fb2bf; font-size:.69rem; }
+    .canvas-wrap { position:relative; min-height:430px; }
+    canvas { width:100%; height:430px; display:block; touch-action:none; cursor:crosshair; }
+    .cursor-readout { position:absolute; z-index:3; padding:5px 7px; pointer-events:none; color:#eef5f7; background:rgb(8 18 24 / 92%); border:1px solid #63808f; border-radius:6px; font:11px ui-monospace,SFMono-Regular,Consolas,monospace; white-space:nowrap; }
+    .numeric-fallback { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; min-height:430px; padding:20px; align-content:center; color:#dce7ed; }
+    .numeric-fallback div { padding:12px; background:#101e27; border:1px solid #30434f; border-radius:7px; }
+    .numeric-fallback span,.readout span { display:block; color:#91a5b1; font-size:.65rem; font-weight:720; text-transform:uppercase; letter-spacing:.04em; }
+    .numeric-fallback strong { display:block; margin-top:5px; font-size:1rem; }
+    .readouts { display:grid; gap:8px; align-content:start; }
+    .readout { min-width:0; padding:10px 11px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .readout strong { display:block; margin-top:4px; overflow-wrap:anywhere; font-size:.82rem; }
+    .readout small { display:block; margin-top:3px; color:var(--muted); font-size:.66rem; }
+    .readout.wide { display:grid; grid-template-columns:1fr max-content; align-items:center; gap:8px; }
+
+    .secondary-panel { margin:0 12px 12px; border:1px solid var(--line); border-radius:9px; }
+    .secondary-head { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:10px; padding:11px 12px; background:var(--surface-2); border-bottom:1px solid var(--line); border-radius:9px 9px 0 0; }
+    .secondary-head h2 { margin:0; font-size:.95rem; }
+    .secondary-head p { margin:4px 0 0; color:var(--muted); font-size:.7rem; }
+    .squelch-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:14px; padding:12px; }
+    .squelch-summary { display:grid; gap:8px; align-content:start; }
+    .squelch-controls { display:grid; grid-template-columns:repeat(2,minmax(180px,1fr)); gap:10px; }
+    .control { padding:10px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .control label { display:flex; justify-content:space-between; gap:8px; color:var(--muted); font-size:.69rem; font-weight:720; }
+    .control input[type="range"] { width:100%; margin-top:9px; accent-color:var(--accent); }
+    .control output { color:var(--ink); font-variant-numeric:tabular-nums; }
+    .history-mini { position:relative; min-height:124px; grid-column:1 / -1; overflow:hidden; background:var(--chart); border:1px solid #314652; border-radius:8px; }
+    .history-mini canvas { height:124px; cursor:default; }
+    .save-row { grid-column:1 / -1; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+
+    .state-card { max-width:710px; margin:55px auto; padding:clamp(22px,4vw,36px); text-align:center; background:var(--surface); }
+    .state-card h2 { margin:0; font-size:1.35rem; }
+    .state-card p { margin:9px auto 18px; color:var(--muted); line-height:1.5; }
+    .state-card .actions { justify-content:center; }
+    .probe-card { max-width:820px; display:grid; grid-template-columns:minmax(0,1fr) max-content; gap:16px; align-items:center; margin:26px auto; padding:18px; background:var(--surface-2); border:1px solid var(--line); border-radius:9px; }
+    .probe-card h2 { margin:0; font-size:1.1rem; }
+    .probe-card p { margin:6px 0 0; color:var(--muted); line-height:1.45; }
+
+    dialog { width:min(600px,calc(100vw - 24px)); max-height:calc(100vh - 32px); padding:0; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:11px; box-shadow:0 18px 60px rgb(0 0 0 / 35%); }
+    dialog::backdrop { background:rgb(5 11 17 / 62%); }
+    .dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:14px 16px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .dialog-head h2 { margin:0; font-size:1.12rem; }
+    .dialog-head p { margin:5px 0 0; color:var(--muted); font-size:.74rem; }
+    .icon-button { width:36px; min-width:36px; padding:0; font-size:1.05rem; }
+    .dialog-body { max-height:65vh; overflow:auto; padding:15px 16px; }
+    .dialog-foot { display:flex; justify-content:flex-end; gap:8px; padding:11px 16px; background:var(--surface-2); border-top:1px solid var(--line); }
+    .stats-list { display:grid; grid-template-columns:1fr max-content; gap:8px 14px; margin:0; }
+    .stats-list dt { color:var(--muted); }
+    .stats-list dd { margin:0; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; text-align:right; }
+
+    .help-popover { position:fixed; z-index:120; width:min(330px,calc(100vw - 24px)); padding:10px 11px; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:8px; box-shadow:var(--shadow); font-size:.73rem; line-height:1.45; }
+    .review-scrim { position:fixed; inset:0; z-index:80; background:rgb(6 12 18 / 56%); }
+    .review-drawer { position:fixed; top:0; right:0; bottom:0; z-index:90; width:min(550px,100vw); display:flex; flex-direction:column; background:var(--surface); border-left:1px solid var(--line); box-shadow:-10px 0 35px rgb(0 0 0 / 26%); }
+    .review-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:15px 16px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .review-head h2 { margin:0; font-size:1.15rem; }
+    .review-head p { margin:5px 0 0; color:var(--muted); font-size:.76rem; }
+    .review-content { flex:1 1 auto; overflow-y:auto; padding:13px; }
+    .review-card { margin-bottom:11px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .review-card h3 { margin:0; font-size:.88rem; }
+    .review-card p { margin:5px 0 9px; color:var(--muted); font-size:.72rem; line-height:1.42; }
+    .review-card select,.review-card textarea { width:100%; padding:7px 8px; }
+    .review-card textarea { min-height:74px; margin-top:7px; resize:vertical; }
+    .review-card-foot { display:flex; justify-content:space-between; gap:8px; margin-top:5px; color:var(--muted); font-size:.66rem; }
+    .review-footer { padding:12px 14px; background:var(--surface-2); border-top:1px solid var(--line); }
+    .review-save-state { margin:0 0 8px; color:var(--muted); font-size:.7rem; }
+    .review-footer-buttons { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+    .danger { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 55%,var(--line)); }
+    .toast { position:fixed; left:50%; bottom:20px; z-index:140; max-width:min(520px,calc(100vw - 24px)); transform:translateX(-50%); padding:10px 13px; color:#fff; background:#15212a; border-radius:8px; box-shadow:var(--shadow); font-size:.76rem; }
+
+    @media (max-width:1050px) {
+      .context-card { grid-template-columns:1fr 1fr; }
+      .chart-layout { grid-template-columns:1fr; }
+      .readouts { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .squelch-layout { grid-template-columns:1fr; }
+    }
+    @media (max-width:700px) {
+      .topbar { grid-template-columns:max-content minmax(0,1fr); gap:10px; padding:0 11px; }
+      .main-nav { grid-column:1 / -1; order:3; height:44px; }
+      .main-nav a { min-height:43px; }
+      .account-area { justify-self:end; }
+      .review-strip { padding:9px 11px; }
+      .review-strip > span,.review-actions { width:100%; }
+      .review-actions select { flex:1 1 190px; min-width:0; max-width:none; }
+      .page { padding:15px 9px 34px; }
+      .context-card { grid-template-columns:1fr; }
+      .context-cell strong { white-space:normal; }
+      .view-tab { flex:1 1 0; padding:0 8px; }
+      .workspace-head { display:block; }
+      .view-tabs { width:100%; }
+      .workspace-status { border-top:1px solid var(--line); }
+      .toolbar > button { flex:1 1 auto; }
+      .slider-field { flex:1 1 100%; display:grid; grid-template-columns:max-content minmax(0,1fr) max-content; }
+      .slider-field input { width:100%; }
+      .chart-layout { padding:8px; }
+      .canvas-wrap,canvas { min-height:330px; height:330px; }
+      .readouts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .secondary-panel { margin:0 8px 8px; }
+      .squelch-controls { grid-template-columns:1fr; }
+      .history-mini,.save-row { grid-column:auto; }
+      .probe-card { grid-template-columns:1fr; margin:16px 10px; }
+      .numeric-fallback { grid-template-columns:1fr; min-height:330px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="admin-dashboard-live-v1.html">sdrtrunk-vce</a>
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="public-listener-recordings-v2.html#listen">Listen</a>
+      <a href="public-listener-recordings-v2.html#recordings">Recordings</a>
+      <a href="admin-dashboard-live-v1.html">Dashboard</a>
+      <a class="active" href="admin-dashboard-live-v1.html#live">Live</a>
+      <a href="events-messages-v1.html#events">Events</a>
+      <a href="events-messages-v1.html#messages">Messages</a>
+      <a href="admin-dashboard-live-v1.html">Systems &amp; Sites</a>
+      <a href="admin-dashboard-live-v1.html">Conventional</a>
+      <a href="admin-dashboard-live-v1.html">Credits</a>
+    </nav>
+    <div class="account-area"><span class="account-dot"></span><span>Administrator</span><a class="settings-link" href="settings-shell-hardware-v1.html">Settings</a></div>
+  </header>
+
+  <div class="review-strip">
+    <span><strong>Interactive layout draft.</strong> Synthetic graphs only; this page does not start an RF probe.</span>
+    <div class="review-actions">
+      <label for="preview">Preview a state</label>
+      <select id="preview">
+        <option value="p25">Active P25 Phase 2 · timeslot 1</option>
+        <option value="dmr">Active DMR · timeslot 2</option>
+        <option value="nxdn">Active NXDN 4800</option>
+        <option value="nbfm">Active NBFM · audio squelch</option>
+        <option value="inactive">Inactive frequency · inspection available</option>
+        <option value="inspecting">Temporary RF inspection running</option>
+        <option value="capacity">No spare tuner capacity</option>
+        <option value="replacing">Site waiting for a new control channel</option>
+        <option value="ended">Exact selected channel ended</option>
+        <option value="unsupported">Decoder has no symbol telemetry</option>
+        <option value="reconnecting">Reconnecting with older values</option>
+        <option value="degraded">Dropped telemetry batches</option>
+        <option value="busy">Signal workspace already in use</option>
+        <option value="session">Administrator session ended</option>
+        <option value="fallback">Canvas unavailable · numeric fallback</option>
+      </select>
+      <button id="open-review" class="primary" type="button">Review this layout</button>
+    </div>
+  </div>
+
+  <main class="page">
+    <header class="page-head">
+      <div><h1>Selected-channel diagnostics</h1><p>Follows the channel selected in Live. This workspace never chooses a tuner or retunes an active receiver.</p></div>
+      <div class="actions"><span class="pill admin">Admin only</span><a class="button-link" href="admin-dashboard-live-v1.html#live">Close workspace</a></div>
+    </header>
+    <div id="notice" class="notice" hidden></div>
+    <section id="context" class="context-card" aria-label="Selected channel context"></section>
+    <section id="workspace" class="workspace" aria-label="Selected-channel diagnostic workspace"></section>
+  </main>
+
+  <dialog id="stats-dialog" aria-labelledby="stats-title">
+    <header class="dialog-head"><div><h2 id="stats-title">Technical details</h2><p>Bounded delivery and renderer details for troubleshooting.</p></div><button class="icon-button" type="button" data-close-dialog="stats-dialog" aria-label="Close">×</button></header>
+    <div class="dialog-body"><dl id="stats-list" class="stats-list"></dl></div>
+    <footer class="dialog-foot"><button class="primary" type="button" data-close-dialog="stats-dialog">Done</button></footer>
+  </dialog>
+  <div id="help-popover" class="help-popover" role="tooltip" hidden></div>
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" aria-labelledby="review-title" hidden>
+    <header class="review-head"><div><h2 id="review-title">Diagnostics layout review</h2><p>Decisions and notes stay in this browser until downloaded.</p></div><button id="close-review" class="icon-button" type="button" aria-label="Close review">×</button></header>
+    <div id="review-content" class="review-content"></div>
+    <footer class="review-footer"><p id="review-save-state" class="review-save-state"></p><div class="review-footer-buttons"><button id="clear-review" class="danger" type="button">Clear notes</button><button id="download-review" type="button">Download answers</button><button id="done-review" class="primary" type="button">Done</button></div></footer>
+  </aside>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script>
+  (function(){
+    "use strict";
+    var scenario="p25", tab=location.hash==="#symbols"?"symbols":"signal", paused=false, lower=-120, zoom=1, pan=0, dragging=false, dragX=0, hover=null;
+    var context=document.getElementById("context"), workspace=document.getElementById("workspace"), notice=document.getElementById("notice");
+    var helpText={
+      floor:"Changes the chart's lower edge so weak signals are easier to compare. It is a browser display choice and does not change tuner gain or stored channel settings.",
+      probe:"Temporarily uses spare tuner capacity to look at an inactive frequency. It stops when you close this page, change selection, or its short lease expires.",
+      pause:"Freezes this browser chart only. Radio decoding, recording, uploads, and other listeners continue normally.",
+      squelch:"Noise and hysteresis decide when NBFM audio opens and closes. Override is temporary; saving threshold changes updates the channel configuration.",
+      symbols:"A bounded rolling view of demodulated symbol phase. Points are batched away from decoder threads and older points fall off automatically."
+    };
+    function escapeHtml(value){return String(value==null?"":value).replace(/[&<>'"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c];});}
+    function showToast(message){var toast=document.getElementById("toast");toast.textContent=message;toast.hidden=false;window.clearTimeout(showToast.timer);showToast.timer=window.setTimeout(function(){toast.hidden=true;},2600);}
+    function model(){
+      var base={system:"GCRCN · Cuyahoga County Simulcast",channel:"Lakewood Police Dispatch",frequency:"855.237500 MHz",slot:"Timeslot 1",decoder:"P25 Phase 2",state:"Active call",connection:"Live",connectionClass:"good",offset:"−64 Hz",power:"−71.4 dB",peak:"−64.8 dB",quality:"94%",bandwidth:"12.5 kHz",protocol:"P25 Phase 2 CQPSK",notice:""};
+      if(scenario==="dmr")Object.assign(base,{system:"Business DMR · Site 1",channel:"Security Dispatch",frequency:"461.337500 MHz",slot:"Timeslot 2",decoder:"DMR",protocol:"DMR C4FM",offset:"+18 Hz",power:"−77.2 dB",peak:"−70.1 dB",quality:"88%"});
+      if(scenario==="nxdn")Object.assign(base,{system:"County NXDN",channel:"Public Works",frequency:"453.468750 MHz",slot:"No timeslot",decoder:"NXDN 4800",protocol:"NXDN 4800",offset:"−11 Hz",power:"−82.6 dB",peak:"−76.0 dB",quality:"91%",bandwidth:"6.25 kHz"});
+      if(scenario==="nbfm")Object.assign(base,{system:"Conventional",channel:"Local operations",frequency:"155.370000 MHz",slot:"No timeslot",decoder:"NBFM",protocol:"No symbol telemetry",offset:"+22 Hz",power:"−68.1 dB",peak:"−62.7 dB",quality:"Signal open",bandwidth:"12.5 kHz"});
+      if(["inactive","inspecting","capacity"].includes(scenario))Object.assign(base,{channel:"Configured alternate",frequency:"856.487500 MHz",slot:"No timeslot",decoder:"P25 Phase 1",state:scenario==="inspecting"?"Temporary RF inspection":"Not currently decoding",connection:scenario==="inspecting"?"Inspecting":"Inactive",connectionClass:scenario==="inspecting"?"warn":"neutral",offset:"Not available",power:scenario==="inspecting"?"−92.1 dB":"Not available",peak:scenario==="inspecting"?"−88.3 dB":"Not available",quality:"Not available",protocol:"No decoder attached",notice:scenario==="capacity"?"All tuner capacity is in use. The receiver will not interrupt active decoding to inspect this frequency.":""});
+      if(scenario==="replacing")Object.assign(base,{channel:"Site control channel",frequency:"Last: 855.987500 MHz",slot:"No timeslot",state:"Waiting for replacement",connection:"Finding control",connectionClass:"warn",offset:"Not available",power:"Not available",peak:"Not available",quality:"Not available",notice:"The site remains selected while the old control channel is replaced. RF inspection is not offered for the old frequency."});
+      if(scenario==="ended")Object.assign(base,{state:"Selection ended",connection:"Ended",connectionClass:"bad",notice:"The exact traffic channel selected in Live has ended. Return to Live and choose a current row."});
+      if(scenario==="unsupported")Object.assign(base,{decoder:"LTR-Net",protocol:"No symbol telemetry",notice:"This decoder provides channel signal measurements but does not provide demodulated symbols."});
+      if(scenario==="reconnecting")Object.assign(base,{connection:"Reconnecting",connectionClass:"warn",notice:"The last complete measurement remains visible and marked as 14 seconds old while the bounded stream reconnects."});
+      if(scenario==="degraded")Object.assign(base,{connection:"Degraded",connectionClass:"warn",notice:"Some display frames were dropped to keep the decoder path clear. The newest bounded data continues to replace older display work."});
+      return base;
+    }
+    function renderContext(m){context.innerHTML='<div class="context-cell"><span>System and site</span><strong>'+escapeHtml(m.system)+'</strong></div><div class="context-cell"><span>Selected channel</span><strong>'+escapeHtml(m.channel)+'</strong></div><div class="context-cell"><span>Frequency</span><strong>'+escapeHtml(m.frequency)+'</strong></div><div class="context-cell"><span>Timeslot</span><strong>'+escapeHtml(m.slot)+'</strong></div><div class="context-cell"><span>Decoder and state</span><strong>'+escapeHtml(m.decoder)+' · '+escapeHtml(m.state)+'</strong></div>';}
+    function workspaceHead(m){return '<header class="workspace-head"><div class="view-tabs" role="tablist" aria-label="Diagnostic view"><button class="view-tab" type="button" role="tab" data-tab="signal" aria-selected="'+(tab==='signal')+'">Signal</button><button class="view-tab" type="button" role="tab" data-tab="symbols" aria-selected="'+(tab==='symbols')+'">Symbols</button></div><div class="workspace-status"><span class="badge '+m.connectionClass+'">'+escapeHtml(m.connection)+'</span><span class="pill neutral">One diagnostic workspace</span></div></header>';}
+    function stateCard(title,text,button){return '<div class="state-card"><h2>'+escapeHtml(title)+'</h2><p>'+escapeHtml(text)+'</p>'+(button||'')+'</div>';}
+    function render(){
+      var m=model();
+      if(scenario==="busy")context.innerHTML='<div class="context-cell"><span>Selected context</span><strong>Not disclosed to this tab</strong></div><div class="context-cell"><span>Workspace</span><strong>In use</strong></div>';
+      else if(scenario==="session")context.innerHTML='<div class="context-cell"><span>Administrator access</span><strong>Session ended</strong></div>';
+      else renderContext(m);
+      notice.hidden=!m.notice;notice.innerHTML=m.notice?'<div><strong>'+escapeHtml(m.connection)+'</strong><p>'+escapeHtml(m.notice)+'</p></div>':'';
+      if(scenario==="busy"){workspace.innerHTML=workspaceHead(m)+stateCard("Signal workspace is already open","Another administrator tab owns the one bounded diagnostic workspace. No samples, symbols, or frequency details are sent to this tab.",'<div class="actions"><button type="button" data-demo="retry">Try again</button><a class="button-link" href="admin-dashboard-live-v1.html#live">Return to Live</a></div>');bind();return;}
+      if(scenario==="session"){workspace.innerHTML=stateCard("Administrator session ended","A newer administrator browser session replaced this one. Diagnostic telemetry has stopped and the workspace lease was released.",'<div class="actions"><button class="primary" type="button" data-demo="signin">Sign in</button></div>');bind();return;}
+      if(scenario==="ended"){workspace.innerHTML=workspaceHead(m)+stateCard("Selected channel ended","This exact traffic-channel context no longer exists. Its diagnostic stream has stopped.",'<a class="button-link primary" href="admin-dashboard-live-v1.html#live">Choose a current channel in Live</a>');bind();return;}
+      if(scenario==="replacing"){workspace.innerHTML=workspaceHead(m)+stateCard("Waiting for the site's new control channel","The selection remains attached to the site. Signal and Symbols resume only after Live resolves the replacement processing chain.",'<a class="button-link" href="admin-dashboard-live-v1.html#live">View site activity</a>');bind();return;}
+      workspace.innerHTML=workspaceHead(m)+(tab==="signal"?signalView(m):symbolsView(m));bind();window.requestAnimationFrame(drawAll);
+    }
+    function signalView(m){
+      if(scenario==="inactive"||scenario==="capacity")return '<div class="probe-card"><div><h2>No live signal data for this frequency</h2><p>The selected frequency is configured but has no running processing chain. '+(scenario==="capacity"?'Active channels keep all available tuner capacity.':'A short, temporary inspection can show its RF spectrum without creating a decoder.')+'</p></div><button id="inspect" class="primary" type="button" '+(scenario==="capacity"?'disabled':'')+'>Inspect RF</button><button class="help" type="button" data-help="probe" aria-label="About RF inspection">i</button></div>';
+      var fallback=scenario==="fallback";
+      return '<div class="toolbar"><button data-pause type="button">'+(paused?'Resume':'Pause')+'</button><button class="help" type="button" data-help="pause" aria-label="About pausing">i</button><button id="reset-view" type="button">Reset view</button><span class="spacer"></span><label class="slider-field" for="lower-limit"><span>Lower display limit</span><input id="lower-limit" type="range" min="-150" max="-60" step="5" value="'+lower+'"><output id="lower-output">'+lower+' dB</output></label><button class="help" type="button" data-help="floor" aria-label="About lower display limit">i</button><button data-stats type="button">Technical details</button></div><div class="chart-layout"><section class="chart-card"><header class="chart-head"><strong>Channel spectrum</strong><span>Wheel or +/− to zoom · drag or arrow keys to pan</span></header><div class="canvas-wrap">'+(fallback?numericFallback(m):'<canvas id="signal-canvas" tabindex="0" aria-label="Channel FFT. Use plus and minus to zoom, arrow keys to pan, and R to reset."></canvas><div id="cursor-readout" class="cursor-readout" hidden></div>')+'</div></section>'+readouts(m)+'</div>'+(scenario==="nbfm"?squelchPanel():'')+(scenario==="inspecting"?'<section class="secondary-panel"><header class="secondary-head"><div><h2>Temporary RF inspection</h2><p>12.5 kHz probe · at least 50 kHz sample rate · automatically releases in 00:42</p></div><button type="button" data-demo="stop-probe">Stop inspection</button></header></section>':'');
+    }
+    function numericFallback(m){return '<div class="numeric-fallback"><div><span>Viewed frequency</span><strong>'+escapeHtml(m.frequency)+'</strong></div><div><span>Current power</span><strong>'+escapeHtml(m.power)+'</strong></div><div><span>Peak power</span><strong>'+escapeHtml(m.peak)+'</strong></div><div><span>Carrier offset</span><strong>'+escapeHtml(m.offset)+'</strong></div><div><span>Channel bandwidth</span><strong>'+escapeHtml(m.bandwidth)+'</strong></div><div><span>Measurement age</span><strong>0.2 seconds</strong></div></div>';}
+    function readouts(m){var age=scenario==="reconnecting"?"14 seconds old":"0.2 seconds old";return '<aside class="readouts"><div class="readout"><span>Viewed frequency</span><strong>'+escapeHtml(m.frequency)+'</strong></div><div class="readout"><span>Carrier offset</span><strong>'+escapeHtml(m.offset)+'</strong></div><div class="readout"><span>Current power</span><strong>'+escapeHtml(m.power)+'</strong></div><div class="readout"><span>Peak power</span><strong>'+escapeHtml(m.peak)+'</strong></div><div class="readout"><span>Decode quality</span><strong>'+escapeHtml(m.quality)+'</strong></div><div class="readout"><span>Channel bandwidth</span><strong>'+escapeHtml(m.bandwidth)+'</strong></div><div class="readout"><span>Decoder</span><strong>'+escapeHtml(m.decoder)+'</strong><small>'+age+'</small></div></aside>';}
+    function squelchPanel(){return '<section class="secondary-panel"><header class="secondary-head"><div><h2>Audio squelch <button class="help" type="button" data-help="squelch" aria-label="About audio squelch">i</button></h2><p>NBFM only · recent view is bounded to about two seconds</p></div><div class="actions"><span class="badge good">Open</span><button id="override" type="button">Override</button><button id="reset-squelch" type="button">Reset defaults</button></div></header><div class="squelch-layout"><div class="squelch-summary"><div class="readout"><span>Current noise</span><strong>7.62</strong></div><div class="readout"><span>Current hysteresis</span><strong>3</strong></div><div class="readout"><span>Output</span><strong>Audio open</strong></div></div><div class="squelch-controls"><div class="control"><label for="noise-open"><span>Noise · open</span><output>7.80</output></label><input id="noise-open" type="range" min="0" max="10" step=".05" value="7.8"></div><div class="control"><label for="noise-close"><span>Noise · close</span><output>6.95</output></label><input id="noise-close" type="range" min="0" max="10" step=".05" value="6.95"></div><div class="control"><label for="hyst-open"><span>Hysteresis · open</span><output>2</output></label><input id="hyst-open" type="range" min="1" max="5" step="1" value="2"></div><div class="control"><label for="hyst-close"><span>Hysteresis · close</span><output>5</output></label><input id="hyst-close" type="range" min="2" max="10" step="1" value="5"></div><div class="history-mini"><canvas id="squelch-canvas" aria-label="Recent bounded noise and hysteresis activity"></canvas></div><div class="save-row"><button id="save-thresholds" class="primary" type="button">Save threshold changes</button></div></div></div></section>';}
+    function symbolsView(m){
+      if(scenario==="inactive"||scenario==="inspecting"||scenario==="capacity")return stateCard("Symbols unavailable","RF inspection can show samples and spectrum, but there is no running decoder to provide demodulated symbols.",'<button type="button" data-tab-jump="signal">Open Signal</button>');
+      if(scenario==="unsupported"||scenario==="nbfm")return stateCard("This decoder does not provide symbols","Signal measurements remain available, but "+m.decoder+" does not expose the demodulated symbol stream used by this graph.",'<button type="button" data-tab-jump="signal">Open Signal</button>');
+      return '<div class="toolbar"><button data-pause type="button">'+(paused?'Resume':'Pause')+'</button><button class="help" type="button" data-help="pause" aria-label="About pausing">i</button><button id="clear-symbols" type="button">Clear display</button><button class="help" type="button" data-help="symbols" aria-label="About symbol display">i</button><span class="spacer"></span><span class="pill neutral">4,800 visible points maximum</span><button data-stats type="button">Technical details</button></div><div class="chart-layout"><section class="chart-card"><header class="chart-head"><strong>'+escapeHtml(m.protocol)+' demodulated symbols</strong><span>Rolling phase · −π to π</span></header><div class="canvas-wrap">'+(scenario==="fallback"?'<div class="numeric-fallback"><div><span>Protocol</span><strong>'+escapeHtml(m.protocol)+'</strong></div><div><span>Visible points</span><strong>4,800</strong></div><div><span>Expected levels</span><strong>±π/4 · ±3π/4</strong></div><div><span>Last batch</span><strong>0.1 seconds ago</strong></div></div>':'<canvas id="symbol-canvas" tabindex="0" aria-label="Rolling demodulated symbol phase graph from minus pi to pi"></canvas>')+'</div></section><aside class="readouts"><div class="readout"><span>Protocol</span><strong>'+escapeHtml(m.protocol)+'</strong></div><div class="readout"><span>Timeslot</span><strong>'+escapeHtml(m.slot)+'</strong></div><div class="readout"><span>Visible points</span><strong>4,800</strong><small>Oldest points fall off</small></div><div class="readout"><span>Batch size</span><strong>120 points</strong></div><div class="readout"><span>Delivery</span><strong>'+(scenario==="degraded"?'Drop-oldest active':'Current')+'</strong><small>'+(scenario==="degraded"?'7 batches dropped':'0 batches dropped')+'</small></div><div class="readout"><span>Measurement age</span><strong>'+(scenario==="reconnecting"?'14 seconds':'0.1 seconds')+'</strong></div></aside></div>';
+    }
+    function bind(){
+      workspace.querySelectorAll("[data-tab]").forEach(function(button){button.addEventListener("click",function(){tab=button.dataset.tab;location.hash=tab;paused=false;render();});});
+      workspace.querySelectorAll("[data-tab-jump]").forEach(function(button){button.addEventListener("click",function(){tab=button.dataset.tabJump;location.hash=tab;render();});});
+      var pause=workspace.querySelector("[data-pause]");if(pause)pause.addEventListener("click",function(){paused=!paused;render();});
+      var reset=workspace.querySelector("#reset-view");if(reset)reset.addEventListener("click",function(){zoom=1;pan=0;drawAll();showToast("Signal view reset.");});
+      var limit=workspace.querySelector("#lower-limit");if(limit)limit.addEventListener("input",function(e){lower=Number(e.target.value);document.getElementById("lower-output").textContent=lower+" dB";drawSignal();});
+      var inspect=workspace.querySelector("#inspect");if(inspect)inspect.addEventListener("click",function(){scenario="inspecting";document.getElementById("preview").value=scenario;render();});
+      var stats=workspace.querySelector("[data-stats]");if(stats)stats.addEventListener("click",openStats);
+      workspace.querySelectorAll("[data-demo]").forEach(function(button){button.addEventListener("click",function(){showToast(button.dataset.demo==="stop-probe"?"The production action would release the RF probe immediately.":"Preview action only.");});});
+      var signal=document.getElementById("signal-canvas");if(signal)bindSignalCanvas(signal);
+      var symbols=document.getElementById("symbol-canvas");if(symbols)symbols.addEventListener("contextmenu",function(e){e.preventDefault();openStats();});
+      var clear=workspace.querySelector("#clear-symbols");if(clear)clear.addEventListener("click",function(){showToast("This browser's symbol points were cleared; decoder telemetry continues.");drawSymbols(true);});
+      var override=workspace.querySelector("#override");if(override)override.addEventListener("click",function(){override.classList.toggle("primary");override.textContent=override.classList.contains("primary")?"Override on":"Override";});
+      var resetSq=workspace.querySelector("#reset-squelch");if(resetSq)resetSq.addEventListener("click",function(){showToast("The production page would restore application defaults, then wait for Save.");});
+      var save=workspace.querySelector("#save-thresholds");if(save)save.addEventListener("click",function(){showToast("Threshold changes would be validated and saved to this channel.");});
+      bindHelp();
+    }
+    function fit(canvas){var rect=canvas.getBoundingClientRect(),dpr=Math.min(2,window.devicePixelRatio||1),w=Math.max(320,Math.round(rect.width*dpr)),h=Math.max(220,Math.round(rect.height*dpr));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}return {ctx:canvas.getContext("2d"),w:w,h:h,dpr:dpr};}
+    function drawAll(){drawSignal();drawSymbols();drawSquelch();}
+    function drawSignal(){
+      var canvas=document.getElementById("signal-canvas");if(!canvas)return;var f=fit(canvas),g=f.ctx,w=f.w,h=f.h,pad={l:54*f.dpr,r:14*f.dpr,t:16*f.dpr,b:38*f.dpr},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
+      g.fillStyle="#071118";g.fillRect(0,0,w,h);g.font=(11*f.dpr)+"px ui-monospace,monospace";g.textAlign="right";g.textBaseline="middle";
+      for(var db=lower;db<=-40;db+=20){var y=pad.t+(db+40)/(-lower-40)*ph;g.strokeStyle="#253946";g.beginPath();g.moveTo(pad.l,y);g.lineTo(w-pad.r,y);g.stroke();g.fillStyle="#9fb2bf";g.fillText(db+" dB",pad.l-7*f.dpr,y);}
+      var bandL=pad.l+pw*.39,bandR=pad.l+pw*.61;g.fillStyle="rgba(65,148,213,.16)";g.fillRect(bandL,pad.t,bandR-bandL,ph);g.strokeStyle="#4c92be";g.strokeRect(bandL,pad.t,bandR-bandL,ph);
+      var points=[];for(var i=0;i<=420;i++){var x=i/420,center=.5+pan*.11,peak=Math.exp(-Math.pow((x-center)*zoom*18,2))*47,shoulder=Math.exp(-Math.pow((x-center)*zoom*5.5,2))*12,noise=5*Math.sin(i*.31)+2.6*Math.sin(i*.83),value=-108+peak+shoulder+noise;var py=pad.t+(-40-value)/(-40-lower)*ph;points.push([pad.l+x*pw,Math.max(pad.t,Math.min(pad.t+ph,py)),value]);}
+      g.beginPath();points.forEach(function(p,i){if(i===0)g.moveTo(p[0],p[1]);else g.lineTo(p[0],p[1]);});g.lineTo(w-pad.r,pad.t+ph);g.lineTo(pad.l,pad.t+ph);g.closePath();g.fillStyle="rgba(48,178,106,.24)";g.fill();
+      g.beginPath();points.forEach(function(p,i){if(i===0)g.moveTo(p[0],p[1]);else g.lineTo(p[0],p[1]);});g.strokeStyle="#65d48c";g.lineWidth=1.5*f.dpr;g.stroke();
+      var carrier=pad.l+pw*(.5+pan*.11-.018/zoom);g.strokeStyle="#f2cf66";g.lineWidth=1*f.dpr;g.beginPath();g.moveTo(carrier,pad.t);g.lineTo(carrier,pad.t+ph);g.stroke();
+      g.textAlign="center";g.textBaseline="top";g.fillStyle="#9fb2bf";for(var tick=0;tick<5;tick++){var tx=pad.l+pw*tick/4;var offset=(-25/zoom)+(50/zoom)*tick/4+pan*25;g.fillText((855.2375+offset/1000).toFixed(5),tx,pad.t+ph+8*f.dpr);}g.fillText("MHz",pad.l+pw/2,pad.t+ph+23*f.dpr);
+      if(hover){var hx=hover.x*f.dpr;g.strokeStyle="#f2cf66";g.beginPath();g.moveTo(hx,pad.t);g.lineTo(hx,pad.t+ph);g.stroke();}
+    }
+    function drawSymbols(clear){
+      var canvas=document.getElementById("symbol-canvas");if(!canvas)return;var f=fit(canvas),g=f.ctx,w=f.w,h=f.h,pad={l:54*f.dpr,r:14*f.dpr,t:16*f.dpr,b:35*f.dpr},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
+      g.fillStyle="#071118";g.fillRect(0,0,w,h);g.font=(11*f.dpr)+"px ui-monospace,monospace";g.textAlign="right";g.textBaseline="middle";var levels=[[-Math.PI,"−π"],[-Math.PI/2,"−π/2"],[0,"0"],[Math.PI/2,"π/2"],[Math.PI,"π"]];levels.forEach(function(level){var y=pad.t+(Math.PI-level[0])/(2*Math.PI)*ph;g.strokeStyle="#253946";g.beginPath();g.moveTo(pad.l,y);g.lineTo(w-pad.r,y);g.stroke();g.fillStyle="#9fb2bf";g.fillText(level[1],pad.l-8*f.dpr,y);});if(clear)return;
+      var expected=scenario==="dmr"?[-2.35,-.78,.78,2.35]:scenario==="nxdn"?[-2.55,-1.25,1.25,2.55]:[-2.35,-.78,.78,2.35];g.fillStyle="rgba(84,205,190,.72)";for(var i=0;i<1100;i++){var x=pad.l+(i/1099)*pw,j=i%4,yv=expected[j]+.12*Math.sin(i*.71)+.055*Math.sin(i*.13),y=pad.t+(Math.PI-yv)/(2*Math.PI)*ph;g.fillRect(x,y,1.4*f.dpr,1.4*f.dpr);}g.textAlign="center";g.textBaseline="top";g.fillStyle="#9fb2bf";g.fillText("Newest symbols →",pad.l+pw/2,pad.t+ph+10*f.dpr);
+    }
+    function drawSquelch(){var canvas=document.getElementById("squelch-canvas");if(!canvas)return;var f=fit(canvas),g=f.ctx,w=f.w,h=f.h;g.fillStyle="#071118";g.fillRect(0,0,w,h);for(var line=1;line<4;line++){g.strokeStyle="#253946";g.beginPath();g.moveTo(0,h*line/4);g.lineTo(w,h*line/4);g.stroke();}function series(color,phase,base,amp){g.beginPath();for(var i=0;i<200;i++){var x=i/199*w,y=h*(base+amp*Math.sin(i*.13+phase)+.03*Math.sin(i*.53));if(i===0)g.moveTo(x,y);else g.lineTo(x,y);}g.strokeStyle=color;g.lineWidth=1.4*f.dpr;g.stroke();}series("#65d48c",0,.32,.08);series("#69aee6",1.2,.62,.11);g.setLineDash([5*f.dpr,4*f.dpr]);series("#f2cf66",0,.42,0);series("#d2a8ff",0,.70,0);g.setLineDash([]);}
+    function bindSignalCanvas(canvas){
+      canvas.addEventListener("wheel",function(e){e.preventDefault();zoom=Math.max(1,Math.min(8,zoom*(e.deltaY<0?1.25:.8)));drawSignal();},{passive:false});
+      canvas.addEventListener("pointerdown",function(e){dragging=true;dragX=e.clientX;canvas.setPointerCapture(e.pointerId);});
+      canvas.addEventListener("pointermove",function(e){var rect=canvas.getBoundingClientRect();hover={x:e.clientX-rect.left,y:e.clientY-rect.top};if(dragging&&zoom>1){pan=Math.max(-1,Math.min(1,pan+(e.clientX-dragX)/rect.width/zoom*2));dragX=e.clientX;}updateCursor(e,rect);drawSignal();});
+      canvas.addEventListener("pointerup",function(){dragging=false;});canvas.addEventListener("pointerleave",function(){hover=null;var read=document.getElementById("cursor-readout");if(read)read.hidden=true;drawSignal();});
+      canvas.addEventListener("keydown",function(e){if(["+","="].includes(e.key))zoom=Math.min(8,zoom*1.25);else if(e.key==="-")zoom=Math.max(1,zoom/1.25);else if(e.key==="ArrowLeft")pan=Math.max(-1,pan-.08/zoom);else if(e.key==="ArrowRight")pan=Math.min(1,pan+.08/zoom);else if(e.key.toLowerCase()==="r"){zoom=1;pan=0;}else return;e.preventDefault();drawSignal();});
+      canvas.addEventListener("contextmenu",function(e){e.preventDefault();openStats();});
+    }
+    function updateCursor(e,rect){var read=document.getElementById("cursor-readout");if(!read)return;var ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width)),khz=(-25/zoom)+(50/zoom)*ratio+pan*25,freq=855.2375+khz/1000,power=-105+46*Math.exp(-Math.pow((ratio-.5-pan*.11)*zoom*17,2));read.textContent=freq.toFixed(6)+" MHz · "+power.toFixed(1)+" dB";read.hidden=false;var left=Math.min(rect.width-read.offsetWidth-8,Math.max(8,e.clientX-rect.left-read.offsetWidth/2)),top=Math.max(8,e.clientY-rect.top-read.offsetHeight-12);read.style.left=left+"px";read.style.top=top+"px";}
+    function openStats(){var rows=[["Active view",tab==="signal"?"Channel FFT":"Symbols"],["Frame/batch rate",tab==="signal"?"12 fps":"10 batches/s"],["Latest-slot depth","1"],["Visible points",tab==="signal"?"4096 bins":"4800"],["Dropped work",scenario==="degraded"?"7 batches":"0"],["Queue policy","Bounded · drop oldest"],["Workspace owner","This administrator tab"],["Database writes","None"]];document.getElementById("stats-list").innerHTML=rows.map(function(r){return '<dt>'+escapeHtml(r[0])+'</dt><dd>'+escapeHtml(r[1])+'</dd>';}).join("");document.getElementById("stats-dialog").showModal();}
+    function bindHelp(){document.querySelectorAll("[data-help]").forEach(function(button){["mouseenter","focus","click"].forEach(function(type){button.addEventListener(type,function(e){e.stopPropagation();showHelp(button);});});button.addEventListener("mouseleave",function(){if(document.activeElement!==button)hideHelp();});button.addEventListener("blur",hideHelp);});}
+    function showHelp(button){var pop=document.getElementById("help-popover"),rect=button.getBoundingClientRect();pop.textContent=helpText[button.dataset.help];pop.hidden=false;var left=Math.min(window.innerWidth-pop.offsetWidth-12,Math.max(12,rect.left));var top=rect.bottom+7;if(top+pop.offsetHeight>window.innerHeight-12)top=rect.top-pop.offsetHeight-7;pop.style.left=left+"px";pop.style.top=Math.max(8,top)+"px";}
+    function hideHelp(){document.getElementById("help-popover").hidden=true;}
+    document.getElementById("preview").addEventListener("change",function(e){scenario=e.target.value;paused=false;tab=["inactive","inspecting","capacity","nbfm","fallback"].includes(scenario)?"signal":tab;render();});
+    document.querySelectorAll("[data-close-dialog]").forEach(function(button){button.addEventListener("click",function(){document.getElementById(button.dataset.closeDialog).close();});});
+    document.addEventListener("click",function(e){if(!e.target.closest("[data-help]")&&!e.target.closest("#help-popover"))hideHelp();});window.addEventListener("resize",function(){window.requestAnimationFrame(drawAll);});
+
+    var REVIEW_KEY="sdrtrunk-vce.mockup.selected-channel-diagnostics-v1.review";
+    var reviewSections=[
+      ["entry","Live selection and entry points","View Signal and View Symbols open this same administrator-only workspace on the requested tab. There is no receiver or channel picker here."],
+      ["context","Stable selected context","System/site, channel, frequency, timeslot, decoder, and current state remain visible. Same-frequency TDMA chains are disambiguated by timeslot."],
+      ["signal","Channel signal view","The large FFT includes relative-dB lines, channel bandwidth, carrier offset, pointer frequency/power, keyboard/touch zoom and pan, and a browser-local lower display limit."],
+      ["measurements","Measurement readouts","Viewed frequency, carrier offset, current and peak power, decode quality, bandwidth, decoder, and age remain readable even when a canvas fallback is required."],
+      ["symbols","Digital symbol view","P25, DMR, and NXDN use one bounded 4,800-point phase graph. NBFM, inactive probes, and unsupported decoders explain why Symbols is unavailable."],
+      ["squelch","NBFM audio squelch","NBFM adds state, noise/hysteresis values and thresholds, a bounded recent chart, temporary Override, Reset defaults, and an explicit Save for durable threshold changes."],
+      ["probe","Inactive-frequency inspection","Inspect RF appears only for an inactive frequency with spare capacity. It has a short lease, never displaces decoding, provides no Symbols, and releases on close or selection change."],
+      ["ownership","Bounded ownership and access","Only the signed-in administrator can open the single diagnostic workspace. Only its visible Signal or Symbols panel streams high-rate data; hidden or closed views release it."],
+      ["recovery","Ended, replacement, reconnect, and degraded states","Exact channels end cleanly, site selection waits for a new control channel, stale readouts are labeled, and display work may drop rather than delay radio processing."],
+      ["runtime","Radio-path isolation","FFT uses a latest-only frame; symbols use bounded batching. Decoder/sample callbacks never perform encoding, network, browser, or database work, and diagnostic history never enters SQLite."],
+      ["responsive","Wide and narrow layouts","The graph remains the dominant element, readouts reflow below it, controls remain keyboard/touch accessible, and a numeric fallback preserves essential measurements."]
+    ];
+    var reviewData=loadReview();
+    function loadReview(){try{return JSON.parse(localStorage.getItem(REVIEW_KEY)||"null")||{entries:{}};}catch(e){return {entries:{}};}}
+    function reviewOptions(value){return [["","Not reviewed"],["approved","Looks good"],["change","Change requested"],["question","Question"],["later","Review later"]].map(function(x){return '<option value="'+x[0]+'"'+(value===x[0]?' selected':'')+'>'+x[1]+'</option>';}).join("");}
+    function renderReview(){document.getElementById("review-content").innerHTML=reviewSections.map(function(s){var entry=reviewData.entries[s[0]]||{state:"",note:""};return '<section class="review-card"><h3>'+escapeHtml(s[1])+'</h3><p>'+escapeHtml(s[2])+'</p><label class="sr-only" for="review-state-'+s[0]+'">Decision for '+escapeHtml(s[1])+'</label><select id="review-state-'+s[0]+'" data-review-state="'+s[0]+'">'+reviewOptions(entry.state||"")+'</select><label class="sr-only" for="review-note-'+s[0]+'">Notes for '+escapeHtml(s[1])+'</label><textarea id="review-note-'+s[0]+'" data-review-note="'+s[0]+'" maxlength="3000" placeholder="Add a decision, requested change, or question…">'+escapeHtml(entry.note||"")+'</textarea><div class="review-card-foot"><span>Saved only in this browser</span><span data-review-count="'+s[0]+'">'+(entry.note||"").length+' / 3000</span></div></section>';}).join("");updateReviewStatus();}
+    function saveReview(id,patch){var entry=reviewData.entries[id]||{state:"",note:""};Object.assign(entry,patch);reviewData.entries[id]=entry;try{localStorage.setItem(REVIEW_KEY,JSON.stringify(reviewData));}catch(e){}updateReviewStatus();}
+    function updateReviewStatus(){var n=reviewSections.filter(function(s){return reviewData.entries[s[0]]&&reviewData.entries[s[0]].state;}).length;document.getElementById("review-save-state").textContent=n+" of "+reviewSections.length+" sections reviewed · saved in this browser";}
+    function openReview(){renderReview();document.getElementById("review-scrim").hidden=false;document.getElementById("review-drawer").hidden=false;document.getElementById("close-review").focus();}
+    function closeReview(){document.getElementById("review-scrim").hidden=true;document.getElementById("review-drawer").hidden=true;document.getElementById("open-review").focus();}
+    document.getElementById("open-review").addEventListener("click",openReview);document.getElementById("close-review").addEventListener("click",closeReview);document.getElementById("done-review").addEventListener("click",closeReview);document.getElementById("review-scrim").addEventListener("click",closeReview);
+    document.getElementById("clear-review").addEventListener("click",function(){reviewData={entries:{}};try{localStorage.removeItem(REVIEW_KEY);}catch(e){}renderReview();});
+    document.getElementById("download-review").addEventListener("click",function(){var payload={format:"sdrtrunk-vce-mockup-review",version:1,mockup:"selected-channel-diagnostics-v1",exportedAt:new Date().toISOString(),evidence:["MAIN-06","web-first-ui-migration-plan-9.2"],entries:reviewData.entries};var blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="sdrtrunk-selected-channel-diagnostics-review-"+new Date().toISOString().slice(0,10)+".json";link.click();window.setTimeout(function(){URL.revokeObjectURL(link.href);},0);});
+    document.getElementById("review-content").addEventListener("change",function(e){if(e.target.matches("[data-review-state]"))saveReview(e.target.dataset.reviewState,{state:e.target.value});});
+    document.getElementById("review-content").addEventListener("input",function(e){if(!e.target.matches("[data-review-note]"))return;var id=e.target.dataset.reviewNote,count=document.querySelector('[data-review-count="'+id+'"]');if(count)count.textContent=e.target.value.length+" / 3000";saveReview(id,{note:e.target.value});});
+    document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!document.getElementById("review-drawer").hidden)closeReview();});
+    render();
+  }());
+  </script>
+</body>
+</html>

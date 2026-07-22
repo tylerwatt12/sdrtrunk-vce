@@ -21,6 +21,7 @@ package io.github.dsheirer.gui.preference;
 
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
+import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.EnumMap;
 import java.util.Map;
@@ -88,6 +89,19 @@ public class UserPreferencesEditor extends BorderPane
             {
                 getEditorSelectionTreeView().getSelectionModel().select(toSelect);
             }
+        }
+    }
+
+    /**
+     * Waits for security-sensitive local writes before the JavaFX toolkit and portable data root are released.
+     */
+    public void prepareForShutdown()
+    {
+        Node webServerEditor = mEditors.get(PreferenceEditorType.WEB_SERVER);
+
+        if(webServerEditor instanceof WebServerPreferenceEditor editor)
+        {
+            editor.awaitAdminOperationCompletion();
         }
     }
 
