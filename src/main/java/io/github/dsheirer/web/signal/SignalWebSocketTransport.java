@@ -24,6 +24,8 @@ import io.github.dsheirer.web.access.InMemoryFeatureAccessPolicy;
 import io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy;
 import io.github.dsheirer.web.access.WebFeature;
 import io.github.dsheirer.web.access.WebTransport;
+import io.github.dsheirer.web.diagnostic.DiagnosticWorkspaceLease;
+import io.github.dsheirer.web.diagnostic.DiagnosticWorkspaceLease.Owner;
 import io.github.dsheirer.web.signal.SignalSubjectResolver.SignalAuthorization;
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -82,6 +84,7 @@ public final class SignalWebSocketTransport implements AutoCloseable
     private final SignalSubjectResolver mSubjectResolver;
     private final SignalOriginPolicy mOriginPolicy;
     private final RemoteAddressAdmissionPolicy mRemoteAddressAdmissionPolicy;
+    private final DiagnosticWorkspaceLease mWorkspaceLease;
     private final Semaphore mSessionPermits;
     private final Set<SignalEndpoint> mEndpoints = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final ExecutorService mSendExecutor;
@@ -100,6 +103,16 @@ public final class SignalWebSocketTransport implements AutoCloseable
                                     SignalSubjectResolver subjectResolver, SignalOriginPolicy originPolicy,
                                     RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy)
     {
+        this(configuration, spectrumStreamService, accessPolicy, subjectResolver, originPolicy,
+            remoteAddressAdmissionPolicy, new DiagnosticWorkspaceLease());
+    }
+
+    public SignalWebSocketTransport(Configuration configuration, SpectrumStreamService spectrumStreamService,
+                                    InMemoryFeatureAccessPolicy accessPolicy,
+                                    SignalSubjectResolver subjectResolver, SignalOriginPolicy originPolicy,
+                                    RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
+                                    DiagnosticWorkspaceLease workspaceLease)
+    {
         mConfiguration = Objects.requireNonNull(configuration, "Signal transport configuration cannot be null");
         mSpectrumStreamService = Objects.requireNonNull(spectrumStreamService,
             "Spectrum stream service cannot be null");
@@ -108,6 +121,7 @@ public final class SignalWebSocketTransport implements AutoCloseable
         mOriginPolicy = Objects.requireNonNull(originPolicy, "Signal origin policy cannot be null");
         mRemoteAddressAdmissionPolicy = Objects.requireNonNull(remoteAddressAdmissionPolicy,
             "Remote-address admission policy cannot be null");
+        mWorkspaceLease = Objects.requireNonNull(workspaceLease, "Diagnostic workspace lease cannot be null");
         mSessionPermits = new Semaphore(configuration.maximumSessions());
         mSendExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual()
             .name(configuration.sendThreadNamePrefix(), 0)
@@ -181,7 +195,18 @@ public final class SignalWebSocketTransport implements AutoCloseable
             return null;
         }
 
-        SignalEndpoint endpoint = new SignalEndpoint(authorization);
+        DiagnosticWorkspaceLease.Lease workspaceLease = mWorkspaceLease.tryAcquire(Owner.WIDEBAND_SIGNAL)
+            .orElse(null);
+
+        if(workspaceLease == null)
+        {
+            mSessionPermits.release();
+            mRejectedHandshakeCount.incrementAndGet();
+            reject(response, callback, HttpStatus.CONFLICT_409, false);
+            return null;
+        }
+
+        SignalEndpoint endpoint = new SignalEndpoint(authorization, workspaceLease);
         mEndpoints.add(endpoint);
         return endpoint;
     }
@@ -320,6 +345,7 @@ public final class SignalWebSocketTransport implements AutoCloseable
     public final class SignalEndpoint implements Session.Listener.AutoDemanding
     {
         private final SignalAuthorization mAuthorization;
+        private final DiagnosticWorkspaceLease.Lease mWorkspaceLease;
         private final Object mSubscriptionLock = new Object();
         private final AtomicBoolean mReleased = new AtomicBoolean();
         private final AtomicBoolean mClosing = new AtomicBoolean();
@@ -336,9 +362,10 @@ public final class SignalWebSocketTransport implements AutoCloseable
         private SpectrumStreamService.Subscription mSubscription;
         private Future<?> mPumpTask;
 
-        private SignalEndpoint(SignalAuthorization authorization)
+        private SignalEndpoint(SignalAuthorization authorization, DiagnosticWorkspaceLease.Lease workspaceLease)
         {
             mAuthorization = authorization;
+            mWorkspaceLease = workspaceLease;
         }
 
         private boolean isAnonymous()
@@ -902,6 +929,7 @@ public final class SignalWebSocketTransport implements AutoCloseable
                 authorizationMonitorTask.cancel(true);
             }
 
+            mWorkspaceLease.close();
             release(this);
         }
     }

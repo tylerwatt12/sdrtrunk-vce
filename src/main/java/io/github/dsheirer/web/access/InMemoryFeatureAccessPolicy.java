@@ -128,9 +128,10 @@ public final class InMemoryFeatureAccessPolicy implements FeatureAccessGateway
         Objects.requireNonNull(feature, "Feature cannot be null");
         Objects.requireNonNull(mode, "Feature access mode cannot be null");
 
-        if(feature == WebFeature.WIDEBAND_SIGNAL && mode != FeatureAccessMode.ADMIN_ONLY)
+        if((feature == WebFeature.WIDEBAND_SIGNAL || feature == WebFeature.SELECTED_CHANNEL_SIGNAL) &&
+            mode != FeatureAccessMode.ADMIN_ONLY)
         {
-            throw new IllegalArgumentException("Wideband signal access is permanently administrator-only");
+            throw new IllegalArgumentException("Signal diagnostics are permanently administrator-only");
         }
 
         mMutationLock.lock();
@@ -172,6 +173,11 @@ public final class InMemoryFeatureAccessPolicy implements FeatureAccessGateway
         if(modes.get(WebFeature.WIDEBAND_SIGNAL) != FeatureAccessMode.ADMIN_ONLY)
         {
             throw new IllegalArgumentException("Wideband signal access is permanently administrator-only");
+        }
+
+        if(modes.get(WebFeature.SELECTED_CHANNEL_SIGNAL) != FeatureAccessMode.ADMIN_ONLY)
+        {
+            throw new IllegalArgumentException("Selected-channel signal access is permanently administrator-only");
         }
     }
 

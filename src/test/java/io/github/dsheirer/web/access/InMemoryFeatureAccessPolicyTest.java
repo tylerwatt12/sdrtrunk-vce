@@ -66,7 +66,7 @@ class InMemoryFeatureAccessPolicyTest
 
             for(WebFeature feature: WebFeature.values())
             {
-                modes.put(feature, feature == WebFeature.WIDEBAND_SIGNAL ? FeatureAccessMode.ADMIN_ONLY :
+                modes.put(feature, isPermanentAdminFeature(feature) ? FeatureAccessMode.ADMIN_ONLY :
                     configuredMode);
             }
 
@@ -81,7 +81,7 @@ class InMemoryFeatureAccessPolicyTest
                     FeatureAccessDecision admin = policy.authorize(feature, AuthorizationSubject.AUTHENTICATED_ADMIN,
                         transport);
                     boolean publicFeature = configuredMode == FeatureAccessMode.PUBLIC &&
-                        feature != WebFeature.WIDEBAND_SIGNAL;
+                        !isPermanentAdminFeature(feature);
 
                     assertEquals(publicFeature, anonymous.isAllowed());
                     assertEquals(publicFeature ? FeatureAccessDecision.Outcome.ALLOWED :
@@ -96,12 +96,15 @@ class InMemoryFeatureAccessPolicyTest
     }
 
     @Test
-    void widebandSignalCannotBeMadePublic()
+    void signalDiagnosticsCannotBeMadePublic()
     {
         InMemoryFeatureAccessPolicy policy = InMemoryFeatureAccessPolicy.currentProfileDefaults();
         assertThrows(IllegalArgumentException.class,
             () -> policy.setMode(WebFeature.WIDEBAND_SIGNAL, FeatureAccessMode.PUBLIC));
+        assertThrows(IllegalArgumentException.class,
+            () -> policy.setMode(WebFeature.SELECTED_CHANNEL_SIGNAL, FeatureAccessMode.PUBLIC));
         assertEquals(FeatureAccessMode.ADMIN_ONLY, policy.getMode(WebFeature.WIDEBAND_SIGNAL));
+        assertEquals(FeatureAccessMode.ADMIN_ONLY, policy.getMode(WebFeature.SELECTED_CHANNEL_SIGNAL));
         assertEquals(0, policy.getRevision());
 
         EnumMap<WebFeature,FeatureAccessMode> invalid = new EnumMap<>(WebFeature.class);
@@ -112,6 +115,10 @@ class InMemoryFeatureAccessPolicyTest
         }
 
         invalid.put(WebFeature.WIDEBAND_SIGNAL, FeatureAccessMode.PUBLIC);
+        assertThrows(IllegalArgumentException.class, () -> InMemoryFeatureAccessPolicy.create(invalid));
+
+        invalid.put(WebFeature.WIDEBAND_SIGNAL, FeatureAccessMode.ADMIN_ONLY);
+        invalid.put(WebFeature.SELECTED_CHANNEL_SIGNAL, FeatureAccessMode.PUBLIC);
         assertThrows(IllegalArgumentException.class, () -> InMemoryFeatureAccessPolicy.create(invalid));
     }
 
@@ -160,7 +167,7 @@ class InMemoryFeatureAccessPolicyTest
 
         for(WebFeature feature: WebFeature.values())
         {
-            complete.put(feature, feature == WebFeature.WIDEBAND_SIGNAL ? FeatureAccessMode.ADMIN_ONLY :
+            complete.put(feature, isPermanentAdminFeature(feature) ? FeatureAccessMode.ADMIN_ONLY :
                 FeatureAccessMode.PUBLIC);
         }
 
@@ -197,7 +204,7 @@ class InMemoryFeatureAccessPolicyTest
                     {
                         WebFeature feature = WebFeature.values()[
                             (writerIndex + iteration) % WebFeature.values().length];
-                        FeatureAccessMode mode = feature == WebFeature.WIDEBAND_SIGNAL ?
+                        FeatureAccessMode mode = isPermanentAdminFeature(feature) ?
                             FeatureAccessMode.ADMIN_ONLY : ((writerIndex + iteration) % 2 == 0 ?
                             FeatureAccessMode.PUBLIC : FeatureAccessMode.ADMIN_ONLY);
                         policy.setMode(feature, mode);
@@ -250,5 +257,10 @@ class InMemoryFeatureAccessPolicyTest
             assertEquals(index, change.previousRevision());
             assertEquals(index + 1, change.revision());
         }
+    }
+
+    private static boolean isPermanentAdminFeature(WebFeature feature)
+    {
+        return feature == WebFeature.WIDEBAND_SIGNAL || feature == WebFeature.SELECTED_CHANNEL_SIGNAL;
     }
 }

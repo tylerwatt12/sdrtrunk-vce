@@ -40,6 +40,9 @@ import io.github.dsheirer.web.auth.SingleAdminAuthenticationService;
 import io.github.dsheirer.web.auth.WebAdminAuthenticationHandler;
 import io.github.dsheirer.web.auth.WebAdminCredentialStore;
 import io.github.dsheirer.web.config.WebListenAddress;
+import io.github.dsheirer.web.diagnostic.DiagnosticWorkspaceLease;
+import io.github.dsheirer.web.diagnostic.SelectedChannelDiagnosticService;
+import io.github.dsheirer.web.diagnostic.SelectedChannelDiagnosticWebSocketTransport;
 import io.github.dsheirer.web.signal.SignalOriginPolicy;
 import io.github.dsheirer.web.signal.SignalWebSocketTransport;
 import io.github.dsheirer.web.tls.TlsMaterial;
@@ -75,6 +78,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
     private final StatsLiveService mLiveService;
+    private final LiveContextResolver mLiveContextResolver;
     private final LiveActivityService mLiveActivityService;
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
@@ -82,10 +86,13 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final TunerManager mTunerManager;
     private final InMemoryFeatureAccessPolicy mFeatureAccessPolicy =
         InMemoryFeatureAccessPolicy.currentProfileDefaults();
+    private final DiagnosticWorkspaceLease mDiagnosticWorkspaceLease = new DiagnosticWorkspaceLease();
     private WebApplicationService mWebApplicationService;
     private StatsWebHandler mHandler;
     private SpectrumStreamService mSpectrumStreamService;
     private SignalWebSocketTransport mSignalTransport;
+    private SelectedChannelDiagnosticService mSelectedChannelDiagnosticService;
+    private SelectedChannelDiagnosticWebSocketTransport mSelectedChannelDiagnosticTransport;
     private SingleAdminAuthenticationService mAuthenticationService;
     private WebAdminAuthenticationHandler mAuthenticationHandler;
     private TunerSpectrumFrameSource mTunerSpectrumFrameSource;
@@ -120,8 +127,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase,
             channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null);
-        mLiveActivityService = channelProcessingManager != null ?
-            new LiveActivityService(new LiveContextResolver(channelProcessingManager)) : null;
+        mLiveContextResolver = channelProcessingManager != null ?
+            new LiveContextResolver(channelProcessingManager) : null;
+        mLiveActivityService = mLiveContextResolver != null ? new LiveActivityService(mLiveContextResolver) : null;
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
     }
@@ -244,14 +252,37 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             authenticationHandler.set(mAuthenticationHandler);
             mSignalTransport = new SignalWebSocketTransport(SignalWebSocketTransport.Configuration.defaults(),
                 mSpectrumStreamService, mFeatureAccessPolicy, mAuthenticationHandler.signalSubjectResolver(),
-                SignalOriginPolicy.sameOrigin(), remoteAddressAdmissionPolicy);
+                SignalOriginPolicy.sameOrigin(), remoteAddressAdmissionPolicy, mDiagnosticWorkspaceLease);
+
+            if(mLiveContextResolver != null)
+            {
+                mSelectedChannelDiagnosticService =
+                    new SelectedChannelDiagnosticService(mLiveContextResolver);
+                mSelectedChannelDiagnosticTransport = new SelectedChannelDiagnosticWebSocketTransport(
+                    SelectedChannelDiagnosticWebSocketTransport.Configuration.defaults(),
+                    mSelectedChannelDiagnosticService, mFeatureAccessPolicy,
+                    mAuthenticationHandler.signalSubjectResolver(), SignalOriginPolicy.sameOrigin(),
+                    remoteAddressAdmissionPolicy, mDiagnosticWorkspaceLease);
+            }
+
             String browserHost = bindAddress.isAnyLocalAddress() ?
                 (bindAddress.getAddress().length == 16 ? "::1" : "127.0.0.1") : listenAddress.host();
+            SignalWebSocketTransport signalTransport = mSignalTransport;
+            SelectedChannelDiagnosticWebSocketTransport selectedChannelDiagnosticTransport =
+                mSelectedChannelDiagnosticTransport;
             mWebApplicationService = new WebApplicationService(
                 WebApplicationService.Configuration.application(bindAddress, listenAddress.port(), browserHost,
                     tlsMaterial),
                 mAuthenticationHandler,
-                mSignalTransport::configure);
+                container ->
+                {
+                    signalTransport.configure(container);
+
+                    if(selectedChannelDiagnosticTransport != null)
+                    {
+                        selectedChannelDiagnosticTransport.configure(container);
+                    }
+                });
             mWebApplicationService.start();
 
             mLog.info("Stats routes mounted at {}://{}/ using assets [{}]",
@@ -266,6 +297,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private synchronized void stop()
     {
+        SelectedChannelDiagnosticWebSocketTransport selectedChannelDiagnosticTransport =
+            mSelectedChannelDiagnosticTransport;
+        mSelectedChannelDiagnosticTransport = null;
+
+        if(selectedChannelDiagnosticTransport != null)
+        {
+            try
+            {
+                selectedChannelDiagnosticTransport.close();
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("Unable to stop selected-channel diagnostic transport cleanly", exception);
+            }
+        }
+
         SignalWebSocketTransport signalTransport = mSignalTransport;
         mSignalTransport = null;
 
@@ -311,6 +358,21 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(authenticationService != null)
         {
             authenticationService.close();
+        }
+
+        SelectedChannelDiagnosticService selectedChannelDiagnosticService = mSelectedChannelDiagnosticService;
+        mSelectedChannelDiagnosticService = null;
+
+        if(selectedChannelDiagnosticService != null)
+        {
+            try
+            {
+                selectedChannelDiagnosticService.close();
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("Unable to stop selected-channel diagnostic service cleanly", exception);
+            }
         }
 
         SpectrumStreamService spectrumStreamService = mSpectrumStreamService;
@@ -429,6 +491,33 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     tunerSpectrumFrameSource.getPublishedFrameCount() : 0),
                 Map.entry("tunerPublicationErrors", tunerSpectrumFrameSource != null ?
                     tunerSpectrumFrameSource.getPublicationErrorCount() : 0)
+            )
+        ));
+        SelectedChannelDiagnosticService selectedDiagnosticService = mSelectedChannelDiagnosticService;
+        SelectedChannelDiagnosticWebSocketTransport selectedDiagnosticTransport =
+            mSelectedChannelDiagnosticTransport;
+        status.put("selectedChannelDiagnostics", Map.of(
+            "available", selectedDiagnosticService != null && selectedDiagnosticTransport != null,
+            "sessions", selectedDiagnosticTransport != null ? selectedDiagnosticTransport.getActiveSessionCount() : 0,
+            "webSocket", SelectedChannelDiagnosticWebSocketTransport.PATH,
+            "workspaceActive", mDiagnosticWorkspaceLease.isActive(),
+            "metrics", Map.ofEntries(
+                Map.entry("openedSessions", selectedDiagnosticService != null ?
+                    selectedDiagnosticService.getOpenedSessionCount() : 0),
+                Map.entry("rejectedSessions", selectedDiagnosticService != null ?
+                    selectedDiagnosticService.getRejectedSessionCount() : 0),
+                Map.entry("signalFrames", selectedDiagnosticTransport != null ?
+                    selectedDiagnosticTransport.getDeliveredSignalFrameCount() : 0),
+                Map.entry("symbolFrames", selectedDiagnosticTransport != null ?
+                    selectedDiagnosticTransport.getDeliveredSymbolFrameCount() : 0),
+                Map.entry("failedSends", selectedDiagnosticTransport != null ?
+                    selectedDiagnosticTransport.getFailedSendCount() : 0),
+                Map.entry("rejectedHandshakes", selectedDiagnosticTransport != null ?
+                    selectedDiagnosticTransport.getRejectedHandshakeCount() : 0),
+                Map.entry("revokedSessions", selectedDiagnosticTransport != null ?
+                    selectedDiagnosticTransport.getRevokedSessionCount() : 0),
+                Map.entry("maximumSendMicros", selectedDiagnosticTransport != null ?
+                    TimeUnit.NANOSECONDS.toMicros(selectedDiagnosticTransport.getMaximumSendNanos()) : 0)
             )
         ));
         return status;

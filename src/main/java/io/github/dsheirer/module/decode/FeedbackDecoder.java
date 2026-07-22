@@ -22,6 +22,7 @@ package io.github.dsheirer.module.decode;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventProvider;
 import io.github.dsheirer.source.SourceEvent;
+import java.util.Arrays;
 
 /**
  * Decoder that provides feedback to signal source(s) via SourceEvent broadcasts and supports registering source
@@ -32,6 +33,7 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     private static final double TWO_PI = 2 * Math.PI;
     private Listener<SourceEvent> mSourceEventListener;
     private Listener<Float> mSymbolListener;
+    private volatile SymbolObserver[] mSymbolObservers = new SymbolObserver[0];
     private double mSampleRate;
 
     /**
@@ -106,6 +108,57 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     }
 
     /**
+     * Adds an independent symbol observer without replacing the legacy UI listener.  Observers must return promptly;
+     * they execute on the decoder thread and should only copy into bounded, non-blocking storage.
+     */
+    public synchronized void addSymbolObserver(SymbolObserver observer)
+    {
+        if(observer == null)
+        {
+            throw new IllegalArgumentException("Symbol observer cannot be null");
+        }
+
+        SymbolObserver[] observers = mSymbolObservers;
+
+        for(SymbolObserver registered: observers)
+        {
+            if(registered == observer)
+            {
+                return;
+            }
+        }
+
+        SymbolObserver[] updated = Arrays.copyOf(observers, observers.length + 1);
+        updated[observers.length] = observer;
+        mSymbolObservers = updated;
+    }
+
+    /**
+     * Removes one independent symbol observer.
+     */
+    public synchronized void removeSymbolObserver(SymbolObserver observer)
+    {
+        SymbolObserver[] observers = mSymbolObservers;
+
+        for(int x = 0; x < observers.length; x++)
+        {
+            if(observers[x] == observer)
+            {
+                SymbolObserver[] updated = new SymbolObserver[observers.length - 1];
+                System.arraycopy(observers, 0, updated, 0, x);
+                System.arraycopy(observers, x + 1, updated, x, observers.length - x - 1);
+                mSymbolObservers = updated;
+                return;
+            }
+        }
+    }
+
+    public int getSymbolObserverCount()
+    {
+        return mSymbolObservers.length;
+    }
+
+    /**
      * Broadcasts the demodulated symbol to a symbol listener.
      * @param symbol in range 0 to +/- PI radians
      */
@@ -113,7 +166,21 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     {
         if(mSymbolListener != null)
         {
+            // Retain the legacy boxed callback only when the Swing symbol view is attached.
             mSymbolListener.receive(symbol);
         }
+
+        // Registration changes publish a new immutable array.  The decoder callback reads one snapshot without
+        // locking, allocating, or boxing each symbol.
+        for(SymbolObserver observer: mSymbolObservers)
+        {
+            observer.receive(symbol);
+        }
+    }
+
+    @FunctionalInterface
+    public interface SymbolObserver
+    {
+        void receive(float symbol);
     }
 }

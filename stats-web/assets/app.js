@@ -1,4 +1,5 @@
 let route = new URLSearchParams(window.location.search);
+let renderRevision = 0;
 const content = document.getElementById('content');
 const tableOnly = route.get('layout') === 'table';
 const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
@@ -1808,6 +1809,19 @@ async function api(path, parameters = {}) {
   return result;
 }
 
+async function administratorSessionActive() {
+  try {
+    const response = await fetch('/api/v1/auth/session', {
+      cache: 'no-store', credentials: 'same-origin'
+    });
+    if (!response.ok) return false;
+    const session = await response.json();
+    return session?.authenticated === true;
+  } catch (error) {
+    return false;
+  }
+}
+
 const liveConnections = new Set();
 const pageConnections = new Set();
 const pageObservers = new Map();
@@ -2092,6 +2106,9 @@ function liveSystemsSection() {
   let activityView = null;
   let activityKind = null;
   let activityContextId = null;
+  let administratorAuthenticated = false;
+  let administratorCheckRevision = 0;
+  let sectionClosed = false;
 
   const rowSelectionId = (row) => row?.selection_id || row?.selectionId || null;
 
@@ -2107,9 +2124,20 @@ function liveSystemsSection() {
   };
 
   const openActivity = (kind = 'events') => {
-    const requestedKind = kind === 'messages' ? 'messages' : 'events';
-    if (!selectedSelectionId || !window.LiveActivityView) {
+    const diagnosticRequested = kind === 'signal' || kind === 'symbols';
+    const requestedKind = diagnosticRequested && administratorAuthenticated ? kind :
+      (kind === 'messages' ? 'messages' : 'events');
+    const diagnostic = requestedKind === 'signal' || requestedKind === 'symbols';
+    if (!selectedSelectionId || (!diagnostic && !window.LiveActivityView) ||
+        (diagnostic && !window.SelectedChannelDiagnosticsView)) {
       closeActivity();
+      return;
+    }
+    if (diagnostic && activityView && activityContextId === selectedSelectionId &&
+        (activityKind === 'signal' || activityKind === 'symbols') &&
+        typeof activityView.setView === 'function') {
+      activityKind = requestedKind;
+      activityView.setView(requestedKind);
       return;
     }
     if (activityView && activityContextId === selectedSelectionId && activityKind === requestedKind) return;
@@ -2118,14 +2146,44 @@ function liveSystemsSection() {
     activityContextId = selectedSelectionId;
     const activityHost = node('div');
     selectionActivity.replaceChildren(activityHost);
-    activityView = new window.LiveActivityView(activityHost, {
+    const options = {
       contextId: selectedSelectionId,
-      activity: requestedKind,
       embedded: true,
+      activities: administratorAuthenticated ? ['events', 'messages', 'signal', 'symbols'] :
+        ['events', 'messages'],
       onActivityChange: openActivity
-    });
+    };
+    activityView = diagnostic ? new window.SelectedChannelDiagnosticsView(activityHost,
+      { ...options, view: requestedKind }) : new window.LiveActivityView(activityHost,
+      { ...options, activity: requestedKind });
     pageConnections.add(activityView);
   };
+
+  const refreshAdministratorAccess = async (knownValue = null) => {
+    if (sectionClosed) return;
+    const revision = ++administratorCheckRevision;
+    const authenticated = typeof knownValue === 'boolean' ? knownValue : await administratorSessionActive();
+    if (sectionClosed || revision !== administratorCheckRevision) return;
+    const changed = administratorAuthenticated !== authenticated;
+    administratorAuthenticated = authenticated;
+    if (!changed || !selectedSelectionId || !activityView) return;
+    const previous = administratorAuthenticated || !['signal', 'symbols'].includes(activityKind) ?
+      activityKind : 'events';
+    closeActivity();
+    openActivity(previous);
+  };
+
+  const authEvents = new AbortController();
+  window.addEventListener('sdrtrunk:auth-changed', (event) => {
+    const value = event.detail?.authenticated;
+    refreshAdministratorAccess(typeof value === 'boolean' ? value : null);
+  }, { signal: authEvents.signal });
+  pageConnections.add({ close: () => {
+    sectionClosed = true;
+    administratorCheckRevision += 1;
+    authEvents.abort();
+  } });
+  refreshAdministratorAccess();
 
   const renderSelection = (ended = false) => {
     if (!selectedRow || !selectedSelectionId) {
@@ -2348,13 +2406,28 @@ function liveSystemsSection() {
   return block;
 }
 
-async function renderLive() {
+async function renderLive(expectedRenderRevision = renderRevision) {
   const contextId = route.get('context');
   const activity = route.get('activity');
-  if (contextId && ['events', 'messages'].includes(activity) && window.LiveActivityView) {
+  const diagnostic = ['signal', 'symbols'].includes(activity);
+  const administratorAuthenticated = diagnostic ? await administratorSessionActive() : false;
+  if (expectedRenderRevision !== renderRevision) return;
+  if (contextId && diagnostic && administratorAuthenticated && window.SelectedChannelDiagnosticsView) {
     const host = node('div');
     content.append(host);
-    const view = new window.LiveActivityView(host, { contextId, activity });
+    const view = new window.SelectedChannelDiagnosticsView(host, {
+      contextId, view: activity, activities: ['events', 'messages', 'signal', 'symbols']
+    });
+    pageConnections.add(view);
+  } else if (contextId && (['events', 'messages'].includes(activity) || diagnostic) && window.LiveActivityView) {
+    const host = node('div');
+    content.append(host);
+    const view = new window.LiveActivityView(host, {
+      contextId,
+      activity: diagnostic ? 'events' : activity,
+      activities: administratorAuthenticated ? ['events', 'messages', 'signal', 'symbols'] :
+        ['events', 'messages']
+    });
     pageConnections.add(view);
   } else {
     content.append(liveSystemsSection());
@@ -2942,6 +3015,7 @@ async function loadStatus(refreshCurrentView = false) {
 }
 
 async function render() {
+  const expectedRenderRevision = ++renderRevision;
   if (route.get('view') === 'sites') {
     route.set('view', 'systems');
     window.history.replaceState({}, '', `${window.location.pathname}?${route}`);
@@ -2968,7 +3042,8 @@ async function render() {
       'conventional-detail': renderConventionalDetail,
       credits: renderCredits
     };
-    await (handlers[view] || renderDashboard)();
+    await (handlers[view] || renderDashboard)(expectedRenderRevision);
+    if (expectedRenderRevision !== renderRevision) return;
     const notice = databaseLoggingNotice(view);
     if (notice) {
       const header = content.querySelector('.page-header');
@@ -2976,6 +3051,7 @@ async function render() {
       else content.prepend(notice);
     }
   } catch (error) {
+    if (expectedRenderRevision !== renderRevision) return;
     const notice = databaseLoggingNotice(view);
     content.replaceChildren(...[notice, node('div', 'error', error.message)].filter(Boolean));
   }

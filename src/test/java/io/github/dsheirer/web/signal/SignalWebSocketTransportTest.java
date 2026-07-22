@@ -23,6 +23,8 @@ import io.github.dsheirer.web.access.FeatureAccessMode;
 import io.github.dsheirer.web.access.InMemoryFeatureAccessPolicy;
 import io.github.dsheirer.web.access.RemoteAddressAdmissionPolicy;
 import io.github.dsheirer.web.access.WebFeature;
+import io.github.dsheirer.web.diagnostic.DiagnosticWorkspaceLease;
+import io.github.dsheirer.web.diagnostic.DiagnosticWorkspaceLease.Owner;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -200,6 +202,25 @@ class SignalWebSocketTransportTest
             assertTrue(denied.getCause() instanceof WebSocketHandshakeException);
             assertEquals(409, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
             assertEquals(1, rig.transport.getActiveSessionCount());
+        }
+    }
+
+    @Test
+    void selectedChannelWorkspaceBlocksWidebandBeforeProducerStartup() throws Exception
+    {
+        DiagnosticWorkspaceLease workspaceLease = new DiagnosticWorkspaceLease();
+
+        try(DiagnosticWorkspaceLease.Lease selected =
+                workspaceLease.tryAcquire(Owner.SELECTED_CHANNEL).orElseThrow();
+            TestRig rig = new TestRig(workspaceLease))
+        {
+            ExecutionException denied = assertThrows(ExecutionException.class,
+                () -> rig.connect(new TestListener(), true, rig.origin()).get(TEST_TIMEOUT.toMillis(),
+                    TimeUnit.MILLISECONDS));
+            assertEquals(409, ((WebSocketHandshakeException)denied.getCause()).getResponse().statusCode());
+            assertEquals(0, rig.transport.getActiveSessionCount());
+            assertEquals(0, rig.source.getStartCount());
+            assertEquals(Owner.SELECTED_CHANNEL, workspaceLease.getOwner().orElseThrow());
         }
     }
 
@@ -500,6 +521,23 @@ class SignalWebSocketTransportTest
                         Duration sourceInterval, RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
                         SignalSubjectResolver subjectResolver)
         {
+            this(accessMode, originPolicy, maximumSessions, sourceInterval, remoteAddressAdmissionPolicy,
+                subjectResolver, new DiagnosticWorkspaceLease());
+        }
+
+        private TestRig(DiagnosticWorkspaceLease workspaceLease)
+        {
+            this(FeatureAccessMode.ADMIN_ONLY, SignalOriginPolicy.sameOrigin(), 1, Duration.ofMillis(25),
+                RemoteAddressAdmissionPolicy.allowAll(),
+                request -> "true".equals(request.getHeaders().get(ADMIN_HEADER)) ?
+                    AuthorizationSubject.AUTHENTICATED_ADMIN : AuthorizationSubject.ANONYMOUS,
+                workspaceLease);
+        }
+
+        private TestRig(FeatureAccessMode accessMode, SignalOriginPolicy originPolicy, int maximumSessions,
+                        Duration sourceInterval, RemoteAddressAdmissionPolicy remoteAddressAdmissionPolicy,
+                        SignalSubjectResolver subjectResolver, DiagnosticWorkspaceLease workspaceLease)
+        {
             source = new SyntheticSpectrumFrameSource(
                 new SyntheticSpectrumFrameSource.Configuration(1, 851_012_500L, 2_400_000L, 128,
                     sourceInterval, "test synthetic spectrum"));
@@ -513,7 +551,7 @@ class SignalWebSocketTransportTest
             transport = new SignalWebSocketTransport(
                 new SignalWebSocketTransport.Configuration(maximumSessions, 20, 30, Duration.ofMillis(100),
                     Duration.ofSeconds(2), Duration.ofSeconds(3), "test signal sender-"), stream, policy,
-                subjectResolver, originPolicy, remoteAddressAdmissionPolicy);
+                subjectResolver, originPolicy, remoteAddressAdmissionPolicy, workspaceLease);
             application = new WebApplicationService(WebApplicationService.Configuration.ephemeralLoopback(),
                 new NotFoundHandler(), transport::configure);
             application.start();

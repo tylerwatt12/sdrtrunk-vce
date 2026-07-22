@@ -158,6 +158,8 @@
       this.kind = options.activity === 'messages' ? 'messages' : 'events';
       this.embedded = options.embedded === true;
       this.onActivityChange = typeof options.onActivityChange === 'function' ? options.onActivityChange : null;
+      this.activities = Array.isArray(options.activities) && options.activities.length ?
+        [...options.activities] : ['events', 'messages'];
       this.closed = false;
       this.source = null;
       this.rows = new Map();
@@ -230,8 +232,9 @@
       this.workspace = element('section', 'live-activity-workspace');
       const tabs = element('nav', 'live-activity-tabs');
       tabs.setAttribute('aria-label', 'Selected channel activity');
-      for (const kind of ['events', 'messages']) {
-        const link = element('a', kind === this.kind ? 'active' : '', kind === 'events' ? 'Events' : 'Messages');
+      for (const kind of this.activities) {
+        const labels = { events: 'Events', messages: 'Messages', signal: 'Signal', symbols: 'Symbols' };
+        const link = element('a', kind === this.kind ? 'active' : '', labels[kind] || kind);
         const target = new URLSearchParams({ view: 'live', context: this.contextId, activity: kind });
         link.href = `/?${target}`;
         if (kind === this.kind) link.setAttribute('aria-current', 'page');
@@ -846,6 +849,8 @@
     showLogin() {
       this.source?.close();
       this.source = null;
+      window.dispatchEvent(new CustomEvent('sdrtrunk:auth-changed',
+        { detail: { authenticated: false } }));
       this.setConnection('Sign-in required', 'state-stale', `${this.kind === 'events' ? 'Events are' : 'Messages are'} administrator-only`);
       this.contextCard.hidden = true;
       const panel = element('div', 'live-activity-login');
@@ -887,6 +892,8 @@
           password.value = '';
           if (response.ok) {
             message.textContent = 'Signed in';
+            window.dispatchEvent(new CustomEvent('sdrtrunk:auth-changed',
+              { detail: { authenticated: true } }));
             this.contextCard.hidden = false;
             this.showLoading();
             this.load();
