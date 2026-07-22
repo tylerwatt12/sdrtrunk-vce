@@ -6,6 +6,7 @@
   const SIGNAL_MINIMUM_FLOOR_DB = -150;
   const SIGNAL_MAXIMUM_FLOOR_DB = -60;
   const DEFAULT_SIGNAL_FLOOR_DB = -120;
+  const SIGNAL_FLOOR_STORAGE_KEY = 'sdrtrunk.narrowband.lowerDisplayLimitDb';
   const MAXIMUM_ZOOM = 16;
   const RECONNECT_MAXIMUM_MILLISECONDS = 10_000;
   let informationControlSequence = 0;
@@ -25,6 +26,24 @@
   function finite(value, fallback = 0) {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
+  }
+
+  function storedSignalFloor() {
+    try {
+      const value = Number(window.localStorage.getItem(SIGNAL_FLOOR_STORAGE_KEY));
+      return Number.isFinite(value) && value >= SIGNAL_MINIMUM_FLOOR_DB && value <= SIGNAL_MAXIMUM_FLOOR_DB ?
+        value : DEFAULT_SIGNAL_FLOOR_DB;
+    } catch (error) {
+      return DEFAULT_SIGNAL_FLOOR_DB;
+    }
+  }
+
+  function storeSignalFloor(value) {
+    try {
+      window.localStorage.setItem(SIGNAL_FLOOR_STORAGE_KEY, String(value));
+    } catch (error) {
+      // The slider still works for this tab when browser storage is unavailable.
+    }
   }
 
   function safeLong(view, offset) {
@@ -74,7 +93,7 @@
       this.activeGeneration = null;
       this.state = 'connecting';
       this.paused = false;
-      this.lowerLimit = DEFAULT_SIGNAL_FLOOR_DB;
+      this.lowerLimit = storedSignalFloor();
       this.zoom = 1;
       this.viewportCenter = 0.5;
       this.dragging = false;
@@ -304,6 +323,7 @@
       this.floorInput.addEventListener('input', () => {
         this.lowerLimit = finite(this.floorInput.value, DEFAULT_SIGNAL_FLOOR_DB);
         this.floorOutput.textContent = `${this.lowerLimit} dB`;
+        storeSignalFloor(this.lowerLimit);
         this.requestRender();
       });
       floor.append(this.floorInput, this.floorOutput);

@@ -30,6 +30,7 @@ class SettingsChannelsView {
     this.autoStartCount = null;
     this.options = {};
     this.selectedIds = new Map();
+    this.selectionAnchorId = null;
     this.bulkFailures = new Map();
     this.detail = null;
     this.originalDetail = null;
@@ -242,8 +243,7 @@ class SettingsChannelsView {
     this.tableRegion.setAttribute('role', 'region');
     this.tableRegion.setAttribute('aria-label', 'Scrollable channels table');
     this.table = this.element('table', 'channels-table');
-    const caption = this.element('caption', 'sr-only',
-      'Saved radio channels. Selection checkboxes are used only for Start selected and Stop selected.');
+    const caption = this.element('caption', 'visually-hidden', 'Saved radio channels.');
     const headRow = this.element('tr');
     const selectHeader = this.element('th');
     this.selectPage = this.element('input');
@@ -610,6 +610,8 @@ class SettingsChannelsView {
         this.query ? 'Try another System, Site, Name, or decoder search.' :
           'Use Add channel to create one of the supported decoder types.');
     } else {
+      this.listState.replaceChildren();
+      this.listState.hidden = true;
       this.items.forEach((item) => this.tableBody.append(this.channelRow(item)));
     }
     const first = this.total ? this.offset + 1 : 0;
@@ -628,6 +630,10 @@ class SettingsChannelsView {
 
   channelRow(item) {
     const row = this.element('tr');
+    row.dataset.rowId = item.id;
+    row.tabIndex = 0;
+    row.setAttribute('aria-selected', String(this.selectedIds.has(item.id)));
+    row.classList.toggle('selected', this.selectedIds.has(item.id));
     if (this.detail?.id === item.id) row.classList.add('open-channel');
     const failure = this.bulkFailures.get(item.id);
     if (failure) row.classList.add('channels-row-failed');
@@ -637,21 +643,13 @@ class SettingsChannelsView {
     checkbox.checked = this.selectedIds.has(item.id);
     checkbox.disabled = this.pending || item.supported === false;
     checkbox.setAttribute('aria-label', `Select ${this.channelDisplayName(item)} for a runtime command`);
-    checkbox.addEventListener('change', () => {
-      const maximum = Number(this.options.maximumSelectionSize) || this.limit;
-      if (checkbox.checked && this.selectedIds.size >= maximum && !this.selectedIds.has(item.id)) {
-        checkbox.checked = false;
-        this.toast(`At most ${maximum} channels can be selected at once.`, true);
-      } else if (checkbox.checked) this.selectedIds.set(item.id, item.revision);
-      else this.selectedIds.delete(item.id);
-      this.updateSelectionControls();
+    checkbox.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.applyRowSelection(item, { toggle: true });
     });
     checkCell.append(checkbox);
     row.append(checkCell, this.textCell(item.system), this.textCell(item.site));
-    const nameCell = this.element('td');
-    const open = this.button(this.channelDisplayName(item), 'channels-open-button');
-    open.addEventListener('click', () => this.openChannel(item.id));
-    nameCell.append(open);
+    const nameCell = this.element('td', 'channels-channel-name', this.channelDisplayName(item));
     if (failure) nameCell.append(this.element('span', 'channels-row-failure', failure));
     row.append(nameCell, this.textCell(this.frequencyText(item), 'channels-frequency-cell'),
       this.textCell(item.protocolLabel || item.protocol || 'Unknown'), this.stateCell(item));
@@ -667,7 +665,47 @@ class SettingsChannelsView {
     runtime.addEventListener('click', () => this.runtime(item, this.isRunning(item) ? 'STOP' : 'START'));
     action.append(runtime);
     row.append(action);
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('button, input, select, textarea, a')) return;
+      const modified = event.ctrlKey || event.metaKey;
+      this.applyRowSelection(item, { toggle: modified, range: event.shiftKey, additive: modified });
+      if (!modified && !event.shiftKey) this.openChannel(item.id);
+    });
+    row.addEventListener('keydown', (event) => {
+      if (event.target !== row || !['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === ' ') this.applyRowSelection(item, { toggle: true });
+      else {
+        this.applyRowSelection(item);
+        this.openChannel(item.id);
+      }
+    });
     return row;
+  }
+
+  applyRowSelection(item, behavior = {}) {
+    const maximum = Number(this.options.maximumSelectionSize) || this.limit;
+    const selection = window.SdrtrunkTableSelection?.apply({
+      items: this.items,
+      keyOf: (candidate) => candidate.id,
+      selectable: (candidate) => candidate.supported !== false,
+      selectedKeys: this.selectedIds.keys(),
+      targetKey: item.id,
+      anchorKey: this.selectionAnchorId,
+      maximum,
+      toggle: behavior.toggle,
+      range: behavior.range,
+      additive: behavior.additive
+    });
+    if (!selection) return;
+    this.selectedIds.clear();
+    selection.selectedKeys.forEach((id) => {
+      const selected = this.items.find((candidate) => String(candidate.id) === id);
+      if (selected) this.selectedIds.set(selected.id, selected.revision);
+    });
+    this.selectionAnchorId = selection.anchorKey;
+    if (selection.limitReached) this.toast(`At most ${maximum} channels can be selected at once.`, true);
+    this.renderTable();
   }
 
   textCell(value, className = '') {
@@ -754,6 +792,7 @@ class SettingsChannelsView {
 
   clearSelection() {
     this.selectedIds.clear();
+    this.selectionAnchorId = null;
     this.updateSelectionControls();
     this.tableBody?.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
   }
@@ -2081,9 +2120,15 @@ class SettingsChannelsView {
       this.toast(message, failed);
       return;
     }
+    const copy = String(message || '').trim();
+    if (!copy) {
+      notice.replaceChildren();
+      notice.hidden = true;
+      return;
+    }
     notice.hidden = false;
     notice.className = `channels-editor-notice${failed ? ' failed' : ''}`;
-    notice.replaceChildren(this.element('span', '', message));
+    notice.replaceChildren(this.element('span', '', copy));
   }
 
   showOperationError(error) {

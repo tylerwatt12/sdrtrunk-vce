@@ -1,4 +1,4 @@
-/* global document, window, Worker, WebSocket, requestAnimationFrame, cancelAnimationFrame, ResizeObserver, fetch */
+/* global document, window, Worker, WebSocket, EventSource, requestAnimationFrame, cancelAnimationFrame, ResizeObserver, fetch */
 'use strict';
 
 const SIGNAL_DEFAULT_FPS = 20;
@@ -12,6 +12,25 @@ const SIGNAL_FIRST_FRAME_TIMEOUT_MS = 15000;
 const SIGNAL_PALETTE_MINIMUM_DB = -220;
 const SIGNAL_PALETTE_MAXIMUM_DB = 40;
 const SIGNAL_PALETTE_STEP_DB = 0.5;
+const SIGNAL_DB_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
+const SIGNAL_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
+
+function signalStoredNumber(key, fallback, minimum, maximum) {
+  try {
+    const value = Number(window.localStorage.getItem(key));
+    return Number.isFinite(value) && value >= minimum && value <= maximum ? value : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function signalStoreNumber(key, value) {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch (error) {
+    // Browser privacy settings can disable local storage. The control still works for this tab.
+  }
+}
 
 class WidebandSignalView {
   constructor(root, options = {}) {
@@ -59,7 +78,13 @@ class WidebandSignalView {
     this.hoverYRatio = null;
     this.drag = null;
     this.refining = false;
-    this.dbFloor = SIGNAL_DEFAULT_DB_FLOOR;
+    this.dbFloor = signalStoredNumber(SIGNAL_DB_FLOOR_STORAGE_KEY, SIGNAL_DEFAULT_DB_FLOOR,
+      SIGNAL_MINIMUM_DB_FLOOR, SIGNAL_MAXIMUM_DB_FLOOR);
+    this.waterfallSpeed = signalStoredNumber(SIGNAL_WATERFALL_SPEED_STORAGE_KEY, 1, 0.25, 4);
+    this.waterfallScrollAccumulator = 0;
+    this.activeChannelTables = new Map();
+    this.activeChannelSource = null;
+    this.activeChannelRenderRequest = null;
     this.paletteLut = new Uint8ClampedArray(
       (Math.round((SIGNAL_PALETTE_MAXIMUM_DB - SIGNAL_PALETTE_MINIMUM_DB) / SIGNAL_PALETTE_STEP_DB) + 1) * 3);
     this.binRange = { start: 0, end: 0 };
@@ -74,8 +99,10 @@ class WidebandSignalView {
       this.hidden = document.hidden;
       if (this.hidden) {
         this.disconnectSocket('page hidden');
+        this.disconnectActiveChannels();
         this.setState('paused', 'Page hidden · spectrum slot released');
       } else if (!this.paused) {
+        this.connectActiveChannels();
         this.subscribeOrConnect();
       }
     };
@@ -93,6 +120,7 @@ class WidebandSignalView {
     document.addEventListener('pointerdown', this.onDocumentPointerDown);
     document.addEventListener('keydown', this.onDocumentKeyDown);
     this.rebuildPalette();
+    this.connectActiveChannels();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.plotArea);
     this.statusTimer = window.setInterval(() => this.updateTimedReadouts(), 250);
@@ -175,11 +203,24 @@ class WidebandSignalView {
     const floorHelp = this.element('span', 'wideband-control-help',
       'Changes display contrast only; it does not change receiver gain or decoder thresholds.');
     floorHelp.id = 'wideband-floor-help';
+    const speedLabel = this.element('label', 'wideband-floor-control wideband-speed-control');
+    const speedText = this.element('span', '', 'Waterfall speed');
+    this.speedInput = this.element('input');
+    this.speedInput.type = 'range';
+    this.speedInput.min = '0.25';
+    this.speedInput.max = '4';
+    this.speedInput.step = '0.25';
+    this.speedInput.value = String(this.waterfallSpeed);
+    this.speedInput.id = 'wideband-waterfall-speed';
+    this.speedValue = this.element('output', '', `${this.waterfallSpeed.toFixed(2)}×`);
+    this.speedValue.htmlFor = this.speedInput.id;
+    this.speedInput.addEventListener('input', () => this.changeWaterfallSpeed());
+    speedLabel.append(speedText, this.speedInput, this.speedValue);
     this.refiningBadge = this.element('span', 'wideband-refining');
     this.refiningBadge.hidden = true;
     this.refiningBadge.setAttribute('role', 'status');
     this.refiningBadge.setAttribute('aria-live', 'polite');
-    displayControls.append(floorLabel, floorHelp, this.refiningBadge);
+    displayControls.append(floorLabel, floorHelp, speedLabel, this.refiningBadge);
 
     const workspace = this.element('div', 'wideband-workspace');
     this.plotArea = this.element('div', 'wideband-plots');
@@ -202,7 +243,9 @@ class WidebandSignalView {
       'Live waterfall plot. Wheel to zoom and drag to pan when zoomed.');
     this.waterfallGuide = this.element('div', 'wideband-cursor-guide');
     this.waterfallGuide.hidden = true;
-    waterfallWrap.append(this.waterfall, this.waterfallGuide);
+    this.activeChannelOverlay = this.element('div', 'wideband-active-channels');
+    this.activeChannelOverlay.setAttribute('aria-hidden', 'true');
+    waterfallWrap.append(this.waterfall, this.activeChannelOverlay, this.waterfallGuide);
 
     this.cursorPopup = this.element('div', 'wideband-cursor-popup');
     this.cursorPopup.hidden = true;
@@ -818,8 +861,10 @@ class WidebandSignalView {
     this.pauseButton.textContent = this.paused ? 'Resume' : 'Pause';
     if (this.paused) {
       this.disconnectSocket('paused');
+      this.disconnectActiveChannels();
       this.setState('paused', 'Paused · spectrum slot released');
     } else {
+      this.connectActiveChannels();
       this.subscribeOrConnect();
     }
   }
@@ -965,6 +1010,7 @@ class WidebandSignalView {
     }
     this.resetButton.disabled = zoom <= 1.0001;
     this.plotArea.classList.toggle('zoomed', zoom > 1.0001);
+    this.queueActiveChannelRender();
   }
 
   formatFrequency(frequencyHz) {
@@ -1072,7 +1118,11 @@ class WidebandSignalView {
     const height = this.waterfall.height;
     const range = this.visibleBinRange();
     const visibleBins = range.end - range.start;
-    context.drawImage(this.waterfall, 0, 0, width, height - 1, 0, 1, width, height - 1);
+    this.waterfallScrollAccumulator += this.waterfallSpeed;
+    const rowCount = Math.min(height, Math.floor(this.waterfallScrollAccumulator));
+    if (rowCount < 1) return;
+    this.waterfallScrollAccumulator -= rowCount;
+    context.drawImage(this.waterfall, 0, 0, width, height - rowCount, 0, rowCount, width, height - rowCount);
     if (!this.waterfallRow || this.waterfallRow.width !== width) {
       this.waterfallRow = context.createImageData(width, 1);
     }
@@ -1087,7 +1137,7 @@ class WidebandSignalView {
       data[offset + 2] = this.paletteLut[color + 2];
       data[offset + 3] = 255;
     }
-    context.putImageData(this.waterfallRow, 0, 0);
+    for (let row = 0; row < rowCount; row += 1) context.putImageData(this.waterfallRow, 0, row);
   }
 
   visibleBinRange() {
@@ -1112,8 +1162,91 @@ class WidebandSignalView {
     if (!Number.isFinite(candidate)) return;
     this.dbFloor = Math.max(SIGNAL_MINIMUM_DB_FLOOR, Math.min(SIGNAL_MAXIMUM_DB_FLOOR, candidate));
     this.floorValue.textContent = `${this.dbFloor} dB`;
+    signalStoreNumber(SIGNAL_DB_FLOOR_STORAGE_KEY, this.dbFloor);
     this.rebuildPalette();
     this.requestFftRender();
+  }
+
+  changeWaterfallSpeed() {
+    const candidate = Number(this.speedInput.value);
+    if (!Number.isFinite(candidate)) return;
+    this.waterfallSpeed = Math.max(0.25, Math.min(4, candidate));
+    this.speedValue.textContent = `${this.waterfallSpeed.toFixed(2)}×`;
+    signalStoreNumber(SIGNAL_WATERFALL_SPEED_STORAGE_KEY, this.waterfallSpeed);
+  }
+
+  connectActiveChannels() {
+    if (this.closed || this.activeChannelSource) return;
+    const source = new EventSource('/live/systems');
+    this.activeChannelSource = source;
+    const read = (event, callback) => {
+      try {
+        callback(JSON.parse(event.data));
+      } catch (error) {
+        // A malformed optional activity update must never interrupt the spectrum display.
+      }
+    };
+    source.addEventListener('snapshot', (event) => read(event, (snapshot) => {
+      this.activeChannelTables.clear();
+      (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
+        if (table?.table_id) this.activeChannelTables.set(String(table.table_id), table);
+      });
+      this.queueActiveChannelRender();
+    }));
+    source.addEventListener('activity_table', (event) => read(event, (update) => {
+      const id = String(update?.table_id || update?.table?.table_id || '');
+      if (!id) return;
+      if (update.operation === 'remove') this.activeChannelTables.delete(id);
+      else if (update.table) this.activeChannelTables.set(id, update.table);
+      this.queueActiveChannelRender();
+    }));
+  }
+
+  disconnectActiveChannels() {
+    this.activeChannelSource?.close();
+    this.activeChannelSource = null;
+  }
+
+  queueActiveChannelRender() {
+    if (this.closed || this.activeChannelRenderRequest !== null) return;
+    this.activeChannelRenderRequest = requestAnimationFrame(() => {
+      this.activeChannelRenderRequest = null;
+      this.renderActiveChannels();
+    });
+  }
+
+  renderActiveChannels() {
+    if (!this.activeChannelOverlay) return;
+    const viewport = this.viewport || this.fullViewport;
+    if (!viewport || viewport.endHz <= viewport.startHz) {
+      this.activeChannelOverlay.replaceChildren();
+      return;
+    }
+    const statusPriority = { ENCRYPTED: 4, CALL: 3, DATA: 2, CONTROL: 1 };
+    const channels = new Map();
+    this.activeChannelTables.forEach((table) => {
+      (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
+        const frequencyHz = Number(row?.frequency_hz);
+        const status = String(row?.status || '').toUpperCase();
+        if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz || frequencyHz > viewport.endHz ||
+            !status || status === 'IDLE') return;
+        const previous = channels.get(frequencyHz);
+        if (!previous || (statusPriority[status] || 0) > (statusPriority[previous.status] || 0)) {
+          channels.set(frequencyHz, { ...row, status });
+        }
+      });
+    });
+    const span = viewport.endHz - viewport.startHz;
+    const markers = [...channels.entries()].sort((left, right) => left[0] - right[0]).slice(0, 48)
+      .map(([frequencyHz, row], index) => {
+        const marker = this.element('div', `wideband-active-channel status-${row.status.toLowerCase()}`);
+        marker.style.left = `${(frequencyHz - viewport.startHz) / span * 100}%`;
+        marker.style.setProperty('--channel-label-lane', String(index % 3));
+        marker.append(this.element('span', 'wideband-active-channel-label',
+          row.target_alias || row.target_id || row.channel_name || row.lcn || row.status));
+        return marker;
+      });
+    this.activeChannelOverlay.replaceChildren(...markers);
   }
 
   clearWaterfall() {
@@ -1456,6 +1589,8 @@ class WidebandSignalView {
     window.clearTimeout(this.refinementTimer);
     window.clearInterval(this.statusTimer);
     if (this.renderRequest !== null) cancelAnimationFrame(this.renderRequest);
+    if (this.activeChannelRenderRequest !== null) cancelAnimationFrame(this.activeChannelRenderRequest);
+    this.disconnectActiveChannels();
     this.disconnectSocket('page closed');
     this.worker.terminate();
     this.frame = null;
