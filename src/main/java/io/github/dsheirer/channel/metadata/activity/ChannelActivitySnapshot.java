@@ -20,6 +20,9 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
 {
     public ChannelActivitySnapshot
     {
+        tableId = tableId != null ? tableId : "";
+        title = title != null ? title : "";
+        channelName = channelName != null ? channelName : "";
         rows = rows != null ? List.copyOf(rows) : List.of();
     }
 
