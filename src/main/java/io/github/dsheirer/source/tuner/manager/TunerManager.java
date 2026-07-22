@@ -28,6 +28,7 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.mixer.MixerManager;
+import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerFactory;
@@ -660,7 +661,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 {
                     try
                     {
-                        preTunePolyphaseCenter(discoveredTuner, tunerChannels);
                         source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
                             tunerChannels);
 
@@ -685,18 +685,14 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             {
                 discoveredTuner = it.next();
 
-                if(discoveredTuner.hasTuner())
+                try
                 {
-                    try
-                    {
-                        preTunePolyphaseCenter(discoveredTuner, tunerChannels);
-                        source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
-                            tunerChannels);
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.error("Error obtaining channel from tuner [" + discoveredTuner.getTuner().getPreferredName() + "]", e);
-                    }
+                    source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
+                        tunerChannels);
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error obtaining channel from tuner [{}]", discoveredTuner.getId(), e);
                 }
             }
         }
@@ -710,32 +706,49 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private TunerChannelSource getSource(DiscoveredTuner discoveredTuner, TunerChannel tunerChannel,
                                          ChannelSpecification channelSpecification, String threadName,
-                                         SortedSet<TunerChannel> tunerChannels)
+                                         SortedSet<TunerChannel> tunerChannels) throws SourceException
     {
-        ChannelSourceManager channelSourceManager = discoveredTuner.getTuner().getChannelSourceManager();
-
-        if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
-            tunerChannels != null && !tunerChannels.isEmpty())
+        //Disabling a receiver uses this same per-tuner lifecycle monitor.  Keep discovery, optional pre-tuning, and
+        //source allocation inside one lifecycle window so USB shutdown cannot remove the manager between checks.
+        synchronized(discoveredTuner)
         {
-            TunerChannelSource source = polyphaseChannelSourceManager.getSource(tunerChannel, channelSpecification, threadName,
-                tunerChannels);
+            if(!discoveredTuner.isEnabled() || !discoveredTuner.hasTuner())
+            {
+                return null;
+            }
 
-            if(source != null)
+            preTunePolyphaseCenter(discoveredTuner, tunerChannels);
+            Tuner tuner = discoveredTuner.getTuner();
+            ChannelSourceManager channelSourceManager = tuner != null ? tuner.getChannelSourceManager() : null;
+
+            if(channelSourceManager == null)
+            {
+                return null;
+            }
+
+            if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
+                tunerChannels != null && !tunerChannels.isEmpty())
+            {
+                TunerChannelSource source = polyphaseChannelSourceManager.getSource(tunerChannel, channelSpecification,
+                    threadName, tunerChannels);
+
+                if(source != null)
+                {
+                    mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
+                }
+
+                return source;
+            }
+
+            TunerChannelSource source = channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
+
+            if(source != null && channelSourceManager instanceof PolyphaseChannelSourceManager)
             {
                 mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
             }
 
             return source;
         }
-
-        TunerChannelSource source = channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
-
-        if(source != null && channelSourceManager instanceof PolyphaseChannelSourceManager)
-        {
-            mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
-        }
-
-        return source;
     }
 
     /**

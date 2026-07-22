@@ -324,6 +324,7 @@ class StatsWebHandlerTest
               "revision":41,
               "frequencyCorrectionPpm":0.0,
               "autoPpm":true,
+              "centerFrequencyHz":101100000,
               "minimumFrequencyHz":24000000,
               "maximumFrequencyHz":1800000000,
               "centerFrequencyFixed":false,
@@ -351,6 +352,7 @@ class StatsWebHandlerTest
         assertEquals(200, saved.statusCode());
         assertTrue(saved.body().contains("\"sessionValid\":true"));
         assertEquals("AIRSPY", mTunerUpdate.get().deviceType());
+        assertEquals(101_100_000L, mTunerUpdate.get().centerFrequencyHz());
         assertEquals(14, mTunerUpdate.get().airspyGain());
 
         int calls = mTunerMutationCalls.get();

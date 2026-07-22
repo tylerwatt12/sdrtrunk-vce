@@ -747,7 +747,7 @@ class SettingsHardwareView {
       const notice = this.element('div', 'hardware-settings-notice');
       notice.append(this.element('strong', '', 'Radio work is active'),
         this.element('span', '',
-          'Frequency correction, frequency limits, sample rate, and Bias-T are locked. Gain controls, automatic PPM, and fixed-center mode remain available.'));
+          'Center frequency, frequency correction, frequency limits, sample rate, and Bias-T are locked. Gain controls, automatic PPM, and fixed-center mode remain available.'));
       this.settingsBody.append(notice);
     } else if (!enabled) {
       const notice = this.element('div', 'hardware-settings-notice');
@@ -761,8 +761,14 @@ class SettingsHardwareView {
       'Frequency limits control where this receiver may be assigned. Values are saved in MHz.');
     const tuningGrid = this.element('div', 'hardware-field-grid');
     const idleOnlyDisabled = active;
-    const ppm = this.numberField('Frequency correction', settings.frequencyCorrectionPpm, {
-      min: -1000, max: 1000, step: 'any', suffix: 'PPM', disabled: idleOnlyDisabled,
+    const center = this.numberField('Center frequency', this.toMHz(settings.centerFrequencyHz), {
+      min: this.toMHz(settings.hardwareMinimumFrequencyHz),
+      max: this.toMHz(settings.hardwareMaximumFrequencyHz), step: 0.000001, suffix: 'MHz',
+      disabled: idleOnlyDisabled,
+      help: 'Tunes the receiver to this frequency. Active channels must be stopped before changing it.'
+    });
+    const ppm = this.numberField('Frequency correction', Math.round(Number(settings.frequencyCorrectionPpm)), {
+      min: -1000, max: 1000, step: 1, suffix: 'PPM', disabled: idleOnlyDisabled,
       help: 'Compensates for a receiver oscillator that is slightly off frequency. Changing it retunes the hardware.'
     });
     const minimum = this.numberField('Minimum frequency', this.toMHz(settings.minimumFrequencyHz), {
@@ -781,7 +787,8 @@ class SettingsHardwareView {
       'Lets compatible decoders use measured frequency error to keep this receiver accurately tuned.');
     const fixedCenter = this.checkboxField('Keep center frequency fixed', settings.centerFrequencyFixed === true,
       'Prevents automatic channel assignment from moving the receiver’s center frequency. It does not retune the receiver when switched on.');
-    tuningGrid.append(ppm.wrapper, minimum.wrapper, maximum.wrapper, autoPpm.wrapper, fixedCenter.wrapper);
+    tuningGrid.append(center.wrapper, ppm.wrapper, minimum.wrapper, maximum.wrapper, autoPpm.wrapper,
+      fixedCenter.wrapper);
     tuning.append(tuningGrid);
 
     const device = this.formSection('Device settings', 'Only controls supported by this receiver are shown.');
@@ -802,7 +809,7 @@ class SettingsHardwareView {
     form.append(tuning, device, actions);
     this.settingsBody.append(form);
 
-    this.settingsForm = { form, ppm: ppm.input, minimum: minimum.input, maximum: maximum.input,
+    this.settingsForm = { form, center: center.input, ppm: ppm.input, minimum: minimum.input, maximum: maximum.input,
       autoPpm: autoPpm.input, fixedCenter: fixedCenter.input, device: deviceControls,
       save, reset, message: actionMessage };
     form.addEventListener('input', () => this.markSettingsDirty());
@@ -1066,14 +1073,16 @@ class SettingsHardwareView {
     const device = form?.device;
     if (!form || !settings || !device) return null;
     const ppm = form.ppm.valueAsNumber;
+    const centerMHz = form.center.valueAsNumber;
     const minimumMHz = form.minimum.valueAsNumber;
     const maximumMHz = form.maximum.valueAsNumber;
     const sampleRate = Number(device.sampleRate.input.value);
-    if (![ppm, minimumMHz, maximumMHz, sampleRate].every(Number.isFinite)) return null;
+    if (![ppm, centerMHz, minimumMHz, maximumMHz, sampleRate].every(Number.isFinite)) return null;
     const body = {
       revision: settings.revision,
-      frequencyCorrectionPpm: ppm,
+      frequencyCorrectionPpm: form.ppm.disabled ? null : ppm,
       autoPpm: form.autoPpm.checked,
+      centerFrequencyHz: form.center.disabled ? null : Math.round(centerMHz * 1_000_000),
       minimumFrequencyHz: Math.round(minimumMHz * 1_000_000),
       maximumFrequencyHz: Math.round(maximumMHz * 1_000_000),
       centerFrequencyFixed: form.fixedCenter.checked,

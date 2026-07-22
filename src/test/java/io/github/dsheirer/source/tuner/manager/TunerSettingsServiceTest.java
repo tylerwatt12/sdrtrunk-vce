@@ -19,6 +19,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.airspy.AirspySampleRate;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
+import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.EnabledRequest;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.TunerSettingsException;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService.UpdateRequest;
@@ -55,6 +56,7 @@ class TunerSettingsServiceTest
             assertEquals(id, settings.get("id"));
             assertEquals(Boolean.FALSE, settings.get("enabled"));
             assertEquals(Boolean.TRUE, settings.get("editable"));
+            assertEquals(TunerConfiguration.DEFAULT_FREQUENCY, settings.get("centerFrequencyHz"));
             @SuppressWarnings("unchecked")
             Map<String,Object> device = (Map<String,Object>)settings.get("device");
             assertEquals("AIRSPY", device.get("type"));
@@ -76,16 +78,40 @@ class TunerSettingsServiceTest
             String id = registry.snapshots().getFirst().id();
             Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
             long revision = ((Number)settings.get("revision")).longValue();
-            UpdateRequest request = airspyRequest(revision, 1.5, false, 18);
+            UpdateRequest request = airspyRequest(revision, 2.0, false, 18, 102_500_000L);
             Map<String,Object> updated = service.update(id, request, () -> true).get(2, TimeUnit.SECONDS);
             assertEquals(Boolean.FALSE, updated.get("enabled"));
             assertEquals(Boolean.TRUE, updated.get("editable"));
-            assertEquals(1.5, configuration.getFrequencyCorrection());
+            assertEquals(2.0, configuration.getFrequencyCorrection());
+            assertEquals(102_500_000L, configuration.getFrequency());
             assertFalse(configuration.getAutoPPMCorrectionEnabled());
             assertEquals(18, configuration.getGain().getValue());
             assertEquals(1, saves.get());
             assertEquals(1, discovered.startEntered.getCount(),
                 "editing a disabled receiver must not initialize or query its hardware");
+        }
+    }
+
+    @Test
+    void webManualPpmRequiresWholeNumbersWithoutChangingFractionalStorage() throws Exception
+    {
+        BlockingDiscoveredTuner discovered = fixture();
+        AirspyTunerConfiguration configuration = (AirspyTunerConfiguration)discovered.getTunerConfiguration();
+        configuration.setFrequencyCorrection(1.5);
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            Map<String,Object> settings = service.settings(id).get(2, TimeUnit.SECONDS);
+            assertEquals(1.5, settings.get("frequencyCorrectionPpm"));
+            long revision = ((Number)settings.get("revision")).longValue();
+            ExecutionException failure = org.junit.jupiter.api.Assertions.assertThrows(ExecutionException.class,
+                () -> service.update(id, airspyRequest(revision, 1.5, true, 14), () -> true)
+                    .get(2, TimeUnit.SECONDS));
+            TunerSettingsException invalid = assertInstanceOf(TunerSettingsException.class, failure.getCause());
+            assertEquals(400, invalid.status());
+            assertEquals(1.5, configuration.getFrequencyCorrection());
         }
     }
 
@@ -104,6 +130,7 @@ class TunerSettingsServiceTest
             assertEquals(Boolean.TRUE, settings.get("editable"));
             long revision = ((Number)settings.get("revision")).longValue();
             UpdateRequest request = new UpdateRequest(revision, 0.0, true,
+                TunerConfiguration.DEFAULT_FREQUENCY,
                 R8xEmbeddedTuner.MINIMUM_TUNABLE_FREQUENCY_HZ,
                 R8xEmbeddedTuner.MAXIMUM_TUNABLE_FREQUENCY_HZ, false, "RTL_R8X",
                 RTL2832TunerController.SampleRate.RATE_2_400MHZ.getRate(), null, null, null, null, null,
@@ -271,6 +298,14 @@ class TunerSettingsServiceTest
             assertEquals(18, configuration.getGain().getValue());
 
             long updatedRevision = ((Number)updated.get("revision")).longValue();
+            ExecutionException centerFailure = org.junit.jupiter.api.Assertions.assertThrows(ExecutionException.class,
+                () -> service.update(id, airspyRequest(updatedRevision, 0.0, true, 18,
+                    AirspyTunerController.FREQUENCY_DEFAULT + 1_000_000L), () -> true)
+                    .get(2, TimeUnit.SECONDS));
+            TunerSettingsException activeCenter = assertInstanceOf(TunerSettingsException.class,
+                centerFailure.getCause());
+            assertEquals("active_channels", activeCenter.code());
+
             ExecutionException failure = org.junit.jupiter.api.Assertions.assertThrows(ExecutionException.class,
                 () -> service.update(id, airspyRequest(updatedRevision, 1.0, true, 18), () -> true)
                     .get(2, TimeUnit.SECONDS));
@@ -281,7 +316,7 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void disableCheckAndStateChangeHoldTheChannelAllocationLock() throws Exception
+    void disableCheckAndStateChangeHoldTheTunerLifecycleMonitor() throws Exception
     {
         FakeAirspyTuner tuner = new FakeAirspyTuner();
         RaceDiscoveredTuner discovered = new RaceDiscoveredTuner(tuner, airspyConfiguration());
@@ -297,21 +332,15 @@ class TunerSettingsServiceTest
             CountDownLatch competingLockAcquired = new CountDownLatch(1);
             Thread contender = Thread.ofPlatform().start(() ->
             {
-                tuner.controller().getLock().lock();
-
-                try
+                synchronized(discovered)
                 {
                     competingLockAcquired.countDown();
-                }
-                finally
-                {
-                    tuner.controller().getLock().unlock();
                 }
             });
             assertFalse(competingLockAcquired.await(150, TimeUnit.MILLISECONDS));
             discovered.allowDisable.countDown();
             assertEquals(Boolean.FALSE, disabling.get(2, TimeUnit.SECONDS).get("enabled"));
-            assertTrue(discovered.lockHeldDuringDisable.get());
+            assertTrue(discovered.lifecycleMonitorHeldDuringDisable.get());
             assertTrue(competingLockAcquired.await(2, TimeUnit.SECONDS));
             contender.join(2_000);
         }
@@ -335,6 +364,7 @@ class TunerSettingsServiceTest
             String id = registry.snapshots().getFirst().id();
             long revision = ((Number)service.settings(id).get(2, TimeUnit.SECONDS).get("revision")).longValue();
             UpdateRequest request = new UpdateRequest(revision, 0.0, false,
+                AirspyTunerController.FREQUENCY_DEFAULT,
                 AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ,
                 AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ, false, "AIRSPY",
                 AirspyTunerController.DEFAULT_SAMPLE_RATE.getRate(), "LINEARITY", 14, 9, 9, 7,
@@ -342,6 +372,27 @@ class TunerSettingsServiceTest
             service.update(id, request, () -> true).get(2, TimeUnit.SECONDS);
             assertTrue(saveRan.get());
             assertFalse(lockHeldDuringSave.get());
+        }
+    }
+
+    @Test
+    void changesLiveCenterFrequencyOnlyWhileReceiverIsIdle() throws Exception
+    {
+        FakeAirspyTuner tuner = new FakeAirspyTuner();
+        AirspyTunerConfiguration configuration = airspyConfiguration();
+        ImmediateDiscoveredTuner discovered = new ImmediateDiscoveredTuner(tuner, configuration);
+        TunerRegistry registry = new TunerRegistry(() -> List.of(discovered));
+
+        try(TunerSettingsService service = new TunerSettingsService(registry, () -> {}))
+        {
+            String id = registry.snapshots().getFirst().id();
+            long revision = ((Number)service.settings(id).get(2, TimeUnit.SECONDS).get("revision")).longValue();
+            long requestedCenter = AirspyTunerController.FREQUENCY_DEFAULT + 1_000_000L;
+            Map<String,Object> updated = service.update(id,
+                airspyRequest(revision, 0.0, true, 14, requestedCenter), () -> true).get(2, TimeUnit.SECONDS);
+            assertEquals(requestedCenter, updated.get("centerFrequencyHz"));
+            assertEquals(requestedCenter, tuner.controller().getFrequency());
+            assertEquals(requestedCenter, configuration.getFrequency());
         }
     }
 
@@ -445,7 +496,13 @@ class TunerSettingsServiceTest
 
     private static UpdateRequest airspyRequest(long revision, double ppm, boolean autoPpm, int gain)
     {
-        return new UpdateRequest(revision, ppm, autoPpm,
+        return airspyRequest(revision, ppm, autoPpm, gain, AirspyTunerController.FREQUENCY_DEFAULT);
+    }
+
+    private static UpdateRequest airspyRequest(long revision, double ppm, boolean autoPpm, int gain,
+                                                long centerFrequency)
+    {
+        return new UpdateRequest(revision, ppm, autoPpm, centerFrequency,
             AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ,
             AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ, false, "AIRSPY",
             AirspyTunerController.DEFAULT_SAMPLE_RATE.getRate(), "LINEARITY", gain, 9, 9, 7,
@@ -610,7 +667,7 @@ class TunerSettingsServiceTest
     {
         private final CountDownLatch disableEntered = new CountDownLatch(1);
         private final CountDownLatch allowDisable = new CountDownLatch(1);
-        private final AtomicBoolean lockHeldDuringDisable = new AtomicBoolean();
+        private final AtomicBoolean lifecycleMonitorHeldDuringDisable = new AtomicBoolean();
 
         private RaceDiscoveredTuner(FakeAirspyTuner tuner, AirspyTunerConfiguration configuration)
         {
@@ -622,7 +679,7 @@ class TunerSettingsServiceTest
         {
             if(!enabled)
             {
-                lockHeldDuringDisable.set(getTuner().getTunerController().getLock().isHeldByCurrentThread());
+                lifecycleMonitorHeldDuringDisable.set(Thread.holdsLock(this));
                 disableEntered.countDown();
 
                 try

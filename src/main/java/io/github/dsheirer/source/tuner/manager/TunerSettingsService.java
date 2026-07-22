@@ -298,55 +298,37 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             return snapshot(discoveredTuner, normalizeId(tunerId));
         }
 
-        Tuner tuner = discoveredTuner.getTuner();
-        TunerController controller = tuner != null ? tuner.getTunerController() : null;
-        ReentrantLock controllerLock = !request.enabled() && controller != null ? controller.getLock() : null;
-        boolean locked = false;
-
         try
         {
-            if(controllerLock != null)
+            //Channel allocation uses this same per-tuner lifecycle monitor.  Holding it across the final state check
+            //and stop prevents a grant from retaining a tuner while its channel manager and USB handle are removed.
+            DiscoveredTuner lifecycleTarget = discoveredTuner;
+            synchronized(lifecycleTarget)
             {
-                try
+                ensureAccepting();
+                requireSession(sessionIsValid);
+                discoveredTuner = resolve(tunerId);
+                configuration = discoveredTuner.getTunerConfiguration();
+
+                if(discoveredTuner != lifecycleTarget || revision(discoveredTuner, configuration) != currentRevision)
                 {
-                    locked = controllerLock.tryLock(CONTROLLER_LOCK_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+                    throw error(412, "settings_changed", "Receiver settings changed. Reload them and try again.");
                 }
-                catch(InterruptedException exception)
+
+                Tuner currentTuner = discoveredTuner.getTuner();
+                TunerController currentController = currentTuner != null ? currentTuner.getTunerController() : null;
+                boolean radioWorkActive = activeChannelCount(currentTuner) > 0 ||
+                    currentController != null && currentController.isLockedSampleRate();
+
+                if(!request.enabled() && radioWorkActive && !Boolean.TRUE.equals(request.confirmActiveStop()))
                 {
-                    Thread.currentThread().interrupt();
-                    throw unavailable();
+                    throw error(409, "active_channels",
+                        "This receiver is in use. Confirm that its active channels may stop.");
                 }
 
-                if(!locked)
-                {
-                    throw error(409, "receiver_busy", "The receiver is busy. Try again in a moment.");
-                }
+                ensureAccepting();
+                discoveredTuner.setEnabled(request.enabled());
             }
-
-            ensureAccepting();
-            requireSession(sessionIsValid);
-            discoveredTuner = resolve(tunerId);
-            configuration = discoveredTuner.getTunerConfiguration();
-
-            if(revision(discoveredTuner, configuration) != currentRevision ||
-                tuner != null && discoveredTuner.getTuner() != tuner)
-            {
-                throw error(412, "settings_changed", "Receiver settings changed. Reload them and try again.");
-            }
-
-            Tuner currentTuner = discoveredTuner.getTuner();
-            TunerController currentController = currentTuner != null ? currentTuner.getTunerController() : null;
-            boolean radioWorkActive = activeChannelCount(currentTuner) > 0 ||
-                currentController != null && currentController.isLockedSampleRate();
-
-            if(!request.enabled() && radioWorkActive && !Boolean.TRUE.equals(request.confirmActiveStop()))
-            {
-                throw error(409, "active_channels",
-                    "This receiver is in use. Confirm that its active channels may stop.");
-            }
-
-            ensureAccepting();
-            discoveredTuner.setEnabled(request.enabled());
         }
         catch(TunerSettingsException exception)
         {
@@ -357,14 +339,6 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             mLog.warn("Unable to change web tuner enabled state for [{}]", tunerId, exception);
             throw error(503, "receiver_command_failed", "The receiver could not change its enabled state.");
         }
-        finally
-        {
-            if(locked)
-            {
-                controllerLock.unlock();
-            }
-        }
-
         try
         {
             mSaveConfigurations.run();
@@ -392,18 +366,22 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         int activeChannels = activeChannelCount(tuner);
         boolean radioWorkActive = activeChannels > 0 || controller.isLockedSampleRate();
         DeviceChange deviceChange = validateDevice(configuration, controller, request);
-        boolean ppmChanged = Double.compare(configuration.getFrequencyCorrection(),
-            request.frequencyCorrectionPpm()) != 0;
+        boolean ppmChanged = request.frequencyCorrectionPpm() != null &&
+            Double.compare(configuration.getFrequencyCorrection(), request.frequencyCorrectionPpm()) != 0;
         long currentMinimum = effectiveMinimum(configuration, controller);
         long currentMaximum = effectiveMaximum(configuration, controller);
+        long currentCenterFrequency = controller.getFrequency();
+        long requestedCenterFrequency = request.centerFrequencyHz() != null ? request.centerFrequencyHz() :
+            currentCenterFrequency;
+        boolean centerFrequencyChanged = requestedCenterFrequency != currentCenterFrequency;
         boolean extentsChanged = currentMinimum != request.minimumFrequencyHz() ||
             currentMaximum != request.maximumFrequencyHz();
-        boolean unsafeChange = ppmChanged || extentsChanged || deviceChange.requiresIdle();
+        boolean unsafeChange = ppmChanged || centerFrequencyChanged || extentsChanged || deviceChange.requiresIdle();
 
         if(radioWorkActive && unsafeChange)
         {
             throw error(409, "active_channels",
-                "Stop this receiver’s active channels before changing frequency correction, limits, sample rate, or Bias-T.");
+                "Stop this receiver’s active channels before changing center frequency, frequency correction, limits, sample rate, or Bias-T.");
         }
 
         if(deviceChange.sampleRateHz() > request.maximumFrequencyHz() - request.minimumFrequencyHz())
@@ -419,11 +397,10 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             throw invalid("The minimum and maximum frequencies must stay inside this receiver’s supported range.");
         }
 
-        long centerFrequency = controller.getFrequency();
-
-        if(centerFrequency < request.minimumFrequencyHz() || centerFrequency > request.maximumFrequencyHz())
+        if(requestedCenterFrequency < request.minimumFrequencyHz() ||
+            requestedCenterFrequency > request.maximumFrequencyHz())
         {
-            throw invalid("The receiver’s current center frequency must remain inside the minimum and maximum range.");
+            throw invalid("Center frequency must remain inside the minimum and maximum range.");
         }
 
         double originalPpm = controller.getFrequencyCorrection();
@@ -448,6 +425,12 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
                 controller.setFrequencyExtents(request.minimumFrequencyHz(), request.maximumFrequencyHz());
             }
 
+            if(centerFrequencyChanged)
+            {
+                ensureAccepting();
+                controller.setFrequency(requestedCenterFrequency);
+            }
+
             if(originalAutoPpm != request.autoPpm())
             {
                 ensureAccepting();
@@ -462,12 +445,16 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         }
         catch(Exception | LinkageError exception)
         {
-            rollbackHardware(controller, deviceChange, originalPpm, currentMinimum, currentMaximum,
+            rollbackHardware(controller, deviceChange, originalPpm, currentCenterFrequency, currentMinimum, currentMaximum,
                 originalAutoPpm, originalCenterFrequencyFixed, tuner);
             throw exception;
         }
 
-        configuration.setFrequencyCorrection(request.frequencyCorrectionPpm());
+        if(request.frequencyCorrectionPpm() != null)
+        {
+            configuration.setFrequencyCorrection(request.frequencyCorrectionPpm());
+        }
+        configuration.setFrequency(requestedCenterFrequency);
         configuration.setMinimumFrequency(request.minimumFrequencyHz());
         configuration.setMaximumFrequency(request.maximumFrequencyHz());
         configuration.setAutoPPMCorrectionEnabled(request.autoPpm());
@@ -497,14 +484,19 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
             throw invalid("The minimum and maximum frequencies must stay inside this receiver’s supported range.");
         }
 
-        long savedCenterFrequency = configuration.getFrequency();
+        long savedCenterFrequency = request.centerFrequencyHz() != null ? request.centerFrequencyHz() :
+            configuration.getFrequency();
 
         if(savedCenterFrequency < request.minimumFrequencyHz() || savedCenterFrequency > request.maximumFrequencyHz())
         {
-            throw invalid("The receiver’s saved center frequency must remain inside the minimum and maximum range.");
+            throw invalid("Center frequency must remain inside the minimum and maximum range.");
         }
 
-        configuration.setFrequencyCorrection(request.frequencyCorrectionPpm());
+        if(request.frequencyCorrectionPpm() != null)
+        {
+            configuration.setFrequencyCorrection(request.frequencyCorrectionPpm());
+        }
+        configuration.setFrequency(savedCenterFrequency);
         configuration.setMinimumFrequency(request.minimumFrequencyHz());
         configuration.setMaximumFrequency(request.maximumFrequencyHz());
         configuration.setAutoPPMCorrectionEnabled(request.autoPpm());
@@ -517,7 +509,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
      * the receiver is only rolled back while the same runtime tuner is still attached.
      */
     private void rollbackHardware(TunerController controller, DeviceChange deviceChange, double frequencyCorrection,
-                                  long minimumFrequency, long maximumFrequency, boolean autoPpm,
+                                  long centerFrequency, long minimumFrequency, long maximumFrequency, boolean autoPpm,
                                   boolean centerFrequencyFixed, Tuner expectedTuner)
     {
         if(expectedTuner.getTunerController() != controller)
@@ -528,6 +520,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         rollbackStep("device settings", deviceChange.restoreHardware());
         rollbackStep("frequency correction", () -> controller.setFrequencyCorrection(frequencyCorrection));
         rollbackStep("frequency limits", () -> controller.setFrequencyExtents(minimumFrequency, maximumFrequency));
+        rollbackStep("center frequency", () -> controller.setFrequency(centerFrequency));
         rollbackStep("automatic frequency correction",
             () -> controller.getTunerFrequencyErrorManager().setEnabled(autoPpm));
         rollbackStep("fixed center-frequency state",
@@ -832,6 +825,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         if(configuration == null)
         {
             response.put("frequencyCorrectionPpm", null);
+            response.put("centerFrequencyHz", null);
             response.put("autoPpm", null);
             response.put("minimumFrequencyHz", null);
             response.put("maximumFrequencyHz", null);
@@ -844,6 +838,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         }
 
         response.put("frequencyCorrectionPpm", configuration.getFrequencyCorrection());
+        response.put("centerFrequencyHz", available ? controller.getFrequency() : configuration.getFrequency());
         response.put("autoPpm", configuration.getAutoPPMCorrectionEnabled());
         response.put("minimumFrequencyHz", effectiveMinimum(configuration, controller));
         response.put("maximumFrequencyHz", effectiveMaximum(configuration, controller));
@@ -1003,10 +998,11 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
 
     private void validateCommon(UpdateRequest request)
     {
-        if(request.frequencyCorrectionPpm() == null || !Double.isFinite(request.frequencyCorrectionPpm()) ||
-            request.frequencyCorrectionPpm() < MINIMUM_PPM || request.frequencyCorrectionPpm() > MAXIMUM_PPM)
+        if(request.frequencyCorrectionPpm() != null && (!Double.isFinite(request.frequencyCorrectionPpm()) ||
+            request.frequencyCorrectionPpm() < MINIMUM_PPM || request.frequencyCorrectionPpm() > MAXIMUM_PPM ||
+            request.frequencyCorrectionPpm() != Math.rint(request.frequencyCorrectionPpm())))
         {
-            throw invalid("Frequency correction must be between -1000 and 1000 PPM.");
+            throw invalid("Manual frequency correction must be a whole number from -1000 to 1000 PPM.");
         }
 
         requireBoolean(request.autoPpm(), "Automatic PPM state is required.");
@@ -1134,7 +1130,7 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
         else
         {
             value.append('|').append(configuration.getClass().getName()).append('|')
-                .append(configuration.getFrequencyCorrection()).append('|')
+                .append(configuration.getFrequency()).append('|').append(configuration.getFrequencyCorrection()).append('|')
             .append(configuration.getAutoPPMCorrectionEnabled()).append('|')
             .append(configuration.getMinimumFrequency()).append('|').append(configuration.getMaximumFrequency())
             .append('|').append(configuration.isCenterFrequencyLocked());
@@ -1357,7 +1353,8 @@ public final class TunerSettingsService implements TunerSettingsOperations, Auto
     }
 
     public record UpdateRequest(Long revision, Double frequencyCorrectionPpm, Boolean autoPpm,
-                                Long minimumFrequencyHz, Long maximumFrequencyHz, Boolean centerFrequencyFixed,
+                                Long centerFrequencyHz, Long minimumFrequencyHz, Long maximumFrequencyHz,
+                                Boolean centerFrequencyFixed,
                                 String deviceType, Integer sampleRateHz,
                                 String airspyGainMode, Integer airspyGain, Integer airspyIfGain,
                                 Integer airspyMixerGain, Integer airspyLnaGain, Boolean airspyMixerAgc,

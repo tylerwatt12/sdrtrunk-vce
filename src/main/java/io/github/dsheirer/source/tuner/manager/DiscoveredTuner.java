@@ -129,7 +129,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     /**
      * Sets the enabled state of this discovered tuner
      */
-    public void setEnabled(boolean enabled)
+    public synchronized void setEnabled(boolean enabled)
     {
         //If there was a change in state
         if(mEnabled ^ enabled)
@@ -307,7 +307,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     /**
      * Attempts to restart a tuner that's currently in an error state
      */
-    public void restart()
+    public synchronized void restart()
     {
         if(getTunerStatus() == TunerStatus.ERROR)
         {
@@ -329,7 +329,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     /**
      * Stop this discovered tuner, notify registered listeners/consumers and release any resources that it is using.
      */
-    public void stop()
+    public synchronized void stop()
     {
         if(hasTuner())
         {

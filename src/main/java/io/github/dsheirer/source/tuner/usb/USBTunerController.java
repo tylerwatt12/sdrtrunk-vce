@@ -31,6 +31,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +56,8 @@ public abstract class USBTunerController extends TunerController
     private static final int USB_BULK_TRANSFER_BUFFER_POOL_SIZE = 8;
     protected static final byte USB_BULK_TRANSFER_ENDPOINT = (byte) 0x81;
     private static final long USB_BULK_TRANSFER_TIMEOUT_MS = 2000l;
+    private static final long USB_SHUTDOWN_WAIT_MS = 5_000L;
+    private static final long USB_TRANSFER_DRAIN_WAIT_MS = 1_500L;
 
     protected int mBus;
     protected String mPortAddress;
@@ -263,30 +266,51 @@ public abstract class USBTunerController extends TunerController
     public final void stop()
     {
         mRunning = false;
+        AtomicBoolean safeToRelease = new AtomicBoolean();
 
-        //Spin the shutdown onto a new thread so that we can set a max wait threshold.
-        Thread t = new Thread(() -> {
-            stopStreaming();
-            mNativeBufferBroadcaster.clear();
-            deviceStop();
-        });
+        //USB transfers and the event loop must be completely quiescent before their native handle is released.
+        Thread t = new Thread(() ->
+        {
+            try
+            {
+                if(stopStreaming())
+                {
+                    mNativeBufferBroadcaster.clear();
+                    deviceStop();
+                    safeToRelease.set(true);
+                }
+            }
+            catch(Throwable throwable)
+            {
+                mLog.error("Error while preparing USB tuner for shutdown", throwable);
+            }
+        }, "sdrtrunk USB tuner shutdown - bus [" + mBus + "] port [" + mPortAddress + "]");
 
         t.start();
 
         try
         {
-            //Wait up to 500 milliseconds for the shutdown to complete ... otherwise interrupt it and finish shutdown
-            t.join(500);
+            t.join(USB_SHUTDOWN_WAIT_MS);
 
             if(t.isAlive())
             {
-                mLog.info("Tuner shutdown exceeded 500ms - forcing shutdown");
-                t.interrupt();
+                mLog.error("USB tuner shutdown did not quiesce within {} ms; native resources will remain open " +
+                    "instead of risking an unsafe forced close", USB_SHUTDOWN_WAIT_MS);
+                return;
             }
         }
         catch(InterruptedException ie)
         {
             Thread.currentThread().interrupt();
+            mLog.warn("Interrupted while waiting for USB tuner shutdown; native resources will remain open", ie);
+            return;
+        }
+
+        if(!safeToRelease.get())
+        {
+            mLog.error("USB tuner transfers did not quiesce; native resources will remain open instead of risking " +
+                "an unsafe forced close");
+            return;
         }
 
         //Release transfers
@@ -338,7 +362,7 @@ public abstract class USBTunerController extends TunerController
     /**
      * Stop streaming data from the tuner
      */
-    private void stopStreaming()
+    private boolean stopStreaming()
     {
         if(mStreaming.compareAndSet(true, false))
         {
@@ -346,16 +370,34 @@ public abstract class USBTunerController extends TunerController
             mTransferManager.setAutoResubmitTransfers(false);
 
             //Stop event processing thread to put all submitted tranfers in a stable state - blocks until stopped
-            mEventProcessor.stop();
+            if(!mEventProcessor.stop())
+            {
+                return false;
+            }
 
             //Cancel all currently submitted transfers
             mTransferManager.cancelTransfers();
 
-            //Perform final event processing iteration so LibUsb returns all of our cancelled tranfers
-            mEventProcessor.handleFinalEvents();
+            //Continue processing cancellation callbacks until every submitted transfer is returned.  Freeing a
+            //transfer or closing its handle while libusb still owns it can terminate the entire JVM.
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(USB_TRANSFER_DRAIN_WAIT_MS);
+
+            while(mTransferManager.hasInProgressTransfers() && System.nanoTime() < deadline)
+            {
+                mEventProcessor.handleFinalEvents();
+            }
+
+            if(mTransferManager.hasInProgressTransfers())
+            {
+                mLog.error("Timed out waiting for [{}] cancelled USB transfers to return",
+                    mTransferManager.getInProgressTransferCount());
+                return false;
+            }
 
             streamingCleanup();
         }
+
+        return !mTransferManager.hasInProgressTransfers();
     }
 
     /**
@@ -525,7 +567,7 @@ public abstract class USBTunerController extends TunerController
     {
         private List<Transfer> mAvailableTransfers;
         private LinkedTransferQueue<Transfer> mInProgressTransfers = new LinkedTransferQueue<>();
-        private boolean mAutoResubmitTransfers = false;
+        private volatile boolean mAutoResubmitTransfers = false;
         private int mTransferErrorCount = 0;
         private List<Transfer> mErrorTransfers = new ArrayList<>();
 
@@ -699,6 +741,16 @@ public abstract class USBTunerController extends TunerController
             }
         }
 
+        private boolean hasInProgressTransfers()
+        {
+            return !mInProgressTransfers.isEmpty();
+        }
+
+        private int getInProgressTransferCount()
+        {
+            return mInProgressTransfers.size();
+        }
+
         @Override
         public void processTransfer(Transfer transfer)
         {
@@ -771,7 +823,7 @@ public abstract class USBTunerController extends TunerController
     class UsbEventProcessor implements Runnable
     {
         private Thread mThread;
-        private boolean mProcessing = false;
+        private volatile boolean mProcessing = false;
 
         /**
          * Start the event processing thread
@@ -791,23 +843,37 @@ public abstract class USBTunerController extends TunerController
         /**
          * Set the stop processing flag and block until the thread stops, blocking up to 1000 ms.
          */
-        public void stop()
+        public boolean stop()
         {
             mProcessing = false;
+            Thread thread = mThread;
+
+            if(thread == null)
+            {
+                return true;
+            }
 
             try
             {
                 //Give the thread a second to stop - it should happen quickly because it's only checking transfers
                 //for completed status and returning them to us to dispatch.
-                mThread.join(1000);
+                thread.join(1000);
             }
             catch(InterruptedException ie)
             {
                 Thread.currentThread().interrupt();
                 mLog.error("Interrupted while stopping LibUsb event processing thread", ie);
+                return false;
+            }
+
+            if(thread.isAlive())
+            {
+                mLog.error("LibUsb event processing thread did not stop within 1000 ms");
+                return false;
             }
 
             mThread = null;
+            return true;
         }
 
         /**
