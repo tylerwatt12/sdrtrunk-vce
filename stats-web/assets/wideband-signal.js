@@ -84,7 +84,6 @@ class WidebandSignalView {
     this.waterfallScrollAccumulator = 0;
     this.activeChannelTables = new Map();
     this.pendingActiveChannelRows = new Map();
-    this.previousActiveChannelBounds = new Map();
     this.activeChannelSource = null;
     this.paletteLut = new Uint8ClampedArray(
       (Math.round((SIGNAL_PALETTE_MAXIMUM_DB - SIGNAL_PALETTE_MINIMUM_DB) / SIGNAL_PALETTE_STEP_DB) + 1) * 3);
@@ -1210,7 +1209,6 @@ class WidebandSignalView {
     this.activeChannelSource = null;
     this.activeChannelTables.clear();
     this.pendingActiveChannelRows.clear();
-    this.previousActiveChannelBounds.clear();
   }
 
   activeChannelRows() {
@@ -1235,7 +1233,7 @@ class WidebandSignalView {
   }
 
   activeChannelKey(row) {
-    return `${row.frequencyHz}:${row.target_id || row.target_alias || row.channel_name || row.status}`;
+    return String(row.frequencyHz);
   }
 
   capturePendingActiveChannels() {
@@ -1253,23 +1251,11 @@ class WidebandSignalView {
     const rows = new Map(this.pendingActiveChannelRows);
     this.activeChannelRows().forEach((row) => rows.set(this.activeChannelKey(row), row));
     this.pendingActiveChannelRows.clear();
-    const currentBounds = new Map();
-    rows.forEach((row, key) => {
+    rows.forEach((row) => {
       const bounds = this.activeSignalBounds(row, canvas.width);
       if (!bounds) return;
-      currentBounds.set(key, bounds);
-      this.drawActiveSignalOutline(context, bounds, rowCount, !this.previousActiveChannelBounds.has(key));
+      this.drawActiveSignalOutline(context, bounds, rowCount);
     });
-    this.previousActiveChannelBounds.forEach((bounds, key) => {
-      if (currentBounds.has(key)) return;
-      context.strokeStyle = bounds.color;
-      context.lineWidth = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
-      context.beginPath();
-      context.moveTo(bounds.leftX, 0.5);
-      context.lineTo(bounds.rightX, 0.5);
-      context.stroke();
-    });
-    this.previousActiveChannelBounds = currentBounds;
   }
 
   activeSignalBounds(row, canvasWidth) {
@@ -1279,7 +1265,7 @@ class WidebandSignalView {
     const center = Math.round((row.frequencyHz - this.frameStartHz()) / binWidthHz);
     const visible = this.visibleBinRange();
     if (center < visible.start || center >= visible.end) return null;
-    const searchRadius = Math.max(2, Math.min(128, Math.ceil(15_000 / binWidthHz)));
+    const searchRadius = Math.max(2, Math.min(96, Math.ceil(10_000 / binWidthHz)));
     const searchStart = Math.max(visible.start, center - searchRadius);
     const searchEnd = Math.min(visible.end - 1, center + searchRadius);
     const seedRadius = Math.max(1, Math.min(searchRadius, Math.ceil(3_000 / binWidthHz)));
@@ -1302,7 +1288,7 @@ class WidebandSignalView {
       }
     }
     const noise = noiseCount ? noiseTotal / noiseCount : this.dbFloor;
-    const threshold = Math.max(this.dbFloor + 6, noise + 6, bins[seed] - 18);
+    const threshold = Math.max(this.dbFloor + 8, noise + 8, bins[seed] - 12);
     let left = seed;
     let right = seed;
     let quiet = 0;
@@ -1310,14 +1296,14 @@ class WidebandSignalView {
       if (bins[index] >= threshold) {
         left = index;
         quiet = 0;
-      } else if (++quiet >= 3) break;
+      } else if (++quiet >= 2) break;
     }
     quiet = 0;
     for (let index = seed + 1; index <= searchEnd; index += 1) {
       if (bins[index] >= threshold) {
         right = index;
         quiet = 0;
-      } else if (++quiet >= 3) break;
+      } else if (++quiet >= 2) break;
     }
     const visibleBins = visible.end - visible.start;
     const centerX = (center - visible.start + 0.5) / visibleBins * canvasWidth;
@@ -1336,18 +1322,14 @@ class WidebandSignalView {
     };
   }
 
-  drawActiveSignalOutline(context, bounds, rowCount, starting) {
+  drawActiveSignalOutline(context, bounds, rowCount) {
     context.strokeStyle = bounds.color;
-    context.lineWidth = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+    context.lineWidth = 1;
     context.beginPath();
     context.moveTo(bounds.leftX, 0);
     context.lineTo(bounds.leftX, rowCount);
     context.moveTo(bounds.rightX, 0);
     context.lineTo(bounds.rightX, rowCount);
-    if (starting) {
-      context.moveTo(bounds.leftX, rowCount - 0.5);
-      context.lineTo(bounds.rightX, rowCount - 0.5);
-    }
     context.stroke();
   }
 
@@ -1360,7 +1342,6 @@ class WidebandSignalView {
     const activeContext = this.activeChannelOverlay?.getContext('2d');
     if (activeContext) activeContext.clearRect(0, 0,
       this.activeChannelOverlay.width, this.activeChannelOverlay.height);
-    this.previousActiveChannelBounds.clear();
   }
 
   clearPlots() {
