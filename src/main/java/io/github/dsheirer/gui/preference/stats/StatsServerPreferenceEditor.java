@@ -11,13 +11,13 @@
 
 package io.github.dsheirer.gui.preference.stats;
 
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.stats.activity.P25ActivityLogMaintenance;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
-import java.nio.file.Path;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import javafx.application.Platform;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
@@ -76,7 +76,8 @@ public class StatsServerPreferenceEditor extends HBox
             mEditorPane.add(getLoggingCheckBox(), 0, row++, 3, 1);
             Label featureExplanation = new Label(
                 "Summary statistics power Dashboard and directory pages. Detailed history additionally powers " +
-                    "Activity pages. The web server, Live Systems, and web audio operate independently.");
+                    "Activity pages. Retention cleanup continues when collection is off. The web server, Live " +
+                    "Systems, and web audio operate independently.");
             featureExplanation.setWrapText(true);
             mEditorPane.add(featureExplanation, 0, row++, 3, 1);
             mEditorPane.add(getDetailedHistoryCheckBox(), 1, row++, 2, 1);
@@ -202,7 +203,8 @@ public class StatsServerPreferenceEditor extends HBox
         if(mResetButton == null)
         {
             mResetButton = new Button("Reset Lifetime Stats");
-            mResetButton.setTooltip(new Tooltip("Deletes Stats Server summaries and history only."));
+            mResetButton.setTooltip(new Tooltip(
+                "Deletes P25, DMR, and NXDN Stats Server summaries and history only."));
             mResetButton.setOnAction(event -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
                     "Reset deletes Stats Server summaries and history. SDRTrunk configuration is unchanged. Continue?",
@@ -236,25 +238,16 @@ public class StatsServerPreferenceEditor extends HBox
     {
         boolean enabled = getLoggingCheckBox().isSelected();
         getDetailedHistoryCheckBox().setDisable(!enabled);
-        getRetentionSpinner().setDisable(!enabled);
+        getRetentionSpinner().setDisable(false);
     }
 
     private void run(P25ActivityLogMaintenance.Operation operation)
     {
-        Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
-        int retentionDays = mApplicationPreference.getStatsLoggingRetentionDays();
+        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.forOperation(operation);
         setMaintenanceRunning(true, operation);
+        MyEventBus.getGlobalEventBus().post(request);
 
-        CompletableFuture.supplyAsync(() -> {
-            try
-            {
-                return P25ActivityLogMaintenance.run(databasePath, retentionDays, operation);
-            }
-            catch(Exception e)
-            {
-                throw new RuntimeException(e);
-            }
-        }).whenComplete((result, throwable) -> Platform.runLater(() -> {
+        request.result().whenComplete((result, throwable) -> Platform.runLater(() -> {
             setMaintenanceRunning(false, operation);
 
             if(throwable != null)

@@ -137,7 +137,7 @@ done
       runtime, application libraries, web assets, and license, and does not contain a portable `data` directory with
       local state.
 - [ ] Confirm that each archive's application JAR contains
-      `io/github/dsheirer/database/upgrade/P25ActivityV19ToV20Upgrade.class`. For the native macOS app this class is in
+      `io/github/dsheirer/database/upgrade/P25ActivitySchemaUpgrade.class`. For the native macOS app this class is in
       `Contents/app/mods/sdrtrunk-vce-jpms.jar`.
 - [ ] Run the packaged upgrade helper with `--help` from one classpath image and the native macOS app. Confirm both
       return exit code 0 and print usage without creating a data folder.

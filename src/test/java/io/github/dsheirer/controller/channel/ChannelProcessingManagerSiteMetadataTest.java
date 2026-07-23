@@ -11,10 +11,15 @@
 
 package io.github.dsheirer.controller.channel;
 
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.protocol.Protocol;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,8 +28,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelProcessingManagerSiteMetadataTest
@@ -86,5 +92,30 @@ public class ChannelProcessingManagerSiteMetadataTest
             releaseListener.countDown();
             caller.shutdownNow();
         }
+    }
+
+    @Test
+    public void protocolListenerReceivesDirectDmrAndBridgedLegacyP25Events() throws Exception
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, null,
+            new UserPreferences());
+        CountDownLatch received = new CountDownLatch(2);
+        List<Protocol> protocols = new java.util.concurrent.CopyOnWriteArrayList<>();
+        manager.addProtocolSiteMetadataListener(event -> {
+            protocols.add(event.snapshot().protocol());
+            received.countDown();
+        });
+        Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
+        DMRNetworkConfigurationSnapshot dmr = new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+            1, 2, "Tier III Trunking", "TINY", null, "Control", 1, 1, List.of(), List.of());
+        P25NetworkConfigurationSnapshot p25 = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(1, 2, 3, 4), null, List.of(), List.of(),
+            List.of(), List.of(), List.of());
+
+        manager.process(new ProtocolSiteMetadataEvent(channel, dmr, 1_000));
+        manager.process(new SiteMetadataEvent(channel, p25, 1_001));
+
+        assertTrue(received.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of(Protocol.DMR, Protocol.APCO25), protocols);
     }
 }

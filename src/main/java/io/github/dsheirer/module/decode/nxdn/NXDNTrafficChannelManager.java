@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.nxdn;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
@@ -77,12 +78,14 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private static final Logger LOGGER = LoggerFactory.getLogger(NXDNTrafficChannelManager.class);
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
     public static final String CHANNEL_START_REJECTED = "CHANNEL START REJECTED";
+    static final long MAX_ACTIVITY_PROGRESS_INTERVAL_MILLISECONDS = 500L;
     private final Channel mParentChannel;
     private final DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private final List<ChannelFrequency> mChannelFrequencies = new ArrayList<>();
     private final Lock mLock = new ReentrantLock();
     private final Map<Long, Channel> mAllocatedTrafficChannelMap = new HashMap<>();
     private final Map<Long, NXDNChannelEventTracker> mEventTrackerMap = new HashMap<>();
+    private final Map<Long, Long> mLastActivityProgressMap = new HashMap<>();
     private final Queue<Channel> mAvailableTrafficChannelQueue = new LinkedTransferQueue<>();
     private final TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private final TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -92,6 +95,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private ChannelAccessInformation mChannelAccessInformation;
     private boolean mIgnoreDataCalls;
     private boolean mIgnoreEncryptedCalls;
+    private ChannelActivityModel mChannelActivityModel;
+    private volatile boolean mTrunkedActivityObserved;
 
     /**
      * Constructs an instance
@@ -117,6 +122,14 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     public TalkerAliasManager getTalkerAliasManager()
     {
         return mTalkerAliasManager;
+    }
+
+    /**
+     * Shared activity model used by the desktop and web Systems views.
+     */
+    public void setChannelActivityModel(ChannelActivityModel channelActivityModel)
+    {
+        mChannelActivityModel = channelActivityModel;
     }
 
     /**
@@ -152,6 +165,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                     trafficChannel.setAliasListName(mParentChannel.getAliasListName());
                     trafficChannel.setSystem(mParentChannel.getSystem());
                     trafficChannel.setSite(mParentChannel.getSite());
+                    trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
                     trafficChannel.setDecodeConfiguration(copyDecodeConfiguration(decodeConfig));
                     trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                     trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
@@ -216,6 +230,16 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      */
     public void broadcast(DecodeEvent decodeEvent)
     {
+        broadcast(decodeEvent, true);
+    }
+
+    private void broadcast(DecodeEvent decodeEvent, boolean publishActivity)
+    {
+        if(publishActivity)
+        {
+            publishChannelActivity(decodeEvent);
+        }
+
         if(mDecodeEventListener != null)
         {
             if(decodeEvent.getEventType() == DecodeEventType.DATA_CALL && mDuplicateDetector.isDuplicate(decodeEvent,
@@ -230,6 +254,26 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             System.out.println("Decode event listener is null");
         }
+    }
+
+    private void publishChannelActivity(DecodeEvent decodeEvent)
+    {
+        if(!mTrunkedActivityObserved || mChannelActivityModel == null || decodeEvent == null ||
+            decodeEvent.getChannelDescriptor() == null)
+        {
+            return;
+        }
+
+        if(decodeEvent.getChannelDescriptor() instanceof NXDNChannel nxdnChannel && !nxdnChannel.isValid())
+        {
+            return;
+        }
+
+        long frequency = decodeEvent.getChannelDescriptor().getDownlinkFrequency();
+        Channel trafficChannel = mAllocatedTrafficChannelMap.get(frequency);
+        mChannelActivityModel.trunkedTrafficEvent(mParentChannel, trafficChannel,
+            decodeEvent.getChannelDescriptor(), null, decodeEvent.getIdentifierCollection(), decodeEvent.getEventType(),
+            getCurrentControlFrequency());
     }
 
     /**
@@ -287,6 +331,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     {
         if(dca.hasChannel() && dca.getChannel().getDownlinkFrequency() > 0)
         {
+            mTrunkedActivityObserved = true;
             DecodeEventType eventType = dca.getEncryptionKeyIdentifier().isEncrypted() ?
                     DecodeEventType.DATA_CALL_ENCRYPTED : DecodeEventType.DATA_CALL;
             processDataCall(dca.getIdentifiers(), dca.getChannel(), eventType, dca.getTimestamp(), dca.getCallOption(),
@@ -374,6 +419,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     {
         if(vca.hasChannel() && vca.getChannel().getDownlinkFrequency() > 0)
         {
+            mTrunkedActivityObserved = true;
             processVoiceCall(vca.getIdentifiers(), vca.getChannel(), vca.getCallType(), vca.getEncryptionKeyIdentifier(),
                     vca.getTimestamp(), vca.getCallOption(), vca.getCallTimer());
         }
@@ -392,6 +438,10 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             //If the channel is null or not configured, use the talkgroup value so we can track the call event
             channel = new NXDNChannelFake(vca.getDestination().getValue());
+        }
+        else
+        {
+            mTrunkedActivityObserved = true;
         }
 
         processVoiceCall(vca.getIdentifiers(), channel, vca.getCallType(), vca.getEncryptionKeyIdentifier(),
@@ -460,13 +510,44 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             if(tracker != null)
             {
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                //Duration-only audio frame updates still belong in decode-event history.  Rate-limit Systems updates
+                //so active calls keep their grant age-out alive without queuing a full snapshot for every audio frame.
+                broadcast(tracker.getEvent(), shouldPublishActivityProgress(frequency, timestamp));
             }
         }
         finally
         {
             mLock.unlock();
         }
+    }
+
+    boolean shouldPublishActivityProgress(long frequency, long timestamp)
+    {
+        Long previous = mLastActivityProgressMap.get(frequency);
+
+        if(previous == null || timestamp < previous ||
+            timestamp - previous >= getActivityProgressIntervalMilliseconds())
+        {
+            mLastActivityProgressMap.put(frequency, timestamp);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Keeps progress snapshots bounded while ensuring that an active call is refreshed before the Systems row's
+     * configured traffic-grant age-out expires.
+     */
+    long getActivityProgressIntervalMilliseconds()
+    {
+        if(mChannelActivityModel != null)
+        {
+            return Math.max(1L, Math.min(MAX_ACTIVITY_PROGRESS_INTERVAL_MILLISECONDS,
+                mChannelActivityModel.getTrafficGrantAgeOutMilliseconds() / 2L));
+        }
+
+        return MAX_ACTIVITY_PROGRESS_INTERVAL_MILLISECONDS;
     }
 
     /**
@@ -677,6 +758,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             mLock.unlock();
         }
 
+        if(mTrunkedActivityObserved && mChannelActivityModel != null)
+        {
+            mChannelActivityModel.trunkedCurrentControl(mParentChannel, current);
+        }
+
     }
 
     @Override
@@ -738,6 +824,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         try
         {
             mEventTrackerMap.remove(frequency);
+            mLastActivityProgressMap.remove(frequency);
         }
         finally
         {

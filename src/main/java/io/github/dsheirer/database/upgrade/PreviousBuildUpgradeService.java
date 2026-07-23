@@ -17,6 +17,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileStore;
@@ -35,6 +36,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.sqlite.SQLiteConfig;
 
@@ -46,8 +48,8 @@ import org.sqlite.SQLiteConfig;
  */
 public final class PreviousBuildUpgradeService
 {
-    public static final int SUPPORTED_SOURCE_VERSION = 19;
-    public static final int CURRENT_VERSION = 20;
+    public static final Set<Integer> SUPPORTED_SOURCE_VERSIONS = Set.of(19, 20);
+    public static final int CURRENT_VERSION = 21;
 
     private static final String VERSION_KEY = "p25_activity_schema_version";
     private static final long FREE_SPACE_MARGIN_BYTES = 64L * 1024L * 1024L;
@@ -141,7 +143,7 @@ public final class PreviousBuildUpgradeService
     }
 
     /**
-     * Upgrades a v19 database already in the current portable data root and retains a standalone v19 backup.
+     * Upgrades a supported earlier database already in the current portable data root and retains a standalone backup.
      */
     public UpgradeResult upgradeCurrent(Path dataRoot, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
@@ -153,10 +155,10 @@ public final class PreviousBuildUpgradeService
         listener.update("Checking previous data");
         int sourceVersion = readP25ActivitySchemaVersion(database);
 
-        if(sourceVersion != SUPPORTED_SOURCE_VERSION)
+        if(!isSupportedSourceVersion(sourceVersion))
         {
-            throw new IOException("This upgrade supports P25 activity database v" + SUPPORTED_SOURCE_VERSION +
-                " only. Found v" + sourceVersion + ".");
+            throw new IOException("This upgrade supports P25 activity database versions " +
+                supportedSourceVersionsLabel() + " only. Found v" + sourceVersion + ".");
         }
 
         Path databaseDirectory = database.getParent();
@@ -166,7 +168,7 @@ public final class PreviousBuildUpgradeService
         Files.createDirectories(backupDirectory);
         String identity = BACKUP_TIME.format(LocalDateTime.now()) + "-" +
             UUID.randomUUID().toString().substring(0, 8);
-        Path backup = backupDirectory.resolve("sdrtrunk-before-v20-" + identity + ".sqlite");
+        Path backup = backupDirectory.resolve("sdrtrunk-before-v21-" + identity + ".sqlite");
         Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".upgrade-" +
             UUID.randomUUID());
 
@@ -256,13 +258,23 @@ public final class PreviousBuildUpgradeService
     {
         int version = readP25ActivitySchemaVersion(database);
 
-        if(version != SUPPORTED_SOURCE_VERSION && version != CURRENT_VERSION)
+        if(!isSupportedSourceVersion(version) && version != CURRENT_VERSION)
         {
-            throw new IOException("Previous-build import supports P25 activity database v" +
-                SUPPORTED_SOURCE_VERSION + " or v" + CURRENT_VERSION + ". Found v" + version + ".");
+            throw new IOException("Previous-build import supports P25 activity database versions " +
+                supportedSourceVersionsLabel() + " or v" + CURRENT_VERSION + ". Found v" + version + ".");
         }
 
         return version;
+    }
+
+    public static boolean isSupportedSourceVersion(int version)
+    {
+        return SUPPORTED_SOURCE_VERSIONS.contains(version);
+    }
+
+    public static String supportedSourceVersionsLabel()
+    {
+        return "v19 or v20";
     }
 
     private static void validateGlobalDatabase(Path database) throws IOException, SQLException
@@ -276,6 +288,7 @@ public final class PreviousBuildUpgradeService
         {
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
+            TrunkedSiteSchema.validate(connection);
             requireIntegrity(connection);
             requireForeignKeysValid(connection);
         }

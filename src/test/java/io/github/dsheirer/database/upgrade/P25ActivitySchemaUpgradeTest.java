@@ -28,7 +28,7 @@ import java.sql.Statement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class P25ActivityV19ToV20UpgradeTest
+class P25ActivitySchemaUpgradeTest
 {
     private static final String VERSION_KEY = "p25_activity_schema_version";
 
@@ -48,15 +48,16 @@ class P25ActivityV19ToV20UpgradeTest
 
         CommandResult result = run(database);
 
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("RESULT: P25 activity schema upgrade complete: v19 -> v20"));
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_SUCCESS, result.exitCode());
+        assertTrue(result.output().contains("RESULT: P25 activity schema upgrade complete: v19 -> v21"));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertEquals("20", metadata(connection, VERSION_KEY));
+            assertEquals("21", metadata(connection, VERSION_KEY));
             assertTrue(tableExists(connection, "p25_foreign_system_band"));
             assertTrue(tableExists(connection, "p25_foreign_system_band_summary"));
+            assertTrue(indexExists(connection, "idx_p25_control_quality_retention"));
             assertEquals(1, count(connection, "alias"));
             P25ActivityLogSchema.validate(connection);
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
@@ -65,7 +66,38 @@ class P25ActivityV19ToV20UpgradeTest
     }
 
     @Test
-    void validatesV20WithoutChangingItsMetadata() throws Exception
+    void migratesV20StagedCopyAndPreservesQualityData() throws Exception
+    {
+        Path database = createV20Database("v20.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_control_channel_quality (
+                    guid, frequency_hz, bucket_start_ms, observed_at_ms
+                ) VALUES ('dmr-site', 451000000, 10000, 12000)
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_SUCCESS, result.exitCode());
+        assertTrue(result.output().contains("v20 -> v21 indexed quality retention"));
+        assertTrue(result.error().isEmpty());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals("21", metadata(connection, VERSION_KEY));
+            assertTrue(indexExists(connection, "idx_p25_control_quality_retention"));
+            assertEquals(1, count(connection, "p25_control_channel_quality"));
+            P25ActivityLogSchema.validate(connection);
+            assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+        }
+    }
+
+    @Test
+    void validatesV21WithoutChangingItsMetadata() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -73,8 +105,8 @@ class P25ActivityV19ToV20UpgradeTest
 
         CommandResult result = run(database);
 
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("already valid at P25 activity schema v20"));
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_SUCCESS, result.exitCode());
+        assertTrue(result.output().contains("already valid at P25 activity schema v21"));
         assertTrue(result.output().contains("without schema changes"));
         assertTrue(result.error().isEmpty());
         assertEquals(updatedAt, metadataUpdatedAt(database, VERSION_KEY));
@@ -92,8 +124,8 @@ class P25ActivityV19ToV20UpgradeTest
 
         CommandResult result = run(database);
 
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("Expected P25 activity schema v19 or v20, found [18]"));
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_UNSUPPORTED_VERSION, result.exitCode());
+        assertTrue(result.error().contains("Expected P25 activity schema v19, v20, or v21, found [18]"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -120,7 +152,7 @@ class P25ActivityV19ToV20UpgradeTest
 
         CommandResult result = run(database);
 
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_MIGRATION_FAILED, result.exitCode());
         assertTrue(result.error().contains("Foreign-key check failed"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -143,7 +175,7 @@ class P25ActivityV19ToV20UpgradeTest
 
         CommandResult result = run(database);
 
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_MIGRATION_FAILED, result.exitCode());
         assertTrue(result.error().contains("SQLite schema is missing table [p25_site_neighbor]"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -155,18 +187,50 @@ class P25ActivityV19ToV20UpgradeTest
     }
 
     @Test
+    void refusesIncorrectPreexistingRetentionIndexWithoutRepairingIt() throws Exception
+    {
+        Path database = createV20Database("incorrect-index.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                CREATE INDEX idx_p25_control_quality_retention
+                ON p25_control_channel_quality(guid)
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertTrue(result.error().contains(
+            "incorrect columns for index [idx_p25_control_quality_retention]: [guid]"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "PRAGMA index_info(idx_p25_control_quality_retention)"))
+        {
+            assertEquals("20", metadata(connection, VERSION_KEY));
+            assertTrue(resultSet.next());
+            assertEquals("guid", resultSet.getString("name"));
+            assertFalse(resultSet.next());
+        }
+    }
+
+    @Test
     void reportsUsageAndMissingInputWithStableExitCodes()
     {
         CommandResult usage = runArguments();
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_USAGE, usage.exitCode());
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_USAGE, usage.exitCode());
         assertTrue(usage.error().contains("A staged database path"));
 
         CommandResult missing = run(mTemporaryFolder.resolve("missing.sqlite"));
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_INPUT, missing.exitCode());
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_INPUT, missing.exitCode());
         assertTrue(missing.error().contains("Staged database not found"));
 
         CommandResult help = runArguments("--help");
-        assertEquals(P25ActivityV19ToV20Upgrade.EXIT_SUCCESS, help.exitCode());
+        assertEquals(P25ActivitySchemaUpgrade.EXIT_SUCCESS, help.exitCode());
         assertTrue(help.output().startsWith("Usage:"));
     }
 
@@ -180,7 +244,23 @@ class P25ActivityV19ToV20UpgradeTest
         {
             statement.executeUpdate("DROP TABLE p25_foreign_system_band");
             statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");
+            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
             SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "19");
+        }
+
+        return database;
+    }
+
+    private Path createV20Database(String name) throws Exception
+    {
+        Path database = mTemporaryFolder.resolve(name);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
+            SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "20");
         }
 
         return database;
@@ -200,7 +280,7 @@ class P25ActivityV19ToV20UpgradeTest
         try(PrintStream outputStream = new PrintStream(output, true, StandardCharsets.UTF_8);
             PrintStream errorStream = new PrintStream(error, true, StandardCharsets.UTF_8))
         {
-            exitCode = P25ActivityV19ToV20Upgrade.run(arguments, outputStream, errorStream);
+            exitCode = P25ActivitySchemaUpgrade.run(arguments, outputStream, errorStream);
         }
 
         return new CommandResult(exitCode, output.toString(StandardCharsets.UTF_8),
@@ -243,6 +323,20 @@ class P25ActivityV19ToV20UpgradeTest
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"))
         {
             statement.setString(1, table);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next();
+            }
+        }
+    }
+
+    private static boolean indexExists(Connection connection, String index) throws Exception
+    {
+        try(var statement = connection.prepareStatement(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?"))
+        {
+            statement.setString(1, index);
 
             try(ResultSet resultSet = statement.executeQuery())
             {

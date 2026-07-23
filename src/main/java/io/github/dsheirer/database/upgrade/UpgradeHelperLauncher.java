@@ -23,11 +23,12 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Runs the compiled database upgrade helper in a child Java process.
+ * Runs the compiled database upgrade helpers in child Java processes.
  */
 public final class UpgradeHelperLauncher
 {
-    private static final String HELPER_CLASS = P25ActivityV19ToV20Upgrade.class.getName();
+    private static final String P25_HELPER_CLASS = P25ActivitySchemaUpgrade.class.getName();
+    private static final String TRUNKED_SITE_HELPER_CLASS = TrunkedSiteSchemaInstaller.class.getName();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
 
     private UpgradeHelperLauncher()
@@ -57,8 +58,26 @@ public final class UpgradeHelperLauncher
             throw new IOException("Staged SQLite database does not exist: " + normalized);
         }
 
-        Process process = new ProcessBuilder(command(normalized, sourceDataRoot, targetDataRoot))
-            .redirectErrorStream(true).start();
+        String p25Output = runHelper(command(normalized, P25_HELPER_CLASS, sourceDataRoot, targetDataRoot),
+            "P25 activity");
+        String trunkedSiteOutput = runHelper(command(normalized, TRUNKED_SITE_HELPER_CLASS, null, null),
+            "trunked-site");
+
+        if(p25Output.isBlank())
+        {
+            return trunkedSiteOutput;
+        }
+        else if(trunkedSiteOutput.isBlank())
+        {
+            return p25Output;
+        }
+
+        return p25Output + System.lineSeparator() + trunkedSiteOutput;
+    }
+
+    private static String runHelper(List<String> command, String label) throws IOException, InterruptedException
+    {
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
         boolean completed;
 
         try
@@ -76,16 +95,16 @@ public final class UpgradeHelperLauncher
         {
             process.destroyForcibly();
             process.waitFor(10, TimeUnit.SECONDS);
-            throw new IOException("The database upgrade helper did not finish within " +
+            throw new IOException("The database upgrade helper did not finish the " + label + " upgrade within " +
                 PROCESS_TIMEOUT.toMinutes() + " minutes.");
         }
 
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
 
-        if(process.exitValue() != P25ActivityV19ToV20Upgrade.EXIT_SUCCESS)
+        if(process.exitValue() != 0)
         {
-            throw new IOException("The database upgrade helper failed with exit code " + process.exitValue() +
-                (output.isBlank() ? "." : ":\n" + output));
+            throw new IOException("The database upgrade helper failed for the " + label + " upgrade with exit code " +
+                process.exitValue() + (output.isBlank() ? "." : ":\n" + output));
         }
 
         return output;
@@ -97,6 +116,12 @@ public final class UpgradeHelperLauncher
     }
 
     static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot) throws IOException
+    {
+        return command(stagedDatabase, P25_HELPER_CLASS, sourceDataRoot, targetDataRoot);
+    }
+
+    private static List<String> command(Path stagedDatabase, String helperClass, Path sourceDataRoot,
+                                        Path targetDataRoot) throws IOException
     {
         if((sourceDataRoot == null) != (targetDataRoot == null))
         {
@@ -112,7 +137,7 @@ public final class UpgradeHelperLauncher
             throw new IOException("The packaged Java executable was not found: " + java);
         }
 
-        Module module = P25ActivityV19ToV20Upgrade.class.getModule();
+        Module module = P25ActivitySchemaUpgrade.class.getModule();
         List<String> command = new ArrayList<>();
         command.add(java.toString());
 
@@ -129,7 +154,7 @@ public final class UpgradeHelperLauncher
             command.add("--module-path");
             command.add(modulePath);
             command.add("-m");
-            command.add(module.getName() + "/" + HELPER_CLASS);
+            command.add(module.getName() + "/" + helperClass);
         }
         else
         {
@@ -143,7 +168,7 @@ public final class UpgradeHelperLauncher
             command.add("--enable-native-access=ALL-UNNAMED");
             command.add("-cp");
             command.add(classPath);
-            command.add(HELPER_CLASS);
+            command.add(helperClass);
         }
 
         command.add(stagedDatabase.toAbsolutePath().normalize().toString());

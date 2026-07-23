@@ -44,7 +44,7 @@ public class P25HistoryV19ToV20ForeignSystemBandsMigrator
 
             if("20".equals(version))
             {
-                P25ActivityLogSchema.validate(connection);
+                P25ActivityLogSchema.validateV20ForUpgrade(connection);
                 System.out.println("Database is already at P25 activity schema v20.");
                 return;
             }
@@ -76,7 +76,7 @@ public class P25HistoryV19ToV20ForeignSystemBandsMigrator
             {
                 P25ActivityLogSchema.createForeignSystemBandTables(statement);
                 SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "20");
-                P25ActivityLogSchema.validate(connection);
+                P25ActivityLogSchema.validateV20ForUpgrade(connection);
                 statement.execute("COMMIT");
             }
             catch(SQLException e)

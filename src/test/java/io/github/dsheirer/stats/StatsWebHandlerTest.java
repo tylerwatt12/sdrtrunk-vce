@@ -565,6 +565,17 @@ class StatsWebHandlerTest
     }
 
     @Test
+    void servesLiveSiteSnapshots() throws Exception
+    {
+        try(InputStream stream = openSse("live/sites"))
+        {
+            String event = readSseEvent(stream);
+            assertTrue(event.startsWith("event: snapshot\n"));
+            assertTrue(event.contains("\"sites\":[]"));
+        }
+    }
+
+    @Test
     void closesAnonymousSsePromptlyWhenFeatureBecomesAdminOnly() throws Exception
     {
         try(InputStream stream = openSse("live/web-calls"))

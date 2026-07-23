@@ -18,6 +18,10 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
@@ -32,14 +36,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Owns optional P25 activity logging and keeps SQLite work off decoder/UI threads.
+ * Owns statistics collection and maintenance and keeps SQLite work off decoder/UI threads.
  */
-public class P25ActivityLogService implements SiteMetadataListener
+public class P25ActivityLogService implements SiteMetadataListener, ProtocolSiteMetadataListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogService.class);
     private static final long DEDUPE_RETENTION_MILLISECONDS = 60000;
@@ -49,8 +54,10 @@ public class P25ActivityLogService implements SiteMetadataListener
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receiveDecodeEvent;
     private final Listener<ControlChannelQualitySnapshot> mQualityListener = this::receiveControlChannelQuality;
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
+    private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
     private final List<P25ActivityCommitListener> mCommitListeners = new CopyOnWriteArrayList<>();
     private volatile P25ActivityLogWriter mWriter;
+    private volatile boolean mCollectionEnabled;
     private Path mCurrentDatabasePath;
     private P25ActivityLogWriter.WriterStatus mLastWriterStatus;
 
@@ -86,7 +93,7 @@ public class P25ActivityLogService implements SiteMetadataListener
 
     private void receiveCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer != null)
         {
@@ -102,10 +109,25 @@ public class P25ActivityLogService implements SiteMetadataListener
 
     private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
-        if(writer != null && snapshot != null && snapshot.active() && snapshot.guid() != null &&
-            !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
+        if(snapshot != null && !snapshot.active() && snapshot.guid() != null)
+        {
+            mObservedTrunkedSites.computeIfPresent(snapshot.guid(), (guid, evidence) ->
+                evidence.channel() == snapshot.channel() ? null : evidence);
+        }
+
+        TrunkedSiteEvidence evidence = snapshot != null && snapshot.guid() != null ?
+            mObservedTrunkedSites.get(snapshot.guid()) : null;
+        boolean observedTrunkedSite = hasCurrentTrunkedSiteEvidence(snapshot, evidence);
+
+        if(evidence != null && !observedTrunkedSite)
+        {
+            mObservedTrunkedSites.remove(snapshot.guid(), evidence);
+        }
+
+        if(writer != null && shouldPersistControlChannelQuality(snapshot, observedTrunkedSite) &&
+            snapshot.active() && snapshot.guid() != null && !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
         {
             writer.enqueue(new P25ActivityLogRecords.ControlChannelQuality(snapshot.observedAtMs(), snapshot.guid(),
                 snapshot.frequencyHz(), snapshot.signalDbfs(), snapshot.averageSignalDbfs(),
@@ -113,6 +135,65 @@ public class P25ActivityLogService implements SiteMetadataListener
                 snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(),
                 snapshot.droppedBits(), snapshot.lastValidDecodeMs()));
         }
+    }
+
+    /**
+     * Requires metadata evidence from the same running channel and decoder configuration. DMR and NXDN decoder types
+     * can also be conventional, so a GUID or decoder type alone is not durable proof that later quality samples are
+     * trunked. The quality monitor's inactive snapshot clears this evidence when the channel stops.
+     */
+    static boolean hasCurrentTrunkedSiteEvidence(ControlChannelQualitySnapshot snapshot,
+                                                  TrunkedSiteEvidence evidence)
+    {
+        if(snapshot == null || snapshot.channel() == null || evidence == null ||
+            evidence.channel() != snapshot.channel())
+        {
+            return false;
+        }
+
+        DecoderType decoderType = decoderType(snapshot.channel());
+        return snapshot.channel().getDecodeConfiguration() == evidence.decodeConfiguration() &&
+            decoderType == evidence.decoderType();
+    }
+
+    /**
+     * Identifies control-channel decoders that publish the shared trunked-site quality contract.  The existing
+     * GUID-keyed quality bucket table is structurally protocol-neutral; its historical P25 name is retained for
+     * deployed-schema compatibility.
+     */
+    static boolean isTrunkedControlChannelQuality(ControlChannelQualitySnapshot snapshot)
+    {
+        DecoderType decoderType = snapshot != null ? decoderType(snapshot.channel()) : null;
+        return decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ||
+            decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN;
+    }
+
+    /**
+     * P25 preserves its existing persistence behavior.  DMR and NXDN monitors can also be attached to conventional
+     * channels, so their samples are retained only after useful trunked-site metadata has identified the receiver.
+     */
+    static boolean shouldPersistControlChannelQuality(ControlChannelQualitySnapshot snapshot,
+                                                       boolean observedTrunkedSite)
+    {
+        if(!isTrunkedControlChannelQuality(snapshot))
+        {
+            return false;
+        }
+
+        DecoderType decoderType = snapshot != null ? decoderType(snapshot.channel()) : null;
+
+        if(decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2)
+        {
+            return true;
+        }
+
+        return observedTrunkedSite;
+    }
+
+    private static DecoderType decoderType(Channel channel)
+    {
+        return channel != null && channel.getDecodeConfiguration() != null ?
+            channel.getDecodeConfiguration().getDecoderType() : null;
     }
 
     public void dispose()
@@ -133,12 +214,9 @@ public class P25ActivityLogService implements SiteMetadataListener
     private synchronized void updateWriterState()
     {
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
-
-        if(!preference.isStatsLoggingEnabled())
-        {
-            stopWriter();
-            return;
-        }
+        boolean collectionEnabled = preference.isStatsLoggingEnabled();
+        boolean collectionWasEnabled = mCollectionEnabled;
+        mCollectionEnabled = collectionEnabled;
 
         Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
         int retentionDays = preference.getStatsLoggingRetentionDays();
@@ -150,6 +228,13 @@ public class P25ActivityLogService implements SiteMetadataListener
         {
             mWriter.setRetentionDays(retentionDays);
             mWriter.setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
+
+            if(collectionWasEnabled && !collectionEnabled)
+            {
+                clearDedupeKeys();
+                mObservedTrunkedSites.clear();
+            }
+
             return;
         }
 
@@ -158,7 +243,7 @@ public class P25ActivityLogService implements SiteMetadataListener
         mWriter = new P25ActivityLogWriter(databasePath, retentionDays, detailedEventHistoryEnabled,
             this::notifyActivityCommitted);
         mWriter.start();
-        mLog.info("Stats database logging enabled [{}]", databasePath);
+        mLog.info("Stats database writer started for collection and retention maintenance [{}]", databasePath);
     }
 
     private synchronized void stopWriter()
@@ -170,18 +255,16 @@ public class P25ActivityLogService implements SiteMetadataListener
             mWriter = null;
             mCurrentDatabasePath = null;
 
-            synchronized(mRecentDedupeKeys)
-            {
-                mRecentDedupeKeys.clear();
-            }
+            clearDedupeKeys();
+            mObservedTrunkedSites.clear();
 
-            mLog.info("P25 database logging disabled");
+            mLog.info("Stats database writer stopped");
         }
     }
 
     private void receiveDecodeEvent(Channel channel, IDecodeEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -213,7 +296,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     @Subscribe
     public void receiveCallStart(P25CallStartEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -231,7 +314,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     @Subscribe
     public void receiveGrantObservation(P25GrantObservationEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -249,7 +332,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     @Subscribe
     public void receiveTalkerAlias(P25TalkerAliasEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -267,7 +350,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -279,6 +362,74 @@ public class P25ActivityLogService implements SiteMetadataListener
         if(record != null)
         {
             writer.enqueue(record);
+        }
+    }
+
+    @Override
+    public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
+    {
+        P25ActivityLogWriter writer = getCollectionWriter();
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        var snapshot = TrunkedSiteMetadataMapper.map(event);
+        Channel channel = event != null ? event.channel() : null;
+        String guid = channel != null ? channel.getRadresGuid() : null;
+
+        if(snapshot != null)
+        {
+            if(snapshot.guid() != null && !snapshot.guid().isBlank())
+            {
+                mObservedTrunkedSites.put(snapshot.guid(),
+                    new TrunkedSiteEvidence(channel,
+                        channel != null ? channel.getDecodeConfiguration() : null, decoderType(channel)));
+            }
+
+            writer.enqueue(new P25ActivityLogRecords.TrunkedSiteSnapshot(
+                snapshot.observedAtEpochMilliseconds(), snapshot));
+        }
+        else if(guid != null && !guid.isBlank())
+        {
+            mObservedTrunkedSites.remove(guid);
+        }
+    }
+
+    record TrunkedSiteEvidence(Channel channel, DecodeConfiguration decodeConfiguration, DecoderType decoderType)
+    {
+    }
+
+    /**
+     * Routes runtime database maintenance through the same connection and background writer used for observations.
+     */
+    @Subscribe
+    public void receiveMaintenanceRequest(StatsDatabaseMaintenanceRequest request)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer != null)
+        {
+            writer.submitMaintenance(request);
+        }
+        else if(request != null)
+        {
+            request.result().completeExceptionally(
+                new IllegalStateException("Statistics database writer is not available"));
+        }
+    }
+
+    private P25ActivityLogWriter getCollectionWriter()
+    {
+        return mCollectionEnabled ? mWriter : null;
+    }
+
+    private void clearDedupeKeys()
+    {
+        synchronized(mRecentDedupeKeys)
+        {
+            mRecentDedupeKeys.clear();
         }
     }
 
@@ -364,7 +515,7 @@ public class P25ActivityLogService implements SiteMetadataListener
 
         if(writerStatus != null)
         {
-            if(summaryConfigured)
+            if(summaryConfigured || writerStatus.state() == P25ActivityLogStatus.State.FAILED)
             {
                 state = writerStatus.state();
             }

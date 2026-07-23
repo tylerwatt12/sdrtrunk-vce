@@ -21,6 +21,9 @@ package io.github.dsheirer.channel.metadata.activity;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -187,20 +190,26 @@ public class SiteActivitySession
 
     public ChannelActivityRow traffic(Channel trafficChannel, IChannelDescriptor channelDescriptor)
     {
+        return traffic(trafficChannel, channelDescriptor, getTimeslot(channelDescriptor));
+    }
+
+    public ChannelActivityRow traffic(Channel trafficChannel, IChannelDescriptor channelDescriptor, Integer timeslot)
+    {
         if(channelDescriptor == null || channelDescriptor.getDownlinkFrequency() <= 0)
         {
             return null;
         }
 
         long frequency = channelDescriptor.getDownlinkFrequency();
-        Integer timeslot = getTimeslot(channelDescriptor);
-        String key = trafficKey(frequency, timeslot);
+        Integer normalizedTimeslot = timeslot != null && timeslot > 0 ? timeslot : null;
+        String key = trafficKey(frequency, normalizedTimeslot);
         Channel rowChannel = trafficChannel != null ? trafficChannel : mParentChannel;
         ChannelActivityRow row = mTrafficRows.get(key);
 
         if(row == null)
         {
-            row = mTableModel.getOrCreate(key, rowChannel, ChannelActivityRow.Role.TRAFFIC, frequency, timeslot);
+            row = mTableModel.getOrCreate(key, rowChannel, ChannelActivityRow.Role.TRAFFIC, frequency,
+                normalizedTimeslot);
             row.setOrigin(ChannelActivityRow.Origin.TRAFFIC_GRANT);
             mTrafficRows.put(key, row);
             inheritFrequencyTags(row);
@@ -210,7 +219,7 @@ public class SiteActivitySession
         row.setRole(ChannelActivityRow.Role.TRAFFIC);
         row.setOrigin(ChannelActivityRow.Origin.TRAFFIC_GRANT);
         row.setFrequency(frequency);
-        row.setTimeslot(timeslot);
+        row.setTimeslot(normalizedTimeslot);
         row.setLcn(getLcn(channelDescriptor));
 
         return row;
@@ -520,6 +529,19 @@ public class SiteActivitySession
             return null;
         }
 
+        if(channelDescriptor instanceof DMRChannel dmrChannel)
+        {
+            return String.valueOf(dmrChannel.getChannelNumber());
+        }
+        else if(channelDescriptor instanceof NXDNChannelLookup lookup)
+        {
+            return String.valueOf(lookup.getChannelNumber());
+        }
+        else if(channelDescriptor instanceof NXDNChannelDFA dfa)
+        {
+            return String.valueOf(dfa.getOutboundChannelNumber());
+        }
+
         String lcn = channelDescriptor.toString();
         Integer timeslot = getTimeslot(channelDescriptor);
 
@@ -537,6 +559,10 @@ public class SiteActivitySession
         if(channelDescriptor instanceof APCO25Channel apco25Channel && apco25Channel.isTDMAChannel())
         {
             return apco25Channel.getTimeslot();
+        }
+        else if(channelDescriptor instanceof DMRChannel dmrChannel)
+        {
+            return dmrChannel.getTimeslot();
         }
 
         return null;

@@ -32,6 +32,7 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
@@ -85,6 +86,7 @@ public class NXDNDecoderState extends DecoderState
     private static final int IDLE_DURING_CALL_MAX_COUNT = 5;
     private final Channel mChannel;
     private final NXDNNetworkConfigurationMonitor mNetworkConfigurationMonitor = new NXDNNetworkConfigurationMonitor();
+    private final ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private final NXDNTrafficChannelManager mTrafficChannelManager;
     private boolean mEncryptedCallStateDetermined = false;
     private boolean mEncryptedCall = false;
@@ -100,6 +102,9 @@ public class NXDNDecoderState extends DecoderState
     {
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
+        mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
+            mNetworkConfigurationMonitor::getSnapshot, this::hasInterModuleEventBus,
+            event -> getInterModuleEventBus().post(event));
     }
 
     /**
@@ -140,6 +145,7 @@ public class NXDNDecoderState extends DecoderState
         {
             case REQUEST_RESET:
                 resetState();
+                mSiteMetadataPublisher.reset();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 setCurrentFrequency(event.getFrequency());
@@ -434,6 +440,10 @@ public class NXDNDecoderState extends DecoderState
             case TRAFFIC_OUT_27_BC_ADJACENT_SITE_INFORMATION:
             case TYPE_D_OUT_27_BC_ADJACENT_SITE_INFORMATION:
             case TRAFFIC_OUT_28_BC_FAILURE_STATUS_INFORMATION:
+            case TYPE_D_SCCH_OUT_INFO_4_REPEATER_IDLE:
+            case TYPE_D_SCCH_OUT_INFO_4_REPEATER_FREE:
+            case TYPE_D_SCCH_OUT_INFO_4_REPEATER_HALT:
+            case TYPE_D_SCCH_OUT_INFO_4_SITE_ID:
                 mNetworkConfigurationMonitor.process(layer3);
                 break;
             case CONTROL_OUT_32_MM_REGISTRATION_RESPONSE:
@@ -677,6 +687,7 @@ public class NXDNDecoderState extends DecoderState
                 break;
         }
 
+        mSiteMetadataPublisher.publish(layer3.getTimestamp());
         broadcast(new DecoderStateEvent(this, event, state));
     }
 

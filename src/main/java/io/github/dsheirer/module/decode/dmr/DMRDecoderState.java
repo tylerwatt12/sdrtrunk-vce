@@ -41,6 +41,7 @@ import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.EmptyTimeslotPlaceholderMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.TimeslotMessage;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
@@ -127,6 +128,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             new AddChannelRotationActiveStateRequest(State.ACTIVE);
     private Channel mChannel;
     private DMRNetworkConfigurationMonitor mNetworkConfigurationMonitor;
+    private ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private DMRTrafficChannelManager mTrafficChannelManager;
     private DecodeEvent mCurrentCallEvent;
     private boolean mIgnoreCRCChecksums;
@@ -143,16 +145,22 @@ public class DMRDecoderState extends TimeslotDecoderState
         super(timeslot);
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
+        DecodeConfigDMR config = channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmrConfig ?
+            dmrConfig : null;
 
         //The decoder state passes all messages to the network configuration monitor, so we only construct
         //the monitor for timeslot 1.
         if(timeslot == 1)
         {
-            mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor();
+            mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor(
+                config != null ? config.getTimeslotMap() : List.of());
+            mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
+                () -> mNetworkConfigurationMonitor != null ? mNetworkConfigurationMonitor.getSnapshot() : null,
+                this::hasInterModuleEventBus, event -> getInterModuleEventBus().post(event));
         }
 
         //For RAS protected systems, allows user to ignore CRC checksums and still decode the system
-        if(channel.getDecodeConfiguration() instanceof DecodeConfigDMR config)
+        if(config != null)
         {
             mIgnoreCRCChecksums = config.getIgnoreCRCChecksums();
         }
@@ -339,6 +347,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         if(mNetworkConfigurationMonitor != null && isValid(message) && message instanceof DMRMessage dmrMessage)
         {
             mNetworkConfigurationMonitor.process(dmrMessage);
+            mSiteMetadataPublisher.publish(dmrMessage.getTimestamp());
         }
     }
 
@@ -1460,6 +1469,10 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             case REQUEST_RESET:
                 resetState();
+                if(mSiteMetadataPublisher != null)
+                {
+                    mSiteMetadataPublisher.reset();
+                }
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 setCurrentFrequency(event.getFrequency());

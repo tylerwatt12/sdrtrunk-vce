@@ -20,6 +20,7 @@ package io.github.dsheirer.module.decode.dmr;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelConversionRequest;
@@ -107,6 +108,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private Channel mParentChannel;
     private boolean mIgnoreDataCalls;
+    private ChannelActivityModel mChannelActivityModel;
+    private volatile boolean mTrunkedActivityObserved;
 
     //Used as temporary storage for message and decode event history during Cap+ REST channel rotation
     private DecodeEventHistory mTransientDecodeEventHistory;
@@ -137,6 +140,14 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public TalkerAliasManager getTalkerAliasManager()
     {
         return mTalkerAliasManager;
+    }
+
+    /**
+     * Shared activity model used by the desktop and web Systems views.
+     */
+    public void setChannelActivityModel(ChannelActivityModel channelActivityModel)
+    {
+        mChannelActivityModel = channelActivityModel;
     }
 
     /**
@@ -174,6 +185,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         {
             mLock.unlock();
         }
+
+        if(mTrunkedActivityObserved && mChannelActivityModel != null)
+        {
+            mChannelActivityModel.trunkedCurrentControl(mParentChannel, current);
+        }
     }
 
     /**
@@ -202,6 +218,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         trafficChannel.setAliasListName(mParentChannel.getAliasListName());
                         trafficChannel.setSystem(mParentChannel.getSystem());
                         trafficChannel.setSite(mParentChannel.getSite());
+                        trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
                         trafficChannel.setDecodeConfiguration(decodeConfig);
                         trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                         trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
@@ -348,10 +365,30 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     public void broadcast(IDecodeEvent decodeEvent)
     {
+        publishChannelActivity(decodeEvent);
+
         if(mDecodeEventListener != null)
         {
             mDecodeEventListener.receive(decodeEvent);
         }
+    }
+
+    private void publishChannelActivity(IDecodeEvent decodeEvent)
+    {
+        if(!mTrunkedActivityObserved || mChannelActivityModel == null || decodeEvent == null ||
+            decodeEvent.getChannelDescriptor() == null)
+        {
+            return;
+        }
+
+        long frequency = decodeEvent.getChannelDescriptor().getDownlinkFrequency();
+        Channel allocated = mAllocatedChannelFrequencyMap.get(frequency);
+        Channel trafficChannel = allocated != null && allocated.isTrafficChannel() ? allocated : null;
+        Integer timeslot = decodeEvent.hasTimeslot() ? decodeEvent.getTimeslot() :
+            decodeEvent.getChannelDescriptor() instanceof DMRChannel dmrChannel ? dmrChannel.getTimeslot() : null;
+        mChannelActivityModel.trunkedTrafficEvent(mParentChannel, trafficChannel,
+            decodeEvent.getChannelDescriptor(), timeslot, decodeEvent.getIdentifierCollection(),
+            decodeEvent.getEventType(), getCurrentControlFrequency());
     }
 
     /**
@@ -372,6 +409,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public void processChannelGrant(DMRChannel channel, IdentifierCollection identifierCollection,
                                     Opcode opcode, long timestamp, boolean encrypted)
     {
+        mTrunkedActivityObserved = true;
         mLock.lock();
 
         try
@@ -380,7 +418,14 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
             if(allocated)
             {
-                //Note: if traffic channel is allocated then do nothing & let the channel maintain its own event state
+                //Traffic children maintain their own event state.  The parent control frequency is also tracked as
+                //allocated, however, and can carry a call on its other timeslot.  Publish the repeated/current-RF grant
+                //directly so that call remains visible after the parent is promoted out of Conventional activity.
+                if(mAllocatedChannelFrequencyMap.get(channel.getDownlinkFrequency()) == mParentChannel)
+                {
+                    publishChannelActivity(channel, identifierCollection,
+                        getEventType(opcode, identifierCollection, encrypted));
+                }
             }
             else
             {
@@ -507,6 +552,20 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         {
             mLock.unlock();
         }
+    }
+
+    private void publishChannelActivity(DMRChannel channel, IdentifierCollection identifiers,
+                                        DecodeEventType eventType)
+    {
+        if(mChannelActivityModel == null || channel == null)
+        {
+            return;
+        }
+
+        Channel allocated = mAllocatedChannelFrequencyMap.get(channel.getDownlinkFrequency());
+        Channel trafficChannel = allocated != null && allocated.isTrafficChannel() ? allocated : null;
+        mChannelActivityModel.trunkedTrafficEvent(mParentChannel, trafficChannel, channel, channel.getTimeslot(),
+            identifiers, eventType, getCurrentControlFrequency());
     }
 
 

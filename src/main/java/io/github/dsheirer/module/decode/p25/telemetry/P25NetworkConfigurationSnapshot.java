@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.module.decode.p25.telemetry;
 
+import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 
 /**
@@ -31,7 +33,14 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                               List<TalkerAlias> talkerAliases,
                                               SiteStatus siteStatus,
                                               List<ForeignSystemBand> foreignSystemBands)
+    implements SiteMetadataSnapshot
 {
+    @Override
+    public Protocol protocol()
+    {
+        return decoder != null && decoder.contains("PHASE_2") ? Protocol.APCO25_PHASE2 : Protocol.APCO25;
+    }
+
     /**
      * Compatibility constructor for snapshot producers that don't provide foreign-system frequency bands.
      */

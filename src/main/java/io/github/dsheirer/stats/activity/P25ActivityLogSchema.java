@@ -34,18 +34,19 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v20 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
+ * The v21 shape is summary-first. P25 systems own radios and talkgroups, while receiver contexts own site observations.
  * Detailed event rows are optional, while lifetime and hourly summaries are always updated when stats logging is
  * enabled. Table names are split by protocol family so DMR/NXDN can be added without folding unrelated records into
  * the P25 tables.
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 20;
+    private static final int SCHEMA_VERSION = 21;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY = "p25_call_output_metrics_started_at_ms";
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
+    static final int RETENTION_DELETE_BATCH_SIZE = 1_000;
     private static final int NULL_TIMESLOT = -1;
 
     private static final int CONTEXT_TRUNKED_SITE = 1;
@@ -157,6 +158,18 @@ public class P25ActivityLogSchema
     {
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS,
             List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION))));
+        validateIndexColumns(connection, "idx_p25_control_quality_retention",
+            List.of("observed_at_ms", "guid", "frequency_hz", "bucket_start_ms"));
+    }
+
+    /**
+     * Validates the public v20 shape for an explicit external upgrade. Normal application startup validates only the
+     * current schema through {@link #validate(Connection)}.
+     */
+    public static void validateV20ForUpgrade(Connection connection) throws SQLException
+    {
+        SqliteSchemaValidator.validate(connection, TABLES, V20_INDEXES, VIEWS,
+            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "20")));
     }
 
     static Long recordActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
@@ -384,7 +397,7 @@ public class P25ActivityLogSchema
         deleted += deleteByTime(connection, "p25_site_patch_group_radio_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_patch_group_summary", "last_seen_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_snapshot", "last_seen_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_control_channel_quality", "observed_at_ms", cutoffEpochMilliseconds);
+        deleted += deleteExpiredControlChannelQuality(connection, cutoffEpochMilliseconds);
         return deleted;
     }
 
@@ -843,6 +856,11 @@ public class P25ActivityLogSchema
 
     private static void createControlChannelQualityTable(Statement statement) throws SQLException
     {
+        /*
+         * The deployed table name predates DMR/NXDN quality collection.  Its GUID-scoped bucket shape is shared by
+         * every supported trunked protocol, so keep the name for schema compatibility instead of forcing a
+         * data-moving migration for a cosmetic rename.
+         */
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_control_channel_quality (
                 guid TEXT NOT NULL,
@@ -903,6 +921,18 @@ public class P25ActivityLogSchema
             """);
     }
 
+    /**
+     * Creates the retention-first index for the shared P25/DMR/NXDN control-channel quality buckets. This is called
+     * only by the startup schema creator for a new database and by the explicit external P25 activity schema upgrade.
+     */
+    public static void createControlChannelQualityRetentionIndex(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_p25_control_quality_retention
+            ON p25_control_channel_quality(observed_at_ms, guid, frequency_hz, bucket_start_ms)
+            """);
+    }
+
     private static void createIndexesAndViews(Statement statement) throws SQLException
     {
         statement.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_receiver_context_guid ON receiver_context(guid) WHERE guid IS NOT NULL");
@@ -926,6 +956,7 @@ public class P25ActivityLogSchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_summary_guid_frequency ON p25_site_channel_summary(guid, downlink_hz)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_summary_guid_site ON p25_site_neighbor_summary(guid, system_id, rfss, site)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_control_quality_guid_time ON p25_control_channel_quality(guid, observed_at_ms DESC)");
+        createControlChannelQualityRetentionIndex(statement);
         statement.executeUpdate(createResolvedViewSql());
     }
 
@@ -1001,7 +1032,7 @@ public class P25ActivityLogSchema
         table("logger_status", "key", "value", "updated_at_ms")
     );
 
-    private static final List<String> INDEXES = List.of(
+    private static final List<String> V20_INDEXES = List.of(
         "idx_receiver_context_guid",
         "idx_p25_activity_event_context_time",
         "idx_p25_activity_event_target_time",
@@ -1024,8 +1055,16 @@ public class P25ActivityLogSchema
         "idx_p25_site_neighbor_summary_guid_site",
         "idx_p25_control_quality_guid_time"
     );
+    private static final List<String> INDEXES = currentIndexes();
 
     private static final List<String> VIEWS = List.of("p25_activity_event_resolved");
+
+    private static List<String> currentIndexes()
+    {
+        List<String> indexes = new ArrayList<>(V20_INDEXES);
+        indexes.add("idx_p25_control_quality_retention");
+        return List.copyOf(indexes);
+    }
 
     private static void upsertP25SystemSummaries(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
                                                  int systemKey) throws SQLException
@@ -2367,6 +2406,62 @@ public class P25ActivityLogSchema
             statement.setLong(1, cutoffEpochMilliseconds);
             return statement.executeUpdate();
         }
+    }
+
+    private static void validateIndexColumns(Connection connection, String index, List<String> expected)
+        throws SQLException
+    {
+        List<String> actual = new ArrayList<>();
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("PRAGMA index_info(" + index + ")"))
+        {
+            while(resultSet.next())
+            {
+                actual.add(resultSet.getString("name"));
+            }
+        }
+
+        if(!actual.equals(expected))
+        {
+            throw new SQLException("SQLite schema has incorrect columns for index [" + index + "]: " + actual);
+        }
+    }
+
+    /**
+     * Drains expired shared control-channel quality buckets in bounded, retention-indexed batches. The ordered
+     * covering-index selection prevents a full table scan and the composite primary-key lookup keeps each delete
+     * batch deterministic for the WITHOUT ROWID table.
+     */
+    private static int deleteExpiredControlChannelQuality(Connection connection, long cutoffEpochMilliseconds)
+        throws SQLException
+    {
+        int total = 0;
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            DELETE FROM p25_control_channel_quality
+            WHERE (guid, frequency_hz, bucket_start_ms) IN (
+                SELECT guid, frequency_hz, bucket_start_ms
+                FROM p25_control_channel_quality INDEXED BY idx_p25_control_quality_retention
+                WHERE observed_at_ms < ?
+                ORDER BY observed_at_ms, guid, frequency_hz, bucket_start_ms
+                LIMIT ?
+            )
+            """))
+        {
+            int deleted;
+
+            do
+            {
+                statement.setLong(1, cutoffEpochMilliseconds);
+                statement.setInt(2, RETENTION_DELETE_BATCH_SIZE);
+                deleted = statement.executeUpdate();
+                total = Math.addExact(total, deleted);
+            }
+            while(deleted > 0);
+        }
+
+        return total;
     }
 
     private static int deleteAll(Connection connection, String table) throws SQLException

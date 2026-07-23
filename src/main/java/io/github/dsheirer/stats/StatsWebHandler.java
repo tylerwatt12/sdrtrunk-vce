@@ -377,6 +377,7 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
                     case "/api/conventional/detail" -> handleJson(request, response, callback,
                         () -> mDatabase.conventionalDetail(statsRequest(request)));
                     case "/live/systems" -> handleSystemsSse(request, response, callback, authorization);
+                    case "/live/sites" -> handleSitesSse(request, response, callback, authorization);
                     case "/live/web-calls" -> handleWebCallsSse(request, response, callback, authorization);
                     case "/live/activity" -> handleActivitySse(request, response, callback, authorization);
                     default -> {
@@ -1207,6 +1208,26 @@ public final class StatsWebHandler extends Handler.Abstract implements AutoClose
 
         streamSse(request, response, callback, subscription, "snapshot", mLiveService.snapshot(), event -> true,
             authorization);
+    }
+
+    private void handleSitesSse(Request request, Response response, Callback callback,
+                                FeatureAuthorization authorization)
+    {
+        if(!requireMethod(request, response, callback, "GET"))
+        {
+            return;
+        }
+
+        StatsLiveEventHub.Subscription subscription = mLiveService.subscribeSites();
+
+        if(subscription == null)
+        {
+            sendText(response, callback, 429, "Too many live Stats Server clients");
+            return;
+        }
+
+        streamSse(request, response, callback, subscription, "snapshot", mLiveService.siteSnapshot(),
+            event -> "site_metadata".equals(event.name()) || "site_removed".equals(event.name()), authorization);
     }
 
     private void handleWebCallsSse(Request request, Response response, Callback callback,

@@ -24,4 +24,12 @@ public record SiteMetadataEvent(Channel channel, P25NetworkConfigurationSnapshot
     {
         return channel != null && snapshot != null && snapshot.isUseful();
     }
+
+    /**
+     * Protocol-neutral view of this legacy P25 event.
+     */
+    public ProtocolSiteMetadataEvent asProtocolSiteMetadataEvent()
+    {
+        return new ProtocolSiteMetadataEvent(channel, snapshot, observedAtEpochMilliseconds);
+    }
 }

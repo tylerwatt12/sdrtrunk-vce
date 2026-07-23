@@ -143,8 +143,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mTunerManager = tunerManager;
         mConfigurationManager = configurationManager;
         mDatabase = new StatsWebDatabase(userPreferences);
-        mLiveService = new StatsLiveService(mDatabase,
-            channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null);
+        mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         mLiveContextResolver = channelProcessingManager != null ?
             new LiveContextResolver(channelProcessingManager) : null;
         mLiveActivityService = mLiveContextResolver != null ? new LiveActivityService(mLiveContextResolver) : null;
@@ -552,6 +551,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             "assetsAvailable", assetRoot != null && Files.isRegularFile(assetRoot.resolve("index.html")),
             "liveChannels", Map.of(
                 "systems", "/live/systems",
+                "sites", "/live/sites",
                 "webCalls", "/live/web-calls",
                 "activity", "/live/activity"
             ),

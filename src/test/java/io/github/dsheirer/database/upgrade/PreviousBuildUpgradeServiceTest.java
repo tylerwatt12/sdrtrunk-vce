@@ -25,6 +25,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -82,15 +83,18 @@ class PreviousBuildUpgradeServiceTest
         assertTrue(result.importedPreviousProfile());
         assertEquals(19, result.sourceVersion());
         assertNull(result.safetyBackup());
-        assertTrue(result.helperOutput().contains("v19 -> v20"));
+        assertTrue(result.helperOutput().contains("v19 -> v21"));
+        assertTrue(result.helperOutput().contains("absent -> v2"));
         assertEquals(List.of("Checking previous data", "Copying setup", "Creating safety backup",
             "Updating database", "Checking updated data", "Finishing"), progress);
 
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-        assertEquals(20, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(targetDatabase));
+        assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(targetDatabase));
         assertEquals(1, count(targetDatabase, "alias"));
         assertTrue(tableExists(targetDatabase, "p25_foreign_system_band"));
         assertTrue(tableExists(targetDatabase, "p25_foreign_system_band_summary"));
+        assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
+        validateTrunkedSiteSchema(targetDatabase);
         assertEquals(1, count(EncryptionKeyVaultPath.getVaultPath(targetRoot), "vault_payload"));
         assertArrayEquals(jmbeContents, Files.readAllBytes(targetRoot.resolve("jmbe/jmbe.jar")));
         assertArrayEquals(moduleContents, Files.readAllBytes(targetRoot.resolve("modules/optional.jar")));
@@ -106,6 +110,35 @@ class PreviousBuildUpgradeServiceTest
         assertArrayEquals(moduleContents, Files.readAllBytes(module));
         assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(sourceDatabase));
         assertFalse(tableExists(sourceDatabase, "p25_foreign_system_band"));
+        assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
+    }
+
+    @Test
+    void importsRealOldV20ProfileAndInstallsTrunkedSiteSchemaWithoutChangingSource() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("sdrtrunk-vce-v20-data");
+        Path sourceDatabase = createV20DatabaseWithoutTrunkedSiteSchema(sourceRoot);
+        insertAlias(sourceDatabase, "Existing V20");
+        byte[] sourceDatabaseHash = sha256(sourceDatabase);
+        Path targetRoot = mTemporaryFolder.resolve("sdrtrunk-vce-current-data");
+
+        PreviousBuildUpgradeService.UpgradeResult result = new PreviousBuildUpgradeService()
+            .importPrevious(sourceRoot, targetRoot, null);
+
+        assertTrue(result.importedPreviousProfile());
+        assertEquals(20, result.sourceVersion());
+        assertTrue(result.helperOutput().contains("v20 -> v21 indexed quality retention"));
+        assertTrue(result.helperOutput().contains("absent -> v2"));
+
+        Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
+        assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(targetDatabase));
+        assertEquals(1, count(targetDatabase, "alias"));
+        assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
+        validateTrunkedSiteSchema(targetDatabase);
+
+        assertArrayEquals(sourceDatabaseHash, sha256(sourceDatabase));
+        assertEquals(20, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(sourceDatabase));
+        assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
     }
 
     @Test
@@ -120,21 +153,24 @@ class PreviousBuildUpgradeServiceTest
 
         assertFalse(result.importedPreviousProfile());
         assertEquals(19, result.sourceVersion());
-        assertTrue(result.helperOutput().contains("v19 -> v20"));
+        assertTrue(result.helperOutput().contains("v19 -> v21"));
+        assertTrue(result.helperOutput().contains("absent -> v2"));
         assertNotNull(result.safetyBackup());
         assertTrue(Files.isRegularFile(result.safetyBackup()));
         assertTrue(result.safetyBackup().startsWith(database.getParent().resolve("backups")));
 
-        assertEquals(20, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(database));
+        assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(database));
         assertEquals(1, count(database, "alias"));
         try(Connection connection = open(database))
         {
             P25ActivityLogSchema.validate(connection);
+            TrunkedSiteSchema.validate(connection);
         }
 
         assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(result.safetyBackup()));
         assertEquals(1, count(result.safetyBackup(), "alias"));
         assertFalse(tableExists(result.safetyBackup(), "p25_foreign_system_band"));
+        assertFalse(tableExists(result.safetyBackup(), "trunked_site_snapshot"));
         assertEquals("ok", scalar(result.safetyBackup(), "PRAGMA quick_check"));
     }
 
@@ -172,6 +208,33 @@ class PreviousBuildUpgradeServiceTest
     }
 
     @Test
+    void partialTrunkedSiteSchemaFailureLeavesCurrentDatabaseUnchanged() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("current-data");
+        Path database = createV19Database(dataRoot);
+        insertAlias(database, "Keep Partial Source");
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("CREATE TABLE trunked_site_snapshot (guid TEXT PRIMARY KEY)");
+        }
+
+        byte[] before = sha256(database);
+        IOException exception = assertThrows(IOException.class,
+            () -> new PreviousBuildUpgradeService().upgradeCurrent(dataRoot, null));
+
+        assertTrue(exception.getMessage().contains("database upgrade helper failed"));
+        assertTrue(exception.getMessage().contains("ambiguous partial schema"));
+        assertArrayEquals(before, sha256(database));
+        assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(database));
+        assertEquals(1, count(database, "alias"));
+        assertFalse(tableExists(database, "p25_foreign_system_band"));
+        assertTrue(tableExists(database, "trunked_site_snapshot"));
+        assertFalse(tableExists(database, "trunked_site_channel_summary"));
+        assertFalse(tableExists(database, "trunked_site_neighbor_summary"));
+    }
+
+    @Test
     void refusesToReplaceCurrentDatabaseWhileAnotherConnectionIsOpen() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-data");
@@ -200,10 +263,47 @@ class PreviousBuildUpgradeServiceTest
         {
             statement.executeUpdate("DROP TABLE p25_foreign_system_band");
             statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");
+            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
             SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "19");
         }
 
+        removeTrunkedSiteSchema(database);
         return database;
+    }
+
+    private Path createV20DatabaseWithoutTrunkedSiteSchema(Path dataRoot) throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
+            SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "20");
+        }
+
+        removeTrunkedSiteSchema(database);
+        return database;
+    }
+
+    private static void removeTrunkedSiteSchema(Path database) throws Exception
+    {
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP TABLE trunked_site_channel_summary");
+            statement.executeUpdate("DROP TABLE trunked_site_neighbor_summary");
+            statement.executeUpdate("DROP TABLE trunked_site_snapshot");
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
+                TrunkedSiteSchema.SCHEMA_VERSION_KEY + "'");
+        }
+    }
+
+    private static void validateTrunkedSiteSchema(Path database) throws Exception
+    {
+        try(Connection connection = open(database))
+        {
+            TrunkedSiteSchema.validate(connection);
+        }
     }
 
     private static Path createVault(Path dataRoot) throws Exception
@@ -291,6 +391,20 @@ class PreviousBuildUpgradeServiceTest
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"))
         {
             statement.setString(1, table);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next();
+            }
+        }
+    }
+
+    private static boolean indexExists(Path database, String index) throws Exception
+    {
+        try(Connection connection = open(database); var statement = connection.prepareStatement(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?"))
+        {
+            statement.setString(1, index);
 
             try(ResultSet resultSet = statement.executeQuery())
             {

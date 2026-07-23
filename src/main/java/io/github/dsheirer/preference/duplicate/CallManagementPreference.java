@@ -164,6 +164,7 @@ public class CallManagementPreference extends Preference implements ICallManagem
     /**
      * Preference for suppressing streaming of duplicate calls
      */
+    @Override
     public boolean isDuplicateStreamingSuppressionEnabled()
     {
         if(mDuplicateStreamingSuppressionEnabled == null)

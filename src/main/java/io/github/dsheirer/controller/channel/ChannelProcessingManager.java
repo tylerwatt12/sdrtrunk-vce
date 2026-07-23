@@ -39,6 +39,8 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.module.Module;
@@ -101,6 +103,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private List<BiConsumer<Channel,IDecodeEvent>> mChannelDecodeEventListeners = new CopyOnWriteArrayList<>();
     private List<Listener<ControlChannelQualitySnapshot>> mControlChannelQualityListeners = new CopyOnWriteArrayList<>();
     private List<SiteMetadataListener> mSiteMetadataListeners = new CopyOnWriteArrayList<>();
+    private List<ProtocolSiteMetadataListener> mProtocolSiteMetadataListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
     private ChannelMapModel mChannelMapModel;
@@ -731,7 +734,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
             mChannelActivityModel);
 
-        if(isP25ControlChannel(channel))
+        if(supportsControlChannelQuality(channel))
         {
             modules.add(new ControlChannelQualityMonitor(channel, source.getFrequency(),
                 this::receiveControlChannelQuality));
@@ -1193,9 +1196,33 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     {
         mChannelActivityModel.receiveSiteMetadata(event);
 
+        if(event != null)
+        {
+            dispatchProtocolSiteMetadata(event.asProtocolSiteMetadataEvent());
+        }
+
         for(SiteMetadataListener listener: mSiteMetadataListeners)
         {
             listener.receiveSiteMetadata(event);
+        }
+    }
+
+    /**
+     * Receives protocol-neutral site configuration from DMR, NXDN, and future decoder modules.
+     */
+    @Subscribe
+    public void process(ProtocolSiteMetadataEvent event)
+    {
+        mSiteMetadataExecutor.execute(() -> dispatchProtocolSiteMetadata(event));
+    }
+
+    private void dispatchProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
+    {
+        mChannelActivityModel.receiveProtocolSiteMetadata(event);
+
+        for(ProtocolSiteMetadataListener listener: mProtocolSiteMetadataListeners)
+        {
+            listener.receiveProtocolSiteMetadata(event);
         }
     }
 
@@ -1262,12 +1289,18 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
     }
 
-    private boolean isP25ControlChannel(Channel channel)
+    /**
+     * Indicates if a standard parent channel supports live trunked control-channel quality.  DMR and NXDN use the
+     * same decoder for conventional and trunked operation, so their monitor can run before trunking is observed;
+     * {@link ChannelActivityModel} only attaches those measurements after an actual trunked site session exists.
+     */
+    static boolean supportsControlChannelQuality(Channel channel)
     {
         DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
         return channel != null && channel.isStandardChannel() &&
-            (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2);
+            (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ||
+                decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN);
     }
 
     public void addSiteMetadataListener(SiteMetadataListener listener)
@@ -1278,6 +1311,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeSiteMetadataListener(SiteMetadataListener listener)
     {
         mSiteMetadataListeners.remove(listener);
+    }
+
+    /**
+     * Adds one listener for P25, DMR, and NXDN site metadata. Legacy P25 listeners remain supported separately.
+     */
+    public void addProtocolSiteMetadataListener(ProtocolSiteMetadataListener listener)
+    {
+        mProtocolSiteMetadataListeners.add(listener);
+    }
+
+    public void removeProtocolSiteMetadataListener(ProtocolSiteMetadataListener listener)
+    {
+        mProtocolSiteMetadataListeners.remove(listener);
     }
 
     /**

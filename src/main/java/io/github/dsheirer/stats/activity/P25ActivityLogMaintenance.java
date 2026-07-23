@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -87,44 +88,50 @@ public final class P25ActivityLogMaintenance
 
     public static Result run(Path databasePath, int retentionDays, Operation operation) throws IOException, SQLException
     {
+        try(Connection connection = SdrTrunkDatabase.open(databasePath))
+        {
+            return run(connection, databasePath, retentionDays, operation);
+        }
+    }
+
+    /**
+     * Runs a maintenance operation on the caller-owned connection. Runtime callers use this overload so that all
+     * mutations remain serialized on the single statistics database writer.
+     */
+    static Result run(Connection connection, Path databasePath, int retentionDays, Operation operation)
+        throws IOException, SQLException
+    {
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
         int rowsDeleted = 0;
         String checkResult = null;
 
-        try(Connection connection = SdrTrunkDatabase.open(databasePath))
+        switch(operation)
         {
-            switch(operation)
+            case MAINTAIN -> rowsDeleted = runLightMaintenance(connection, retentionDays);
+            case SHRINK ->
             {
-                case MAINTAIN ->
-                {
-                    rowsDeleted = runLightMaintenance(connection, retentionDays);
-                }
-                case SHRINK ->
-                {
-                    rowsDeleted = runLightMaintenance(connection, retentionDays);
-                    vacuum(connection);
-                    checkpoint(connection);
-                    optimize(connection);
-                    updateStatus(connection, "last_shrink_ms");
-                }
-                case CHECK ->
-                {
-                    checkResult = quickCheck(connection);
-                    P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_ms",
-                        Long.toString(System.currentTimeMillis()));
-                    P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_result", checkResult);
-                }
-                case RESET_STATS ->
-                {
-                    rowsDeleted = P25ActivityLogSchema.resetStats(connection);
-                    checkpoint(connection);
-                    optimize(connection);
-                    updateStatus(connection, "last_stats_reset_ms");
-                }
-                case CLEAR_SITE_STATS -> throw new IllegalArgumentException(
-                    "CLEAR_SITE_STATS requires a site GUID");
+                rowsDeleted = runLightMaintenance(connection, retentionDays);
+                vacuum(connection);
+                checkpoint(connection);
+                optimize(connection);
+                updateStatus(connection, "last_shrink_ms");
             }
+            case CHECK ->
+            {
+                checkResult = quickCheck(connection);
+                P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_ms",
+                    Long.toString(System.currentTimeMillis()));
+                P25ActivityLogSchema.updateStatus(connection, "last_integrity_check_result", checkResult);
+            }
+            case RESET_STATS ->
+            {
+                rowsDeleted = resetStats(connection);
+                checkpoint(connection);
+                optimize(connection);
+            }
+            case CLEAR_SITE_STATS -> throw new IllegalArgumentException(
+                "CLEAR_SITE_STATS requires a site GUID");
         }
 
         return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(databasePath), walBytesBefore,
@@ -137,6 +144,18 @@ public final class P25ActivityLogMaintenance
      */
     public static Result clearSiteStats(Path databasePath, String guid) throws IOException, SQLException
     {
+        try(Connection connection = SdrTrunkDatabase.open(databasePath))
+        {
+            return clearSiteStats(connection, databasePath, guid);
+        }
+    }
+
+    /**
+     * Clears one site's statistics on the caller-owned writer connection.
+     */
+    static Result clearSiteStats(Connection connection, Path databasePath, String guid)
+        throws IOException, SQLException
+    {
         if(guid == null || guid.isBlank())
         {
             throw new IllegalArgumentException("Site GUID is required");
@@ -144,30 +163,9 @@ public final class P25ActivityLogMaintenance
 
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
-        int rowsDeleted;
-
-        try(Connection connection = SdrTrunkDatabase.open(databasePath))
-        {
-            connection.setAutoCommit(false);
-
-            try
-            {
-                rowsDeleted = P25ActivityLogSchema.clearSiteStats(connection, guid);
-                P25ActivityLogSchema.updateStatus(connection, "last_site_stats_clear_ms",
-                    Long.toString(System.currentTimeMillis()));
-                connection.commit();
-            }
-            catch(SQLException e)
-            {
-                connection.rollback();
-                throw e;
-            }
-
-            connection.setAutoCommit(true);
-            checkpoint(connection);
-            optimize(connection);
-        }
-
+        int rowsDeleted = clearSiteStats(connection, guid);
+        checkpoint(connection);
+        optimize(connection);
         return new Result(Operation.CLEAR_SITE_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
             walBytesBefore, size(walPath(databasePath)));
     }
@@ -185,13 +183,76 @@ public final class P25ActivityLogMaintenance
     static int cleanupRetention(Connection connection, int retentionDays) throws SQLException
     {
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(Math.max(1, retentionDays));
-        int deleted = P25ActivityLogSchema.deleteOlderThan(connection, cutoff);
+        int deleted = P25ActivityLogSchema.deleteOlderThan(connection, cutoff) +
+            TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total();
 
         P25ActivityLogSchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
         P25ActivityLogSchema.updateStatus(connection, "last_retention_cleanup_ms",
             Long.toString(System.currentTimeMillis()));
         P25ActivityLogSchema.updateStatus(connection, "last_retention_deleted_rows", Integer.toString(deleted));
         return deleted;
+    }
+
+    private static int resetStats(Connection connection) throws SQLException
+    {
+        return inTransaction(connection, () -> {
+            int deleted = P25ActivityLogSchema.resetStats(connection) + TrunkedSiteSchema.resetStats(connection);
+            updateStatus(connection, "last_stats_reset_ms");
+            return deleted;
+        });
+    }
+
+    private static int clearSiteStats(Connection connection, String guid) throws SQLException
+    {
+        return inTransaction(connection, () -> {
+            int deleted = P25ActivityLogSchema.clearSiteStats(connection, guid) +
+                TrunkedSiteSchema.clearSiteStats(connection, guid);
+            P25ActivityLogSchema.updateStatus(connection, "last_site_stats_clear_ms",
+                Long.toString(System.currentTimeMillis()));
+            return deleted;
+        });
+    }
+
+    private static int inTransaction(Connection connection, SqlOperation operation) throws SQLException
+    {
+        boolean previousAutoCommit = connection.getAutoCommit();
+
+        if(!previousAutoCommit)
+        {
+            throw new SQLException("Statistics maintenance requires an idle database writer connection");
+        }
+
+        connection.setAutoCommit(false);
+
+        try
+        {
+            int result = operation.run();
+            connection.commit();
+            return result;
+        }
+        catch(SQLException | RuntimeException e)
+        {
+            try
+            {
+                connection.rollback();
+            }
+            catch(SQLException rollbackException)
+            {
+                e.addSuppressed(rollbackException);
+            }
+
+            throw e;
+        }
+        finally
+        {
+            connection.setAutoCommit(true);
+        }
+    }
+
+    @FunctionalInterface
+    private interface SqlOperation
+    {
+        int run() throws SQLException;
     }
 
     private static void optimize(Connection connection) throws SQLException

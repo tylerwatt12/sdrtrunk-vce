@@ -56,6 +56,9 @@ public abstract class NXDNMessage implements IMessage
     private CorrectedBinaryMessage mMessage;
     private long mTimestamp;
     private boolean mValid = true;
+    private boolean mRfFrameQualityCarrier;
+    private boolean mRfFrameValid;
+    private int mRfFrameCorrectedBitCount;
 
     /**
      * Constructs an instance
@@ -99,6 +102,47 @@ public abstract class NXDNMessage implements IMessage
     public void setValid(boolean valid)
     {
         mValid = valid;
+    }
+
+    /**
+     * Marks this message as the single quality-accounting carrier for the RF frame that produced it.
+     *
+     * A single NXDN RF frame can produce several layer-2/layer-3 messages.  The frame decoder assigns the aggregate
+     * validity and corrected-bit count to exactly one of those messages so downstream quality monitors do not count
+     * the same 384-bit RF frame more than once.
+     *
+     * @param valid true when at least one payload decoded successfully from the RF frame
+     * @param correctedBitCount aggregate corrected bits across the payloads extracted directly from the RF frame
+     */
+    public void setRfFrameQuality(boolean valid, int correctedBitCount)
+    {
+        mRfFrameQualityCarrier = true;
+        mRfFrameValid = valid;
+        mRfFrameCorrectedBitCount = Math.max(0, correctedBitCount);
+    }
+
+    /**
+     * Indicates that this message carries the aggregate quality result for its RF frame.
+     */
+    public boolean isRfFrameQualityCarrier()
+    {
+        return mRfFrameQualityCarrier;
+    }
+
+    /**
+     * Aggregate RF-frame validity.  Only meaningful when {@link #isRfFrameQualityCarrier()} is true.
+     */
+    public boolean isRfFrameValid()
+    {
+        return mRfFrameValid;
+    }
+
+    /**
+     * Aggregate corrected bits for the RF frame.  Only meaningful when {@link #isRfFrameQualityCarrier()} is true.
+     */
+    public int getRfFrameCorrectedBitCount()
+    {
+        return mRfFrameCorrectedBitCount;
     }
 
     @Override

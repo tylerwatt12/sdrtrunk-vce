@@ -35,13 +35,20 @@ duplicated.
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
 
-The first supported database upgrade is P25 activity schema v19 to v20. The migration runs in a bundled child process,
-so the normal application startup path remains validation-only. A database already at v20 is copied and validated
-without a schema change. Other versions are refused with an explanation.
+The bundled P25 activity upgrade accepts public schema v19 or v20 and produces v21. A v19 database receives the v20
+foreign-system band tables and the v21 quality-retention index; a v20 database receives only that index. The migration
+runs in a bundled child process against a staged copy, so the normal application startup path remains validation-only.
+A database already at v21 is copied and validated without a schema change. Other versions are refused with an
+explanation.
 
-If the current data folder itself contains a v19 database, startup offers **Upgrade and Start**. It first creates a
-standalone backup under `data/database/backups`, migrates another staged copy, validates it, and then replaces the
-current database atomically. If an upgrade fails, the application does not start and the completed backup is retained.
+If the current data folder itself contains a v19 or v20 database, startup offers **Upgrade and Start**. It first
+creates a standalone backup under `data/database/backups`, migrates another staged copy, validates it, and then
+replaces the current database atomically. If an upgrade fails, the application does not start and the completed backup
+is retained.
+
+The trunked-site subsystem was introduced publicly at schema v2. Older databases selected through the Upgrade
+Assistant do not contain that subsystem; the bundled staged installer adds the complete current schema before the
+copied profile is validated and promoted. Existing active databases remain validation-only at normal startup.
 
 If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
 `playlist_v2.xml`. The legacy XML is read only.
@@ -56,8 +63,8 @@ Headless launches require one explicit option when the database is absent:
 
 Fresh creation and XML import build the complete current schema in a temporary database, validate it, and then install
 it atomically. `--upgrade-data` is the non-graphical equivalent of choosing previous portable data. When an existing
-data folder contains a v19 database, `--upgrade-current` explicitly authorizes its one-time v19-to-v20 upgrade. Schema
-changes are performed only by the bundled one-off upgrade helper against a staged database.
+data folder contains a v19 or v20 database, `--upgrade-current` explicitly authorizes its one-time upgrade to v21.
+Schema changes are performed only by the bundled one-off upgrade helper against a staged database.
 
 Once a portable database exists, the app holds an operating-system lock for that data folder until shutdown. A second
 sdrtrunk-vce process receives a clear “already in use” error before it can validate, upgrade, or write the same data.
