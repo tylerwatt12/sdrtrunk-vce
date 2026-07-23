@@ -26,6 +26,7 @@ import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
+import io.github.dsheirer.preference.duplicate.ICallManagementProvider;
 import io.github.dsheirer.preference.duplicate.TestCallManagementProvider;
 import java.util.ArrayList;
 import java.util.List;
@@ -253,6 +254,22 @@ class AudioCallCoordinatorTest
 
             awaitCondition(() -> isPlaybackDuplicate(playbackCalls, duplicate.callId()),
                 "Remaining call must stay suppressed after the sticky survivor completes");
+
+            AudioCallSnapshot newTransmission = snapshot(3, 3, 1200, 9003, "Test System", null,
+                3_000L, 4_000L, 1, false);
+            AudioCallSnapshot newTransmissionDuplicate = snapshot(4, 4, 1200, 9004, "Test System", null,
+                3_000L, 4_000L, 1, false);
+            coordinator.receive(audioEvent(newTransmission, 160));
+
+            awaitCondition(() -> playbackCalls.size() == 3,
+                "Expected the later transmission to reach playback");
+            assertFalse(isPlaybackDuplicate(playbackCalls, newTransmission.callId()),
+                "A sealed old cohort must not black-hole a new call while its loser lingers");
+
+            coordinator.receive(audioEvent(newTransmissionDuplicate, 160));
+            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, newTransmissionDuplicate.callId()),
+                "The new temporal cohort should independently suppress its own duplicate");
+            assertFalse(isPlaybackDuplicate(playbackCalls, newTransmission.callId()));
         }
         finally
         {
@@ -261,7 +278,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void mixedTalkgroupAndRadioMatchesFormOneExplicitDuplicateGroup() throws Exception
+    void mixedTalkgroupAndRadioMatchesDoNotFormATransitiveDuplicateGroup() throws Exception
     {
         List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
@@ -281,11 +298,43 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(radioAnchor, 160));
 
             awaitCondition(() -> playbackCalls.size() == 3 &&
-                playbackCalls.stream().filter(ManagedPlayableAudioCall::isDuplicate).count() == 2,
-                "The transitive mixed-detector group should retain exactly one live survivor");
+                playbackCalls.stream().filter(ManagedPlayableAudioCall::isDuplicate).count() == 1,
+                "Only calls that directly match the elected anchor should be grouped");
             assertFalse(isPlaybackDuplicate(playbackCalls, talkgroupAnchor.callId()));
             assertTrue(isPlaybackDuplicate(playbackCalls, bridge.callId()));
-            assertTrue(isPlaybackDuplicate(playbackCalls, radioAnchor.callId()));
+            assertFalse(isPlaybackDuplicate(playbackCalls, radioAnchor.callId()),
+                "A talkgroup edge followed by a radio edge must not suppress the unrelated endpoint");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void sealedCohortDoesNotDelayNewSingleTransmissionStreaming() throws Exception
+    {
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
+            null, null, streamed::add, null, DuplicateCallPriorityProvider.NONE, 500L);
+
+        try
+        {
+            AudioCallSnapshot oldWinner = snapshot(1, 1, 1200, 9001, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot oldLingeringLoser = snapshot(2, 2, 1200, 9002, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot newTransmission = snapshot(3, 3, 1200, 9003, "Test System", null,
+                3_000L, 4_000L, 1, false);
+            coordinator.receive(audioEvent(oldWinner, 160));
+            coordinator.receive(audioEvent(oldLingeringLoser, 160));
+            coordinator.receive(completionEvent(oldWinner));
+            coordinator.receive(audioEvent(newTransmission, 160));
+            coordinator.receive(completionEvent(newTransmission));
+
+            awaitCondition(() -> streamed.stream()
+                .anyMatch(call -> call.snapshot().callId().equals(newTransmission.callId())),
+                "A later single transmission should stream immediately outside the sealed old cohort");
         }
         finally
         {
@@ -321,7 +370,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void singleStreamingCallIsNotDelayedByDuplicateGrace() throws Exception
+    void singleStreamingCallIsNotDelayedByDuplicateWatchdog() throws Exception
     {
         CountDownLatch streamed = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
@@ -372,7 +421,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void duplicateStreamingWaitsForGraceAndSelectsBetterPcmCompleteness() throws Exception
+    void duplicateStreamingWaitsForKnownMembersAndSelectsBetterPcmCompleteness() throws Exception
     {
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
@@ -402,15 +451,19 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(complete, 160));
             coordinator.receive(audioEvent(complete, 3_840));
             coordinator.receive(completionEvent(sparse));
-            coordinator.receive(completionEvent(complete));
 
+            awaitCondition(() -> recorded.size() == 1 && webCalls.size() == 1,
+                "Expected immediate completion fanout for the first member");
+            assertFalse(streamingFanout.await(40, TimeUnit.MILLISECONDS),
+                "Streaming should wait while a known cohort member is still active");
+
+            coordinator.receive(completionEvent(complete));
             assertTrue(immediateFanout.await(1, TimeUnit.SECONDS),
                 "Recording and web completion fanout should remain immediate for every candidate");
             assertEquals(2, recorded.size());
             assertEquals(2, webCalls.size());
-            assertFalse(streamingFanout.await(40, TimeUnit.MILLISECONDS),
-                "Actual duplicate groups should wait for the configured streaming grace");
-            assertTrue(streamingFanout.await(1, TimeUnit.SECONDS));
+            assertTrue(streamingFanout.await(200, TimeUnit.MILLISECONDS),
+                "Streaming should select immediately once every sealed member completes");
             assertEquals(1, streamed.size());
             assertEquals(complete.callId(), streamed.getFirst().snapshot().callId());
             assertFalse(streamed.getFirst().snapshot().duplicate(),
@@ -423,9 +476,89 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void streamingWatchdogBoundsDelayForLingeringMember() throws Exception
+    {
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        CountDownLatch completedFanout = new CountDownLatch(2);
+        CountDownLatch streamingFanout = new CountDownLatch(1);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(true, false, true), null, null, call -> {
+                streamed.add(call);
+                streamingFanout.countDown();
+            }, call -> completedFanout.countDown(), DuplicateCallPriorityProvider.NONE, 120L);
+
+        try
+        {
+            AudioCallSnapshot completed = snapshot(1, 1, 1200, 9001, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot lingering = snapshot(2, 2, 1200, 9002, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            coordinator.receive(audioEvent(completed, 160));
+            coordinator.receive(audioEvent(lingering, 160));
+            coordinator.receive(completionEvent(completed));
+
+            assertFalse(streamingFanout.await(40, TimeUnit.MILLISECONDS),
+                "The watchdog should not fire before its bounded timeout");
+            assertTrue(streamingFanout.await(1, TimeUnit.SECONDS),
+                "A lingering member must not block streaming forever");
+            assertEquals(completed.callId(), streamed.getFirst().snapshot().callId());
+
+            coordinator.receive(completionEvent(lingering));
+            assertTrue(completedFanout.await(1, TimeUnit.SECONDS));
+            assertEquals(1, streamed.size(),
+                "A member completing after the watchdog decision remains suppressed");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void detectionToggleReleasesLiveAndPendingCalls() throws Exception
+    {
+        MutableCallManagementProvider preferences = new MutableCallManagementProvider(true, false, true);
+        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        CountDownLatch firstCompleted = new CountDownLatch(1);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(preferences, playbackCalls::add,
+            call -> firstCompleted.countDown(), streamed::add, null, DuplicateCallPriorityProvider.NONE, 500L);
+
+        try
+        {
+            AudioCallSnapshot first = snapshot(1, 1, 1200, 9001, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot second = snapshot(2, 2, 1200, 9002, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            coordinator.receive(audioEvent(first, 160));
+            coordinator.receive(audioEvent(second, 160));
+            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, second.callId()),
+                "Expected an active duplicate before disabling detection");
+            coordinator.receive(completionEvent(first));
+            assertTrue(firstCompleted.await(1, TimeUnit.SECONDS));
+
+            preferences.setDetectionEnabled(false);
+            coordinator.receive(audioEvent(second, 160));
+
+            awaitCondition(() -> !isPlaybackDuplicate(playbackCalls, second.callId()) && streamed.size() == 1,
+                "Disabling detection should release live state and pending streaming candidates");
+            assertFalse(streamed.getFirst().snapshot().duplicate());
+
+            coordinator.receive(completionEvent(second));
+            awaitCondition(() -> streamed.size() == 2,
+                "The formerly suppressed live call should stream normally after detection is disabled");
+            assertFalse(streamed.get(1).snapshot().duplicate());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
     void disposeCancelsPendingStreamingSelection() throws Exception
     {
-        CountDownLatch completed = new CountDownLatch(2);
+        CountDownLatch completed = new CountDownLatch(1);
         CountDownLatch streamed = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(true, false, true), null, call -> completed.countDown(),
@@ -440,7 +573,6 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(first, 160));
             coordinator.receive(audioEvent(second, 160));
             coordinator.receive(completionEvent(first));
-            coordinator.receive(completionEvent(second));
 
             assertTrue(completed.await(1, TimeUnit.SECONDS));
             coordinator.dispose();
@@ -519,5 +651,50 @@ class AudioCallCoordinatorTest
         }
 
         assertTrue(condition.getAsBoolean(), message);
+    }
+
+    private static class MutableCallManagementProvider implements ICallManagementProvider
+    {
+        private final boolean mByTalkgroup;
+        private final boolean mByRadio;
+        private final boolean mSuppressStreaming;
+        private volatile boolean mDetectionEnabled;
+
+        private MutableCallManagementProvider(boolean byTalkgroup, boolean byRadio, boolean suppressStreaming)
+        {
+            mByTalkgroup = byTalkgroup;
+            mByRadio = byRadio;
+            mSuppressStreaming = suppressStreaming;
+            mDetectionEnabled = byTalkgroup || byRadio;
+        }
+
+        private void setDetectionEnabled(boolean enabled)
+        {
+            mDetectionEnabled = enabled;
+        }
+
+        @Override
+        public boolean isDuplicateCallDetectionEnabled()
+        {
+            return mDetectionEnabled;
+        }
+
+        @Override
+        public boolean isDuplicateCallDetectionByTalkgroupEnabled()
+        {
+            return mDetectionEnabled && mByTalkgroup;
+        }
+
+        @Override
+        public boolean isDuplicateCallDetectionByRadioEnabled()
+        {
+            return mDetectionEnabled && mByRadio;
+        }
+
+        @Override
+        public boolean isDuplicateStreamingSuppressionEnabled()
+        {
+            return mSuppressStreaming;
+        }
     }
 }
