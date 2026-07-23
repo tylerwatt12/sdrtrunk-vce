@@ -40,6 +40,7 @@ import javafx.util.Callback;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.util.UUID;
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({
@@ -66,6 +67,8 @@ public abstract class BroadcastConfiguration
     protected BooleanProperty mEnabled = new SimpleBooleanProperty(false);
     protected BooleanProperty mValid = new SimpleBooleanProperty();
     private int mId = ++UNIQUE_ID;
+    private String mConfigurationId = UUID.randomUUID().toString();
+    private boolean mConfigurationIdPersistenceRequired = true;
 
     protected BroadcastConfiguration()
     {
@@ -79,6 +82,57 @@ public abstract class BroadcastConfiguration
     public int getId()
     {
         return mId;
+    }
+
+    /**
+     * Stable internal identity for this saved provider.  Unlike {@link #getId()}, this value survives restarts and
+     * provider renames.
+     */
+    public String getConfigurationId()
+    {
+        if(mConfigurationId == null)
+        {
+            regenerateConfigurationId();
+        }
+
+        return mConfigurationId;
+    }
+
+    /**
+     * Restores a persisted provider identity.  Missing or malformed legacy values are replaced before providers start.
+     */
+    public void setConfigurationId(String configurationId)
+    {
+        if(configurationId != null && !configurationId.isBlank())
+        {
+            try
+            {
+                mConfigurationId = UUID.fromString(configurationId.trim()).toString();
+                mConfigurationIdPersistenceRequired = false;
+                return;
+            }
+            catch(IllegalArgumentException _)
+            {
+                //Replace malformed values below.
+            }
+        }
+
+        regenerateConfigurationId();
+    }
+
+    /**
+     * Assigns a distinct identity to a new or cloned provider.
+     */
+    public void regenerateConfigurationId()
+    {
+        mConfigurationId = UUID.randomUUID().toString();
+        mConfigurationIdPersistenceRequired = true;
+    }
+
+    @JsonIgnore
+    public boolean isConfigurationIdPersistenceRequired()
+    {
+        return mConfigurationIdPersistenceRequired;
     }
 
     /**

@@ -434,7 +434,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             if(mConfigurationDatabaseStore.isInitialized())
             {
                 ConfigurationState loaded = mConfigurationDatabaseStore.loadConfigurationState();
-                persistGeneratedChannelConfigurationIds(loaded);
+                persistGeneratedConfigurationIds(loaded);
                 mLog.debug("Loaded configuration channels [{}], channel maps [{}], and streams [{}] from SQLite [{}]",
                     loaded.getChannels().size(), loaded.getChannelMaps().size(),
                     loaded.getBroadcastConfigurations().size(), mConfigurationDatabaseStore.getDatabasePath());
@@ -471,21 +471,21 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      * Persists identities generated while deserializing legacy channel JSON.  This one-time configuration-data upgrade
      * runs before channels are added to the model or auto-started and does not change the database schema.
      */
-    private void persistGeneratedChannelConfigurationIds(ConfigurationState state)
+    private void persistGeneratedConfigurationIds(ConfigurationState state)
     {
-        if(ensureUniqueChannelConfigurationIds(state))
+        if(ensureUniqueChannelConfigurationIds(state) || ensureUniqueBroadcastConfigurationIds(state))
         {
             try
             {
                 mConfigurationDatabaseStore.replaceConfigurationState(state);
-                mLog.info("Assigned persistent internal identities to legacy channel configurations");
+                mLog.info("Assigned persistent internal identities to legacy saved configurations");
             }
             catch(Exception e)
             {
-                mLog.error("Unable to persist generated internal channel configuration identities in SQLite [{}]",
+                mLog.error("Unable to persist generated internal configuration identities in SQLite [{}]",
                     mConfigurationDatabaseStore.getDatabasePath(), e);
                 throw new ChannelConfigurationIdentityPersistenceException(
-                    "Stable channel identities could not be saved before channel startup", e);
+                    "Stable configuration identities could not be saved before startup", e);
             }
         }
     }
@@ -516,6 +516,38 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             }
 
             persistenceRequired |= channel.isConfigurationIdPersistenceRequired();
+        }
+
+        return persistenceRequired;
+    }
+
+    static boolean ensureUniqueBroadcastConfigurationIds(ConfigurationState state)
+    {
+        if(state == null || state.getBroadcastConfigurations() == null)
+        {
+            return false;
+        }
+
+        boolean persistenceRequired = false;
+        Set<String> identities = new HashSet<>();
+
+        for(io.github.dsheirer.audio.broadcast.BroadcastConfiguration configuration:
+            state.getBroadcastConfigurations())
+        {
+            if(configuration == null)
+            {
+                continue;
+            }
+
+            String identity = configuration.getConfigurationId();
+
+            while(!identities.add(identity))
+            {
+                configuration.regenerateConfigurationId();
+                identity = configuration.getConfigurationId();
+            }
+
+            persistenceRequired |= configuration.isConfigurationIdPersistenceRequired();
         }
 
         return persistenceRequired;
