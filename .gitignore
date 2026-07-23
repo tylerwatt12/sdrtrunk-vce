@@ -37,6 +37,7 @@ gradle-app.setting
 # Local development and deployment instructions
 AGENTS.md
 RELEASING.md
+docs/development/main-webfirst-branch-flow.md
 
 # Machine-local maintenance scripts and data fixes
 .DS_Store
