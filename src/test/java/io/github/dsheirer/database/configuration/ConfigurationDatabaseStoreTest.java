@@ -51,6 +51,7 @@ class ConfigurationDatabaseStoreTest
         assertFalse(store.isInitialized());
 
         Channel channel = new Channel("Control");
+        String configurationId = channel.getConfigurationId();
         channel.setSystem("County");
         channel.setSite("Simulcast");
         channel.setAliasListName("County Aliases");
@@ -91,6 +92,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals("County", loadedChannel.getSystem());
         assertEquals("Simulcast", loadedChannel.getSite());
         assertEquals("Control", loadedChannel.getName());
+        assertEquals(configurationId, loadedChannel.getConfigurationId());
         assertEquals("County Aliases", loadedChannel.getAliasListName());
         assertEquals("11111111-2222-3333-4444-555555555555", loadedChannel.getRadresGuid());
         assertTrue(loadedChannel.getAutoStart());

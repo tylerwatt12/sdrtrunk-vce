@@ -218,6 +218,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         trafficChannel.setAliasListName(mParentChannel.getAliasListName());
                         trafficChannel.setSystem(mParentChannel.getSystem());
                         trafficChannel.setSite(mParentChannel.getSite());
+                        trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
                         trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
                         trafficChannel.setDecodeConfiguration(decodeConfig);
                         trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());

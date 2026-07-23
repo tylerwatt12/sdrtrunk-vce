@@ -31,6 +31,7 @@ import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -221,6 +222,7 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     private void createConfigurationIdentifiers(Channel channel)
     {
         mIdentifierCollection.update(DecoderTypeConfigurationIdentifier.create(channel.getDecodeConfiguration().getDecoderType()));
+        mIdentifierCollection.update(ChannelConfigurationIdentifier.create(channel.getConfigurationId()));
 
         if(channel.hasSystem())
         {

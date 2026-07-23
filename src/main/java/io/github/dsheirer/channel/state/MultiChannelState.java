@@ -31,6 +31,7 @@ import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -275,6 +276,7 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
             MutableIdentifierCollection identifierCollection = mIdentifierCollectionMap.get(timeslot);
 
             identifierCollection.update(DecoderTypeConfigurationIdentifier.create(channel.getDecodeConfiguration().getDecoderType()));
+            identifierCollection.update(ChannelConfigurationIdentifier.create(channel.getConfigurationId()));
 
             if(channel.hasSystem())
             {

@@ -416,6 +416,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         trafficChannel.setAliasListName(mParentChannel.getAliasListName());
         trafficChannel.setSystem(mParentChannel.getSystem());
         trafficChannel.setSite(mParentChannel.getSite());
+        trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
         trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
         trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
         trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());

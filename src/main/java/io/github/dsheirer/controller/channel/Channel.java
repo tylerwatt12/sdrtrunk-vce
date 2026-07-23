@@ -79,6 +79,8 @@ public class Channel extends Configuration
     private StringProperty mSite = new SimpleStringProperty();
     private StringProperty mName = new SimpleStringProperty();
     private StringProperty mRadresGuid = new SimpleStringProperty();
+    private String mConfigurationId;
+    private boolean mConfigurationIdPersistenceRequired;
     private ObservableList<Long> mFrequencyList;
 
     private BooleanProperty mProcessing = new SimpleBooleanProperty();
@@ -119,6 +121,7 @@ public class Channel extends Configuration
     public Channel()
     {
         mChannelID = UNIQUE_ID++;
+        regenerateConfigurationId();
     }
 
     /**
@@ -439,6 +442,62 @@ public class Channel extends Configuration
     public void setName(String name)
     {
         mName.set(name);
+    }
+
+    /**
+     * Stable internal identifier for this saved channel configuration.  Unlike {@link #getChannelID()}, this value is
+     * persisted and unlike {@link #getRadresGuid()}, it has no external site meaning.
+     */
+    public String getConfigurationId()
+    {
+        if(mConfigurationId == null)
+        {
+            regenerateConfigurationId();
+        }
+
+        return mConfigurationId;
+    }
+
+    /**
+     * Restores the stable internal channel configuration identifier.  Missing or malformed legacy values are replaced
+     * with a valid identifier so they cannot leak into call routing.
+     */
+    public void setConfigurationId(String configurationId)
+    {
+        if(configurationId != null && !configurationId.isBlank())
+        {
+            try
+            {
+                mConfigurationId = UUID.fromString(configurationId.trim()).toString();
+                mConfigurationIdPersistenceRequired = false;
+                return;
+            }
+            catch(IllegalArgumentException _)
+            {
+                //Replace malformed persisted values below.
+            }
+        }
+
+        regenerateConfigurationId();
+    }
+
+    /**
+     * Assigns a new internal identity.  This is used only when creating a distinct saved configuration from a copy.
+     */
+    public void regenerateConfigurationId()
+    {
+        mConfigurationId = UUID.randomUUID().toString();
+        mConfigurationIdPersistenceRequired = true;
+    }
+
+    /**
+     * Indicates that this identity was generated because the channel is new or its persisted legacy value was absent
+     * or malformed.  Configuration startup uses this signal to durably upgrade the existing JSON before channels run.
+     */
+    @JsonIgnore
+    public boolean isConfigurationIdPersistenceRequired()
+    {
+        return mConfigurationIdPersistenceRequired;
     }
 
     /**

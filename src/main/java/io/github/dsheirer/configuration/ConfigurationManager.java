@@ -21,6 +21,7 @@ package io.github.dsheirer.configuration;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
@@ -41,7 +42,10 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -72,6 +76,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
     private AtomicBoolean mAliasesDirty = new AtomicBoolean();
     private AtomicBoolean mConfigurationStateDirty = new AtomicBoolean();
+    private final Object mHeadlessWebConfigurationLock = new Object();
     private ScheduledFuture<?> mConfigurationSaveFuture;
     private boolean mConfigurationLoading = false;
     private List<IAliasListRefreshListener> mAliasListRefreshListeners = new ArrayList<>();
@@ -131,6 +136,21 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                     break;
             }
         });
+    }
+
+    /**
+     * Serializes headless web configuration-model access shared by the channel and Listen-list administrator
+     * services.  Desktop builds instead use the JavaFX application thread.  This lock is never acquired by tuner,
+     * sample, decoder, recorder, broadcaster, or browser-audio delivery paths.
+     */
+    public void runHeadlessWebConfigurationTask(Runnable task)
+    {
+        Objects.requireNonNull(task, "Configuration task cannot be null");
+
+        synchronized(mHeadlessWebConfigurationLock)
+        {
+            task.run();
+        }
     }
 
     /**
@@ -414,6 +434,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             if(mConfigurationDatabaseStore.isInitialized())
             {
                 ConfigurationState loaded = mConfigurationDatabaseStore.loadConfigurationState();
+                persistGeneratedChannelConfigurationIds(loaded);
                 mLog.debug("Loaded configuration channels [{}], channel maps [{}], and streams [{}] from SQLite [{}]",
                     loaded.getChannels().size(), loaded.getChannelMaps().size(),
                     loaded.getBroadcastConfigurations().size(), mConfigurationDatabaseStore.getDatabasePath());
@@ -433,6 +454,10 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
             return mConfigurationDatabaseStore.loadConfigurationState();
         }
+        catch(ChannelConfigurationIdentityPersistenceException e)
+        {
+            throw e;
+        }
         catch(Exception e)
         {
             mLog.error("Error loading configuration state from SQLite database [" +
@@ -440,6 +465,68 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
 
         return databaseState;
+    }
+
+    /**
+     * Persists identities generated while deserializing legacy channel JSON.  This one-time configuration-data upgrade
+     * runs before channels are added to the model or auto-started and does not change the database schema.
+     */
+    private void persistGeneratedChannelConfigurationIds(ConfigurationState state)
+    {
+        if(ensureUniqueChannelConfigurationIds(state))
+        {
+            try
+            {
+                mConfigurationDatabaseStore.replaceConfigurationState(state);
+                mLog.info("Assigned persistent internal identities to legacy channel configurations");
+            }
+            catch(Exception e)
+            {
+                mLog.error("Unable to persist generated internal channel configuration identities in SQLite [{}]",
+                    mConfigurationDatabaseStore.getDatabasePath(), e);
+                throw new ChannelConfigurationIdentityPersistenceException(
+                    "Stable channel identities could not be saved before channel startup", e);
+            }
+        }
+    }
+
+    static boolean ensureUniqueChannelConfigurationIds(ConfigurationState state)
+    {
+        if(state == null || state.getChannels() == null)
+        {
+            return false;
+        }
+
+        boolean persistenceRequired = false;
+        Set<String> identities = new HashSet<>();
+
+        for(Channel channel: state.getChannels())
+        {
+            if(channel == null)
+            {
+                continue;
+            }
+
+            String identity = channel.getConfigurationId();
+
+            while(!identities.add(identity))
+            {
+                channel.regenerateConfigurationId();
+                identity = channel.getConfigurationId();
+            }
+
+            persistenceRequired |= channel.isConfigurationIdPersistenceRequired();
+        }
+
+        return persistenceRequired;
+    }
+
+    private static final class ChannelConfigurationIdentityPersistenceException extends RuntimeException
+    {
+        private ChannelConfigurationIdentityPersistenceException(String message, Throwable cause)
+        {
+            super(message, cause);
+        }
     }
 
     private List<Alias> loadAliases(ConfigurationState databaseState)
