@@ -1064,7 +1064,8 @@ class StatsWebDatabase
             if(isTrunkedSite(connection, guid))
             {
                 return Map.of("rows", queryRows(connection, """
-                    SELECT channel_number, inbound_channel_number,
+                    SELECT NULLIF(channel_number, -1) AS channel_number,
+                        NULLIF(inbound_channel_number, -1) AS inbound_channel_number,
                         NULLIF(timeslot, -1) AS timeslot,
                         NULLIF(frequency_hz, -1) AS frequency_hz,
                         NULLIF(frequency_hz, -1) AS downlink_hz,

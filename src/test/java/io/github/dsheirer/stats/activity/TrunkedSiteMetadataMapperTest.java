@@ -25,12 +25,13 @@ import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationS
 import io.github.dsheirer.source.config.SourceConfigRecording;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
-import java.util.List;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -48,7 +49,8 @@ class TrunkedSiteMetadataMapperTest
             "DMR", "CAPACITY_MAX", 10, 20, "Capacity Max Tier III Trunking", "SMALL", "Advantage",
             "Control", 3, 4,
             List.of(new DMRNetworkConfigurationSnapshot.Channel("DMRChannel", 42, 1,
-                452_000_000L, 457_000_000L)),
+                452_000_000L, 457_000_000L, DMRNetworkConfigurationSnapshot.ChannelRole.TRAFFIC,
+                DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP)),
             List.of(new DMRNetworkConfigurationSnapshot.NeighborSite("TIER_III", 10, 21, "SMALL",
                 43, 453_000_000L, 458_000_000L, true, 1, 2)));
 
@@ -70,6 +72,11 @@ class TrunkedSiteMetadataMapperTest
         assertTrue(mapped.channels().stream().anyMatch(value ->
             Long.valueOf(451_000_000L).equals(value.frequencyHertz()) &&
                 (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL) != 0));
+        assertTrue(mapped.channels().stream().anyMatch(value ->
+            Long.valueOf(452_000_000L).equals(value.frequencyHertz()) &&
+                (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED) != 0 &&
+                (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC) != 0 &&
+                (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP) != 0));
         assertEquals(TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE,
             mapped.neighbors().getFirst().statusFlags());
         assertEquals(2, mapped.neighbors().getFirst().identityDomainCode());
@@ -82,6 +89,42 @@ class TrunkedSiteMetadataMapperTest
         TrunkedSiteSchema.Snapshot renamed = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 7_000L));
         assertNotEquals(mapped.snapshotHash(), renamed.snapshotHash());
+    }
+
+    @Test
+    void mapsDmrOverTheAirFrequencyAndAdditiveControlFlags()
+    {
+        Channel channel = channel(451_000_000L);
+        DMRNetworkConfigurationSnapshot source = new DMRNetworkConfigurationSnapshot(
+            "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control", 1, 2,
+            List.of(
+                new DMRNetworkConfigurationSnapshot.Channel("DMRAbsoluteChannel", 42, 1,
+                    452_000_000L, 457_000_000L, DMRNetworkConfigurationSnapshot.ChannelRole.OBSERVED,
+                    DMRNetworkConfigurationSnapshot.FrequencySource.OVER_THE_AIR),
+                new DMRNetworkConfigurationSnapshot.Channel("DMRTier3Channel", 43, 1,
+                    451_000_000L, 456_000_000L,
+                    Set.of(DMRNetworkConfigurationSnapshot.ChannelRole.CONTROL,
+                        DMRNetworkConfigurationSnapshot.ChannelRole.TRAFFIC),
+                    DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP)),
+            List.of());
+
+        TrunkedSiteSchema.Snapshot mapped = TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(channel, source, 1_000L));
+        TrunkedSiteSchema.Channel absolute = mapped.channels().stream()
+            .filter(value -> Integer.valueOf(42).equals(value.channelNumber()))
+            .findFirst().orElseThrow();
+        TrunkedSiteSchema.Channel control = mapped.channels().stream()
+            .filter(value -> Integer.valueOf(43).equals(value.channelNumber()))
+            .findFirst().orElseThrow();
+
+        assertTrue((absolute.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED) != 0);
+        assertTrue((absolute.roleFlags() &
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR) != 0);
+        assertTrue((control.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL) != 0);
+        assertTrue((control.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED) != 0);
+        assertTrue((control.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC) != 0);
+        assertTrue((control.roleFlags() &
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP) != 0);
     }
 
     @Test

@@ -91,8 +91,32 @@ final class TrunkedSiteMetadataMapper
         {
             if(channel != null)
             {
-                int role = channel.downlink() != null && channel.downlink().equals(configuredCurrentControl) ?
-                    TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL : TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED;
+                int role = TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED;
+
+                if(channel.roles().contains(DMRNetworkConfigurationSnapshot.ChannelRole.TRAFFIC))
+                {
+                    role |= TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC;
+                }
+                if(channel.roles().contains(DMRNetworkConfigurationSnapshot.ChannelRole.CONTROL) &&
+                    (channel.downlink() == null || !channel.downlink().equals(configuredCurrentControl)))
+                {
+                    role |= TrunkedSiteSchema.CHANNEL_ROLE_ALTERNATE_CONTROL;
+                }
+
+                if(channel.downlink() != null && channel.downlink().equals(configuredCurrentControl))
+                {
+                    role |= TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL;
+                }
+
+                if(channel.frequencySource() == DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP)
+                {
+                    role |= TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP;
+                }
+                else if(channel.frequencySource() == DMRNetworkConfigurationSnapshot.FrequencySource.OVER_THE_AIR)
+                {
+                    role |= TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR;
+                }
+
                 channels.add(new TrunkedSiteSchema.Channel(channel.logicalChannelNumber(), null, channel.timeslot(),
                     channel.downlink(), channel.uplink(), role));
             }
@@ -238,6 +262,7 @@ final class TrunkedSiteMetadataMapper
             case "CONNECT_PLUS" -> 2;
             case "CAPACITY_MAX" -> 3;
             case "HYTERA_TIER_III" -> 4;
+            case "CAPACITY_PLUS" -> 5;
             default -> 0;
         };
     }
@@ -273,6 +298,7 @@ final class TrunkedSiteMetadataMapper
             case "Motorola Connect+" -> 2;
             case "Capacity Max Tier III Trunking" -> 3;
             case "Hytera Tier III Trunking" -> 4;
+            case "Motorola Capacity+" -> 5;
             default -> null;
         };
     }

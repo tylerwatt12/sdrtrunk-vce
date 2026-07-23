@@ -44,6 +44,8 @@ public final class TrunkedSiteSchema
     public static final int CHANNEL_ROLE_ALTERNATE_CONTROL = 1 << 1;
     public static final int CHANNEL_ROLE_TRAFFIC = 1 << 2;
     public static final int CHANNEL_ROLE_OBSERVED = 1 << 3;
+    public static final int CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP = 1 << 4;
+    public static final int CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR = 1 << 5;
     public static final int NEIGHBOR_STATUS_ACTIVE = 1;
     public static final int NEIGHBOR_STATUS_ISOLATED = 1 << 1;
 

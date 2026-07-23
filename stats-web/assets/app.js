@@ -444,6 +444,7 @@ function trunkedVariant(row) {
   if (raw === 'CONNECT_PLUS') return 'Connect Plus';
   if (raw === 'CAPACITY_MAX') return 'Capacity Max';
   if (raw === 'HYTERA_TIER_III') return 'Hytera Tier III';
+  if (raw === 'CAPACITY_PLUS') return 'Capacity Plus';
   if (raw === 'TYPE_C' || raw === 'TYPE-C') return 'Type-C';
   if (raw === 'TYPE_D' || raw === 'TYPE-D') return 'Type-D';
   if (raw === 'P25_PHASE_1') return 'Phase 1';
@@ -453,6 +454,7 @@ function trunkedVariant(row) {
   if (protocolName === 'DMR' && variant === 2) return 'Connect Plus';
   if (protocolName === 'DMR' && variant === 3) return 'Capacity Max';
   if (protocolName === 'DMR' && variant === 4) return 'Hytera Tier III';
+  if (protocolName === 'DMR' && variant === 5) return 'Capacity Plus';
   if (protocolName === 'NXDN' && variant === 1) return 'Type-C';
   if (protocolName === 'NXDN' && variant === 2) return 'Type-D';
   return variant > 0 ? `Variant ${variant}` : '';
@@ -2031,13 +2033,21 @@ function trunkedSiteTabs(site, active) {
   ], active);
 }
 
-function trunkedChannelRoles(value) {
+function trunkedChannelUse(value) {
   const flags = Number(value || 0);
   const values = [];
   if (flags & 1) values.push(badge('Current CC', 'state-current'));
   if (flags & 2) values.push(badge('Alt CC', 'state-current'));
   if (flags & 4) values.push(badge('Traffic'));
-  if (flags & 8) values.push(badge('Observed'));
+  return fragment(...values);
+}
+
+function trunkedChannelSources(value) {
+  const flags = Number(value || 0);
+  const values = [];
+  if (flags & 8) values.push(badge('OTA Seen', '', 'This channel and timeslot were decoded over the air'));
+  if (flags & 16) values.push(badge('LCN Map', '', 'Frequency resolved from the configured LCN-to-frequency map'));
+  if (flags & 32) values.push(badge('OTA Freq', '', 'Absolute frequency was broadcast over the air'));
   return fragment(...values);
 }
 
@@ -2051,7 +2061,7 @@ function trunkedNeighborStatus(value) {
 
 function dmrBrand(value) {
   return ({ 1: 'Tier III', 2: 'Motorola Connect+', 3: 'Motorola Capacity Max',
-    4: 'Hytera Tier III' })[Number(value)] || '';
+    4: 'Hytera Tier III', 5: 'Motorola Capacity+' })[Number(value)] || '';
 }
 
 function dmrModel(value) {
@@ -2773,21 +2783,26 @@ async function renderTrunkedSite(site) {
 
   if (tab === 'channels') {
     const data = await api('/api/site/channels', { guid: site.guid, limit: 500 });
-    content.append(section('Observed Channels', table(data.rows || [], [
+    const explanation = protocolFamily(site) === 'DMR'
+      ? node('p', 'muted',
+        'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.')
+      : fragment();
+    content.append(section('Channels', fragment(explanation, table(data.rows || [], [
       { label: 'Channel', key: 'channel_number', className: 'numeric' },
       { label: 'Inbound', fullLabel: 'Inbound Channel', key: 'inbound_channel_number', className: 'numeric',
         render: (row) => identifierNumber(row.inbound_channel_number) },
       { label: 'Slot', key: 'timeslot', className: 'numeric' },
-      { label: 'Role', render: (row) => trunkedChannelRoles(row.role_flags) },
+      { label: 'Use', render: (row) => trunkedChannelUse(row.role_flags) },
+      { label: 'Source', render: (row) => trunkedChannelSources(row.role_flags) },
       { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
         render: (row) => frequency(row.frequency_hz), className: 'numeric' },
       { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
         render: (row) => frequency(row.uplink_hz), className: 'numeric' },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
-      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+      { label: 'Snapshots', key: 'observation_count', className: 'numeric' },
+      { id: 'last-seen', label: 'Recorded', fullLabel: 'Last Recorded',
         render: (row) => dateTime(row.last_seen_ms) }
-    ], 'No channels decoded yet', { type: 'trunked-site-channels' })));
+    ], 'No channels decoded yet', { type: 'trunked-site-channels' }))));
   } else if (tab === 'neighbors') {
     const data = await api('/api/site/neighbors', { guid: site.guid, limit: 500 });
     content.append(section('Observed Neighbors', table(data.rows || [], [

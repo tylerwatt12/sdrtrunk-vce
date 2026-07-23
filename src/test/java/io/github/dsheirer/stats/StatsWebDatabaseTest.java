@@ -778,7 +778,11 @@ class StatsWebDatabaseTest
             TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-a", TrunkedSiteSchema.PROTOCOL_DMR,
                 1, 2, "Metro DMR", "DMR Downtown", 10, 20, 1, null,
                 List.of(
-                    new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L, 1),
+                    new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L,
+                        TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC |
+                            TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED |
+                            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP |
+                            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR),
                     new TrunkedSiteSchema.Channel(43, null, 2, 452_000_000L, 457_000_000L, 2)),
                 List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 2, 44, 453_000_000L, 1))));
             TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-b", TrunkedSiteSchema.PROTOCOL_DMR,
@@ -820,6 +824,11 @@ class StatsWebDatabaseTest
         assertEquals(1, channels.size());
         assertEquals(42, number(channels.getFirst().get("channel_number")));
         assertEquals(451_000_000L, number(channels.getFirst().get("frequency_hz")));
+        assertEquals(TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC |
+            TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED |
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP |
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR,
+            number(channels.getFirst().get("role_flags")));
 
         List<Map<String,Object>> neighbors = rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=nxdn-a&limit=1")));

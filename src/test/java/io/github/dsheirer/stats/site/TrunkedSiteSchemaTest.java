@@ -76,6 +76,33 @@ class TrunkedSiteSchemaTest
     }
 
     @Test
+    void channelFrequencyProvenanceFlagsAccumulateWithoutSchemaChange() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("channel-flags.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        int mapped = TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED |
+            TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC |
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP;
+        int announced = TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED |
+            TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC |
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            TrunkedSiteSchema.upsert(connection, snapshot(1_000L, "hash-map", 7, mapped));
+            TrunkedSiteSchema.upsert(connection, snapshot(2_000L, "hash-ota", 7, announced));
+
+            assertEquals(mapped | announced, scalarLong(connection, """
+                SELECT role_flags FROM trunked_site_channel_summary WHERE guid='dmr-site'
+                """));
+            assertEquals(2, scalarLong(connection, """
+                SELECT observation_count FROM trunked_site_channel_summary WHERE guid='dmr-site'
+                """));
+            assertEquals("1", TrunkedSiteSchema.schemaVersion(connection));
+        }
+    }
+
+    @Test
     void rejectsUnsupportedProtocolBeforeWriting() throws Exception
     {
         Path database = mTemporaryFolder.resolve("protocol.sqlite");
@@ -302,10 +329,15 @@ class TrunkedSiteSchemaTest
 
     private static TrunkedSiteSchema.Snapshot snapshot(long observedAt, String hash, int serviceFlags)
     {
+        return snapshot(observedAt, hash, serviceFlags, 1);
+    }
+
+    private static TrunkedSiteSchema.Snapshot snapshot(long observedAt, String hash, int serviceFlags, int roleFlags)
+    {
         return new TrunkedSiteSchema.Snapshot(observedAt, "dmr-site", hash, TrunkedSiteSchema.PROTOCOL_DMR, 1,
             2, "Metro DMR", "Downtown", "Public Safety", "DMR Tier 3", 10, 20, 30, null, 2, null, null, null,
             1, 1, 42, serviceFlags, null, 451_000_000L, 451_000_000L,
-            List.of(new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L, 1)),
+            List.of(new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L, roleFlags)),
             List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 31, 43, 452_000_000L, 1)));
     }
 
