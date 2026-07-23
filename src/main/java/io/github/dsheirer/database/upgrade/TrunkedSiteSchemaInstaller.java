@@ -29,26 +29,26 @@ import java.util.Objects;
 import java.util.StringJoiner;
 
 /**
- * Explicit out-of-process helper that installs trunked-site schema v2 into a staged copy of a current SDRTrunk
- * database. It can install the subsystem when absent or migrate a validated v1 subsystem to v2.
+ * Explicit out-of-process helper that installs the current trunked-site schema into a staged copy of an SDRTrunk
+ * database when the subsystem is absent, or validates it when already current.
  *
  * <p>The caller owns backup, staging, and atomic replacement. This helper is intentionally not called by application
  * startup and should never be aimed at a live database.</p>
  */
-public final class TrunkedSiteV2Upgrade
+public final class TrunkedSiteSchemaInstaller
 {
     public static final int EXIT_SUCCESS = 0;
     public static final int EXIT_USAGE = 2;
     public static final int EXIT_INPUT = 3;
     public static final int EXIT_UNSUPPORTED_VERSION = 4;
-    public static final int EXIT_MIGRATION_FAILED = 5;
+    public static final int EXIT_PREPARATION_FAILED = 5;
 
     private static final String TARGET_VERSION = Integer.toString(TrunkedSiteSchema.SCHEMA_VERSION);
     private static final List<String> TABLES = List.of(
         "trunked_site_snapshot", "trunked_site_channel_summary", "trunked_site_neighbor_summary");
-    private static final String USAGE = "Usage: TrunkedSiteV2Upgrade <staged-database-path>";
+    private static final String USAGE = "Usage: TrunkedSiteSchemaInstaller <staged-database-path>";
 
-    private TrunkedSiteV2Upgrade()
+    private TrunkedSiteSchemaInstaller()
     {
     }
 
@@ -94,7 +94,7 @@ public final class TrunkedSiteV2Upgrade
 
         try
         {
-            upgradeStaged(database, output);
+            installOrValidateStaged(database, output);
             return EXIT_SUCCESS;
         }
         catch(UnsupportedSchemaVersionException e)
@@ -109,12 +109,12 @@ public final class TrunkedSiteV2Upgrade
         }
         catch(SQLException | RuntimeException e)
         {
-            error.println("ERROR: Database upgrade failed: " + message(e));
-            return EXIT_MIGRATION_FAILED;
+            error.println("ERROR: Database preparation failed: " + message(e));
+            return EXIT_PREPARATION_FAILED;
         }
     }
 
-    static void upgradeStaged(Path database, PrintStream output)
+    static void installOrValidateStaged(Path database, PrintStream output)
         throws IOException, SQLException, UnsupportedSchemaVersionException
     {
         if(!Files.isRegularFile(database))
@@ -142,36 +142,25 @@ public final class TrunkedSiteV2Upgrade
                 return;
             }
 
-            if(version != null && !"1".equals(version))
+            if(version != null)
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected trunked-site schema to be absent, v1, or v2; found [" + version +
-                        "]. Refusing upgrade.");
+                    "Expected trunked-site schema to be absent or v2; found [" + version +
+                        "]. Refusing staged import.");
             }
 
-            if(version == null)
-            {
-                requireSubsystemAbsent(connection);
-                output.println("Pre-upgrade checks passed. Installing trunked-site schema v2.");
-            }
-            else
-            {
-                TrunkedSiteSchema.validateVersionOneForMigration(connection);
-                output.println("Pre-upgrade checks passed. Migrating trunked-site schema v1 to v2.");
-            }
-
-            migrateInTransaction(connection, version);
+            requireSubsystemAbsent(connection);
+            output.println("Pre-install checks passed. Installing trunked-site schema v2.");
+            installInTransaction(connection);
             TrunkedSiteSchema.validate(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
-            output.println(version == null
-                ? "RESULT: Trunked-site schema installation complete: absent -> v2."
-                : "RESULT: Trunked-site schema migration complete: v1 -> v2.");
+            output.println("RESULT: Trunked-site schema installation complete: absent -> v2.");
         }
     }
 
-    private static void migrateInTransaction(Connection connection, String sourceVersion) throws SQLException
+    private static void installInTransaction(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
@@ -182,15 +171,7 @@ public final class TrunkedSiteV2Upgrade
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
 
-                if(sourceVersion == null)
-                {
-                    requireSubsystemAbsent(connection);
-                }
-                else
-                {
-                    TrunkedSiteSchema.validateVersionOneForMigration(connection);
-                }
-
+                requireSubsystemAbsent(connection);
                 TrunkedSiteSchema.create(connection);
                 TrunkedSiteSchema.validate(connection);
                 requireForeignKeysValid(connection);
@@ -297,7 +278,7 @@ public final class TrunkedSiteV2Upgrade
         {
             if(resultSet.next() && resultSet.getInt(1) != 0)
             {
-                throw new SQLException("Unable to checkpoint the upgraded staged database.");
+                throw new SQLException("Unable to checkpoint the prepared staged database.");
             }
         }
 

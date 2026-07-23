@@ -39,11 +39,9 @@ If the current data folder itself contains a v19 database, startup offers **Upgr
 standalone backup under `data/database/backups`, migrates another staged copy, validates it, and then replaces the
 current database atomically. If an upgrade fails, the application does not start and the completed backup is retained.
 
-Trunked-site schema v1 to v2 is deliberately not a startup repair. With sdrtrunk-vce stopped, the explicit external
-`TrunkedSiteV2DatabaseMigration` command accepts the portable `database/sdrtrunk.sqlite` path. It checkpoints the live
-file after acquiring the same portable data root lock used by the app, writes a timestamped standalone backup under
-`database/backups`, migrates and validates a staged copy, and atomically replaces the database only after schema,
-integrity, and foreign-key checks pass. It refuses to run while the app holds that lock or against a non-portable path.
+The trunked-site subsystem was introduced publicly at schema v2. Older databases selected through the Upgrade
+Assistant do not contain that subsystem; the bundled staged installer adds the complete current schema before the
+copied profile is validated and promoted. Existing active databases remain validation-only at normal startup.
 
 If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
 `playlist_v2.xml`. The legacy XML is read only.

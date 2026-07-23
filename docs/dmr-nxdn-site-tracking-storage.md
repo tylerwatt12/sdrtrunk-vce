@@ -108,14 +108,11 @@ active receiver from an offline one; cumulative learned channels and neighbors a
 snapshot hash changes.
 
 No normal runtime path creates or repairs these tables or indexes. New databases create the independent
-`trunked_site_schema_version=2` subsystem in the single startup schema routine. Existing v1 databases require the
-explicit external `TrunkedSiteV2DatabaseMigration` command while sdrtrunk-vce is stopped. That command checkpoints the
-database after acquiring the portable data root's operating-system lock, creates a timestamped standalone file in the
-database directory's `backups` folder, migrates a staged copy, validates the schema plus `integrity_check` and
-`foreign_key_check`, and atomically replaces the original only after all checks pass. It refuses to run when the app
-holds the lock or when the argument is not the canonical portable `database/sdrtrunk.sqlite` path. The lower-level
-staged helper supports absent-to-v2 imports and v1-to-v2 migration but is never invoked by runtime startup. The P25
-schema remains v20.
+`trunked_site_schema_version=2` subsystem in the single startup schema routine. The subsystem was introduced publicly
+at v2, so no public v1 migration is supported. Older databases selected through the Upgrade Assistant have no
+trunked-site subsystem; the bundled helper installs v2 only in the staged copy before validation and atomic promotion.
+An existing active database is validation-only at startup and must already contain the current schema. The P25 schema
+remains v20.
 
 ## Retention
 

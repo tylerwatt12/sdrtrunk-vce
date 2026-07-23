@@ -183,17 +183,6 @@ public final class TrunkedSiteSchema
         validateKeysAndIndexes(connection);
     }
 
-    /**
-     * Validates the legacy v1 shape before the explicit external migration installs the v2 retention indexes.
-     * Normal application startup must use {@link #validate(Connection)} and therefore rejects v1.
-     */
-    public static void validateVersionOneForMigration(Connection connection) throws SQLException
-    {
-        SqliteSchemaValidator.validate(connection, TABLES, List.of(), List.of(),
-            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "1")));
-        validateKeysAndForeignKeys(connection);
-    }
-
     private static void validateKeysAndIndexes(Connection connection) throws SQLException
     {
         validateKeysAndForeignKeys(connection);
