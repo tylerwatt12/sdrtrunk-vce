@@ -312,6 +312,46 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void bridgeFirstCannotAttachUnrelatedEndpointToOpenCohort() throws Exception
+    {
+        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
+            playbackCalls::add, null, null, null);
+
+        try
+        {
+            AudioCallSnapshot bridge = snapshot(1, 1, 100, 2, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot talkgroupEndpoint = snapshot(2, 2, 100, 1, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot radioEndpoint = snapshot(3, 3, 200, 2, "Test System", null,
+                1_000L, 2_000L, 1, false);
+
+            coordinator.receive(audioEvent(bridge, 160));
+            coordinator.receive(audioEvent(talkgroupEndpoint, 160));
+            coordinator.receive(audioEvent(radioEndpoint, 160));
+
+            awaitCondition(() -> playbackCalls.size() == 3 &&
+                playbackCalls.stream().filter(ManagedPlayableAudioCall::isDuplicate).count() == 1,
+                "An open cohort must remain pairwise compatible");
+            assertFalse(isPlaybackDuplicate(playbackCalls, bridge.callId()));
+            assertTrue(isPlaybackDuplicate(playbackCalls, talkgroupEndpoint.callId()));
+            assertFalse(isPlaybackDuplicate(playbackCalls, radioEndpoint.callId()));
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void configuredPriorityBridgeCannotCreateNonCliqueForEitherEndpointOrder() throws Exception
+    {
+        assertConfiguredPriorityBridgePermutation(false);
+        assertConfiguredPriorityBridgePermutation(true);
+    }
+
+    @Test
     void sealedCohortDoesNotDelayNewSingleTransmissionStreaming() throws Exception
     {
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
@@ -468,6 +508,54 @@ class AudioCallCoordinatorTest
             assertEquals(complete.callId(), streamed.getFirst().snapshot().callId());
             assertFalse(streamed.getFirst().snapshot().duplicate(),
                 "The selected streaming winner must pass the existing suppression filter");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void progressingCleanerPastInitialWatchdogCompletesAndWins() throws Exception
+    {
+        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        CountDownLatch firstCompletion = new CountDownLatch(1);
+        CountDownLatch streamingFanout = new CountDownLatch(1);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(true, false, true), playbackCalls::add,
+            call -> firstCompletion.countDown(), call -> {
+                streamed.add(call);
+                streamingFanout.countDown();
+            }, null, DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
+
+        try
+        {
+            AudioCallSnapshot sparse = snapshot(1, 1, 1200, 9001, "Test System", null,
+                1_000L, 2_000L, 2, false);
+            AudioCallSnapshot cleaner = snapshot(2, 2, 1200, 9002, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            coordinator.receive(audioEvent(sparse, 160));
+            coordinator.receive(audioEvent(cleaner, 160));
+            coordinator.receive(completionEvent(sparse));
+            assertTrue(firstCompletion.await(1, TimeUnit.SECONDS));
+
+            Thread.sleep(70);
+            coordinator.receive(audioEvent(cleaner, 2_000));
+            awaitCondition(() -> getPlaybackBufferCount(playbackCalls, cleaner.callId()) >= 2,
+                "Expected first cleaner progress update");
+            Thread.sleep(70);
+            coordinator.receive(audioEvent(cleaner, 2_000));
+            awaitCondition(() -> getPlaybackBufferCount(playbackCalls, cleaner.callId()) >= 3,
+                "Expected cleaner progress beyond the initial watchdog");
+            assertTrue(streamed.isEmpty(),
+                "A known member that is still progressing must not be treated as an orphan");
+
+            coordinator.receive(completionEvent(cleaner));
+            assertTrue(streamingFanout.await(1, TimeUnit.SECONDS));
+            assertEquals(1, streamed.size());
+            assertEquals(cleaner.callId(), streamed.getFirst().snapshot().callId(),
+                "The progressing cleaner candidate should participate in the final quality election");
         }
         finally
         {
@@ -634,6 +722,58 @@ class AudioCallCoordinatorTest
     {
         return playbackCalls.stream().filter(call -> call.callId().equals(callId)).findFirst()
             .map(ManagedPlayableAudioCall::isDuplicate).orElse(false);
+    }
+
+    private static int getPlaybackBufferCount(List<ManagedPlayableAudioCall> playbackCalls, AudioCallId callId)
+    {
+        return playbackCalls.stream().filter(call -> call.callId().equals(callId)).findFirst()
+            .map(ManagedPlayableAudioCall::getAudioBufferCount).orElse(0);
+    }
+
+    private static void assertConfiguredPriorityBridgePermutation(boolean radioEndpointFirst) throws Exception
+    {
+        String talkgroupGuid = "00000000-0000-0000-0000-000000000011";
+        String radioGuid = "00000000-0000-0000-0000-000000000012";
+        String bridgeGuid = "00000000-0000-0000-0000-000000000013";
+        Map<String, Integer> priorities = Map.of(talkgroupGuid, 10, radioGuid, 10, bridgeGuid, 0);
+        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
+            playbackCalls::add, null, null, null, guid -> priorities.getOrDefault(guid, Integer.MAX_VALUE), 25L);
+
+        try
+        {
+            AudioCallSnapshot talkgroupEndpoint = snapshot(11, 1, 100, 1, "Test System", talkgroupGuid,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot radioEndpoint = snapshot(12, 2, 200, 2, "Test System", radioGuid,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot preferredBridge = snapshot(13, 3, 100, 2, "Test System", bridgeGuid,
+                1_000L, 2_000L, 1, false);
+
+            if(radioEndpointFirst)
+            {
+                coordinator.receive(audioEvent(radioEndpoint, 160));
+                coordinator.receive(audioEvent(talkgroupEndpoint, 160));
+            }
+            else
+            {
+                coordinator.receive(audioEvent(talkgroupEndpoint, 160));
+                coordinator.receive(audioEvent(radioEndpoint, 160));
+            }
+
+            coordinator.receive(audioEvent(preferredBridge, 160));
+
+            awaitCondition(() -> playbackCalls.size() == 3 &&
+                playbackCalls.stream().filter(ManagedPlayableAudioCall::isDuplicate).count() == 1,
+                "Configured bridge priority must still produce a pairwise clique");
+            assertFalse(isPlaybackDuplicate(playbackCalls, preferredBridge.callId()));
+            assertTrue(isPlaybackDuplicate(playbackCalls, talkgroupEndpoint.callId()) ^
+                    isPlaybackDuplicate(playbackCalls, radioEndpoint.callId()),
+                "Exactly one mutually incompatible endpoint may join the preferred bridge");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
     }
 
     private static void awaitCondition(BooleanSupplier condition, String message) throws InterruptedException

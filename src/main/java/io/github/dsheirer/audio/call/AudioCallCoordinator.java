@@ -51,6 +51,7 @@ import java.util.function.Consumer;
 public class AudioCallCoordinator implements Listener<AudioCallEvent>
 {
     static final long DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS = 1_000L;
+    static final long DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS = 10_000L;
 
     private final Object mStateLock = new Object();
     private final ScheduledThreadPoolExecutor mExecutor;
@@ -63,6 +64,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final Consumer<CompletedAudioCall> mStreamingConsumer;
     private final Consumer<CompletedAudioCall> mWebConsumer;
     private final long mStreamingDuplicateWatchdogMilliseconds;
+    private final long mStreamingDuplicateOrphanCeilingMilliseconds;
     private long mNextRegistrationOrdinal;
     private long mNextDuplicateGroupOrdinal;
     private volatile boolean mDisposed;
@@ -90,7 +92,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             audioPlaybackManager != null ? audioPlaybackManager::receive : null,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
             audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS);
+            duplicateCallPriorityProvider, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
+            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
@@ -100,7 +103,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> webConsumer)
     {
         this(callManagementProvider, playbackConsumer, recordingConsumer, streamingConsumer, webConsumer,
-            DuplicateCallPriorityProvider.NONE, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS);
+            DuplicateCallPriorityProvider.NONE, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
+            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
@@ -111,6 +115,20 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          DuplicateCallPriorityProvider duplicateCallPriorityProvider,
                          long streamingDuplicateWatchdogMilliseconds)
     {
+        this(callManagementProvider, playbackConsumer, recordingConsumer, streamingConsumer, webConsumer,
+            duplicateCallPriorityProvider, streamingDuplicateWatchdogMilliseconds,
+            deriveOrphanCeilingMilliseconds(streamingDuplicateWatchdogMilliseconds));
+    }
+
+    AudioCallCoordinator(ICallManagementProvider callManagementProvider,
+                         Consumer<ManagedPlayableAudioCall> playbackConsumer,
+                         Consumer<CompletedAudioCall> recordingConsumer,
+                         Consumer<CompletedAudioCall> streamingConsumer,
+                         Consumer<CompletedAudioCall> webConsumer,
+                         DuplicateCallPriorityProvider duplicateCallPriorityProvider,
+                         long streamingDuplicateWatchdogMilliseconds,
+                         long streamingDuplicateOrphanCeilingMilliseconds)
+    {
         mCallManagementProvider = callManagementProvider;
         mPlaybackConsumer = playbackConsumer;
         mRecordingConsumer = recordingConsumer;
@@ -119,10 +137,26 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         mDuplicateCallPriorityProvider = duplicateCallPriorityProvider != null ?
             duplicateCallPriorityProvider : DuplicateCallPriorityProvider.NONE;
         mStreamingDuplicateWatchdogMilliseconds = Math.max(0L, streamingDuplicateWatchdogMilliseconds);
+        mStreamingDuplicateOrphanCeilingMilliseconds = Math.max(mStreamingDuplicateWatchdogMilliseconds,
+            streamingDuplicateOrphanCeilingMilliseconds);
         mExecutor = new ScheduledThreadPoolExecutor(1,
             new NamingThreadFactory("sdrtrunk audio coordinator"));
         mExecutor.setRemoveOnCancelPolicy(true);
         mExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+    }
+
+    private static long deriveOrphanCeilingMilliseconds(long watchdogMilliseconds)
+    {
+        long normalizedWatchdog = Math.max(0L, watchdogMilliseconds);
+
+        try
+        {
+            return Math.max(TimeUnit.SECONDS.toMillis(1), Math.multiplyExact(normalizedWatchdog, 10L));
+        }
+        catch(ArithmeticException _)
+        {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override
@@ -185,6 +219,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         // 3) playback/recording/streaming consume snapshots or coordinator-owned playback calls and do not mutate
         //    the shared call context directly
         context.snapshot = incomingSnapshot.withDuplicate(context.snapshot != null && context.snapshot.duplicate());
+
+        if(isProgressEvent(event))
+        {
+            context.lastProgressNanos = System.nanoTime();
+        }
+
         if(context.playbackCall != null)
         {
             context.playbackCall.updateSnapshot(context.snapshot);
@@ -223,6 +263,15 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
     }
 
+    private boolean isProgressEvent(AudioCallEvent event)
+    {
+        return switch(event.eventType())
+        {
+            case CALL_CREATED, ACTIVITY, METADATA_UPDATED, BURST_STARTED, BURST_ENDED, AUDIO_FRAME -> true;
+            case DUPLICATE_UPDATED, CALL_COMPLETED -> false;
+        };
+    }
+
     private ManagedPlayableAudioCall createPlaybackCall(AudioCallSnapshot snapshot)
     {
         if(mPlaybackConsumer == null || snapshot == null)
@@ -236,7 +285,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     }
 
     /**
-     * Reconciles explicit, non-transitive duplicate cohorts. Every member has to match the elected anchor directly;
+     * Reconciles explicit, non-transitive duplicate cohorts. Every member has to match every other member directly;
      * a talkgroup match followed by a radio match cannot bridge two otherwise unrelated calls. A cohort is sealed as
      * soon as one member completes, so a later transmission cannot be absorbed by a lingering old duplicate.
      */
@@ -292,7 +341,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             return;
         }
 
-        //First attach ungrouped calls to an open cohort only when they directly match that cohort's anchor.
+        //First attach ungrouped calls to an open cohort only when they directly match every existing member.
         ungroupedCalls.sort(this::compareLiveCandidates);
         List<ManagedAudioCall> stillUngrouped = new ArrayList<>();
 
@@ -300,7 +349,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         {
             DuplicateGroup matchingGroup = mDuplicateGroups.values().stream()
                 .filter(group -> isOpenDuplicateGroup(group, system) &&
-                    isDuplicate(group.anchorSnapshot, call.snapshot))
+                    isPairwiseCompatible(group, call.snapshot))
                 .min(this::compareDuplicateGroupAnchors).orElse(null);
 
             if(matchingGroup != null)
@@ -313,17 +362,20 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             }
         }
 
-        //Create new cohorts greedily in explicit election order. Each member must directly match the elected anchor.
+        //Create new cohorts greedily in explicit election order. Each cohort must remain a pairwise clique.
         while(stillUngrouped.size() > 1)
         {
             ManagedAudioCall anchor = stillUngrouped.removeFirst();
             List<ManagedAudioCall> matches = new ArrayList<>();
+            List<AudioCallSnapshot> clique = new ArrayList<>();
+            clique.add(anchor.snapshot);
 
             for(ManagedAudioCall candidate : stillUngrouped)
             {
-                if(isDuplicate(anchor.snapshot, candidate.snapshot))
+                if(clique.stream().allMatch(member -> isDuplicate(member, candidate.snapshot)))
                 {
                     matches.add(candidate);
+                    clique.add(candidate.snapshot);
                 }
             }
 
@@ -342,6 +394,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 stillUngrouped.removeAll(matches);
             }
         }
+    }
+
+    private boolean isPairwiseCompatible(DuplicateGroup group, AudioCallSnapshot candidate)
+    {
+        return group.memberSnapshots.values().stream().allMatch(member -> isDuplicate(member, candidate));
     }
 
     private DuplicateGroup getDuplicateGroup(ManagedAudioCall call)
@@ -386,6 +443,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         call.duplicateGroupId = group.groupId;
         group.memberCallIds.add(call.snapshot.callId());
         group.activeMemberCallIds.add(call.snapshot.callId());
+        group.memberSnapshots.put(call.snapshot.callId(), call.snapshot);
         setDuplicateState(call, !group.liveWinnerCallId.equals(call.snapshot.callId()));
     }
 
@@ -488,7 +546,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     /**
      * Sends single calls through immediately. Once the first duplicate member completes, its cohort is sealed and a
      * watchdog starts. Streaming normally waits until every known member completes and then scores the whole cohort;
-     * the watchdog bounds the delay when a member lingers or never produces a completion event.
+     * the watchdog follows coordinator-local member progress and only treats an inactive member as orphaned. A
+     * separate, longer ceiling bounds the delay if a producer keeps reporting progress but never completes.
      */
     private void handleStreamingCompletion(ManagedAudioCall context, CompletedAudioCall completedAudioCall)
     {
@@ -516,13 +575,17 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         group.completedStreamingCandidates.put(completedAudioCall.snapshot().callId(),
             new CompletedStreamingCandidate(completedAudioCall, context.registrationOrdinal));
 
-        if(group.streamingWatchdog == null)
+        if(!group.streamingWatchdogStarted)
         {
-            scheduleStreamingWatchdog(group);
+            group.streamingWatchdogStarted = true;
+            group.streamingOrphanDeadlineNanos = safeAddNanos(System.nanoTime(),
+                TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateOrphanCeilingMilliseconds));
+            scheduleStreamingWatchdog(group,
+                TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateWatchdogMilliseconds));
         }
     }
 
-    private void scheduleStreamingWatchdog(DuplicateGroup group)
+    private void scheduleStreamingWatchdog(DuplicateGroup group, long delayNanos)
     {
         if(mDisposed)
         {
@@ -538,15 +601,94 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 {
                     if(!mDisposed)
                     {
-                        flushStreamingGroup(groupId);
+                        DuplicateGroup currentGroup = mDuplicateGroups.get(groupId);
+
+                        if(currentGroup != null)
+                        {
+                            currentGroup.streamingWatchdog = null;
+                        }
+
+                        evaluateStreamingWatchdog(groupId);
                     }
                 }
-            }, mStreamingDuplicateWatchdogMilliseconds, TimeUnit.MILLISECONDS);
+            }, Math.max(0L, delayNanos), TimeUnit.NANOSECONDS);
         }
         catch(RejectedExecutionException _)
         {
             group.streamingWatchdog = null;
         }
+    }
+
+    private void evaluateStreamingWatchdog(long groupId)
+    {
+        if(!mCallManagementProvider.isDuplicateCallDetectionEnabled())
+        {
+            releaseAllDuplicateGroups();
+            return;
+        }
+
+        if(!mCallManagementProvider.isDuplicateStreamingSuppressionEnabled())
+        {
+            releasePendingStreamingCandidates();
+            return;
+        }
+
+        DuplicateGroup group = mDuplicateGroups.get(groupId);
+
+        if(group == null || group.streamingDecisionMade)
+        {
+            return;
+        }
+
+        if(group.completedMemberCallIds.containsAll(group.memberCallIds))
+        {
+            flushStreamingGroup(groupId);
+            return;
+        }
+
+        long now = System.nanoTime();
+
+        if(now >= group.streamingOrphanDeadlineNanos)
+        {
+            flushStreamingGroup(groupId);
+            return;
+        }
+
+        long latestProgress = Long.MIN_VALUE;
+
+        for(AudioCallId activeMemberCallId : group.activeMemberCallIds)
+        {
+            ManagedAudioCall activeMember = mCalls.get(activeMemberCallId);
+
+            if(activeMember != null)
+            {
+                latestProgress = Math.max(latestProgress, activeMember.lastProgressNanos);
+            }
+        }
+
+        long inactivityDeadline = latestProgress != Long.MIN_VALUE ?
+            safeAddNanos(latestProgress,
+                TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateWatchdogMilliseconds)) : now;
+
+        if(now < inactivityDeadline)
+        {
+            long nextDeadline = Math.min(inactivityDeadline, group.streamingOrphanDeadlineNanos);
+            scheduleStreamingWatchdog(group, Math.max(0L, nextDeadline - now));
+        }
+        else
+        {
+            flushStreamingGroup(groupId);
+        }
+    }
+
+    private long safeAddNanos(long timestamp, long duration)
+    {
+        if(duration > 0L && timestamp > Long.MAX_VALUE - duration)
+        {
+            return Long.MAX_VALUE;
+        }
+
+        return timestamp + duration;
     }
 
     private void flushStreamingGroup(long groupId)
@@ -844,6 +986,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         private final List<float[]> audioBuffers = new ArrayList<>();
         private final ManagedPlayableAudioCall playbackCall;
         private final long registrationOrdinal;
+        private long lastProgressNanos = System.nanoTime();
         private Long duplicateGroupId;
 
         private ManagedAudioCall(AudioCallSnapshot snapshot, ManagedPlayableAudioCall playbackCall,
@@ -863,9 +1006,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         private final Set<AudioCallId> memberCallIds = new HashSet<>();
         private final Set<AudioCallId> activeMemberCallIds = new HashSet<>();
         private final Set<AudioCallId> completedMemberCallIds = new HashSet<>();
+        private final Map<AudioCallId, AudioCallSnapshot> memberSnapshots = new HashMap<>();
         private final Map<AudioCallId, CompletedStreamingCandidate> completedStreamingCandidates = new HashMap<>();
         private final AudioCallSnapshot anchorSnapshot;
         private ScheduledFuture<?> streamingWatchdog;
+        private long streamingOrphanDeadlineNanos;
+        private boolean streamingWatchdogStarted;
         private boolean sealed;
         private boolean streamingDecisionMade;
 
