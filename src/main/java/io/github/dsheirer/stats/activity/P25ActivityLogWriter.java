@@ -13,6 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -412,6 +413,11 @@ class P25ActivityLogWriter implements AutoCloseable
                     {
                         writtenRecords++;
                     }
+                }
+                else if(record instanceof P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)
+                {
+                    TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot());
+                    writtenRecords++;
                 }
             }
 

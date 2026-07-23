@@ -18,6 +18,8 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
@@ -40,7 +42,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Owns optional P25 activity logging and keeps SQLite work off decoder/UI threads.
  */
-public class P25ActivityLogService implements SiteMetadataListener
+public class P25ActivityLogService implements SiteMetadataListener, ProtocolSiteMetadataListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogService.class);
     private static final long DEDUPE_RETENTION_MILLISECONDS = 60000;
@@ -292,6 +294,25 @@ public class P25ActivityLogService implements SiteMetadataListener
         if(record != null)
         {
             writer.enqueue(record);
+        }
+    }
+
+    @Override
+    public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        var snapshot = TrunkedSiteMetadataMapper.map(event);
+
+        if(snapshot != null)
+        {
+            writer.enqueue(new P25ActivityLogRecords.TrunkedSiteSnapshot(
+                snapshot.observedAtEpochMilliseconds(), snapshot));
         }
     }
 

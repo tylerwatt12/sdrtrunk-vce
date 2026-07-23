@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.net.URI;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -769,6 +770,116 @@ class StatsWebDatabaseTest
         assertFalse((Boolean)systems.get(1).get("children_truncated"));
     }
 
+    @Test
+    void exposesBoundedDmrAndNxdnSystemDirectoryAndSiteDetails() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-a", TrunkedSiteSchema.PROTOCOL_DMR,
+                1, 2, "Metro DMR", "DMR Downtown", 10, 20, 1, null,
+                List.of(
+                    new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L, 1),
+                    new TrunkedSiteSchema.Channel(43, null, 2, 452_000_000L, 457_000_000L, 2)),
+                List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 2, 44, 453_000_000L, 1))));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-b", TrunkedSiteSchema.PROTOCOL_DMR,
+                1, 2, "Metro DMR", "DMR Airport", 10, 20, 2, null,
+                List.of(new TrunkedSiteSchema.Channel(52, null, 1, 461_000_000L, 466_000_000L, 1)),
+                List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-a", TrunkedSiteSchema.PROTOCOL_NXDN,
+                2, 4, "Regional NXDN", "NXDN North", 7, 8, 9, 5,
+                List.of(new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, 160_000_000L, 1)),
+                List.of(new TrunkedSiteSchema.Neighbor(2, 4, 7, 8, 10, 122, 155_012_500L, 2))));
+        }
+
+        Map<String,Object> directory = mDatabase.systemDirectory(request("/api/system-directory"));
+        List<Map<String,Object>> systems = rows(directory);
+        assertEquals(3, systems.size());
+        Map<String,Object> dmr = systems.stream().filter(row -> "DMR".equals(row.get("protocol")))
+            .findFirst().orElseThrow();
+        assertEquals(2, number(dmr.get("sites")));
+        assertEquals(2, rowsFrom(dmr, "children").size());
+        assertEquals("dmr-a", rowsFrom(dmr, "children").getFirst().get("guid"));
+        assertEquals("trunked", rowsFrom(dmr, "children").getFirst().get("site_kind"));
+
+        List<Map<String,Object>> nxdnSearch = rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=NXDN")));
+        assertEquals(1, nxdnSearch.size());
+        assertEquals("NXDN", nxdnSearch.getFirst().get("protocol"));
+        assertEquals("nxdn-a", rowsFrom(nxdnSearch.getFirst(), "children").getFirst().get("guid"));
+
+        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=dmr-a")), "site");
+        assertEquals("DMR", site.get("protocol"));
+        assertEquals("trunked", site.get("site_kind"));
+        assertEquals(2, number(site.get("identity_domain_code")));
+        assertEquals(20, number(site.get("system_id")));
+        assertEquals(2, number(site.get("channels")));
+        assertEquals(1, number(site.get("neighbors")));
+
+        List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
+            "/api/site/channels?guid=dmr-a&limit=1")));
+        assertEquals(1, channels.size());
+        assertEquals(42, number(channels.getFirst().get("channel_number")));
+        assertEquals(451_000_000L, number(channels.getFirst().get("frequency_hz")));
+
+        List<Map<String,Object>> neighbors = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=nxdn-a&limit=1")));
+        assertEquals(1, neighbors.size());
+        assertEquals(10, number(neighbors.getFirst().get("site_id")));
+        assertEquals(4, number(neighbors.getFirst().get("identity_domain_code")));
+        assertEquals(155_012_500L, number(neighbors.getFirst().get("frequency_hz")));
+
+        Map<String,Object> counts = map(mDatabase.dashboard(), "counts");
+        assertEquals(3, number(counts.get("systems")));
+        assertEquals(4, number(counts.get("sites")));
+    }
+
+    @Test
+    void keepsDmrModelsAndNxdnLocationCategoriesInSeparateSystemGroups() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-tiny", TrunkedSiteSchema.PROTOCOL_DMR,
+                1, 1, "Shared DMR", "Tiny Site", 10, null, 1, null, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-small", TrunkedSiteSchema.PROTOCOL_DMR,
+                1, 2, "Shared DMR", "Small Site", 10, null, 2, null, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-global", TrunkedSiteSchema.PROTOCOL_NXDN,
+                1, 1, "Shared NXDN", "Global Site", null, 8, 1, 5, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-local", TrunkedSiteSchema.PROTOCOL_NXDN,
+                1, 3, "Shared NXDN", "Local Site", null, 8, 2, 5, List.of(), List.of()));
+        }
+
+        List<Map<String,Object>> systems = rows(mDatabase.systemDirectory(request("/api/system-directory")));
+        List<Map<String,Object>> dmr = systems.stream().filter(row -> "DMR".equals(row.get("protocol"))).toList();
+        List<Map<String,Object>> nxdn = systems.stream().filter(row -> "NXDN".equals(row.get("protocol"))).toList();
+        assertEquals(2, dmr.size());
+        assertEquals(2, nxdn.size());
+        assertEquals(List.of(1L, 2L), dmr.stream().map(row -> number(row.get("identity_domain_code"))).sorted()
+            .toList());
+        assertEquals(List.of(1L, 3L), nxdn.stream().map(row -> number(row.get("identity_domain_code"))).sorted()
+            .toList());
+    }
+
+    @Test
+    void keepsDmrVariantsWithOverlappingUnqualifiedIdsInSeparateSystemGroups() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-tier3", TrunkedSiteSchema.PROTOCOL_DMR,
+                1, 0, "Tier III", "Tier III Site", 10, 20, 1, null, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-connect-plus",
+                TrunkedSiteSchema.PROTOCOL_DMR, 2, 0, "Connect Plus", "Connect Plus Site", 10, 20, 2, null,
+                List.of(), List.of()));
+        }
+
+        List<Map<String,Object>> dmr = rows(mDatabase.systemDirectory(request("/api/system-directory"))).stream()
+            .filter(row -> "DMR".equals(row.get("protocol")))
+            .toList();
+        assertEquals(2, dmr.size());
+        assertEquals(List.of(1L, 2L), dmr.stream().map(row -> number(row.get("variant_code"))).sorted().toList());
+        assertTrue(dmr.stream().allMatch(row -> rowsFrom(row, "children").size() == 1));
+        assertEquals(3, number(map(mDatabase.dashboard(), "counts").get("systems")));
+    }
+
     private static StatsRequest request(String uri)
     {
         return StatsRequest.from(URI.create(uri));
@@ -795,6 +906,19 @@ class StatsWebDatabaseTest
     private static long number(Object value)
     {
         return ((Number)value).longValue();
+    }
+
+    private static TrunkedSiteSchema.Snapshot trunkedSnapshot(String guid, int protocol, int variant, int domain,
+                                                               String configuredSystem, String channelName,
+                                                               Integer network, Integer system, Integer site,
+                                                               Integer ran, List<TrunkedSiteSchema.Channel> channels,
+                                                               List<TrunkedSiteSchema.Neighbor> neighbors)
+    {
+        return new TrunkedSiteSchema.Snapshot(System.currentTimeMillis(), guid, "hash-" + guid, protocol, variant,
+            domain, configuredSystem, channelName, "County", protocol == TrunkedSiteSchema.PROTOCOL_DMR ?
+            "DMR" : "NXDN", network, system, site, ran, null, null, null, null, 1, 1, null, 0, null,
+            channels.isEmpty() ? null : channels.getFirst().frequencyHertz(),
+            channels.isEmpty() ? null : channels.getFirst().frequencyHertz(), channels, neighbors);
     }
 
     private static void seed(Path database) throws Exception

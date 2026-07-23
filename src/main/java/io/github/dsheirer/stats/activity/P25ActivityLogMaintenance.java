@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -117,7 +118,8 @@ public final class P25ActivityLogMaintenance
                 }
                 case RESET_STATS ->
                 {
-                    rowsDeleted = P25ActivityLogSchema.resetStats(connection);
+                    rowsDeleted = P25ActivityLogSchema.resetStats(connection) +
+                        TrunkedSiteSchema.resetStats(connection);
                     checkpoint(connection);
                     optimize(connection);
                     updateStatus(connection, "last_stats_reset_ms");
@@ -152,7 +154,8 @@ public final class P25ActivityLogMaintenance
 
             try
             {
-                rowsDeleted = P25ActivityLogSchema.clearSiteStats(connection, guid);
+                rowsDeleted = P25ActivityLogSchema.clearSiteStats(connection, guid) +
+                    TrunkedSiteSchema.clearSiteStats(connection, guid);
                 P25ActivityLogSchema.updateStatus(connection, "last_site_stats_clear_ms",
                     Long.toString(System.currentTimeMillis()));
                 connection.commit();

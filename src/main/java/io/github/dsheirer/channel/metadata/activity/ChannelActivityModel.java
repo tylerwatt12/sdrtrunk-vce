@@ -36,6 +36,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
@@ -44,6 +45,7 @@ import io.github.dsheirer.module.decode.p25.P25EncryptionDetails;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
@@ -325,11 +327,16 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
             ChannelActivityRow row = table.get(session.controlKey(snapshot.frequencyHz()));
 
-            if(row == null && snapshot.active())
+            if(snapshot.active() && (row == null || row.getRole() != ChannelActivityRow.Role.CURRENT_CONTROL ||
+                !table.isControlActive()))
             {
-                row = session.configuredControl(snapshot.frequencyHz());
-                rememberRow(table, row);
-                row.setDecoder(getDecoder(snapshot.channel()));
+                updateCurrentControl(session, table, snapshot.channel(), snapshot.frequencyHz());
+                row = table.get(session.controlKey(snapshot.frequencyHz()));
+            }
+            else if(snapshot.active())
+            {
+                cancelPendingControlIdle(row);
+                scheduleControlIdle(row, table, snapshot.channel());
             }
 
             if(row != null)
@@ -493,6 +500,33 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         });
     }
 
+    /**
+     * Promotes a standard DMR or NXDN channel only after the decoder has positively identified a known trunking
+     * variant. This allows a quiet control channel to expose control quality without allowing quality alone to
+     * misclassify conventional DMR/NXDN channels.
+     */
+    public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
+    {
+        if(!mEnabled || !isKnownDmrNxdnTrunkingMetadata(event))
+        {
+            return;
+        }
+
+        Channel parentChannel = event.channel();
+
+        runOnSwingIfEnabled(() -> {
+            SiteActivitySession session = getOrCreateSiteSession(parentChannel);
+
+            if(session == null)
+            {
+                return;
+            }
+
+            removeConventionalRows(parentChannel);
+            ensureConfiguredControlRowIfMissing(session, "protocol-site-metadata-control-seed");
+        });
+    }
+
     public void p25TrafficGrant(Channel parentChannel, Channel trafficChannel, IChannelDescriptor channelDescriptor,
                                 IdentifierCollection identifiers, DecodeEventType eventType)
     {
@@ -507,9 +541,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     }
 
     /**
-     * Publishes a DMR or NXDN trunked call event into the shared Systems activity model.  Unlike P25, DMR and NXDN
-     * use the same decoder configuration for conventional and trunked channels, so the first actual traffic-manager
-     * call event is what promotes the parent from the Conventional table to a trunked Systems table.
+     * Publishes a DMR or NXDN trunked call event into the shared Systems activity model. DMR and NXDN use the same
+     * decoder configuration for conventional and trunked channels, so either positively identified trunking metadata
+     * or the first actual traffic-manager call event can promote the parent into a trunked Systems table.
      *
      * @param parentChannel control channel that owns the traffic-channel manager
      * @param trafficChannel allocated child channel, or null when the grant could not be allocated
@@ -1338,6 +1372,29 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return channel != null && channel.isStandardChannel() &&
             (decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2 || decoder == DecoderType.DMR ||
                 decoder == DecoderType.NXDN);
+    }
+
+    private boolean isKnownDmrNxdnTrunkingMetadata(ProtocolSiteMetadataEvent event)
+    {
+        if(event == null || !event.isUseful() || event.channel() == null || !event.channel().isStandardChannel() ||
+            event.channel().isTrafficChannel() || event.snapshot().protocol() == null)
+        {
+            return false;
+        }
+
+        String variant = event.snapshot().variant();
+
+        if(event.snapshot().protocol() == Protocol.DMR)
+        {
+            return "TIER_III".equals(variant) || "CONNECT_PLUS".equals(variant) ||
+                "CAPACITY_MAX".equals(variant) || "HYTERA_TIER_III".equals(variant);
+        }
+        else if(event.snapshot().protocol() == Protocol.NXDN)
+        {
+            return "TYPE_C".equals(variant) || "TYPE_D".equals(variant) || "TYPE-D".equals(variant);
+        }
+
+        return false;
     }
 
     private SiteIdentity getSiteIdentity(P25NetworkConfigurationSnapshot snapshot)

@@ -81,8 +81,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mDatabase = new StatsWebDatabase(userPreferences);
-        mLiveService = new StatsLiveService(mDatabase,
-            channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null);
+        mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
     }
@@ -194,6 +193,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mServer.createContext("/api/conventional/detail", exchange -> handleJson(exchange,
                 () -> mDatabase.conventionalDetail(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/live/systems", this::handleSystemsSse);
+            mServer.createContext("/live/sites", this::handleSitesSse);
             mServer.createContext("/live/web-calls", this::handleWebCallsSse);
             mServer.createContext("/live/activity", this::handleActivitySse);
             mServer.createContext("/api/web-player/calls/", this::handleWebCallAudio);
@@ -249,6 +249,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             "assetsAvailable", mAssetRoot != null && Files.isRegularFile(mAssetRoot.resolve("index.html")),
             "liveChannels", Map.of(
                 "systems", "/live/systems",
+                "sites", "/live/sites",
                 "webCalls", "/live/web-calls",
                 "activity", "/live/activity"
             )
@@ -337,6 +338,25 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         streamSse(exchange, subscription, "snapshot", mLiveService.snapshot(), event -> true);
+    }
+
+    private void handleSitesSse(HttpExchange exchange) throws IOException
+    {
+        if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
+        {
+            return;
+        }
+
+        StatsLiveEventHub.Subscription subscription = mLiveService.subscribeSites();
+
+        if(subscription == null)
+        {
+            sendText(exchange, 429, "Too many live Stats Server clients");
+            return;
+        }
+
+        streamSse(exchange, subscription, "snapshot", mLiveService.siteSnapshot(),
+            event -> "site_metadata".equals(event.name()) || "site_removed".equals(event.name()));
     }
 
     private void handleWebCallsSse(HttpExchange exchange) throws IOException

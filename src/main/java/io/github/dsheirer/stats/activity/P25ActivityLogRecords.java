@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.util.List;
 
 /**
@@ -155,6 +156,11 @@ final class P25ActivityLogRecords
                                  Double maximumSignalDbfs, Double decodeHealthPercent, long validFrames,
                                  long invalidFrames, long correctedBits, long syncLossBits, long droppedBits,
                                  long lastValidDecodeMs)
+        implements P25ActivityLogRecord
+    {
+    }
+
+    record TrunkedSiteSnapshot(long observedAtEpochMilliseconds, TrunkedSiteSchema.Snapshot snapshot)
         implements P25ActivityLogRecord
     {
     }

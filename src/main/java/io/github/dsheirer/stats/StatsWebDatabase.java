@@ -238,11 +238,28 @@ class StatsWebDatabase
         return read(connection -> {
             Map<String,Object> dashboard = new LinkedHashMap<>();
             dashboard.put("counts", Map.of(
-                "systems", scalarLong(connection, "SELECT COUNT(*) FROM p25_system"),
-                "sites", scalarLong(connection, "SELECT COUNT(*) FROM p25_site_snapshot"),
+                "systems", scalarLong(connection, """
+                    SELECT (SELECT COUNT(*) FROM p25_system) + (SELECT COUNT(*) FROM (
+                        SELECT protocol_code, variant_code, identity_domain_code, network_id, system_id,
+                            CASE WHEN network_id IS NULL AND system_id IS NULL
+                                THEN lower(coalesce(nullif(trim(configured_system), ''),
+                                    nullif(trim(channel_name), ''), guid))
+                                ELSE '' END AS configured_group
+                        FROM trunked_site_snapshot
+                        GROUP BY protocol_code, variant_code, identity_domain_code, network_id, system_id,
+                            configured_group
+                    ))
+                    """),
+                "sites", scalarLong(connection, """
+                    SELECT (SELECT COUNT(*) FROM p25_site_snapshot) +
+                        (SELECT COUNT(*) FROM trunked_site_snapshot)
+                    """),
                 "talkgroups", scalarLong(connection, "SELECT COUNT(*) FROM p25_talkgroup_summary"),
                 "radios", scalarLong(connection, "SELECT COUNT(*) FROM p25_radio_summary"),
-                "frequencies", scalarLong(connection, "SELECT COUNT(*) FROM p25_site_frequency_summary"),
+                "frequencies", scalarLong(connection, """
+                    SELECT (SELECT COUNT(*) FROM p25_site_frequency_summary) +
+                        (SELECT COUNT(*) FROM trunked_site_channel_summary WHERE frequency_hz > 0)
+                    """),
                 "conventional", scalarLong(connection, "SELECT COUNT(*) FROM conventional_activity_summary")
             ));
             dashboard.put("lastSeenMs", scalarLong(connection, """
@@ -252,6 +269,7 @@ class StatsWebDatabase
                     UNION ALL SELECT last_seen_ms FROM p25_radio_summary
                     UNION ALL SELECT last_seen_ms FROM p25_site_frequency_summary
                     UNION ALL SELECT last_seen_ms FROM conventional_activity_summary
+                    UNION ALL SELECT last_seen_ms FROM trunked_site_snapshot
                 )
                 """));
 
@@ -482,40 +500,77 @@ class StatsWebDatabase
     {
         return read(connection -> {
             String search = request.search();
-            StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, system.first_seen_ms,
-                    system.last_seen_ms, COUNT(DISTINCT site.guid) AS sites,
-                    (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
-                        WHERE talkgroup.system_key = system.system_key) AS talkgroups,
-                    (SELECT COUNT(*) FROM p25_radio_summary radio
-                        WHERE radio.system_key = system.system_key) AS radios,
-                    (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                        WHERE affiliation.system_key = system.system_key) AS affiliations,
-                    (SELECT group_concat(name, ', ') FROM (
-                        SELECT DISTINCT channel_name AS name FROM p25_site_snapshot names
-                        WHERE names.system_key = system.system_key AND channel_name IS NOT NULL
-                        ORDER BY channel_name)) AS site_names
-                FROM p25_system system
-                LEFT JOIN p25_site_snapshot site ON site.system_key = system.system_key
-                """);
-            List<Object> parameters = new ArrayList<>();
+            String searchLike = search != null ? like(search) : null;
+            List<Map<String,Object>> parentRows = queryRows(connection, """
+                WITH parents AS (
+                    SELECT 1 AS protocol_code, 'P25' AS protocol,
+                        'p25:' || system.wacn || ':' || system.system_id AS system_group_key,
+                        system.system_key, system.wacn, system.system_id, NULL AS network_id,
+                        0 AS variant_code, 0 AS identity_domain_code,
+                        NULL AS configured_system, system.first_seen_ms, system.last_seen_ms,
+                        COUNT(DISTINCT site.guid) AS sites,
+                        (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
+                            WHERE talkgroup.system_key = system.system_key) AS talkgroups,
+                        (SELECT COUNT(*) FROM p25_radio_summary radio
+                            WHERE radio.system_key = system.system_key) AS radios,
+                        (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
+                            WHERE affiliation.system_key = system.system_key) AS affiliations,
+                        (SELECT group_concat(name, ', ') FROM (
+                            SELECT DISTINCT channel_name AS name FROM p25_site_snapshot names
+                            WHERE names.system_key = system.system_key AND channel_name IS NOT NULL
+                            ORDER BY channel_name)) AS site_names,
+                        lower('P25 ' || system.wacn || ' ' || system.system_id || ' ' ||
+                            coalesce(group_concat(site.channel_name, ' '), '') || ' ' ||
+                            coalesce(group_concat(site.guid, ' '), '')) AS search_text
+                    FROM p25_system system
+                    LEFT JOIN p25_site_snapshot site ON site.system_key = system.system_key
+                    GROUP BY system.system_key
 
-            if(search != null)
-            {
-                sql.append(" WHERE CAST(system.wacn AS TEXT) LIKE ? OR CAST(system.system_id AS TEXT) LIKE ? " +
-                    "OR EXISTS (SELECT 1 FROM p25_site_snapshot matched WHERE matched.system_key = system.system_key " +
-                    "AND (lower(matched.channel_name) LIKE ? OR lower(matched.guid) LIKE ?))");
-                String like = like(search);
-                parameters.add(like);
-                parameters.add(like);
-                parameters.add(like);
-                parameters.add(like);
-            }
+                    UNION ALL
 
-            sql.append(" GROUP BY system.system_key " +
-                "ORDER BY system.wacn ASC, system.system_id ASC LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            Map<String,Object> response = page(queryRows(connection, sql.toString(), parameters.toArray()), request);
+                    SELECT site.protocol_code,
+                        CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                        'trunked:' || site.protocol_code || ':' || site.variant_code || ':' ||
+                            site.identity_domain_code || ':' ||
+                            coalesce(site.network_id, -1) || ':' || coalesce(site.system_id, -1) || ':' ||
+                            CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
+                                THEN lower(coalesce(nullif(trim(site.configured_system), ''),
+                                    nullif(trim(site.channel_name), ''), site.guid))
+                                ELSE '' END AS system_group_key,
+                        NULL AS system_key, NULL AS wacn, site.system_id, site.network_id,
+                        site.variant_code, site.identity_domain_code,
+                        coalesce(min(nullif(trim(site.configured_system), '')),
+                            min(nullif(trim(site.channel_name), ''))) AS configured_system,
+                        min(site.first_seen_ms) AS first_seen_ms, max(site.last_seen_ms) AS last_seen_ms,
+                        count(*) AS sites, 0 AS talkgroups, 0 AS radios, 0 AS affiliations,
+                        group_concat(DISTINCT site.channel_name) AS site_names,
+                        lower(
+                            CASE site.protocol_code WHEN 3 THEN 'DMR ' WHEN 4 THEN 'NXDN ' ELSE '' END ||
+                            coalesce(site.network_id, '') || ' ' || coalesce(site.system_id, '') || ' ' ||
+                            coalesce(group_concat(site.configured_system, ' '), '') || ' ' ||
+                            coalesce(group_concat(site.channel_name, ' '), '') || ' ' ||
+                            coalesce(group_concat(site.guid, ' '), '')
+                        ) AS search_text
+                    FROM trunked_site_snapshot site
+                    GROUP BY site.protocol_code, site.variant_code, site.identity_domain_code, site.network_id,
+                        site.system_id,
+                        CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
+                            THEN lower(coalesce(nullif(trim(site.configured_system), ''),
+                                nullif(trim(site.channel_name), ''), site.guid))
+                            ELSE '' END
+                )
+                SELECT protocol_code, protocol, system_group_key, system_key, wacn, system_id, network_id,
+                    variant_code, identity_domain_code, configured_system, first_seen_ms, last_seen_ms, sites,
+                    talkgroups, radios, affiliations, site_names
+                FROM parents
+                WHERE (? IS NULL OR search_text LIKE ?)
+                ORDER BY protocol_code ASC, wacn IS NULL ASC, wacn ASC,
+                    variant_code ASC, identity_domain_code ASC, network_id IS NULL ASC, network_id ASC,
+                    system_id IS NULL ASC, system_id ASC,
+                    lower(coalesce(configured_system, site_names, system_group_key)), system_group_key
+                LIMIT ? OFFSET ?
+                """, search, searchLike, request.limit() + 1, request.offset());
+            Map<String,Object> response = page(parentRows, request);
             @SuppressWarnings("unchecked")
             List<Map<String,Object>> systems = (List<Map<String,Object>>)response.get("rows");
 
@@ -530,36 +585,103 @@ class StatsWebDatabase
                 .map(Number.class::cast)
                 .map(Number::longValue)
                 .toList();
-            String placeholders = String.join(",", java.util.Collections.nCopies(systemKeys.size(), "?"));
-            List<Object> siteParameters = new ArrayList<>(systemKeys);
-            siteParameters.add(DIRECTORY_SITE_LIMIT_PER_SYSTEM);
-            List<Map<String,Object>> sites = queryRows(connection, siteSelect() + """
-                JOIN (
-                    SELECT guid, row_number() OVER (
-                        PARTITION BY system_key
-                        ORDER BY rfss IS NULL ASC, rfss ASC, site IS NULL ASC, site ASC, guid ASC
-                    ) AS directory_rank
-                    FROM p25_site_snapshot
-                    WHERE system_key IN (%s)
-                ) directory ON directory.guid = site.guid
-                WHERE directory.directory_rank <= ?
-                ORDER BY system.wacn ASC, system.system_id ASC,
-                    site.rfss IS NULL ASC, site.rfss ASC, site.site IS NULL ASC, site.site ASC, site.guid ASC
-                """.formatted(placeholders), siteParameters.toArray());
-            Map<Long,List<Map<String,Object>>> sitesBySystem = new LinkedHashMap<>();
+            List<String> trunkedGroupKeys = systems.stream()
+                .map(row -> row.get("system_group_key"))
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(key -> key.startsWith("trunked:"))
+                .toList();
+            Map<String,List<Map<String,Object>>> sitesBySystem = new LinkedHashMap<>();
 
-            for(Map<String,Object> site: sites)
+            if(!systemKeys.isEmpty())
             {
-                if(site.get("system_key") instanceof Number key)
+                String placeholders = String.join(",", java.util.Collections.nCopies(systemKeys.size(), "?"));
+                List<Object> siteParameters = new ArrayList<>(systemKeys);
+                siteParameters.add(DIRECTORY_SITE_LIMIT_PER_SYSTEM);
+                List<Map<String,Object>> sites = queryRows(connection, siteSelect() + """
+                    JOIN (
+                        SELECT guid, row_number() OVER (
+                            PARTITION BY system_key
+                            ORDER BY rfss IS NULL ASC, rfss ASC, site IS NULL ASC, site ASC, guid ASC
+                        ) AS directory_rank
+                        FROM p25_site_snapshot
+                        WHERE system_key IN (%s)
+                    ) directory ON directory.guid = site.guid
+                    WHERE directory.directory_rank <= ?
+                    ORDER BY system.wacn ASC, system.system_id ASC,
+                        site.rfss IS NULL ASC, site.rfss ASC, site.site IS NULL ASC, site.site ASC, site.guid ASC
+                    """.formatted(placeholders), siteParameters.toArray());
+
+                for(Map<String,Object> site: sites)
                 {
-                    sitesBySystem.computeIfAbsent(key.longValue(), ignored -> new ArrayList<>()).add(site);
+                    String groupKey = "p25:" + number(site.get("wacn")) + ":" + number(site.get("system_id"));
+                    site.put("protocol_code", 1);
+                    site.put("protocol", "P25");
+                    site.put("site_kind", "p25");
+                    site.put("system_group_key", groupKey);
+                    sitesBySystem.computeIfAbsent(groupKey, ignored -> new ArrayList<>()).add(site);
+                }
+            }
+
+            if(!trunkedGroupKeys.isEmpty())
+            {
+                String placeholders = String.join(",",
+                    java.util.Collections.nCopies(trunkedGroupKeys.size(), "?"));
+                List<Object> siteParameters = new ArrayList<>(trunkedGroupKeys);
+                siteParameters.add(DIRECTORY_SITE_LIMIT_PER_SYSTEM);
+                List<Map<String,Object>> sites = queryRows(connection, """
+                    SELECT * FROM (
+                        SELECT site.guid, site.snapshot_hash, site.protocol_code,
+                            CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
+                                ELSE 'Unknown' END AS protocol,
+                            site.variant_code, site.identity_domain_code, site.configured_system, site.channel_name,
+                            site.alias_list_name, site.decoder, site.network_id, site.system_id, site.site_id, site.ran,
+                            site.model_code, site.brand_code, site.mode_code, site.channel_type_code,
+                            site.color_code_ts1, site.color_code_ts2, site.current_repeater,
+                            site.service_flags, site.failure_code, site.primary_frequency_hz,
+                            site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
+                            site.observation_count,
+                            'trunked:' || site.protocol_code || ':' || site.variant_code || ':' ||
+                                site.identity_domain_code || ':' ||
+                                coalesce(site.network_id, -1) || ':' || coalesce(site.system_id, -1) || ':' ||
+                                CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
+                                    THEN lower(coalesce(nullif(trim(site.configured_system), ''),
+                                        nullif(trim(site.channel_name), ''), site.guid))
+                                    ELSE '' END AS system_group_key,
+                            (SELECT COUNT(*) FROM trunked_site_channel_summary channel
+                                WHERE channel.guid = site.guid) AS channels,
+                            (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
+                                WHERE neighbor.guid = site.guid) AS neighbors,
+                            row_number() OVER (
+                                PARTITION BY site.protocol_code, site.variant_code, site.identity_domain_code,
+                                    site.network_id, site.system_id,
+                                    CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
+                                        THEN lower(coalesce(nullif(trim(site.configured_system), ''),
+                                            nullif(trim(site.channel_name), ''), site.guid))
+                                        ELSE '' END
+                                ORDER BY site.site_id IS NULL ASC, site.site_id ASC, site.ran IS NULL ASC,
+                                    site.ran ASC, site.guid ASC
+                            ) AS directory_rank
+                        FROM trunked_site_snapshot site
+                    ) ranked
+                    WHERE system_group_key IN (%s) AND directory_rank <= ?
+                    ORDER BY protocol_code, variant_code, identity_domain_code, network_id IS NULL ASC,
+                        network_id ASC, system_id IS NULL ASC, system_id ASC, site_id IS NULL ASC, site_id ASC,
+                        ran IS NULL ASC, ran ASC, guid
+                    """.formatted(placeholders), siteParameters.toArray());
+
+                for(Map<String,Object> site: sites)
+                {
+                    site.put("site_kind", "trunked");
+                    String groupKey = String.valueOf(site.get("system_group_key"));
+                    sitesBySystem.computeIfAbsent(groupKey, ignored -> new ArrayList<>()).add(site);
                 }
             }
 
             for(Map<String,Object> system: systems)
             {
-                long systemKey = number(system.get("system_key"));
-                List<Map<String,Object>> children = sitesBySystem.getOrDefault(systemKey, List.of());
+                String groupKey = String.valueOf(system.get("system_group_key"));
+                List<Map<String,Object>> children = sitesBySystem.getOrDefault(groupKey, List.of());
                 system.put("children", children);
                 system.put("children_truncated", number(system.get("sites")) > children.size());
             }
@@ -912,13 +1034,25 @@ class StatsWebDatabase
     {
         String guid = request.requiredText("guid");
         return read(connection -> {
-            Map<String,Object> site = first(queryRows(connection, siteSelect() + " WHERE site.guid = ?", guid),
-                "Site not found");
-            Object mfid = site.get("mfid");
-            if(mfid instanceof Number number)
+            List<Map<String,Object>> p25Sites = queryRows(connection, siteSelect() + " WHERE site.guid = ?", guid);
+
+            if(!p25Sites.isEmpty())
             {
-                site.put("mfid_display", mfidDisplay(number.intValue()));
+                Map<String,Object> site = p25Sites.getFirst();
+                site.put("protocol_code", 1);
+                site.put("site_kind", "p25");
+                Object mfid = site.get("mfid");
+
+                if(mfid instanceof Number number)
+                {
+                    site.put("mfid_display", mfidDisplay(number.intValue()));
+                }
+
+                return Map.of("site", site);
             }
+
+            Map<String,Object> site = first(queryRows(connection,
+                trunkedSiteSelect() + " WHERE site.guid = ?", guid), "Site not found");
             return Map.of("site", site);
         });
     }
@@ -926,7 +1060,25 @@ class StatsWebDatabase
     Map<String,Object> siteChannels(StatsRequest request)
     {
         String guid = request.requiredText("guid");
-        return read(connection -> Map.of("rows", queryRows(connection, """
+        return read(connection -> {
+            if(isTrunkedSite(connection, guid))
+            {
+                return Map.of("rows", queryRows(connection, """
+                    SELECT channel_number, inbound_channel_number,
+                        NULLIF(timeslot, -1) AS timeslot,
+                        NULLIF(frequency_hz, -1) AS frequency_hz,
+                        NULLIF(frequency_hz, -1) AS downlink_hz,
+                        uplink_hz, role_flags, first_seen_ms, last_seen_ms, observation_count,
+                        CASE WHEN last_seen_ms >= ? THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                    FROM trunked_site_channel_summary
+                    WHERE guid = ?
+                    ORDER BY channel_number = -1, channel_number, timeslot = -1, timeslot,
+                        frequency_hz = -1, frequency_hz
+                    LIMIT ?
+                    """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid, request.limit()));
+            }
+
+            return Map.of("rows", queryRows(connection, """
             WITH tag_summary AS (
                 SELECT guid, channel_key, group_concat(tag) AS tags,
                     max(CASE WHEN tag = 'CONTROL' THEN observation_count ELSE 0 END) AS control_observations,
@@ -981,7 +1133,8 @@ class StatsWebDatabase
             FROM logical
             GROUP BY guid, coalesce(CAST(downlink_hz AS TEXT), channel_key)
             ORDER BY coalesce(downlink_hz, 9223372036854775807), channel_key
-            """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS)));
+            """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS));
+        });
     }
 
     Map<String,Object> siteTalkgroups(StatsRequest request)
@@ -1091,6 +1244,26 @@ class StatsWebDatabase
         String guid = request.requiredText("guid");
         return read(connection -> {
             long currentSince = System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS;
+
+            if(isTrunkedSite(connection, guid))
+            {
+                return Map.of("rows", queryRows(connection, """
+                    SELECT 'SITE' AS entry_type, variant_code, identity_domain_code,
+                        NULLIF(network_id, -1) AS network_id, NULLIF(system_id, -1) AS system_id,
+                        NULLIF(site_id, -1) AS site_id,
+                        NULLIF(site_id, -1) AS site, NULLIF(channel_number, -1) AS channel_number,
+                        NULLIF(frequency_hz, -1) AS frequency_hz,
+                        NULLIF(frequency_hz, -1) AS downlink_hz, status_flags,
+                        first_seen_ms, last_seen_ms, observation_count,
+                        CASE WHEN last_seen_ms >= ? THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                    FROM trunked_site_neighbor_summary
+                    WHERE guid = ?
+                    ORDER BY identity_domain_code, network_id = -1, network_id, system_id = -1, system_id,
+                        site_id = -1, site_id, channel_number = -1, channel_number
+                    LIMIT ?
+                    """, currentSince, guid, request.limit()));
+            }
+
             List<Map<String,Object>> rows = new ArrayList<>(queryRows(connection, """
             SELECT 'SITE' AS entry_type, NULL AS wacn, summary.neighbor_key,
                 coalesce(current.system_id, summary.system_id) AS system_id,
@@ -1376,6 +1549,32 @@ class StatsWebDatabase
             FROM p25_site_snapshot site
             LEFT JOIN p25_system system ON system.system_key = site.system_key
             """;
+    }
+
+    private static String trunkedSiteSelect()
+    {
+        return """
+            SELECT site.guid, site.snapshot_hash, site.protocol_code,
+                CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                'trunked' AS site_kind, site.variant_code, site.identity_domain_code, site.configured_system,
+                site.channel_name, site.alias_list_name, site.decoder, site.network_id, site.system_id, site.site_id,
+                site.ran,
+                site.model_code, site.brand_code, site.mode_code, site.channel_type_code,
+                site.color_code_ts1, site.color_code_ts2, site.current_repeater, site.service_flags,
+                site.failure_code, site.primary_frequency_hz, site.current_control_hz,
+                site.first_seen_ms, site.last_seen_ms, site.observation_count,
+                (SELECT COUNT(*) FROM trunked_site_channel_summary channel
+                    WHERE channel.guid = site.guid) AS channels,
+                (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
+                    WHERE neighbor.guid = site.guid) AS neighbors,
+                0 AS bands, 0 AS patches
+            FROM trunked_site_snapshot site
+            """;
+    }
+
+    private static boolean isTrunkedSite(Connection connection, String guid) throws SQLException
+    {
+        return scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid = ?", guid) > 0;
     }
 
     static String mfidDisplay(int value)

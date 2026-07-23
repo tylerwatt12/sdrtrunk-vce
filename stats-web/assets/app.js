@@ -5,6 +5,7 @@ const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
+const SITE_METADATA_OFFLINE_MILLISECONDS = 30_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
@@ -403,6 +404,80 @@ function siteLabel(row) {
 
 function siteValue(row) {
   return siteLabel(row);
+}
+
+function protocolFamily(row) {
+  const code = Number(row?.protocol_code);
+  if (code === 1 || code === 2) return 'P25';
+  if (code === 3) return 'DMR';
+  if (code === 4) return 'NXDN';
+  return row?.protocol || '';
+}
+
+function isP25(row) {
+  return ['P25', 'APCO25', 'APCO25_PHASE2'].includes(protocolFamily(row)) ||
+    ['APCO25', 'APCO25_PHASE2'].includes(row?.protocol);
+}
+
+function identifierNumber(value) {
+  return value === null || value === undefined || value === '' || Number(value) < 0 ? '' : number(value);
+}
+
+function trunkedSystemLabel(row) {
+  const configured = row.configured_system || row.site_names;
+  if (configured) return configured;
+  const identities = [];
+  if (row.network_id !== null && row.network_id !== undefined) identities.push(`Network ${number(row.network_id)}`);
+  if (row.system_id !== null && row.system_id !== undefined) identities.push(`System ${number(row.system_id)}`);
+  return identities.length ? `${protocolFamily(row)} ${identities.join(' · ')}` : `${protocolFamily(row)} system`;
+}
+
+function trunkedSiteLabel(row) {
+  return row.channel_name || row.configured_system ||
+    `${protocolFamily(row)} site ${identifierNumber(row.site_id) || identifierNumber(row.ran) || row.guid}`;
+}
+
+function trunkedVariant(row) {
+  const protocolName = protocolFamily(row);
+  const raw = String(row.variant || '').toUpperCase();
+  if (raw === 'TIER_III') return 'Tier III';
+  if (raw === 'CONNECT_PLUS') return 'Connect Plus';
+  if (raw === 'CAPACITY_MAX') return 'Capacity Max';
+  if (raw === 'HYTERA_TIER_III') return 'Hytera Tier III';
+  if (raw === 'TYPE_C' || raw === 'TYPE-C') return 'Type-C';
+  if (raw === 'TYPE_D' || raw === 'TYPE-D') return 'Type-D';
+  if (raw === 'P25_PHASE_1') return 'Phase 1';
+  if (raw === 'P25_PHASE_2') return 'Phase 2';
+  const variant = Number(row.variant_code);
+  if (protocolName === 'DMR' && variant === 1) return 'Tier III';
+  if (protocolName === 'DMR' && variant === 2) return 'Connect Plus';
+  if (protocolName === 'DMR' && variant === 3) return 'Capacity Max';
+  if (protocolName === 'DMR' && variant === 4) return 'Hytera Tier III';
+  if (protocolName === 'NXDN' && variant === 1) return 'Type-C';
+  if (protocolName === 'NXDN' && variant === 2) return 'Type-D';
+  return variant > 0 ? `Variant ${variant}` : '';
+}
+
+function identityDomainLabel(row) {
+  const code = Number(row.identity_domain_code || 0);
+  if (protocolFamily(row) === 'DMR') {
+    return ({ 1: 'Tiny', 2: 'Small', 3: 'Large', 4: 'Huge' })[code] || '';
+  }
+  if (protocolFamily(row) === 'NXDN') {
+    return ({ 1: 'Global', 2: 'Regional', 3: 'Local', 4: 'Type-D', 5: 'Reserved' })[code] || '';
+  }
+  return '';
+}
+
+function trunkedIdentity(row) {
+  const values = [];
+  const domain = identityDomainLabel(row);
+  if (domain) values.push(domain);
+  if (row.network_id !== null && row.network_id !== undefined) values.push(`Network ${number(row.network_id)}`);
+  if (row.system_id !== null && row.system_id !== undefined) values.push(`System ${number(row.system_id)}`);
+  if (row.site_id !== null && row.site_id !== undefined) values.push(`Site ${number(row.site_id)}`);
+  if (row.ran !== null && row.ran !== undefined) values.push(`RAN ${number(row.ran)}`);
+  return values.join(' · ');
 }
 
 function badge(label, className = '', title = '') {
@@ -1947,6 +2022,112 @@ function siteTabs(site, active) {
   ], active);
 }
 
+function trunkedSiteTabs(site, active) {
+  const values = { guid: site.guid };
+  return tabs([
+    { id: 'info', label: 'Info', href: href('site', { ...values, tab: 'info' }) },
+    { id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) },
+    { id: 'neighbors', label: 'Neighbors', href: href('site', { ...values, tab: 'neighbors' }) }
+  ], active);
+}
+
+function trunkedChannelRoles(value) {
+  const flags = Number(value || 0);
+  const values = [];
+  if (flags & 1) values.push(badge('Current CC', 'state-current'));
+  if (flags & 2) values.push(badge('Alt CC', 'state-current'));
+  if (flags & 4) values.push(badge('Traffic'));
+  if (flags & 8) values.push(badge('Observed'));
+  return fragment(...values);
+}
+
+function trunkedNeighborStatus(value) {
+  const flags = Number(value || 0);
+  const values = [];
+  if (flags & 1) values.push(badge('Linked', 'state-current'));
+  if (flags & 2) values.push(badge('Isolated', 'state-stale'));
+  return fragment(...values);
+}
+
+function dmrBrand(value) {
+  return ({ 1: 'Tier III', 2: 'Motorola Connect+', 3: 'Motorola Capacity Max',
+    4: 'Hytera Tier III' })[Number(value)] || '';
+}
+
+function dmrModel(value) {
+  return ({ 1: 'Tiny', 2: 'Small', 3: 'Large', 4: 'Huge' })[Number(value)] || '';
+}
+
+function dmrMode(value) {
+  return ({ 1: 'Open System', 2: 'Advantage' })[Number(value)] || '';
+}
+
+function dmrChannelType(value) {
+  return ({ 1: 'Control', 2: 'Traffic' })[Number(value)] || '';
+}
+
+function nxdnRepeaterMode(value) {
+  return ({ 1: 'Idle', 2: 'Free', 3: 'Halted / CWID' })[Number(value)] || '';
+}
+
+function liveTrunkedSiteSection(site) {
+  const connection = badge('Waiting', 'state-stale');
+  const signal = node('span', '', '—');
+  const decode = node('span', '', '—');
+  const observed = node('span', '', 'No live metadata received');
+  const variant = node('span', '', trunkedVariant(site));
+  const details = keyValues([
+    ['Connection', connection], ['Variant', variant], ['Signal', signal], ['Decode', decode],
+    ['Live Observation', observed]
+  ]);
+  let current = null;
+  let reconnecting = false;
+  const refresh = () => {
+    const live = current && Date.now() - Number(current.live_received_at_ms || current.observed_at_ms || 0) <=
+      SITE_METADATA_OFFLINE_MILLISECONDS;
+    connection.textContent = reconnecting ? 'Reconnecting' : (live ? 'Live' : (current ? 'Stale' : 'Waiting'));
+    connection.className = `badge ${live && !reconnecting ? 'state-current' : 'state-stale'}`;
+    const qualityLive = live && Date.now() -
+      Number(current?.quality_received_at_ms || current?.quality_observed_at_ms || 0) <=
+      SIGNAL_OFFLINE_MILLISECONDS;
+    signal.textContent = qualityLive ? signalNumber(current.signal_dbfs) : '—';
+    decode.textContent = qualityLive ? percentNumber(current.decode_health_pct) : '—';
+  };
+  const apply = (value) => {
+    if (!value || value.guid !== site.guid) return;
+    current = value;
+    variant.textContent = trunkedVariant(value) || trunkedVariant(site);
+    observed.replaceChildren(valueNode(dateTime(value.observed_at_ms)));
+    refresh();
+  };
+  const source = liveConnection('/live/sites');
+  source.addEventListener('snapshot', (event) => {
+    const snapshot = JSON.parse(event.data);
+    current = null;
+    (snapshot.sites || []).forEach(apply);
+    if (!current) observed.textContent = 'No live metadata received';
+    refresh();
+  });
+  source.addEventListener('site_metadata', (event) => apply(JSON.parse(event.data)));
+  source.addEventListener('site_removed', (event) => {
+    if (JSON.parse(event.data)?.guid === site.guid) {
+      current = null;
+      observed.textContent = 'No live metadata received';
+      refresh();
+    }
+  });
+  source.onopen = () => {
+    reconnecting = false;
+    refresh();
+  };
+  source.onerror = () => {
+    reconnecting = true;
+    refresh();
+  };
+  pageInterval(refresh, 5_000);
+  return section('Live Receiver', details);
+}
+
 const siteColumns = [
   { id: 'system', label: 'Sys', fullLabel: 'System', render: systemLink, sort: 'system', sortValue: systemLabel },
   { id: 'rfss', label: 'RFSS', key: 'rfss', render: (row) => hex(row.rfss, 2), className: 'numeric', sort: 'rfss' },
@@ -2250,14 +2431,117 @@ function liveSystemsSection() {
   return block;
 }
 
+function liveSiteMetadataSection() {
+  const sites = new Map();
+  const host = node('div', 'systems-live');
+  const connection = badge('Connecting', 'state-stale');
+  const block = section('Live Site Tracking', host);
+  block.querySelector('.section-title').append(' ', connection);
+  const identity = (row) => {
+    const metadata = row.metadata || {};
+    if (protocolFamily(row) === 'DMR') {
+      return [metadata.model || '', metadata.network == null ? '' : `Network ${number(metadata.network)}`,
+        metadata.site == null ? '' : `Site ${number(metadata.site)}`].filter(Boolean).join(' · ');
+    }
+    if (protocolFamily(row) === 'P25') {
+      const network = metadata.network || {};
+      const currentSite = metadata.currentSite || {};
+      return [network.wacn == null ? '' : `WACN ${hex(network.wacn, 5)}`,
+        (network.system ?? currentSite.system) == null ? '' :
+          `System ${hex(network.system ?? currentSite.system, 3)}`,
+        currentSite.rfss == null ? '' : `RFSS ${hex(currentSite.rfss, 2)}`,
+        currentSite.site == null ? '' : `Site ${hex(currentSite.site, 2)}`]
+        .filter(Boolean).join(' · ');
+    }
+    const location = metadata.currentLocation || {};
+    return [location.category || '', location.integrator == null ? '' : `Integrator ${number(location.integrator)}`,
+      location.system == null ? '' : `System ${number(location.system)}`,
+      (location.site ?? metadata.typeDSite) == null ? '' :
+        `Site ${number(location.site ?? metadata.typeDSite)}`,
+      metadata.ran == null ? '' : `RAN ${number(metadata.ran)}`].filter(Boolean).join(' · ');
+  };
+  const channelCount = (row) => {
+    const metadata = row.metadata || {};
+    if (protocolFamily(row) === 'NXDN') {
+      const values = new Set((metadata.controlChannels || []).map((channel) => {
+        const channelNumber = channel.channelNumber ?? channel.outboundChannelNumber;
+        return channelNumber == null ? `frequency:${channel.downlink ?? ''}` : `number:${channelNumber}`;
+      }));
+      (metadata.observedRepeaters || []).forEach((repeater) => values.add(`number:${repeater}`));
+      return values.size;
+    }
+    return (metadata.channels || []).length;
+  };
+  const neighborCount = (row) => (row.metadata?.neighborSites || []).length;
+  const renderRows = () => {
+    const rows = [...sites.values()].sort((left, right) =>
+      `${protocolFamily(left)}|${left.configured_system || ''}|${left.configured_site || ''}|${left.guid}`
+        .localeCompare(`${protocolFamily(right)}|${right.configured_system || ''}|` +
+          `${right.configured_site || ''}|${right.guid}`));
+    host.replaceChildren(table(rows, [
+      { label: 'Protocol', render: protocolFamily },
+      { id: 'name', label: 'System / Site', render: (row) =>
+        [row.configured_system, row.configured_site || row.channel_name].filter(Boolean).join(' / ') },
+      { label: 'Identity', render: identity },
+      { label: 'Variant', render: trunkedVariant },
+      { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
+        render: (row) => frequency(row.frequency_hz), className: 'numeric' },
+      { label: 'Ch', fullLabel: 'Channels', render: channelCount, className: 'numeric' },
+      { label: 'Nbrs', fullLabel: 'Neighbors', render: neighborCount, className: 'numeric' },
+      { id: 'signal', label: 'dBFS', render: (row) => signalNumber(row.signal_dbfs), className: 'numeric' },
+      { id: 'decode-health', label: 'Decode %', render: (row) => percentNumber(row.decode_health_pct),
+        className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', render: (row) => dateTime(row.observed_at_ms) }
+    ], 'No DMR, NXDN, or P25 site metadata observed', { type: 'live-site-metadata' }));
+  };
+  renderRows();
+  const upsert = (site) => {
+    if (!site?.guid) return;
+    sites.set(site.guid, site);
+    renderRows();
+  };
+  const source = liveConnection('/live/sites');
+  source.addEventListener('snapshot', (event) => {
+    const snapshot = JSON.parse(event.data);
+    sites.clear();
+    (snapshot.sites || []).forEach((site) => sites.set(site.guid, site));
+    renderRows();
+  });
+  source.addEventListener('site_metadata', (event) => upsert(JSON.parse(event.data)));
+  source.addEventListener('site_removed', (event) => {
+    const guid = JSON.parse(event.data)?.guid;
+    if (guid && sites.delete(guid)) renderRows();
+  });
+  source.onopen = () => {
+    connection.textContent = 'Live';
+    connection.className = 'badge state-current';
+  };
+  source.onerror = () => {
+    connection.textContent = 'Reconnecting';
+    connection.className = 'badge state-stale';
+  };
+  pageInterval(() => {
+    let changed = false;
+    sites.forEach((value, guid) => {
+      if (Date.now() - Number(value.live_received_at_ms || value.observed_at_ms || 0) >
+          SITE_METADATA_OFFLINE_MILLISECONDS) {
+        sites.delete(guid);
+        changed = true;
+      }
+    });
+    if (changed) renderRows();
+  }, 5_000);
+  return block;
+}
+
 async function renderLive() {
-  content.append(liveSystemsSection());
+  content.append(liveSystemsSection(), liveSiteMetadataSection());
 }
 
 async function renderSystems() {
   const page = await api('/api/system-directory', pageParameters({ limit: 25 }));
   content.append(pageHeader('Systems & Sites',
-    'Parent systems with child sites · fixed order by WACN, System ID, RFSS, and Site'));
+    'P25, DMR, and NXDN parent systems with their observed receiver sites'));
   const rows = [];
   (page.rows || []).forEach((system) => {
     rows.push({ ...system, directory_type: 'system' });
@@ -2267,33 +2551,42 @@ async function renderSystems() {
     { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
       const wrapper = node('div', 'directory-entity');
       if (row.directory_type === 'system') {
-        wrapper.append(node('strong', '', 'System'));
-        if (row.site_names) wrapper.append(node('span', 'directory-secondary', row.site_names));
+        wrapper.append(node('strong', '', isP25(row) ? 'P25 System' : trunkedSystemLabel(row)));
+        if (row.site_names && row.site_names !== row.configured_system) {
+          wrapper.append(node('span', 'directory-secondary', row.site_names));
+        }
       } else {
-        wrapper.append(node('span', 'directory-branch', '↳'), siteLink(row));
+        wrapper.append(node('span', 'directory-branch', '↳'),
+          siteLink(row, row.site_kind === 'trunked' ? trunkedSiteLabel(row) : siteValue(row)));
       }
       return wrapper;
     } },
-    { id: 'wacn', label: 'WACN', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? hex(row.wacn, 5) : '' },
-    { id: 'system', label: 'Sys ID', fullLabel: 'System ID', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? systemLink(row, hex(row.system_id, 3)) : '' },
-    { id: 'rfss', label: 'RFSS', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? hex(row.rfss, 2) : '' },
+    { id: 'protocol', label: 'Protocol', render: (row) => protocolFamily(row) },
+    { label: 'Variant / Model', render: (row) => isP25(row) ? '' :
+      [trunkedVariant(row), identityDomainLabel(row)].filter(Boolean).join(' · ') },
+    { id: 'wacn', label: 'WACN / Net', fullLabel: 'WACN or Network', className: 'numeric', render: (row) =>
+      isP25(row) ? (row.directory_type === 'system' ? hex(row.wacn, 5) : '') :
+        (row.directory_type === 'system' ? identifierNumber(row.network_id) : '') },
+    { id: 'system', label: 'Sys ID', fullLabel: 'System ID', className: 'numeric', render: (row) => {
+      if (row.directory_type !== 'system') return '';
+      return isP25(row) ? systemLink(row, hex(row.system_id, 3)) : identifierNumber(row.system_id);
+    } },
+    { id: 'rfss', label: 'RFSS / RAN', className: 'numeric', render: (row) =>
+      row.directory_type === 'site' ? (isP25(row) ? hex(row.rfss, 2) : identifierNumber(row.ran)) : '' },
     { id: 'site', label: 'Site', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? hex(row.site, 2) : '' },
+      row.directory_type === 'site' ? (isP25(row) ? hex(row.site, 2) : identifierNumber(row.site_id)) : '' },
     { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
       render: (row) => row.directory_type === 'site' ? frequency(row.current_control_hz) : '' },
     { id: 'count', label: 'Sites / Ch', fullLabel: 'Sites or Channels', className: 'numeric', render: (row) =>
       row.directory_type === 'system' ? `${number(row.sites)} ${Number(row.sites) === 1 ? 'site' : 'sites'}` :
         `${number(row.channels)} ch` },
     { id: 'talkgroups', label: 'TGs', fullLabel: 'Talkgroups', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? number(row.talkgroups) : '' },
+      row.directory_type === 'system' && isP25(row) ? number(row.talkgroups) : '' },
     { id: 'radios', label: 'Radios', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? number(row.radios) : '' },
+      row.directory_type === 'system' && isP25(row) ? number(row.radios) : '' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
   ];
-  content.append(searchBar('Search system, site name, or GUID'));
+  content.append(searchBar('Search protocol, system, site name, or GUID'));
   const directory = section('System Directory', table(rows, columns, 'No systems or sites recorded', {
     type: 'system-directory',
     sortable: false,
@@ -2471,11 +2764,100 @@ async function renderRadio() {
   }
 }
 
+async function renderTrunkedSite(site) {
+  const requestedTab = route.get('tab') || 'info';
+  const tab = ['info', 'channels', 'neighbors'].includes(requestedTab) ? requestedTab : 'info';
+  const subtitle = [protocolFamily(site), trunkedVariant(site), trunkedIdentity(site)]
+    .filter(Boolean).join(' · ');
+  content.append(pageHeader(trunkedSiteLabel(site), subtitle), trunkedSiteTabs(site, tab));
+
+  if (tab === 'channels') {
+    const data = await api('/api/site/channels', { guid: site.guid, limit: 500 });
+    content.append(section('Observed Channels', table(data.rows || [], [
+      { label: 'Channel', key: 'channel_number', className: 'numeric' },
+      { label: 'Inbound', fullLabel: 'Inbound Channel', key: 'inbound_channel_number', className: 'numeric',
+        render: (row) => identifierNumber(row.inbound_channel_number) },
+      { label: 'Slot', key: 'timeslot', className: 'numeric' },
+      { label: 'Role', render: (row) => trunkedChannelRoles(row.role_flags) },
+      { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
+        render: (row) => frequency(row.frequency_hz), className: 'numeric' },
+      { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
+        render: (row) => frequency(row.uplink_hz), className: 'numeric' },
+      { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
+      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+        render: (row) => dateTime(row.last_seen_ms) }
+    ], 'No channels decoded yet', { type: 'trunked-site-channels' })));
+  } else if (tab === 'neighbors') {
+    const data = await api('/api/site/neighbors', { guid: site.guid, limit: 500 });
+    content.append(section('Observed Neighbors', table(data.rows || [], [
+      { label: 'Variant', render: (row) => {
+        const candidate = { protocol_code: site.protocol_code, variant_code: row.variant_code };
+        return trunkedVariant(candidate);
+      } },
+      { label: 'Model / Category', render: (row) => identityDomainLabel({
+        protocol_code: site.protocol_code,
+        identity_domain_code: row.identity_domain_code
+      }) },
+      { label: 'Network', key: 'network_id', className: 'numeric',
+        render: (row) => identifierNumber(row.network_id) },
+      { label: 'System', key: 'system_id', className: 'numeric',
+        render: (row) => identifierNumber(row.system_id) },
+      { label: 'Site', key: 'site_id', className: 'numeric',
+        render: (row) => identifierNumber(row.site_id) },
+      { label: 'Channel', key: 'channel_number', className: 'numeric',
+        render: (row) => identifierNumber(row.channel_number) },
+      { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
+        render: (row) => frequency(row.frequency_hz), className: 'numeric' },
+      { label: 'Status', render: (row) => trunkedNeighborStatus(row.status_flags) },
+      { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
+      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+        render: (row) => dateTime(row.last_seen_ms) }
+    ], 'No neighbors decoded yet', { type: 'trunked-site-neighbors' })));
+  } else {
+    const protocolName = protocolFamily(site);
+    const protocolSpecific = protocolName === 'DMR' ? [
+      ['Brand', dmrBrand(site.brand_code)], ['Model', dmrModel(site.model_code)],
+      ['Mode', dmrMode(site.mode_code)], ['Channel Type', dmrChannelType(site.channel_type_code)],
+      ['Color Code TS1', identifierNumber(site.color_code_ts1)],
+      ['Color Code TS2', identifierNumber(site.color_code_ts2)]
+    ] : [
+      ['Category', identityDomainLabel(site)],
+      ['Repeater State', nxdnRepeaterMode(site.mode_code)],
+      ['Current Repeater', identifierNumber(site.current_repeater)],
+      ['Service Flags', Number(site.service_flags) ? `0x${hex(site.service_flags, 4)}` : ''],
+      ['Failure Call Timer', site.failure_code == null ? '' :
+        (Number(site.failure_code) === 0 ? 'Unspecified' : `${number(site.failure_code)} seconds`)]
+    ];
+    const info = section('Site Info', keyValues([
+      ['Protocol', protocolName], ['Variant', trunkedVariant(site)],
+      ['Configured System', site.configured_system], ['GUID', site.guid],
+      ['Name', site.channel_name], ['Alias List', site.alias_list_name], ['Decoder', site.decoder],
+      ['Network', identifierNumber(site.network_id)], ['System', identifierNumber(site.system_id)],
+      ['Site', identifierNumber(site.site_id)], ['RAN', identifierNumber(site.ran)],
+      ...protocolSpecific,
+      ['Configured Frequency', frequency(site.primary_frequency_hz)],
+      ['Current Control Frequency', frequency(site.current_control_hz)],
+      ['First Seen', dateTime(site.first_seen_ms)], ['Last Seen', dateTime(site.last_seen_ms)],
+      ['Observations', number(site.observation_count)], ['Channels', number(site.channels)],
+      ['Neighbors', number(site.neighbors)]
+    ]));
+    const layout = node('div', 'entity-info-layout');
+    layout.append(info, liveTrunkedSiteSection(site));
+    content.append(metrics([['Channels', site.channels], ['Neighbors', site.neighbors]]), layout);
+  }
+}
+
 async function renderSite() {
   const guid = route.get('guid');
   if (!guid) throw new Error('Site GUID is missing from the URL');
   const response = await api('/api/site', { guid });
   const site = response.site;
+  if (site.site_kind === 'trunked') {
+    await renderTrunkedSite(site);
+    return;
+  }
   const requestedTab = route.get('tab') || 'info';
   const tab = requestedTab === 'talkgroups' ? 'info' : requestedTab;
   content.append(pageHeader(siteValue(site), fragment(systemValue(site), ' · ',

@@ -18,13 +18,17 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
+import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
+import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
@@ -99,6 +103,67 @@ class ChannelActivityModelTest
             assertEquals(1, model.getTables().size());
             assertEquals(1, model.getConventionalTable().getRows().size());
         }
+    }
+
+    @Test
+    void knownDmrAndNxdnMetadataPromotesQuietControlAndAcceptsQuality() throws Exception
+    {
+        List<Map.Entry<DecodeConfiguration,SiteMetadataSnapshot>> cases = List.of(
+            Map.entry(new DecodeConfigDMR(), new DMRNetworkConfigurationSnapshot(
+                "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
+                1, 2, List.of(), List.of())),
+            Map.entry(new DecodeConfigNXDN(), new NXDNNetworkConfigurationSnapshot(
+                "NXDN", "TYPE-D", 5, new NXDNNetworkConfigurationSnapshot.Location(
+                    "REGIONAL", 8, 9, null), null, null, null, null, List.of(), List.of(), null,
+                List.of(), List.of(), null, null, List.of())));
+
+        for(Map.Entry<DecodeConfiguration,SiteMetadataSnapshot> testCase: cases)
+        {
+            AliasModel aliasModel = new AliasModel();
+            ChannelActivityModel model = new ChannelActivityModel(aliasModel,
+                new NowPlayingPreference(type -> {}));
+            Channel parent = trunkedChannel("Quiet", "System", "Site", testCase.getKey(), 451_012_500L);
+            ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+
+            SwingUtilities.invokeAndWait(() -> {
+                model.setEnabled(true);
+                model.channelStarted(parent, List.of(metadata));
+                model.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(
+                    parent, testCase.getValue(), 1_000L));
+                model.receiveControlChannelQuality(quality(parent, 451_012_500L, 2_000L, true));
+            });
+
+            assertTrue(model.getConventionalTable().getRows().isEmpty());
+            assertEquals(2, model.getTables().size());
+            ChannelActivityRow control = model.getTables().get(1).getRows().stream()
+                .filter(row -> row.getRole() == ChannelActivityRow.Role.CURRENT_CONTROL)
+                .findFirst().orElseThrow();
+            assertTrue(model.getTables().get(1).isControlActive());
+            assertEquals(-20.5, control.getSignalDbfs());
+            assertEquals(97.5, control.getDecodeHealthPercent());
+        }
+    }
+
+    @Test
+    void unknownDmrMetadataDoesNotPromoteConventionalChannel() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel,
+            new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("Conventional", "System", "Site", new DecodeConfigDMR(),
+            451_012_500L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        DMRNetworkConfigurationSnapshot unknown = new DMRNetworkConfigurationSnapshot(
+            "DMR", null, 10, 20, null, null, null, null, 1, 2, List.of(), List.of());
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.channelStarted(parent, List.of(metadata));
+            model.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(parent, unknown, 1_000L));
+        });
+
+        assertEquals(1, model.getTables().size());
+        assertEquals(1, model.getConventionalTable().getRows().size());
     }
 
     @Test

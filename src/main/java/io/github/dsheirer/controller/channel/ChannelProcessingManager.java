@@ -958,6 +958,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private void dispatchProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
+        mChannelActivityModel.receiveProtocolSiteMetadata(event);
+
         for(ProtocolSiteMetadataListener listener: mProtocolSiteMetadataListeners)
         {
             listener.receiveProtocolSiteMetadata(event);

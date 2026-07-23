@@ -283,6 +283,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
             mP25ActivityLogService.getControlChannelQualityListener());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mP25ActivityLogService);
+        mConfigurationManager.getChannelProcessingManager().addProtocolSiteMetadataListener(mP25ActivityLogService);
         mP25ActivityLogService.addActivityCommitListener(mStatsWebServerService);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(new SiteControlChannelLearner(mConfigurationManager));
@@ -871,6 +872,8 @@ public class SDRTrunk implements Listener<TunerEvent>
             mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
                 mP25ActivityLogService.getControlChannelQualityListener());
             mConfigurationManager.getChannelProcessingManager().removeSiteMetadataListener(mP25ActivityLogService);
+            mConfigurationManager.getChannelProcessingManager()
+                .removeProtocolSiteMetadataListener(mP25ActivityLogService);
             mP25ActivityLogService.dispose();
         }
         mConfigurationManager.getChannelProcessingManager().shutdown();
