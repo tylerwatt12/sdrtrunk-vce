@@ -267,6 +267,88 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void qualityRetentionDrainsMoreThanOneBoundedBatch() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("quality-retention-batches.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH RECURSIVE buckets(value) AS (
+                    VALUES(0) UNION ALL SELECT value + 1 FROM buckets WHERE value < 1000
+                )
+                INSERT INTO p25_control_channel_quality (
+                    guid, frequency_hz, bucket_start_ms, observed_at_ms
+                )
+                SELECT 'dmr-site', 451000000, value * 10000, value * 10000 FROM buckets
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_control_channel_quality (
+                    guid, frequency_hz, bucket_start_ms, observed_at_ms
+                ) VALUES ('dmr-site', 451000000, 20000000, 20000000)
+                """);
+
+            assertEquals(1_002, count(connection, "p25_control_channel_quality"));
+            assertEquals(1_001, P25ActivityLogSchema.deleteOlderThan(connection, 11_000_000L));
+            assertEquals(1, count(connection, "p25_control_channel_quality"));
+            assertEquals(20_000_000L, scalarLong(connection,
+                "SELECT observed_at_ms FROM p25_control_channel_quality"));
+        }
+    }
+
+    @Test
+    void representativeVolumeQualityRetentionSelectionUsesCoveringTimeIndex() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("quality-retention-query-plan.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH RECURSIVE
+                    sites(value) AS (
+                        VALUES(0) UNION ALL SELECT value + 1 FROM sites WHERE value < 99
+                    ),
+                    buckets(value) AS (
+                        VALUES(0) UNION ALL SELECT value + 1 FROM buckets WHERE value < 1023
+                    )
+                INSERT INTO p25_control_channel_quality (
+                    guid, frequency_hz, bucket_start_ms, observed_at_ms
+                )
+                SELECT printf('site-%03d', sites.value), 450000000 + sites.value,
+                       buckets.value * 10000, buckets.value * 10000
+                FROM sites CROSS JOIN buckets
+                """);
+
+            assertEquals(102_400, count(connection, "p25_control_channel_quality"));
+
+            StringBuilder plan = new StringBuilder();
+
+            try(ResultSet resultSet = statement.executeQuery("""
+                EXPLAIN QUERY PLAN
+                SELECT guid, frequency_hz, bucket_start_ms
+                FROM p25_control_channel_quality INDEXED BY idx_p25_control_quality_retention
+                WHERE observed_at_ms < 5120000
+                ORDER BY observed_at_ms, guid, frequency_hz, bucket_start_ms
+                LIMIT 1000
+                """))
+            {
+                while(resultSet.next())
+                {
+                    plan.append(resultSet.getString("detail")).append('\n');
+                }
+            }
+
+            assertTrue(plan.toString().contains(
+                "USING COVERING INDEX idx_p25_control_quality_retention (observed_at_ms<?)"), plan.toString());
+            assertFalse(plan.toString().contains("SCAN p25_control_channel_quality"), plan.toString());
+        }
+    }
+
+    @Test
     void maintenanceDeletesExpiredRowsAndUpdatesStatus() throws Exception
     {
         Path database = mTemporaryFolder.resolve("maintenance.sqlite");
@@ -398,7 +480,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("20", resultSet.getString(1));
+                assertEquals("21", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
@@ -441,9 +523,9 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void explicitV19ToV20SchemaStepCreatesAndValidatesForeignBandTables() throws Exception
+    void explicitSchemaStepsCreateAndValidateForeignBandsAndQualityRetentionIndex() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("schema-v19-to-v20.sqlite");
+        Path database = mTemporaryFolder.resolve("schema-v19-to-v21.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -451,6 +533,7 @@ class P25ActivityLogWriterTest
         {
             statement.executeUpdate("DROP TABLE p25_foreign_system_band");
             statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");
+            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
             SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "19");
 
             assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
@@ -458,6 +541,9 @@ class P25ActivityLogWriterTest
             statement.execute("BEGIN IMMEDIATE");
             P25ActivityLogSchema.createForeignSystemBandTables(statement);
             SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "20");
+            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+            P25ActivityLogSchema.createControlChannelQualityRetentionIndex(statement);
+            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "21");
             P25ActivityLogSchema.validate(connection);
             statement.execute("COMMIT");
 

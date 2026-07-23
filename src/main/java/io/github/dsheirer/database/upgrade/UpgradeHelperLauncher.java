@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class UpgradeHelperLauncher
 {
-    private static final String P25_HELPER_CLASS = P25ActivityV19ToV20Upgrade.class.getName();
+    private static final String P25_HELPER_CLASS = P25ActivitySchemaUpgrade.class.getName();
     private static final String TRUNKED_SITE_HELPER_CLASS = TrunkedSiteSchemaInstaller.class.getName();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
 
@@ -137,7 +137,7 @@ public final class UpgradeHelperLauncher
             throw new IOException("The packaged Java executable was not found: " + java);
         }
 
-        Module module = P25ActivityV19ToV20Upgrade.class.getModule();
+        Module module = P25ActivitySchemaUpgrade.class.getModule();
         List<String> command = new ArrayList<>();
         command.add(java.toString());
 

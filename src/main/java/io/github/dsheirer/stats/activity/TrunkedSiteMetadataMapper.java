@@ -13,6 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.TrunkedSiteMetadataClassifier;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
@@ -39,7 +40,7 @@ final class TrunkedSiteMetadataMapper
 
     static TrunkedSiteSchema.Snapshot map(ProtocolSiteMetadataEvent event)
     {
-        if(event == null || !event.isUseful() || event.channel() == null ||
+        if(!TrunkedSiteMetadataClassifier.isKnownTrunkingMetadata(event) || event.channel() == null ||
             event.snapshot() == null || event.snapshot().protocol() == null)
         {
             return null;
@@ -270,7 +271,7 @@ final class TrunkedSiteMetadataMapper
 
     private static int dmrVariant(String value)
     {
-        return switch(safe(value))
+        return switch(TrunkedSiteMetadataClassifier.canonicalVariant(value))
         {
             case "TIER_III" -> 1;
             case "CONNECT_PLUS" -> 2;
@@ -283,7 +284,7 @@ final class TrunkedSiteMetadataMapper
 
     private static int nxdnVariant(String value)
     {
-        return switch(safe(value))
+        return switch(TrunkedSiteMetadataClassifier.canonicalVariant(value))
         {
             case "TYPE_C" -> 1;
             case "TYPE_D" -> 2;

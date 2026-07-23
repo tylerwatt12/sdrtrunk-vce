@@ -112,6 +112,9 @@ class ChannelActivityModelTest
             Map.entry(new DecodeConfigDMR(), new DMRNetworkConfigurationSnapshot(
                 "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
                 1, 2, List.of(), List.of())),
+            Map.entry(new DecodeConfigDMR(), new DMRNetworkConfigurationSnapshot(
+                "DMR", "CAPACITY_PLUS", null, 20, "Motorola Capacity+", null, null, "Control",
+                1, 2, List.of(), List.of())),
             Map.entry(new DecodeConfigNXDN(), new NXDNNetworkConfigurationSnapshot(
                 "NXDN", "TYPE-D", 5, new NXDNNetworkConfigurationSnapshot.Location(
                     "REGIONAL", 8, 9, null), null, null, null, null, List.of(), List.of(), null,

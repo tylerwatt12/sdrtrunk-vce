@@ -337,17 +337,18 @@ class StatsWebDatabase
         long toMilliseconds = System.currentTimeMillis();
         long fromMilliseconds = toMilliseconds - rangeMilliseconds;
         String responseRange = range;
+        String qualitySiteSelect = qualitySiteSelect();
 
         return read(connection -> {
             Map<String,Map<String,Object>> sitesByGuid = new LinkedHashMap<>();
             List<Map<String,Object>> sites = queryRows(connection, """
-                SELECT site.guid, site.channel_name, site.rfss, site.site, site.current_control_hz,
-                    site.last_seen_ms AS site_last_seen_ms, system.wacn, system.system_id
-                FROM p25_site_snapshot site
-                LEFT JOIN p25_system system ON system.system_key = site.system_key
+                SELECT site.*
+                FROM (
+                    %s
+                ) site
                 WHERE (? IS NULL OR site.guid = ?)
                 ORDER BY lower(coalesce(site.channel_name, site.guid)), site.guid
-                """, guid, guid);
+                """.formatted(qualitySiteSelect), guid, guid);
 
             for(Map<String,Object> site: sites)
             {
@@ -362,7 +363,9 @@ class StatsWebDatabase
                     quality.decode_health_pct, quality.valid_frames, quality.invalid_frames,
                     quality.corrected_bits, quality.sync_loss_bits, quality.dropped_bits,
                     quality.last_valid_decode_ms
-                FROM p25_site_snapshot site
+                FROM (
+                    %s
+                ) site
                 JOIN p25_control_channel_quality quality ON quality.guid = site.guid AND
                     (quality.frequency_hz, quality.bucket_start_ms) = (
                     SELECT candidate.frequency_hz, candidate.bucket_start_ms
@@ -371,7 +374,7 @@ class StatsWebDatabase
                     ORDER BY candidate.observed_at_ms DESC, candidate.frequency_hz DESC LIMIT 1
                 )
                 WHERE (? IS NULL OR site.guid = ?)
-                """, guid, guid);
+                """.formatted(qualitySiteSelect), guid, guid);
 
             for(Map<String,Object> quality: latest)
             {
@@ -390,6 +393,15 @@ class StatsWebDatabase
 
             if(includeHistory)
             {
+                String guidClause = guid != null ? " AND guid = ?" : "";
+                List<Object> seriesParameters = new ArrayList<>(List.of(bucketMilliseconds, bucketMilliseconds,
+                    fromMilliseconds, toMilliseconds));
+
+                if(guid != null)
+                {
+                    seriesParameters.add(guid);
+                }
+
                 List<Map<String,Object>> series = queryRows(connection, """
                     SELECT guid, (observed_at_ms / ?) * ? AS time_ms,
                         avg(average_signal_dbfs) AS average_signal_dbfs,
@@ -400,10 +412,10 @@ class StatsWebDatabase
                         count(DISTINCT frequency_hz) AS frequency_count, count(*) AS sample_count,
                         max(observed_at_ms) AS last_observed_ms
                     FROM p25_control_channel_quality
-                    WHERE observed_at_ms >= ? AND observed_at_ms <= ? AND (? IS NULL OR guid = ?)
+                    WHERE observed_at_ms >= ? AND observed_at_ms <= ?%s
                     GROUP BY guid, time_ms
                     ORDER BY guid, time_ms
-                    """, bucketMilliseconds, bucketMilliseconds, fromMilliseconds, toMilliseconds, guid, guid);
+                    """.formatted(guidClause), seriesParameters.toArray());
 
                 for(Map<String,Object> point: series)
                 {
@@ -518,12 +530,22 @@ class StatsWebDatabase
                         (SELECT group_concat(name, ', ') FROM (
                             SELECT DISTINCT channel_name AS name FROM p25_site_snapshot names
                             WHERE names.system_key = system.system_key AND channel_name IS NOT NULL
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM trunked_site_snapshot trunked
+                                  WHERE trunked.guid = names.guid
+                                    AND trunked.last_seen_ms > names.last_seen_ms
+                              )
                             ORDER BY channel_name)) AS site_names,
                         lower('P25 ' || system.wacn || ' ' || system.system_id || ' ' ||
                             coalesce(group_concat(site.channel_name, ' '), '') || ' ' ||
                             coalesce(group_concat(site.guid, ' '), '')) AS search_text
                     FROM p25_system system
                     LEFT JOIN p25_site_snapshot site ON site.system_key = system.system_key
+                        AND NOT EXISTS (
+                            SELECT 1 FROM trunked_site_snapshot trunked
+                            WHERE trunked.guid = site.guid
+                              AND trunked.last_seen_ms > site.last_seen_ms
+                        )
                     GROUP BY system.system_key
 
                     UNION ALL
@@ -552,6 +574,12 @@ class StatsWebDatabase
                             coalesce(group_concat(site.guid, ' '), '')
                         ) AS search_text
                     FROM trunked_site_snapshot site
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM p25_site_snapshot p25
+                        WHERE p25.guid = site.guid
+                          AND (p25.last_seen_ms > site.last_seen_ms OR
+                            (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
+                    )
                     GROUP BY site.protocol_code, site.variant_code, site.identity_domain_code, site.network_id,
                         site.system_id,
                         CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
@@ -606,6 +634,11 @@ class StatsWebDatabase
                         ) AS directory_rank
                         FROM p25_site_snapshot
                         WHERE system_key IN (%s)
+                          AND NOT EXISTS (
+                            SELECT 1 FROM trunked_site_snapshot trunked
+                            WHERE trunked.guid = p25_site_snapshot.guid
+                              AND trunked.last_seen_ms > p25_site_snapshot.last_seen_ms
+                          )
                     ) directory ON directory.guid = site.guid
                     WHERE directory.directory_rank <= ?
                     ORDER BY system.wacn ASC, system.system_id ASC,
@@ -663,6 +696,12 @@ class StatsWebDatabase
                                     site.ran ASC, site.guid ASC
                             ) AS directory_rank
                         FROM trunked_site_snapshot site
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM p25_site_snapshot p25
+                            WHERE p25.guid = site.guid
+                              AND (p25.last_seen_ms > site.last_seen_ms OR
+                                (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
+                        )
                     ) ranked
                     WHERE system_group_key IN (%s) AND directory_rank <= ?
                     ORDER BY protocol_code, variant_code, identity_domain_code, network_id IS NULL ASC,
@@ -1035,10 +1074,24 @@ class StatsWebDatabase
         String guid = request.requiredText("guid");
         return read(connection -> {
             List<Map<String,Object>> p25Sites = queryRows(connection, siteSelect() + " WHERE site.guid = ?", guid);
+            List<Map<String,Object>> trunkedSites =
+                queryRows(connection, trunkedSiteSelect() + " WHERE site.guid = ?", guid);
+            Map<String,Object> p25Site = p25Sites.isEmpty() ? null : p25Sites.getFirst();
+            Map<String,Object> trunkedSite = trunkedSites.isEmpty() ? null : trunkedSites.getFirst();
 
-            if(!p25Sites.isEmpty())
+            if(p25Site == null && trunkedSite == null)
             {
-                Map<String,Object> site = p25Sites.getFirst();
+                throw new StatsApiException(404, "Site not found");
+            }
+
+            boolean p25OwnsGuid = p25Site != null && (trunkedSite == null ||
+                number(p25Site.get("last_seen_ms")) >= number(trunkedSite.get("last_seen_ms")));
+            Map<String,Object> site = p25OwnsGuid ? p25Site : trunkedSite;
+            site.put("site_type", "trunked");
+            site.put("capabilities", siteCapabilities(p25OwnsGuid));
+
+            if(p25OwnsGuid)
+            {
                 site.put("protocol_code", 1);
                 site.put("site_kind", "p25");
                 Object mfid = site.get("mfid");
@@ -1047,12 +1100,8 @@ class StatsWebDatabase
                 {
                     site.put("mfid_display", mfidDisplay(number.intValue()));
                 }
-
-                return Map.of("site", site);
             }
 
-            Map<String,Object> site = first(queryRows(connection,
-                trunkedSiteSelect() + " WHERE site.guid = ?", guid), "Site not found");
             return Map.of("site", site);
         });
     }
@@ -1552,6 +1601,66 @@ class StatsWebDatabase
             """;
     }
 
+    /**
+     * Normalizes the identity fields needed by the protocol-agnostic control-channel quality views.  The quality
+     * buckets remain in the deployed GUID-keyed table whose historical name starts with {@code p25_}; no schema
+     * distinction is required because the receiver GUID is the shared identity.  During a retained protocol
+     * transition, the newest site observation owns that GUID and P25 wins an exact timestamp tie.
+     */
+    private static String qualitySiteSelect()
+    {
+        String candidates = """
+            SELECT site.guid, site.channel_name, site.rfss, site.site, site.current_control_hz,
+                site.last_seen_ms AS site_last_seen_ms, system.wacn, system.system_id,
+                1 AS protocol_code, 'P25' AS protocol, 'p25' AS site_kind,
+                NULL AS configured_system, NULL AS network_id, NULL AS site_id, NULL AS ran,
+                NULL AS variant_code, NULL AS identity_domain_code
+            FROM p25_site_snapshot site
+            LEFT JOIN p25_system system ON system.system_key = site.system_key
+
+            UNION ALL
+
+            SELECT site.guid, site.channel_name, NULL AS rfss, NULL AS site, site.current_control_hz,
+                site.last_seen_ms AS site_last_seen_ms, NULL AS wacn, site.system_id,
+                site.protocol_code,
+                CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                'trunked' AS site_kind, site.configured_system, site.network_id, site.site_id, site.ran,
+                site.variant_code, site.identity_domain_code
+            FROM trunked_site_snapshot site
+            """;
+        return """
+            SELECT guid, channel_name, rfss, site, current_control_hz, site_last_seen_ms, wacn, system_id,
+                protocol_code, protocol, site_kind, configured_system, network_id, site_id, ran,
+                variant_code, identity_domain_code
+            FROM (
+                SELECT candidate.*, row_number() OVER (
+                    PARTITION BY candidate.guid
+                    ORDER BY candidate.site_last_seen_ms DESC, candidate.protocol_code ASC
+                ) AS identity_rank
+                FROM (
+                    %s
+                ) candidate
+            ) ranked
+            WHERE identity_rank = 1
+            """.formatted(candidates);
+    }
+
+    private static Map<String,Boolean> siteCapabilities(boolean p25)
+    {
+        Map<String,Boolean> capabilities = new LinkedHashMap<>();
+        capabilities.put("info", true);
+        capabilities.put("channels", true);
+        capabilities.put("quality", true);
+        capabilities.put("quality_live", true);
+        capabilities.put("quality_history", true);
+        capabilities.put("neighbors", true);
+        capabilities.put("band_plan", p25);
+        capabilities.put("patches", p25);
+        capabilities.put("activity", p25);
+        capabilities.put("talkgroups", p25);
+        return Map.copyOf(capabilities);
+    }
+
     private static String trunkedSiteSelect()
     {
         return """
@@ -1575,7 +1684,23 @@ class StatsWebDatabase
 
     private static boolean isTrunkedSite(Connection connection, String guid) throws SQLException
     {
-        return scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_snapshot WHERE guid = ?", guid) > 0;
+        long protocolCode = scalarLong(connection, """
+            SELECT protocol_code
+            FROM (
+                SELECT 1 AS protocol_code, last_seen_ms
+                FROM p25_site_snapshot
+                WHERE guid = ?
+
+                UNION ALL
+
+                SELECT protocol_code, last_seen_ms
+                FROM trunked_site_snapshot
+                WHERE guid = ?
+            )
+            ORDER BY last_seen_ms DESC, protocol_code ASC
+            LIMIT 1
+            """, guid, guid);
+        return protocolCode == 3 || protocolCode == 4;
     }
 
     static String mfidDisplay(int value)

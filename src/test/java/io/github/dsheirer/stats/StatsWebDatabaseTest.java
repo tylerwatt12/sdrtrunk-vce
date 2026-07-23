@@ -9,6 +9,7 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -104,6 +105,13 @@ class StatsWebDatabaseTest
         assertEquals("Motorola (0x90)", site.get("mfid_display"));
         assertEquals(110L, number(site.get("micro_slots")));
         assertEquals("Autonomous and by Request", site.get("data_access"));
+        assertEquals("trunked", site.get("site_type"));
+        Map<String,Object> capabilities = map(site, "capabilities");
+        assertEquals(Boolean.TRUE, capabilities.get("quality"));
+        assertEquals(Boolean.TRUE, capabilities.get("quality_history"));
+        assertEquals(Boolean.TRUE, capabilities.get("band_plan"));
+        assertEquals(Boolean.TRUE, capabilities.get("patches"));
+        assertEquals(Boolean.TRUE, capabilities.get("activity"));
 
         List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=" + GUID)));
@@ -511,6 +519,71 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void retainedQualityLookupUsesTheGuidTimeIndex() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement query = connection.prepareStatement("""
+                EXPLAIN QUERY PLAN
+                SELECT frequency_hz, observed_at_ms
+                FROM p25_control_channel_quality
+                WHERE guid = ?
+                ORDER BY observed_at_ms DESC
+                LIMIT ?
+                """))
+        {
+            query.setString(1, GUID);
+            query.setInt(2, 100);
+            List<String> plan = new ArrayList<>();
+
+            try(ResultSet resultSet = query.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    plan.add(resultSet.getString("detail"));
+                }
+            }
+
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_control_quality_guid_time")),
+                () -> "Expected GUID/time-indexed quality lookup, plan was: " + plan);
+        }
+    }
+
+    @Test
+    void retainedQualityHistoryUsesTheGuidTimeIndex() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement query = connection.prepareStatement("""
+                EXPLAIN QUERY PLAN
+                SELECT guid, (observed_at_ms / ?) * ? AS time_ms,
+                    avg(average_signal_dbfs), avg(decode_health_pct)
+                FROM p25_control_channel_quality
+                WHERE observed_at_ms >= ? AND observed_at_ms <= ? AND guid = ?
+                GROUP BY guid, time_ms
+                ORDER BY guid, time_ms
+                """))
+        {
+            query.setLong(1, 60_000L);
+            query.setLong(2, 60_000L);
+            query.setLong(3, 0L);
+            query.setLong(4, System.currentTimeMillis());
+            query.setString(5, GUID);
+            List<String> plan = new ArrayList<>();
+
+            try(ResultSet resultSet = query.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    plan.add(resultSet.getString("detail"));
+                }
+            }
+
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_control_quality_guid_time") &&
+                    detail.contains("guid=?") && detail.contains("observed_at_ms>?")),
+                () -> "Expected GUID/time-indexed quality history, plan was: " + plan);
+        }
+    }
+
+    @Test
     void providesSystemScopedZeroFilledTalkgroupActivityHistory() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
@@ -681,6 +754,125 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesRetainedQualityForP25DmrAndNxdnThroughOneContract() throws Exception
+    {
+        long now = System.currentTimeMillis();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("quality-dmr", TrunkedSiteSchema.PROTOCOL_DMR,
+                1, 2, "Metro DMR", "DMR Quality", 10, 20, 3, null, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("quality-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN,
+                2, 4, "Regional NXDN", "NXDN Quality", 7, 8, 9, 5, List.of(), List.of()));
+            insertQuality(connection, "quality-dmr", 451_012_500L, now - 2_000L, -52.0, 94.0);
+            insertQuality(connection, "quality-nxdn", 155_012_500L, now - 1_000L, -61.0, 88.0);
+        }
+
+        Map<String,Object> dmrResponse = mDatabase.qualityHistory(request(
+            "/api/quality?guid=quality-dmr&range=1h&points=60"));
+        Map<String,Object> dmr = rowsFrom(dmrResponse, "sites").getFirst();
+        assertEquals("DMR", dmr.get("protocol"));
+        assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, number(dmr.get("protocol_code")));
+        assertEquals("Metro DMR", dmr.get("configured_system"));
+        assertEquals(3, number(dmr.get("site_id")));
+        assertEquals(451_012_500L, number(dmr.get("quality_frequency_hz")));
+        assertEquals(94.0, ((Number)dmr.get("decode_health_pct")).doubleValue());
+        assertEquals(1, rowsFrom(dmr, "series").size());
+
+        Map<String,Object> nxdnResponse = mDatabase.qualityHistory(request(
+            "/api/quality?guid=quality-nxdn&range=1h&points=60"));
+        Map<String,Object> nxdn = rowsFrom(nxdnResponse, "sites").getFirst();
+        assertEquals("NXDN", nxdn.get("protocol"));
+        assertEquals(TrunkedSiteSchema.PROTOCOL_NXDN, number(nxdn.get("protocol_code")));
+        assertEquals(5, number(nxdn.get("ran")));
+        assertEquals(155_012_500L, number(nxdn.get("quality_frequency_hz")));
+        assertEquals(88.0, ((Number)nxdn.get("decode_health_pct")).doubleValue());
+        assertEquals(1, rowsFrom(nxdn, "series").size());
+
+        List<Map<String,Object>> dmrRows = rows(mDatabase.siteQuality(request(
+            "/api/site/quality?guid=quality-dmr&limit=1")));
+        assertEquals(1, dmrRows.size());
+        assertEquals(451_012_500L, number(dmrRows.getFirst().get("frequency_hz")));
+
+        List<Map<String,Object>> allSites = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/quality?include_history=false")), "sites");
+        assertTrue(allSites.stream().anyMatch(row -> "P25".equals(row.get("protocol"))));
+        assertTrue(allSites.stream().anyMatch(row -> "DMR".equals(row.get("protocol"))));
+        assertTrue(allSites.stream().anyMatch(row -> "NXDN".equals(row.get("protocol"))));
+    }
+
+    @Test
+    void resolvesRetainedProtocolTransitionsByLatestObservationWithP25TieBreak() throws Exception
+    {
+        long trunkedLastSeen = System.currentTimeMillis();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(trunkedLastSeen, GUID,
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Transitioned DMR", "DMR Receiver", 10, 20, 2, null,
+                List.of(new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L, 1)),
+                List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 3, 43, 452_000_000L, 1))));
+        }
+
+        Map<String,Object> latest = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
+        assertEquals("DMR", latest.get("protocol"));
+        assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, number(latest.get("protocol_code")));
+        assertEquals(42, number(rows(mDatabase.siteChannels(request(
+            "/api/site/channels?guid=" + GUID))).getFirst().get("channel_number")));
+        assertEquals(3, number(rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=" + GUID))).getFirst().get("site_id")));
+
+        List<Map<String,Object>> qualitySites = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
+        assertEquals(1, qualitySites.size());
+        assertEquals("DMR", qualitySites.getFirst().get("protocol"));
+
+        List<Map<String,Object>> directory = rows(mDatabase.systemDirectory(request(
+            "/api/system-directory")));
+        List<Map<String,Object>> directoryChildren = directory.stream()
+            .flatMap(parent -> rowsFrom(parent, "children").stream())
+            .filter(child -> GUID.equals(child.get("guid"))).toList();
+        assertEquals(1, directoryChildren.size());
+        assertEquals("DMR", directoryChildren.getFirst().get("protocol"));
+        Map<String,Object> retainedP25Parent = directory.stream()
+            .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
+        assertEquals(0, number(retainedP25Parent.get("sites")));
+        assertNull(retainedP25Parent.get("site_names"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement(
+                "UPDATE p25_site_snapshot SET last_seen_ms = ? WHERE guid = ?"))
+        {
+            statement.setLong(1, trunkedLastSeen);
+            statement.setString(2, GUID);
+            statement.executeUpdate();
+        }
+
+        Map<String,Object> tied = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
+        assertEquals(1, number(tied.get("protocol_code")));
+        assertEquals("p25", tied.get("site_kind"));
+        assertNotNull(rows(mDatabase.siteChannels(request(
+            "/api/site/channels?guid=" + GUID))).getFirst().get("descriptor"));
+        assertFalse(rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=" + GUID))).getFirst().containsKey("site_id"));
+
+        qualitySites = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
+        assertEquals(1, qualitySites.size());
+        assertEquals("P25", qualitySites.getFirst().get("protocol"));
+
+        directory = rows(mDatabase.systemDirectory(request("/api/system-directory")));
+        directoryChildren = directory.stream().flatMap(parent -> rowsFrom(parent, "children").stream())
+            .filter(child -> GUID.equals(child.get("guid"))).toList();
+        assertEquals(1, directoryChildren.size());
+        assertEquals("P25", directoryChildren.getFirst().get("protocol"));
+        retainedP25Parent = directory.stream()
+            .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
+        assertEquals(1, number(retainedP25Parent.get("sites")));
+        assertEquals("Cleveland Simulcast", retainedP25Parent.get("site_names"));
+    }
+
+    @Test
     void sortsDisplayedDirectoryColumnsBeforePagination() throws Exception
     {
         seedSecondSystem(mDatabasePath);
@@ -814,10 +1006,23 @@ class StatsWebDatabaseTest
         Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=dmr-a")), "site");
         assertEquals("DMR", site.get("protocol"));
         assertEquals("trunked", site.get("site_kind"));
+        assertEquals("trunked", site.get("site_type"));
         assertEquals(2, number(site.get("identity_domain_code")));
         assertEquals(20, number(site.get("system_id")));
         assertEquals(2, number(site.get("channels")));
         assertEquals(1, number(site.get("neighbors")));
+        Map<String,Object> dmrCapabilities = map(site, "capabilities");
+        assertEquals(Boolean.TRUE, dmrCapabilities.get("quality"));
+        assertEquals(Boolean.TRUE, dmrCapabilities.get("quality_history"));
+        assertEquals(Boolean.FALSE, dmrCapabilities.get("band_plan"));
+        assertEquals(Boolean.FALSE, dmrCapabilities.get("patches"));
+        assertEquals(Boolean.FALSE, dmrCapabilities.get("activity"));
+
+        Map<String,Object> nxdnSite = map(mDatabase.site(request("/api/site?guid=nxdn-a")), "site");
+        assertEquals("NXDN", nxdnSite.get("protocol"));
+        assertEquals(4, number(nxdnSite.get("identity_domain_code")));
+        assertEquals(5, number(nxdnSite.get("ran")));
+        assertEquals(Boolean.TRUE, map(nxdnSite, "capabilities").get("quality"));
 
         List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=dmr-a&limit=1")));
@@ -836,6 +1041,16 @@ class StatsWebDatabaseTest
         assertEquals(10, number(neighbors.getFirst().get("site_id")));
         assertEquals(4, number(neighbors.getFirst().get("identity_domain_code")));
         assertEquals(155_012_500L, number(neighbors.getFirst().get("frequency_hz")));
+
+        List<Map<String,Object>> dmrNeighbors = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=dmr-a&limit=1")));
+        assertEquals(1, dmrNeighbors.size());
+        assertEquals(2, number(dmrNeighbors.getFirst().get("site_id")));
+
+        List<Map<String,Object>> nxdnChannels = rows(mDatabase.siteChannels(request(
+            "/api/site/channels?guid=nxdn-a&limit=1")));
+        assertEquals(1, nxdnChannels.size());
+        assertEquals(120, number(nxdnChannels.getFirst().get("channel_number")));
 
         Map<String,Object> counts = map(mDatabase.dashboard(), "counts");
         assertEquals(3, number(counts.get("systems")));
@@ -923,11 +1138,47 @@ class StatsWebDatabaseTest
                                                                Integer ran, List<TrunkedSiteSchema.Channel> channels,
                                                                List<TrunkedSiteSchema.Neighbor> neighbors)
     {
-        return new TrunkedSiteSchema.Snapshot(System.currentTimeMillis(), guid, "hash-" + guid, protocol, variant,
+        return trunkedSnapshotAt(System.currentTimeMillis(), guid, protocol, variant, domain, configuredSystem,
+            channelName, network, system, site, ran, channels, neighbors);
+    }
+
+    private static TrunkedSiteSchema.Snapshot trunkedSnapshotAt(long observedAt, String guid, int protocol,
+                                                                 int variant, int domain, String configuredSystem,
+                                                                 String channelName, Integer network, Integer system,
+                                                                 Integer site, Integer ran,
+                                                                 List<TrunkedSiteSchema.Channel> channels,
+                                                                 List<TrunkedSiteSchema.Neighbor> neighbors)
+    {
+        return new TrunkedSiteSchema.Snapshot(observedAt, guid, "hash-" + guid, protocol, variant,
             domain, configuredSystem, channelName, "County", protocol == TrunkedSiteSchema.PROTOCOL_DMR ?
             "DMR" : "NXDN", network, system, site, ran, null, null, null, null, 1, 1, null, 0, null,
             channels.isEmpty() ? null : channels.getFirst().frequencyHertz(),
             channels.isEmpty() ? null : channels.getFirst().frequencyHertz(), channels, neighbors);
+    }
+
+    private static void insertQuality(Connection connection, String guid, long frequency, long observedAt,
+                                      double signal, double decode) throws Exception
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO p25_control_channel_quality (
+                guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs, average_signal_dbfs,
+                minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct, valid_frames, invalid_frames,
+                corrected_bits, sync_loss_bits, dropped_bits, last_valid_decode_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 1, 2, 0, 0, ?)
+            """))
+        {
+            statement.setString(1, guid);
+            statement.setLong(2, frequency);
+            statement.setLong(3, observedAt - Math.floorMod(observedAt, 10_000L));
+            statement.setLong(4, observedAt);
+            statement.setDouble(5, signal);
+            statement.setDouble(6, signal);
+            statement.setDouble(7, signal - 2.0);
+            statement.setDouble(8, signal + 2.0);
+            statement.setDouble(9, decode);
+            statement.setLong(10, observedAt);
+            statement.executeUpdate();
+        }
     }
 
     private static void seed(Path database) throws Exception

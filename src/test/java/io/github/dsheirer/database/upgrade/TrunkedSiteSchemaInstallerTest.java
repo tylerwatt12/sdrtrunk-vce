@@ -53,7 +53,7 @@ class TrunkedSiteSchemaInstallerTest
         {
             TrunkedSiteSchema.validate(connection);
             assertEquals("2", TrunkedSiteSchema.schemaVersion(connection));
-            assertEquals("20", metadata(connection, "p25_activity_schema_version"));
+            assertEquals("21", metadata(connection, "p25_activity_schema_version"));
             assertEquals(1, count(connection, "alias"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             assertFalse(hasRows(connection, "PRAGMA foreign_key_check"));

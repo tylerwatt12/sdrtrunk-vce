@@ -2,17 +2,18 @@
 
 ## Website functions
 
-The persistent records in this design serve four bounded website queries:
+The persistent records in this design serve five bounded website queries:
 
 1. The Systems & Sites directory lists DMR and NXDN systems with their observed receiver sites.
 2. A site information page shows the most recently decoded identity and service details.
 3. A site channel page lists the bounded set of logical channels or repeaters observed for that site.
 4. A site neighbors page lists the bounded set of adjacent sites advertised by that site.
+5. The shared Quality page charts retained control-channel signal and decode health for P25, DMR, and NXDN sites.
 
 Live calls, current control-channel signal, decode health, and full protocol metadata use the bounded `/live/systems`
 and `/live/sites` in-memory streams. Persistent site details are exposed through `/api/system-directory`, `/api/site`,
-`/api/site/channels`, and `/api/site/neighbors`. This design does not retain raw messages, per-call rows, site-change
-events, JSON, or DMR/NXDN control-channel quality history.
+`/api/site/channels`, `/api/site/neighbors`, and the protocol-neutral `/api/quality` response. This design does not
+retain raw messages, per-call rows, site-change events, JSON, or general activity history for DMR/NXDN.
 
 ## Tables
 
@@ -111,8 +112,8 @@ No normal runtime path creates or repairs these tables or indexes. New databases
 `trunked_site_schema_version=2` subsystem in the single startup schema routine. The subsystem was introduced publicly
 at v2, so no public v1 migration is supported. Older databases selected through the Upgrade Assistant have no
 trunked-site subsystem; the bundled helper installs v2 only in the staged copy before validation and atomic promotion.
-An existing active database is validation-only at startup and must already contain the current schema. The P25 schema
-remains v20.
+An existing active database is validation-only at startup and must already contain the current schemas. The P25
+activity schema is v21; existing v19 or v20 databases use the backed-up staged-copy upgrade path described below.
 
 ## Retention
 
@@ -145,3 +146,31 @@ Representative-volume tests must populate 100 sites, 102,400 channel facts, and 
 
 The directory's bounded summary-table scan is intentional: it reads at most one compact row per configured site and
 does not touch channel, neighbor, call, or detailed-event tables.
+
+## Shared control-channel quality buckets
+
+P25, DMR, and NXDN use the same compact 10-second control-channel quality bucket shape. The deployed
+`p25_control_channel_quality` table already keys every bucket by receiver GUID and frequency and has no P25 identity
+foreign key, so it is used as the single shared quality store. Its historical name is retained to avoid a data-moving
+schema migration that would change no row shape or query. The API joins each GUID to the appropriate protocol-specific
+site summary and exposes one response contract.
+
+The concrete website queries are a GUID-scoped latest-sample lookup and a bounded, server-aggregated time range for the
+Quality charts. `idx_p25_control_quality_guid_time(guid, observed_at_ms DESC)` supports both site lookups. The API caps
+the requested range at the configured Statistics retention period and caps the returned chart resolution at 1,000
+points. Retention is a separate all-site access path, so v21 adds the covering
+`idx_p25_control_quality_retention(observed_at_ms, guid, frequency_hz, bucket_start_ms)` index. Cleanup selects at most
+1,000 expired primary keys per statement in oldest-first order and drains those bounded batches until current. At
+representative volume (100 sites and 102,400 buckets), `EXPLAIN QUERY PLAN` reports
+`USING COVERING INDEX idx_p25_control_quality_retention (observed_at_ms<?)` with no quality-table scan.
+
+At most one mutable row is retained per `(guid, frequency, 10-second bucket)`: 360 rows/hour, 8,640 rows/day, 259,200
+rows at the default 30-day retention, and 3,153,600 rows at the maximum 365-day retention for a continuously monitored
+site. DMR/NXDN samples are accepted only after the shared metadata classifier has identified a known trunking variant
+on that exact running channel and decoder configuration, so conventional or unknown DMR/NXDN channels do not create
+quality history. Evidence remains valid through sustained decode loss and is cleared by the quality monitor's inactive
+shutdown snapshot, channel/configuration replacement, statistics disablement, or writer shutdown. Samples use the
+existing bounded statistics queue and single database writer. Existing retention, site-specific clear, and full reset
+paths already operate on this shared GUID-keyed table. New databases create the v21 index in the single startup schema
+routine. Existing public v19 and v20 databases are upgraded only by the explicit backed-up staged-copy helper; normal
+application startup never creates or repairs the index.

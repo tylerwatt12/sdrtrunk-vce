@@ -375,6 +375,7 @@ function aliasLabel(row, prefix = 'alias_') {
 }
 
 function systemLabel(row) {
+  if (!isP25(row)) return trunkedSystemLabel(row);
   const wacn = hex(row.wacn, 5);
   const system = hex(row.system_id, 3);
   return wacn && system ? `${wacn}-${system}` : wacn || system;
@@ -385,6 +386,7 @@ function systemValue(row) {
 }
 
 function systemInfoValue(row) {
+  if (!isP25(row)) return systemValue(row);
   const hexadecimal = systemLabel(row);
   const wacn = row.wacn === null || row.wacn === undefined || row.wacn === '' ? '' : Number(row.wacn);
   const system = row.system_id === null || row.system_id === undefined || row.system_id === '' ? '' :
@@ -398,6 +400,7 @@ function systemInfoValue(row) {
 }
 
 function siteLabel(row) {
+  if (!isP25(row)) return trunkedSiteLabel(row);
   const identity = `${hex(row.rfss, 2)}-${hex(row.site, 2)}`;
   return row.channel_name || `${systemLabel(row)} ${identity}`;
 }
@@ -416,7 +419,8 @@ function protocolFamily(row) {
 
 function isP25(row) {
   return ['P25', 'APCO25', 'APCO25_PHASE2'].includes(protocolFamily(row)) ||
-    ['APCO25', 'APCO25_PHASE2'].includes(row?.protocol);
+    ['APCO25', 'APCO25_PHASE2'].includes(row?.protocol) ||
+    (row?.wacn !== null && row?.wacn !== undefined);
 }
 
 function identifierNumber(value) {
@@ -474,7 +478,7 @@ function identityDomainLabel(row) {
 function trunkedIdentity(row) {
   const values = [];
   const domain = identityDomainLabel(row);
-  if (domain) values.push(domain);
+  if (domain && domain !== trunkedVariant(row)) values.push(domain);
   if (row.network_id !== null && row.network_id !== undefined) values.push(`Network ${number(row.network_id)}`);
   if (row.system_id !== null && row.system_id !== undefined) values.push(`System ${number(row.system_id)}`);
   if (row.site_id !== null && row.site_id !== undefined) values.push(`Site ${number(row.site_id)}`);
@@ -562,6 +566,14 @@ function externalAnchor(label, target) {
 }
 
 function systemLink(row, label = systemValue(row)) {
+  if (!isP25(row)) {
+    const search = row.configured_system || [
+      protocolFamily(row),
+      row.network_id == null ? '' : row.network_id,
+      row.system_id == null ? '' : row.system_id
+    ].filter((value) => value !== '').join(' ');
+    return anchor(label, href('systems', { q: search }));
+  }
   return anchor(label, href('system', { ...scope(row), tab: 'info' }));
 }
 
@@ -1664,7 +1676,7 @@ async function signalHealthSection() {
     });
     [...tileNodes.keys()].filter((key) => !activeKeys.has(key)).forEach((key) => tileNodes.delete(key));
     tiles.replaceChildren(...orderedTiles);
-    if (!sites.length) tiles.append(node('div', 'empty', 'No P25 receivers are currently reporting'));
+    if (!sites.length) tiles.append(node('div', 'empty', 'No trunked receivers are currently reporting'));
   };
 
   sort.addEventListener('change', () => {
@@ -1727,8 +1739,9 @@ async function siteSignalHistorySection(site) {
       const qualitySite = (response.sites || [])[0];
       disconnectPageObserversWithin(host);
       host.replaceChildren();
-      if (!qualitySite) {
-        host.append(node('div', 'empty', 'No control channel quality history is available for this site'));
+      if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
+        host.append(node('div', 'empty',
+          `No retained control channel quality samples are available in the selected ${selectedRange} range`));
         return;
       }
       const charts = node('div', 'quality-chart-stack');
@@ -2010,27 +2023,88 @@ function entityTabs(view, system, id, active, radio) {
   ], active);
 }
 
-function siteTabs(site, active) {
-  const values = { guid: site.guid };
-  return tabs([
-    { id: 'info', label: 'Info', href: href('site', { ...values, tab: 'info' }) },
-    { id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) },
-    { id: 'quality', label: 'Quality', href: href('site', { ...values, tab: 'quality' }) },
-    { id: 'neighbors', label: 'Neighbors', href: href('site', { ...values, tab: 'neighbors' }) },
-    { id: 'band-plan', label: 'Band Plan', href: href('site', { ...values, tab: 'band-plan' }) },
-    { id: 'patches', label: 'Patches', href: href('site', { ...values, tab: 'patches' }) },
-    { id: 'activity', label: 'Activity', href: href('site', { ...values, tab: 'activity' }),
-      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' }
-  ], active);
+const SITE_CAPABILITY_ALIASES = Object.freeze({
+  channels: ['channels'],
+  quality: ['quality'],
+  'quality-live': ['quality-live', 'quality_live', 'qualityLive'],
+  'quality-history': ['quality-history', 'quality_history', 'qualityHistory'],
+  neighbors: ['neighbors'],
+  'band-plan': ['band-plan', 'band_plan', 'bandPlan', 'bands'],
+  patches: ['patches'],
+  activity: ['activity', 'detailed-history', 'detailed_history', 'detailedHistory'],
+  'top-talkgroups': ['top-talkgroups', 'top_talkgroups', 'topTalkgroups', 'talkgroups', 'site-talkgroups']
+});
+
+function normalizedSiteCapability(value) {
+  return String(value || '').replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-function trunkedSiteTabs(site, active) {
+function siteCapabilityValue(value) {
+  if (value && typeof value === 'object') {
+    for (const key of ['available', 'enabled', 'supported']) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) return Boolean(value[key]);
+    }
+  }
+  return Boolean(value);
+}
+
+function explicitSiteCapability(site, capability) {
+  const capabilities = site?.capabilities;
+  if (!capabilities) return undefined;
+  const aliases = new Set((SITE_CAPABILITY_ALIASES[capability] || [capability])
+    .map(normalizedSiteCapability));
+  if (Array.isArray(capabilities)) {
+    return capabilities.some((value) => aliases.has(normalizedSiteCapability(value)));
+  }
+  if (typeof capabilities === 'string') {
+    return capabilities.split(',').some((value) => aliases.has(normalizedSiteCapability(value)));
+  }
+  if (typeof capabilities !== 'object') return undefined;
+  const entry = Object.entries(capabilities)
+    .find(([key]) => aliases.has(normalizedSiteCapability(key)));
+  return entry ? siteCapabilityValue(entry[1]) : undefined;
+}
+
+function siteCapability(site, capability) {
+  const explicit = explicitSiteCapability(site, capability);
+  if (explicit !== undefined) return explicit;
+  return ['channels', 'quality', 'quality-live', 'quality-history', 'neighbors'].includes(capability) ||
+    isP25(site);
+}
+
+function siteTabItems(site) {
   const values = { guid: site.guid };
-  return tabs([
-    { id: 'info', label: 'Info', href: href('site', { ...values, tab: 'info' }) },
-    { id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) },
-    { id: 'neighbors', label: 'Neighbors', href: href('site', { ...values, tab: 'neighbors' }) }
-  ], active);
+  const items = [
+    { id: 'info', label: 'Info', href: href('site', { ...values, tab: 'info' }) }
+  ];
+  if (siteCapability(site, 'channels')) {
+    items.push({ id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) });
+  }
+  const hasQuality = siteCapability(site, 'quality') &&
+    (siteCapability(site, 'quality-live') || siteCapability(site, 'quality-history'));
+  if (hasQuality) {
+    items.push({ id: 'quality', label: 'Quality', href: href('site', { ...values, tab: 'quality' }) });
+  }
+  if (siteCapability(site, 'neighbors')) {
+    items.push({ id: 'neighbors', label: 'Neighbors', href: href('site', { ...values, tab: 'neighbors' }) });
+  }
+  if (siteCapability(site, 'band-plan')) {
+    items.push({ id: 'band-plan', label: 'Band Plan', href: href('site', { ...values, tab: 'band-plan' }) });
+  }
+  if (siteCapability(site, 'patches')) {
+    items.push({ id: 'patches', label: 'Patches', href: href('site', { ...values, tab: 'patches' }) });
+  }
+  if (siteCapability(site, 'activity')) {
+    items.push({ id: 'activity', label: 'Activity', href: href('site', { ...values, tab: 'activity' }),
+      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' }
+    );
+  }
+  return items;
+}
+
+function siteTabs(site, active) {
+  return tabs(siteTabItems(site), active);
 }
 
 function trunkedChannelUse(value) {
@@ -2080,14 +2154,15 @@ function nxdnRepeaterMode(value) {
   return ({ 1: 'Idle', 2: 'Free', 3: 'Halted / CWID' })[Number(value)] || '';
 }
 
-function liveTrunkedSiteSection(site) {
+function liveSiteReceiverSection(site) {
   const connection = badge('Waiting', 'state-stale');
   const signal = node('span', '', '—');
   const decode = node('span', '', '—');
   const observed = node('span', '', 'No live metadata received');
-  const variant = node('span', '', trunkedVariant(site));
+  const protocolVariant = node('span', '',
+    [protocolFamily(site), trunkedVariant(site)].filter(Boolean).join(' · '));
   const details = keyValues([
-    ['Connection', connection], ['Variant', variant], ['Signal', signal], ['Decode', decode],
+    ['Connection', connection], ['Protocol', protocolVariant], ['Signal', signal], ['Decode', decode],
     ['Live Observation', observed]
   ]);
   let current = null;
@@ -2106,7 +2181,10 @@ function liveTrunkedSiteSection(site) {
   const apply = (value) => {
     if (!value || value.guid !== site.guid) return;
     current = value;
-    variant.textContent = trunkedVariant(value) || trunkedVariant(site);
+    protocolVariant.textContent = [
+      protocolFamily(value) || protocolFamily(site),
+      trunkedVariant(value) || trunkedVariant(site)
+    ].filter(Boolean).join(' · ');
     observed.replaceChildren(valueNode(dateTime(value.observed_at_ms)));
     refresh();
   };
@@ -2567,7 +2645,7 @@ async function renderSystems() {
         }
       } else {
         wrapper.append(node('span', 'directory-branch', '↳'),
-          siteLink(row, row.site_kind === 'trunked' ? trunkedSiteLabel(row) : siteValue(row)));
+          siteLink(row, siteValue(row)));
       }
       return wrapper;
     } },
@@ -2774,94 +2852,218 @@ async function renderRadio() {
   }
 }
 
-async function renderTrunkedSite(site) {
-  const requestedTab = route.get('tab') || 'info';
-  const tab = ['info', 'channels', 'neighbors'].includes(requestedTab) ? requestedTab : 'info';
-  const subtitle = [protocolFamily(site), trunkedVariant(site), trunkedIdentity(site)]
-    .filter(Boolean).join(' · ');
-  content.append(pageHeader(trunkedSiteLabel(site), subtitle), trunkedSiteTabs(site, tab));
+function siteIdentity(site) {
+  if (!isP25(site)) return trunkedIdentity(site);
+  return [
+    site.wacn == null ? '' : `WACN ${hex(site.wacn, 5)}`,
+    site.system_id == null ? '' : `System ${hex(site.system_id, 3)}`,
+    site.rfss == null ? '' : `RFSS ${hex(site.rfss, 2)}`,
+    site.site == null ? '' : `Site ${hex(site.site, 2)}`
+  ].filter(Boolean).join(' · ');
+}
 
-  if (tab === 'channels') {
-    const data = await api('/api/site/channels', { guid: site.guid, limit: 500 });
-    const explanation = protocolFamily(site) === 'DMR'
-      ? node('p', 'muted',
-        'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.')
-      : fragment();
-    content.append(section('Channels', fragment(explanation, table(data.rows || [], [
-      { label: 'Channel', key: 'channel_number', className: 'numeric' },
-      { label: 'Inbound', fullLabel: 'Inbound Channel', key: 'inbound_channel_number', className: 'numeric',
-        render: (row) => identifierNumber(row.inbound_channel_number) },
-      { label: 'Slot', key: 'timeslot', className: 'numeric' },
-      { label: 'Use', render: (row) => trunkedChannelUse(row.role_flags) },
-      { label: 'Source', render: (row) => trunkedChannelSources(row.role_flags) },
-      { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
-        render: (row) => frequency(row.frequency_hz), className: 'numeric' },
-      { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
-        render: (row) => frequency(row.uplink_hz), className: 'numeric' },
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
-      { label: 'Snapshots', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Recorded', fullLabel: 'Last Recorded',
-        render: (row) => dateTime(row.last_seen_ms) }
-    ], 'No channels decoded yet', { type: 'trunked-site-channels' }))));
-  } else if (tab === 'neighbors') {
-    const data = await api('/api/site/neighbors', { guid: site.guid, limit: 500 });
-    content.append(section('Observed Neighbors', table(data.rows || [], [
-      { label: 'Variant', render: (row) => {
-        const candidate = { protocol_code: site.protocol_code, variant_code: row.variant_code };
-        return trunkedVariant(candidate);
-      } },
-      { label: 'Model / Category', render: (row) => identityDomainLabel({
-        protocol_code: site.protocol_code,
-        identity_domain_code: row.identity_domain_code
-      }) },
-      { label: 'Network', key: 'network_id', className: 'numeric',
-        render: (row) => identifierNumber(row.network_id) },
-      { label: 'System', key: 'system_id', className: 'numeric',
-        render: (row) => identifierNumber(row.system_id) },
-      { label: 'Site', key: 'site_id', className: 'numeric',
-        render: (row) => identifierNumber(row.site_id) },
-      { label: 'Channel', key: 'channel_number', className: 'numeric',
-        render: (row) => identifierNumber(row.channel_number) },
-      { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
-        render: (row) => frequency(row.frequency_hz), className: 'numeric' },
-      { label: 'Status', render: (row) => trunkedNeighborStatus(row.status_flags) },
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
-      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
-        render: (row) => dateTime(row.last_seen_ms) }
-    ], 'No neighbors decoded yet', { type: 'trunked-site-neighbors' })));
-  } else {
-    const protocolName = protocolFamily(site);
-    const protocolSpecific = protocolName === 'DMR' ? [
-      ['Brand', dmrBrand(site.brand_code)], ['Model', dmrModel(site.model_code)],
-      ['Mode', dmrMode(site.mode_code)], ['Channel Type', dmrChannelType(site.channel_type_code)],
-      ['Color Code TS1', identifierNumber(site.color_code_ts1)],
-      ['Color Code TS2', identifierNumber(site.color_code_ts2)]
-    ] : [
-      ['Category', identityDomainLabel(site)],
-      ['Repeater State', nxdnRepeaterMode(site.mode_code)],
-      ['Current Repeater', identifierNumber(site.current_repeater)],
-      ['Service Flags', Number(site.service_flags) ? `0x${hex(site.service_flags, 4)}` : ''],
-      ['Failure Call Timer', site.failure_code == null ? '' :
-        (Number(site.failure_code) === 0 ? 'Unspecified' : `${number(site.failure_code)} seconds`)]
-    ];
-    const info = section('Site Info', keyValues([
-      ['Protocol', protocolName], ['Variant', trunkedVariant(site)],
-      ['Configured System', site.configured_system], ['GUID', site.guid],
-      ['Name', site.channel_name], ['Alias List', site.alias_list_name], ['Decoder', site.decoder],
-      ['Network', identifierNumber(site.network_id)], ['System', identifierNumber(site.system_id)],
-      ['Site', identifierNumber(site.site_id)], ['RAN', identifierNumber(site.ran)],
-      ...protocolSpecific,
-      ['Configured Frequency', frequency(site.primary_frequency_hz)],
-      ['Current Control Frequency', frequency(site.current_control_hz)],
-      ['First Seen', dateTime(site.first_seen_ms)], ['Last Seen', dateTime(site.last_seen_ms)],
-      ['Observations', number(site.observation_count)], ['Channels', number(site.channels)],
-      ['Neighbors', number(site.neighbors)]
-    ]));
-    const layout = node('div', 'entity-info-layout');
-    layout.append(info, liveTrunkedSiteSection(site));
-    content.append(metrics([['Channels', site.channels], ['Neighbors', site.neighbors]]), layout);
+function p25SiteDetailRows(site) {
+  return [
+    ['Callsign', site.callsign], ['WACN', hexDecimalPair(site.wacn, 5)],
+    ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
+    ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site, 2)],
+    ['Local Registration Area', hexDecimalPair(site.lra, 2)],
+    ['MFID', site.mfid === null || site.mfid === undefined ? site.mfid_display :
+      hexDecimalPair(site.mfid, 2)],
+    ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
+    ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
+    ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' :
+      `${number(site.wuid_lease_minutes)} minutes`],
+    ['Unit registration over control channel', yesNoKnown(site.registration_service)],
+    ['TDMA', yesNoKnown(site.tdma)], ['u-Slots', site.micro_slots == null ? '' : number(site.micro_slots)],
+    ['Voice', yesNoKnown(site.voice_service)]
+  ];
+}
+
+function dmrSiteDetailRows(site) {
+  return [
+    ['Variant', trunkedVariant(site)], ['Network', identifierNumber(site.network_id)],
+    ['System', identifierNumber(site.system_id)], ['Site', identifierNumber(site.site_id)],
+    ['RAN', identifierNumber(site.ran)], ['Brand', dmrBrand(site.brand_code)],
+    ['Model', dmrModel(site.model_code)], ['Mode', dmrMode(site.mode_code)],
+    ['Channel Type', dmrChannelType(site.channel_type_code)],
+    ['Color Code TS1', identifierNumber(site.color_code_ts1)],
+    ['Color Code TS2', identifierNumber(site.color_code_ts2)]
+  ];
+}
+
+function nxdnSiteDetailRows(site) {
+  return [
+    ['Variant', trunkedVariant(site)], ['Network', identifierNumber(site.network_id)],
+    ['System', identifierNumber(site.system_id)], ['Site', identifierNumber(site.site_id)],
+    ['RAN', identifierNumber(site.ran)], ['Category', identityDomainLabel(site)],
+    ['Repeater State', nxdnRepeaterMode(site.mode_code)],
+    ['Current Repeater', identifierNumber(site.current_repeater)],
+    ['Service Flags', Number(site.service_flags) ? `0x${hex(site.service_flags, 4)}` : ''],
+    ['Failure Call Timer', site.failure_code == null ? '' :
+      (Number(site.failure_code) === 0 ? 'Unspecified' : `${number(site.failure_code)} seconds`)]
+  ];
+}
+
+function siteProtocolDetailRows(site) {
+  if (isP25(site)) return p25SiteDetailRows(site);
+  if (protocolFamily(site) === 'DMR') return dmrSiteDetailRows(site);
+  if (protocolFamily(site) === 'NXDN') return nxdnSiteDetailRows(site);
+  return [];
+}
+
+function p25SiteChannelColumns() {
+  return [
+    { label: 'LCN / Mode', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
+    { label: 'Callsign', key: 'callsign' },
+    { label: 'Tags', key: 'tags', render: channelTags },
+    { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
+      render: (row) => frequency(row.downlink_hz), className: 'numeric',
+      sortValue: (row) => Number(row.downlink_hz || 0) },
+    { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
+      render: (row) => frequency(row.uplink_hz), className: 'numeric',
+      sortValue: (row) => Number(row.uplink_hz || 0) },
+    { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma),
+      sortValue: (row) => Boolean(row.tdma) },
+    { label: 'Slots', key: 'timeslots', className: 'numeric' },
+    { id: 'state', label: 'State', render: (row) => stateBadge(row.state),
+      sortValue: (row) => row.state || '' },
+    { label: 'Voice', fullLabel: 'Voice Grant Observations', key: 'voice_grant_observations',
+      className: 'numeric' },
+    { label: 'Data', fullLabel: 'Data Grant Observations', key: 'data_grant_observations',
+      className: 'numeric' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+      render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ];
+}
+
+function trunkedSiteChannelColumns() {
+  return [
+    { label: 'Channel', key: 'channel_number', className: 'numeric' },
+    { label: 'Inbound', fullLabel: 'Inbound Channel', key: 'inbound_channel_number', className: 'numeric',
+      render: (row) => identifierNumber(row.inbound_channel_number) },
+    { label: 'Slot', key: 'timeslot', className: 'numeric' },
+    { label: 'Use', render: (row) => trunkedChannelUse(row.role_flags) },
+    { label: 'Source', render: (row) => trunkedChannelSources(row.role_flags) },
+    { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
+      render: (row) => frequency(row.frequency_hz), className: 'numeric' },
+    { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
+      render: (row) => frequency(row.uplink_hz), className: 'numeric' },
+    { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
+    { label: 'Snapshots', key: 'observation_count', className: 'numeric' },
+    { id: 'last-seen', label: 'Recorded', fullLabel: 'Last Recorded',
+      render: (row) => dateTime(row.last_seen_ms) }
+  ];
+}
+
+async function renderSiteChannels(site) {
+  const data = await api('/api/site/channels', { guid: site.guid, limit: 500 });
+  const explanation = protocolFamily(site) === 'DMR' ? node('p', 'muted',
+    'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.') :
+    fragment();
+  const p25 = isP25(site);
+  content.append(section('Channels', fragment(explanation, table(data.rows || [],
+    p25 ? p25SiteChannelColumns() : trunkedSiteChannelColumns(), 'No channels recorded',
+    { type: p25 ? 'site-channels' : 'trunked-site-channels' }))));
+}
+
+function p25SiteNeighborColumns() {
+  return [
+    { id: 'state', label: 'State', render: (row) => stateBadge(row.state),
+      sortValue: (row) => row.state || '' },
+    { id: 'type', label: 'Type', render: (row) => row.entry_type === 'ISSI' ? 'ISSI System' : 'Site' },
+    { id: 'wacn', label: 'WACN', render: (row) => hex(row.wacn, 5),
+      sortValue: (row) => Number(row.wacn || 0) },
+    { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hex(row.system_id, 3),
+      sortValue: (row) => Number(row.system_id || 0) },
+    { id: 'rfss', label: 'RFSS', render: (row) => hex(row.rfss, 2),
+      sortValue: (row) => Number(row.rfss || 0) },
+    { id: 'site', label: 'Site', render: (row) => hex(row.site, 2),
+      sortValue: (row) => Number(row.site || 0) },
+    { id: 'lra', label: 'LRA', render: (row) => hex(row.lra, 2),
+      sortValue: (row) => Number(row.lra || 0) },
+    { label: 'LCN', key: 'channel_descriptor' },
+    { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
+      render: (row) => frequency(row.downlink_hz), className: 'numeric',
+      sortValue: (row) => Number(row.downlink_hz || 0) },
+    { id: 'modes', label: 'Modes', render: neighborModes },
+    { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric' },
+    { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status',
+      render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
+    { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+      render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ];
+}
+
+function trunkedSiteNeighborColumns(site) {
+  return [
+    { label: 'Variant', render: (row) => trunkedVariant({
+      protocol_code: site.protocol_code,
+      variant_code: row.variant_code
+    }) },
+    { label: 'Model / Category', render: (row) => identityDomainLabel({
+      protocol_code: site.protocol_code,
+      identity_domain_code: row.identity_domain_code
+    }) },
+    { label: 'Network', key: 'network_id', className: 'numeric',
+      render: (row) => identifierNumber(row.network_id) },
+    { label: 'System', key: 'system_id', className: 'numeric',
+      render: (row) => identifierNumber(row.system_id) },
+    { label: 'Site', key: 'site_id', className: 'numeric',
+      render: (row) => identifierNumber(row.site_id) },
+    { label: 'Channel', key: 'channel_number', className: 'numeric',
+      render: (row) => identifierNumber(row.channel_number) },
+    { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
+      render: (row) => frequency(row.frequency_hz), className: 'numeric' },
+    { label: 'Status', render: (row) => trunkedNeighborStatus(row.status_flags) },
+    { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
+    { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+      render: (row) => dateTime(row.last_seen_ms) }
+  ];
+}
+
+async function renderSiteNeighbors(site) {
+  const data = await api('/api/site/neighbors', { guid: site.guid, limit: 500 });
+  const p25 = isP25(site);
+  content.append(section('Neighbors', table(data.rows || [],
+    p25 ? p25SiteNeighborColumns() : trunkedSiteNeighborColumns(site), 'No neighbors recorded',
+    { type: p25 ? 'site-neighbors' : 'trunked-site-neighbors' })));
+}
+
+async function renderSiteInfo(site) {
+  const summary = [
+    ['Observations', site.observation_count], ['Channels', site.channels], ['Neighbors', site.neighbors]
+  ];
+  if (siteCapability(site, 'band-plan')) summary.push(['Band Plans', site.bands]);
+  if (siteCapability(site, 'patches')) summary.push(['Patches', site.patches]);
+
+  const infoColumn = node('div', 'entity-info-column');
+  infoColumn.append(section('Site Info', keyValues([
+    ['System', systemLink(site, systemInfoValue(site))],
+    ['GUID', site.guid], ['Name', site.channel_name], ['Alias List', site.alias_list_name],
+    ['Protocol', protocolFamily(site)], ['Decoder', site.decoder],
+    ['Configured Frequency', frequency(site.primary_frequency_hz)],
+    ['Current Control Frequency', frequency(site.current_control_hz)],
+    ['First Seen', dateTime(site.first_seen_ms)], ['Last Seen', dateTime(site.last_seen_ms)]
+  ])));
+  const protocolDetails = siteProtocolDetailRows(site);
+  if (protocolDetails.length) {
+    infoColumn.append(section(`${protocolFamily(site)} Details`, keyValues(protocolDetails)));
   }
+
+  const receiverColumn = node('div', 'entity-info-column');
+  if (siteCapability(site, 'quality-live')) {
+    receiverColumn.append(liveSiteReceiverSection(site));
+  }
+  if (siteCapability(site, 'top-talkgroups')) {
+    receiverColumn.append(await siteTopTalkgroupsSection(site));
+  }
+  const layout = node('div', 'entity-info-layout');
+  layout.append(infoColumn);
+  if (receiverColumn.childNodes.length) layout.append(receiverColumn);
+  content.append(metrics(summary), layout);
 }
 
 async function renderSite() {
@@ -2869,53 +3071,19 @@ async function renderSite() {
   if (!guid) throw new Error('Site GUID is missing from the URL');
   const response = await api('/api/site', { guid });
   const site = response.site;
-  if (site.site_kind === 'trunked') {
-    await renderTrunkedSite(site);
-    return;
-  }
   const requestedTab = route.get('tab') || 'info';
-  const tab = requestedTab === 'talkgroups' ? 'info' : requestedTab;
-  content.append(pageHeader(siteValue(site), fragment(systemValue(site), ' · ',
-    hex(site.rfss, 2), '-', hex(site.site, 2))),
-    siteTabs(site, tab));
+  const tabItems = siteTabItems(site);
+  const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
+  const subtitle = [protocolFamily(site), trunkedVariant(site), siteIdentity(site)].filter(Boolean).join(' · ');
+  content.append(pageHeader(siteValue(site), subtitle), siteTabs(site, tab));
 
   if (tab === 'quality') {
-    content.append(await siteSignalHistorySection(site));
+    if (siteCapability(site, 'quality-live')) content.append(liveSiteReceiverSection(site));
+    if (siteCapability(site, 'quality-history')) content.append(await siteSignalHistorySection(site));
   } else if (tab === 'channels') {
-    const data = await api('/api/site/channels', { guid });
-    const columns = [
-      { label: 'LCN / Mode', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
-      { label: 'Callsign', key: 'callsign' },
-      { label: 'Tags', key: 'tags', render: channelTags },
-      { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
-      { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz', render: (row) => frequency(row.uplink_hz), className: 'numeric', sortValue: (row) => Number(row.uplink_hz || 0) },
-      { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
-      { label: 'Slots', key: 'timeslots', className: 'numeric' },
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { label: 'Voice', fullLabel: 'Voice Grant Observations', key: 'voice_grant_observations', className: 'numeric' },
-      { label: 'Data', fullLabel: 'Data Grant Observations', key: 'data_grant_observations', className: 'numeric' },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ];
-    const rows = data.rows || [];
-    content.append(section('Channels', table(rows, columns, 'No channels recorded', { type: 'site-channels' })));
+    await renderSiteChannels(site);
   } else if (tab === 'neighbors') {
-    const data = await api('/api/site/neighbors', { guid });
-    content.append(section('Neighbors', table(data.rows || [], [
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'type', label: 'Type', render: (row) => row.entry_type === 'ISSI' ? 'ISSI System' : 'Site' },
-      { id: 'wacn', label: 'WACN', render: (row) => hex(row.wacn, 5), sortValue: (row) => Number(row.wacn || 0) },
-      { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hex(row.system_id, 3), sortValue: (row) => Number(row.system_id || 0) },
-      { id: 'rfss', label: 'RFSS', render: (row) => hex(row.rfss, 2), sortValue: (row) => Number(row.rfss || 0) },
-      { id: 'site', label: 'Site', render: (row) => hex(row.site, 2), sortValue: (row) => Number(row.site || 0) },
-      { id: 'lra', label: 'LRA', render: (row) => hex(row.lra, 2), sortValue: (row) => Number(row.lra || 0) },
-      { label: 'LCN', key: 'channel_descriptor' },
-      { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.downlink_hz), className: 'numeric', sortValue: (row) => Number(row.downlink_hz || 0) },
-      { id: 'modes', label: 'Modes', render: neighborModes },
-      { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric' },
-      { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status', render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
-      { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ], 'No neighbors recorded', { type: 'site-neighbors' })));
+    await renderSiteNeighbors(site);
   } else if (tab === 'band-plan') {
     const data = await api('/api/site/bands', { guid });
     content.append(section('Home System Band Plan', table(data.rows || [], [
@@ -2990,30 +3158,7 @@ async function renderSite() {
   } else if (tab === 'activity') {
     await renderActivity({ guid });
   } else {
-    const infoColumn = node('div', 'entity-info-column');
-    infoColumn.append(section('Site Info', keyValues([
-      ['System', systemLink(site, systemInfoValue(site))], ['GUID', site.guid], ['Name', site.channel_name],
-      ['Alias List', site.alias_list_name], ['Protocol', site.protocol], ['Decoder', site.decoder],
-      ['Callsign', site.callsign], ['WACN', hexDecimalPair(site.wacn, 5)],
-      ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
-      ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site, 2)],
-      ['Local Registration Area', hexDecimalPair(site.lra, 2)],
-      ['MFID', site.mfid === null || site.mfid === undefined ? site.mfid_display : hexDecimalPair(site.mfid, 2)],
-      ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
-      ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
-      ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' : `${number(site.wuid_lease_minutes)} minutes`],
-      ['Unit registration over control channel', yesNoKnown(site.registration_service)],
-      ['TDMA', yesNoKnown(site.tdma)],
-      ['u-Slots', site.micro_slots == null ? '' : number(site.micro_slots)],
-      ['Voice', yesNoKnown(site.voice_service)],
-      ['Control Frequency', frequency(site.current_control_hz)],
-      ['First Seen', dateTime(site.first_seen_ms)], ['Last Seen', dateTime(site.last_seen_ms)],
-      ['Channels', number(site.channels)], ['Neighbors', number(site.neighbors)],
-      ['Band Plans', number(site.bands)], ['Patches', number(site.patches)]
-    ])));
-    const layout = node('div', 'entity-info-layout');
-    layout.append(infoColumn, await siteTopTalkgroupsSection(site));
-    content.append(layout);
+    await renderSiteInfo(site);
   }
 }
 

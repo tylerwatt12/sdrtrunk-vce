@@ -43,6 +43,17 @@ class TrunkedSiteMetadataMapperTest
     Path mTemporaryFolder;
 
     @Test
+    void rejectsUsefulMetadataWithoutAKnownTrunkingVariant()
+    {
+        Channel channel = channel(451_000_000L);
+        DMRNetworkConfigurationSnapshot unknown = new DMRNetworkConfigurationSnapshot(
+            "DMR", null, 10, 20, null, null, null, null, 1, 2, List.of(), List.of());
+
+        assertNull(TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(channel, unknown, 1_000L)));
+    }
+
+    @Test
     void mapsDmrIdentityChannelsNeighborsAndConfiguredLabels()
     {
         Channel channel = channel(451_000_000L);
@@ -149,7 +160,7 @@ class TrunkedSiteMetadataMapperTest
     {
         Channel channel = channel(155_000_000L);
         NXDNNetworkConfigurationSnapshot source = new NXDNNetworkConfigurationSnapshot(
-            "NXDN", "TYPE_D", 5,
+            "NXDN", "TYPE-D", 5,
             new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, null, 7),
             9, "CONTROL", null, null, List.of("VOICE", "DATA"), List.of(),
             new NXDNNetworkConfigurationSnapshot.FailureStatus(null, "60 SECONDS"),

@@ -14,10 +14,12 @@ package io.github.dsheirer.stats.activity;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
@@ -158,6 +160,77 @@ class P25ActivityLogServiceLifecycleTest
         }
     }
 
+    @Test
+    void persistsDmrQualityOnlyAfterTrunkedSiteMetadataIsObserved() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+
+        try
+        {
+            long now = System.currentTimeMillis();
+            Channel trunked = dmrChannel("00000000-0000-0000-0000-000000000201");
+            service.getControlChannelQualityListener().receive(quality(trunked, now));
+            awaitCount(database, "p25_control_channel_quality", 0);
+
+            service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
+                new DMRNetworkConfigurationSnapshot("DMR", null, 10, 20, null, null, null, null,
+                    1, 2, List.of(), List.of()), System.currentTimeMillis()));
+            service.getControlChannelQualityListener().receive(quality(trunked, now + 10_000L));
+            awaitCount(database, "p25_control_channel_quality", 0);
+            assertEquals(0, count(database, "trunked_site_snapshot"));
+
+            service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
+                new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
+                    "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
+            service.getControlChannelQualityListener().receive(quality(trunked, now + 20_000L));
+            awaitCount(database, "p25_control_channel_quality", 1);
+            assertEquals(1, count(database, "trunked_site_snapshot"));
+
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            applicationPreference.setCollectionEnabled(true);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            service.getControlChannelQualityListener().receive(quality(trunked, now + 40_000L));
+
+            service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
+                new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
+                    "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
+            Channel reusedGuid = dmrChannel(trunked.getRadresGuid());
+            service.getControlChannelQualityListener().receive(quality(reusedGuid, now + 60_000L));
+
+            service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
+                new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
+                    "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
+            service.getControlChannelQualityListener().receive(quality(trunked, now + 600_000L));
+            awaitCount(database, "p25_control_channel_quality", 2);
+
+            service.getControlChannelQualityListener().receive(quality(trunked, now + 610_000L, false));
+            service.getControlChannelQualityListener().receive(quality(trunked, now + 620_000L));
+
+            service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
+                new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
+                    "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
+            service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
+                new DMRNetworkConfigurationSnapshot("DMR", null, 10, 20, null, null, null, null,
+                    1, 2, List.of(), List.of()), System.currentTimeMillis()));
+            service.getControlChannelQualityListener().receive(quality(trunked, now + 640_000L));
+
+            Channel conventional = dmrChannel("00000000-0000-0000-0000-000000000202");
+            service.getControlChannelQualityListener().receive(quality(conventional, now + 660_000L));
+            Thread.sleep(1_100);
+            assertEquals(2, count(database, "p25_control_channel_quality"));
+        }
+        finally
+        {
+            service.dispose();
+        }
+    }
+
     private static int count(Path database, String table) throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -183,6 +256,39 @@ class P25ActivityLogServiceLifecycleTest
                 return resultSet.getInt(1);
             }
         }
+    }
+
+    private static void awaitCount(Path database, String table, int expected) throws Exception
+    {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        int actual = count(database, table);
+
+        while(actual != expected && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+            actual = count(database, table);
+        }
+
+        assertEquals(expected, actual);
+    }
+
+    private static Channel dmrChannel(String guid)
+    {
+        Channel channel = new Channel("DMR", Channel.ChannelType.STANDARD);
+        channel.setRadresGuid(guid);
+        channel.setDecodeConfiguration(new DecodeConfigDMR());
+        return channel;
+    }
+
+    private static ControlChannelQualitySnapshot quality(Channel channel, long observedAt)
+    {
+        return quality(channel, observedAt, true);
+    }
+
+    private static ControlChannelQualitySnapshot quality(Channel channel, long observedAt, boolean active)
+    {
+        return new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(), 451_012_500L, observedAt,
+            active, -20.0, -21.0, -25.0, -18.0, 95.0, 100, 2, 1, 0, 0, observedAt);
     }
 
     private static void insertTrunkedSite(java.sql.PreparedStatement statement, String guid, int protocol,
@@ -232,7 +338,7 @@ class P25ActivityLogServiceLifecycleTest
 
     private static class TestApplicationPreference extends ApplicationPreference
     {
-        private final boolean mCollectionEnabled;
+        private boolean mCollectionEnabled;
         private int mRetentionDays;
 
         private TestApplicationPreference(boolean collectionEnabled, int retentionDays)
@@ -246,6 +352,11 @@ class P25ActivityLogServiceLifecycleTest
         public boolean isStatsLoggingEnabled()
         {
             return mCollectionEnabled;
+        }
+
+        private void setCollectionEnabled(boolean collectionEnabled)
+        {
+            mCollectionEnabled = collectionEnabled;
         }
 
         @Override

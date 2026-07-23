@@ -33,13 +33,13 @@ import java.util.Set;
 import java.util.StringJoiner;
 
 /**
- * Out-of-process upgrade helper for a staged copy of an Alpha 5 global database.
+ * Out-of-process upgrade helper for a staged copy of an earlier portable global database.
  *
- * <p>This helper deliberately supports one migration only: P25 activity schema v19 to v20. The caller owns staging,
- * backup, and final installation of the database. Running this class against the user's live database is not a
- * supported workflow.</p>
+ * <p>The caller owns staging, backup, and final installation of the database. Running this class against the user's
+ * live database is not a supported workflow. Schema v19 receives both the v20 foreign-system band tables and the v21
+ * quality-retention index; schema v20 receives only the v21 index.</p>
  */
-public final class P25ActivityV19ToV20Upgrade
+public final class P25ActivitySchemaUpgrade
 {
     public static final int EXIT_SUCCESS = 0;
     public static final int EXIT_USAGE = 2;
@@ -48,8 +48,9 @@ public final class P25ActivityV19ToV20Upgrade
     public static final int EXIT_MIGRATION_FAILED = 5;
 
     private static final String VERSION_KEY = "p25_activity_schema_version";
-    private static final String SOURCE_VERSION = "19";
-    private static final String TARGET_VERSION = "20";
+    private static final String SOURCE_VERSION_19 = "19";
+    private static final String SOURCE_VERSION_20 = "20";
+    private static final String TARGET_VERSION = "21";
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
     private static final Set<String> PORTABLE_DIRECTORY_KEYS = Set.of(
         "directory.application.logs",
@@ -61,15 +62,15 @@ public final class P25ActivityV19ToV20Upgrade
         "directory.last.recording.browse"
     );
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final String USAGE = "Usage: P25ActivityV19ToV20Upgrade <staged-database-path> " +
+    private static final String USAGE = "Usage: P25ActivitySchemaUpgrade <staged-database-path> " +
         "[<source-data-root> <target-data-root>]";
 
-    private P25ActivityV19ToV20Upgrade()
+    private P25ActivitySchemaUpgrade()
     {
     }
 
     /**
-     * Command-line entry point. A zero exit code means that the staged database is valid at v20, either because this
+     * Command-line entry point. A zero exit code means that the staged database is valid at v21, either because this
      * invocation migrated it or because it was already current.
      */
     public static void main(String[] args)
@@ -165,36 +166,45 @@ public final class P25ActivityV19ToV20Upgrade
                 int rebased = rebaseInTransaction(connection, relocation);
                 finalizeStagedDatabase(connection);
                 output.println(rebased == 0 ?
-                    "RESULT: Database is already valid at P25 activity schema v20; the staged copy was prepared " +
+                    "RESULT: Database is already valid at P25 activity schema v21; the staged copy was prepared " +
                         "without schema changes." :
-                    "RESULT: Database is already valid at P25 activity schema v20; " + rebased +
+                    "RESULT: Database is already valid at P25 activity schema v21; " + rebased +
                         " portable directory preference(s) were updated for the new data folder.");
                 return;
             }
 
-            if(!SOURCE_VERSION.equals(version))
+            if(!SOURCE_VERSION_19.equals(version) && !SOURCE_VERSION_20.equals(version))
             {
-                throw new UnsupportedSchemaVersionException("Expected P25 activity schema v19 or v20, found [" +
+                throw new UnsupportedSchemaVersionException("Expected P25 activity schema v19, v20, or v21, found [" +
                     version + "]. Refusing upgrade.");
             }
 
             SdrTrunkDatabaseSchema.validate(connection);
+
+            if(SOURCE_VERSION_20.equals(version))
+            {
+                P25ActivityLogSchema.validateV20ForUpgrade(connection);
+            }
+
             requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
             requireForeignKeysValid(connection);
-            output.println("Pre-upgrade checks passed. Upgrading staged database from v19 to v20.");
+            output.println("Pre-upgrade checks passed. Upgrading staged database from v" + version + " to v21.");
 
-            int rebased = migrateInTransaction(connection, relocation);
+            int rebased = migrateInTransaction(connection, version, relocation);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
             output.println("Portable directory preferences updated: " + rebased + ".");
+            output.println(SOURCE_VERSION_19.equals(version) ?
+                "RESULT: P25 activity schema upgrade complete: v19 -> v21 foreign-system bands and indexed " +
+                    "quality retention." :
+                "RESULT: P25 activity schema upgrade complete: v20 -> v21 indexed quality retention.");
         }
-
-        output.println("RESULT: P25 activity schema upgrade complete: v19 -> v20 foreign-system bands.");
     }
 
-    private static int migrateInTransaction(Connection connection, DataRootRelocation relocation)
+    private static int migrateInTransaction(Connection connection, String sourceVersion,
+                                            DataRootRelocation relocation)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -205,7 +215,13 @@ public final class P25ActivityV19ToV20Upgrade
             {
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
-                P25ActivityLogSchema.createForeignSystemBandTables(statement);
+
+                if(SOURCE_VERSION_19.equals(sourceVersion))
+                {
+                    P25ActivityLogSchema.createForeignSystemBandTables(statement);
+                }
+
+                P25ActivityLogSchema.createControlChannelQualityRetentionIndex(statement);
                 SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, TARGET_VERSION);
                 int rebased = rebasePortableDirectoryPreferences(connection, relocation);
                 validateCurrentDatabase(connection);
