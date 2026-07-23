@@ -18,6 +18,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
@@ -104,7 +105,7 @@ public class P25ActivityLogService implements SiteMetadataListener
     {
         P25ActivityLogWriter writer = mWriter;
 
-        if(writer != null && snapshot != null && snapshot.active() && snapshot.guid() != null &&
+        if(writer != null && isP25ControlChannelQuality(snapshot) && snapshot.active() && snapshot.guid() != null &&
             !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
         {
             writer.enqueue(new P25ActivityLogRecords.ControlChannelQuality(snapshot.observedAtMs(), snapshot.guid(),
@@ -113,6 +114,18 @@ public class P25ActivityLogService implements SiteMetadataListener
                 snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(),
                 snapshot.droppedBits(), snapshot.lastValidDecodeMs()));
         }
+    }
+
+    /**
+     * Persistent quality tables are currently P25-specific.  DMR/NXDN quality remains live-only until a
+     * protocol-neutral schema is introduced through an explicit migration.
+     */
+    static boolean isP25ControlChannelQuality(ControlChannelQualitySnapshot snapshot)
+    {
+        DecoderType decoderType = snapshot != null && snapshot.channel() != null &&
+            snapshot.channel().getDecodeConfiguration() != null ?
+            snapshot.channel().getDecodeConfiguration().getDecoderType() : null;
+        return decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2;
     }
 
     public void dispose()

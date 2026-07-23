@@ -309,7 +309,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         runOnSwingIfEnabled(() -> {
-            SiteActivitySession session = getOrCreateSiteSession(snapshot.channel());
+            /*
+             * P25 is explicitly configured as a trunked control parent, so quality can create its initial site
+             * session.  DMR and NXDN use the same decoder configuration for conventional and trunked channels:
+             * quality alone must never promote a conventional channel into Systems.
+             */
+            SiteActivitySession session = isP25TrunkedControlParent(snapshot.channel()) ?
+                getOrCreateSiteSession(snapshot.channel()) : mSiteSessions.get(snapshot.channel());
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
 
             if(table == null)

@@ -28,6 +28,7 @@ import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
 import io.github.dsheirer.dsp.filter.fir.real.RealFIRFilter;
 import io.github.dsheirer.dsp.fm.FmDemodulatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
+import io.github.dsheirer.dsp.squelch.PowerMonitor;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
@@ -67,6 +68,7 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
     private IRealFilter mBasebandFilterQ;
     private IRealFilter mPulseShapingFilter;
     private IDemodulator mDemodulator;
+    private final PowerMonitor mPowerMonitor = new PowerMonitor();
 
     @Override
     public DecoderType getDecoderType()
@@ -133,6 +135,7 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
         mDecimationFilterI = DecimationFilterFactory.getRealDecimationFilter(decimation);
         mDecimationFilterQ = DecimationFilterFactory.getRealDecimationFilter(decimation);
         float decimatedSampleRate = (float)sampleRate / decimation;
+        mPowerMonitor.setSampleRate((int)decimatedSampleRate);
 
         //Set the decimated sample rate to use for PLL error reporting.
         setDecimatedSampleRate(decimatedSampleRate);
@@ -164,6 +167,9 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
 
         i = mBasebandFilterI.filter(i);
         q = mBasebandFilterQ.filter(q);
+
+        //Measure filtered decoder I/Q power for live signal telemetry.
+        mPowerMonitor.process(i, q);
 
         float[] demodulated = mDemodulator.demodulate(i, q);
         demodulated = mPulseShapingFilter.filter(demodulated);
@@ -252,6 +258,23 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
     public Listener<SourceEvent> getSourceEventListener()
     {
         return this::process;
+    }
+
+    /**
+     * Registers the processing-chain source-event broadcaster for both decoder feedback and power measurements.
+     */
+    @Override
+    public void setSourceEventListener(Listener<SourceEvent> listener)
+    {
+        super.setSourceEventListener(listener);
+        mPowerMonitor.setSourceEventListener(listener);
+    }
+
+    @Override
+    public void removeSourceEventListener()
+    {
+        super.removeSourceEventListener();
+        mPowerMonitor.setSourceEventListener(null);
     }
 
     @Override

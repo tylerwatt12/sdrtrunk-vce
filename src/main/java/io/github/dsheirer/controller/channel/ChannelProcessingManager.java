@@ -603,7 +603,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
             mChannelActivityModel);
 
-        if(isP25ControlChannel(channel))
+        if(supportsControlChannelQuality(channel))
         {
             modules.add(new ControlChannelQualityMonitor(channel, source.getFrequency(),
                 this::receiveControlChannelQuality));
@@ -1002,12 +1002,18 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
     }
 
-    private boolean isP25ControlChannel(Channel channel)
+    /**
+     * Indicates if a standard parent channel supports live trunked control-channel quality.  DMR and NXDN use the
+     * same decoder for conventional and trunked operation, so their monitor can run before trunking is observed;
+     * {@link ChannelActivityModel} only attaches those measurements after an actual trunked site session exists.
+     */
+    static boolean supportsControlChannelQuality(Channel channel)
     {
         DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
         return channel != null && channel.isStandardChannel() &&
-            (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2);
+            (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ||
+                decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN);
     }
 
     public void addSiteMetadataListener(SiteMetadataListener listener)

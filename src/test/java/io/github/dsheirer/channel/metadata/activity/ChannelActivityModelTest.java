@@ -80,6 +80,51 @@ class ChannelActivityModelTest
     }
 
     @Test
+    void qualityAloneDoesNotPromoteConventionalDmrOrNxdn() throws Exception
+    {
+        for(DecodeConfiguration config: List.of(new DecodeConfigDMR(), new DecodeConfigNXDN()))
+        {
+            AliasModel aliasModel = new AliasModel();
+            ChannelActivityModel model = new ChannelActivityModel(aliasModel,
+                new NowPlayingPreference(type -> {}));
+            Channel parent = trunkedChannel("Test", "System", "Site", config, 451_012_500L);
+            ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+
+            SwingUtilities.invokeAndWait(() -> {
+                model.setEnabled(true);
+                model.channelStarted(parent, List.of(metadata));
+                model.receiveControlChannelQuality(quality(parent, 451_012_500L, 1_000L, true));
+            });
+
+            assertEquals(1, model.getTables().size());
+            assertEquals(1, model.getConventionalTable().getRows().size());
+        }
+    }
+
+    @Test
+    void attachesDmrQualityAfterTrafficPromotesSite() throws Exception
+    {
+        ChannelActivityModel model = new ChannelActivityModel(new AliasModel(),
+            new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", new DecodeConfigDMR(), 139_781_250L);
+        DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
+                DecodeEventType.CALL_GROUP, 139_781_250L);
+            model.receiveControlChannelQuality(quality(parent, 139_781_250L, 2_000L, true));
+        });
+
+        ChannelActivityRow control = model.getTables().get(1).getRows().stream()
+            .filter(row -> row.getRole() == ChannelActivityRow.Role.CURRENT_CONTROL)
+            .findFirst().orElseThrow();
+        assertEquals(-20.5, control.getSignalDbfs());
+        assertEquals(97.5, control.getDecodeHealthPercent());
+        assertEquals(2_000L, control.getQualityObservedAt());
+    }
+
+    @Test
     void retainsSeparateDmrTrafficRowsForSameFrequencyTimeslots() throws Exception
     {
         ChannelActivityModel model = new ChannelActivityModel(new AliasModel(),
@@ -291,6 +336,13 @@ class ChannelActivityModelTest
         source.setFrequency(frequency);
         channel.setSourceConfiguration(source);
         return channel;
+    }
+
+    private static ControlChannelQualitySnapshot quality(Channel channel, long frequency, long timestamp,
+                                                         boolean active)
+    {
+        return new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(), frequency, timestamp, active,
+            -20.5, -21.0, -25.0, -18.0, 97.5, 100, 1, 3, 0, 0, timestamp - 1);
     }
 
 }

@@ -12,6 +12,9 @@ import io.github.dsheirer.message.IMessageListener;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.message.data.DataMessage;
+import io.github.dsheirer.module.decode.nxdn.NXDNMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.sample.Listener;
@@ -24,7 +27,7 @@ import java.util.Deque;
 import java.util.function.Consumer;
 
 /**
- * Collects low-cost P25 control-channel signal and decode measurements on the processing-chain thread.
+ * Collects low-cost trunked control-channel signal and decode measurements on the processing-chain thread.
  */
 public class ControlChannelQualityMonitor extends Module implements IMessageListener, ISourceEventListener,
     IHeartbeatListener
@@ -33,11 +36,14 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     static final long ROLLING_WINDOW_MILLISECONDS = 30000;
     private static final int P25_PHASE_1_FRAME_BITS = 196;
     private static final int P25_PHASE_2_FRAME_BITS = 320;
+    private static final int DMR_FRAME_BITS = 288;
+    private static final int NXDN_FRAME_BITS = 384;
 
     private final Channel mChannel;
     private final String mGuid;
     private final Consumer<ControlChannelQualitySnapshot> mConsumer;
-    private final boolean mPhase2;
+    private final DecoderType mDecoderType;
+    private final boolean mIgnoreDmrCrcChecksums;
     private final Deque<Bucket> mBuckets = new ArrayDeque<>();
     private Bucket mCurrent = new Bucket();
     private long mFrequency;
@@ -54,9 +60,10 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
         mGuid = channel != null && channel.isStandardChannel() ? channel.getRadresGuid() : null;
         mFrequency = initialFrequency;
         mConsumer = consumer;
-        DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
+        mDecoderType = channel != null && channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
-        mPhase2 = decoderType == DecoderType.P25_PHASE2;
+        mIgnoreDmrCrcChecksums = channel != null &&
+            channel.getDecodeConfiguration() instanceof DecodeConfigDMR config && config.getIgnoreCRCChecksums();
     }
 
     @Override
@@ -123,6 +130,25 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
                 mLastLcchKey = key;
                 countFrame(mac.isValid(), Math.max(0, mac.getBitErrorCount()), mac.getTimestamp());
             }
+        }
+        else if(mDecoderType == DecoderType.DMR && message instanceof DataMessage data)
+        {
+            /*
+             * DataMessage is the physical DMR burst carrier.  Reassembled LC and packet messages are deliberately
+             * excluded so a burst is counted once.  Alternate RAS masks are resolved upstream and reflected in
+             * isValid(); Ignore CRC is a user-selected override.  Slot type integrity remains mandatory because an
+             * invalid slot type means the payload type itself is not trustworthy.
+             */
+            boolean valid = data.getSlotType() != null && data.getSlotType().isValid() &&
+                (data.isValid() || mIgnoreDmrCrcChecksums);
+            int correctedBits = Math.max(0, data.getMessage().getCorrectedBitCount()) +
+                (data.getSlotType() != null ? data.getSlotType().getCorrectedBitCount() : 0);
+            countFrame(valid, correctedBits, data.getTimestamp());
+        }
+        else if(mDecoderType == DecoderType.NXDN && message instanceof NXDNMessage nxdn &&
+            nxdn.isRfFrameQualityCarrier())
+        {
+            countFrame(nxdn.isRfFrameValid(), nxdn.getRfFrameCorrectedBitCount(), nxdn.getTimestamp());
         }
         else if(message instanceof SyncLossMessage syncLoss)
         {
@@ -200,7 +226,21 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
             dropped += bucket.droppedBits;
         }
 
-        int frameBits = mPhase2 ? P25_PHASE_2_FRAME_BITS : P25_PHASE_1_FRAME_BITS;
+        int frameBits = P25_PHASE_1_FRAME_BITS;
+
+        if(mDecoderType == DecoderType.P25_PHASE2)
+        {
+            frameBits = P25_PHASE_2_FRAME_BITS;
+        }
+        else if(mDecoderType == DecoderType.DMR)
+        {
+            frameBits = DMR_FRAME_BITS;
+        }
+        else if(mDecoderType == DecoderType.NXDN)
+        {
+            frameBits = NXDN_FRAME_BITS;
+        }
+
         double attempted = valid + invalid + (double)(syncLoss + dropped) / frameBits;
         Double health = attempted > 0 ? Math.max(0.0, Math.min(100.0, 100.0 * valid / attempted)) : null;
         Double average = powerCount > 0 ? 10.0 * Math.log10(powerSum / powerCount) : null;

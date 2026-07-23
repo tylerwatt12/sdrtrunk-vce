@@ -259,6 +259,33 @@ public class Frame
                 mMessages.add(layer3);
             }
         }
+
+        assignRfFrameQuality(mMessages);
+    }
+
+    /**
+     * Assigns one aggregate quality result to exactly one message from this physical RF frame.  RCCH frames normally
+     * produce one message, while traffic and Type-D frames can produce several independently protected messages.
+     * Matching the framer's existing synchronization rule, a frame is valid when any directly extracted payload is
+     * valid.
+     */
+    static void assignRfFrameQuality(List<NXDNMessage> messages)
+    {
+        if(messages == null || messages.isEmpty())
+        {
+            return;
+        }
+
+        boolean valid = false;
+        int correctedBitCount = 0;
+
+        for(NXDNMessage message: messages)
+        {
+            valid |= message.isValid();
+            correctedBitCount += Math.max(0, message.getMessage().getCorrectedBitCount());
+        }
+
+        messages.getFirst().setRfFrameQuality(valid, correctedBitCount);
     }
 
     /**
