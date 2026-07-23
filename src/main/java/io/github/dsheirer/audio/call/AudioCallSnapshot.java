@@ -33,8 +33,30 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                                 long startTimestamp, long lastActivityTimestamp, int burstCount,
                                 long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
                                 boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
-                                int monitorPriority, boolean duplicate)
+                                int monitorPriority, boolean duplicate,
+                                AudioCallRecordingMetadata recordingMetadata)
 {
+    public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,
+                             IdentifierCollection identifierCollection, Set<BroadcastChannel> broadcastChannels,
+                             long startTimestamp, long lastActivityTimestamp, int burstCount,
+                             long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
+                             boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
+                             int monitorPriority, boolean duplicate)
+    {
+        this(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels, startTimestamp,
+            lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp, lastBurstEndTimestamp,
+            burstActive, complete, encrypted, recordAudio, monitorPriority, duplicate,
+            AudioCallRecordingMetadata.captureAtSnapshot(aliasList, identifierCollection));
+    }
+
+    public AudioCallSnapshot
+    {
+        if(recordingMetadata == null)
+        {
+            recordingMetadata = AudioCallRecordingMetadata.captureAtSnapshot(aliasList, identifierCollection);
+        }
+    }
+
     public int timeslot()
     {
         return callId != null ? callId.timeslot() : 0;
@@ -59,6 +81,7 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
     {
         return new AudioCallSnapshot(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels,
             startTimestamp, lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp,
-            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, monitorPriority, newDuplicate);
+            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, monitorPriority, newDuplicate,
+            recordingMetadata);
     }
 }

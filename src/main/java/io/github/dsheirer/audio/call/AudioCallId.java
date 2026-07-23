@@ -21,6 +21,9 @@ package io.github.dsheirer.audio.call;
 
 /**
  * Stable runtime identity for one audio call/session emitted by a producer.
+ *
+ * <p>This value is intentionally process-local. Persistent stores must combine it with the call completion timestamp,
+ * as the managed-recording filename does, rather than treating it as a durable global identifier.</p>
  */
 public record AudioCallId(long producerId, long sequence, int timeslot)
 {

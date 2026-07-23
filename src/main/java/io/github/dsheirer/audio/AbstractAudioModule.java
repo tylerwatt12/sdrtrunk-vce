@@ -38,6 +38,8 @@ import io.github.dsheirer.sample.Listener;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Base audio module implementation.
@@ -47,6 +49,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 {
     public static final long DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH = 60L * 8000; // 1 minute @ 8kHz
     public static final int DEFAULT_TIMESLOT = 0;
+    private static final AtomicLong NEXT_PRODUCER_ID =
+        new AtomicLong(ThreadLocalRandom.current().nextLong());
     private final int mMaxSegmentAudioSampleLength;
     private Listener<AudioCallEvent> mAudioCallEventListener;
     protected MutableIdentifierCollection mIdentifierCollection;
@@ -55,7 +59,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private int mAudioSampleCount = 0;
     private boolean mRecordAudioOverride;
     private int mTimeslot;
-    private final long mProducerId = System.identityHashCode(this);
+    private final long mProducerId = NEXT_PRODUCER_ID.getAndIncrement();
     private long mNextAudioCallSequence = 1;
     private AudioCallId mCurrentAudioCallId;
     private AudioCallId mCurrentLinkedAudioCallId;
@@ -325,7 +329,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             audioCall.getStartTimestamp(), audioCall.getLastActivityTimestamp(), audioCall.getBurstCount(),
             audioCall.getBurstGeneration(), audioCall.getLastBurstStartTimestamp(),
             audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(), audioCall.isEncrypted(),
-            audioCall.isRecordAudio(), audioCall.getMonitorPriority(), audioCall.isDuplicate());
+            audioCall.isRecordAudio(), audioCall.getMonitorPriority(), audioCall.isDuplicate(),
+            audioCall.getRecordingMetadata());
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame)

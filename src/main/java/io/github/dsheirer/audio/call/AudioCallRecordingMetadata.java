@@ -1,0 +1,327 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * ****************************************************************************
+ */
+package io.github.dsheirer.audio.call;
+
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Compact immutable call metadata captured while aliases are matched.
+ *
+ * <p>This object deliberately contains no Alias, AliasList, IdentifierCollection, or other mutable runtime graph.
+ * The recording writer, retained-call catalog, and recovery metadata can therefore all use the same historical
+ * decision even if an administrator edits aliases while a call is active or queued for disk.</p>
+ */
+public record AudioCallRecordingMetadata(String systemName, String systemIdentity, String siteName,
+                                         String siteIdentity, String channelName, String channelIdentity,
+                                         String aliasListName, String destinationProtocol, String destinationValue,
+                                         String destinationAlias, String destinationMatcherIdentity,
+                                         boolean destinationTalkgroupRecordEnabled, String sourceProtocol,
+                                         String sourceValue, String sourceAlias)
+{
+    private static final int MAXIMUM_LABEL_LENGTH = 160;
+
+    public static AudioCallRecordingMetadata captureAtSnapshot(AliasList aliasList,
+                                                               IdentifierCollection identifiers)
+    {
+        return capture(identifiers, captureDestination(aliasList, destinationIdentifier(identifiers)),
+            captureSource(aliasList, sourceIdentifier(identifiers)));
+    }
+
+    public static AudioCallRecordingMetadata capture(IdentifierCollection identifiers,
+                                                     DestinationDecision destination,
+                                                     SourceDecision source)
+    {
+        String system = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
+        String site = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY);
+        String siteGuid = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.RADRES_GUID, Role.ANY);
+        String channel = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY);
+        String channelIdentity =
+            identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY);
+        String aliasList = identifierText(identifiers, IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY);
+        String stableSiteIdentity = hasText(siteGuid) ? siteGuid : nullSafe(system) + ':' + nullSafe(site);
+        String stableChannelIdentity = hasText(channelIdentity) ? channelIdentity :
+            nullSafe(system) + ':' + nullSafe(site) + ':' + nullSafe(channel);
+        DestinationDecision safeDestination = destination != null ? destination : DestinationDecision.empty();
+        SourceDecision safeSource = source != null ? source : SourceDecision.empty();
+        return new AudioCallRecordingMetadata(label(system), nullSafe(system), label(site), stableSiteIdentity,
+            label(channel), stableChannelIdentity, label(aliasList), safeDestination.protocol(),
+            safeDestination.value(), safeDestination.aliasName(), safeDestination.matcherIdentity(),
+            safeDestination.recordEnabled(), safeSource.protocol(), safeSource.value(), safeSource.aliasName());
+    }
+
+    public static boolean isDestination(Identifier<?> identifier)
+    {
+        return identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER &&
+            identifier.getRole() == Role.TO &&
+            (identifier.getForm() == Form.TALKGROUP || identifier.getForm() == Form.PATCH_GROUP);
+    }
+
+    public static boolean isSource(Identifier<?> identifier)
+    {
+        return identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER &&
+            identifier.getRole() == Role.FROM && identifier.getForm() == Form.RADIO;
+    }
+
+    public static DestinationDecision captureDestination(AliasList aliasList, Identifier<?> destination)
+    {
+        String value = destinationValue(destination);
+        String fallbackIdentity = receivedDestinationIdentity(destination);
+
+        if(aliasList == null || destination == null)
+        {
+            return new DestinationDecision(protocol(destination), value, null, fallbackIdentity, false);
+        }
+
+        List<TalkgroupIdentifier> candidates = new ArrayList<>();
+
+        if(destination instanceof PatchGroupIdentifier patchGroupIdentifier)
+        {
+            PatchGroup patchGroup = patchGroupIdentifier.getValue();
+            candidates.add(patchGroup.getPatchGroup());
+            candidates.addAll(patchGroup.getPatchedTalkgroupIdentifiers());
+        }
+        else if(destination instanceof TalkgroupIdentifier talkgroupIdentifier)
+        {
+            candidates.add(talkgroupIdentifier);
+        }
+        else
+        {
+            return new DestinationDecision(protocol(destination), value, null, fallbackIdentity, false);
+        }
+
+        DestinationDecision firstMatch = null;
+
+        for(TalkgroupIdentifier candidate: candidates)
+        {
+            if(candidate == null)
+            {
+                continue;
+            }
+
+            for(Alias alias: aliasList.getAliases(candidate))
+            {
+                AliasID matcher = matchingTalkgroupAliasId(alias, candidate);
+                String matcherIdentity = matcher != null ? matcherIdentity(matcher) :
+                    receivedDestinationIdentity(candidate);
+                DestinationDecision match = new DestinationDecision(protocol(destination), value,
+                    label(alias.getName()), matcherIdentity, alias.isRecordable());
+
+                if(match.recordEnabled())
+                {
+                    return match;
+                }
+
+                if(firstMatch == null)
+                {
+                    firstMatch = match;
+                }
+            }
+        }
+
+        return firstMatch != null ? firstMatch :
+            new DestinationDecision(protocol(destination), value, null, fallbackIdentity, false);
+    }
+
+    public static SourceDecision captureSource(AliasList aliasList, Identifier<?> source)
+    {
+        if(source == null)
+        {
+            return SourceDecision.empty();
+        }
+
+        String aliasName = null;
+
+        if(aliasList != null)
+        {
+            List<Alias> aliases = aliasList.getAliases(source);
+
+            if(!aliases.isEmpty())
+            {
+                aliasName = label(aliases.getFirst().getName());
+            }
+        }
+
+        return new SourceDecision(protocol(source),
+            source.getValue() != null ? source.getValue().toString() : null, aliasName);
+    }
+
+    private static AliasID matchingTalkgroupAliasId(Alias alias, TalkgroupIdentifier destination)
+    {
+        if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+        {
+            for(AliasID aliasID: alias.getAliasIdentifiers())
+            {
+                if(aliasID instanceof P25FullyQualifiedTalkgroup matcher &&
+                    matcher.getProtocol() == destination.getProtocol() &&
+                    matcher.getWacn() == fullyQualified.getWacn() &&
+                    matcher.getSystem() == fullyQualified.getSystem() &&
+                    matcher.getValue() == fullyQualified.getTalkgroup())
+                {
+                    return matcher;
+                }
+            }
+        }
+
+        for(AliasID aliasID: alias.getAliasIdentifiers())
+        {
+            if(aliasID instanceof Talkgroup matcher && !(matcher instanceof P25FullyQualifiedTalkgroup) &&
+                matcher.getProtocol() == destination.getProtocol() && matcher.getValue() == destination.getValue())
+            {
+                return matcher;
+            }
+        }
+
+        for(AliasID aliasID: alias.getAliasIdentifiers())
+        {
+            if(aliasID instanceof TalkgroupRange matcher && matcher.getProtocol() == destination.getProtocol() &&
+                matcher.contains(destination.getValue()))
+            {
+                return matcher;
+            }
+        }
+
+        return null;
+    }
+
+    private static String matcherIdentity(AliasID matcher)
+    {
+        if(matcher instanceof P25FullyQualifiedTalkgroup fullyQualified)
+        {
+            return "p25-fq:" + fullyQualified.getWacn() + ':' + fullyQualified.getSystem() + ':' +
+                fullyQualified.getValue();
+        }
+        else if(matcher instanceof TalkgroupRange range)
+        {
+            return "range:" + range.getProtocol() + ':' + range.getMinTalkgroup() + ':' + range.getMaxTalkgroup();
+        }
+        else if(matcher instanceof Talkgroup talkgroup)
+        {
+            return "exact:" + talkgroup.getProtocol() + ':' + talkgroup.getValue();
+        }
+
+        return matcher.getType() + ":" + matcher;
+    }
+
+    private static Identifier<?> destinationIdentifier(IdentifierCollection identifiers)
+    {
+        if(identifiers == null)
+        {
+            return null;
+        }
+
+        Identifier<?> destination =
+            identifiers.getIdentifier(IdentifierClass.USER, Form.PATCH_GROUP, Role.TO);
+        return destination != null ? destination :
+            identifiers.getIdentifier(IdentifierClass.USER, Form.TALKGROUP, Role.TO);
+    }
+
+    private static Identifier<?> sourceIdentifier(IdentifierCollection identifiers)
+    {
+        return identifiers != null ?
+            identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) : null;
+    }
+
+    private static String destinationValue(Identifier<?> destination)
+    {
+        if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+        {
+            return Integer.toString(fullyQualified.getTalkgroup());
+        }
+        else if(destination instanceof PatchGroupIdentifier patchGroupIdentifier)
+        {
+            return destinationValue(patchGroupIdentifier.getValue().getPatchGroup());
+        }
+
+        return destination != null && destination.getValue() != null ? destination.getValue().toString() : null;
+    }
+
+    private static String receivedDestinationIdentity(Identifier<?> destination)
+    {
+        if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+        {
+            return protocol(destination) + ":fq:" + fullyQualified.getWacn() + ':' +
+                fullyQualified.getSystem() + ':' + fullyQualified.getTalkgroup();
+        }
+        else if(destination instanceof PatchGroupIdentifier patchGroupIdentifier)
+        {
+            return receivedDestinationIdentity(patchGroupIdentifier.getValue().getPatchGroup());
+        }
+
+        return destination != null ?
+            protocol(destination) + ":" + destination.getForm() + ':' + destination.getValue() : null;
+    }
+
+    private static String identifierText(IdentifierCollection identifiers, IdentifierClass identifierClass,
+                                         Form form, Role role)
+    {
+        Identifier<?> identifier = identifiers != null ? identifiers.getIdentifier(identifierClass, form, role) : null;
+        return identifier != null && identifier.getValue() != null ? identifier.getValue().toString() : null;
+    }
+
+    private static String protocol(Identifier<?> identifier)
+    {
+        return identifier != null && identifier.getProtocol() != null ? identifier.getProtocol().name() : null;
+    }
+
+    private static boolean hasText(String value)
+    {
+        return value != null && !value.isBlank();
+    }
+
+    private static String label(String value)
+    {
+        if(value == null)
+        {
+            return null;
+        }
+
+        String stripped = value.strip();
+        return stripped.length() <= MAXIMUM_LABEL_LENGTH ? stripped : stripped.substring(0, MAXIMUM_LABEL_LENGTH);
+    }
+
+    private static String nullSafe(String value)
+    {
+        return value != null ? value : "";
+    }
+
+    public record DestinationDecision(String protocol, String value, String aliasName, String matcherIdentity,
+                                      boolean recordEnabled)
+    {
+        static DestinationDecision empty()
+        {
+            return new DestinationDecision(null, null, null, null, false);
+        }
+    }
+
+    public record SourceDecision(String protocol, String value, String aliasName)
+    {
+        static SourceDecision empty()
+        {
+            return new SourceDecision(null, null, null);
+        }
+    }
+}

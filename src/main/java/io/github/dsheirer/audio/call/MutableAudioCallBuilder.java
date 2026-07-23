@@ -45,6 +45,9 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private final int mTimeslot;
     private final MutableIdentifierCollection mIdentifierCollection = new MutableIdentifierCollection();
     private final Set<BroadcastChannel> mBroadcastChannels = new HashSet<>();
+    private AudioCallRecordingMetadata.DestinationDecision mRecordingDestination;
+    private AudioCallRecordingMetadata.SourceDecision mRecordingSource;
+    private AudioCallRecordingMetadata mRecordingMetadata;
     private long mStartTimestamp = System.currentTimeMillis();
     private long mLastActivityTimestamp = mStartTimestamp;
     private long mLastBurstStartTimestamp;
@@ -153,6 +156,21 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
         return mIdentifierCollection;
     }
 
+    /**
+     * Immutable recording/catalog metadata. Destination and source Alias decisions are frozen when those identifiers
+     * first join the call so later administrator edits cannot change the historical call.
+     */
+    public AudioCallRecordingMetadata getRecordingMetadata()
+    {
+        if(mRecordingMetadata == null)
+        {
+            mRecordingMetadata =
+                AudioCallRecordingMetadata.capture(mIdentifierCollection, mRecordingDestination, mRecordingSource);
+        }
+
+        return mRecordingMetadata;
+    }
+
     public int getAudioBufferCount()
     {
         return mAudioBufferCount;
@@ -254,6 +272,18 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private void addIdentifier(Identifier<?> identifier)
     {
         mIdentifierCollection.update(identifier);
+
+        if(mRecordingDestination == null && AudioCallRecordingMetadata.isDestination(identifier))
+        {
+            mRecordingDestination = AudioCallRecordingMetadata.captureDestination(mAliasList, identifier);
+        }
+
+        if(mRecordingSource == null && AudioCallRecordingMetadata.isSource(identifier))
+        {
+            mRecordingSource = AudioCallRecordingMetadata.captureSource(mAliasList, identifier);
+        }
+
+        mRecordingMetadata = null;
 
         if(identifier instanceof EncryptionKeyIdentifier encryptionKeyIdentifier)
         {

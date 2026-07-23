@@ -125,13 +125,29 @@ public class WaveWriter implements AutoCloseable
             throw new IOException("Unable to create a unique file name for recording - exceeded 20 versioning attempts");
         }
 
-        mFileChannel = (FileChannel.open(mFile, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW));
+        mFileChannel = FileChannel.open(mFile, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW);
 
-        ByteBuffer header = getWaveHeader();
-
-        while(header.hasRemaining())
+        try
         {
-            mFileChannel.write(header);
+            ByteBuffer header = getWaveHeader();
+
+            while(header.hasRemaining())
+            {
+                mFileChannel.write(header);
+            }
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            try
+            {
+                mFileChannel.close();
+            }
+            catch(IOException closeException)
+            {
+                exception.addSuppressed(closeException);
+            }
+
+            throw exception;
         }
     }
 
@@ -149,8 +165,39 @@ public class WaveWriter implements AutoCloseable
      */
     public void close(Path path) throws IOException
     {
-        mFileChannel.force(true);
-        mFileChannel.close();
+        IOException failure = null;
+
+        try
+        {
+            mFileChannel.force(true);
+        }
+        catch(IOException exception)
+        {
+            failure = exception;
+        }
+        finally
+        {
+            try
+            {
+                mFileChannel.close();
+            }
+            catch(IOException closeException)
+            {
+                if(failure != null)
+                {
+                    failure.addSuppressed(closeException);
+                }
+                else
+                {
+                    failure = closeException;
+                }
+            }
+        }
+
+        if(failure != null)
+        {
+            throw failure;
+        }
 
         rename(path);
     }
