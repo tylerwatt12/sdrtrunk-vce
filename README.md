@@ -454,8 +454,8 @@ publishing a numbered alpha release on GitHub.
 
 - Richer web-call playback details, including identifier type, alias and numeric identity, system, channel, frequency,
   timeslot, decoder, protected-call state, and call duration.
-- A rich-text What's New window that opens automatically once for each new public version and remains available from
-  the Help menu.
+- A rich-text What's New page in the coordinated startup experience that appears once for each new public version and
+  remains available from the Help menu.
 - A consent-based **Help > Submit Bug Report** workflow that can upload a sanitized diagnostic package or save it for
   manual submission.
 
@@ -478,10 +478,6 @@ publishing a numbered alpha release on GitHub.
 - Improve web playback labels so aliases retain their numeric identifiers and the source-to-target relationship remains
   visible during current and queued calls.
 - Preserve exact packaged version and build information for diagnostic reports.
-
-#### Removed
-
-- No user-facing feature or stored data is removed. Obsolete documentation screenshots were replaced.
 
 #### Upgrade Notes
 
