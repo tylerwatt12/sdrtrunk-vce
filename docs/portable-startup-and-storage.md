@@ -14,8 +14,12 @@ files, temporary bug-report bundles, JMBE libraries, and optional modules. Java 
 
 ## First Launch And Upgrades
 
-When `data/database/sdrtrunk.sqlite` is absent, a graphical launch first looks beside the current app or install
-folder for portable data from an earlier sdrtrunk-vce build. The setup window offers these paths:
+The normal receiver launch is always headless, even when a desktop session is available. Swing and JavaFX radio
+windows are not part of unattended startup. The only non-headless launch mode is the isolated local
+`--server-admin-ui` maintenance utility described below.
+
+When `data/database/sdrtrunk.sqlite` is absent, a local graphical maintenance launch first looks beside the current
+app or install folder for portable data from an earlier sdrtrunk-vce build. The setup window offers these paths:
 
 - Upgrade using a discovered previous data folder.
 - Choose a previous `.app`, install folder, data folder, or `database/sdrtrunk.sqlite` file.
@@ -57,3 +61,30 @@ changes are performed only by the bundled one-off upgrade helper against a stage
 
 Once a portable database exists, the app holds an operating-system lock for that data folder until shutdown. A second
 sdrtrunk-vce process receives a clear “already in use” error before it can validate, upgrade, or write the same data.
+
+## Local Web Server Settings
+
+The browser administrator account and host-level web-server settings are configured locally, outside the normal radio
+runtime. Stop the normal sdrtrunk-vce process first, then launch the same installed package from the receiver's local
+desktop with:
+
+```text
+--server-admin-ui
+```
+
+For example, the packaged Windows launcher accepts `bin\sdrtrunk-vce.bat --server-admin-ui`. The focused JavaFX
+window owns the portable data directory exclusively while it is open and does not start tuners, decoders, audio,
+recording, streaming, or the embedded web server. Close the window and restart sdrtrunk-vce normally after saving
+changes. Never start this maintenance window as a second process beside a running receiver; the data-root lock will
+reject that attempt.
+
+The web listener uses one `host-or-IP:port` value and defaults to `127.0.0.1:8090`; LAN and Tailscale addresses are
+ordinary bind addresses, not separate modes. HTTPS uses the same connector and port. The maintenance window can
+generate a self-signed certificate or import a PEM certificate chain and unencrypted PKCS#8 private key into:
+
+```text
+data/security/tls/certificate.pem
+data/security/tls/private-key.pem
+```
+
+No certificate or key bytes are stored in SQLite, and no certificate history is retained.

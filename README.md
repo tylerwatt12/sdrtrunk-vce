@@ -197,7 +197,15 @@ Select any screenshot to view it at full resolution.
 
 - Runs a small Java web server with no Apache, PHP, or XAMPP dependency.
 - Is disabled by default and can be started, stopped, and configured under **Preferences > Stats & Web > Web Server**.
-- Can bind to localhost only or allow access from a trusted LAN or private overlay network.
+- Provides a focused local `--server-admin-ui` JavaFX maintenance window for headless installations. It configures the
+  one browser administrator account and web-server settings without starting radio or web runtime services.
+- Uses an exclusive portable data-root lock so normal reception and local maintenance cannot operate on the same
+  SQLite state concurrently.
+- Uses one listen-address setting, `127.0.0.1:8090` by default. Set an exact interface address or `0.0.0.0` when
+  wider access is required; there are no separate LAN or Tailscale modes.
+- Can run its one Jetty connector as HTTP or HTTPS. The local JavaFX maintenance window can generate a self-signed
+  certificate or import a PEM certificate chain and matching unencrypted PKCS#8 private key under
+  `<data>/security/tls`.
 - Serves editable files from the external `stats-web` folder. HTML, CSS, and JavaScript can be changed without
   recompiling SDRTrunk.
 - Provides top-level Dashboard, Systems, and Conventional views.
