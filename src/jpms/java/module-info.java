@@ -12,6 +12,7 @@ open module sdr.trunk {
     requires ch.qos.logback.core;
     requires com.fasterxml.jackson.annotation;
     requires com.fasterxml.jackson.databind;
+    requires com.fasterxml.jackson.dataformat.xml;
     requires com.fazecast.jSerialComm;
     requires com.google.common;
     requires com.google.gson;

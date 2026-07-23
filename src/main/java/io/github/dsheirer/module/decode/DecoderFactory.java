@@ -186,14 +186,14 @@ public class DecoderFactory
                 break;
             case DMR:
                 processDMR(channel, userPreferences, modules, aliasList, (DecodeConfigDMR)decodeConfig,
-                    trafficChannelManager, channelDescriptor, initialSourceSampleRate);
+                    trafficChannelManager, channelDescriptor, initialSourceSampleRate, channelActivityModel);
                 break;
             case NBFM:
                 processNBFM(channel, modules, aliasList, decodeConfig);
                 break;
             case NXDN:
                 processNXDN(channel, userPreferences, modules, aliasList, decodeConfig, trafficChannelManager,
-                    channelDescriptor);
+                    channelDescriptor, channelActivityModel);
                 break;
             case LTR:
                 processLTRStandard(channel, modules, aliasList, (DecodeConfigLTRStandard) decodeConfig);
@@ -396,7 +396,8 @@ public class DecoderFactory
      */
     private static void processNXDN(Channel channel, UserPreferences userPreferences, List<Module> modules,
                                     AliasList aliasList, DecodeConfiguration decodeConfig,
-                                    TrafficChannelManager trafficChannelManager, IChannelDescriptor channelDescriptor)
+                                    TrafficChannelManager trafficChannelManager, IChannelDescriptor channelDescriptor,
+                                    ChannelActivityModel channelActivityModel)
     {
         if(decodeConfig instanceof DecodeConfigNXDN configNXDN)
         {
@@ -414,11 +415,13 @@ public class DecoderFactory
             if(channel.getChannelType() == ChannelType.STANDARD)
             {
                 NXDNTrafficChannelManager primaryTCM = new NXDNTrafficChannelManager(channel);
+                primaryTCM.setChannelActivityModel(channelActivityModel);
                 modules.add(primaryTCM);
                 modules.add(new NXDNDecoderState(channel, primaryTCM));
             }
             else if(trafficChannelManager instanceof NXDNTrafficChannelManager parentTCM)
             {
+                parentTCM.setChannelActivityModel(channelActivityModel);
                 NXDNDecoderState decoderState = new NXDNDecoderState(channel, parentTCM);
                 decoderState.setCurrentChannel(channelDescriptor);
                 modules.add(decoderState);
@@ -582,7 +585,7 @@ public class DecoderFactory
     private static void processDMR(Channel channel, UserPreferences userPreferences, List<Module> modules,
                                    AliasList aliasList, DecodeConfigDMR decodeConfig,
                                    TrafficChannelManager trafficChannelManager, IChannelDescriptor channelDescriptor,
-                                   double initialSourceSampleRate)
+                                   double initialSourceSampleRate, ChannelActivityModel channelActivityModel)
     {
         modules.add(new DMRDecoder(decodeConfig, channel.isTrafficChannel(), initialSourceSampleRate));
 
@@ -596,6 +599,8 @@ public class DecoderFactory
         {
             dmrTrafficChannelManager = new DMRTrafficChannelManager(channel);
         }
+
+        dmrTrafficChannelManager.setChannelActivityModel(channelActivityModel);
 
         //Only register the traffic channel manager as a module if this is the parent control channel.
         if(channel.isStandardChannel())

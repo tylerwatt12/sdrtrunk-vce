@@ -38,6 +38,7 @@ import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentif
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25EncryptionDetails;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
@@ -495,6 +496,36 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
+        trunkedTrafficEvent(parentChannel, trafficChannel, channelDescriptor, getTimeslot(channelDescriptor),
+            identifiers, eventType, 0);
+    }
+
+    /**
+     * Publishes a DMR or NXDN trunked call event into the shared Systems activity model.  Unlike P25, DMR and NXDN
+     * use the same decoder configuration for conventional and trunked channels, so the first actual traffic-manager
+     * call event is what promotes the parent from the Conventional table to a trunked Systems table.
+     *
+     * @param parentChannel control channel that owns the traffic-channel manager
+     * @param trafficChannel allocated child channel, or null when the grant could not be allocated
+     * @param channelDescriptor traffic channel/frequency descriptor
+     * @param timeslot one-based TDMA timeslot, or null for FDMA
+     * @param identifiers call identifiers
+     * @param eventType voice/data call type
+     * @param controlFrequency current control frequency, or zero when unknown
+     */
+    public void trunkedTrafficEvent(Channel parentChannel, Channel trafficChannel,
+                                    IChannelDescriptor channelDescriptor, Integer timeslot,
+                                    IdentifierCollection identifiers, DecodeEventType eventType,
+                                    long controlFrequency)
+    {
+        if(!mEnabled || !isTrunkingCapableParent(parentChannel) || channelDescriptor == null ||
+            channelDescriptor.getDownlinkFrequency() <= 0 || ChannelTag.fromService(eventType) == null)
+        {
+            return;
+        }
+
+        Integer normalizedTimeslot = timeslot != null && timeslot > 0 ? timeslot : null;
+
         runOnSwingIfEnabled(() -> {
             sweepActivityExpirations();
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
@@ -505,11 +536,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 return;
             }
 
+            removeConventionalRows(parentChannel);
             expireTrafficRows(session, table, parentChannel);
-            ensureConfiguredControlRowIfMissing(table, parentChannel, "p25-traffic-grant-control-seed");
+            if(controlFrequency > 0)
+            {
+                updateCurrentControl(session, table, parentChannel, controlFrequency);
+            }
+            else
+            {
+                ensureConfiguredControlRowIfMissing(table, parentChannel, "trunked-traffic-event-control-seed");
+            }
 
             Channel rowChannel = trafficChannel != null ? trafficChannel : parentChannel;
-            ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor);
+            ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor, normalizedTimeslot);
             rememberRow(table, row);
             clearTrafficGrantAgeOut(row);
             boolean newCall = row.getState() == State.IDLE || isTargetChanged(row, identifiers);
@@ -532,6 +571,28 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             row.setState(getStickyTrafficState(row, getState(eventType), wasEncrypted));
             table.refresh(row);
             scheduleTrafficGrantAgeOut(row);
+        });
+    }
+
+    /**
+     * Updates an already-observed DMR or NXDN trunked site when its control frequency changes.  This deliberately does
+     * not create a table by itself, which keeps conventional DMR/NXDN channels in the Conventional table.
+     */
+    public void trunkedCurrentControl(Channel parentChannel, long frequency)
+    {
+        if(!mEnabled || !isTrunkingCapableParent(parentChannel) || frequency <= 0)
+        {
+            return;
+        }
+
+        runOnSwingIfEnabled(() -> {
+            SiteActivitySession session = mSiteSessions.get(parentChannel);
+            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+
+            if(table != null)
+            {
+                updateCurrentControl(session, table, parentChannel, frequency);
+            }
         });
     }
 
@@ -1000,6 +1061,42 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
+    private void removeConventionalRows(Channel channel)
+    {
+        if(channel != null)
+        {
+            for(ChannelActivityRow row: new ArrayList<>(mConventionalTable.getRows()))
+            {
+                if(row.getChannel() == channel)
+                {
+                    removeConventionalRow(row);
+                }
+            }
+        }
+    }
+
+    private void updateCurrentControl(SiteActivitySession session, ChannelActivityTableModel table,
+                                      Channel parentChannel, long frequency)
+    {
+        SiteActivitySession.ControlUpdate update = session.currentControl(frequency, null);
+        ChannelActivityRow current = update.current();
+
+        if(current != null)
+        {
+            rememberRow(table, current);
+            current.setDecoder(getDecoder(parentChannel));
+            setControlActive(table, true);
+            table.refresh(current);
+            scheduleControlIdle(current, table, parentChannel);
+        }
+
+        for(ChannelActivityRow demoted: update.demoted())
+        {
+            demoted.setDecoder(getDecoder(parentChannel));
+            table.refresh(demoted);
+        }
+    }
+
     private void addConventionalRows(Channel channel, List<ChannelMetadata> metadataList, String action)
     {
         if(channel == null || metadataList == null)
@@ -1228,6 +1325,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             (decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2);
     }
 
+    private boolean isTrunkingCapableParent(Channel channel)
+    {
+        DecoderType decoder = channel != null && channel.getDecodeConfiguration() != null ?
+            channel.getDecodeConfiguration().getDecoderType() : null;
+        return channel != null && channel.isStandardChannel() &&
+            (decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2 || decoder == DecoderType.DMR ||
+                decoder == DecoderType.NXDN);
+    }
+
     private SiteIdentity getSiteIdentity(P25NetworkConfigurationSnapshot snapshot)
     {
         if(snapshot == null)
@@ -1248,7 +1354,39 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     private String getTrunkedTitle(Channel channel)
     {
-        return buildP25Title(channel, mSiteIdentities.get(channel));
+        DecoderType decoder = channel != null && channel.getDecodeConfiguration() != null ?
+            channel.getDecodeConfiguration().getDecoderType() : null;
+
+        if(decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2)
+        {
+            return buildP25Title(channel, mSiteIdentities.get(channel));
+        }
+
+        return buildGenericTrunkedTitle(channel);
+    }
+
+    private String buildGenericTrunkedTitle(Channel channel)
+    {
+        String decoder = getDecoder(channel);
+        List<String> identity = new ArrayList<>();
+        addTitlePart(identity, channel != null ? channel.getSystem() : null);
+        addTitlePart(identity, channel != null ? channel.getSite() : null);
+        addTitlePart(identity, channel != null ? channel.getName() : null);
+        String description = identity.isEmpty() ? "Trunked System" : String.join(" / ", identity);
+        return (decoder != null ? decoder : "Trunked") + ": " + description;
+    }
+
+    private void addTitlePart(List<String> parts, String value)
+    {
+        if(value != null && !value.isBlank())
+        {
+            String cleaned = value.trim();
+
+            if(parts.stream().noneMatch(cleaned::equalsIgnoreCase))
+            {
+                parts.add(cleaned);
+            }
+        }
     }
 
     private String buildP25Title(Channel channel, SiteIdentity siteIdentity)
@@ -1355,6 +1493,10 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         {
             return apco25Channel.getTimeslot();
         }
+        else if(channelDescriptor instanceof DMRChannel dmrChannel)
+        {
+            return dmrChannel.getTimeslot();
+        }
 
         return null;
     }
@@ -1369,7 +1511,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return values != null ? values : Collections.emptyList();
     }
 
-    private int getTrafficGrantAgeOutMilliseconds()
+    /**
+     * Current traffic-grant age-out used by the Systems activity rows.
+     *
+     * @return age-out interval in milliseconds
+     */
+    public int getTrafficGrantAgeOutMilliseconds()
     {
         return mNowPlayingPreference != null ? mNowPlayingPreference.getTrafficGrantAgeOutMilliseconds() :
             NowPlayingPreference.DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;

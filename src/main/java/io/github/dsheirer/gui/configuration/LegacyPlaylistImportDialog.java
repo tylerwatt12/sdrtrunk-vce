@@ -84,7 +84,7 @@ public final class LegacyPlaylistImportDialog
             JOptionPane.showMessageDialog(parent, resultMessage(result), "Playlist Import Complete",
                 JOptionPane.INFORMATION_MESSAGE);
         }
-        catch(Exception e)
+        catch(Exception | LinkageError e)
         {
             parent.setCursor(previousCursor);
             Throwable cause = rootCause(e);

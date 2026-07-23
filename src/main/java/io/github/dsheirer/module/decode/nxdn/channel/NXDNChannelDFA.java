@@ -54,6 +54,22 @@ public class NXDNChannelDFA extends NXDNChannel
         return mBandwidth;
     }
 
+    /**
+     * Direct-frequency-assignment outbound channel number.
+     */
+    public int getOutboundChannelNumber()
+    {
+        return mOutboundChannelNumber;
+    }
+
+    /**
+     * Direct-frequency-assignment inbound channel number.
+     */
+    public int getInboundChannelNumber()
+    {
+        return mInboundChannelNumber;
+    }
+
     @Override
     public void receive(ChannelAccessInformation channelAccessInformation, Map<Integer, ChannelFrequency> channelFrequencyMap)
     {
