@@ -26,8 +26,10 @@ import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentif
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
@@ -196,15 +198,17 @@ public class AliasModel
         }
 
         AliasList aliasList = new AliasList(name);
+        List<Alias> matchingAliases = new ArrayList<>();
 
         for(Alias alias : mAliases)
         {
             if(alias.hasList() && alias.getAliasListName().equalsIgnoreCase(name))
             {
-                aliasList.addAlias(alias);
+                matchingAliases.add(alias);
             }
         }
 
+        aliasList.addAliases(matchingAliases);
         mAliasListMap.put(name, aliasList);
 
         return aliasList;
@@ -260,11 +264,6 @@ public class AliasModel
         mAliases.add(alias);
     }
 
-    private boolean hasAliasList(String aliasListName)
-    {
-        return aliasListName != null && mAliasListMap.containsKey(aliasListName);
-    }
-
     public void addAliasList(String aliasListName)
     {
         if(aliasListName != null && !aliasListName.isEmpty())
@@ -290,11 +289,6 @@ public class AliasModel
         if(alias != null)
         {
             mAliases.remove(alias);
-
-            if(hasAliasList(alias.getAliasListName()))
-            {
-                getAliasList(alias.getAliasListName()).removeAlias(alias);
-            }
         }
     }
 
@@ -307,14 +301,6 @@ public class AliasModel
         if(aliases != null && !aliases.isEmpty())
         {
             mAliases.removeAll(aliases);
-
-            for(Alias alias: aliases)
-            {
-                if(hasAliasList(alias.getAliasListName()))
-                {
-                    getAliasList(alias.getAliasListName()).removeAlias(alias);
-                }
-            }
         }
     }
 
@@ -411,8 +397,16 @@ public class AliasModel
         @Override
         public void onChanged(ListChangeListener.Change<? extends Alias> change)
         {
+            Set<Alias> changedAliases = new LinkedHashSet<>();
+            Set<Alias> removedAliases = new LinkedHashSet<>();
+
             while(change.next())
             {
+                if(change.wasRemoved())
+                {
+                    removedAliases.addAll(change.getRemoved());
+                }
+
                 if(change.wasAdded())
                 {
                     for(Alias alias: change.getAddedSubList())
@@ -424,34 +418,38 @@ public class AliasModel
 
                         String aliasListName = alias.getAliasListName();
                         addAliasList(aliasListName);
+                        changedAliases.add(alias);
+                    }
+                }
 
-                        if(hasAliasList(aliasListName))
+                if(change.wasUpdated())
+                {
+                    for(int index = change.getFrom(); index < change.getTo(); index++)
+                    {
+                        Alias alias = change.getList().get(index);
+
+                        if(alias != null)
                         {
-                            getAliasList(aliasListName).addAlias(alias);
+                            addAliasList(alias.getAliasListName());
+                            changedAliases.add(alias);
                         }
                     }
                 }
-                else if(change.wasRemoved())
+            }
+
+            if(!changedAliases.isEmpty())
+            {
+                for(AliasList aliasList: List.copyOf(mAliasListMap.values()))
                 {
-                    for(Alias alias: change.getRemoved())
-                    {
-                        if(alias == null)
-                        {
-                            continue;
-                        }
-
-                        String aliasListName = alias.getAliasListName();
-
-                        if(hasAliasList(aliasListName))
-                        {
-                            AliasList aliasList = getAliasList(aliasListName);
-
-                            if(aliasList != null)
-                            {
-                                aliasList.removeAlias(alias);
-                            }
-                        }
-                    }
+                    aliasList.removeAliases(removedAliases);
+                    aliasList.updateAliases(changedAliases);
+                }
+            }
+            else if(!removedAliases.isEmpty())
+            {
+                for(AliasList aliasList: List.copyOf(mAliasListMap.values()))
+                {
+                    aliasList.removeAliases(removedAliases);
                 }
             }
         }

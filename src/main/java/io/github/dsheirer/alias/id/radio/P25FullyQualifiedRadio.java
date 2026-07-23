@@ -71,6 +71,7 @@ public class P25FullyQualifiedRadio extends Radio
     public void setWacn(int wacn)
     {
         mWacn = wacn;
+        updateValueProperty();
     }
 
     /**
@@ -89,6 +90,7 @@ public class P25FullyQualifiedRadio extends Radio
     public void setSystem(int system)
     {
         mSystem = system;
+        updateValueProperty();
     }
 
     @Override

@@ -90,6 +90,7 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
     public void setProtocol(Protocol protocol)
     {
         mProtocol = protocol;
+        updateValueProperty();
     }
 
     @Override

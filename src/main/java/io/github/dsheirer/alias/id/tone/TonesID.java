@@ -75,7 +75,13 @@ public class TonesID extends AliasID implements ListChangeListener<Tone>
         }
 
         mToneSequence = toneSequence;
-        mToneSequence.tonesProperty().addListener(this);
+
+        if(mToneSequence != null)
+        {
+            mToneSequence.tonesProperty().addListener(this);
+        }
+
+        updateValueProperty();
     }
 
     /**
