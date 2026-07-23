@@ -423,7 +423,8 @@ tasks.register('verifyBundledDatabaseUpgradeHelper') {
         def archive = inputs.files.singleFile
         def helperEntries = [
             'io/github/dsheirer/database/upgrade/P25ActivityV19ToV20Upgrade.class',
-            'io/github/dsheirer/database/upgrade/TrunkedSiteV1Upgrade.class'
+            'io/github/dsheirer/database/upgrade/TrunkedSiteV2Upgrade.class',
+            'io/github/dsheirer/database/upgrade/TrunkedSiteV2DatabaseMigration.class'
         ]
         def zip = new java.util.zip.ZipFile(archive)
 

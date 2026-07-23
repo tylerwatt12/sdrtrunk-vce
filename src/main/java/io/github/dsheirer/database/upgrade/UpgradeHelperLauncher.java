@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 public final class UpgradeHelperLauncher
 {
     private static final String P25_HELPER_CLASS = P25ActivityV19ToV20Upgrade.class.getName();
-    private static final String TRUNKED_SITE_HELPER_CLASS = TrunkedSiteV1Upgrade.class.getName();
+    private static final String TRUNKED_SITE_HELPER_CLASS = TrunkedSiteV2Upgrade.class.getName();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
 
     private UpgradeHelperLauncher()

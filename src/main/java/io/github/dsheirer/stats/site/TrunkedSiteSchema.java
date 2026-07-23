@@ -26,19 +26,20 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * Compact current/lifetime summaries for DMR and NXDN trunked sites.
+ * Compact retention-bound summaries for DMR and NXDN trunked sites.
  *
  * <p>This is an independent schema subsystem. New databases create it from the single global startup schema owner,
- * while existing databases must be upgraded with the explicit staged-copy migration helper.</p>
+ * while existing databases must be upgraded with the explicit backed-up external migration.</p>
  */
 public final class TrunkedSiteSchema
 {
-    public static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 2;
     public static final String SCHEMA_VERSION_KEY = "trunked_site_schema_version";
     public static final int PROTOCOL_DMR = 3;
     public static final int PROTOCOL_NXDN = 4;
     public static final int MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT = 1_024;
     public static final int MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT = 256;
+    public static final int RETENTION_DELETE_BATCH_SIZE = 1_000;
     public static final int UNKNOWN = -1;
     public static final int CHANNEL_ROLE_CURRENT_CONTROL = 1;
     public static final int CHANNEL_ROLE_ALTERNATE_CONTROL = 1 << 1;
@@ -48,6 +49,9 @@ public final class TrunkedSiteSchema
     public static final int CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR = 1 << 5;
     public static final int NEIGHBOR_STATUS_ACTIVE = 1;
     public static final int NEIGHBOR_STATUS_ISOLATED = 1 << 1;
+    static final String SNAPSHOT_LAST_SEEN_INDEX = "idx_trunked_site_snapshot_last_seen";
+    static final String CHANNEL_LAST_SEEN_INDEX = "idx_trunked_site_channel_last_seen";
+    static final String NEIGHBOR_LAST_SEEN_INDEX = "idx_trunked_site_neighbor_last_seen";
 
     private static final List<SqliteSchemaValidator.Table> TABLES = List.of(
         new SqliteSchemaValidator.Table("trunked_site_snapshot",
@@ -64,6 +68,8 @@ public final class TrunkedSiteSchema
             "channel_number", "frequency_hz", "status_flags", "first_seen_ms", "last_seen_ms",
             "observation_count")
     );
+    private static final List<String> INDEXES = List.of(
+        SNAPSHOT_LAST_SEEN_INDEX, CHANNEL_LAST_SEEN_INDEX, NEIGHBOR_LAST_SEEN_INDEX);
 
     private TrunkedSiteSchema()
     {
@@ -150,6 +156,21 @@ public final class TrunkedSiteSchema
                     CHECK(observation_count > 0)
                 ) WITHOUT ROWID
                 """);
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_trunked_site_snapshot_last_seen
+                ON trunked_site_snapshot(last_seen_ms, guid)
+                """);
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_trunked_site_channel_last_seen
+                ON trunked_site_channel_summary(
+                    last_seen_ms, guid, channel_number, inbound_channel_number, timeslot, frequency_hz)
+                """);
+            statement.executeUpdate("""
+                CREATE INDEX IF NOT EXISTS idx_trunked_site_neighbor_last_seen
+                ON trunked_site_neighbor_summary(
+                    last_seen_ms, guid, variant_code, identity_domain_code, network_id, system_id, site_id,
+                    channel_number, frequency_hz)
+                """);
         }
 
         SdrTrunkDatabaseStartup.setMetadata(connection, SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION));
@@ -157,8 +178,36 @@ public final class TrunkedSiteSchema
 
     public static void validate(Connection connection) throws SQLException
     {
-        SqliteSchemaValidator.validate(connection, TABLES, List.of(), List.of(),
+        SqliteSchemaValidator.validate(connection, TABLES, INDEXES, List.of(),
             List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION))));
+        validateKeysAndIndexes(connection);
+    }
+
+    /**
+     * Validates the legacy v1 shape before the explicit external migration installs the v2 retention indexes.
+     * Normal application startup must use {@link #validate(Connection)} and therefore rejects v1.
+     */
+    public static void validateVersionOneForMigration(Connection connection) throws SQLException
+    {
+        SqliteSchemaValidator.validate(connection, TABLES, List.of(), List.of(),
+            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "1")));
+        validateKeysAndForeignKeys(connection);
+    }
+
+    private static void validateKeysAndIndexes(Connection connection) throws SQLException
+    {
+        validateKeysAndForeignKeys(connection);
+        validateIndex(connection, SNAPSHOT_LAST_SEEN_INDEX, List.of("last_seen_ms", "guid"));
+        validateIndex(connection, CHANNEL_LAST_SEEN_INDEX,
+            List.of("last_seen_ms", "guid", "channel_number", "inbound_channel_number", "timeslot",
+                "frequency_hz"));
+        validateIndex(connection, NEIGHBOR_LAST_SEEN_INDEX,
+            List.of("last_seen_ms", "guid", "variant_code", "identity_domain_code", "network_id", "system_id",
+                "site_id", "channel_number", "frequency_hz"));
+    }
+
+    private static void validateKeysAndForeignKeys(Connection connection) throws SQLException
+    {
         validatePrimaryKey(connection, "trunked_site_snapshot", List.of("guid"));
         validatePrimaryKey(connection, "trunked_site_channel_summary",
             List.of("guid", "channel_number", "inbound_channel_number", "timeslot", "frequency_hz"));
@@ -170,10 +219,22 @@ public final class TrunkedSiteSchema
     }
 
     /**
-     * Updates one compact site summary. Child facts are only touched when the publisher's stable snapshot hash
-     * changes; a liveness heartbeat therefore performs one bounded row update.
+     * Updates one compact site summary. Learned child facts are only touched when the publisher's stable snapshot
+     * hash changes. An unchanged liveness heartbeat also refreshes at most one synthetic current-control child so
+     * the actively tuned frequency cannot expire while the site remains active.
      */
     public static void upsert(Connection connection, Snapshot snapshot) throws SQLException
+    {
+        upsert(connection, snapshot, Long.MIN_VALUE);
+    }
+
+    /**
+     * Updates one compact site summary while refusing to replay cumulative child facts that had already expired.
+     *
+     * @param childRetentionCutoffEpochMilliseconds child facts observed before this time are not inserted or updated
+     */
+    public static void upsert(Connection connection, Snapshot snapshot, long childRetentionCutoffEpochMilliseconds)
+        throws SQLException
     {
         requireValid(snapshot);
         String previousHash = snapshotHash(connection, snapshot.guid());
@@ -181,6 +242,7 @@ public final class TrunkedSiteSchema
 
         if(Objects.equals(previousHash, snapshot.snapshotHash()))
         {
+            refreshSyntheticCurrentControl(connection, snapshot, childRetentionCutoffEpochMilliseconds);
             return;
         }
 
@@ -194,10 +256,13 @@ public final class TrunkedSiteSchema
             if(channel != null)
             {
                 ChannelKey key = ChannelKey.from(channel);
+                long childObservationTime = observationTime(channel.observedAtEpochMilliseconds(),
+                    snapshot.observedAtEpochMilliseconds());
 
-                if(channelKeys.contains(key) || channelKeys.size() < MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT)
+                if(childObservationTime >= childRetentionCutoffEpochMilliseconds &&
+                    (channelKeys.contains(key) || channelKeys.size() < MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT))
                 {
-                    upsertChannel(connection, snapshot.guid(), snapshot.observedAtEpochMilliseconds(), channel);
+                    upsertChannel(connection, snapshot.guid(), childObservationTime, channel);
                     channelKeys.add(key);
                 }
             }
@@ -213,12 +278,48 @@ public final class TrunkedSiteSchema
             if(neighbor != null)
             {
                 NeighborKey key = NeighborKey.from(neighbor);
+                long childObservationTime = observationTime(neighbor.observedAtEpochMilliseconds(),
+                    snapshot.observedAtEpochMilliseconds());
 
-                if(neighborKeys.contains(key) || neighborKeys.size() < MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT)
+                if(childObservationTime >= childRetentionCutoffEpochMilliseconds &&
+                    (neighborKeys.contains(key) || neighborKeys.size() < MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT))
                 {
-                    upsertNeighbor(connection, snapshot.guid(), snapshot.observedAtEpochMilliseconds(), neighbor);
+                    upsertNeighbor(connection, snapshot.guid(), childObservationTime, neighbor);
                     neighborKeys.add(key);
                 }
+            }
+        }
+    }
+
+    /**
+     * Refreshes the configured/current tuner frequency that the metadata mapper adds without a protocol channel
+     * number. This row represents active receiver state rather than a historical learned fact, so its freshness
+     * follows the site heartbeat. Limiting this path to one identifiable row preserves the bounded equal-hash
+     * heartbeat behavior for every cumulative learned channel and neighbor.
+     */
+    private static void refreshSyntheticCurrentControl(Connection connection, Snapshot snapshot,
+                                                       long childRetentionCutoffEpochMilliseconds)
+        throws SQLException
+    {
+        int channelLimit = Math.min(snapshot.channels().size(), MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT);
+
+        for(int x = 0; x < channelLimit; x++)
+        {
+            Channel channel = snapshot.channels().get(x);
+
+            if(channel != null && channel.channelNumber() == null && channel.inboundChannelNumber() == null &&
+                channel.timeslot() == null && channel.frequencyHertz() != null &&
+                (channel.roleFlags() & CHANNEL_ROLE_CURRENT_CONTROL) != 0)
+            {
+                long childObservationTime = observationTime(channel.observedAtEpochMilliseconds(),
+                    snapshot.observedAtEpochMilliseconds());
+
+                if(childObservationTime >= childRetentionCutoffEpochMilliseconds)
+                {
+                    upsertChannel(connection, snapshot.guid(), childObservationTime, channel);
+                }
+
+                return;
             }
         }
     }
@@ -244,6 +345,52 @@ public final class TrunkedSiteSchema
             statement.setString(1, guid);
             return statement.executeUpdate();
         }
+    }
+
+    /**
+     * Deletes expired learned facts in bounded, time-indexed batches. Child rows are removed independently before
+     * expired site parents, so an active site cannot keep an obsolete channel or neighbor alive indefinitely.
+     *
+     * <p>The caller owns the transaction and must use a connection with foreign keys enabled so deleting an expired
+     * site also removes any remaining descendants.</p>
+     */
+    public static CleanupResult deleteOlderThan(Connection connection, long cutoffEpochMilliseconds)
+        throws SQLException
+    {
+        int channels = deleteAllBatches(connection, """
+            DELETE FROM trunked_site_channel_summary
+            WHERE (guid, channel_number, inbound_channel_number, timeslot, frequency_hz) IN (
+                SELECT guid, channel_number, inbound_channel_number, timeslot, frequency_hz
+                FROM trunked_site_channel_summary INDEXED BY idx_trunked_site_channel_last_seen
+                WHERE last_seen_ms < ?
+                ORDER BY last_seen_ms, guid, channel_number, inbound_channel_number, timeslot, frequency_hz
+                LIMIT ?
+            )
+            """, cutoffEpochMilliseconds);
+        int neighbors = deleteAllBatches(connection, """
+            DELETE FROM trunked_site_neighbor_summary
+            WHERE (guid, variant_code, identity_domain_code, network_id, system_id, site_id,
+                   channel_number, frequency_hz) IN (
+                SELECT guid, variant_code, identity_domain_code, network_id, system_id, site_id,
+                       channel_number, frequency_hz
+                FROM trunked_site_neighbor_summary INDEXED BY idx_trunked_site_neighbor_last_seen
+                WHERE last_seen_ms < ?
+                ORDER BY last_seen_ms, guid, variant_code, identity_domain_code, network_id, system_id, site_id,
+                         channel_number, frequency_hz
+                LIMIT ?
+            )
+            """, cutoffEpochMilliseconds);
+        int sites = deleteAllBatches(connection, """
+            DELETE FROM trunked_site_snapshot
+            WHERE guid IN (
+                SELECT guid
+                FROM trunked_site_snapshot INDEXED BY idx_trunked_site_snapshot_last_seen
+                WHERE last_seen_ms < ?
+                ORDER BY last_seen_ms, guid
+                LIMIT ?
+            )
+            """, cutoffEpochMilliseconds);
+        return new CleanupResult(channels, neighbors, sites);
     }
 
     public static String schemaVersion(Connection connection) throws SQLException
@@ -284,6 +431,52 @@ public final class TrunkedSiteSchema
             throw new SQLException("SQLite schema has incorrect primary key for [" + table + "]: " +
                 ordered.values());
         }
+    }
+
+    private static void validateIndex(Connection connection, String index, List<String> expected) throws SQLException
+    {
+        List<String> actual = new ArrayList<>();
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("PRAGMA index_info(" + index + ")"))
+        {
+            while(resultSet.next())
+            {
+                actual.add(resultSet.getString("name"));
+            }
+        }
+
+        if(!actual.equals(expected))
+        {
+            throw new SQLException("SQLite schema has incorrect columns for index [" + index + "]: " + actual);
+        }
+    }
+
+    private static int deleteAllBatches(Connection connection, String sql, long cutoffEpochMilliseconds)
+        throws SQLException
+    {
+        int total = 0;
+
+        try(PreparedStatement statement = connection.prepareStatement(sql))
+        {
+            int deleted;
+
+            do
+            {
+                statement.setLong(1, cutoffEpochMilliseconds);
+                statement.setInt(2, RETENTION_DELETE_BATCH_SIZE);
+                deleted = statement.executeUpdate();
+                total = Math.addExact(total, deleted);
+            }
+            while(deleted > 0);
+        }
+
+        return total;
+    }
+
+    private static long observationTime(long childObservationTime, long snapshotObservationTime)
+    {
+        return childObservationTime > 0 ? childObservationTime : snapshotObservationTime;
     }
 
     private static void validateGuidForeignKey(Connection connection, String table) throws SQLException
@@ -429,11 +622,16 @@ public final class TrunkedSiteSchema
                 first_seen_ms, last_seen_ms, observation_count
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(guid, channel_number, inbound_channel_number, timeslot, frequency_hz) DO UPDATE SET
-                uplink_hz = coalesce(excluded.uplink_hz, trunked_site_channel_summary.uplink_hz),
+                uplink_hz = CASE
+                    WHEN excluded.last_seen_ms > trunked_site_channel_summary.last_seen_ms
+                    THEN coalesce(excluded.uplink_hz, trunked_site_channel_summary.uplink_hz)
+                    ELSE trunked_site_channel_summary.uplink_hz
+                END,
                 role_flags = trunked_site_channel_summary.role_flags | excluded.role_flags,
                 first_seen_ms = min(trunked_site_channel_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(trunked_site_channel_summary.last_seen_ms, excluded.last_seen_ms),
-                observation_count = trunked_site_channel_summary.observation_count + 1
+                observation_count = trunked_site_channel_summary.observation_count +
+                    CASE WHEN excluded.last_seen_ms > trunked_site_channel_summary.last_seen_ms THEN 1 ELSE 0 END
             """))
         {
             statement.setString(1, guid);
@@ -463,7 +661,8 @@ public final class TrunkedSiteSchema
                 status_flags = trunked_site_neighbor_summary.status_flags | excluded.status_flags,
                 first_seen_ms = min(trunked_site_neighbor_summary.first_seen_ms, excluded.first_seen_ms),
                 last_seen_ms = max(trunked_site_neighbor_summary.last_seen_ms, excluded.last_seen_ms),
-                observation_count = trunked_site_neighbor_summary.observation_count + 1
+                observation_count = trunked_site_neighbor_summary.observation_count +
+                    CASE WHEN excluded.last_seen_ms > trunked_site_neighbor_summary.last_seen_ms THEN 1 ELSE 0 END
             """))
         {
             statement.setString(1, guid);
@@ -595,13 +794,33 @@ public final class TrunkedSiteSchema
     }
 
     public record Channel(Integer channelNumber, Integer inboundChannelNumber, Integer timeslot, Long frequencyHertz,
-                          Long uplinkHertz, int roleFlags)
+                          Long uplinkHertz, int roleFlags, long observedAtEpochMilliseconds)
     {
+        public Channel(Integer channelNumber, Integer inboundChannelNumber, Integer timeslot, Long frequencyHertz,
+                       Long uplinkHertz, int roleFlags)
+        {
+            this(channelNumber, inboundChannelNumber, timeslot, frequencyHertz, uplinkHertz, roleFlags, 0);
+        }
     }
 
     public record Neighbor(int variantCode, int identityDomainCode, Integer networkId, Integer systemId,
-                           Integer siteId, Integer channelNumber, Long frequencyHertz, int statusFlags)
+                           Integer siteId, Integer channelNumber, Long frequencyHertz, int statusFlags,
+                           long observedAtEpochMilliseconds)
     {
+        public Neighbor(int variantCode, int identityDomainCode, Integer networkId, Integer systemId,
+                        Integer siteId, Integer channelNumber, Long frequencyHertz, int statusFlags)
+        {
+            this(variantCode, identityDomainCode, networkId, systemId, siteId, channelNumber, frequencyHertz,
+                statusFlags, 0);
+        }
+    }
+
+    public record CleanupResult(int channelsDeleted, int neighborsDeleted, int sitesDeleted)
+    {
+        public int total()
+        {
+            return Math.addExact(Math.addExact(channelsDeleted, neighborsDeleted), sitesDeleted);
+        }
     }
 
     private record ChannelKey(int channelNumber, int inboundChannelNumber, int timeslot, long frequencyHertz)

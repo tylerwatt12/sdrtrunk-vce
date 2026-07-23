@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -280,6 +281,21 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.insertControlChannelQuality(connection,
                 quality(now - TimeUnit.DAYS.toMillis(2), -25.0));
             P25ActivityLogSchema.insertControlChannelQuality(connection, quality(now, -20.0));
+
+            try(var statement = connection.prepareStatement("""
+                INSERT INTO trunked_site_snapshot (
+                    guid, snapshot_hash, protocol_code, variant_code, identity_domain_code,
+                    first_seen_ms, last_seen_ms, observation_count
+                ) VALUES (?, ?, ?, 1, 1, ?, ?, 1)
+                """))
+            {
+                insertTrunkedSite(statement, "expired-dmr", TrunkedSiteSchema.PROTOCOL_DMR,
+                    now - TimeUnit.DAYS.toMillis(2));
+                insertTrunkedSite(statement, "current-dmr", TrunkedSiteSchema.PROTOCOL_DMR, now);
+                insertTrunkedSite(statement, "expired-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN,
+                    now - TimeUnit.DAYS.toMillis(2));
+                insertTrunkedSite(statement, "current-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN, now);
+            }
         }
 
         P25ActivityLogMaintenance.Result result =
@@ -292,6 +308,11 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "p25_activity_event", 1);
             assertCount(connection, "p25_control_channel_quality", 1);
+            assertCount(connection, "trunked_site_snapshot", 2);
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE protocol_code=3"));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE protocol_code=4"));
             assertEquals("1", status(connection, "retention_days"));
             assertEquals(Long.toString(result.rowsDeleted()), status(connection, "last_maintenance_deleted_rows"));
         }
@@ -1123,6 +1144,257 @@ class P25ActivityLogWriterTest
         assertTrue(writer.getDroppedRecords() > 0);
     }
 
+    @Test
+    void clearSiteWaitsForEarlierObservationsAndPrecedesLaterObservations() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("writer-clear-order.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        String retainedGuid = "223e4567-e89b-12d3-a456-426614174000";
+        long now = System.currentTimeMillis();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            insertAdministratorData(connection);
+        }
+
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1024);
+        writer.start();
+
+        //Fill a startup backlog so the clear request has earlier observations to cross as a queue barrier.
+        for(int x = 0; x < 400; x++)
+        {
+            writer.enqueue(activity(now - 1_000L + x, P25ActivityLogRecords.Action.GRANT, guid));
+        }
+
+        writer.enqueue(trunkedSite(now - 500L, guid, TrunkedSiteSchema.PROTOCOL_DMR, "pre-clear"));
+        writer.enqueue(trunkedSite(now - 500L, retainedGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "retained"));
+        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearSite(guid);
+        writer.submitMaintenance(request);
+        writer.enqueue(activity(now, P25ActivityLogRecords.Action.GRANT, guid));
+        writer.enqueue(trunkedSite(now, guid, TrunkedSiteSchema.PROTOCOL_DMR, "post-clear"));
+
+        P25ActivityLogMaintenance.Result result = request.result().get(10, TimeUnit.SECONDS);
+        assertEquals(P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS, result.operation());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            //The clear removed every pre-request row and the post-request observation was written afterward.
+            assertCount(connection, "p25_activity_event", 1);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("SELECT observed_at_ms FROM p25_activity_event"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(now, resultSet.getLong(1));
+                assertFalse(resultSet.next());
+            }
+
+            assertGuidCount(connection, "trunked_site_snapshot", guid, 1);
+            assertGuidCount(connection, "trunked_site_snapshot", retainedGuid, 1);
+            assertEquals(now, scalarLong(connection,
+                "SELECT last_seen_ms FROM trunked_site_snapshot WHERE guid='" + guid + "'"));
+            assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, scalarLong(connection,
+                "SELECT protocol_code FROM trunked_site_snapshot WHERE guid='" + guid + "'"));
+            assertEquals(TrunkedSiteSchema.PROTOCOL_NXDN, scalarLong(connection,
+                "SELECT protocol_code FROM trunked_site_snapshot WHERE guid='" + retainedGuid + "'"));
+            assertAdministratorData(connection);
+        }
+    }
+
+    @Test
+    void resetStatsWaitsForEarlierObservationsAndPrecedesLaterObservations() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("writer-reset-order.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        long now = System.currentTimeMillis();
+        String dmrGuid = "123e4567-e89b-12d3-a456-426614174000";
+        String nxdnGuid = "223e4567-e89b-12d3-a456-426614174000";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            insertAdministratorData(connection);
+        }
+
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 1024);
+        writer.start();
+
+        for(int x = 0; x < 400; x++)
+        {
+            writer.enqueue(activity(now - 1_000L + x, P25ActivityLogRecords.Action.GRANT));
+        }
+
+        writer.enqueue(trunkedSite(now - 500L, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR, "pre-reset-dmr"));
+        writer.enqueue(trunkedSite(now - 500L, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "pre-reset-nxdn"));
+        StatsDatabaseMaintenanceRequest request =
+            StatsDatabaseMaintenanceRequest.forOperation(P25ActivityLogMaintenance.Operation.RESET_STATS);
+        writer.submitMaintenance(request);
+        writer.enqueue(activity(now, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(trunkedSite(now, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR, "post-reset-dmr"));
+        writer.enqueue(trunkedSite(now, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "post-reset-nxdn"));
+
+        P25ActivityLogMaintenance.Result result = request.result().get(10, TimeUnit.SECONDS);
+        assertEquals(P25ActivityLogMaintenance.Operation.RESET_STATS, result.operation());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("SELECT observed_at_ms FROM p25_activity_event"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(now, resultSet.getLong(1));
+                assertFalse(resultSet.next());
+            }
+
+            assertCount(connection, "trunked_site_snapshot", 2);
+            assertCount(connection, "trunked_site_channel_summary", 2);
+            assertCount(connection, "trunked_site_neighbor_summary", 2);
+            assertEquals(2, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_snapshot WHERE last_seen_ms=" + now));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_snapshot
+                WHERE protocol_code=3
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_snapshot
+                WHERE protocol_code=4
+                """));
+            assertAdministratorData(connection);
+        }
+    }
+
+    @Test
+    void loweringRetentionRequestsPromptCleanupOnWriter() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("writer-retention-reduction.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        long now = System.currentTimeMillis();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(now - TimeUnit.DAYS.toMillis(2), P25ActivityLogRecords.Action.GRANT), true);
+        }
+
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        writer.start();
+        waitForState(writer, P25ActivityLogStatus.State.RUNNING);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+        }
+
+        writer.setRetentionDays(1);
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        int remaining = 1;
+
+        while(remaining != 0 && System.currentTimeMillis() < deadline)
+        {
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                remaining = count(connection, "p25_activity_event");
+            }
+
+            if(remaining != 0)
+            {
+                Thread.sleep(25);
+            }
+        }
+
+        writer.close();
+        assertEquals(0, remaining);
+    }
+
+    @Test
+    void rejectsMaintenanceWhenWriterIsNotRunning()
+    {
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(mTemporaryFolder.resolve("not-running.sqlite"),
+            30, false, 1);
+        StatsDatabaseMaintenanceRequest request =
+            StatsDatabaseMaintenanceRequest.forOperation(P25ActivityLogMaintenance.Operation.RESET_STATS);
+
+        writer.submitMaintenance(request);
+
+        assertTrue(request.result().isCompletedExceptionally());
+    }
+
+    private static void waitForState(P25ActivityLogWriter writer, P25ActivityLogStatus.State expected)
+        throws InterruptedException
+    {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+
+        while(writer.getStatus().state() != expected && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        assertEquals(expected, writer.getStatus().state());
+    }
+
+    private static void insertTrunkedSite(java.sql.PreparedStatement statement, String guid, int protocol,
+                                          long observedAt) throws Exception
+    {
+        statement.setString(1, guid);
+        statement.setString(2, "hash-" + guid);
+        statement.setInt(3, protocol);
+        statement.setLong(4, observedAt);
+        statement.setLong(5, observedAt);
+        statement.executeUpdate();
+    }
+
+    private static P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSite(long observedAt, String guid,
+                                                                         int protocol, String hash)
+    {
+        boolean dmr = protocol == TrunkedSiteSchema.PROTOCOL_DMR;
+        TrunkedSiteSchema.Channel channel = dmr ?
+            new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L,
+                TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC, observedAt) :
+            new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, 160_000_000L,
+                TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, observedAt);
+        TrunkedSiteSchema.Neighbor neighbor = dmr ?
+            new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 31, 43, 452_000_000L,
+                TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE, observedAt) :
+            new TrunkedSiteSchema.Neighbor(2, 4, 7, 8, 10, 122, 155_012_500L,
+                TrunkedSiteSchema.NEIGHBOR_STATUS_ISOLATED, observedAt);
+        TrunkedSiteSchema.Snapshot snapshot = new TrunkedSiteSchema.Snapshot(
+            observedAt, guid, hash, protocol, dmr ? 1 : 2, dmr ? 2 : 4,
+            dmr ? "Metro DMR" : "Metro NXDN", dmr ? "Downtown" : "North", null,
+            dmr ? "DMR" : "NXDN", dmr ? 10 : 7, dmr ? null : 8, dmr ? 20 : 9,
+            dmr ? null : 12, null, null, null, null, null, null, null, 0, null,
+            channel.frequencyHertz(), channel.frequencyHertz(), List.of(channel), List.of(neighbor));
+        return new P25ActivityLogRecords.TrunkedSiteSnapshot(observedAt, snapshot);
+    }
+
+    private static void insertAdministratorData(Connection connection) throws Exception
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias(sort_order, name) VALUES (0, 'Administrator Alias')");
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    sort_order, name, auto_start, frequency_count, recording_enabled, event_logging_enabled,
+                    config_json
+                ) VALUES (0, 'Administrator Channel', 0, 1, 0, 0, '{}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO application_settings (key, settings_json, updated_at_ms)
+                VALUES ('administrator-setting', '{}', 1)
+                """);
+        }
+    }
+
+    private static void assertAdministratorData(Connection connection) throws Exception
+    {
+        assertCount(connection, "alias", 1);
+        assertCount(connection, "configuration_channel", 1);
+        assertCount(connection, "application_settings", 1);
+    }
+
     private static void assertCount(Connection connection, String table, int expected) throws Exception
     {
         assertEquals(expected, count(connection, table));
@@ -1135,6 +1407,15 @@ class P25ActivityLogWriterTest
         {
             assertTrue(resultSet.next());
             return resultSet.getInt(1);
+        }
+    }
+
+    private static long scalarLong(Connection connection, String sql) throws Exception
+    {
+        try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery(sql))
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getLong(1);
         }
     }
 

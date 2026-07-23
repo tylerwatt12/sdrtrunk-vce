@@ -40,7 +40,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Owns optional P25 activity logging and keeps SQLite work off decoder/UI threads.
+ * Owns statistics collection and maintenance and keeps SQLite work off decoder/UI threads.
  */
 public class P25ActivityLogService implements SiteMetadataListener, ProtocolSiteMetadataListener
 {
@@ -54,6 +54,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
     private final List<P25ActivityCommitListener> mCommitListeners = new CopyOnWriteArrayList<>();
     private volatile P25ActivityLogWriter mWriter;
+    private volatile boolean mCollectionEnabled;
     private Path mCurrentDatabasePath;
     private P25ActivityLogWriter.WriterStatus mLastWriterStatus;
 
@@ -89,7 +90,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void receiveCallOutput(CompletedAudioCall call, P25ActivityLogRecords.CallOutput output)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer != null)
         {
@@ -105,7 +106,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer != null && isP25ControlChannelQuality(snapshot) && snapshot.active() && snapshot.guid() != null &&
             !snapshot.guid().isBlank() && snapshot.frequencyHz() > 0)
@@ -148,12 +149,9 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     private synchronized void updateWriterState()
     {
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
-
-        if(!preference.isStatsLoggingEnabled())
-        {
-            stopWriter();
-            return;
-        }
+        boolean collectionEnabled = preference.isStatsLoggingEnabled();
+        boolean collectionWasEnabled = mCollectionEnabled;
+        mCollectionEnabled = collectionEnabled;
 
         Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
         int retentionDays = preference.getStatsLoggingRetentionDays();
@@ -165,6 +163,12 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         {
             mWriter.setRetentionDays(retentionDays);
             mWriter.setDetailedEventHistoryEnabled(detailedEventHistoryEnabled);
+
+            if(collectionWasEnabled && !collectionEnabled)
+            {
+                clearDedupeKeys();
+            }
+
             return;
         }
 
@@ -173,7 +177,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         mWriter = new P25ActivityLogWriter(databasePath, retentionDays, detailedEventHistoryEnabled,
             this::notifyActivityCommitted);
         mWriter.start();
-        mLog.info("Stats database logging enabled [{}]", databasePath);
+        mLog.info("Stats database writer started for collection and retention maintenance [{}]", databasePath);
     }
 
     private synchronized void stopWriter()
@@ -185,18 +189,15 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             mWriter = null;
             mCurrentDatabasePath = null;
 
-            synchronized(mRecentDedupeKeys)
-            {
-                mRecentDedupeKeys.clear();
-            }
+            clearDedupeKeys();
 
-            mLog.info("P25 database logging disabled");
+            mLog.info("Stats database writer stopped");
         }
     }
 
     private void receiveDecodeEvent(Channel channel, IDecodeEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -228,7 +229,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @Subscribe
     public void receiveCallStart(P25CallStartEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -246,7 +247,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @Subscribe
     public void receiveGrantObservation(P25GrantObservationEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -264,7 +265,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @Subscribe
     public void receiveTalkerAlias(P25TalkerAliasEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -282,7 +283,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -300,7 +301,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     @Override
     public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
-        P25ActivityLogWriter writer = mWriter;
+        P25ActivityLogWriter writer = getCollectionWriter();
 
         if(writer == null)
         {
@@ -313,6 +314,38 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         {
             writer.enqueue(new P25ActivityLogRecords.TrunkedSiteSnapshot(
                 snapshot.observedAtEpochMilliseconds(), snapshot));
+        }
+    }
+
+    /**
+     * Routes runtime database maintenance through the same connection and background writer used for observations.
+     */
+    @Subscribe
+    public void receiveMaintenanceRequest(StatsDatabaseMaintenanceRequest request)
+    {
+        P25ActivityLogWriter writer = mWriter;
+
+        if(writer != null)
+        {
+            writer.submitMaintenance(request);
+        }
+        else if(request != null)
+        {
+            request.result().completeExceptionally(
+                new IllegalStateException("Statistics database writer is not available"));
+        }
+    }
+
+    private P25ActivityLogWriter getCollectionWriter()
+    {
+        return mCollectionEnabled ? mWriter : null;
+    }
+
+    private void clearDedupeKeys()
+    {
+        synchronized(mRecentDedupeKeys)
+        {
+            mRecentDedupeKeys.clear();
         }
     }
 
@@ -398,7 +431,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(writerStatus != null)
         {
-            if(summaryConfigured)
+            if(summaryConfigured || writerStatus.state() == P25ActivityLogStatus.State.FAILED)
             {
                 state = writerStatus.state();
             }

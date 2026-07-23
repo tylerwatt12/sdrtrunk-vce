@@ -8,6 +8,7 @@ package io.github.dsheirer.metadata.site;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.List;
@@ -76,6 +77,39 @@ class ProtocolSiteMetadataPublisherTest
         publisher.publish(1_001);
 
         assertEquals(2, events.size());
+    }
+
+    @Test
+    void childFreshnessUsesHeartbeatWhileStructuralChangesPublishImmediately()
+    {
+        Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
+        AtomicReference<DMRNetworkConfigurationSnapshot> snapshot =
+            new AtomicReference<>(dmrSnapshot(1_000L, DMRNetworkConfigurationSnapshot.ChannelRole.OBSERVED));
+        List<ProtocolSiteMetadataEvent> events = new ArrayList<>();
+        ProtocolSiteMetadataPublisher publisher = new ProtocolSiteMetadataPublisher(channel, snapshot::get,
+            () -> true, events::add, 5_000);
+
+        publisher.publish(1_000L);
+        snapshot.set(dmrSnapshot(2_000L, DMRNetworkConfigurationSnapshot.ChannelRole.OBSERVED));
+        publisher.publish(2_000L);
+        assertEquals(1, events.size());
+
+        publisher.publish(6_000L);
+        assertEquals(2, events.size());
+
+        snapshot.set(dmrSnapshot(6_001L, DMRNetworkConfigurationSnapshot.ChannelRole.TRAFFIC));
+        publisher.publish(6_001L);
+        assertEquals(3, events.size());
+    }
+
+    private static DMRNetworkConfigurationSnapshot dmrSnapshot(long observedAt,
+                                                                DMRNetworkConfigurationSnapshot.ChannelRole role)
+    {
+        return new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 1, 2, null, null, null, null,
+            null, null,
+            List.of(new DMRNetworkConfigurationSnapshot.Channel("DMRChannel", 3, 1, null, null, role,
+                DMRNetworkConfigurationSnapshot.FrequencySource.UNRESOLVED, observedAt)),
+            List.of());
     }
 
     private record TestSnapshot(String decoder, boolean useful) implements SiteMetadataSnapshot

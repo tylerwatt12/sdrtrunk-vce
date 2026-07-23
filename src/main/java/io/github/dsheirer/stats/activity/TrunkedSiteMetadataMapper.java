@@ -118,11 +118,12 @@ final class TrunkedSiteMetadataMapper
                 }
 
                 channels.add(new TrunkedSiteSchema.Channel(channel.logicalChannelNumber(), null, channel.timeslot(),
-                    channel.downlink(), channel.uplink(), role));
+                    channel.downlink(), channel.uplink(), role,
+                    observedAt(channel.observedAtEpochMilliseconds(), observedAt)));
             }
         }
 
-        addCurrentControlIfMissing(channels, configuredCurrentControl);
+        addCurrentControlIfMissing(channels, configuredCurrentControl, observedAt);
         List<TrunkedSiteSchema.Neighbor> neighbors = new ArrayList<>();
 
         for(DMRNetworkConfigurationSnapshot.NeighborSite neighbor: snapshot.neighborSites())
@@ -134,7 +135,8 @@ final class TrunkedSiteMetadataMapper
                 Integer neighborModel = dmrModel(neighbor.model());
                 neighbors.add(new TrunkedSiteSchema.Neighbor(dmrVariant(neighbor.variant()),
                     neighborModel != null ? neighborModel : 0, neighbor.network(), null, neighbor.site(),
-                    neighbor.logicalChannelNumber(), neighbor.downlink(), status));
+                    neighbor.logicalChannelNumber(), neighbor.downlink(), status,
+                    observedAt(neighbor.observedAtEpochMilliseconds(), observedAt)));
             }
         }
 
@@ -169,7 +171,8 @@ final class TrunkedSiteMetadataMapper
                 Integer channelNumber = channel.channelNumber() != null ? channel.channelNumber() :
                     channel.outboundChannelNumber();
                 channels.add(new TrunkedSiteSchema.Channel(channelNumber, channel.inboundChannelNumber(), null,
-                    channel.downlink(), channel.uplink(), role));
+                    channel.downlink(), channel.uplink(), role,
+                    observedAt(channel.observedAtEpochMilliseconds(), observedAt)));
             }
         }
 
@@ -179,7 +182,8 @@ final class TrunkedSiteMetadataMapper
             {
                 int role = repeater.equals(snapshot.currentRepeater()) ?
                     TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL : TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED;
-                channels.add(new TrunkedSiteSchema.Channel(repeater, null, null, null, null, role));
+                channels.add(new TrunkedSiteSchema.Channel(repeater, null, null, null, null, role,
+                    observedAt(snapshot.observedRepeaterTimestamp(repeater), observedAt)));
             }
         }
 
@@ -189,7 +193,7 @@ final class TrunkedSiteMetadataMapper
             .filter(frequency -> frequency != null && frequency > 0)
             .findFirst()
             .orElse(configuredCurrentControl);
-        addCurrentControlIfMissing(channels, currentControl);
+        addCurrentControlIfMissing(channels, currentControl, observedAt);
         List<TrunkedSiteSchema.Neighbor> neighbors = new ArrayList<>();
 
         for(NXDNNetworkConfigurationSnapshot.NeighborSite neighbor: snapshot.neighborSites())
@@ -209,11 +213,15 @@ final class TrunkedSiteMetadataMapper
             Long neighborFrequency = neighborChannel != null ? neighborChannel.downlink() : null;
             int status = Boolean.TRUE.equals(neighbor.isolated()) ?
                 TrunkedSiteSchema.NEIGHBOR_STATUS_ISOLATED : 0;
+            long neighborObservedAt = neighbor.observedAtEpochMilliseconds() > 0 ?
+                neighbor.observedAtEpochMilliseconds() :
+                neighborChannel != null ? neighborChannel.observedAtEpochMilliseconds() : 0;
             neighbors.add(new TrunkedSiteSchema.Neighbor(nxdnVariant(neighbor.variant()),
                 nxdnIdentityDomain(neighborLocation != null ? neighborLocation.category() : neighbor.variant()),
                 neighborLocation != null ? neighborLocation.integrator() : null,
                 neighborLocation != null ? neighborLocation.system() : null, neighborSite,
-                neighborChannelNumber, neighborFrequency, status));
+                neighborChannelNumber, neighborFrequency, status,
+                observedAt(neighborObservedAt, observedAt)));
         }
 
         return new TrunkedSiteSchema.Snapshot(observedAt, guid, hash, TrunkedSiteSchema.PROTOCOL_NXDN,
@@ -224,14 +232,20 @@ final class TrunkedSiteMetadataMapper
             nxdnFailureCode(snapshot.failureStatus()), primaryFrequency, currentControl, channels, neighbors);
     }
 
-    private static void addCurrentControlIfMissing(List<TrunkedSiteSchema.Channel> channels, Long frequency)
+    private static void addCurrentControlIfMissing(List<TrunkedSiteSchema.Channel> channels, Long frequency,
+                                                   long observedAt)
     {
         if(frequency != null && frequency > 0 && channels.stream()
             .noneMatch(channel -> frequency.equals(channel.frequencyHertz())))
         {
             channels.addFirst(new TrunkedSiteSchema.Channel(null, null, null, frequency, null,
-                TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL));
+                TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, observedAt));
         }
+    }
+
+    private static long observedAt(long childObservedAt, long fallbackObservedAt)
+    {
+        return childObservedAt > 0 ? childObservedAt : fallbackObservedAt;
     }
 
     private static Long primaryFrequency(Channel channel)

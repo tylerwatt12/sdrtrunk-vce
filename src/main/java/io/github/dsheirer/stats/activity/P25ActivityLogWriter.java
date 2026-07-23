@@ -21,6 +21,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -30,7 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Single background SQLite writer for P25 activity logging.
+ * Single background SQLite writer for statistics observations and maintenance.
  */
 class P25ActivityLogWriter implements AutoCloseable
 {
@@ -43,8 +44,12 @@ class P25ActivityLogWriter implements AutoCloseable
     private static final long MAINTENANCE_INTERVAL_MILLISECONDS = TimeUnit.DAYS.toMillis(1);
 
     private final Path mDatabasePath;
-    private final ArrayBlockingQueue<P25ActivityLogRecord> mQueue;
+    private final ArrayBlockingQueue<QueuedRecord> mQueue;
+    private final ConcurrentLinkedQueue<MaintenanceCommand> mMaintenanceQueue = new ConcurrentLinkedQueue<>();
+    private final Object mQueueOrderingLock = new Object();
     private final AtomicBoolean mRunning = new AtomicBoolean();
+    private final AtomicBoolean mRetentionCleanupRequested = new AtomicBoolean();
+    private final AtomicLong mEnqueueSequence = new AtomicLong();
     private final AtomicLong mDroppedRecords = new AtomicLong();
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
@@ -89,14 +94,21 @@ class P25ActivityLogWriter implements AutoCloseable
         {
             mLastError = null;
             mState = P25ActivityLogStatus.State.STARTING;
-            mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory("p25 activity log writer"));
+            mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory("statistics database writer"));
             mExecutorService.execute(this::run);
         }
     }
 
     void setRetentionDays(int retentionDays)
     {
-        mRetentionDays = Math.max(1, retentionDays);
+        int updatedRetentionDays = Math.max(1, retentionDays);
+        int previousRetentionDays = mRetentionDays;
+        mRetentionDays = updatedRetentionDays;
+
+        if(previousRetentionDays > 0 && updatedRetentionDays < previousRetentionDays)
+        {
+            mRetentionCleanupRequested.set(true);
+        }
     }
 
     void setDetailedEventHistoryEnabled(boolean detailedEventHistoryEnabled)
@@ -106,20 +118,53 @@ class P25ActivityLogWriter implements AutoCloseable
 
     void enqueue(P25ActivityLogRecord record)
     {
-        if(record == null || !mRunning.get())
+        if(record == null)
         {
             return;
         }
 
-        if(!mQueue.offer(record))
+        synchronized(mQueueOrderingLock)
         {
-            mQueue.poll();
-            mDroppedRecords.incrementAndGet();
-
-            if(!mQueue.offer(record))
+            if(!mRunning.get())
             {
-                mDroppedRecords.incrementAndGet();
+                return;
             }
+
+            QueuedRecord queuedRecord = new QueuedRecord(mEnqueueSequence.incrementAndGet(), record);
+
+            if(!mQueue.offer(queuedRecord))
+            {
+                mQueue.poll();
+                mDroppedRecords.incrementAndGet();
+
+                if(!mQueue.offer(queuedRecord))
+                {
+                    mDroppedRecords.incrementAndGet();
+                }
+            }
+        }
+    }
+
+    /**
+     * Serializes a non-droppable runtime maintenance request behind any active write transaction.
+     */
+    void submitMaintenance(StatsDatabaseMaintenanceRequest request)
+    {
+        if(request == null)
+        {
+            return;
+        }
+
+        synchronized(mQueueOrderingLock)
+        {
+            if(!mRunning.get())
+            {
+                request.result().completeExceptionally(
+                    new IllegalStateException("Statistics database writer is not running"));
+                return;
+            }
+
+            mMaintenanceQueue.offer(new MaintenanceCommand(request, mEnqueueSequence.get()));
         }
     }
 
@@ -147,7 +192,10 @@ class P25ActivityLogWriter implements AutoCloseable
     @Override
     public void close()
     {
-        mRunning.set(false);
+        synchronized(mQueueOrderingLock)
+        {
+            mRunning.set(false);
+        }
 
         if(mExecutorService != null)
         {
@@ -179,6 +227,8 @@ class P25ActivityLogWriter implements AutoCloseable
 
     private void run()
     {
+        Exception terminalFailure = null;
+
         try(Connection connection = openConnection())
         {
             restoreStatus(connection);
@@ -192,28 +242,60 @@ class P25ActivityLogWriter implements AutoCloseable
             }
 
             List<P25ActivityLogRecord> batch = new ArrayList<>(BATCH_SIZE);
+            QueuedRecord pendingRecord = null;
 
-            while(mRunning.get() || !mQueue.isEmpty())
+            while(mRunning.get() || pendingRecord != null || !mQueue.isEmpty() || !mMaintenanceQueue.isEmpty())
             {
-                P25ActivityLogRecord first = mQueue.poll(POLL_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+                MaintenanceCommand command = mMaintenanceQueue.peek();
+                QueuedRecord queuedHead = mQueue.peek();
+                long nextSequence = pendingRecord != null ? pendingRecord.sequence() :
+                    (queuedHead != null ? queuedHead.sequence() : Long.MAX_VALUE);
 
-                if(first != null)
+                if(command != null && nextSequence > command.observationBarrierSequence())
                 {
-                    batch.add(first);
-                    mQueue.drainTo(batch, BATCH_SIZE - 1);
+                    processNextMaintenanceCommand(connection);
+                    runScheduledMaintenance(connection);
+                    continue;
+                }
+
+                if(pendingRecord == null)
+                {
+                    pendingRecord = mQueue.poll(POLL_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+                }
+
+                command = mMaintenanceQueue.peek();
+
+                if(pendingRecord != null &&
+                    (command == null || pendingRecord.sequence() <= command.observationBarrierSequence()))
+                {
+                    batch.add(pendingRecord.record());
+                    pendingRecord = null;
+
+                    while(batch.size() < BATCH_SIZE)
+                    {
+                        QueuedRecord next = mQueue.poll();
+
+                        if(next == null)
+                        {
+                            break;
+                        }
+
+                        command = mMaintenanceQueue.peek();
+
+                        if(command != null && next.sequence() > command.observationBarrierSequence())
+                        {
+                            pendingRecord = next;
+                            break;
+                        }
+
+                        batch.add(next.record());
+                    }
+
                     writeBatchWithRetry(connection, batch);
                     batch.clear();
                 }
 
-                if(System.currentTimeMillis() - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS)
-                {
-                    cleanupRetentionWithRetry(connection);
-                }
-
-                if(System.currentTimeMillis() - mLastMaintenance >= MAINTENANCE_INTERVAL_MILLISECONDS)
-                {
-                    runMaintenanceWithRetry(connection);
-                }
+                runScheduledMaintenance(connection);
             }
 
             if(!batch.isEmpty())
@@ -224,25 +306,116 @@ class P25ActivityLogWriter implements AutoCloseable
         catch(InterruptedException e)
         {
             Thread.currentThread().interrupt();
+            terminalFailure = e;
         }
         catch(IOException e)
         {
+            terminalFailure = e;
             fail(e);
-            mLog.warn("P25 activity SQLite writer stopped after database path error", e);
+            mLog.warn("Statistics SQLite writer stopped after database path error", e);
         }
         catch(SQLException e)
         {
+            terminalFailure = e;
             fail(e);
-            mLog.warn("P25 activity SQLite writer stopped after database error", e);
+            mLog.warn("Statistics SQLite writer stopped after database error", e);
         }
         finally
         {
             mRunning.set(false);
+            failPendingMaintenance(terminalFailure != null ? terminalFailure :
+                new IllegalStateException("Statistics database writer stopped"));
 
             if(mState != P25ActivityLogStatus.State.FAILED)
             {
                 mState = P25ActivityLogStatus.State.STOPPED;
             }
+        }
+    }
+
+    private void processNextMaintenanceCommand(Connection connection)
+    {
+        MaintenanceCommand command = mMaintenanceQueue.poll();
+
+        if(command != null)
+        {
+            try
+            {
+                P25ActivityLogMaintenance.Result result = executeMaintenanceWithRetry(connection, command);
+                command.request().result().complete(result);
+            }
+            catch(Exception e)
+            {
+                command.request().result().completeExceptionally(e);
+                mLog.warn("Statistics database maintenance request failed [{}]",
+                    command.request().operation(), e);
+            }
+        }
+    }
+
+    private void runScheduledMaintenance(Connection connection) throws SQLException, InterruptedException
+    {
+        if(mRetentionCleanupRequested.getAndSet(false) ||
+            System.currentTimeMillis() - mLastRetentionCleanup >= RETENTION_CLEANUP_INTERVAL_MILLISECONDS)
+        {
+            cleanupRetentionWithRetry(connection);
+        }
+
+        if(System.currentTimeMillis() - mLastMaintenance >= MAINTENANCE_INTERVAL_MILLISECONDS)
+        {
+            runMaintenanceWithRetry(connection);
+        }
+    }
+
+    private P25ActivityLogMaintenance.Result executeMaintenanceWithRetry(Connection connection,
+                                                                         MaintenanceCommand command)
+        throws IOException, SQLException, InterruptedException
+    {
+        while(true)
+        {
+            try
+            {
+                StatsDatabaseMaintenanceRequest request = command.request();
+                P25ActivityLogMaintenance.Result result;
+
+                if(request.operation() == P25ActivityLogMaintenance.Operation.CLEAR_SITE_STATS)
+                {
+                    result = P25ActivityLogMaintenance.clearSiteStats(connection, mDatabasePath, request.siteGuid());
+                }
+                else
+                {
+                    result = P25ActivityLogMaintenance.run(connection, mDatabasePath, mRetentionDays,
+                        request.operation());
+                }
+
+                if(request.operation() == P25ActivityLogMaintenance.Operation.MAINTAIN ||
+                    request.operation() == P25ActivityLogMaintenance.Operation.SHRINK)
+                {
+                    mLastRetentionCleanup = System.currentTimeMillis();
+                    mLastMaintenance = System.currentTimeMillis();
+                }
+
+                return result;
+            }
+            catch(SQLException e)
+            {
+                if(!isDatabaseBusy(e) || !mRunning.get())
+                {
+                    throw e;
+                }
+
+                Thread.sleep(DATABASE_BUSY_RETRY_MILLISECONDS);
+            }
+        }
+    }
+
+    private void failPendingMaintenance(Exception failure)
+    {
+        MaintenanceCommand command;
+
+        while((command = mMaintenanceQueue.poll()) != null)
+        {
+            command.request().result().completeExceptionally(failure);
         }
     }
 
@@ -416,7 +589,9 @@ class P25ActivityLogWriter implements AutoCloseable
                 }
                 else if(record instanceof P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)
                 {
-                    TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot());
+                    long childRetentionCutoff = System.currentTimeMillis() -
+                        TimeUnit.DAYS.toMillis(Math.max(1, mRetentionDays));
+                    TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot(), childRetentionCutoff);
                     writtenRecords++;
                 }
             }
@@ -512,6 +687,14 @@ class P25ActivityLogWriter implements AutoCloseable
 
     record WriterStatus(P25ActivityLogStatus.State state, boolean detailedHistoryEnabled,
                         long lastSuccessfulWriteMs, long recordsWritten, long recordsDropped, String lastError)
+    {
+    }
+
+    private record QueuedRecord(long sequence, P25ActivityLogRecord record)
+    {
+    }
+
+    private record MaintenanceCommand(StatsDatabaseMaintenanceRequest request, long observationBarrierSequence)
     {
     }
 }

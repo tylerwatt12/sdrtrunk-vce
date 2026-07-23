@@ -84,7 +84,7 @@ class PreviousBuildUpgradeServiceTest
         assertEquals(19, result.sourceVersion());
         assertNull(result.safetyBackup());
         assertTrue(result.helperOutput().contains("v19 -> v20"));
-        assertTrue(result.helperOutput().contains("absent -> v1"));
+        assertTrue(result.helperOutput().contains("absent -> v2"));
         assertEquals(List.of("Checking previous data", "Copying setup", "Creating safety backup",
             "Updating database", "Checking updated data", "Finishing"), progress);
 
@@ -127,7 +127,7 @@ class PreviousBuildUpgradeServiceTest
         assertTrue(result.importedPreviousProfile());
         assertEquals(20, result.sourceVersion());
         assertTrue(result.helperOutput().contains("already valid at P25 activity schema v20"));
-        assertTrue(result.helperOutput().contains("absent -> v1"));
+        assertTrue(result.helperOutput().contains("absent -> v2"));
 
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(20, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(targetDatabase));
@@ -152,7 +152,7 @@ class PreviousBuildUpgradeServiceTest
         assertFalse(result.importedPreviousProfile());
         assertEquals(19, result.sourceVersion());
         assertTrue(result.helperOutput().contains("v19 -> v20"));
-        assertTrue(result.helperOutput().contains("absent -> v1"));
+        assertTrue(result.helperOutput().contains("absent -> v2"));
         assertNotNull(result.safetyBackup());
         assertTrue(Files.isRegularFile(result.safetyBackup()));
         assertTrue(result.safetyBackup().startsWith(database.getParent().resolve("backups")));

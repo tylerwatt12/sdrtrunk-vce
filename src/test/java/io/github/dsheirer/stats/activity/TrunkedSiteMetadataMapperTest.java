@@ -31,6 +31,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -50,9 +51,9 @@ class TrunkedSiteMetadataMapperTest
             "Control", 3, 4,
             List.of(new DMRNetworkConfigurationSnapshot.Channel("DMRChannel", 42, 1,
                 452_000_000L, 457_000_000L, DMRNetworkConfigurationSnapshot.ChannelRole.TRAFFIC,
-                DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP)),
+                DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP, 700L)),
             List.of(new DMRNetworkConfigurationSnapshot.NeighborSite("TIER_III", 10, 21, "SMALL",
-                43, 453_000_000L, 458_000_000L, true, 1, 2)));
+                43, 453_000_000L, 458_000_000L, true, 1, 2, 800L)));
 
         TrunkedSiteSchema.Snapshot mapped = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 1_000L));
@@ -76,14 +77,29 @@ class TrunkedSiteMetadataMapperTest
             Long.valueOf(452_000_000L).equals(value.frequencyHertz()) &&
                 (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED) != 0 &&
                 (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC) != 0 &&
-                (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP) != 0));
+                (value.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP) != 0 &&
+                value.observedAtEpochMilliseconds() == 700L));
         assertEquals(TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE,
             mapped.neighbors().getFirst().statusFlags());
         assertEquals(2, mapped.neighbors().getFirst().identityDomainCode());
+        assertEquals(800L, mapped.neighbors().getFirst().observedAtEpochMilliseconds());
 
         TrunkedSiteSchema.Snapshot heartbeat = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 6_000L));
         assertEquals(mapped.snapshotHash(), heartbeat.snapshotHash());
+
+        DMRNetworkConfigurationSnapshot refreshedSource = new DMRNetworkConfigurationSnapshot(
+            "DMR", "CAPACITY_MAX", 10, 20, "Capacity Max Tier III Trunking", "SMALL", "Advantage",
+            "Control", 3, 4,
+            List.of(new DMRNetworkConfigurationSnapshot.Channel("DMRChannel", 42, 1,
+                452_000_000L, 457_000_000L, DMRNetworkConfigurationSnapshot.ChannelRole.TRAFFIC,
+                DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP, 900L)),
+            List.of(new DMRNetworkConfigurationSnapshot.NeighborSite("TIER_III", 10, 21, "SMALL",
+                43, 453_000_000L, 458_000_000L, true, 1, 2, 950L)));
+        assertEquals(source, refreshedSource);
+        TrunkedSiteSchema.Snapshot refreshed = TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(channel, refreshedSource, 6_000L));
+        assertNotEquals(mapped.snapshotHash(), refreshed.snapshotHash());
 
         channel.setSite("Airport");
         TrunkedSiteSchema.Snapshot renamed = TrunkedSiteMetadataMapper.map(
@@ -120,6 +136,7 @@ class TrunkedSiteMetadataMapperTest
         assertTrue((absolute.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED) != 0);
         assertTrue((absolute.roleFlags() &
             TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR) != 0);
+        assertEquals(1_000L, absolute.observedAtEpochMilliseconds());
         assertTrue((control.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL) != 0);
         assertTrue((control.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED) != 0);
         assertTrue((control.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC) != 0);
@@ -137,10 +154,10 @@ class TrunkedSiteMetadataMapperTest
             9, "CONTROL", null, null, List.of("VOICE", "DATA"), List.of(),
             new NXDNNetworkConfigurationSnapshot.FailureStatus(null, "60 SECONDS"),
             List.of(new NXDNNetworkConfigurationSnapshot.Channel("CONTROL_1", "DFA", null,
-                120, 121, "BW_12_5", 155_000_000L, 160_000_000L, null)),
+                120, 121, "BW_12_5", 155_000_000L, 160_000_000L, null, 600L)),
             List.of(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
-                new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, 10, 7), null, true)),
-            12, "FREE", List.of(12, 13));
+                new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, 10, 7), null, true, 700L)),
+            12, "FREE", List.of(12, 13), Map.of(12, 800L, 13, 900L));
 
         TrunkedSiteSchema.Snapshot mapped = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, source, 1_000L));
@@ -156,10 +173,12 @@ class TrunkedSiteMetadataMapperTest
         assertEquals(2, mapped.modeCode());
         assertEquals(60, mapped.failureCode());
         assertTrue(mapped.serviceFlags() > 0);
-        assertTrue(mapped.channels().stream().anyMatch(value -> Integer.valueOf(13).equals(value.channelNumber())));
+        assertTrue(mapped.channels().stream().anyMatch(value -> Integer.valueOf(13).equals(value.channelNumber()) &&
+            value.observedAtEpochMilliseconds() == 900L));
         assertEquals(TrunkedSiteSchema.NEIGHBOR_STATUS_ISOLATED,
             mapped.neighbors().getFirst().statusFlags());
         assertEquals(4, mapped.neighbors().getFirst().identityDomainCode());
+        assertEquals(700L, mapped.neighbors().getFirst().observedAtEpochMilliseconds());
     }
 
     @Test

@@ -7,6 +7,7 @@ package io.github.dsheirer.module.decode.dmr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -85,6 +86,35 @@ class DMRNetworkConfigurationMonitorTest
     }
 
     @Test
+    void retainsActualChannelObservationTimeAcrossCumulativeSnapshots()
+    {
+        DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor();
+
+        monitor.process(grant(802, 1, 1_000L));
+        monitor.process(grant(803, 1, 2_000L));
+        DMRNetworkConfigurationSnapshot first = monitor.getSnapshot();
+
+        assertEquals(1_000L, first.channels().stream()
+            .filter(channel -> channel.logicalChannelNumber() == 802)
+            .findFirst().orElseThrow().observedAtEpochMilliseconds());
+        assertEquals(2_000L, first.channels().stream()
+            .filter(channel -> channel.logicalChannelNumber() == 803)
+            .findFirst().orElseThrow().observedAtEpochMilliseconds());
+
+        monitor.process(grant(802, 1, 3_000L));
+        DMRNetworkConfigurationSnapshot refreshed = monitor.getSnapshot();
+
+        assertEquals(3_000L, refreshed.channels().stream()
+            .filter(channel -> channel.logicalChannelNumber() == 802)
+            .findFirst().orElseThrow().observedAtEpochMilliseconds());
+        assertEquals(2_000L, refreshed.channels().stream()
+            .filter(channel -> channel.logicalChannelNumber() == 803)
+            .findFirst().orElseThrow().observedAtEpochMilliseconds());
+        assertEquals(first, refreshed);
+        assertNotEquals(first.toString(), refreshed.toString());
+    }
+
+    @Test
     void retainsAbsoluteOverTheAirFrequencyWhenLaterGrantUsesConfiguredMap()
     {
         TimeslotFrequency mapping = mapping(844, 140_000_000L, 150_000_000L);
@@ -144,6 +174,11 @@ class DMRNetworkConfigurationMonitorTest
 
     private static TalkgroupVoiceChannelGrant grant(int lcn, int timeslot)
     {
+        return grant(lcn, timeslot, 1_000L);
+    }
+
+    private static TalkgroupVoiceChannelGrant grant(int lcn, int timeslot, long timestamp)
+    {
         CorrectedBinaryMessage bits = new CorrectedBinaryMessage(80);
         bits.load(16, 12, lcn);
 
@@ -153,7 +188,7 @@ class DMRNetworkConfigurationMonitorTest
         }
 
         return new TalkgroupVoiceChannelGrant(DMRSyncPattern.BASE_STATION_DATA, bits, null, slotType(),
-            1_000L, 1);
+            timestamp, 1);
     }
 
     private static Clear clear(int lcn)

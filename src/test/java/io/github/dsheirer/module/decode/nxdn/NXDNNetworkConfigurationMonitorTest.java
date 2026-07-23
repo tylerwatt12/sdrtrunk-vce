@@ -12,6 +12,7 @@
 package io.github.dsheirer.module.decode.nxdn;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -86,5 +87,15 @@ class NXDNNetworkConfigurationMonitorTest
         assertEquals(9, snapshot.currentRepeater());
         assertEquals("IDLE", snapshot.repeaterStatus());
         assertEquals(java.util.List.of(14), snapshot.observedRepeaters());
+        assertEquals(1_000L, snapshot.observedRepeaterTimestamp(14));
+
+        RepeaterIdle refreshed = new RepeaterIdle(message, 3_000,
+            NXDNMessageType.TYPE_D_SCCH_OUT_INFO_4_REPEATER_IDLE, 0,
+            LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE);
+        monitor.process(refreshed);
+        NXDNNetworkConfigurationSnapshot refreshedSnapshot = monitor.getSnapshot();
+        assertEquals(3_000L, refreshedSnapshot.observedRepeaterTimestamp(14));
+        assertEquals(snapshot, refreshedSnapshot);
+        assertNotEquals(snapshot.toString(), refreshedSnapshot.toString());
     }
 }

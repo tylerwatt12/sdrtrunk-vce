@@ -37,13 +37,10 @@ import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.stats.activity.P25ActivityLogMaintenance;
-import io.github.dsheirer.stats.activity.P25ActivityLogPath;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.util.ThreadPool;
-import java.nio.file.Path;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
@@ -835,7 +832,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             mClearSiteStatisticsButton = new Button("Clear Statistics for This Site");
             mClearSiteStatisticsButton.setMaxWidth(Double.MAX_VALUE);
             mClearSiteStatisticsButton.setTooltip(new Tooltip(
-                "Deletes Stats Server history and summaries owned by this P25 site."));
+                "Deletes Stats Server history and learned site observations owned by this trunked site."));
             mClearSiteStatisticsButton.setVisible(false);
             mClearSiteStatisticsButton.setManaged(false);
             mClearSiteStatisticsButton.setOnAction(event -> clearSiteStatistics());
@@ -857,8 +854,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
 
         String siteName = channel.getName() != null && !channel.getName().isBlank() ? channel.getName() : guid;
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
-            "Delete this site's channel inventory, frequency summaries, activity history, snapshots, and signal " +
-                "quality history?\n\nOther sites, shared system-wide radio/talkgroup summaries, and the channel " +
+            "Delete this site's learned channels, frequencies, neighbors, activity history, snapshots, and signal " +
+                "quality history?\n\nOther sites, shared system-wide radio/talkgroup summaries, and administrator " +
                 "configuration will not be changed. The site will reappear as new observations arrive.",
             ButtonType.YES, ButtonType.NO);
         confirmation.setTitle("Clear Site Statistics");
@@ -876,21 +873,13 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             return;
         }
 
-        Path databasePath = P25ActivityLogPath.getDatabasePath(mUserPreferences);
         mSiteStatisticsMaintenanceRunning = true;
         getClearSiteStatisticsButton().setText("Clearing Site Statistics...");
         getClearSiteStatisticsButton().setDisable(true);
+        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearSite(guid);
+        MyEventBus.getGlobalEventBus().post(request);
 
-        CompletableFuture.supplyAsync(() -> {
-            try
-            {
-                return P25ActivityLogMaintenance.clearSiteStats(databasePath, guid);
-            }
-            catch(Exception e)
-            {
-                throw new RuntimeException(e);
-            }
-        }, ThreadPool.CACHED).whenComplete((maintenanceResult, throwable) -> Platform.runLater(() -> {
+        request.result().whenComplete((maintenanceResult, throwable) -> Platform.runLater(() -> {
             mSiteStatisticsMaintenanceRunning = false;
             getClearSiteStatisticsButton().setText("Clear Statistics for This Site");
             updateClearSiteStatisticsButtonState();
@@ -920,7 +909,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
 
     private void updateClearSiteStatisticsButtonState()
     {
-        boolean supported = getDecoderType() == DecoderType.P25_PHASE1 || getDecoderType() == DecoderType.P25_PHASE2;
+        boolean supported = getDecoderType() == DecoderType.P25_PHASE1 || getDecoderType() == DecoderType.P25_PHASE2 ||
+            getDecoderType() == DecoderType.DMR || getDecoderType() == DecoderType.NXDN;
         Channel channel = getItem();
         String guid = channel != null ? channel.getRadresGuid() : null;
         getClearSiteStatisticsButton().setVisible(supported);

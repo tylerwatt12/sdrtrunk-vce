@@ -14,6 +14,7 @@ package io.github.dsheirer.module.decode.dmr.telemetry;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -69,12 +70,22 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
      * Observed DMR logical channel/timeslot and any resolved frequency mapping.
      */
     public record Channel(String descriptor, Integer logicalChannelNumber, Integer timeslot,
-                          Long downlink, Long uplink, Set<ChannelRole> roles, FrequencySource frequencySource)
+                          Long downlink, Long uplink, Set<ChannelRole> roles, FrequencySource frequencySource,
+                          long observedAtEpochMilliseconds)
     {
         public Channel
         {
             roles = roles == null || roles.isEmpty() ? Set.of(ChannelRole.OBSERVED) : Set.copyOf(roles);
             frequencySource = frequencySource == null ? FrequencySource.UNRESOLVED : frequencySource;
+        }
+
+        /**
+         * Compatibility constructor for callers that do not track observation time.
+         */
+        public Channel(String descriptor, Integer logicalChannelNumber, Integer timeslot,
+                       Long downlink, Long uplink, Set<ChannelRole> roles, FrequencySource frequencySource)
+        {
+            this(descriptor, logicalChannelNumber, timeslot, downlink, uplink, roles, frequencySource, 0);
         }
 
         /**
@@ -84,7 +95,19 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
                        Long downlink, Long uplink, ChannelRole role, FrequencySource frequencySource)
         {
             this(descriptor, logicalChannelNumber, timeslot, downlink, uplink,
-                Set.of(role == null ? ChannelRole.OBSERVED : role), frequencySource);
+                Set.of(role == null ? ChannelRole.OBSERVED : role), frequencySource, 0);
+        }
+
+        /**
+         * Convenience constructor for a timestamped observation with one channel use.
+         */
+        public Channel(String descriptor, Integer logicalChannelNumber, Integer timeslot,
+                       Long downlink, Long uplink, ChannelRole role, FrequencySource frequencySource,
+                       long observedAtEpochMilliseconds)
+        {
+            this(descriptor, logicalChannelNumber, timeslot, downlink, uplink,
+                Set.of(role == null ? ChannelRole.OBSERVED : role), frequencySource,
+                observedAtEpochMilliseconds);
         }
 
         /**
@@ -94,7 +117,7 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
                        Long downlink, Long uplink)
         {
             this(descriptor, logicalChannelNumber, timeslot, downlink, uplink,
-                ChannelRole.OBSERVED, FrequencySource.UNRESOLVED);
+                ChannelRole.OBSERVED, FrequencySource.UNRESOLVED, 0);
         }
 
         /**
@@ -113,6 +136,32 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
 
             return ChannelRole.OBSERVED;
         }
+
+        /**
+         * Observation time is telemetry freshness, not a structural configuration change. Excluding it keeps repeated
+         * observations on the bounded site-metadata heartbeat instead of triggering an immediate publish for each
+         * decoded message.
+         */
+        @Override
+        public boolean equals(Object object)
+        {
+            return object == this ||
+                object instanceof Channel other &&
+                    Objects.equals(descriptor, other.descriptor) &&
+                    Objects.equals(logicalChannelNumber, other.logicalChannelNumber) &&
+                    Objects.equals(timeslot, other.timeslot) &&
+                    Objects.equals(downlink, other.downlink) &&
+                    Objects.equals(uplink, other.uplink) &&
+                    Objects.equals(roles, other.roles) &&
+                    frequencySource == other.frequencySource;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(descriptor, logicalChannelNumber, timeslot, downlink, uplink, roles,
+                frequencySource);
+        }
     }
 
     /**
@@ -121,7 +170,45 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
     public record NeighborSite(String variant, Integer network, Integer site, String model,
                                Integer logicalChannelNumber, Long downlink, Long uplink,
                                Boolean networkConnectionActive, Integer confirmedPriority,
-                               Integer adjacentPriority)
+                               Integer adjacentPriority, long observedAtEpochMilliseconds)
     {
+        /**
+         * Compatibility constructor for callers that do not track observation time.
+         */
+        public NeighborSite(String variant, Integer network, Integer site, String model,
+                            Integer logicalChannelNumber, Long downlink, Long uplink,
+                            Boolean networkConnectionActive, Integer confirmedPriority,
+                            Integer adjacentPriority)
+        {
+            this(variant, network, site, model, logicalChannelNumber, downlink, uplink,
+                networkConnectionActive, confirmedPriority, adjacentPriority, 0);
+        }
+
+        /**
+         * Observation time does not change the neighbor's structural identity or advertised state.
+         */
+        @Override
+        public boolean equals(Object object)
+        {
+            return object == this ||
+                object instanceof NeighborSite other &&
+                    Objects.equals(variant, other.variant) &&
+                    Objects.equals(network, other.network) &&
+                    Objects.equals(site, other.site) &&
+                    Objects.equals(model, other.model) &&
+                    Objects.equals(logicalChannelNumber, other.logicalChannelNumber) &&
+                    Objects.equals(downlink, other.downlink) &&
+                    Objects.equals(uplink, other.uplink) &&
+                    Objects.equals(networkConnectionActive, other.networkConnectionActive) &&
+                    Objects.equals(confirmedPriority, other.confirmedPriority) &&
+                    Objects.equals(adjacentPriority, other.adjacentPriority);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(variant, network, site, model, logicalChannelNumber, downlink, uplink,
+                networkConnectionActive, confirmedPriority, adjacentPriority);
+        }
     }
 }

@@ -28,13 +28,13 @@ import java.sql.Statement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class TrunkedSiteV1UpgradeTest
+class TrunkedSiteV2UpgradeTest
 {
     @TempDir
     Path mTemporaryFolder;
 
     @Test
-    void installsV1OnStagedCurrentDatabaseAndPreservesData() throws Exception
+    void installsV2OnStagedCurrentDatabaseAndPreservesData() throws Exception
     {
         Path database = createWithoutTrunkedSiteSchema("migrate.sqlite");
 
@@ -45,14 +45,14 @@ class TrunkedSiteV1UpgradeTest
         }
 
         CommandResult result = run(database);
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("RESULT: Trunked-site schema installation complete: absent -> v1"));
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_SUCCESS, result.exitCode());
+        assertTrue(result.output().contains("RESULT: Trunked-site schema installation complete: absent -> v2"));
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             TrunkedSiteSchema.validate(connection);
-            assertEquals("1", TrunkedSiteSchema.schemaVersion(connection));
+            assertEquals("2", TrunkedSiteSchema.schemaVersion(connection));
             assertEquals("20", metadata(connection, "p25_activity_schema_version"));
             assertEquals(1, count(connection, "alias"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
@@ -61,15 +61,73 @@ class TrunkedSiteV1UpgradeTest
     }
 
     @Test
-    void validatesV1WithoutChangingMetadata() throws Exception
+    void migratesV1ToV2WithoutChangingSiteOrAdministratorData() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("v1.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("INSERT INTO alias(sort_order, name) VALUES (0, 'Administrator Alias')");
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_snapshot (
+                    guid, snapshot_hash, protocol_code, variant_code, identity_domain_code, configured_system,
+                    channel_name, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('dmr-v1', 'hash', 3, 1, 2, 'DMR System', 'DMR Site', 1000, 2000, 3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_channel_summary (
+                    guid, channel_number, inbound_channel_number, timeslot, frequency_hz, role_flags,
+                    first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('dmr-v1', 42, -1, 1, 451000000, 1, 1000, 2000, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_neighbor_summary (
+                    guid, variant_code, identity_domain_code, network_id, system_id, site_id, channel_number,
+                    frequency_hz, status_flags, first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('dmr-v1', 1, 2, 10, 20, 31, 43, 452000000, 1, 1000, 2000, 2)
+                """);
+            statement.executeUpdate("DROP INDEX idx_trunked_site_snapshot_last_seen");
+            statement.executeUpdate("DROP INDEX idx_trunked_site_channel_last_seen");
+            statement.executeUpdate("DROP INDEX idx_trunked_site_neighbor_last_seen");
+            SdrTrunkDatabaseStartup.setMetadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY, "1");
+            TrunkedSiteSchema.validateVersionOneForMigration(connection);
+        }
+
+        CommandResult result = run(database);
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_SUCCESS, result.exitCode());
+        assertTrue(result.output().contains("RESULT: Trunked-site schema migration complete: v1 -> v2"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            TrunkedSiteSchema.validate(connection);
+            assertEquals("2", TrunkedSiteSchema.schemaVersion(connection));
+            assertEquals(1, count(connection, "alias"));
+            assertEquals(1, count(connection, "trunked_site_snapshot"));
+            assertEquals(1, count(connection, "trunked_site_channel_summary"));
+            assertEquals(1, count(connection, "trunked_site_neighbor_summary"));
+            assertEquals("DMR System", scalar(connection,
+                "SELECT configured_system FROM trunked_site_snapshot WHERE guid='dmr-v1'"));
+            assertTrue(indexExists(connection, "idx_trunked_site_snapshot_last_seen"));
+            assertTrue(indexExists(connection, "idx_trunked_site_channel_last_seen"));
+            assertTrue(indexExists(connection, "idx_trunked_site_neighbor_last_seen"));
+            assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
+            assertFalse(hasRows(connection, "PRAGMA foreign_key_check"));
+        }
+    }
+
+    @Test
+    void validatesV2WithoutChangingMetadata() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         long updatedAt = metadataUpdatedAt(database, TrunkedSiteSchema.SCHEMA_VERSION_KEY);
 
         CommandResult result = run(database);
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("already valid at trunked-site schema v1"));
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_SUCCESS, result.exitCode());
+        assertTrue(result.output().contains("already valid at trunked-site schema v2"));
         assertEquals(updatedAt, metadataUpdatedAt(database, TrunkedSiteSchema.SCHEMA_VERSION_KEY));
     }
 
@@ -81,16 +139,16 @@ class TrunkedSiteV1UpgradeTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            SdrTrunkDatabaseStartup.setMetadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY, "2");
+            SdrTrunkDatabaseStartup.setMetadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY, "3");
         }
 
         CommandResult result = run(database);
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("absent or v1, found [2]"));
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_UNSUPPORTED_VERSION, result.exitCode());
+        assertTrue(result.error().contains("absent, v1, or v2; found [3]"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertEquals("2", TrunkedSiteSchema.schemaVersion(connection));
+            assertEquals("3", TrunkedSiteSchema.schemaVersion(connection));
             assertTrue(tableExists(connection, "trunked_site_snapshot"));
         }
     }
@@ -110,7 +168,7 @@ class TrunkedSiteV1UpgradeTest
         }
 
         CommandResult result = run(database);
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_MIGRATION_FAILED, result.exitCode());
         assertTrue(result.error().contains("ambiguous partial schema"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -132,7 +190,7 @@ class TrunkedSiteV1UpgradeTest
         }
 
         CommandResult result = run(database);
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_MIGRATION_FAILED, result.exitCode());
         assertTrue(result.error().contains("SQLite schema is missing table [p25_site_neighbor]"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
@@ -145,15 +203,15 @@ class TrunkedSiteV1UpgradeTest
     void reportsUsageAndMissingInputWithStableExitCodes()
     {
         CommandResult usage = runArguments();
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_USAGE, usage.exitCode());
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_USAGE, usage.exitCode());
         assertTrue(usage.error().contains("staged database path"));
 
         CommandResult missing = run(mTemporaryFolder.resolve("missing.sqlite"));
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_INPUT, missing.exitCode());
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_INPUT, missing.exitCode());
         assertTrue(missing.error().contains("Staged database not found"));
 
         CommandResult help = runArguments("--help");
-        assertEquals(TrunkedSiteV1Upgrade.EXIT_SUCCESS, help.exitCode());
+        assertEquals(TrunkedSiteV2Upgrade.EXIT_SUCCESS, help.exitCode());
         assertTrue(help.output().startsWith("Usage:"));
     }
 
@@ -190,7 +248,7 @@ class TrunkedSiteV1UpgradeTest
         try(PrintStream outputStream = new PrintStream(output, true, StandardCharsets.UTF_8);
             PrintStream errorStream = new PrintStream(error, true, StandardCharsets.UTF_8))
         {
-            exitCode = TrunkedSiteV1Upgrade.run(arguments, outputStream, errorStream);
+            exitCode = TrunkedSiteV2Upgrade.run(arguments, outputStream, errorStream);
         }
 
         return new CommandResult(exitCode, output.toString(StandardCharsets.UTF_8),
@@ -233,6 +291,20 @@ class TrunkedSiteV1UpgradeTest
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"))
         {
             statement.setString(1, table);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next();
+            }
+        }
+    }
+
+    private static boolean indexExists(Connection connection, String index) throws Exception
+    {
+        try(var statement = connection.prepareStatement(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?"))
+        {
+            statement.setString(1, index);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
