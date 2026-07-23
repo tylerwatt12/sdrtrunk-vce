@@ -77,4 +77,29 @@ class ConfigurationManagerIdentityTest
 
         assertFalse(ConfigurationManager.ensureUniqueBroadcastConfigurationIds(state));
     }
+
+    @Test
+    void checksProviderIdentitiesEvenWhenChannelsAlsoNeedPersistence()
+    {
+        String duplicate = "11111111-2222-4333-8444-555555555555";
+        Channel firstChannel = new Channel("First");
+        Channel secondChannel = new Channel("Second");
+        firstChannel.setConfigurationId(duplicate);
+        secondChannel.setConfigurationId(duplicate);
+        BroadcastConfiguration firstProvider = new OpenMHzConfiguration(BroadcastFormat.MP3);
+        BroadcastConfiguration secondProvider = new OpenMHzConfiguration(BroadcastFormat.MP3);
+        firstProvider.setConfigurationId(duplicate);
+        secondProvider.setConfigurationId(duplicate);
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(firstChannel, secondChannel));
+        state.setBroadcastConfigurations(List.of(firstProvider, secondProvider));
+
+        boolean channelPersistenceRequired = ConfigurationManager.ensureUniqueChannelConfigurationIds(state);
+        boolean providerPersistenceRequired = ConfigurationManager.ensureUniqueBroadcastConfigurationIds(state);
+
+        assertTrue(channelPersistenceRequired);
+        assertTrue(providerPersistenceRequired);
+        assertNotEquals(firstChannel.getConfigurationId(), secondChannel.getConfigurationId());
+        assertNotEquals(firstProvider.getConfigurationId(), secondProvider.getConfigurationId());
+    }
 }

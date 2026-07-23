@@ -454,7 +454,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
             return mConfigurationDatabaseStore.loadConfigurationState();
         }
-        catch(ChannelConfigurationIdentityPersistenceException e)
+        catch(ConfigurationIdentityPersistenceException e)
         {
             throw e;
         }
@@ -473,7 +473,10 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     private void persistGeneratedConfigurationIds(ConfigurationState state)
     {
-        if(ensureUniqueChannelConfigurationIds(state) || ensureUniqueBroadcastConfigurationIds(state))
+        boolean channelPersistenceRequired = ensureUniqueChannelConfigurationIds(state);
+        boolean providerPersistenceRequired = ensureUniqueBroadcastConfigurationIds(state);
+
+        if(channelPersistenceRequired || providerPersistenceRequired)
         {
             try
             {
@@ -484,7 +487,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             {
                 mLog.error("Unable to persist generated internal configuration identities in SQLite [{}]",
                     mConfigurationDatabaseStore.getDatabasePath(), e);
-                throw new ChannelConfigurationIdentityPersistenceException(
+                throw new ConfigurationIdentityPersistenceException(
                     "Stable configuration identities could not be saved before startup", e);
             }
         }
@@ -553,9 +556,9 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return persistenceRequired;
     }
 
-    private static final class ChannelConfigurationIdentityPersistenceException extends RuntimeException
+    private static final class ConfigurationIdentityPersistenceException extends RuntimeException
     {
-        private ChannelConfigurationIdentityPersistenceException(String message, Throwable cause)
+        private ConfigurationIdentityPersistenceException(String message, Throwable cause)
         {
             super(message, cause);
         }
