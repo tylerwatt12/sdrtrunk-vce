@@ -38,6 +38,7 @@ gradle-app.setting
 AGENTS.md
 RELEASING.md
 docs/development/main-webfirst-branch-flow.md
+docs/internal/
 
 # Machine-local maintenance scripts and data fixes
 .DS_Store

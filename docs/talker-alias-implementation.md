@@ -7,14 +7,14 @@ language and focuses on what happens to the information rather than on the sourc
 
 A talker alias is a short, human-readable name transmitted by a radio system. Examples include:
 
-- `CDP #0134`
-- `CEMS-MED24 P2`
-- `MBH-4808`
+- `DEMO-UNIT-01`
+- `DEMO-MEDIC-02`
+- `DEMO-SUPERVISOR`
 
-Every radio already has a numeric radio ID, such as `1880134`. The talker alias gives that number a useful name. A
-successful alias transmission can therefore tell SDRTrunk:
+Every radio already has a numeric radio ID, such as the fictional `1001001`. The talker alias gives that number a
+useful name. A successful alias transmission can therefore tell SDRTrunk:
 
-> Radio 1880134 identifies itself as “CDP #0134.”
+> Radio 1001001 identifies itself as “DEMO-UNIT-01.”
 
 This information comes from the radio network. It is separate from a name that an operator manually enters in an
 SDRTrunk alias list. A transmitted talker alias can be useful even when there is no manually maintained name for that
@@ -35,9 +35,9 @@ A radio ID is not always unique across every P25 system. The fuller identity is 
 WACN + system ID + radio ID
 ```
 
-For example, a complete observation may identify WACN 781824, system 1183, radio 1880134, and alias `CDP #0134`.
-Keeping the network and system information with the radio ID prevents an alias from being attached to a similarly
-numbered radio on another system.
+For example, a fictional observation may identify WACN `0xABCDE`, system `0x123`, radio `1001001`, and alias
+`DEMO-UNIT-01`. Keeping the network and system information with the radio ID prevents an alias from being attached to
+a similarly numbered radio on another system.
 
 ## Why the Alias Arrives in Pieces
 
@@ -55,7 +55,7 @@ Think of it as a small numbered package:
 A transmission may look like this:
 
 ```text
-Header: talkgroup 56132, sequence 1, five blocks coming
+Header: fictional talkgroup 101, sequence 1, five blocks coming
 Block 1
 Block 2
 Block 3
@@ -94,8 +94,8 @@ The alias is not sent as ordinary readable letters. Motorola applies its own rep
 reverses that representation and reconstructs the characters that make up the name.
 
 Some internal messages show a prefix such as `TA-`. That prefix identifies the type of information inside SDRTrunk. It
-is not part of the name stored in the statistics table. For example, an internal identifier shown as `TA-CDP #0134`
-is stored and displayed as `CDP #0134`.
+is not part of the name stored in the statistics table. For example, an internal identifier shown as
+`TA-DEMO-UNIT-01` is stored and displayed as `DEMO-UNIT-01`.
 
 ## The Checksum Protects the Result
 
@@ -155,8 +155,8 @@ When the complete set is available, it:
 
 A trunked P25 system normally has a control channel and several traffic frequencies.
 
-The control channel directs radios to an available traffic frequency for each call. One call might use 854.3375 MHz,
-while another uses 854.9625 MHz.
+The control channel directs radios to an available traffic frequency for each call. One call might use one configured
+traffic channel, while another uses a different configured traffic channel.
 
 SDRTrunk creates a traffic decoder for a frequency being used. In this context, a decoder is the part listening to and
 understanding that frequency. It handles voice-related signaling as well as the audio itself.
@@ -177,9 +177,9 @@ Once an assembler produces a complete, checksum-valid alias, the result moves th
 While SDRTrunk is running, it keeps a fast in-memory map similar to:
 
 ```text
-1880134 -> CDP #0134
-1882011 -> CDP #2011
-1830224 -> CEMS-MED24 P2
+1001001 -> DEMO-UNIT-01
+1001002 -> DEMO-UNIT-02
+1001003 -> DEMO-MEDIC-02
 ```
 
 This allows later calls from a known radio to be labeled immediately, even when the later call does not carry another
@@ -240,7 +240,7 @@ The live map and the SQLite database serve different purposes.
 
 The live map is fast. It helps label calls immediately while the application is running:
 
-> This call is from radio 1880134, which is currently known as CDP #0134.
+> This call is from fictional radio 1001001, which is currently known as DEMO-UNIT-01.
 
 The database is durable. It supports statistics tables, historical inspection, and information that remains useful
 after the alias was first received.

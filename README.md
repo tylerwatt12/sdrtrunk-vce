@@ -102,14 +102,6 @@ code cleanup are summarized by area instead of listing every changed source file
 
 Select any screenshot to view it at full resolution.
 
-### Desktop Application
-
-<p align="center">
-  <a href="docs/screenshots/desktop-systems-workspace.png"><img src="docs/screenshots/desktop-systems-workspace.png" width="85%" alt="Desktop sdrtrunk-vce Systems workspace showing stable P25 channel rows, recent events, stream status, and runtime health"></a>
-  <br>
-  <strong>Systems workspace</strong> — stable channel rows, recent events, stream status, and portable-runtime health.
-</p>
-
 ### Web Console
 
 <p align="center">

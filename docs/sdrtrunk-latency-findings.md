@@ -4,8 +4,8 @@ Date: 2026-07-17
 
 ## Current conclusion
 
-The measured BOSGAME and CUBI systems do not show a present problem with SDRTrunk starting traffic decoders too late
-to recover the beginning of normal P25 voice calls.
+The measured development receiver and low-spec reference receiver do not show a present problem with SDRTrunk
+starting traffic decoders too late to recover the beginning of normal P25 voice calls.
 
 There are measurable places where the software can be made faster, but the tested improvements save tens of
 milliseconds inside a normal setup margin of several hundred milliseconds. They are not currently expected to change
@@ -32,8 +32,8 @@ onset. It can contain synchronization, terminators, headers, idle data, or other
 
 ## Normal control-path measurements
 
-Normal BOSGAME operation was measured across 134 grants with a 10 MHz Airspy covering the control and traffic
-frequencies. No receiver retune was needed.
+Normal operation on the development receiver was measured across 134 grants with a 10 MHz Airspy covering the
+configured control and traffic channels. No receiver retune was needed.
 
 | Measurement | Median | 95th percentile | Maximum |
 |---|---:|---:|---:|
@@ -60,7 +60,7 @@ below 11 ms. This was a startup event, not evidence of continuing control-channe
 Wideband IQ recordings were used to compare the grant, traffic-signal onset, first IQ delivered to the traffic
 decoder, and subsequent P25 output on a shared RF timeline.
 
-On CUBI, 17 calls had a clear traffic-frequency power transition:
+On the low-spec reference receiver, 17 calls had a clear traffic-frequency power transition:
 
 - traffic carrier onset occurred about 86 ms before the grant at the median;
 - first traffic IQ reached the new decoder about 10.5 ms after the grant on the RF timestamp scale;
@@ -72,10 +72,10 @@ On CUBI, 17 calls had a clear traffic-frequency power transition:
 The smallest measured interval between first decoder IQ and audio-call creation was approximately 270 ms. The median
 interval was approximately 386 ms. This is much larger than the measured software startup time.
 
-A separate BOSGAME forced-retune comparison reached the same conclusion. The first RTL traffic IQ arrived about
-42.5 ms after the grant. The first normally observed 180 ms voice-bearing LDU completed around 569 ms after the grant,
-placing the beginning of that LDU around 389 ms after the grant. The resulting estimated setup margin was about
-334 ms. The forced Airspy path had approximately 379 ms of margin.
+A separate forced-retune comparison on the development receiver reached the same conclusion. The first RTL traffic IQ
+arrived about 42.5 ms after the grant. The first normally observed 180 ms voice-bearing LDU completed around 569 ms
+after the grant, placing the beginning of that LDU around 389 ms after the grant. The resulting estimated setup margin
+was about 334 ms. The forced Airspy path had approximately 379 ms of margin.
 
 These results apply to the measured P25 systems and call sequences. Late entry into an existing call, unusual system
 signaling, severe RF fading, or sustained computer overload can produce a different result.
@@ -96,7 +96,7 @@ An experimental path used 5 ms scheduling intervals and a 1,024-sample output bu
 
 The smaller output buffer substantially improved delivery of the first IQ samples, but median decoded audio improved
 by only about 9 ms. All measured grants started successfully under both settings. No large CPU penalty was visible on
-BOSGAME, although the smaller buffer creates twice as many downstream buffer deliveries.
+the development receiver, although the smaller buffer creates twice as many downstream buffer deliveries.
 
 This is a valid optimization candidate if a future system shows insufficient setup margin. The measurements do not
 show that it is currently required to prevent clipped speech.
@@ -106,8 +106,8 @@ show that it is currently required to prevent clipped speech.
 A receiver does not need to retune for each traffic channel when its existing wideband sample stream already covers
 that channel. The channelizer can create multiple control and traffic channels from the same wideband stream.
 
-During normal BOSGAME operation, the 10 MHz Airspy covered all 134 observed GCRCN traffic grants, spanning 851.9000
-through 855.8875 MHz, while the control channel remained at 856.1625 MHz. The Airspy center frequency did not move.
+During normal operation on the development receiver, the 10 MHz Airspy covered all 134 observed P25 traffic grants
+and the configured control channel. The Airspy center frequency did not move.
 
 The forced-retune tests deliberately narrowed or restricted receiver selection to measure the hardware path:
 
@@ -121,9 +121,9 @@ The Airspy hardware command was much faster, but any physical retune changes the
 active decoder using that receiver sees an RF discontinuity, regardless of how quickly the command returns.
 
 In the forced narrow-band Airspy test, three retunes aligned with a missing 180 ms P25 LDU on an existing call. This
-did not occur during normal 10 MHz BOSGAME operation because no retunes occurred. The important optimization is
-therefore avoiding a physical retune, especially on a receiver carrying active calls, rather than removing a few
-milliseconds from the hardware command.
+did not occur during normal 10 MHz operation on the development receiver because no retunes occurred. The important
+optimization is therefore avoiding a physical retune, especially on a receiver carrying active calls, rather than
+removing a few milliseconds from the hardware command.
 
 A future receiver-selection policy should prefer, in order:
 
@@ -137,7 +137,8 @@ RTL-SDR exception.
 
 ## RTL-SDR optimization experiments
 
-Forced BOSGAME tests used an RTL-2832/R828D Blog V4 at 2.4 MHz while the Airspy remained on the control channel.
+Forced tests on the development receiver used an RTL-2832/R828D Blog V4 at a 2.4 MHz sample rate while the Airspy
+remained on the control channel.
 
 The following experimental changes were successful:
 
@@ -148,7 +149,7 @@ The following experimental changes were successful:
 
 The command changes reduced the R828D median tuning command from approximately 32.8 ms to approximately 22.5 ms.
 The smaller USB block reduced median first decoder IQ in the final comparison from 47.9 ms to 35.1 ms. The 32,768-byte
-setting showed almost no change in total BOSGAME CPU consumption.
+setting showed almost no change in total development-receiver CPU consumption.
 
 These improvements are real but save only about 10–13 ms at the decoder-input stage in the final comparison. That is
 small relative to the measured 300-plus-millisecond setup margin. They were documented as future candidates rather
@@ -162,8 +163,9 @@ Two variations should not be repeated without a new reason and careful isolation
   32,768-byte setting. It also quadrupled callback frequency relative to 65,536 bytes.
 
 The final RTL tests produced 18,572 valid P25 frame events with no runtime USB errors, channelizer overflow warnings,
-PLL-lock failures, crash, or stalled decoder. They validated BOSGAME's R828D at 800 MHz. No R820T/R820T2 receiver was
-available, and CUBI had no RTL-SDR, so broader hardware coverage was not established.
+PLL-lock failures, crash, or stalled decoder. They validated the development receiver's R828D in the tested
+public-safety band. No R820T/R820T2 receiver was available, and the low-spec reference receiver had no RTL-SDR, so
+broader hardware coverage was not established.
 
 USB sample transfers continue while an RTL tuner command is running. A completed block can contain samples from the
 old center frequency, the tuning transition, the new center frequency, or a combination. A future diagnostic can tag
