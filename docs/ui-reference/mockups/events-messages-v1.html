@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce — Events and Messages mockup</title>
+  <style>
+    :root {
+      color-scheme:light dark;
+      --page:#edf1f4; --surface:#fff; --surface-2:#f5f7f9; --surface-3:#e8edf1;
+      --ink:#18212a; --muted:#65717d; --line:#c9d1d8; --line-strong:#9ba8b3;
+      --header:#202a33; --header-2:#2c3944; --accent:#0b7168; --accent-hover:#095d56;
+      --accent-soft:#d9efec; --blue:#075eaa; --blue-soft:#e7f1fb; --warning:#8a5200;
+      --warning-soft:#fff1d6; --danger:#9b2743; --danger-soft:#fbe8ed;
+      --success:#176b3a; --success-soft:#e2f3e9; --violet:#6d3ba3; --violet-soft:#f0e8fa;
+      --shadow:0 6px 20px rgb(20 32 44 / 9%);
+      font-family:"Segoe UI",Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+    }
+    @media (prefers-color-scheme:dark) {
+      :root {
+        --page:#111820; --surface:#18212a; --surface-2:#202b35; --surface-3:#2b3742;
+        --ink:#e5ebf0; --muted:#aeb8c1; --line:#3b4854; --line-strong:#596976;
+        --header:#0d1318; --header-2:#24313b; --accent:#55c7ba; --accent-hover:#79d6cc;
+        --accent-soft:#193d39; --blue:#82bff3; --blue-soft:#18324a; --warning:#f0bd67;
+        --warning-soft:#48351c; --danger:#ff99b0; --danger-soft:#4a222c;
+        --success:#85d6a2; --success-soft:#193b27; --violet:#d2a8ff; --violet-soft:#342446;
+        --shadow:0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+    * { box-sizing:border-box; }
+    html { min-width:320px; background:var(--page); }
+    body { min-height:100vh; margin:0; color:var(--ink); background:var(--page); font-size:14px; }
+    button,input,select,textarea { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:7px; }
+    button { min-height:36px; padding:7px 12px; cursor:pointer; }
+    button:hover:not(:disabled) { border-color:var(--accent); }
+    button:disabled { cursor:not-allowed; opacity:.5; }
+    button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible {
+      outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent); outline-offset:2px;
+    }
+    [hidden] { display:none !important; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+    .topbar { position:sticky; top:0; z-index:30; min-height:52px; display:grid; grid-template-columns:max-content minmax(0,1fr) max-content; align-items:center; gap:20px; padding:0 18px; color:#fff; background:var(--header); border-bottom:1px solid #0e151b; box-shadow:0 2px 8px rgb(0 0 0 / 18%); }
+    .brand { color:#fff; font-size:17px; font-weight:760; text-decoration:none; white-space:nowrap; }
+    .main-nav { align-self:stretch; display:flex; min-width:0; gap:2px; overflow-x:auto; }
+    .main-nav a { min-height:51px; display:flex; align-items:center; padding:0 13px; color:#dce4eb; border-bottom:3px solid transparent; text-decoration:none; white-space:nowrap; }
+    .main-nav a:hover,.main-nav a.active { color:#fff; background:var(--header-2); border-bottom-color:#35b8a9; }
+    .account-area { display:flex; align-items:center; gap:8px; color:#dce4eb; white-space:nowrap; font-size:12px; }
+    .account-dot { width:8px; height:8px; border-radius:50%; background:#54d177; box-shadow:0 0 0 3px rgb(84 209 119 / 16%); }
+    .topbar button { min-height:32px; padding:4px 9px; color:#fff; background:transparent; border-color:#71808d; }
+    .topbar .settings-link { color:#fff; background:#2e625e; border-color:#5c918b; }
+
+    .review-strip { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:9px 18px; padding:9px 18px; color:var(--blue); background:var(--blue-soft); border-bottom:1px solid color-mix(in srgb,var(--blue) 35%,var(--line)); }
+    .review-strip strong { color:var(--ink); }
+    .review-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    .review-actions label { color:var(--ink); font-size:.76rem; font-weight:720; }
+    .review-actions select { min-height:34px; max-width:310px; padding:5px 30px 5px 8px; }
+    .primary { color:#fff; background:var(--accent); border-color:var(--accent); font-weight:720; }
+    .primary:hover:not(:disabled) { background:var(--accent-hover); }
+
+    .page { width:min(1540px,100%); margin:0 auto; padding:20px clamp(10px,2vw,26px) 48px; }
+    .page-head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:14px; margin-bottom:13px; }
+    .page-head h1 { margin:0; font-size:clamp(1.5rem,3vw,2.05rem); letter-spacing:-.025em; }
+    .page-head p { max-width:850px; margin:6px 0 0; color:var(--muted); line-height:1.45; }
+    .status-row,.actions,.context-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    .badge,.pill { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:.7rem; font-weight:760; white-space:nowrap; }
+    .badge::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+    .good { color:var(--success); background:var(--success-soft); }
+    .warn { color:var(--warning); background:var(--warning-soft); }
+    .bad { color:var(--danger); background:var(--danger-soft); }
+    .info { color:var(--blue); background:var(--blue-soft); }
+    .neutral { color:var(--muted); background:var(--surface-3); }
+
+    .notice { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; padding:11px 13px; color:var(--warning); background:var(--warning-soft); border:1px solid color-mix(in srgb,var(--warning) 38%,var(--line)); border-radius:9px; }
+    .notice strong { display:block; color:var(--ink); }
+    .notice p { margin:3px 0 0; font-size:.75rem; line-height:1.4; }
+    .context-card { display:grid; grid-template-columns:minmax(240px,1.35fr) minmax(180px,.75fr) minmax(180px,.75fr) max-content; gap:1px; margin-bottom:12px; overflow:hidden; background:var(--line); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); }
+    .context-cell { min-width:0; padding:11px 13px; background:var(--surface); }
+    .context-cell span { display:block; color:var(--muted); font-size:.66rem; font-weight:740; letter-spacing:.04em; text-transform:uppercase; }
+    .context-cell strong { display:block; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.79rem; }
+    .context-actions { justify-content:flex-end; padding:9px 11px; background:var(--surface); }
+    .context-actions a { color:var(--accent); font-weight:720; text-decoration:none; }
+
+    .workspace { overflow:hidden; background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); }
+    .route-tabs { display:flex; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .route-tab { min-height:48px; padding:0 18px; border:0; border-right:1px solid var(--line); border-radius:0; background:transparent; font-weight:760; }
+    .route-tab[aria-selected="true"] { color:var(--accent); background:var(--surface); box-shadow:inset 0 -3px 0 var(--accent); }
+    .toolbar { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
+    .toolbar .spacer { flex:1 1 auto; }
+    .toolbar button { min-height:35px; }
+    .row-limit { min-width:205px; }
+    .row-limit label,.search label { display:flex; align-items:center; gap:5px; margin-bottom:4px; color:var(--muted); font-size:.68rem; font-weight:720; }
+    .row-label { display:flex; align-items:center; gap:5px; margin-bottom:4px; }
+    .row-label label { margin:0; }
+    .row-limit-line { display:grid; grid-template-columns:minmax(110px,1fr) 52px; gap:7px; align-items:center; }
+    .row-limit input[type="range"] { width:100%; accent-color:var(--accent); }
+    .row-limit output { text-align:right; font-variant-numeric:tabular-nums; }
+    .search { flex:1 1 240px; max-width:450px; }
+    .search input { width:100%; min-height:35px; padding:7px 9px; }
+    .help { width:20px; height:20px; min-width:20px; min-height:20px; max-width:20px; max-height:20px; flex:0 0 20px; aspect-ratio:1; align-self:center; padding:0; display:inline-grid; place-items:center; color:var(--blue); background:transparent; border:1px solid currentColor; border-radius:50%; font-size:.7rem; font-weight:800; line-height:1; }
+    .toolbar > button.help { flex:0 0 20px; }
+    .feed-state { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:39px; padding:7px 12px; color:var(--muted); background:var(--surface-2); border-bottom:1px solid var(--line); font-size:.72rem; }
+    .new-count { color:var(--blue); background:var(--blue-soft); }
+
+    .table-wrap { min-height:390px; max-height:590px; overflow:auto; }
+    table { width:100%; min-width:1240px; border-collapse:separate; border-spacing:0; font-size:.73rem; }
+    th { position:sticky; top:0; z-index:2; padding:0; color:var(--muted); background:var(--surface-2); border-bottom:1px solid var(--line-strong); text-align:left; font-size:.68rem; letter-spacing:.025em; }
+    th button { width:100%; min-height:36px; padding:8px; color:inherit; background:transparent; border:0; border-radius:0; text-align:left; font-size:inherit; font-weight:760; }
+    th button[data-active-sort]::after { content:" " attr(data-sort-arrow); color:var(--accent); }
+    td { height:38px; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+    tbody tr { cursor:pointer; }
+    tbody tr:hover,tbody tr:focus { background:var(--surface-2); outline:none; }
+    tbody tr.live-row { box-shadow:inset 3px 0 0 var(--success); }
+    tbody tr.invalid { color:var(--muted); }
+    .mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric:tabular-nums; }
+    .identity strong,.identity span { display:block; }
+    .identity span { margin-top:2px; color:var(--muted); font-size:.67rem; }
+    .event-kind { color:var(--blue); background:var(--blue-soft); }
+    .encrypted { color:var(--violet); background:var(--violet-soft); }
+    .command { color:var(--warning); background:var(--warning-soft); }
+    .registration { color:var(--accent); background:var(--accent-soft); }
+    .message-text { max-width:680px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .empty { min-height:350px; display:grid; place-items:center; padding:30px; text-align:center; }
+    .empty h2 { margin:0; font-size:1.2rem; }
+    .empty p { max-width:500px; margin:8px auto 0; color:var(--muted); line-height:1.5; }
+    .mobile-list { display:none; }
+
+    dialog { width:min(680px,calc(100vw - 24px)); max-height:calc(100vh - 32px); padding:0; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:11px; box-shadow:0 18px 60px rgb(0 0 0 / 35%); }
+    dialog::backdrop { background:rgb(5 11 17 / 62%); }
+    .dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:14px 16px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .dialog-head h2 { margin:0; font-size:1.12rem; }
+    .dialog-head p { margin:5px 0 0; color:var(--muted); font-size:.74rem; }
+    .icon-button { width:36px; min-width:36px; padding:0; font-size:1.05rem; }
+    .dialog-body { max-height:65vh; overflow:auto; padding:15px 16px; }
+    .dialog-foot { display:flex; justify-content:flex-end; gap:8px; padding:11px 16px; background:var(--surface-2); border-top:1px solid var(--line); }
+    .filter-tools { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+    .filter-tree { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+    .filter-group { padding:9px 10px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .check { display:flex; align-items:flex-start; gap:8px; }
+    .check input { margin-top:3px; accent-color:var(--accent); }
+    .check strong,.check span { display:block; }
+    .check span { margin-top:3px; color:var(--muted); font-size:.7rem; line-height:1.4; }
+    .detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .detail-field { min-width:0; padding:9px; background:var(--surface-2); border-radius:7px; }
+    .detail-field span { display:block; color:var(--muted); font-size:.65rem; font-weight:720; text-transform:uppercase; letter-spacing:.04em; }
+    .detail-field strong { display:block; margin-top:4px; overflow-wrap:anywhere; font-size:.77rem; }
+    .full-text { grid-column:1 / -1; }
+
+    .help-popover { position:fixed; z-index:120; width:min(330px,calc(100vw - 24px)); padding:10px 11px; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:8px; box-shadow:var(--shadow); font-size:.73rem; line-height:1.45; }
+    .review-scrim { position:fixed; inset:0; z-index:80; background:rgb(6 12 18 / 56%); }
+    .review-drawer { position:fixed; top:0; right:0; bottom:0; z-index:90; width:min(550px,100vw); display:flex; flex-direction:column; background:var(--surface); border-left:1px solid var(--line); box-shadow:-10px 0 35px rgb(0 0 0 / 26%); }
+    .review-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:15px 16px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .review-head h2 { margin:0; font-size:1.15rem; }
+    .review-head p { margin:5px 0 0; color:var(--muted); font-size:.76rem; }
+    .review-content { flex:1 1 auto; overflow-y:auto; padding:13px; }
+    .review-card { margin-bottom:11px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .review-card h3 { margin:0; font-size:.88rem; }
+    .review-card p { margin:5px 0 9px; color:var(--muted); font-size:.72rem; line-height:1.42; }
+    .review-card select,.review-card textarea { width:100%; padding:7px 8px; }
+    .review-card textarea { min-height:74px; margin-top:7px; resize:vertical; }
+    .review-card-foot { display:flex; justify-content:space-between; gap:8px; margin-top:5px; color:var(--muted); font-size:.66rem; }
+    .review-footer { padding:12px 14px; background:var(--surface-2); border-top:1px solid var(--line); }
+    .review-save-state { margin:0 0 8px; color:var(--muted); font-size:.7rem; }
+    .review-footer-buttons { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+    .danger { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 55%,var(--line)); }
+    .toast { position:fixed; left:50%; bottom:20px; z-index:140; max-width:min(520px,calc(100vw - 24px)); transform:translateX(-50%); padding:10px 13px; color:#fff; background:#15212a; border-radius:8px; box-shadow:var(--shadow); font-size:.76rem; }
+
+    @media (max-width:900px) {
+      .context-card { grid-template-columns:1fr 1fr; }
+      .context-actions { justify-content:flex-start; }
+      .table-wrap { display:none; }
+      .mobile-list { display:grid; gap:8px; min-height:350px; max-height:640px; padding:10px; overflow:auto; }
+      .mobile-row { width:100%; display:grid; gap:7px; padding:11px; text-align:left; background:var(--surface-2); border:1px solid var(--line); }
+      .mobile-top { display:flex; justify-content:space-between; gap:10px; }
+      .mobile-meta { display:flex; flex-wrap:wrap; gap:6px 12px; color:var(--muted); font-size:.68rem; }
+    }
+    @media (max-width:700px) {
+      .topbar { grid-template-columns:max-content minmax(0,1fr); gap:10px; padding:0 11px; }
+      .main-nav { grid-column:1 / -1; order:3; height:44px; }
+      .main-nav a { min-height:43px; }
+      .account-area { justify-self:end; }
+      .review-strip { padding:9px 11px; }
+      .review-strip > span,.review-actions { width:100%; }
+      .review-actions select { flex:1 1 190px; min-width:0; max-width:none; }
+      .page { padding:15px 9px 34px; }
+      .context-card { grid-template-columns:1fr; }
+      .context-cell strong { white-space:normal; }
+      .route-tab { flex:1 1 0; padding:0 8px; }
+      .toolbar > button { flex:1 1 auto; }
+      .row-limit,.search { flex:1 1 100%; max-width:none; }
+      .detail-grid { grid-template-columns:1fr; }
+      .full-text { grid-column:auto; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="admin-dashboard-live-v1.html">sdrtrunk-vce</a>
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="public-listener-recordings-v2.html#listen">Listen</a>
+      <a href="public-listener-recordings-v2.html#recordings">Recordings</a>
+      <a href="admin-dashboard-live-v1.html">Dashboard</a>
+      <a href="admin-dashboard-live-v1.html#live">Live</a>
+      <a class="active" href="#events" data-route="events">Events</a>
+      <a href="#messages" data-route="messages">Messages</a>
+      <a href="admin-dashboard-live-v1.html">Systems &amp; Sites</a>
+      <a href="admin-dashboard-live-v1.html">Conventional</a>
+      <a href="admin-dashboard-live-v1.html">Credits</a>
+    </nav>
+    <div class="account-area"><span id="account-dot" class="account-dot"></span><span id="account-label">Administrator</span><a id="settings-link" class="settings-link" href="settings-shell-hardware-v1.html">Settings</a></div>
+  </header>
+
+  <div class="review-strip">
+    <span><strong>Interactive layout draft.</strong> Synthetic examples only; this does not connect to a receiver.</span>
+    <div class="review-actions">
+      <label for="preview">Preview a state</label>
+      <select id="preview">
+        <option value="normal">Live updates</option>
+        <option value="burst">Fast traffic burst</option>
+        <option value="exact">Exact traffic channel · timeslot 1</option>
+        <option value="public">Public read-only view</option>
+        <option value="revoked">Public access turned off while connected</option>
+        <option value="paused">Paused with new items waiting</option>
+        <option value="reconnecting">Reconnecting with older rows retained</option>
+        <option value="gap">Missed-update refresh required</option>
+        <option value="rebind">Control channel changing</option>
+        <option value="empty">No activity yet</option>
+        <option value="nomatch">Filters match nothing</option>
+        <option value="locked">Messages admin-only · Events public</option>
+      </select>
+      <button id="open-review" class="primary" type="button">Review this layout</button>
+    </div>
+  </div>
+
+  <main class="page">
+    <header class="page-head">
+      <div><h1 id="page-title">Events</h1><p id="page-copy">Decoded activity for the selected site or channel. Newest changes stay at the top without interrupting radio processing.</p></div>
+      <div class="status-row"><span id="age" class="pill info">Updated just now</span><span id="connection" class="badge good">Live</span></div>
+    </header>
+    <div id="notice" class="notice" hidden></div>
+
+    <section class="context-card" aria-label="Selected Live context">
+      <div class="context-cell"><span>System and site</span><strong>GCRCN · Cuyahoga County Simulcast</strong></div>
+      <div class="context-cell"><span>Selected scope</span><strong id="scope-value">Entire site</strong></div>
+      <div class="context-cell"><span id="context-label">Control channel</span><strong id="frequency-value">855.987500 MHz</strong></div>
+      <div class="context-actions"><a href="admin-dashboard-live-v1.html#live">Change selection in Live</a></div>
+    </section>
+
+    <section class="workspace" aria-labelledby="page-title">
+      <div class="route-tabs" role="tablist" aria-label="Activity view">
+        <button id="events-tab" class="route-tab" type="button" role="tab" aria-selected="true" data-tab="events">Events</button>
+        <button id="messages-tab" class="route-tab" type="button" role="tab" aria-selected="false" data-tab="messages">Messages</button>
+      </div>
+      <div id="workspace-content"></div>
+    </section>
+  </main>
+
+  <dialog id="filter-dialog" aria-labelledby="filter-title">
+    <header class="dialog-head"><div><h2 id="filter-title">Event filters</h2><p id="filter-copy">Choose which decoded activity appears in this browser.</p></div><button class="icon-button" type="button" data-close-dialog="filter-dialog" aria-label="Close">×</button></header>
+    <div class="dialog-body"><div class="filter-tools"><button id="select-all" type="button">Select all</button><button id="select-none" type="button">Select none</button></div><ul id="filter-tree" class="filter-tree"></ul></div>
+    <footer class="dialog-foot"><button type="button" data-close-dialog="filter-dialog">Cancel</button><button id="apply-filters" class="primary" type="button">Apply filters</button></footer>
+  </dialog>
+
+  <dialog id="detail-dialog" aria-labelledby="detail-title">
+    <header class="dialog-head"><div><h2 id="detail-title">Event details</h2><p>Normalized browser details for this one row.</p></div><button class="icon-button" type="button" data-close-dialog="detail-dialog" aria-label="Close">×</button></header>
+    <div id="detail-body" class="dialog-body"></div>
+    <footer class="dialog-foot"><button class="primary" type="button" data-close-dialog="detail-dialog">Done</button></footer>
+  </dialog>
+
+  <div id="help-popover" class="help-popover" role="tooltip" hidden></div>
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" aria-labelledby="review-title" hidden>
+    <header class="review-head"><div><h2 id="review-title">Events and Messages review</h2><p>Decisions and notes stay in this browser until downloaded.</p></div><button id="close-review" class="icon-button" type="button" aria-label="Close review">×</button></header>
+    <div id="review-content" class="review-content"></div>
+    <footer class="review-footer"><p id="review-save-state" class="review-save-state"></p><div class="review-footer-buttons"><button id="clear-review" class="danger" type="button">Clear notes</button><button id="download-review" type="button">Download answers</button><button id="done-review" class="primary" type="button">Done</button></div></footer>
+  </aside>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script>
+  (function(){
+    "use strict";
+    var route="events", scenario="normal", paused=false, cleared=false, search="", rowLimit=200, sortKey="", sortDirection="desc";
+    var eventFilters=[
+      ["voice","Voice calls","Clear and completed voice grants"],
+      ["encrypted","Voice calls — encrypted","Encrypted voice grants kept separate from clear calls"],
+      ["data","Data calls","Packet and other data-channel grants"],
+      ["commands","Commands","Channel grants, updates, patches, and other decoded commands"],
+      ["registrations","Registrations","Radio registration and affiliation activity"],
+      ["other","Other","Decoded events that do not fit a category above"]
+    ];
+    var messageFilters=[
+      ["headers","Headers","Network status and frame headers"],
+      ["trunking","Trunking commands","Opcode groups such as grants, updates, registrations, and affiliations"],
+      ["voice","Voice","Voice frame and signaling messages"],
+      ["packet","Packet and data","Packet, PDU, and SNDCP messages"],
+      ["terminator","Terminators","Call-ending and link-control terminators"],
+      ["sync","Sync loss","Decoder synchronization-loss notices"],
+      ["other","Other","Protocol messages outside the groups above"]
+    ];
+    var enabled={events:new Set(eventFilters.map(function(x){return x[0];})),messages:new Set(messageFilters.map(function(x){return x[0];}))};
+    var events=[
+      {id:"e1",time:"14:42:18.614",duration:"3.7 s",kind:"Call",category:"voice",from:"Radio 1817123",fromId:"1817123",to:"Lakewood Police Dispatch",toId:"TG 13511",channel:"12-1529 · TS 1",frequency:"855.237500",details:"Group call · P25 Phase 2",live:true},
+      {id:"e2",time:"14:42:18.420",duration:"0.3 s",kind:"Channel grant",category:"commands",from:"—",fromId:"",to:"Fireground 4",toId:"TG 14424",channel:"11-0681 · TS 2",frequency:"854.137500",details:"Traffic channel update"},
+      {id:"e3",time:"14:42:17.997",duration:"1.1 s",kind:"Encrypted call",category:"encrypted",from:"Radio 1815990",fromId:"1815990",to:"County Investigations",toId:"TG 13770",channel:"12-1055 · TS 1",frequency:"854.762500",details:"AES encrypted · P25 Phase 2"},
+      {id:"e4",time:"14:42:17.260",duration:"0.2 s",kind:"Registration",category:"registrations",from:"Radio 1818317",fromId:"1818317",to:"GCRCN",toId:"WACN BEE00",channel:"Control",frequency:"855.987500",details:"Unit registration accepted"},
+      {id:"e5",time:"14:42:16.881",duration:"0.4 s",kind:"Data call",category:"data",from:"Radio 1812004",fromId:"1812004",to:"Data service",toId:"TG 65535",channel:"11-0543 · TS 2",frequency:"853.962500",details:"Packet data grant"},
+      {id:"e6",time:"14:42:15.502",duration:"6.9 s",kind:"Call",category:"voice",from:"Radio 1813402",fromId:"1813402",to:"Cleveland EMS",toId:"TG 14509",channel:"12-0417 · TS 1",frequency:"856.112500",details:"Group call complete"},
+      {id:"e7",time:"14:42:14.111",duration:"0.2 s",kind:"Patch update",category:"other",from:"—",fromId:"",to:"Police Event 2",toId:"TG 13544",channel:"Control",frequency:"855.987500",details:"Talkgroup patch added"}
+    ];
+    var messages=[
+      {id:"m1",time:"14:42:18.614",protocol:"P25 Phase 1",slot:"—",valid:true,category:"trunking",text:"TSBK GRP_V_CH_GRANT_UPDT: CHAN 12-1529 GROUP 13511 SERVICE OPTIONS 0",identifiers:"Talkgroup 13511 · Channel 12-1529"},
+      {id:"m2",time:"14:42:18.420",protocol:"P25 Phase 1",slot:"—",valid:true,category:"trunking",text:"TSBK MOTOROLA GROUP REGROUP CHANNEL GRANT UPDATE",identifiers:"Talkgroup 14424 · Channel 11-0681"},
+      {id:"m3",time:"14:42:18.003",protocol:"P25 Phase 1",slot:"—",valid:true,category:"headers",text:"NETWORK STATUS BROADCAST ABBREVIATED WACN:BEE00 SYSTEM:49F NAC:49F",identifiers:"WACN BEE00 · System 49F · NAC 49F"},
+      {id:"m4",time:"14:42:17.711",protocol:"P25 Phase 1",slot:"—",valid:false,category:"other",text:"CRC FAILED — TSBK OPCODE 0x3A",identifiers:"No reliable identifiers"},
+      {id:"m5",time:"14:42:17.260",protocol:"P25 Phase 1",slot:"—",valid:true,category:"trunking",text:"UNIT REGISTRATION RESPONSE: SOURCE 1818317 ACCEPTED",identifiers:"Radio 1818317"},
+      {id:"m6",time:"14:42:16.881",protocol:"P25 Phase 1",slot:"—",valid:true,category:"packet",text:"SNDCP DATA CHANNEL GRANT: SOURCE 1812004 TARGET 65535",identifiers:"Radio 1812004 · Talkgroup 65535"},
+      {id:"m7",time:"14:42:15.103",protocol:"P25 Phase 1",slot:"—",valid:true,category:"sync",text:"SYNC LOSS: 144 BITS",identifiers:"No identifiers"},
+      {id:"m8",time:"14:42:14.833",protocol:"P25 Phase 1",slot:"—",valid:true,category:"terminator",text:"TERMINATOR DATA UNIT WITH LINK CONTROL",identifiers:"Talkgroup 14509 · Radio 1813402"}
+    ];
+    var trafficMessages=[
+      {id:"tm1",time:"14:42:18.614",protocol:"P25 Phase 2",slot:"1",valid:true,category:"voice",text:"SACCH TIMESLOT 1: GROUP 13511 SOURCE 1817123 VOICE SERVICE OPTIONS 0",identifiers:"Talkgroup 13511 · Radio 1817123"},
+      {id:"tm2",time:"14:42:18.364",protocol:"P25 Phase 2",slot:"1",valid:true,category:"headers",text:"FACCH TIMESLOT 1: NETWORK BEE00-49F NAC 49F",identifiers:"WACN BEE00 · System 49F · NAC 49F"},
+      {id:"tm3",time:"14:42:18.114",protocol:"P25 Phase 2",slot:"1",valid:true,category:"terminator",text:"VOICE TERMINATOR TIMESLOT 1: GROUP 13511 SOURCE 1817123",identifiers:"Talkgroup 13511 · Radio 1817123"}
+    ];
+    var helpText={
+      rows:"This is the most activity this browser keeps visible, from 0 to 2,000 rows. It does not change server history and it does not create database records.",
+      clear:"Clear hides everything received so far in this browser. Other browsers and the receiver's shared short history are unchanged.",
+      filters:"Filters only change what this browser shows. Event categories are stable; Message groups change to match the selected decoder protocol.",
+      pause:"Pause freezes this table so a fast burst does not move rows while you inspect one. Incoming items remain bounded and can be shown when you continue."
+    };
+    var title=document.getElementById("page-title"), copy=document.getElementById("page-copy"), content=document.getElementById("workspace-content");
+
+    function escapeHtml(value){return String(value==null?"":value).replace(/[&<>'"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c];});}
+    function showToast(message){var toast=document.getElementById("toast");toast.textContent=message;toast.hidden=false;window.clearTimeout(showToast.timer);showToast.timer=window.setTimeout(function(){toast.hidden=true;},2600);}
+    function setRoute(next){route=next;cleared=false;location.hash=next;document.querySelectorAll("[data-route]").forEach(function(a){a.classList.toggle("active",a.dataset.route===route);});document.querySelectorAll("[data-tab]").forEach(function(b){b.setAttribute("aria-selected",String(b.dataset.tab===route));});render();}
+    function statusForScenario(){
+      var state={label:"Live",klass:"good",age:"Updated just now",notice:""};
+      if(scenario==="burst")state.age="10 updates in the last second";
+      if(scenario==="paused")state={label:"Paused",klass:"warn",age:"34 new items waiting",notice:"The table is frozen for inspection. Continue to insert the waiting items at the top."};
+      if(scenario==="reconnecting")state={label:"Reconnecting",klass:"warn",age:"Last update 12 seconds ago",notice:"The connection is being restored. The last complete rows remain visible and are marked as older data."};
+      if(scenario==="gap")state={label:"Refreshing",klass:"warn",age:"Some updates were missed",notice:"The short replay window no longer covers the gap. A fresh bounded snapshot is loading; older rows remain visible until it arrives."};
+      if(scenario==="rebind")state={label:"Finding control",klass:"warn",age:"Site selection retained",notice:"The previous control channel ended. Site-wide Events stay visible while the receiver binds this selection to its replacement. Exact Messages wait for the new decoder context."};
+      if(scenario==="public")state={label:"Live",klass:"good",age:"Public read-only view",notice:""};
+      if(scenario==="revoked")state={label:"Access changed",klass:"bad",age:"Public access was turned off",notice:"The administrator changed this feature to administrator-only. Live delivery stopped and the browser discarded its transient rows."};
+      if(scenario==="locked")state=route==="messages"?{label:"Sign-in required",klass:"bad",age:"Messages are administrator-only",notice:"This receiver's administrator has turned off public access to Messages. Events and other public pages remain available."}:{label:"Live",klass:"good",age:"Public read-only view",notice:""};
+      return state;
+    }
+    function toolbar(){return '<div class="toolbar">'+
+      '<button id="filters" type="button">Filters <span class="pill neutral">'+enabled[route].size+'</span></button><button class="help" type="button" data-help="filters" aria-label="About filters">i</button>'+
+      '<button id="clear" type="button">Clear view</button><button class="help" type="button" data-help="clear" aria-label="About clearing">i</button>'+
+      '<button id="pause" type="button">'+(paused||scenario==="paused"?'Continue':'Pause')+'</button><button class="help" type="button" data-help="pause" aria-label="About pausing">i</button>'+
+      '<button id="reset-view" type="button">Reset view</button>'+
+      '<div class="search"><label for="search">Find in visible rows</label><input id="search" type="search" placeholder="'+(route==="events"?'Alias, ID, frequency, or event':'Protocol, identifier, or message text')+'" value="'+escapeHtml(search)+'"></div><span class="spacer"></span>'+
+      '<div class="row-limit"><div class="row-label"><label for="row-limit">Visible row limit</label><button class="help" type="button" data-help="rows" aria-label="About visible row limits">i</button></div><div class="row-limit-line"><input id="row-limit" type="range" min="0" max="2000" step="50" value="'+rowLimit+'"><output id="row-limit-value">'+rowLimit+'</output></div></div></div>';
+    }
+    function filterRows(rows){
+      if(cleared||rowLimit===0)return [];
+      var q=search.trim().toLowerCase();
+      var filtered=rows.filter(function(row){return enabled[route].has(row.category)&&(!q||Object.keys(row).some(function(key){return String(row[key]).toLowerCase().indexOf(q)>=0;}));});
+      if(sortKey)filtered=filtered.slice().sort(function(a,b){var av=a[sortKey],bv=b[sortKey],result=String(av==null?"":av).localeCompare(String(bv==null?"":bv),undefined,{numeric:true,sensitivity:"base"});return sortDirection==="asc"?result:-result;});
+      return filtered.slice(0,Math.min(rowLimit,filtered.length));
+    }
+    function tableHeader(label,key){var active=sortKey===key;return '<th><button type="button" data-sort="'+key+'" '+(active?'data-active-sort data-sort-arrow="'+(sortDirection==='asc'?'↑':'↓')+'"':'')+'>'+escapeHtml(label)+'</button></th>';}
+    function eventTable(rows){
+      var body=rows.map(function(r){return '<tr tabindex="0" data-row="'+r.id+'"'+(r.live?' class="live-row"':'')+'><td class="mono">'+r.time+'</td><td>'+r.duration+'</td><td><span class="pill '+(r.category==='encrypted'?'encrypted':r.category==='commands'?'command':r.category==='registrations'?'registration':'event-kind')+'">'+escapeHtml(r.kind)+'</span></td><td class="identity"><strong>'+escapeHtml(r.from)+'</strong><span>'+escapeHtml(r.fromId)+'</span></td><td class="identity"><strong>'+escapeHtml(r.to)+'</strong><span>'+escapeHtml(r.toId)+'</span></td><td>'+escapeHtml(r.channel)+'</td><td class="mono">'+r.frequency+'</td><td>'+escapeHtml(r.details)+'</td></tr>';}).join("");
+      return '<div class="table-wrap"><table><thead><tr>'+tableHeader('Time','time')+tableHeader('Duration','duration')+tableHeader('Event','kind')+tableHeader('From','from')+tableHeader('To','to')+tableHeader('Channel / timeslot','channel')+tableHeader('Frequency (MHz)','frequency')+tableHeader('Details','details')+'</tr></thead><tbody>'+body+'</tbody></table></div>'+mobileRows(rows);
+    }
+    function messageTable(rows){
+      var body=rows.map(function(r){return '<tr tabindex="0" data-row="'+r.id+'" class="'+(r.valid?'':'invalid')+'"><td class="mono">'+r.time+'</td><td>'+escapeHtml(r.protocol)+'</td><td>'+r.slot+'</td><td><span class="pill '+(r.valid?'good':'bad')+'">'+(r.valid?'Valid':'Invalid')+'</span></td><td class="message-text mono">'+escapeHtml(r.text)+'</td></tr>';}).join("");
+      return '<div class="table-wrap"><table><thead><tr>'+tableHeader('Time','time')+tableHeader('Protocol','protocol')+tableHeader('Timeslot','slot')+tableHeader('Validity','valid')+tableHeader('Message','text')+'</tr></thead><tbody>'+body+'</tbody></table></div>'+mobileRows(rows);
+    }
+    function mobileRows(rows){return '<div class="mobile-list">'+rows.map(function(r){return '<button class="mobile-row" type="button" data-row="'+r.id+'"><span class="mobile-top"><strong>'+escapeHtml(route==='events'?r.kind:r.protocol)+'</strong><span class="mono">'+r.time+'</span></span><span>'+escapeHtml(route==='events'?r.to:r.text)+'</span><span class="mobile-meta"><span>'+(route==='events'?escapeHtml(r.frequency)+' MHz':(r.valid?'Valid':'Invalid'))+'</span><span>'+(route==='events'?escapeHtml(r.channel):'Timeslot '+r.slot)+'</span></span></button>';}).join("")+'</div>';}
+    function emptyState(kind){var heading=kind==="nomatch"?'No visible rows match':'No '+route+' yet';var text=kind==="nomatch"?'Change the search or filters to show activity already in this bounded view.':'This selected context has not produced any '+route+' during the visible history window.';return '<div class="empty"><div><h2>'+heading+'</h2><p>'+text+'</p></div></div>';}
+    function render(){
+      var publicViewer=["public","locked","revoked"].includes(scenario);
+      document.getElementById("account-label").textContent=publicViewer?"Public viewer":"Administrator";
+      document.getElementById("settings-link").hidden=publicViewer;
+      document.getElementById("account-dot").style.background=publicViewer?"#8fa0ad":"#54d177";
+      title.textContent=route==="events"?"Events":"Messages";
+      copy.textContent=route==="events"?"Decoded activity for the selected site or channel. Mutable calls update one row as they progress.":"Raw decoder activity normalized for the selected processing chain, with protocol-aware filters and bounded history.";
+      document.getElementById("scope-value").textContent=scenario==="exact"?(route==="events"?"Exact traffic events":"Exact traffic messages"):(route==="events"?"Entire site":"Control-channel messages");
+      document.getElementById("context-label").textContent=scenario==="exact"?"Frequency and timeslot":(route==="events"?"Control channel":"Control processing chain");
+      document.getElementById("frequency-value").textContent=scenario==="exact"?"855.237500 MHz · timeslot 1":"855.987500 MHz · no timeslot";
+      var state=statusForScenario(), notice=document.getElementById("notice");
+      document.getElementById("age").textContent=state.age;document.getElementById("connection").className="badge "+state.klass;document.getElementById("connection").textContent=state.label;
+      notice.hidden=!state.notice;notice.innerHTML=state.notice?'<div><strong>'+escapeHtml(state.label)+'</strong><p>'+escapeHtml(state.notice)+'</p></div>':'';
+      if((scenario==="locked"&&route==="messages")||scenario==="revoked"){content.innerHTML='<div class="empty"><div><h2>Administrator sign-in required</h2><p>'+(scenario==="revoked"?'Public access to this page was turned off. Transient rows from the public connection are no longer retained.':'Messages are not public on this receiver. Events and other public pages remain available.')+'</p><button class="primary" type="button" data-demo="sign-in">Sign in</button></div></div>';bindCommon();return;}
+      var source=route==="events"?events:(scenario==="exact"?trafficMessages:messages), rows=filterRows(source);
+      if(scenario==="exact"&&route==="events")rows=rows.filter(function(row){return row.frequency==="855.237500"&&row.channel.indexOf("TS 1")>=0;});
+      if(scenario==="empty")rows=[];
+      if(scenario==="nomatch"&&!search)search="not present";
+      if(scenario==="nomatch")rows=[];
+      content.innerHTML=toolbar()+'<div class="feed-state"><span>'+(route==="events"?(scenario==="exact"?'Exact traffic events match this frequency and timeslot.':'Site-wide events include grants carried on traffic frequencies.'):'Exact decoder context · Stuff bits are omitted before delivery.')+'</span>'+(scenario==="paused"||paused?'<span class="pill new-count">34 new</span>':'<span>'+rows.length+' visible · newest first</span>')+'</div>'+(rows.length?(route==="events"?eventTable(rows):messageTable(rows)):emptyState(scenario==="nomatch"?'nomatch':'empty'));
+      bindWorkspace();
+    }
+    function bindWorkspace(){
+      document.getElementById("filters").addEventListener("click",openFilters);
+      document.getElementById("clear").addEventListener("click",function(){cleared=true;render();showToast("This browser now hides everything received before Clear.");});
+      document.getElementById("pause").addEventListener("click",function(){paused=!(paused||scenario==="paused");if(scenario==="paused")scenario="normal";render();});
+      document.getElementById("reset-view").addEventListener("click",function(){search="";rowLimit=200;cleared=false;paused=false;sortKey="";sortDirection="desc";enabled.events=new Set(eventFilters.map(function(x){return x[0];}));enabled.messages=new Set(messageFilters.map(function(x){return x[0];}));render();});
+      document.getElementById("search").addEventListener("input",function(e){search=e.target.value;renderRowsOnlySoon();});
+      var limit=document.getElementById("row-limit");limit.addEventListener("input",function(e){rowLimit=Number(e.target.value);document.getElementById("row-limit-value").textContent=rowLimit;});limit.addEventListener("change",function(){render();});
+      document.querySelectorAll("[data-row]").forEach(function(row){row.addEventListener("click",function(){openDetail(row.dataset.row);});row.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openDetail(row.dataset.row);}});});
+      document.querySelectorAll("[data-sort]").forEach(function(button){button.addEventListener("click",function(){if(sortKey!==button.dataset.sort){sortKey=button.dataset.sort;sortDirection="asc";}else if(sortDirection==="asc")sortDirection="desc";else{sortKey="";sortDirection="desc";}render();});});
+      bindHelp();bindCommon();
+    }
+    function renderRowsOnlySoon(){window.clearTimeout(renderRowsOnlySoon.timer);renderRowsOnlySoon.timer=window.setTimeout(render,80);}
+    function openFilters(){
+      var list=route==="events"?eventFilters:messageFilters, tree=document.getElementById("filter-tree");
+      document.getElementById("filter-title").textContent=route==="events"?"Event filters":(scenario==="exact"?"P25 Phase 2 message filters":"P25 Phase 1 message filters");
+      document.getElementById("filter-copy").textContent=route==="events"?"The stable event categories match the existing application.":"Message groups come from the selected decoder and change when its protocol changes.";
+      tree.innerHTML=list.map(function(item){return '<li class="filter-group"><label class="check"><input type="checkbox" value="'+item[0]+'" '+(enabled[route].has(item[0])?'checked':'')+'><span><strong>'+escapeHtml(item[1])+'</strong><span>'+escapeHtml(item[2])+'</span></span></label></li>';}).join("");
+      document.getElementById("filter-dialog").showModal();
+    }
+    function openDetail(id){
+      var row=(route==="events"?events:messages.concat(trafficMessages)).find(function(x){return x.id===id;});if(!row)return;
+      document.getElementById("detail-title").textContent=route==="events"?row.kind:"Message at "+row.time;
+      var fields=route==="events"?[["Time","2026-07-21 "+row.time],["Duration",row.duration],["From alias",row.from],["From ID",row.fromId||"Not supplied"],["To alias",row.to],["To ID",row.toId||"Not supplied"],["Channel / timeslot",row.channel],["Frequency",row.frequency+" MHz"],["Details",row.details]]:[["Time","2026-07-21 "+row.time],["Protocol",row.protocol],["Timeslot",row.slot],["Validity",row.valid?"Valid":"Invalid"],["Selected identifiers",row.identifiers],["Normalized message",row.text]];
+      document.getElementById("detail-body").innerHTML='<div class="detail-grid">'+fields.map(function(field,index){return '<div class="detail-field '+((route==="messages"&&index>=4)||(route==="events"&&index===8)?'full-text':'')+'"><span>'+escapeHtml(field[0])+'</span><strong class="'+(field[0].indexOf("message")>=0?'mono':'')+'">'+escapeHtml(field[1])+'</strong></div>';}).join("")+'</div>';
+      document.getElementById("detail-dialog").showModal();
+    }
+    function bindHelp(){document.querySelectorAll("[data-help]").forEach(function(button){["mouseenter","focus","click"].forEach(function(type){button.addEventListener(type,function(e){e.stopPropagation();showHelp(button);});});button.addEventListener("mouseleave",function(){if(document.activeElement!==button)hideHelp();});button.addEventListener("blur",hideHelp);});}
+    function showHelp(button){var pop=document.getElementById("help-popover"),rect=button.getBoundingClientRect();pop.textContent=helpText[button.dataset.help];pop.hidden=false;var left=Math.min(window.innerWidth-pop.offsetWidth-12,Math.max(12,rect.left));var top=rect.bottom+7;if(top+pop.offsetHeight>window.innerHeight-12)top=rect.top-pop.offsetHeight-7;pop.style.left=left+"px";pop.style.top=Math.max(8,top)+"px";}
+    function hideHelp(){document.getElementById("help-popover").hidden=true;}
+    function bindCommon(){document.querySelectorAll("[data-demo]").forEach(function(button){button.addEventListener("click",function(){showToast("The production page would open administrator sign-in.");});});}
+
+    document.querySelectorAll("[data-tab]").forEach(function(button){button.addEventListener("click",function(){setRoute(button.dataset.tab);});});
+    document.querySelectorAll("[data-route]").forEach(function(link){link.addEventListener("click",function(e){e.preventDefault();setRoute(link.dataset.route);});});
+    document.getElementById("preview").addEventListener("change",function(e){scenario=e.target.value;paused=scenario==="paused";cleared=false;search=scenario==="nomatch"?"not present":"";sortKey="";render();});
+    document.querySelectorAll("[data-close-dialog]").forEach(function(button){button.addEventListener("click",function(){document.getElementById(button.dataset.closeDialog).close();});});
+    document.getElementById("select-all").addEventListener("click",function(){document.querySelectorAll("#filter-tree input").forEach(function(input){input.checked=true;});});
+    document.getElementById("select-none").addEventListener("click",function(){document.querySelectorAll("#filter-tree input").forEach(function(input){input.checked=false;});});
+    document.getElementById("apply-filters").addEventListener("click",function(){enabled[route]=new Set(Array.from(document.querySelectorAll("#filter-tree input:checked")).map(function(input){return input.value;}));document.getElementById("filter-dialog").close();render();});
+    document.addEventListener("click",function(e){if(!e.target.closest("[data-help]")&&!e.target.closest("#help-popover"))hideHelp();});
+
+    var REVIEW_KEY="sdrtrunk-vce.mockup.events-messages-v1.review";
+    var reviewSections=[
+      ["context","Selection and route continuity","Events, Messages, and diagnostics carry one stable Live selection. Site-wide Events and exact-chain Messages state their scope plainly."],
+      ["events","Events table and mutable rows","Time, duration, event type, raw and resolved From/To identities, channel, timeslot, frequency, and details are retained. An active call updates one row instead of creating duplicates."],
+      ["messages","Messages table and details","Time, protocol, timeslot, validity, normalized text, and selected identifiers are available without storing decoder objects or raw-message history."],
+      ["filters","Protocol-aware filters","Events use the current seven-category taxonomy. Message filters are supplied by the selected decoder, so a different protocol produces different groups."],
+      ["bursts","Fast activity and inspection","Newest rows lead, Pause prevents movement during inspection, and the mobile cards remain usable when several brief calls arrive together."],
+      ["history","Bounded browser view","The 0–2,000 row limit, filters, and Clear watermark belong to this browser. Transient Events and Messages create no database schema or permanent raw-message log."],
+      ["recovery","Reconnect, replay, and context replacement","Older rows remain during reconnect. A small replay fills short gaps; an explicit refresh handles larger gaps; site Events survive a temporary control-channel replacement."],
+      ["access","Independent public access","Events and Messages can each be public or administrator-only. Locking one does not identify visitors or change the other route's policy."],
+      ["responsive","Wide and narrow layouts","Desktop uses a dense sticky-header table; narrow screens use complete touch-friendly cards and a row-detail dialog."]
+    ];
+    var reviewData=loadReview();
+    function loadReview(){try{return JSON.parse(localStorage.getItem(REVIEW_KEY)||"null")||{entries:{}};}catch(e){return {entries:{}};}}
+    function reviewOptions(value){return [["","Not reviewed"],["approved","Looks good"],["change","Change requested"],["question","Question"],["later","Review later"]].map(function(x){return '<option value="'+x[0]+'"'+(value===x[0]?' selected':'')+'>'+x[1]+'</option>';}).join("");}
+    function renderReview(){document.getElementById("review-content").innerHTML=reviewSections.map(function(s){var entry=reviewData.entries[s[0]]||{state:"",note:""};return '<section class="review-card"><h3>'+escapeHtml(s[1])+'</h3><p>'+escapeHtml(s[2])+'</p><label class="sr-only" for="review-state-'+s[0]+'">Decision for '+escapeHtml(s[1])+'</label><select id="review-state-'+s[0]+'" data-review-state="'+s[0]+'">'+reviewOptions(entry.state||"")+'</select><label class="sr-only" for="review-note-'+s[0]+'">Notes for '+escapeHtml(s[1])+'</label><textarea id="review-note-'+s[0]+'" data-review-note="'+s[0]+'" maxlength="3000" placeholder="Add a decision, requested change, or question…">'+escapeHtml(entry.note||"")+'</textarea><div class="review-card-foot"><span>Saved only in this browser</span><span data-review-count="'+s[0]+'">'+(entry.note||"").length+' / 3000</span></div></section>';}).join("");updateReviewStatus();}
+    function saveReview(id,patch){var entry=reviewData.entries[id]||{state:"",note:""};Object.assign(entry,patch);reviewData.entries[id]=entry;try{localStorage.setItem(REVIEW_KEY,JSON.stringify(reviewData));}catch(e){}updateReviewStatus();}
+    function updateReviewStatus(){var n=reviewSections.filter(function(s){return reviewData.entries[s[0]]&&reviewData.entries[s[0]].state;}).length;document.getElementById("review-save-state").textContent=n+" of "+reviewSections.length+" sections reviewed · saved in this browser";}
+    function openReview(){renderReview();document.getElementById("review-scrim").hidden=false;document.getElementById("review-drawer").hidden=false;document.getElementById("close-review").focus();}
+    function closeReview(){document.getElementById("review-scrim").hidden=true;document.getElementById("review-drawer").hidden=true;document.getElementById("open-review").focus();}
+    document.getElementById("open-review").addEventListener("click",openReview);document.getElementById("close-review").addEventListener("click",closeReview);document.getElementById("done-review").addEventListener("click",closeReview);document.getElementById("review-scrim").addEventListener("click",closeReview);
+    document.getElementById("clear-review").addEventListener("click",function(){reviewData={entries:{}};try{localStorage.removeItem(REVIEW_KEY);}catch(e){}renderReview();});
+    document.getElementById("download-review").addEventListener("click",function(){var payload={format:"sdrtrunk-vce-mockup-review",version:1,mockup:"events-messages-v1",exportedAt:new Date().toISOString(),evidence:["MAIN-04","MAIN-05","web-first-ui-migration-plan-9.3","web-first-ui-migration-plan-9.4","web-first-ui-migration-plan-9.5"],entries:reviewData.entries};var blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="sdrtrunk-events-messages-review-"+new Date().toISOString().slice(0,10)+".json";link.click();window.setTimeout(function(){URL.revokeObjectURL(link.href);},0);});
+    document.getElementById("review-content").addEventListener("change",function(e){if(e.target.matches("[data-review-state]"))saveReview(e.target.dataset.reviewState,{state:e.target.value});});
+    document.getElementById("review-content").addEventListener("input",function(e){if(!e.target.matches("[data-review-note]"))return;var id=e.target.dataset.reviewNote,count=document.querySelector('[data-review-count="'+id+'"]');if(count)count.textContent=e.target.value.length+" / 3000";saveReview(id,{note:e.target.value});});
+    document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!document.getElementById("review-drawer").hidden)closeReview();});
+
+    route=location.hash==="#messages"?"messages":"events";setRoute(route);
+  }());
+  </script>
+</body>
+</html>

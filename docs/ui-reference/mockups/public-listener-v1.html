@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce — Public listener mockup</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #edf1f4;
+      --surface: #fff;
+      --surface-2: #f5f7f9;
+      --surface-3: #e8edf1;
+      --ink: #18212a;
+      --muted: #65717d;
+      --line: #c9d1d8;
+      --line-strong: #9ba8b3;
+      --header: #202a33;
+      --header-2: #2c3944;
+      --accent: #0b7168;
+      --accent-hover: #095d56;
+      --accent-soft: #d9efec;
+      --blue: #075eaa;
+      --blue-soft: #e7f1fb;
+      --warning: #8a5200;
+      --warning-soft: #fff1d6;
+      --danger: #9b2743;
+      --danger-soft: #fbe8ed;
+      --success: #176b3a;
+      --success-soft: #e2f3e9;
+      --shadow: 0 6px 20px rgb(20 32 44 / 9%);
+      font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111820;
+        --surface: #18212a;
+        --surface-2: #202b35;
+        --surface-3: #2b3742;
+        --ink: #e5ebf0;
+        --muted: #aeb8c1;
+        --line: #3b4854;
+        --line-strong: #596976;
+        --header: #0d1318;
+        --header-2: #24313b;
+        --accent: #55c7ba;
+        --accent-hover: #79d6cc;
+        --accent-soft: #193d39;
+        --blue: #82bff3;
+        --blue-soft: #18324a;
+        --warning: #f0bd67;
+        --warning-soft: #48351c;
+        --danger: #ff99b0;
+        --danger-soft: #4a222c;
+        --success: #85d6a2;
+        --success-soft: #193b27;
+        --shadow: 0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page); }
+    body { min-height: 100vh; margin: 0; color: var(--ink); background: var(--page); font-size: 14px; }
+    button, input, select, textarea { font: inherit; }
+    button, input, select, textarea { color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 7px; }
+    button { min-height: 36px; padding: 7px 12px; cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .5; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+      outline-offset: 2px;
+    }
+    [hidden] { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 30; min-height: 52px;
+      display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 24px;
+      padding: 0 18px; color: #fff; background: var(--header); border-bottom: 1px solid #0e151b; box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+    }
+    .brand { color: #fff; font-size: 17px; font-weight: 760; text-decoration: none; white-space: nowrap; }
+    .main-nav { align-self: stretch; display: flex; min-width: 0; gap: 2px; overflow-x: auto; }
+    .main-nav a { min-height: 51px; display: flex; align-items: center; padding: 0 13px; color: #dce4eb; border-bottom: 3px solid transparent; text-decoration: none; white-space: nowrap; }
+    .main-nav a:hover, .main-nav a[aria-current="page"] { color: #fff; background: var(--header-2); border-bottom-color: #35b8a9; }
+    .main-nav a.locked::after { content: "Locked"; margin-left: 6px; padding: 2px 5px; color: #dce4eb; background: #44525e; border-radius: 999px; font-size: .62rem; font-weight: 700; }
+    .account-area { display: flex; align-items: center; gap: 9px; color: #dce4eb; white-space: nowrap; font-size: 12px; }
+    .public-dot { width: 8px; height: 8px; border-radius: 50%; background: #54d177; box-shadow: 0 0 0 3px rgb(84 209 119 / 16%); }
+    .topbar button { min-height: 32px; padding: 4px 9px; color: #fff; background: transparent; border-color: #71808d; }
+
+    .review-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 9px 18px; padding: 9px 18px; color: var(--blue); background: var(--blue-soft); border-bottom: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); }
+    .review-strip strong { color: var(--ink); }
+    .review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .review-actions label { color: var(--ink); font-size: .76rem; font-weight: 720; }
+    .review-actions select { min-height: 34px; padding: 5px 30px 5px 8px; }
+    .review-button, .primary { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 720; }
+    .review-button:hover:not(:disabled), .primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .page { width: min(1260px, 100%); margin: 0 auto; padding: 22px clamp(12px, 2.5vw, 28px) 48px; }
+    .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 17px; }
+    .page-head h1 { margin: 0; font-size: clamp(1.55rem, 3vw, 2.15rem); letter-spacing: -.025em; }
+    .page-head p { max-width: 720px; margin: 7px 0 0; color: var(--muted); line-height: 1.48; }
+    .connection-badge, .state-badge, .count-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; font-size: .7rem; font-weight: 760; }
+    .connection-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .connection-badge.connected, .state-badge.listening { color: var(--success); background: var(--success-soft); }
+    .connection-badge.reconnecting, .state-badge.buffering { color: var(--warning); background: var(--warning-soft); }
+    .connection-badge.unavailable, .state-badge.error { color: var(--danger); background: var(--danger-soft); }
+    .state-badge.ready, .count-badge { color: var(--blue); background: var(--blue-soft); }
+
+    .listener-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, .8fr); gap: 16px; align-items: start; }
+    .panel { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); }
+    .panel-head { min-height: 58px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); border-radius: 11px 11px 0 0; }
+    .panel-head h2 { margin: 0; font-size: 1rem; }
+    .panel-head p { margin: 4px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.38; }
+    .panel-body { padding: 15px; }
+
+    .now-playing { min-height: 225px; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 18px; align-items: center; padding: clamp(17px, 3vw, 28px); background: linear-gradient(145deg, var(--surface), var(--surface-2)); border-bottom: 1px solid var(--line); }
+    .audio-mark { width: 92px; height: 92px; display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 50%; }
+    .audio-mark span { width: 6px; height: 22px; background: currentColor; border-radius: 999px; }
+    .audio-mark span:nth-child(2) { height: 42px; }
+    .audio-mark span:nth-child(3) { height: 58px; }
+    .audio-mark span:nth-child(4) { height: 34px; }
+    .audio-mark.idle span { height: 6px; opacity: .55; }
+    .playing-copy { min-width: 0; }
+    .playing-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 9px; }
+    .playing-copy h2 { margin: 0; overflow-wrap: anywhere; font-size: clamp(1.35rem, 3vw, 2rem); line-height: 1.12; }
+    .identifier-line { margin: 7px 0 0; color: var(--muted); font-size: .88rem; line-height: 1.4; }
+    .source-line { margin: 13px 0 0; font-size: .95rem; line-height: 1.45; }
+    .source-line strong { color: var(--accent); }
+    .metadata { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 13px; color: var(--muted); font-size: .76rem; }
+    .metadata span { position: relative; }
+    .metadata span:not(:last-child)::after { content: "·"; position: absolute; right: -8px; }
+    .progress-track { height: 6px; margin-top: 17px; overflow: hidden; background: var(--surface-3); border-radius: 999px; }
+    .progress-track span { display: block; width: 0; height: 100%; background: var(--accent); border-radius: inherit; transition: width .2s ease; }
+
+    .player-controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 13px 15px; }
+    .player-controls button.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); font-weight: 720; }
+    .player-status { min-height: 43px; display: flex; align-items: center; padding: 10px 15px; color: var(--muted); background: var(--surface-2); border-top: 1px solid var(--line); border-radius: 0 0 11px 11px; font-size: .78rem; line-height: 1.4; }
+    .player-status.warning { color: var(--warning); background: var(--warning-soft); }
+    .player-status.error { color: var(--danger); background: var(--danger-soft); }
+
+    .side-stack { display: grid; gap: 16px; }
+    .queue-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .queue-item { padding: 10px 11px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .queue-item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .queue-item strong { min-width: 0; overflow-wrap: anywhere; }
+    .queue-time { flex: 0 0 auto; color: var(--muted); font-size: .69rem; }
+    .queue-source, .queue-meta { display: block; margin-top: 4px; color: var(--muted); font-size: .72rem; line-height: 1.35; }
+    .queue-empty { padding: 25px 12px; color: var(--muted); text-align: center; }
+    .queue-note { margin: 10px 0 0; padding: 8px 10px; color: var(--warning); background: var(--warning-soft); border-radius: 7px; font-size: .73rem; }
+    .queue-explanation { margin: 12px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.45; }
+
+    details.preferences { border-top: 1px solid var(--line); }
+    details.preferences summary { padding: 12px 14px; cursor: pointer; font-weight: 720; }
+    .preference-body { display: grid; gap: 13px; padding: 0 14px 14px; }
+    .field { min-width: 0; }
+    .field label, .field-label { display: block; margin: 0 0 5px; font-size: .76rem; font-weight: 720; }
+    .field input:not([type="checkbox"]), .field select { width: 100%; min-height: 38px; padding: 7px 9px; }
+    .field-help { margin: 5px 0 0; color: var(--muted); font-size: .7rem; line-height: 1.4; }
+    .inline-control { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .inline-control label { margin: 0; line-height: 1.35; }
+    .format-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .saved-local { color: var(--success); font-size: .7rem; }
+
+    .access-gate { max-width: 620px; margin: 45px auto; padding: clamp(20px, 4vw, 34px); text-align: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+    .access-gate h2 { margin: 0; font-size: 1.45rem; }
+    .access-gate > p { margin: 9px auto 20px; color: var(--muted); line-height: 1.5; }
+    .login-form { max-width: 400px; display: grid; gap: 12px; margin: 0 auto; text-align: left; }
+    .login-form button { width: 100%; }
+    .login-message { min-height: 20px; color: var(--muted); text-align: center; font-size: .75rem; }
+
+    .review-scrim { position: fixed; inset: 0; z-index: 80; background: rgb(6 12 18 / 56%); }
+    .review-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 90; width: min(540px, 100vw); display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line); box-shadow: -10px 0 35px rgb(0 0 0 / 26%); }
+    .review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 15px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+    .review-head h2 { margin: 0; font-size: 1.15rem; }
+    .review-head p { margin: 5px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+    .review-head button { width: 35px; min-width: 35px; padding: 0; font-size: 1.25rem; }
+    .review-content { flex: 1 1 auto; overflow-y: auto; padding: 13px; }
+    .review-card { margin-bottom: 11px; padding: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .review-card h3 { margin: 0; font-size: .88rem; }
+    .review-card p { margin: 5px 0 9px; color: var(--muted); font-size: .72rem; line-height: 1.42; }
+    .review-card select, .review-card textarea { width: 100%; padding: 7px 8px; }
+    .review-card textarea { min-height: 74px; margin-top: 7px; resize: vertical; }
+    .review-card-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; color: var(--muted); font-size: .66rem; }
+    .review-footer { padding: 12px 14px; background: var(--surface-2); border-top: 1px solid var(--line); }
+    .review-save-state { margin: 0 0 8px; color: var(--muted); font-size: .7rem; }
+    .review-footer-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+
+    @media (max-width: 880px) {
+      .topbar { grid-template-columns: max-content minmax(0, 1fr); gap: 10px; padding: 0 11px; }
+      .main-nav { grid-column: 1 / -1; order: 3; height: 44px; }
+      .main-nav a { min-height: 43px; }
+      .account-area { justify-self: end; }
+      .listener-layout { grid-template-columns: 1fr; }
+      .side-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .account-area > span:not(.public-dot) { display: none; }
+      .review-strip { padding: 9px 11px; }
+      .review-strip > span { width: 100%; }
+      .review-actions { width: 100%; }
+      .review-actions select { flex: 1 1 180px; min-width: 0; }
+      .page { padding: 16px 10px 34px; }
+      .page-head { align-items: flex-start; }
+      .now-playing { min-height: 0; grid-template-columns: 1fr; gap: 12px; padding: 18px 15px; }
+      .audio-mark { width: 62px; height: 62px; }
+      .audio-mark span { width: 5px; transform: scale(.72); }
+      .player-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .player-controls button { min-width: 0; }
+      .side-stack { grid-template-columns: 1fr; }
+      .format-grid { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#">sdrtrunk-vce</a>
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="#" aria-current="page">Listen</a>
+      <a href="#" data-radio-page>Dashboard</a>
+      <a href="#" data-radio-page>Live</a>
+      <a href="#" data-radio-page>Systems &amp; Sites</a>
+      <a href="#" data-radio-page>Conventional</a>
+      <a href="#">Credits</a>
+    </nav>
+    <div class="account-area"><span class="public-dot" aria-hidden="true"></span><span>Public listener</span><button id="header-sign-in" type="button">Admin sign in</button></div>
+  </header>
+
+  <div class="review-strip">
+    <span><strong>Interactive layout review.</strong> Try the listening controls and each preview state. Nothing is sent to SDRTrunk.</span>
+    <div class="review-actions"><label for="preview-state">Preview</label><select id="preview-state"><option value="ready">First visit · muted</option><option value="connecting">Connecting</option><option value="buffering">Preparing a call</option><option value="playing">Listening to a call</option><option value="waiting">Waiting for calls</option><option value="reconnecting">Reconnecting</option><option value="skipped">Unavailable call skipped</option><option value="pressure">Older calls skipped</option><option value="busy">Listening is busy</option><option value="unavailable">Audio unavailable</option><option value="audio-locked">Audio requires admin</option><option value="radio-locked">Radio pages require admin</option></select><button id="open-review" class="review-button" type="button">Review this mockup</button></div>
+  </div>
+
+  <main class="page">
+    <header class="page-head">
+      <div><h1>Listen</h1><p>Completed calls are added automatically and play in order. When available, current radio activity is on the Live page.</p></div>
+      <span id="connection-state" class="connection-badge connected">Connected</span>
+    </header>
+
+    <section id="access-gate" class="access-gate" hidden>
+      <h2 id="gate-title">Administrator sign-in required</h2>
+      <p id="gate-copy">Call audio is available to the administrator on this receiver.</p>
+      <form id="login-form" class="login-form">
+        <div class="field"><label for="login-username">Administrator username</label><input id="login-username" name="username" autocomplete="username" required></div>
+        <div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
+        <button class="primary" type="submit">Sign in</button><button id="cancel-sign-in" type="button">Continue public listening</button><span id="login-message" class="login-message" role="status"></span>
+      </form>
+    </section>
+
+    <div id="listener-layout" class="listener-layout">
+      <section class="panel" aria-labelledby="player-heading">
+        <header class="panel-head"><div><h2 id="player-heading">Call audio</h2><p id="player-subtitle">Start listening when you are ready.</p></div><span id="player-state" class="state-badge ready">Muted</span></header>
+        <div class="now-playing">
+          <div id="audio-mark" class="audio-mark idle" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div class="playing-copy">
+            <div class="playing-kicker"><span id="call-time" class="count-badge">4 calls waiting</span></div>
+            <h2 id="target-name">Ready to listen</h2>
+            <p id="target-id" class="identifier-line">Audio starts only after you choose Start listening.</p>
+            <p id="source-line" class="source-line">Calls received while muted remain in this browser’s queue.</p>
+            <div id="call-metadata" class="metadata"><span>Queue ready</span><span>Newest call 9:42:18 PM</span></div>
+            <div class="progress-track" aria-hidden="true"><span id="call-progress"></span></div>
+          </div>
+        </div>
+        <div class="player-controls" aria-label="Listening controls">
+          <button id="listen-toggle" class="primary" type="button">Start listening</button>
+          <button id="hold-target" type="button" disabled>Only this target</button>
+          <button id="avoid-target" type="button" disabled>Avoid this target</button>
+          <button id="clear-avoids" type="button" disabled>Clear avoids</button>
+          <button id="skip-call" type="button">Skip next</button>
+        </div>
+        <div id="player-message" class="player-status" role="status">Calls play automatically after they finish; there are no per-call play buttons.</div>
+      </section>
+
+      <aside class="side-stack" aria-label="Queue and browser preferences">
+        <section class="panel">
+          <header class="panel-head"><div><h2>Up next</h2><p>Oldest completed call plays first.</p></div><span id="queue-count" class="count-badge">4</span></header>
+          <div class="panel-body"><ol id="queue-list" class="queue-list"></ol><div id="queue-empty" class="queue-empty" hidden>No calls are waiting.</div><p id="queue-note" class="queue-note" hidden></p><p class="queue-explanation">New calls enter this queue automatically. Skip removes the next call; queue entries cannot be replayed or reordered.</p></div>
+          <details class="preferences"><summary>Listening preferences</summary><div class="preference-body"><div class="field"><label for="maximum-queued">Maximum queued calls</label><input id="maximum-queued" type="number" min="1" max="500" step="1" value="100"><p class="field-help">Saved in this browser. When full, the oldest waiting call is skipped.</p></div><div><button id="clear-browser-choices" type="button">Reset listening choices</button></div><span id="listening-saved" class="saved-local" role="status"></span></div></details>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head"><div><h2>Display</h2><p>These choices affect only this browser.</p></div></header>
+          <details class="preferences"><summary>Identifier and encryption display</summary><div class="preference-body"><div class="field"><label for="advanced-encryption">Advanced P25 encryption details</label><select id="advanced-encryption"><option>Use public default</option><option>Show</option><option>Hide</option></select></div><div class="format-grid" id="format-grid"></div><span id="display-saved" class="saved-local" role="status"></span></div></details>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" role="dialog" aria-labelledby="review-title" aria-modal="true" hidden>
+    <header class="review-head"><div><h2 id="review-title">Review Public Listen</h2><p>Decisions stay in this browser until you download them.</p></div><button id="close-review" type="button" aria-label="Close review">×</button></header>
+    <div id="review-content" class="review-content"></div>
+    <footer class="review-footer"><p id="review-save-state" class="review-save-state"></p><div class="review-footer-buttons"><button id="clear-review" class="danger" type="button">Clear</button><button id="download-review" type="button">Download notes</button><button id="done-review" class="primary" type="button">Done</button></div></footer>
+  </aside>
+
+  <script>
+    "use strict";
+    (function () {
+      var calls = [
+        {target:"County Service", targetId:"56628", targetForm:"TGID", source:"", sourceId:"1878613", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"854.71250 MHz", slot:"Slot 1", decoder:"P25 Phase 1", duration:"2.9 sec", completed:"9:41:51 PM", encrypted:false},
+        {target:"CPD D4 DISP", targetId:"56132", targetForm:"TGID", source:"Unit 9368", sourceId:"1889368", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"855.18750 MHz", slot:"Slot 1", decoder:"P25 Phase 1", duration:"4.6 sec", completed:"9:41:58 PM", encrypted:true, encryptionDetail:"AES-256 · Key 1001"},
+        {target:"Cuyahoga Fireground 2", targetId:"56507", targetForm:"TGID", source:"Engine 5", sourceId:"1862719", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"855.66250 MHz", slot:"Slot 2", decoder:"P25 Phase 1", duration:"7.1 sec", completed:"9:42:10 PM", encrypted:false},
+        {target:"CPD D3 DISP", targetId:"56131", targetForm:"TGID", source:"Car 312", sourceId:"1811332", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"854.18750 MHz", slot:"Slot 1", decoder:"P25 Phase 1", duration:"3.8 sec", completed:"9:42:18 PM", encrypted:false},
+        {target:"Transit Operations", targetId:"57041", targetForm:"TGID", source:"Bus 214", sourceId:"1902214", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"856.16250 MHz", slot:"Slot 2", decoder:"P25 Phase 1", duration:"5.4 sec", completed:"9:42:23 PM", encrypted:false},
+        {target:"Public Works", targetId:"56910", targetForm:"TGID", source:"Truck 8", sourceId:"1890008", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"855.91250 MHz", slot:"Slot 1", decoder:"P25 Phase 1", duration:"6.0 sec", completed:"9:42:30 PM", encrypted:false},
+        {target:"City Services", targetId:"56801", targetForm:"TGID", source:"", sourceId:"1874402", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"854.96250 MHz", slot:"Slot 2", decoder:"P25 Phase 1", duration:"3.2 sec", completed:"9:42:36 PM", encrypted:false},
+        {target:"Maintenance", targetId:"57112", targetForm:"TGID", source:"Crew 14", sourceId:"1910014", sourceForm:"Radio", system:"Greater Cleveland Radio Communications Network", channel:"GCRCN Simulcast", frequency:"856.41250 MHz", slot:"Slot 1", decoder:"P25 Phase 1", duration:"8.3 sec", completed:"9:42:45 PM", encrypted:false}
+      ];
+      var queue = calls.slice(0, 4);
+      var current = null;
+      var muted = true;
+      var hasStarted = false;
+      var holdKey = null;
+      var holdName = "";
+      var avoids = new Set();
+      var dropped = 0;
+      var audioLocked = false;
+      var signInOrigin = "audio-lock";
+
+      var layout = document.getElementById("listener-layout");
+      var gate = document.getElementById("access-gate");
+      var listenToggle = document.getElementById("listen-toggle");
+      var holdButton = document.getElementById("hold-target");
+      var avoidButton = document.getElementById("avoid-target");
+      var clearAvoids = document.getElementById("clear-avoids");
+      var skipButton = document.getElementById("skip-call");
+
+      function escapeHtml(value) {
+        return String(value == null ? "" : value).replace(/[&<>'"]/g, function (character) { return {"&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;"}[character]; });
+      }
+
+      function displayIdentifier(form, value) {
+        if (value === null || value === undefined || value === "") return "";
+        var selected=document.getElementById("format-0");
+        var format=selected?selected.value:"Use public default";
+        var numeric=Number(value);
+        var displayed=format==="Hexadecimal"&&Number.isFinite(numeric)?"0x"+numeric.toString(16).toUpperCase():String(value);
+        return (form || "ID") + " " + displayed;
+      }
+
+      function sourceLabel(call) {
+        var identifier=displayIdentifier(call.sourceForm,call.sourceId);
+        return call.source ? call.source + (identifier ? " · " + identifier : "") : identifier;
+      }
+
+      function protectedLabel(call) {
+        if (!call.encrypted) return "";
+        return document.getElementById("advanced-encryption").value==="Show"&&call.encryptionDetail?"Protected · "+call.encryptionDetail:"Protected";
+      }
+
+      function targetKey(call) {
+        if (!call) return "";
+        if (call.targetId !== null && call.targetId !== undefined && call.targetId !== "") return call.system+"|target:"+call.targetId;
+        if (call.channel) return call.system+"|channel:"+call.channel;
+        return call.system+"|frequency:"+call.frequency;
+      }
+
+      function isAllowed(call) {
+        var key=targetKey(call);
+        return !avoids.has(key)&&(!holdKey||holdKey===key);
+      }
+
+      function renderFormats() {
+        var rows = [["APCO-25", "Decimal", "Hexadecimal"], ["DMR", "Decimal", "Hexadecimal"], ["Fleetsync", "Decimal", "Formatted"], ["MDC-1200", "Decimal", "Hexadecimal"], ["NBFM", "Decimal", "Hexadecimal"], ["NXDN", "Decimal", "Hexadecimal"]];
+        document.getElementById("format-grid").innerHTML = rows.map(function(row, index){ return '<div class="field"><label for="format-' + index + '">' + row[0] + ' identifiers</label><select id="format-' + index + '" data-display-choice><option>Use public default</option><option>' + row[1] + '</option><option>' + row[2] + '</option></select></div>'; }).join("");
+      }
+
+      function queueItem(call) {
+        var source=sourceLabel(call);
+        var protectedText=protectedLabel(call);
+        return '<li class="queue-item"><div class="queue-item-top"><strong>' + escapeHtml(call.target) + '</strong><span class="queue-time">' + escapeHtml(call.completed) + '</span></div><span class="queue-source">' + escapeHtml(displayIdentifier(call.targetForm,call.targetId)) + (source ? ' · ' + escapeHtml(source) : '') + '</span><span class="queue-meta">' + escapeHtml(call.system) + ' · ' + escapeHtml(call.duration) + (protectedText ? ' · ' + escapeHtml(protectedText) : '') + '</span></li>';
+      }
+
+      function renderQueue() {
+        document.getElementById("queue-list").innerHTML = queue.map(queueItem).join("");
+        document.getElementById("queue-list").hidden = !queue.length;
+        document.getElementById("queue-empty").hidden = Boolean(queue.length);
+        document.getElementById("queue-count").textContent = String(queue.length);
+        var note = document.getElementById("queue-note");
+        note.hidden = !dropped;
+        note.textContent = dropped ? dropped + " older " + (dropped === 1 ? "call was" : "calls were") + " skipped to keep this browser responsive." : "";
+        skipButton.disabled = !current && !queue.length;
+      }
+
+      function renderCurrent() {
+        var mark = document.getElementById("audio-mark");
+        var progress = document.getElementById("call-progress");
+        if (current) {
+          mark.classList.remove("idle");
+          document.getElementById("call-time").textContent = "Completed " + current.completed;
+          document.getElementById("target-name").textContent = current.target;
+          document.getElementById("target-id").textContent = displayIdentifier(current.targetForm,current.targetId);
+          document.getElementById("source-line").innerHTML = '<strong>' + escapeHtml(sourceLabel(current) || "Source not identified") + '</strong>';
+          document.getElementById("call-metadata").innerHTML = [current.system, current.channel, current.frequency, current.slot, current.decoder, current.duration].concat(protectedLabel(current) ? [protectedLabel(current)] : []).map(function(value){return '<span>' + escapeHtml(value) + '</span>';}).join("");
+          progress.style.width = "46%";
+        } else {
+          mark.classList.add("idle");
+          progress.style.width = "0";
+          if (muted) {
+            document.getElementById("call-time").textContent = queue.length + (queue.length === 1 ? " call waiting" : " calls waiting");
+            document.getElementById("target-name").textContent = "Ready to listen";
+            document.getElementById("target-id").textContent = "Audio starts only after you choose Start listening.";
+            document.getElementById("source-line").textContent = "Calls received while muted remain in this browser’s queue.";
+            document.getElementById("call-metadata").innerHTML = '<span>Queue ready</span><span>Newest call ' + (queue.length ? escapeHtml(queue[queue.length - 1].completed) : "not available") + '</span>';
+          } else {
+            document.getElementById("call-time").textContent = "Connected";
+            document.getElementById("target-name").textContent = "Waiting for the next call";
+            document.getElementById("target-id").textContent = "Listening is on";
+            document.getElementById("source-line").textContent = "The next completed call will start automatically.";
+            document.getElementById("call-metadata").innerHTML = '<span>No calls waiting</span>';
+          }
+        }
+        holdButton.disabled = !holdKey&&!current;
+        avoidButton.disabled = !current;
+        holdButton.classList.toggle("active", Boolean(holdKey));
+        holdButton.textContent = holdKey ? "Play all targets" : "Only this target";
+        clearAvoids.disabled = !avoids.size;
+        clearAvoids.textContent = avoids.size ? "Clear avoids (" + avoids.size + ")" : "Clear avoids";
+      }
+
+      function setPlayerState(state, message, className) {
+        var badge = document.getElementById("player-state");
+        badge.textContent = state;
+        badge.className = "state-badge " + className;
+        var status = document.getElementById("player-message");
+        status.textContent = message;
+        status.className = "player-status" + (className === "error" ? " error" : className === "buffering" ? " warning" : "");
+      }
+
+      function playNext() {
+        if (muted) return;
+        while(queue.length&&!isAllowed(queue[0]))queue.shift();
+        current = queue.shift() || null;
+        renderQueue();
+        renderCurrent();
+        if (current) setPlayerState("Listening", "Playing the oldest completed call. New calls continue to join the queue.", "listening");
+        else setPlayerState("Waiting", "Listening is on. The next completed call will start automatically.", "ready");
+      }
+
+      function setConnection(label, className) {
+        var connection = document.getElementById("connection-state");
+        connection.textContent = label;
+        connection.className = "connection-badge " + className;
+      }
+
+      function setEmptyCopy(kicker, title, identifier, explanation, metadata) {
+        document.getElementById("call-time").textContent=kicker;
+        document.getElementById("target-name").textContent=title;
+        document.getElementById("target-id").textContent=identifier;
+        document.getElementById("source-line").textContent=explanation;
+        document.getElementById("call-metadata").innerHTML='<span>'+escapeHtml(metadata)+'</span>';
+      }
+
+      function resetState() {
+        queue = calls.slice(0, 4);
+        current = null;
+        muted = true;
+        hasStarted = false;
+        holdKey = null;
+        holdName = "";
+        avoids = new Set();
+        dropped = 0;
+        audioLocked = false;
+        signInOrigin = "audio-lock";
+        gate.hidden = true;
+        layout.hidden = false;
+        listenToggle.disabled = false;
+        listenToggle.textContent = "Start listening";
+        listenToggle.className = "primary";
+        document.getElementById("player-subtitle").textContent = "Start listening when you are ready.";
+        document.getElementById("gate-title").textContent = "Administrator sign-in required";
+        document.getElementById("gate-copy").textContent = "Call audio is available to the administrator on this receiver.";
+        document.getElementById("cancel-sign-in").textContent = "Use other public pages";
+        document.getElementById("header-sign-in").textContent = "Admin sign in";
+        document.getElementById("login-message").textContent = "";
+        try{var savedMaximum=Number(localStorage.getItem("sdrtrunk-vce.mockup.listener.max"));document.getElementById("maximum-queued").value=Number.isInteger(savedMaximum)&&savedMaximum>=1&&savedMaximum<=500?String(savedMaximum):"100";}catch(error){document.getElementById("maximum-queued").value="100";}
+        setConnection("Connected", "connected");
+        setPlayerState("Muted", "Calls play automatically after they finish; there are no per-call play buttons.", "ready");
+        document.querySelectorAll("[data-radio-page]").forEach(function(link){link.classList.remove("locked");link.removeAttribute("aria-label");});
+        renderQueue();
+        renderCurrent();
+      }
+
+      function applyScenario(value) {
+        resetState();
+        if (value === "connecting") {
+          queue=[];setConnection("Connecting","reconnecting");renderQueue();renderCurrent();setEmptyCopy("Connecting","Connecting to call audio","This usually takes only a moment.","The page will be ready to start listening after it connects.","No calls loaded yet");setPlayerState("Connecting","Connecting to completed-call audio…","buffering");
+        } else if (value === "buffering") {
+          muted=false;hasStarted=true;current=queue.shift();listenToggle.textContent="Mute";listenToggle.className="";renderQueue();renderCurrent();setPlayerState("Preparing","Preparing the next completed call for playback…","buffering");
+        } else if (value === "playing") {
+          muted = false;hasStarted=true;listenToggle.textContent = "Mute"; listenToggle.className = ""; playNext();
+        } else if (value === "waiting") {
+          muted = false;hasStarted=true;queue = []; listenToggle.textContent = "Mute"; listenToggle.className = ""; renderQueue(); renderCurrent(); setPlayerState("Waiting", "Listening is on. The next completed call will start automatically.", "ready");
+        } else if (value === "reconnecting") {
+          muted = false;hasStarted=true;queue = calls.slice(1, 3); listenToggle.textContent = "Mute"; listenToggle.className = ""; setConnection("Reconnecting", "reconnecting"); renderQueue(); renderCurrent(); setPlayerState("Reconnecting", "Calls already in this browser remain available while it reconnects.", "buffering");
+        } else if (value === "skipped") {
+          muted=false;hasStarted=true;queue=calls.slice(2,5);listenToggle.textContent="Mute";listenToggle.className="";renderQueue();renderCurrent();setEmptyCopy("Continuing","Unavailable call skipped","The next call will start automatically.","Nothing needs to be fixed in this browser.",queue.length+" calls waiting");setPlayerState("Call skipped","One call was no longer available, so listening will continue with the next call.","buffering");
+        } else if (value === "pressure") {
+          muted = false;hasStarted=true;current = calls[0]; queue = calls.slice(1); dropped = 3; listenToggle.textContent = "Mute"; listenToggle.className = ""; document.getElementById("maximum-queued").value = "7"; renderQueue(); renderCurrent(); setPlayerState("Listening", "Older waiting calls were skipped. New calls continue to play in order.", "listening");
+        } else if (value === "busy") {
+          queue=[];listenToggle.disabled=true;setConnection("Listening busy","unavailable");renderQueue();renderCurrent();setEmptyCopy("Try again shortly","Public listening is busy","No listener slot is available right now.","Dashboard, Live, Systems & Sites, and Conventional remain available when public.","Radio pages still available");setPlayerState("Busy","Public listening is currently full. Try again shortly; the other public radio pages remain available.","error");
+        } else if (value === "unavailable") {
+          queue = []; listenToggle.disabled = true; setConnection("Audio unavailable", "unavailable"); renderQueue(); renderCurrent();setEmptyCopy("Temporarily unavailable","Call audio is unavailable","Try again later.","Other public radio pages can still be used.","Radio pages still available");setPlayerState("Unavailable", "Call audio is temporarily unavailable. Other public radio pages can still be used.", "error");
+        } else if (value === "audio-locked") {
+          audioLocked=true;signInOrigin="audio-lock";layout.hidden = true; gate.hidden = false;document.getElementById("cancel-sign-in").textContent="Use other public pages";setConnection("Sign-in required", "unavailable");
+        } else if (value === "radio-locked") {
+          document.querySelectorAll("[data-radio-page]").forEach(function(link){link.classList.add("locked");link.setAttribute("aria-label", link.textContent + " requires administrator sign-in");});
+          setPlayerState("Muted", "Call audio is public. Other radio pages require administrator sign-in.", "ready");
+        }
+      }
+
+      function showAudioLockedSummary(){audioLocked=true;gate.hidden=true;layout.hidden=false;queue=[];current=null;muted=true;listenToggle.disabled=true;renderQueue();renderCurrent();setEmptyCopy("Administrator only","Call audio requires sign-in","Public listening is turned off on this receiver.","Use the public navigation above or sign in as the administrator.","Other allowed radio pages remain available");setConnection("Sign-in required","unavailable");setPlayerState("Sign-in required","Call audio is administrator-only on this receiver.","error");}
+
+      listenToggle.addEventListener("click", function(){
+        if (listenToggle.disabled) return;
+        muted = !muted;
+        if (muted) {
+          listenToggle.textContent = hasStarted ? "Resume listening" : "Start listening";listenToggle.className = "primary";setPlayerState("Muted",current?"The current call is paused. Calls keep joining this browser’s queue.":"Calls keep joining this browser’s queue while listening is paused.","ready");renderCurrent();
+        } else {
+          hasStarted=true;listenToggle.textContent = "Mute"; listenToggle.className = "";if(current){setPlayerState("Listening","The current call resumed.","listening");renderCurrent();}else playNext();
+        }
+      });
+      skipButton.addEventListener("click", function(){var skippedCurrent=Boolean(current);current=null;if(!skippedCurrent&&queue.length)queue.shift();renderQueue();renderCurrent();if(muted)setPlayerState("Muted","The "+(skippedCurrent?"paused":"next waiting")+" call was skipped.","ready");else playNext();});
+      holdButton.addEventListener("click", function(){if(holdKey){holdKey=null;holdName="";}else if(current){holdKey=targetKey(current);holdName=current.target||displayIdentifier(current.targetForm,current.targetId);queue=queue.filter(function(call){return targetKey(call)===holdKey;});}renderQueue();renderCurrent();setPlayerState(muted?"Muted":current?"Listening":"Waiting",holdKey?"Only "+holdName+" will play until you choose Play all targets.":"All targets can play.",muted||!current?"ready":"listening");});
+      avoidButton.addEventListener("click", function(){if(!current)return;var key=targetKey(current);avoids.add(key);if(holdKey===key){holdKey=null;holdName="";}queue=queue.filter(function(call){return targetKey(call)!==key;});current=null;renderQueue();renderCurrent();if(muted)setPlayerState("Muted","That target is temporarily avoided in this browser.","ready");else playNext();});
+      clearAvoids.addEventListener("click", function(){avoids.clear();renderCurrent();setPlayerState(muted?"Muted":current?"Listening":"Waiting","Temporary avoided targets were cleared.",muted||!current?"ready":"listening");});
+
+      document.getElementById("maximum-queued").addEventListener("change", function(event){ var value=Math.trunc(Number(event.target.value)); value=Number.isFinite(value)?Math.min(500,Math.max(1,value)):100; event.target.value=String(value); try{localStorage.setItem("sdrtrunk-vce.mockup.listener.max",String(value));}catch(error){} document.getElementById("listening-saved").textContent="Saved in this browser"; if(queue.length>value){dropped+=queue.length-value;queue=queue.slice(queue.length-value);renderQueue();renderCurrent();} });
+      document.getElementById("clear-browser-choices").addEventListener("click", function(){avoids.clear();holdKey=null;holdName="";document.getElementById("maximum-queued").value="100";try{localStorage.removeItem("sdrtrunk-vce.mockup.listener.max");}catch(error){}document.getElementById("listening-saved").textContent="Listening choices reset";renderCurrent();});
+      document.getElementById("advanced-encryption").addEventListener("change", saveDisplayChoice);
+      document.getElementById("format-grid").addEventListener("change", function(event){if(event.target.matches("[data-display-choice]"))saveDisplayChoice();});
+      function saveDisplayChoice(){var data={advanced:document.getElementById("advanced-encryption").value,formats:Array.from(document.querySelectorAll("[data-display-choice]")).map(function(select){return select.value;})};try{localStorage.setItem("sdrtrunk-vce.mockup.listener.display",JSON.stringify(data));}catch(error){}document.getElementById("display-saved").textContent="Saved in this browser";renderQueue();renderCurrent();}
+
+      document.getElementById("preview-state").addEventListener("change", function(event){applyScenario(event.target.value);});
+      document.getElementById("login-form").addEventListener("submit", function(event){event.preventDefault();document.getElementById("login-password").value="";document.getElementById("login-message").textContent="Signed in for this preview";window.setTimeout(function(){document.getElementById("preview-state").value="playing";applyScenario("playing");document.getElementById("header-sign-in").textContent="Administrator";},350);});
+      document.getElementById("cancel-sign-in").addEventListener("click",function(){if(signInOrigin==="audio-lock")showAudioLockedSummary();else{document.getElementById("preview-state").value="ready";resetState();document.getElementById("header-sign-in").focus();}});
+      document.getElementById("header-sign-in").addEventListener("click", function(){if(audioLocked){signInOrigin="audio-lock";layout.hidden=true;gate.hidden=false;document.getElementById("gate-title").textContent="Administrator sign-in required";document.getElementById("gate-copy").textContent="Call audio is available to the administrator on this receiver.";document.getElementById("cancel-sign-in").textContent="Use other public pages";setConnection("Sign-in required","unavailable");}else{resetState();signInOrigin="account";layout.hidden=true;gate.hidden=false;document.getElementById("gate-title").textContent="Administrator sign-in";document.getElementById("gate-copy").textContent="Sign in to open Settings. Public listening remains available without signing in.";document.getElementById("cancel-sign-in").textContent="Continue public listening";setConnection("Public access","connected");}document.getElementById("login-username").focus();});
+      document.querySelectorAll(".main-nav a").forEach(function(link){link.addEventListener("click",function(event){event.preventDefault();});});
+
+      var REVIEW_KEY="sdrtrunk-vce.mockup.public-listener-v1.review";
+      var reviewSections=[
+        ["shell","Public navigation and independent access","Listen is a focused route beside the existing read-only pages. Spectrum is absent. Review MAIN-01, ACCESS-001, and ACCESS-002."],
+        ["start","First visit and listening state","Audio starts muted until the visitor acts. Review the Connecting, Muted, Buffering, Listening, Waiting, and Reconnecting states."],
+        ["call","Current call information","Target and source aliases and IDs, system, channel, frequency, timeslot, decoder, completion time, duration, and protected state use the existing call metadata."],
+        ["controls","Hold, avoid, clear, and skip","Only this target is scoped by system and the best available target identity. Avoid is temporary. Clear affects avoids, not the queue. Review the source-only playback coverage row and CALL-003."],
+        ["queue","Automatic queue","Calls enter automatically after completion. There is no per-call Play, replay, reordering, or permanent listening history. Review XF-008 and XF-009."],
+        ["display","Browser-local display choices","Advanced P25 encryption detail and protocol ID formatting stay only in this browser. Review DISP-002 and DISP-004."],
+        ["access","Locked, busy, and partial-access states","Call audio and the radio/status pages can be public or administrator-only independently. The page also shows connecting, preparing, reconnecting, unavailable-call, full-listener, and service-unavailable states."],
+        ["responsive","Narrow-screen behavior","Current call, queue access, status, and every essential control remain usable on phones and small tablets."]
+      ];
+      var reviewData=loadReview();
+      function loadReview(){try{return JSON.parse(localStorage.getItem(REVIEW_KEY)||"null")||{entries:{}};}catch(error){return {entries:{}};}}
+      function reviewOptions(selected){return [["","Not reviewed"],["approved","Looks good"],["change","Change requested"],["question","Question"],["later","Review later"]].map(function(option){return '<option value="'+option[0]+'"'+(selected===option[0]?' selected':'')+'>'+option[1]+'</option>';}).join("");}
+      function renderReview(){document.getElementById("review-content").innerHTML=reviewSections.map(function(section){var entry=reviewData.entries[section[0]]||{state:"",note:""};return '<section class="review-card"><h3>'+escapeHtml(section[1])+'</h3><p>'+escapeHtml(section[2])+'</p><label class="sr-only" for="review-state-'+section[0]+'">Decision for '+escapeHtml(section[1])+'</label><select id="review-state-'+section[0]+'" data-review-state="'+section[0]+'">'+reviewOptions(entry.state||"")+'</select><label class="sr-only" for="review-note-'+section[0]+'">Notes for '+escapeHtml(section[1])+'</label><textarea id="review-note-'+section[0]+'" data-review-note="'+section[0]+'" maxlength="3000" placeholder="Add a decision, requested change, or question…">'+escapeHtml(entry.note||"")+'</textarea><div class="review-card-foot"><span>Saved only in this browser</span><span data-review-count="'+section[0]+'">'+(entry.note||"").length+' / 3000</span></div></section>';}).join("");updateReviewStatus();}
+      function saveReview(id,patch){var entry=reviewData.entries[id]||{state:"",note:""};Object.assign(entry,patch);reviewData.entries[id]=entry;try{localStorage.setItem(REVIEW_KEY,JSON.stringify(reviewData));}catch(error){}updateReviewStatus();}
+      function updateReviewStatus(){var reviewed=reviewSections.filter(function(section){return reviewData.entries[section[0]]&&reviewData.entries[section[0]].state;}).length;document.getElementById("review-save-state").textContent=reviewed+" of "+reviewSections.length+" sections reviewed · saved in this browser";}
+      function openReview(){renderReview();document.getElementById("review-scrim").hidden=false;document.getElementById("review-drawer").hidden=false;document.getElementById("close-review").focus();}
+      function closeReview(){document.getElementById("review-scrim").hidden=true;document.getElementById("review-drawer").hidden=true;document.getElementById("open-review").focus();}
+      function downloadReview(){var payload={format:"sdrtrunk-vce-mockup-review",version:1,mockup:"public-listener-v1",exportedAt:new Date().toISOString(),evidence:["MAIN-01","MAIN-02","ACCESS-001","ACCESS-002","CALL-003","DISP-002","DISP-004","XF-008","XF-009"],entries:reviewData.entries};var blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});var link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="sdrtrunk-public-listener-review-"+new Date().toISOString().slice(0,10)+".json";link.click();window.setTimeout(function(){URL.revokeObjectURL(link.href);},0);}
+      document.getElementById("open-review").addEventListener("click",openReview);
+      document.getElementById("close-review").addEventListener("click",closeReview);
+      document.getElementById("done-review").addEventListener("click",closeReview);
+      document.getElementById("review-scrim").addEventListener("click",closeReview);
+      document.getElementById("download-review").addEventListener("click",downloadReview);
+      document.getElementById("clear-review").addEventListener("click",function(){reviewData={entries:{}};try{localStorage.removeItem(REVIEW_KEY);}catch(error){}renderReview();});
+      document.getElementById("review-content").addEventListener("change",function(event){if(event.target.matches("[data-review-state]"))saveReview(event.target.dataset.reviewState,{state:event.target.value});});
+      document.getElementById("review-content").addEventListener("input",function(event){if(!event.target.matches("[data-review-note]"))return;var id=event.target.dataset.reviewNote;var count=document.querySelector('[data-review-count="'+id+'"]');if(count)count.textContent=event.target.value.length+" / 3000";saveReview(id,{note:event.target.value});});
+      document.addEventListener("keydown",function(event){if(event.key==="Escape"&&!document.getElementById("review-drawer").hidden)closeReview();});
+
+      renderFormats();
+      try{var savedMaximum=Number(localStorage.getItem("sdrtrunk-vce.mockup.listener.max"));if(Number.isInteger(savedMaximum)&&savedMaximum>=1&&savedMaximum<=500)document.getElementById("maximum-queued").value=String(savedMaximum);}catch(error){}
+      try{var savedDisplay=JSON.parse(localStorage.getItem("sdrtrunk-vce.mockup.listener.display")||"null");if(savedDisplay){document.getElementById("advanced-encryption").value=savedDisplay.advanced===true?"Show":savedDisplay.advanced===false?"Use public default":savedDisplay.advanced||"Use public default";document.querySelectorAll("[data-display-choice]").forEach(function(select,index){if(savedDisplay.formats&&savedDisplay.formats[index])select.value=savedDisplay.formats[index]==="Use receiver default"?"Use public default":savedDisplay.formats[index];});}}catch(error){}
+      resetState();
+    }());
+  </script>
+</body>
+</html>

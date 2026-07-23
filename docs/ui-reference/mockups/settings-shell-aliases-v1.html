@@ -1,0 +1,2044 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce Settings — Aliases mockup</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #edf1f4;
+      --surface: #fff;
+      --surface-2: #f5f7f9;
+      --surface-3: #e8edf1;
+      --ink: #18212a;
+      --muted: #65717d;
+      --line: #c9d1d8;
+      --line-strong: #9ba8b3;
+      --header: #202a33;
+      --header-2: #2c3944;
+      --accent: #0b7168;
+      --accent-hover: #095d56;
+      --accent-soft: #d9efec;
+      --blue: #075eaa;
+      --blue-soft: #e7f1fb;
+      --warning: #8a5200;
+      --warning-soft: #fff1d6;
+      --danger: #9b2743;
+      --danger-soft: #fbe8ed;
+      --success: #176b3a;
+      --success-soft: #e2f3e9;
+      --shadow: 0 6px 20px rgb(20 32 44 / 9%);
+      --radius: 10px;
+      font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111820;
+        --surface: #18212a;
+        --surface-2: #202b35;
+        --surface-3: #2b3742;
+        --ink: #e5ebf0;
+        --muted: #aeb8c1;
+        --line: #3b4854;
+        --line-strong: #596976;
+        --header: #0d1318;
+        --header-2: #24313b;
+        --accent: #55c7ba;
+        --accent-hover: #79d6cc;
+        --accent-soft: #193d39;
+        --blue: #82bff3;
+        --blue-soft: #18324a;
+        --warning: #f0bd67;
+        --warning-soft: #48351c;
+        --danger: #ff99b0;
+        --danger-soft: #4a222c;
+        --success: #85d6a2;
+        --success-soft: #193b27;
+        --shadow: 0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page); }
+    body { min-height: 100vh; margin: 0; color: var(--ink); background: var(--page); font-size: 14px; }
+    button, input, select, textarea { font: inherit; }
+    button, input, select, textarea {
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+    }
+    button { min-height: 34px; padding: 6px 11px; cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .58; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
+    summary:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+      outline-offset: 2px;
+    }
+    a { color: var(--blue); }
+    [hidden] { display: none !important; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      min-height: 50px;
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr) max-content;
+      align-items: center;
+      gap: 24px;
+      padding: 0 18px;
+      color: #fff;
+      background: var(--header);
+      border-bottom: 1px solid #0e151b;
+      box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+    }
+    .brand { font-size: 17px; font-weight: 750; letter-spacing: -.01em; }
+    .global-nav { align-self: stretch; display: flex; min-width: 0; gap: 2px; overflow-x: auto; }
+    .global-nav button {
+      min-height: 49px;
+      padding: 0 13px;
+      color: #dce4eb;
+      background: transparent;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+    }
+    .global-nav button:hover, .global-nav button[aria-current="page"] {
+      color: #fff;
+      background: var(--header-2);
+      border-bottom-color: #35b8a9;
+    }
+    .admin-summary { display: flex; align-items: center; gap: 9px; color: #dce4eb; white-space: nowrap; font-size: 12px; }
+    .admin-dot { width: 8px; height: 8px; border-radius: 50%; background: #54d177; box-shadow: 0 0 0 3px rgb(84 209 119 / 16%); }
+
+    .settings-shell { min-height: calc(100vh - 50px); display: grid; grid-template-columns: 238px minmax(0, 1fr); }
+    .settings-nav {
+      position: sticky;
+      top: 50px;
+      height: calc(100vh - 50px);
+      overflow-y: auto;
+      padding: 18px 12px 30px;
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+    }
+    .settings-nav h2 { margin: 0 8px 18px; font-size: 1.08rem; }
+    .nav-group { margin: 0 0 21px; }
+    .nav-group h3 { margin: 0 9px 7px; color: var(--muted); font-size: .7rem; letter-spacing: .075em; text-transform: uppercase; }
+    .settings-nav button {
+      width: 100%;
+      min-height: 37px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 7px;
+      padding: 7px 10px;
+      text-align: left;
+      background: transparent;
+      border: 0;
+      border-radius: 7px;
+    }
+    .settings-nav button:hover { background: var(--surface-2); }
+    .settings-nav button[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+    .future-tag { color: var(--muted); font-size: .68rem; font-weight: 600; }
+
+    .settings-main { min-width: 0; padding: 18px clamp(14px, 2.2vw, 30px) 60px; }
+    .page-head {
+      max-width: 1600px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 0 auto 14px;
+    }
+    .breadcrumbs { margin: 0 0 6px; color: var(--muted); font-size: .78rem; }
+    .page-head h1 { margin: 0; font-size: clamp(1.45rem, 2.5vw, 2rem); line-height: 1.15; }
+    .page-head p { max-width: 820px; margin: 7px 0 0; color: var(--muted); line-height: 1.45; }
+    .page-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+    .review-button, .button-primary { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .review-button:hover:not(:disabled), .button-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .button-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); background: var(--surface); }
+    .button-link { color: var(--blue); background: transparent; border-color: transparent; }
+
+    .prototype-banner {
+      max-width: 1600px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 18px;
+      margin: 0 auto 14px;
+      padding: 10px 13px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+      border-radius: 8px;
+    }
+    .prototype-banner strong { color: var(--ink); }
+    .scenario-control { display: flex; align-items: center; gap: 8px; }
+    .scenario-control label { font-size: .78rem; font-weight: 700; }
+    .scenario-control select { min-height: 34px; padding: 5px 30px 5px 8px; }
+
+    .aliases-workspace { max-width: 1600px; margin: 0 auto; }
+    .panel { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .panel + .panel { margin-top: 14px; }
+    .panel-head {
+      min-height: 58px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 14px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .panel-head h2, .panel-head h3 { margin: 0; font-size: 1rem; }
+    .panel-head p { margin: 3px 0 0; color: var(--muted); font-size: .78rem; }
+    .list-context, .list-actions, .toolbar, .table-actions, .selection-toolbar, .pagination,
+    .editor-actions, .editor-footer, .inline-actions, .chip-list, .match-actions, .field-inline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .list-context label { font-weight: 700; }
+    .list-context select { min-width: 230px; min-height: 36px; padding: 6px 32px 6px 9px; }
+    .list-count { color: var(--muted); font-size: .76rem; }
+
+    .toolbar { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+    .search-wrap { position: relative; flex: 1 1 270px; max-width: 520px; }
+    .search-wrap input { width: 100%; min-height: 38px; padding: 7px 76px 7px 34px; }
+    .search-icon { position: absolute; left: 11px; top: 10px; color: var(--muted); pointer-events: none; }
+    .clear-search { position: absolute; right: 4px; top: 3px; min-height: 32px; color: var(--muted); background: transparent; border: 0; }
+    .task-tabs { display: inline-flex; padding: 3px; background: var(--surface-3); border-radius: 8px; }
+    .task-tabs button { min-height: 31px; border: 0; background: transparent; }
+    .task-tabs button[aria-pressed="true"] { color: var(--accent); background: var(--surface); box-shadow: 0 1px 4px rgb(0 0 0 / 12%); font-weight: 750; }
+    .filters-menu { position: relative; }
+    .filters-menu > summary {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .filters-menu > summary::-webkit-details-marker { display: none; }
+    .filters-popover {
+      position: absolute;
+      top: calc(100% + 5px);
+      right: 0;
+      z-index: 20;
+      width: min(320px, calc(100vw - 28px));
+      padding: 12px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      box-shadow: var(--shadow);
+    }
+    .filters-popover h3 { margin: 0 0 9px; font-size: .9rem; }
+    .check-stack { display: grid; gap: 8px; }
+    .check-row { display: flex; align-items: flex-start; gap: 8px; line-height: 1.35; }
+    .check-row input { flex: 0 0 auto; margin-top: 2px; }
+    .behavior-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .behavior-option { display: flex; align-items: flex-start; gap: 7px; padding: 9px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .behavior-option label { flex: 1; display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+    .behavior-option input { flex: 0 0 auto; margin-top: 3px; }
+    .behavior-option strong, .behavior-option small { display: block; }
+    .behavior-option small { margin-top: 2px; color: var(--muted); line-height: 1.3; }
+
+    .selection-toolbar {
+      min-height: 48px;
+      padding: 8px 14px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+    }
+    .selection-toolbar strong { margin-right: auto; }
+    .selection-note { color: var(--muted); font-size: .75rem; }
+
+    .table-wrap { max-height: 48vh; overflow: auto; }
+    table { width: 100%; min-width: 1140px; border-collapse: separate; border-spacing: 0; }
+    th, td { padding: 9px 10px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); }
+    th { position: sticky; top: 0; z-index: 2; color: var(--muted); background: var(--surface-2); font-size: .71rem; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+    th:first-child, td:first-child { width: 42px; text-align: center; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: var(--surface-2); }
+    tbody tr.is-open { background: var(--accent-soft); box-shadow: inset 4px 0 0 var(--accent); }
+    tbody tr.is-unsupported { background: color-mix(in srgb, var(--danger-soft) 45%, var(--surface)); }
+    tbody button.row-link { min-height: 0; padding: 0; color: var(--blue); background: transparent; border: 0; font-weight: 700; text-align: left; }
+    .match-cell { display: grid; gap: 2px; min-width: 180px; }
+    .match-value { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; }
+    .subtext { color: var(--muted); font-size: .74rem; }
+    .yes { color: var(--success); font-weight: 750; }
+    .no { color: var(--muted); }
+    .priority-default { color: var(--muted); }
+    .visual-preview { display: inline-flex; align-items: center; gap: 7px; }
+    .icon-swatch {
+      width: 29px;
+      height: 29px;
+      display: inline-grid;
+      place-items: center;
+      color: var(--swatch, var(--accent));
+      background: color-mix(in srgb, var(--swatch, var(--accent)) 12%, var(--surface));
+      border: 1px solid color-mix(in srgb, var(--swatch, var(--accent)) 40%, var(--line));
+      border-radius: 7px;
+    }
+    .icon-swatch svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .warning-mark { color: var(--warning); font-weight: 800; }
+    .error-mark { color: var(--danger); font-weight: 800; }
+
+    .list-state { padding: 38px 20px; text-align: center; }
+    .list-state strong { display: block; margin-bottom: 6px; font-size: 1rem; }
+    .list-state span { display: block; max-width: 620px; margin: auto; color: var(--muted); line-height: 1.45; }
+    .list-state button { margin-top: 14px; }
+    .table-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; }
+    .range-summary { color: var(--muted); font-size: .78rem; }
+    .pagination button { min-width: 36px; }
+
+    .editor-empty { padding: 50px 20px; text-align: center; }
+    .editor-empty strong, .editor-empty span { display: block; }
+    .editor-empty span { margin-top: 6px; color: var(--muted); }
+    .editor-head-left { min-width: 0; }
+    .editor-kicker { margin: 0 0 3px; color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
+    .editor-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      color: var(--muted);
+      background: var(--surface-3);
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: .68rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .status-badge.saved { color: var(--success); background: var(--success-soft); }
+    .status-badge.dirty, .status-badge.warning { color: var(--warning); background: var(--warning-soft); }
+    .status-badge.unsupported { color: var(--danger); background: var(--danger-soft); }
+    .editor-body { padding: 14px; }
+    .editor-section { margin-bottom: 12px; border: 1px solid var(--line); border-radius: 9px; overflow: clip; }
+    .editor-section[open] { overflow: visible; }
+    .editor-section[open] > summary { border-radius: 8px 8px 0 0; }
+    .editor-section > summary {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      cursor: pointer;
+      font-weight: 750;
+    }
+    .section-copy { color: var(--muted); font-size: .74rem; font-weight: 400; }
+    .section-content { padding: 14px; }
+    .form-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 14px; }
+    .field { min-width: 0; }
+    .field.wide { grid-column: span 2; }
+    .field.full { grid-column: 1 / -1; }
+    .field-label { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: .78rem; font-weight: 750; }
+    .field input:not([type="checkbox"]):not([type="color"]), .field select, .field textarea { width: 100%; min-height: 38px; padding: 7px 9px; }
+    .field textarea { min-height: 76px; resize: vertical; }
+    .field-hint { margin: 5px 0 0; color: var(--muted); font-size: .73rem; line-height: 1.4; }
+    .field-error { margin: 5px 0 0; color: var(--danger); font-size: .73rem; font-weight: 700; }
+    [aria-invalid="true"] { border-color: var(--danger) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent); }
+    .help-button {
+      width: 20px;
+      min-width: 20px;
+      min-height: 20px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      color: var(--blue);
+      background: transparent;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-family: Georgia, serif;
+      font-size: .75rem;
+      font-weight: 800;
+    }
+    .help-popover {
+      position: fixed;
+      z-index: 120;
+      width: min(330px, calc(100vw - 24px));
+      padding: 11px 12px;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .help-popover strong { display: block; margin-bottom: 4px; }
+    .help-popover p { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.45; }
+
+    .choice-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+    .choice-card { position: relative; min-width: 145px; flex: 1 1 145px; }
+    .choice-card input { position: absolute; opacity: 0; pointer-events: none; }
+    .choice-card span { min-height: 42px; display: flex; align-items: center; justify-content: center; padding: 8px; border: 1px solid var(--line-strong); border-radius: 8px; cursor: pointer; text-align: center; }
+    .choice-card input:checked + span { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); font-weight: 750; }
+    .choice-card input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+    .color-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+    .color-choice { width: 31px; min-width: 31px; min-height: 31px; padding: 0; background: var(--color); border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line-strong); border-radius: 50%; }
+    .color-choice.is-selected { box-shadow: 0 0 0 3px var(--ink); }
+    input[type="color"] { width: 42px; height: 34px; padding: 2px; }
+    .icon-picker button { width: 100%; justify-content: flex-start; }
+    .icon-dialog { width: min(880px, calc(100vw - 28px)); max-height: min(88vh, 880px); }
+    .icon-dialog-body { display: grid; gap: 12px; min-width: 0; }
+    .icon-search-row { display: grid; grid-template-columns: minmax(210px, 1fr) auto; align-items: end; gap: 12px; }
+    .icon-category-list { display: flex; flex-wrap: wrap; gap: 7px; }
+    .icon-category-list button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+    .icon-results {
+      min-width: 0;
+      max-height: min(51vh, 520px);
+      overflow-y: auto;
+      padding: 2px 3px 8px 2px;
+    }
+    .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); gap: 8px; }
+    .icon-grid button { min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left; }
+    .icon-grid button span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .icon-grid button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .icon-empty { padding: 28px 10px; color: var(--muted); text-align: center; }
+    .icon-selection-copy { margin-right: auto; color: var(--muted); font-size: .78rem; }
+    .icon-selection-copy strong { color: var(--ink); }
+
+    .other-fields { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .other-fields > .field.full { grid-column: 1 / -1; }
+    .tone-editor { min-width: 0; container-type: inline-size; }
+    .tone-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .tone-editor-head .field-label { margin: 0; }
+    .tone-table { overflow: hidden; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .tone-list-header, .tone-row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 28px minmax(180px, 1fr) 126px 110px;
+      align-items: center;
+      gap: 9px;
+    }
+    .tone-list-header { min-height: 35px; padding: 5px 9px; color: var(--muted); background: var(--surface-3); border-bottom: 1px solid var(--line); font-size: .7rem; font-weight: 750; }
+    .tone-column-label { display: flex; align-items: center; gap: 5px; }
+    .tone-column-label .help-button { width: 18px; min-width: 18px; min-height: 18px; font-size: .68rem; }
+    .tone-list { display: grid; }
+    .tone-row {
+      min-height: 54px;
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--line);
+    }
+    .tone-row:last-child { border-bottom: 0; }
+    .tone-row select, .tone-row input { min-height: 36px !important; padding: 7px 9px; }
+    .tone-choice-control select { width: 100%; }
+    .tone-number { color: var(--muted); font-size: .74rem; font-weight: 800; text-align: center; }
+    .tone-duration-control { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: stretch; }
+    .tone-duration-control input { min-width: 0; width: 100% !important; border-radius: 7px 0 0 7px; }
+    .tone-unit { display: grid; place-items: center; margin-left: -1px; color: var(--muted); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 0 7px 7px 0; font-size: .7rem; }
+    .tone-actions { display: grid; grid-template-columns: repeat(3, 34px); gap: 4px; }
+    .tone-actions button { width: 34px; min-width: 34px; min-height: 36px; padding: 0; }
+    .tone-mobile-label { display: none; }
+    .tone-empty { margin: 0; padding: 18px 12px; color: var(--muted); text-align: center; }
+
+    .match-list { display: grid; gap: 9px; }
+    .match-card { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(210px, 2fr) max-content; align-items: center; gap: 10px; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .match-card strong, .match-card span { display: block; }
+    .match-card .match-value { margin-top: 2px; }
+    .inline-notice { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 10px; margin: 0 0 12px; padding: 10px 12px; color: var(--warning); background: var(--warning-soft); border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--line)); border-radius: 8px; }
+    .inline-notice.error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+    .inline-notice.info { color: var(--blue); background: var(--blue-soft); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); }
+    .inline-notice span { color: var(--ink); line-height: 1.42; }
+    .chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; color: var(--blue); background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 30%, var(--line)); border-radius: 999px; font-size: .75rem; }
+    .chip.missing { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+    .destination-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 8px; }
+    .destination-card { display: flex; align-items: flex-start; gap: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; }
+    .destination-card input { margin-top: 2px; }
+    .destination-card strong, .destination-card span { display: block; }
+
+    .editor-footer { position: sticky; bottom: 0; z-index: 5; justify-content: space-between; padding: 10px 14px; background: color-mix(in srgb, var(--surface) 92%, transparent); border-top: 1px solid var(--line); backdrop-filter: blur(7px); }
+    .editor-footer-copy { color: var(--muted); font-size: .76rem; }
+    .editor-footer-buttons { display: flex; gap: 8px; }
+
+    dialog {
+      width: min(650px, calc(100vw - 28px));
+      max-height: min(82vh, 780px);
+      padding: 0;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      box-shadow: 0 20px 70px rgb(0 0 0 / 38%);
+      overflow: auto;
+    }
+    dialog::backdrop { background: rgb(6 12 18 / 58%); backdrop-filter: blur(2px); }
+    .modal-head { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; gap: 12px; padding: 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+    .modal-head h2 { margin: 0; font-size: 1.1rem; }
+    .modal-head p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; }
+    .modal-close { min-width: 34px; padding: 0; font-size: 1.25rem; }
+    .modal-body { min-width: 0; padding: 14px; overflow-wrap: anywhere; }
+    dialog .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    dialog .field.wide { grid-column: 1 / -1; }
+    .modal-footer { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 11px 14px; background: var(--surface-2); border-top: 1px solid var(--line); }
+    .impact-grid { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 8px; margin: 0 0 12px; }
+    .impact-grid > div { padding: 9px; background: var(--surface-2); border-radius: 7px; }
+    .impact-grid dt { color: var(--muted); font-size: .72rem; }
+    .impact-grid dd { margin: 3px 0 0; font-weight: 750; }
+
+    .review-scrim { position: fixed; inset: 0; z-index: 80; background: rgb(6 12 18 / 48%); }
+    .review-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 90;
+      width: min(540px, 100vw);
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      box-shadow: -10px 0 35px rgb(0 0 0 / 26%);
+    }
+    .review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 15px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+    .review-head h2 { margin: 0; font-size: 1.15rem; }
+    .review-head p { margin: 5px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+    .review-content { flex: 1; overflow-y: auto; padding: 12px; }
+    .review-card { margin-bottom: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; }
+    .review-card h3 { margin: 0; font-size: .92rem; }
+    .review-card p { margin: 5px 0 9px; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+    .review-card select, .review-card textarea { width: 100%; padding: 7px; }
+    .review-card textarea { min-height: 72px; margin-top: 7px; resize: vertical; }
+    .review-card-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: var(--muted); font-size: .68rem; }
+    .review-footer { padding: 12px; background: var(--surface-2); border-top: 1px solid var(--line); }
+    .review-save-state { margin: 0 0 8px; color: var(--muted); font-size: .75rem; }
+    .review-save-state.warning { color: var(--warning); }
+    .review-footer-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+    .toast { position: fixed; left: 50%; bottom: 22px; z-index: 140; max-width: min(540px, calc(100vw - 28px)); transform: translateX(-50%); padding: 10px 13px; color: #fff; background: #172028; border-radius: 8px; box-shadow: var(--shadow); }
+    body.narrow-preview .aliases-workspace, body.narrow-preview .page-head, body.narrow-preview .prototype-banner { max-width: 760px; }
+
+    @container (max-width: 500px) {
+      .tone-list-header { display: none; }
+      .tone-row { grid-template-columns: 26px minmax(0, 1fr); align-items: start; padding-block: 9px; }
+      .tone-choice-control, .tone-duration-cell, .tone-row .tone-actions { grid-column: 2; }
+      .tone-mobile-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: .7rem; font-weight: 750; }
+      .tone-row .tone-actions { grid-template-columns: repeat(3, 40px); justify-content: end; }
+      .tone-actions button { width: 40px; min-width: 40px; min-height: 40px; }
+    }
+
+    @media (max-width: 980px) {
+      .settings-shell { grid-template-columns: 1fr; }
+      .settings-nav { position: static; height: auto; display: flex; gap: 7px; overflow-x: auto; padding: 9px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .settings-nav h2, .nav-group h3 { display: none; }
+      .nav-group { display: flex; flex: 0 0 auto; margin: 0; }
+      .settings-nav button { width: auto; white-space: nowrap; }
+      .form-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+      .destination-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 650px) {
+      .topbar { grid-template-columns: max-content minmax(0, 1fr); gap: 10px; padding: 0 10px; }
+      .admin-summary { display: none; }
+      .global-nav button { padding: 0 9px; }
+      .settings-main { padding-inline: 9px; }
+      .page-actions { width: 100%; justify-content: flex-start; }
+      .list-context { width: 100%; }
+      .list-context select { flex: 1; min-width: 150px; }
+      .task-tabs { width: 100%; }
+      .task-tabs button { flex: 1; }
+      .filters-menu { margin-left: auto; }
+      .form-grid, .destination-grid, dialog .form-grid { grid-template-columns: 1fr; }
+      .field.wide, dialog .field.wide { grid-column: auto; }
+      .other-fields, .icon-search-row { grid-template-columns: 1fr; }
+      .icon-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .match-card { grid-template-columns: 1fr; }
+      .impact-grid { grid-template-columns: 1fr; }
+      .editor-footer { align-items: stretch; }
+      .editor-footer-buttons { width: 100%; }
+      .editor-footer-buttons button { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">sdrtrunk-vce</div>
+    <nav class="global-nav" aria-label="Application">
+      <button type="button" data-future-page="Live">Live</button>
+      <button type="button" data-future-page="Activity">Activity</button>
+      <button type="button" aria-current="page">Settings</button>
+    </nav>
+    <div class="admin-summary"><span class="admin-dot" aria-hidden="true">&nbsp;</span>Administrator</div>
+  </header>
+
+  <div class="settings-shell">
+    <aside class="settings-nav" aria-label="Settings navigation">
+      <h2>Settings</h2>
+      <div class="nav-group">
+        <h3>Playlist Settings</h3>
+        <button type="button" data-future-page="Hardware">Hardware</button>
+        <button type="button" data-future-page="Channels">Channels</button>
+        <button type="button" aria-current="page">Aliases</button>
+        <button type="button" data-future-page="Listen lists">Listen lists</button>
+        <button type="button" data-future-page="Streaming">Streaming <span class="future-tag">NEXT</span></button>
+        <button type="button" data-future-page="RadioReference">RadioReference</button>
+      </div>
+      <div class="nav-group">
+        <h3>General Settings</h3>
+        <button type="button" data-future-page="Audio & recording">Audio &amp; recording</button>
+        <button type="button" data-future-page="Decoders & keys">Decoders &amp; keys</button>
+        <button type="button" data-future-page="Storage & retention">Storage &amp; retention</button>
+        <button type="button" data-future-page="Diagnostics">Diagnostics</button>
+      </div>
+    </aside>
+
+    <main class="settings-main">
+      <header class="page-head">
+        <div>
+          <p class="breadcrumbs">Settings / Playlist Settings / Aliases</p>
+          <h1>Aliases</h1>
+          <p>Name radio traffic, choose what is recorded, set playback priority, match talkgroups and radio IDs, and assign streaming destinations. Live browser eligibility is managed through Listen lists. Large alias lists stay server-paged instead of loading into the browser all at once.</p>
+        </div>
+        <div class="page-actions">
+          <button id="open-review" class="review-button" type="button">Review this mockup</button>
+        </div>
+      </header>
+
+      <section class="prototype-banner" aria-label="Prototype notice">
+        <div><strong>Interactive design mockup.</strong> Changes are temporary and no receiver, playlist, stream, or database is contacted.</div>
+        <div class="scenario-control">
+          <label for="preview-scenario">Preview state</label>
+          <select id="preview-scenario">
+            <option value="normal">Normal large list</option>
+            <option value="bulk">Multi-select and bulk tools</option>
+            <option value="other">Other matcher / AMBE tones</option>
+            <option value="overlap">Overlapping identifiers</option>
+            <option value="empty">Empty alias list</option>
+            <option value="no-results">No search results</option>
+            <option value="loading">Loading page</option>
+            <option value="list-error">List unavailable</option>
+            <option value="unknown">Unsupported legacy matcher</option>
+            <option value="missing-stream">Missing stream destination</option>
+            <option value="list-impact">Delete-list impact preview</option>
+            <option value="validation">Field validation</option>
+            <option value="conflict">Changed elsewhere</option>
+            <option value="no-lists">No alias lists</option>
+            <option value="narrow">Narrow layout</option>
+          </select>
+        </div>
+      </section>
+
+      <div class="aliases-workspace">
+        <section class="panel" aria-labelledby="alias-list-heading">
+          <h2 id="alias-list-heading" class="sr-only">Aliases in the selected Alias List</h2>
+          <header class="panel-head">
+            <div class="list-context">
+              <label for="alias-list-select">Alias List</label>
+              <button class="help-button" type="button" aria-label="About Alias Lists" aria-expanded="false" data-help-title="Alias Lists" data-help="An Alias List groups names and matching rules. Channels point to a list by its stable identity, so renaming it does not break those links.">i</button>
+              <select id="alias-list-select">
+                <option>Metro County</option>
+                <option>State Patrol</option>
+                <option>Regional Interop</option>
+              </select>
+              <span id="list-count" class="list-count">2,843 aliases</span>
+            </div>
+            <div class="list-actions">
+              <button type="button" data-list-action="new">New list</button>
+              <button type="button" data-list-action="clone">Clone list</button>
+              <button type="button" data-list-action="rename">Rename list</button>
+              <button class="button-danger" type="button" data-list-action="delete">Delete list</button>
+            </div>
+          </header>
+
+          <div class="toolbar">
+            <div class="search-wrap">
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <label class="sr-only" for="alias-search">Search aliases</label>
+              <input id="alias-search" type="search" placeholder="Search alias, group, or matching ID" autocomplete="off">
+              <button id="clear-search" class="clear-search" type="button">Clear</button>
+            </div>
+            <div class="task-tabs" role="group" aria-label="Alias matching category">
+              <button type="button" aria-pressed="true" data-category="talkgroup">Talkgroups</button>
+              <button type="button" aria-pressed="false" data-category="radio">Radios</button>
+              <button type="button" aria-pressed="false" data-category="other">Other</button>
+            </div>
+            <details class="filters-menu">
+              <summary>Filters <span id="filter-count" class="status-badge">0</span></summary>
+              <div class="filters-popover">
+                <h3>Filter aliases</h3>
+                <div class="check-stack">
+                  <label class="check-row"><input type="checkbox" data-filter="record"> Records calls</label>
+                  <label class="check-row"><input type="checkbox" data-filter="stream"> Has stream destination</label>
+                  <label class="check-row"><input type="checkbox" data-filter="warning"> Has matching warning</label>
+                </div>
+                <p class="field-hint">Filters are sent to the server with the search. The browser does not scan all 2,843 aliases.</p>
+              </div>
+            </details>
+            <button id="new-alias" class="button-primary" type="button">New alias</button>
+          </div>
+
+          <div id="selection-toolbar" class="selection-toolbar" hidden>
+            <strong id="selection-count">0 selected</strong>
+            <span class="selection-note">Only named rows on this page are selected.</span>
+            <button type="button" data-bulk-action="edit">Bulk edit</button>
+            <button type="button" data-bulk-action="move">Move</button>
+            <button class="button-danger" type="button" data-bulk-action="delete">Delete</button>
+            <button type="button" data-bulk-action="clear">Clear selection</button>
+          </div>
+
+          <div id="table-region">
+            <div class="table-wrap">
+              <table id="alias-table">
+                <thead>
+                  <tr>
+                    <th><input id="select-page" type="checkbox" aria-label="Select all aliases shown on this page"></th>
+                    <th>Match</th>
+                    <th>Alias</th>
+                    <th>Group</th>
+                    <th>Record</th>
+                    <th>Priority</th>
+                    <th>Icon / color</th>
+                    <th>Streams</th>
+                    <th><span class="sr-only">Warning</span></th>
+                  </tr>
+                </thead>
+                <tbody id="alias-table-body"></tbody>
+              </table>
+            </div>
+            <footer class="table-footer">
+              <span id="range-summary" class="range-summary">Showing 1–100 of 2,843 Talkgroup aliases · 100 per page</span>
+              <div class="pagination" aria-label="Alias pages">
+                <button id="previous-page" type="button" disabled aria-label="Previous page">‹</button>
+                <span>Page <strong id="page-number">1</strong> of <strong id="page-total">29</strong></span>
+                <button id="next-page" type="button" aria-label="Next page">›</button>
+              </div>
+            </footer>
+          </div>
+          <div id="list-state" class="list-state" hidden></div>
+        </section>
+
+        <section id="editor-panel" class="panel" aria-live="polite">
+          <div class="editor-empty"><strong>No alias selected</strong><span>Select an alias name from the table to open its editor.</span></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="app-dialog" aria-labelledby="dialog-title">
+    <header class="modal-head">
+      <div><h2 id="dialog-title">Dialog</h2><p id="dialog-subtitle"></p></div>
+      <button id="dialog-close" class="modal-close" type="button" aria-label="Close dialog">×</button>
+    </header>
+    <div id="dialog-body" class="modal-body"></div>
+    <footer id="dialog-footer" class="modal-footer"></footer>
+  </dialog>
+
+  <dialog id="icon-dialog" class="icon-dialog" aria-labelledby="icon-dialog-title" aria-describedby="icon-dialog-copy">
+    <header class="modal-head">
+      <div><h2 id="icon-dialog-title">Choose a vector icon</h2><p id="icon-dialog-copy">Search or browse the packaged icon set. No image files are uploaded.</p></div>
+      <button id="icon-dialog-close" class="modal-close" type="button" aria-label="Close icon chooser">×</button>
+    </header>
+    <div class="modal-body icon-dialog-body">
+      <div class="icon-search-row">
+        <div class="field">
+          <div class="field-label"><label for="icon-search">Search icons</label></div>
+          <input id="icon-search" type="search" autocomplete="off" placeholder="Try ambulance, radio, school, encrypted…">
+        </div>
+        <p id="icon-result-count" class="field-hint" role="status" aria-live="polite"></p>
+      </div>
+      <div id="icon-category-list" class="icon-category-list" role="toolbar" aria-label="Icon categories"></div>
+      <div class="icon-results">
+        <div id="icon-grid" class="icon-grid" role="group" aria-label="Available vector icons"></div>
+        <p id="icon-empty" class="icon-empty" hidden>No icons match that search.</p>
+      </div>
+    </div>
+    <footer class="modal-footer">
+      <span class="icon-selection-copy">Selected: <strong id="icon-selected-name">Radio</strong></span>
+      <button id="icon-dialog-cancel" type="button">Cancel</button>
+      <button id="icon-dialog-use" class="button-primary" type="button">Use icon</button>
+    </footer>
+  </dialog>
+
+  <div id="context-help" class="help-popover" role="dialog" aria-label="More information" hidden>
+    <strong id="context-help-title">More information</strong>
+    <p id="context-help-copy"></p>
+  </div>
+
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" role="dialog" aria-modal="true" aria-labelledby="review-title" hidden>
+    <header class="review-head">
+      <div>
+        <h2 id="review-title">Review Aliases</h2>
+        <p>Choices and notes save only in this browser. They never change SDRTrunk or its database. Reference evidence:
+          CFG-04 through CFG-07 Alias workflows and OTHER-01 retired raster Icon Manager.</p>
+      </div>
+      <button id="close-review" class="modal-close" type="button" aria-label="Close review">×</button>
+    </header>
+    <div id="review-content" class="review-content"></div>
+    <footer class="review-footer">
+      <p id="review-save-state" class="review-save-state" role="status" aria-live="polite">Preparing browser notes…</p>
+      <div class="review-footer-buttons">
+        <button id="clear-review" class="button-danger" type="button">Clear notes</button>
+        <button id="download-review" class="button-primary" type="button">Download review</button>
+      </div>
+    </footer>
+  </aside>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var aliasSeeds = [
+        { id: "a1", category: "talkgroup", matchType: "Talkgroup", match: "5000", protocol: "P25", name: "Metro Dispatch", group: "Police", record: true, priority: 20, icon: "shield", color: "#1769aa", streams: ["RadioResolve Calls"], warning: "", identifiers: [{ type: "Talkgroup", value: "P25 · 5000" }] },
+        { id: "a2", category: "talkgroup", matchType: "Talkgroup Range", match: "5100–5199", protocol: "P25", name: "Metro Tac Channels", group: "Police", record: true, priority: 50, icon: "radio", color: "#5f45a7", streams: ["RadioResolve Calls"], warning: "" , identifiers: [{ type: "Talkgroup Range", value: "P25 · 5100–5199" }]},
+        { id: "a3", category: "talkgroup", matchType: "Fully qualified TG", match: "BEE00.3A7.5000", protocol: "P25", name: "Metro Dispatch — exact", group: "Police", record: true, priority: 10, icon: "shield", color: "#1769aa", streams: ["RadioResolve Calls", "Archive Feed"], warning: "Overlaps Metro Dispatch", identifiers: [{ type: "P25 fully qualified talkgroup", value: "WACN BEE00 · System 3A7 · TG 5000" }] },
+        { id: "a4", category: "talkgroup", matchType: "Talkgroup", match: "7012", protocol: "P25", name: "County Fire Dispatch", group: "Fire", record: true, priority: 5, icon: "flame", color: "#c6412d", streams: ["RadioResolve Calls"], warning: "", identifiers: [{ type: "Talkgroup", value: "P25 · 7012" }] },
+        { id: "a5", category: "talkgroup", matchType: "Talkgroup", match: "9001", protocol: "DMR", name: "Transit Operations", group: "Public Works", record: false, priority: null, icon: "bus", color: "#bd6e00", streams: [], warning: "", identifiers: [{ type: "Talkgroup", value: "DMR · 9001" }] },
+        { id: "a11", category: "talkgroup", matchType: "Talkgroup", match: "3201", protocol: "NXDN", name: "NXDN Operations", group: "Public Works", record: true, priority: null, icon: "radio", color: "#2b7c3f", streams: ["RadioResolve Calls"], warning: "", identifiers: [{ type: "Talkgroup", value: "NXDN · 3201" }, { type: "Talkgroup Range", value: "NXDN · 3300–3399" }] },
+        { id: "a6", category: "radio", matchType: "Radio ID", match: "1201045", protocol: "P25", name: "Car 12", group: "Police Units", record: false, priority: null, icon: "car", color: "#1769aa", streams: [], warning: "", identifiers: [{ type: "Radio ID", value: "P25 · 1201045" }] },
+        { id: "a7", category: "radio", matchType: "Radio ID Range", match: "1201000–1201099", protocol: "P25", name: "Metro Patrol Cars", group: "Police Units", record: false, priority: null, icon: "car", color: "#1769aa", streams: ["RadioResolve Calls"], warning: "Overlaps Car 12", identifiers: [{ type: "Radio ID Range", value: "P25 · 1201000–1201099" }] },
+        { id: "a12", category: "radio", matchType: "Radio ID", match: "41025", protocol: "NXDN", name: "NXDN Unit 41025", group: "Public Works Units", record: false, priority: null, icon: "radio", color: "#2b7c3f", streams: [], warning: "", identifiers: [{ type: "Radio ID", value: "NXDN · 41025" }, { type: "Radio ID Range", value: "NXDN · 41000–41099" }] },
+        { id: "a8", category: "other", matchType: "DCS", match: "DCS-023", protocol: "NBFM", name: "Parks Repeater", group: "Public Works", record: true, priority: null, icon: "tree", color: "#2b7c3f", streams: [], warning: "", identifiers: [{ type: "DCS", value: "DCS-023" }] },
+        { id: "a9", category: "other", matchType: "AMBE tones", match: "1000 · 1000 · 1250 Hz", protocol: "P25", name: "Station Alert", group: "Fire", record: true, priority: 1, icon: "bell", color: "#c6412d", streams: ["RadioResolve Calls"], warning: "", identifiers: [{ type: "AMBE tone sequence", value: "1000.00 Hz / 600 ms · 1000.00 Hz / 600 ms · 1250.00 Hz / 900 ms" }] },
+        { id: "a10", category: "other", matchType: "Legacy identifier", match: "opaque:0x492a", protocol: "Retired", name: "Imported legacy match", group: "Migration Review", record: false, priority: null, icon: "question", color: "#777777", streams: [], warning: "Unsupported matcher", unsupported: true, identifiers: [{ type: "Unknown legacy matcher", value: "opaque:0x492a", raw: true }] }
+      ];
+
+      var aliases = deepClone(aliasSeeds);
+      var scenario = "normal";
+      var category = "talkgroup";
+      var selectedAliasId = "a1";
+      var selectedRows = new Set();
+      var searchTerm = "";
+      var activeFilters = new Set();
+      var currentPage = 1;
+      var dirty = false;
+      var currentListName = document.getElementById("alias-list-select").value;
+      var editorSavedSnapshot = null;
+      var editorSnapshotId = null;
+      var helpPinned = null;
+      var helpVisibleFor = null;
+      var dialogReturnFocus = null;
+      var reviewReturnFocus = null;
+      var toastTimer = null;
+      var iconDialogReturnFocus = null;
+      var iconDialogSelection = "radio";
+      var iconDialogCategory = "All";
+      var iconDialogApply = null;
+
+      var ICON_CATALOG = [
+        { key: "shield", label: "Shield", category: "Public safety", keywords: "police protection", svg: '<path d="M12 3 4.5 6v5.2c0 4.6 3.2 8.1 7.5 9.8 4.3-1.7 7.5-5.2 7.5-9.8V6L12 3Z"/><path d="M9 12l2 2 4-5"/>' },
+        { key: "badge", label: "Police badge", category: "Public safety", keywords: "officer law enforcement", svg: '<path d="m12 2 2.2 4 4.5.8-3.1 3.3.6 4.6L12 17l-4.2-2.3.6-4.6-3.1-3.3 4.5-.8L12 2Z"/><circle cx="12" cy="10.5" r="2.2"/><path d="M9 17v4l3-1.5 3 1.5v-4"/>' },
+        { key: "sheriff-star", label: "Sheriff star", category: "Public safety", keywords: "badge police county", svg: '<path d="m12 2 2.1 4.4 4.9-.7-2.8 4 4.3 2.3-4.3 2.3 2.8 4-4.9-.7L12 22l-2.1-4.4-4.9.7 2.8-4L3.5 12l4.3-2.3-2.8-4 4.9.7L12 2Z"/><circle cx="12" cy="12" r="3"/>' },
+        { key: "flame", label: "Fire", category: "Public safety", keywords: "fire department flame", svg: '<path d="M12 22c4 0 7-3 7-7 0-3-1.5-5.5-4-8 .2 2-1 3.5-2 4.5C12 9 10 6 7 4c.4 4-2 6-2 10 0 4.4 3 8 7 8Z"/><path d="M10 18c-1-2 0-3.5 2-5 0 2 2 2.5 2 4a2 2 0 0 1-4 1Z"/>' },
+        { key: "fire-engine", label: "Fire engine", category: "Public safety", keywords: "fire truck apparatus", svg: '<path d="M3 10h11v8H3zM14 13h4l3 3v2h-7zM5 10l2-5h9M7 5h8M8 3h8"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/>' },
+        { key: "ambulance", label: "Ambulance", category: "Public safety", keywords: "ems medic rescue vehicle", svg: '<path d="M3 7h12v11H3zM15 11h3l3 4v3h-6z"/><path d="M7 10h4M9 8v4"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/>' },
+        { key: "medical", label: "Medical", category: "Public safety", keywords: "ems hospital first aid cross", svg: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/>' },
+        { key: "siren", label: "Emergency siren", category: "Public safety", keywords: "warning light responder", svg: '<path d="M7 16v-5a5 5 0 0 1 10 0v5M5 16h14v4H5zM12 2v2M4.2 5.2l1.5 1.5M19.8 5.2l-1.5 1.5M2 11h2M20 11h2"/>' },
+        { key: "dispatch", label: "Dispatch", category: "Public safety", keywords: "operator console headset", svg: '<path d="M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v5H5a1 1 0 0 1-1-1v-4ZM20 14h-3v5h2a1 1 0 0 0 1-1v-4ZM17 19c0 2-2 3-5 3"/>' },
+        { key: "emergency", label: "Emergency response", category: "Public safety", keywords: "incident rescue urgent", svg: '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 17h.01M3 12h3M18 12h3"/>' },
+
+        { key: "car", label: "Patrol car", category: "Vehicles", keywords: "police sedan unit", svg: '<path d="m5 17-1 3M19 17l1 3M3 14l2-6h14l2 6v4H3v-4Z"/><path d="M7 14h.01M17 14h.01M5 18h14"/>' },
+        { key: "truck", label: "Truck", category: "Vehicles", keywords: "utility pickup public works", svg: '<path d="M3 6h12v12H3zM15 10h3l3 4v4h-6z"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/>' },
+        { key: "bus", label: "Bus", category: "Vehicles", keywords: "transit school", svg: '<rect x="5" y="3" width="14" height="17" rx="2"/><path d="M8 20v2M16 20v2M5 11h14M8 16h.01M16 16h.01"/>' },
+        { key: "motorcycle", label: "Motorcycle", category: "Vehicles", keywords: "bike patrol traffic", svg: '<circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="m9 17 3-7 3 7M9 10h6M14 7h3l2 3M11 14H7l-2-3"/>' },
+        { key: "helicopter", label: "Helicopter", category: "Vehicles", keywords: "air aviation medevac", svg: '<path d="M4 13h11a4 4 0 0 0 4-4H9a5 5 0 0 0-5 4ZM9 13l-2 4h8l-2-4M15 9l5-4M11 5h8M19 9h3"/>' },
+        { key: "airplane", label: "Airplane", category: "Vehicles", keywords: "aircraft aviation airport", svg: '<path d="m3 11 8-2 3-6 2 1-1 6 5 3-1 2-5-1-4 6-2-1 2-6-7 1-1-2Z"/>' },
+        { key: "boat", label: "Boat", category: "Vehicles", keywords: "marine harbor coast guard", svg: '<path d="m4 13 8-4 8 4-3 5H7l-3-5ZM12 9V3l5 3-5 1"/><path d="M3 21c1.5-1 3-1 4.5 0s3 1 4.5 0 3-1 4.5 0 3 1 4.5 0"/>' },
+        { key: "train", label: "Train", category: "Vehicles", keywords: "rail transit railroad", svg: '<rect x="6" y="3" width="12" height="15" rx="3"/><path d="M8 21l2-3M16 18l2 3M6 11h12M9 15h.01M15 15h.01"/>' },
+        { key: "bicycle", label: "Bicycle", category: "Vehicles", keywords: "bike patrol parks", svg: '<circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="m6 17 4-8 3 8 3-6H9M10 9 8 6M14 7h3"/>' },
+        { key: "tow-truck", label: "Tow truck", category: "Vehicles", keywords: "recovery roadside", svg: '<path d="M3 8h10v10H3zM13 12h4l3 3v3h-7zM7 8l6-4 3 2-4 4"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/>' },
+
+        { key: "radio", label: "Radio", category: "Radio and communications", keywords: "receiver scanner communications", svg: '<rect x="4" y="7" width="16" height="13" rx="2"/><path d="m7 7 10-4M8 12h8M8 16h4M17 16h.01"/>' },
+        { key: "handheld-radio", label: "Handheld radio", category: "Radio and communications", keywords: "portable walkie talkie", svg: '<rect x="7" y="5" width="10" height="16" rx="2"/><path d="M9 2v3M11 2h4M10 9h4M10 13h4M12 17h.01"/>' },
+        { key: "antenna", label: "Antenna", category: "Radio and communications", keywords: "signal rf broadcast", svg: '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13M12 14v8"/>' },
+        { key: "tower", label: "Radio tower", category: "Radio and communications", keywords: "site repeater antenna", svg: '<path d="M12 3 7 21M12 3l5 18M9 13h6M8 17h8M6 21h12"/><path d="M7 5a7 7 0 0 0-2 5M17 5a7 7 0 0 1 2 5"/>' },
+        { key: "microphone", label: "Microphone", category: "Radio and communications", keywords: "audio voice talk", svg: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"/>' },
+        { key: "headset", label: "Headset", category: "Radio and communications", keywords: "dispatch operator audio", svg: '<path d="M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v5H5a1 1 0 0 1-1-1v-4ZM20 14h-3v5h2a1 1 0 0 0 1-1v-4Z"/>' },
+        { key: "phone", label: "Telephone", category: "Radio and communications", keywords: "call dispatch contact", svg: '<path d="M5 3h4l2 5-2.5 2a15 15 0 0 0 5.5 5.5L16 13l5 2v4c0 1-1 2-2 2C10 20 4 14 3 5c0-1 1-2 2-2Z"/>' },
+        { key: "satellite", label: "Satellite", category: "Radio and communications", keywords: "space gps communications", svg: '<path d="m8 8 8 8M6 3l5 5-3 3-5-5 3-3ZM18 13l3 3-5 5-3-3 5-5Z"/><path d="M14 5a5 5 0 0 1 5 5M15 2a8 8 0 0 1 7 7"/>' },
+        { key: "link", label: "Interoperability", category: "Radio and communications", keywords: "link mutual aid connected", svg: '<path d="M10 13a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7L11 6.3M14 11a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 0 0 5.7 5.7L13 17.7"/>' },
+        { key: "repeater", label: "Repeater", category: "Radio and communications", keywords: "relay duplex signal", svg: '<path d="M7 7h10M14 4l3 3-3 3M17 17H7M10 14l-3 3 3 3"/><circle cx="5" cy="7" r="2"/><circle cx="19" cy="17" r="2"/>' },
+
+        { key: "hospital", label: "Hospital", category: "Places and services", keywords: "medical health clinic", svg: '<path d="M4 21V5h16v16M8 21v-4h8v4M9 9h6M12 6v6"/>' },
+        { key: "school", label: "School", category: "Places and services", keywords: "education campus", svg: '<path d="m3 10 9-6 9 6-9 5-9-5Z"/><path d="M6 12v6c3 2 9 2 12 0v-6M21 10v6"/>' },
+        { key: "courthouse", label: "Government", category: "Places and services", keywords: "courthouse city hall public", svg: '<path d="m3 8 9-5 9 5H3ZM5 10v8M9 10v8M15 10v8M19 10v8M3 21h18M2 18h20"/>' },
+        { key: "building", label: "Office building", category: "Places and services", keywords: "business agency", svg: '<path d="M5 21V3h11v18M16 9h3v12M8 7h2M12 7h2M8 11h2M12 11h2M8 15h2M12 15h2"/>' },
+        { key: "home", label: "Residence", category: "Places and services", keywords: "house neighborhood", svg: '<path d="m3 11 9-8 9 8M5 10v11h14V10M9 21v-7h6v7"/>' },
+        { key: "factory", label: "Industrial", category: "Places and services", keywords: "factory plant manufacturing", svg: '<path d="M3 21V10l6 3v-3l6 3V6h4v15H3ZM7 17h2M12 17h2M17 17h2"/>' },
+        { key: "utility", label: "Electric utility", category: "Places and services", keywords: "power energy electric", svg: '<path d="m13 2-8 12h7l-1 8 8-12h-7l1-8Z"/>' },
+        { key: "water", label: "Water service", category: "Places and services", keywords: "water sewer hydrant", svg: '<path d="M12 2S5 10 5 15a7 7 0 0 0 14 0c0-5-7-13-7-13Z"/><path d="M9 16c.5 1.5 1.5 2 3 2"/>' },
+        { key: "tree", label: "Parks", category: "Places and services", keywords: "tree forest recreation", svg: '<path d="M12 22v-6M8 22h8M12 2 5 12h4l-3 5h12l-3-5h4L12 2Z"/>' },
+        { key: "transit", label: "Transit station", category: "Places and services", keywords: "transport stop terminal", svg: '<rect x="5" y="3" width="14" height="16" rx="2"/><path d="M8 7h8M8 12h8M8 19l-2 3M16 19l2 3"/>' },
+
+        { key: "road", label: "Roads", category: "Operations", keywords: "highway street transportation", svg: '<path d="M8 2 5 22M16 2l3 20M12 3v4M12 10v4M12 17v4"/>' },
+        { key: "construction", label: "Construction", category: "Operations", keywords: "public works hard hat", svg: '<path d="M4 15a8 8 0 0 1 16 0M3 15h18v4H3zM9 15V7M15 15V7"/>' },
+        { key: "traffic-cone", label: "Traffic control", category: "Operations", keywords: "cone road closure", svg: '<path d="m10 3-5 17h14L14 3h-4ZM7 13h10M8 9h8M3 21h18"/>' },
+        { key: "map-pin", label: "Location", category: "Operations", keywords: "map place site", svg: '<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/>' },
+        { key: "route", label: "Route", category: "Operations", keywords: "path travel response", svg: '<circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h3a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"/>' },
+        { key: "clock", label: "Time", category: "Operations", keywords: "schedule shift", svg: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
+        { key: "calendar", label: "Calendar", category: "Operations", keywords: "schedule date event", svg: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>' },
+        { key: "clipboard", label: "Assignment", category: "Operations", keywords: "task incident report", svg: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M8 9h8M8 13h8M8 17h5"/>' },
+        { key: "tools", label: "Maintenance", category: "Operations", keywords: "wrench repair service", svg: '<path d="M14 7a5 5 0 0 0-6-5l3 3-3 3-3-3a5 5 0 0 0 5 6L4 17l3 3 6-6a5 5 0 0 0 6-6l-3 3-3-3 3-3a5 5 0 0 0-2 2Z"/>' },
+        { key: "weather", label: "Weather", category: "Operations", keywords: "storm cloud emergency", svg: '<path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9.5 4.5 4.5 0 0 0 7 18Z"/><path d="m9 20-1 2M13 20l-1 2M17 20l-1 2"/>' },
+
+        { key: "user", label: "Individual unit", category: "People and status", keywords: "person radio id member", svg: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>' },
+        { key: "users", label: "Team", category: "People and status", keywords: "group crew units", svg: '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20a6 6 0 0 1 12 0M14 16a5 5 0 0 1 7 4"/>' },
+        { key: "k9", label: "K9 unit", category: "People and status", keywords: "dog canine police", svg: '<path d="M6 11 4 7l4 2 4-3 4 3 4-2-2 4v6l-6 4-6-4v-6Z"/><path d="M9 13h.01M15 13h.01M10 16h4M12 16v2"/>' },
+        { key: "bell", label: "Alert bell", category: "People and status", keywords: "notification station alert", svg: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>' },
+        { key: "alert", label: "Warning", category: "People and status", keywords: "caution important", svg: '<path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17h.01"/>' },
+        { key: "priority-star", label: "Priority", category: "People and status", keywords: "favorite important star", svg: '<path d="m12 2 3 6 6.5 1-4.7 4.6 1.1 6.4-5.9-3.1L6.1 20l1.1-6.4L2.5 9 9 8l3-6Z"/>' },
+        { key: "key", label: "Key", category: "People and status", keywords: "secure access encryption", svg: '<circle cx="8" cy="15" r="5"/><path d="m11.5 11.5 8-8M16 7l2 2M18 5l2 2"/>' },
+        { key: "lock", label: "Encrypted", category: "People and status", keywords: "lock secure private", svg: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>' },
+        { key: "muted", label: "Muted", category: "People and status", keywords: "silent no audio do not monitor", svg: '<path d="M4 10h4l5-4v12l-5-4H4v-4ZM17 10l5 5M22 10l-5 5"/>' },
+        { key: "question", label: "Unknown", category: "People and status", keywords: "question unidentified other", svg: '<circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.3 2.3 0 1 1 3.4 2c-1 .6-1.2 1-1.2 2M12 17h.01"/>' }
+      ];
+
+      var DCS_CODES = ["023", "025", "026", "031", "032", "043", "047", "051", "054", "065", "071", "072", "073", "074", "114", "115", "116", "125", "131", "132", "134", "143", "152", "155", "156", "162", "165", "172", "174", "205", "223", "226", "243", "244", "245", "251", "261", "263", "265", "271", "306", "311", "315", "331", "343", "346", "351", "364", "365", "371", "411", "412", "413", "423", "431", "432", "445", "464", "465", "466", "503", "506", "516", "532", "546", "565", "606", "612", "624", "627", "631", "632", "654", "662", "664", "703", "712", "723", "731", "732", "734", "743", "754"];
+      var LOJACK_FUNCTIONS = ["0-UNKNOWN", "1Y-SITE ID", "1-SPEED UP", "2-TOWER TEST", "3-DEACTIVATE", "4-ACTIVATE", "5-TRANSPONDER TEST REPLY", "6-TRANSPONDER TEST COMMAND", "7-QUIET COMMAND", "8-UNKNOWN", "9-UNKNOWN", "A-UNKNOWN", "B-UNKNOWN", "C-ALT-DEACTIVATE", "D-UNKNOWN", "E-UNKNOWN", "F-TRACK PULSE", "UNKNOWN"];
+      var AMBE_TONE_GROUPS = [
+        { label: "DTMF", values: "0 1 2 3 4 5 6 7 8 9 A B C D * #".split(" ").map(function (value) { return "DTMF " + value; }) },
+        { label: "KNOX", values: "0 1 2 3 4 5 6 7 8 9 A B C D * #".split(" ").map(function (value) { return "KNOX " + value; }) },
+        { label: "Call progress", values: ["Busy tone", "Call progress tone", "Dial tone", "Ringing tone"] },
+        { label: "Frequency", values: Array.from({ length: 118 }, function (_, index) { return (156.25 + index * 31.25).toFixed(2) + " Hz"; }) }
+      ];
+
+      var REVIEW_STORAGE_KEY = "sdrtrunk-vce.mockup.settings-aliases-v1.review";
+      var REVIEW_FORMAT = "sdrtrunk-vce-ui-review";
+      var REVIEW_VERSION = 1;
+      var MAX_NOTE_LENGTH = 3000;
+      var reviewStorageAvailable = true;
+      var reviewData = { entries: {}, updatedAt: "" };
+      var reviewTimers = new Map();
+      var reviewSections = [
+        ["navigation", "Settings navigation", "Aliases stays under Playlist Settings and uses the same shell as Hardware and Channels."],
+        ["list-lifecycle", "Alias List controls", "New, clone, rename, and delete are separate actions. Rename and delete show channel and alias impact before applying."],
+        ["search-scale", "Search, filters, and scale", "Search and filters run as bounded server requests. About 100 rows are shown at a time; thousands are never placed in the browser. Filters cover Record, stream assignment, and matching warnings; live eligibility belongs to Listen lists."],
+        ["task-views", "Talkgroup, Radio, and Other views", "The three buttons change how matching information is presented without creating separate copies of aliases."],
+        ["table", "Alias table", "The table keeps matching value, name, group, recording, priority, vector appearance, streams, and warnings visible. Listen-list membership is managed on its own page."],
+        ["bulk", "Bulk operations", "Only checked rows on the current page are changed. Bulk edit is limited to color, vector icon, Priority, and Record."],
+        ["details", "Alias details", "Name, group, Priority, Record, icon, and color are edited together with explicit Save, Reset, and Cancel. The searchable icon chooser contains 60 packaged vector icons in six categories. This draft allows up to 80 characters for Alias and Group names."],
+        ["identifiers", "Matching identifiers", "Talkgroup, Radio, and Other matching stays inside Alias details. Every Other matcher shows only its own fields, and AMBE tones use an ordered row editor. Overlaps warn and link to filtered results instead of blocking a save."],
+        ["streaming", "Streaming assignments", "Aliases choose destinations here. The optional talkgroup override affects only the outgoing stream label, never the decoded talkgroup or transmitting radio ID."],
+        ["legacy", "Retired and legacy behavior", "Actions, raster icons, MPT-1327, and separate Identifier/Record tabs are not ported. Unknown old matchers remain readable and exportable."],
+        ["states", "Error and conflict states", "The scenario menu covers empty, loading, error, unsupported, missing destination, validation, and changed-elsewhere states."],
+        ["responsive", "Narrow and accessible layout", "The editor drops below the full-width table; help works by hover, focus, click, or tap and essential meaning is never color-only."]
+      ];
+
+      var tableBody = document.getElementById("alias-table-body");
+      var tableRegion = document.getElementById("table-region");
+      var listState = document.getElementById("list-state");
+      var editorPanel = document.getElementById("editor-panel");
+      var selectionToolbar = document.getElementById("selection-toolbar");
+      var selectPage = document.getElementById("select-page");
+      var appDialog = document.getElementById("app-dialog");
+      var iconDialog = document.getElementById("icon-dialog");
+      var helpPopover = document.getElementById("context-help");
+      var reviewDrawer = document.getElementById("review-drawer");
+      var reviewScrim = document.getElementById("review-scrim");
+      var reviewSaveState = document.getElementById("review-save-state");
+
+      function deepClone(value) { return JSON.parse(JSON.stringify(value)); }
+      function escapeHtml(value) {
+        return String(value == null ? "" : value).replace(/[&<>"']/g, function (character) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[character];
+        });
+      }
+      function selectedAlias() { return aliases.find(function (alias) { return alias.id === selectedAliasId; }) || null; }
+      function categoryLabel() { return category === "talkgroup" ? "Talkgroup" : category === "radio" ? "Radio" : "Other"; }
+
+      function iconCatalogItem(name) {
+        return ICON_CATALOG.find(function (item) { return item.key === name; }) || ICON_CATALOG.find(function (item) { return item.key === "question"; });
+      }
+
+      function iconSvg(name) {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true">' + iconCatalogItem(name).svg + '</svg>';
+      }
+
+      function iconLabel(name) { return iconCatalogItem(name).label; }
+
+      function iconSelectOptions(includeNoChange) {
+        var categories = Array.from(new Set(ICON_CATALOG.map(function (item) { return item.category; })));
+        var output = includeNoChange ? '<option value="">No change</option>' : "";
+        categories.forEach(function (iconCategory) {
+          output += '<optgroup label="' + escapeHtml(iconCategory) + '">';
+          output += ICON_CATALOG.filter(function (item) { return item.category === iconCategory; }).map(function (item) {
+            return '<option value="' + escapeHtml(item.key) + '">' + escapeHtml(item.label) + '</option>';
+          }).join("");
+          output += '</optgroup>';
+        });
+        return output;
+      }
+
+      function helpButton(title, copy) {
+        return '<button class="help-button" type="button" aria-label="About ' + escapeHtml(title) + '" aria-expanded="false" data-help-title="' + escapeHtml(title) + '" data-help="' + escapeHtml(copy) + '">i</button>';
+      }
+
+      function visibleAliases() {
+        if (scenario === "no-results") return [];
+        var term = searchTerm.trim().toLowerCase();
+        return aliases.filter(function (alias) {
+          if (alias.category !== category) return false;
+          if (term && [alias.name, alias.group, alias.match, alias.matchType, alias.protocol].join(" ").toLowerCase().indexOf(term) < 0) return false;
+          if (activeFilters.has("record") && !alias.record) return false;
+          if (activeFilters.has("stream") && !alias.streams.length) return false;
+          if (activeFilters.has("warning") && !alias.warning) return false;
+          return true;
+        });
+      }
+
+      function totalForCategory() {
+        if (scenario === "no-lists") return 0;
+        if (scenario === "empty") return visibleAliases().length;
+        if (searchTerm || activeFilters.size || scenario === "no-results") return visibleAliases().length;
+        return category === "talkgroup" ? 2843 : category === "radio" ? 1736 : 218;
+      }
+
+      function priorityText(alias) {
+        return alias.priority == null ? "Default" : String(alias.priority);
+      }
+
+      function renderState(title, copy, retry) {
+        tableRegion.hidden = true;
+        listState.hidden = false;
+        listState.innerHTML = '<strong>' + escapeHtml(title) + '</strong><span>' + escapeHtml(copy) + '</span>' + (retry ? '<button type="button" data-list-retry>Retry</button>' : "");
+      }
+
+      function renderTable() {
+        tableRegion.hidden = false;
+        listState.hidden = true;
+        tableBody.innerHTML = "";
+
+        if (scenario === "loading") {
+          renderState("Loading aliases…", "The current request can be cancelled if the list, search, filters, or page changes. Decoder and audio work never waits for this request.", false);
+          updateSelectionToolbar();
+          return;
+        }
+        if (scenario === "list-error") {
+          renderState("Aliases could not be loaded", "The saved playlist is unchanged. Retry this bounded page without restarting the receiver.", true);
+          updateSelectionToolbar();
+          return;
+        }
+        if (scenario === "no-lists") {
+          renderState("No Alias Lists", "Create an Alias List before adding aliases. A list is never created from inside the selector.", false);
+          updateSelectionToolbar();
+          return;
+        }
+        if (scenario === "empty" && aliases.length === 0) {
+          renderState(currentListName + " has no aliases", "Add the first alias or clone aliases from another list. The list itself remains available to channels.", false);
+          updateSelectionToolbar();
+          return;
+        }
+
+        var shown = visibleAliases();
+        if (!shown.length) {
+          renderState("No aliases match", "Clear the search, change the category, or remove a filter. No saved aliases were changed.", false);
+          updateSelectionToolbar();
+          return;
+        }
+
+        tableBody.innerHTML = shown.map(function (alias) {
+          var selected = selectedRows.has(alias.id);
+          var warning = alias.warning ? '<span class="' + (alias.unsupported ? "error-mark" : "warning-mark") + '" title="' + escapeHtml(alias.warning) + '" aria-label="' + escapeHtml(alias.warning) + '">!</span>' : "";
+          return [
+            '<tr data-row-id="', alias.id, '" class="', alias.id === selectedAliasId ? "is-open " : "", alias.unsupported ? "is-unsupported" : "", '">',
+            '<td><input type="checkbox" data-select-id="', alias.id, '" aria-label="Select ', escapeHtml(alias.name), '"', selected ? " checked" : "", '></td>',
+            '<td><div class="match-cell"><span class="match-value">', escapeHtml(alias.match), '</span><span class="subtext">', escapeHtml(alias.matchType), ' · ', escapeHtml(alias.protocol), '</span></div></td>',
+            '<td><button class="row-link" type="button" data-open-id="', alias.id, '">', escapeHtml(alias.name), '</button></td>',
+            '<td>', escapeHtml(alias.group || "—"), '</td>',
+            '<td><span class="', alias.record ? "yes" : "no", '">', alias.record ? "Yes" : "No", '</span></td>',
+            '<td class="', alias.priority == null ? "priority-default" : "", '">', escapeHtml(priorityText(alias)), '</td>',
+            '<td><span class="visual-preview"><span class="icon-swatch" style="--swatch:', escapeHtml(alias.color), '">', iconSvg(alias.icon), '</span><span class="subtext">', escapeHtml(alias.icon), '</span></span></td>',
+            '<td>', alias.streams.length ? escapeHtml(String(alias.streams.length)) : '<span class="no">—</span>', '</td>',
+            '<td>', warning, '</td></tr>'
+          ].join("");
+        }).join("");
+
+        var total = totalForCategory();
+        var pages = Math.max(1, Math.ceil(total / 100));
+        currentPage = Math.min(currentPage, pages);
+        var first = total ? (currentPage - 1) * 100 + 1 : 0;
+        var last = Math.min(currentPage * 100, total);
+        document.getElementById("range-summary").textContent = "Representative rows from " + first + "–" + last + " of " + total.toLocaleString() + " " + categoryLabel() + " aliases · 100 per server page";
+        document.getElementById("page-number").textContent = String(currentPage);
+        document.getElementById("page-total").textContent = String(pages);
+        document.getElementById("previous-page").disabled = currentPage <= 1;
+        document.getElementById("next-page").disabled = currentPage >= pages;
+        var pageIds = new Set(shown.map(function (alias) { return alias.id; }));
+        var selectedVisible = shown.filter(function (alias) { return selectedRows.has(alias.id); }).length;
+        selectPage.checked = shown.length > 0 && selectedVisible === shown.length;
+        selectPage.indeterminate = selectedVisible > 0 && selectedVisible < shown.length;
+        Array.from(selectedRows).forEach(function (id) { if (!aliases.some(function (alias) { return alias.id === id; }) || !pageIds.has(id)) selectedRows.delete(id); });
+        updateSelectionToolbar();
+      }
+
+      function editorHeader(alias, badge) {
+        return [
+          '<header class="panel-head"><div class="editor-head-left"><p class="editor-kicker">', alias.unsupported ? "Preserved imported alias" : alias.id === "new" ? "New alias" : "Alias details", '</p>',
+          '<div class="editor-title-row"><h2 id="editor-title" tabindex="-1">', escapeHtml(alias.name || "Untitled alias"), '</h2>',
+          '<span id="editor-change-badge" class="status-badge ', badge === "Unsaved changes" ? "dirty" : alias.unsupported ? "unsupported" : "saved", '">', escapeHtml(badge || (alias.unsupported ? "Read only" : "Saved")), '</span></div>',
+          '<p>', escapeHtml(alias.matchType), ' · ', escapeHtml(alias.match), '</p></div>',
+          '<div class="editor-actions">', alias.unsupported ? '<button type="button" data-editor-action="export">Export preserved data</button>' : '<button type="button" data-editor-action="clone">Clone</button><button type="button" data-editor-action="move">Move</button>',
+          '<button class="button-danger" type="button" data-editor-action="delete">Delete</button></div></header>'
+        ].join("");
+      }
+
+      function aliasDetailsSection(alias) {
+        var priority = alias.priority != null && alias.priority >= 1 ? String(alias.priority) : "";
+        var talkgroupRecord = alias.category === "talkgroup";
+        return [
+          '<details class="editor-section" open><summary><span>Alias details ', helpButton("Alias details", "The visible name and group do not change the numeric talkgroup or radio ID received over the air."), '</span><span class="section-copy">Name, recording, priority, and appearance</span></summary>',
+          '<div class="section-content"><div class="form-grid">',
+          '<div class="field wide"><div class="field-label"><label for="alias-name">Alias</label>', helpButton("Alias", "The friendly name shown with calls and activity."), '</div><input id="alias-name" name="aliasName" maxlength="80" required aria-describedby="alias-name-error" value="', escapeHtml(alias.name), '"><p id="alias-name-error" class="field-error" data-error-for="alias-name" hidden></p></div>',
+          '<div class="field wide"><div class="field-label"><label for="alias-group">Group</label>', helpButton("Group", "An optional label used to organize aliases inside this list. It does not affect matching."), '</div><input id="alias-group" name="group" maxlength="80" value="', escapeHtml(alias.group), '"></div>',
+          '<div class="field wide"><div class="field-label">Recording ', helpButton("Recording", talkgroupRecord ? "Record decides whether this destination talkgroup's future call audio is saved and can become available in Recordings search. Listen lists can still play a matching live call when Record is off." : "This keeps the existing non-talkgroup recording trigger. It may save a matching call, but the Recordings browser still requires that call's destination talkgroup to have Record enabled."), '</div><div class="behavior-options">',
+          '<div class="behavior-option"><label for="alias-record"><input id="alias-record" name="record" type="checkbox"', alias.record ? " checked" : "", '><span><strong>Record</strong><small>', talkgroupRecord ? "Save this talkgroup's call audio" : "Keep the existing recording trigger", '</small></span></label>', helpButton("Record", talkgroupRecord ? "After a successful file write, matching calls can appear in Recordings search. This is separate from channel technical recorder outputs and from Listen lists." : "This can retain the existing Radio or Other Alias recording behavior, but it does not by itself make a call searchable. Recordings requires the destination talkgroup's Record setting too."), '</div></div></div>',
+          '<div class="field wide"><div class="field-label"><label for="alias-priority">Priority</label>', helpButton("Priority", "Enter 1 through 99. Priority 1 is highest. Leave blank for the normal default priority. This can order competing live calls after a visitor selects a Listen list; it never excludes a list member."), '</div><input id="alias-priority" name="priority" type="number" inputmode="numeric" min="1" max="99" placeholder="Default" aria-describedby="alias-priority-hint alias-priority-error" value="', priority, '"><p id="alias-priority-hint" class="field-hint">Leave blank for Default. 1 is highest; 99 is lowest. Listen-list membership decides eligibility.</p><p id="alias-priority-error" class="field-error" data-error-for="alias-priority" hidden></p></div>',
+          '<div class="field wide"><div class="field-label">Vector icon ', helpButton("Vector icon", "Choose a packaged vector icon. Old raster icon uploads and the desktop Icon Manager are not carried into the web interface."), '</div>',
+          '<div class="icon-picker"><button id="open-icon-picker" type="button" aria-haspopup="dialog"><span class="visual-preview"><span class="icon-swatch" style="--swatch:', escapeHtml(alias.color), '">', iconSvg(alias.icon), '</span><span id="selected-icon-label">', escapeHtml(iconLabel(alias.icon)), '</span></span></button></div></div>',
+          '<div class="field wide"><div class="field-label">Color ', helpButton("Color", "Color helps scan the list but is never the only way an Alias is identified."), '</div><div class="color-picker">',
+          ["#1769aa", "#5f45a7", "#c6412d", "#bd6e00", "#2b7c3f", "#777777"].map(function (color) { return '<button type="button" class="color-choice' + (color.toLowerCase() === alias.color.toLowerCase() ? " is-selected" : "") + '" style="--color:' + color + '" data-color="' + color + '" aria-label="Choose color ' + color + '" aria-pressed="' + (color.toLowerCase() === alias.color.toLowerCase() ? "true" : "false") + '"></button>'; }).join(""),
+          '<label class="sr-only" for="custom-color">Custom color</label><input id="custom-color" name="color" type="color" value="', escapeHtml(alias.color), '"></div></div>',
+          '</div></div></details>'
+        ].join("");
+      }
+
+      function matchingSection(alias) {
+        var overlap = scenario === "overlap" || alias.warning.indexOf("Overlap") === 0;
+        return [
+          '<details class="editor-section" open><summary><span>Matching identifiers ', helpButton("Matching identifiers", "Identifiers connect decoded talkgroups, radio IDs, tones, and status values to this Alias. They are edited here instead of in a separate tab."), '</span><span class="section-copy">', alias.identifiers.length, ' matching rule', alias.identifiers.length === 1 ? "" : "s", '</span></summary>',
+          '<div class="section-content">',
+          overlap ? '<div class="inline-notice"><strong>Matching overlap.</strong><span>An exact rule and a broader range or wildcard can both match. The exact rule wins. <button class="button-link" type="button" data-editor-action="show-overlap">Show the 2 matching aliases</button></span></div>' : "",
+          '<div class="match-list">', alias.identifiers.map(function (identifier, index) {
+            return '<div class="match-card"><div><strong>' + escapeHtml(identifier.type) + '</strong><span class="subtext">Rule ' + (index + 1) + '</span></div><span class="match-value">' + escapeHtml(identifier.value) + '</span><div class="match-actions"><button type="button" data-identifier-action="edit" data-identifier-index="' + index + '"' + (identifier.raw ? " disabled" : "") + '>Edit</button><button class="button-danger" type="button" data-identifier-action="delete" data-identifier-index="' + index + '">Delete</button></div></div>';
+          }).join(""), '</div>',
+          '<div class="inline-actions" style="margin-top:10px"><button type="button" data-identifier-action="add-talkgroup">Add Talkgroup match</button><button type="button" data-identifier-action="add-radio">Add Radio match</button><button type="button" data-identifier-action="add-other">Add Other match</button></div>',
+          '<p class="field-hint">P25, DMR, and NXDN Talkgroup and Radio matches support exact values and ranges; Talkgroup also supports NBFM. P25 additionally supports fully qualified identities using either Any network or an exact WACN plus System, so a half-wildcard rule cannot be created. The shared AMBE tone-sequence matcher also works with NXDN voice, but it is not saved as an NXDN-only rule.</p>',
+          '</div></details>'
+        ].join("");
+      }
+
+      function streamingSection(alias) {
+        var missing = scenario === "missing-stream";
+        var hasSavedOverride = Object.prototype.hasOwnProperty.call(alias, "streamTalkgroup");
+        var override = hasSavedOverride ? (alias.streamTalkgroup == null ? "" : String(alias.streamTalkgroup)) : (alias.id === "a3" ? "5000" : "");
+        return [
+          '<details class="editor-section" open><summary><span>Streaming ', helpButton("Streaming assignments", "Checking a destination makes this Alias available to that configured stream. Provider setup stays on the separate Streaming page."), '</span><span class="section-copy">', alias.streams.length, ' destination', alias.streams.length === 1 ? "" : "s", '</span></summary>',
+          '<div class="section-content">', missing ? '<div class="inline-notice error"><strong>Saved destination is missing.</strong><span>“County Calls (removed)” is preserved so an administrator can replace or remove it. It is never silently discarded.</span></div>' : "",
+          '<div class="destination-grid">',
+          destinationCard("RadioResolve Calls", "RadioResolve", alias.streams.indexOf("RadioResolve Calls") >= 0, false),
+          destinationCard("Archive Feed", "Rdio Scanner", alias.streams.indexOf("Archive Feed") >= 0, false),
+          destinationCard("Public Scanner", "Broadcastify Calls", alias.streams.indexOf("Public Scanner") >= 0, false),
+          missing ? destinationCard("County Calls (removed)", "Unavailable destination", true, true) : "",
+          '</div>',
+          '<div class="form-grid" style="margin-top:14px"><div class="field wide"><div class="field-label"><label for="stream-talkgroup">Stream this Alias as Talkgroup</label>', helpButton("Stream this Alias as Talkgroup", "Optional. Blank sends the decoded talkgroup. A number here changes only the outgoing stream target. It never changes decoding or the transmitting radio ID. For example, it can prevent two conventional repeaters that both appear as talkgroup 1 from colliding in a downstream service."), '</div>',
+          '<input id="stream-talkgroup" name="streamTalkgroup" type="number" min="1" max="65535" aria-describedby="stream-talkgroup-hint stream-talkgroup-error" value="', override, '" placeholder="Use decoded talkgroup"><p id="stream-talkgroup-hint" class="field-hint">Optional number from 1 to 65,535. Blank uses the decoded talkgroup.</p><p id="stream-talkgroup-error" class="field-error" data-error-for="stream-talkgroup" hidden></p></div></div>',
+          '</div></details>'
+        ].join("");
+      }
+
+      function destinationCard(name, type, checked, missing) {
+        return '<label class="destination-card"><input type="checkbox" name="destination" value="' + escapeHtml(name) + '"' + (checked ? " checked" : "") + (missing ? " disabled" : "") + '><span><strong>' + escapeHtml(name) + '</strong><span class="subtext">' + escapeHtml(type) + '</span></span></label>';
+      }
+
+      function unsupportedEditor(alias) {
+        return [editorHeader(alias), '<div class="editor-body"><div class="inline-notice error"><strong>Unsupported imported matcher.</strong><span>The complete saved value remains available for backup, export, or deletion. It cannot be edited or used to create a new matcher.</span></div>',
+          '<dl class="impact-grid"><div><dt>Alias</dt><dd>', escapeHtml(alias.name), '</dd></div><div><dt>Group</dt><dd>', escapeHtml(alias.group), '</dd></div><div><dt>Matcher type</dt><dd>', escapeHtml(alias.matchType), '</dd></div><div><dt>Preserved value</dt><dd>', escapeHtml(alias.match), '</dd></div></dl>',
+          '<p class="field-hint">No action, raster icon, or retired protocol code is executed by this read-only view.</p></div>'].join("");
+      }
+
+      function renderEditor() {
+        closeHelp();
+        var alias = selectedAlias();
+        if (!alias || scenario === "loading" || scenario === "list-error" || (scenario === "empty" && aliases.length === 0) || scenario === "no-lists") {
+          editorPanel.innerHTML = '<div class="editor-empty"><strong>No alias selected</strong><span>Select an alias name from the table to open its editor.</span></div>';
+          return;
+        }
+        if (alias.unsupported) {
+          editorPanel.innerHTML = unsupportedEditor(alias);
+          return;
+        }
+        if (!editorSavedSnapshot || editorSnapshotId !== alias.id || !dirty) {
+          editorSavedSnapshot = deepClone(alias);
+          editorSnapshotId = alias.id;
+        }
+        var notice = "";
+        if (scenario === "conflict") notice = '<div class="inline-notice error"><strong>This Alias changed elsewhere.</strong><span>Your typed values are still here. Review the latest saved values before choosing Replace saved version or Discard my changes.</span></div>';
+        if (scenario === "validation") notice += '<div class="inline-notice error"><strong>Some fields need attention.</strong><span>Correct the visible errors before saving.</span></div>';
+        editorPanel.innerHTML = [
+          editorHeader(alias, dirty ? "Unsaved changes" : "Saved"),
+          '<form id="alias-editor-form" novalidate><div class="editor-body">', notice,
+          aliasDetailsSection(alias), matchingSection(alias), streamingSection(alias),
+          '</div><footer class="editor-footer"><span id="editor-save-status" class="editor-footer-copy">', scenario === "conflict" ? "Your unsaved input is preserved." : alias.id === "new" ? "Save before adding this Alias to the list." : "Last saved a few seconds ago.", '</span>',
+          '<div class="editor-footer-buttons"><button type="button" data-editor-action="cancel">Cancel</button><button type="button" data-editor-action="reset"', dirty || alias.id === "new" ? "" : " disabled", '>Reset</button><button class="button-primary" type="submit"', dirty || alias.id === "new" || scenario === "validation" || scenario === "conflict" ? "" : " disabled", '>', scenario === "conflict" ? "Review conflict" : "Save changes", '</button></div></footer></form>'
+        ].join("");
+        if (scenario === "validation") {
+          var name = document.getElementById("alias-name");
+          name.value = "";
+          name.setAttribute("aria-invalid", "true");
+          var nameError = editorPanel.querySelector('[data-error-for="alias-name"]');
+          nameError.textContent = "Enter an Alias name.";
+          nameError.hidden = false;
+          var override = document.getElementById("stream-talkgroup");
+          override.value = "70000";
+          override.setAttribute("aria-invalid", "true");
+          var overrideError = editorPanel.querySelector('[data-error-for="stream-talkgroup"]');
+          overrideError.textContent = "Use a number from 1 to 65,535, or leave this blank.";
+          overrideError.hidden = false;
+        }
+        wireEditor();
+        wireHelpButtons();
+        window.setTimeout(function () {
+          var help = editorPanel.querySelector('.help-button[data-help-title="Stream this Alias as Talkgroup"]');
+          if (help && scenario === "normal") showHelp(help, true);
+        }, 100);
+      }
+
+      function renderAll() { renderTable(); renderEditor(); }
+
+      function updateSelectionToolbar() {
+        var count = selectedRows.size;
+        selectionToolbar.hidden = count === 0;
+        document.getElementById("selection-count").textContent = count + " selected";
+      }
+
+      function selectAlias(id) {
+        if (id === selectedAliasId) {
+          focusEditorTitle();
+          return;
+        }
+        if (dirty && id !== selectedAliasId) {
+          confirmLeave(function () { discardOpenDraft(); selectedAliasId = id; renderAll(); focusEditorTitle(); });
+          return;
+        }
+        selectedAliasId = id;
+        dirty = false;
+        renderAll();
+        focusEditorTitle();
+      }
+
+      function focusEditorTitle() { var title = document.getElementById("editor-title"); if (title) title.focus(); }
+
+      function markDirty() {
+        var alias = selectedAlias();
+        if (!alias || alias.unsupported) return;
+        dirty = true;
+        var badge = document.getElementById("editor-change-badge");
+        if (badge) { badge.className = "status-badge dirty"; badge.textContent = "Unsaved changes"; }
+        var status = document.getElementById("editor-save-status");
+        if (status) status.textContent = "Changes are staged only in this browser mockup.";
+        editorPanel.querySelectorAll('[data-editor-action="reset"], button[type="submit"]').forEach(function (button) { button.disabled = false; });
+      }
+
+      function stageEditorDraft() {
+        var form = document.getElementById("alias-editor-form");
+        var alias = selectedAlias();
+        if (!form || !alias) return;
+        alias.name = document.getElementById("alias-name").value;
+        alias.group = document.getElementById("alias-group").value;
+        alias.record = document.getElementById("alias-record").checked;
+        var priority = document.getElementById("alias-priority").value.trim();
+        alias.priority = priority ? Number(priority) : null;
+        alias.color = document.getElementById("custom-color").value;
+        alias.icon = form.dataset.icon;
+        alias.streams = Array.from(form.querySelectorAll('input[name="destination"]:checked:not(:disabled)')).map(function (input) { return input.value; });
+        var streamTalkgroup = document.getElementById("stream-talkgroup").value;
+        alias.streamTalkgroup = streamTalkgroup ? Number(streamTalkgroup) : null;
+      }
+
+      function wireEditor() {
+        var form = document.getElementById("alias-editor-form");
+        if (!form) return;
+        form.addEventListener("input", markDirty);
+        form.addEventListener("change", markDirty);
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+          if (scenario === "conflict") { showConflictDialog(); return; }
+          if (!validateEditor()) return;
+          var alias = selectedAlias();
+          alias.name = document.getElementById("alias-name").value.trim();
+          alias.group = document.getElementById("alias-group").value.trim();
+          alias.record = document.getElementById("alias-record").checked;
+          var priority = document.getElementById("alias-priority").value.trim();
+          alias.priority = priority ? Number(priority) : null;
+          alias.color = document.getElementById("custom-color").value;
+          alias.icon = form.dataset.icon;
+          alias.streams = Array.from(form.querySelectorAll('input[name="destination"]:checked:not(:disabled)')).map(function (input) { return input.value; });
+          var streamTalkgroup = document.getElementById("stream-talkgroup").value;
+          alias.streamTalkgroup = streamTalkgroup ? Number(streamTalkgroup) : null;
+          if (alias.id === "new") {
+            alias.id = "alias-mockup-" + Date.now();
+            selectedAliasId = alias.id;
+            if (!alias.identifiers.length) alias.matchType = "No matching identifier";
+            if (scenario === "empty") document.getElementById("list-count").textContent = "1 alias";
+          }
+          dirty = false;
+          editorSavedSnapshot = deepClone(alias);
+          editorSnapshotId = alias.id;
+          renderAll();
+          showToast("Alias saved in this mockup.");
+        });
+        var iconButton = document.getElementById("open-icon-picker");
+        form.dataset.icon = selectedAlias().icon;
+        iconButton.addEventListener("click", function () {
+          openIconDialog(form.dataset.icon, function (nextIcon) {
+            form.dataset.icon = nextIcon;
+            document.getElementById("selected-icon-label").textContent = iconLabel(nextIcon);
+            iconButton.querySelector(".icon-swatch").innerHTML = iconSvg(nextIcon);
+            markDirty();
+          });
+        });
+      }
+
+      function validateEditor() {
+        var name = document.getElementById("alias-name");
+        var priority = document.getElementById("alias-priority");
+        var streamTalkgroup = document.getElementById("stream-talkgroup");
+        editorPanel.querySelectorAll("[aria-invalid]").forEach(function (input) { input.removeAttribute("aria-invalid"); });
+        editorPanel.querySelectorAll(".field-error").forEach(function (error) { error.hidden = true; error.textContent = ""; });
+        var valid = true;
+        if (!name.value.trim()) { showFieldError(name, "Enter an Alias name."); valid = false; }
+        if (!priority.disabled && priority.value && (!Number.isInteger(Number(priority.value)) || Number(priority.value) < 1 || Number(priority.value) > 99)) { showFieldError(priority, "Use a whole number from 1 to 99, or leave this blank for Default."); valid = false; }
+        if (streamTalkgroup.value && (Number(streamTalkgroup.value) < 1 || Number(streamTalkgroup.value) > 65535)) { showFieldError(streamTalkgroup, "Use a number from 1 to 65,535, or leave this blank."); valid = false; }
+        if (!valid) {
+          var first = editorPanel.querySelector('[aria-invalid="true"]');
+          if (first) first.focus();
+        }
+        return valid;
+      }
+
+      function showFieldError(input, copy) {
+        input.setAttribute("aria-invalid", "true");
+        var error = editorPanel.querySelector('[data-error-for="' + input.id + '"]');
+        if (error) { error.textContent = copy; error.hidden = false; }
+      }
+
+      function showHelp(button, pin) {
+        if (!button || !button.isConnected) return;
+        if (helpPinned && helpPinned !== button) helpPinned.setAttribute("aria-expanded", "false");
+        if (pin) helpPinned = button;
+        helpVisibleFor = button;
+        document.getElementById("context-help-title").textContent = button.dataset.helpTitle || "More information";
+        document.getElementById("context-help-copy").textContent = button.dataset.help || "";
+        helpPopover.hidden = false;
+        button.setAttribute("aria-expanded", "true");
+        positionHelp(button);
+      }
+
+      function positionHelp(button) {
+        if (helpPopover.hidden || !button || !button.isConnected) return;
+        var rect = button.getBoundingClientRect();
+        var left = Math.min(window.innerWidth - helpPopover.offsetWidth - 12, Math.max(12, rect.left));
+        var top = rect.bottom + 7;
+        if (top + helpPopover.offsetHeight > window.innerHeight - 12) top = Math.max(12, rect.top - helpPopover.offsetHeight - 7);
+        helpPopover.style.left = left + "px";
+        helpPopover.style.top = top + "px";
+      }
+
+      function closeHelp(returnFocus) {
+        if (helpVisibleFor) helpVisibleFor.setAttribute("aria-expanded", "false");
+        var previous = helpPinned || helpVisibleFor;
+        helpPinned = null;
+        helpVisibleFor = null;
+        helpPopover.hidden = true;
+        if (returnFocus && previous && previous.isConnected) previous.focus();
+      }
+
+      function wireHelpButtons() {
+        document.querySelectorAll(".help-button:not([data-help-ready])").forEach(function (button) {
+          button.dataset.helpReady = "true";
+          button.addEventListener("mouseenter", function () { if (!helpPinned) showHelp(button, false); });
+          button.addEventListener("mouseleave", function () { if (!helpPinned && document.activeElement !== button) closeHelp(); });
+          button.addEventListener("focus", function () { if (!helpPinned) showHelp(button, false); });
+          button.addEventListener("blur", function () { window.setTimeout(function () { if (!helpPinned && document.activeElement !== button) closeHelp(); }, 0); });
+          button.addEventListener("click", function (event) { event.stopPropagation(); if (helpPinned === button) closeHelp(); else showHelp(button, true); });
+        });
+      }
+
+      function renderIconCategories() {
+        var categories = ["All"].concat(Array.from(new Set(ICON_CATALOG.map(function (item) { return item.category; }))));
+        document.getElementById("icon-category-list").innerHTML = categories.map(function (item) {
+          return '<button type="button" data-icon-category="' + escapeHtml(item) + '" aria-pressed="' + (item === iconDialogCategory ? "true" : "false") + '">' + escapeHtml(item) + '</button>';
+        }).join("");
+      }
+
+      function renderIconGrid() {
+        var term = document.getElementById("icon-search").value.trim().toLowerCase();
+        var visible = ICON_CATALOG.filter(function (item) {
+          if (iconDialogCategory !== "All" && item.category !== iconDialogCategory) return false;
+          return !term || [item.label, item.key, item.category, item.keywords].join(" ").toLowerCase().indexOf(term) >= 0;
+        });
+        document.getElementById("icon-grid").innerHTML = visible.map(function (item) {
+          return '<button type="button" data-icon-choice="' + escapeHtml(item.key) + '" aria-pressed="' + (item.key === iconDialogSelection ? "true" : "false") + '" title="' + escapeHtml(item.label) + '"><span class="icon-swatch">' + iconSvg(item.key) + '</span><span>' + escapeHtml(item.label) + '</span></button>';
+        }).join("");
+        document.getElementById("icon-empty").hidden = visible.length !== 0;
+        document.getElementById("icon-result-count").textContent = visible.length + " of " + ICON_CATALOG.length + " icons";
+      }
+
+      function updateIconDialogSelection(name) {
+        iconDialogSelection = iconCatalogItem(name).key;
+        document.getElementById("icon-selected-name").textContent = iconLabel(iconDialogSelection);
+        document.getElementById("icon-grid").querySelectorAll("[data-icon-choice]").forEach(function (button) {
+          button.setAttribute("aria-pressed", String(button.dataset.iconChoice === iconDialogSelection));
+        });
+      }
+
+      function openIconDialog(currentIcon, apply) {
+        closeHelp();
+        iconDialogReturnFocus = document.activeElement;
+        iconDialogSelection = iconCatalogItem(currentIcon).key;
+        iconDialogCategory = "All";
+        iconDialogApply = apply;
+        document.getElementById("icon-search").value = "";
+        document.getElementById("icon-selected-name").textContent = iconLabel(iconDialogSelection);
+        renderIconCategories();
+        renderIconGrid();
+        if (typeof iconDialog.showModal === "function") iconDialog.showModal(); else iconDialog.setAttribute("open", "");
+        window.setTimeout(function () { document.getElementById("icon-search").focus(); }, 0);
+      }
+
+      function closeIconDialog(useSelection) {
+        if (useSelection && typeof iconDialogApply === "function") iconDialogApply(iconDialogSelection);
+        if (typeof iconDialog.close === "function" && iconDialog.open) iconDialog.close(); else iconDialog.removeAttribute("open");
+        var returnFocus = iconDialogReturnFocus;
+        iconDialogApply = null;
+        iconDialogReturnFocus = null;
+        if (returnFocus && returnFocus.isConnected) returnFocus.focus();
+      }
+
+      function openDialog(options) {
+        closeHelp();
+        dialogReturnFocus = document.activeElement;
+        document.getElementById("dialog-title").textContent = options.title || "Dialog";
+        document.getElementById("dialog-subtitle").textContent = options.subtitle || "";
+        document.getElementById("dialog-body").innerHTML = options.body || "";
+        wireHelpButtons();
+        var footer = document.getElementById("dialog-footer");
+        footer.innerHTML = "";
+        (options.buttons || [{ label: "Close", action: closeDialog }]).forEach(function (definition) {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.textContent = definition.label;
+          button.disabled = Boolean(definition.disabled);
+          if (definition.className) button.className = definition.className;
+          button.addEventListener("click", definition.action || closeDialog);
+          footer.append(button);
+        });
+        if (typeof appDialog.showModal === "function") appDialog.showModal(); else appDialog.setAttribute("open", "");
+        appDialog.append(helpPopover);
+        var first = footer.querySelector("button:not(:disabled)");
+        if (first) first.focus();
+      }
+
+      function closeDialog() {
+        closeHelp();
+        if (typeof appDialog.close === "function" && appDialog.open) appDialog.close(); else appDialog.removeAttribute("open");
+        document.body.append(helpPopover);
+        if (dialogReturnFocus && dialogReturnFocus.isConnected) dialogReturnFocus.focus();
+        dialogReturnFocus = null;
+      }
+
+      function confirmLeave(action) {
+        openDialog({
+          title: "Leave unsaved changes?",
+          subtitle: "The open Alias has changes that exist only in this browser mockup.",
+          body: "<p>Continue without saving, or return to the Alias editor.</p>",
+          buttons: [{ label: "Keep editing", action: closeDialog }, { label: "Discard changes", className: "button-danger", action: function () { closeDialog(); action(); } }]
+        });
+      }
+
+      function continueAfterUnsaved(action) {
+        if (dirty) confirmLeave(function () { discardOpenDraft(); action(); });
+        else action();
+      }
+
+      function discardOpenDraft() {
+        var alias = selectedAlias();
+        if (alias && alias.id === "new") aliases = aliases.filter(function (item) { return item.id !== "new"; });
+        else if (alias && editorSavedSnapshot && editorSnapshotId === alias.id) {
+          var index = aliases.findIndex(function (item) { return item.id === alias.id; });
+          if (index >= 0) aliases[index] = deepClone(editorSavedSnapshot);
+        }
+        dirty = false;
+      }
+
+      function showConflictDialog() {
+        openDialog({
+          title: "Review newer saved version",
+          subtitle: "Another administrator session or background import changed this Alias after it was opened.",
+          body: '<dl class="impact-grid"><div><dt>Your Alias name</dt><dd>' + escapeHtml(document.getElementById("alias-name").value || "(blank)") + '</dd></div><div><dt>Latest saved name</dt><dd>Metro Dispatch Updated</dd></div><div><dt>Your revision</dt><dd>41</dd></div><div><dt>Latest revision</dt><dd>42</dd></div></dl><p>Your input remains available until you choose.</p>',
+          buttons: [{ label: "Keep reviewing", action: closeDialog }, { label: "Discard my changes", className: "button-danger", action: function () { closeDialog(); scenario = "normal"; dirty = false; renderAll(); } }, { label: "Replace saved version", className: "button-primary", action: function () { closeDialog(); scenario = "normal"; dirty = false; renderAll(); showToast("Conflict choice applied in this mockup."); } }]
+        });
+      }
+
+      function showListAction(action) {
+        var safeListName = escapeHtml(currentListName);
+        var definitions = {
+          new: { title: "Create Alias List", subtitle: "List names are required, unique, and no more than 25 characters.", body: '<div class="field"><div class="field-label"><label for="dialog-list-name">List name</label>' + helpButton("List name", "A unique name of up to 25 characters. Channels link to the list identity, not just this visible name.") + '</div><input id="dialog-list-name" maxlength="25" value=""></div>', primary: "Create list" },
+          clone: { title: "Clone " + currentListName, subtitle: "Create a separate copy for editing.", body: '<div class="field"><div class="field-label"><label for="dialog-list-name">New list name</label>' + helpButton("New list name", "The clone receives a new list identity and every copied Alias receives a new identity.") + '</div><input id="dialog-list-name" maxlength="25" value="' + safeListName + ' Copy"></div><div class="inline-notice info" style="margin-top:12px"><strong>What is copied?</strong><span>All aliases get new identities. Channel assignments are not copied, so existing channels keep using ' + safeListName + '.</span></div>', primary: "Clone list" },
+          rename: { title: "Rename " + currentListName, subtitle: "Saved channel links use the list identity and remain intact.", body: '<dl class="impact-grid"><div><dt>Aliases</dt><dd>2,843</dd></div><div><dt>Channels using list</dt><dd>14</dd></div></dl><div class="field"><div class="field-label"><label for="dialog-list-name">New name</label>' + helpButton("New list name", "Renaming changes the visible label while preserving the stable list identity used by Channels.") + '</div><input id="dialog-list-name" maxlength="25" value="' + safeListName + '"></div>', primary: "Rename list" },
+          delete: { title: "Delete " + currentListName + "?", subtitle: "Review every effect before this destructive change.", body: '<dl class="impact-grid"><div><dt>Aliases removed</dt><dd>2,843</dd></div><div><dt>Channel references cleared</dt><dd>14</dd></div><div><dt>Streaming providers changed</dt><dd>0</dd></div><div><dt>Detailed history changed</dt><dd>0</dd></div></dl><div class="inline-notice error"><strong>This cannot be undone from Settings.</strong><span>Back up the playlist first if the list may be needed later.</span></div>', primary: "Delete list", danger: true }
+        };
+        var item = definitions[action];
+        openDialog({ title: item.title, subtitle: item.subtitle, body: item.body, buttons: [{ label: "Cancel", action: closeDialog }, { label: item.primary, className: item.danger ? "button-danger" : "button-primary", action: function () { closeDialog(); showToast(item.primary + " simulated. No playlist was changed."); } }] });
+      }
+
+      function showBulkAction(action) {
+        var count = selectedRows.size;
+        if (action === "clear") { selectedRows.clear(); renderTable(); return; }
+        if (action === "edit") {
+          openDialog({
+            title: "Bulk edit " + count + " aliases",
+            subtitle: "Only explicitly checked rows on this page are included.",
+            body: [
+              '<div class="form-grid"><div class="field wide">', matcherLabel("bulk-priority", "Priority", "Priority 1 is highest. No change preserves different priorities across the selection. Priority orders competing eligible calls but never replaces Listen-list membership."), '<select id="bulk-priority"><option>No change</option><option>Default</option>', Array.from({ length: 99 }, function (_, index) { return '<option>' + (index + 1) + '</option>'; }).join(""), '</select></div>',
+              '<div class="field wide">', matcherLabel("bulk-record", "Record", "Change recording for the selected Aliases without changing Channel recorder settings."), '<select id="bulk-record"><option>No change</option><option>Record</option><option>Do not record</option></select></div>',
+              '<div class="field wide">', matcherLabel("bulk-icon", "Vector icon", "Choose one packaged vector icon for every selected Alias, or leave each current icon unchanged."), '<select id="bulk-icon">', iconSelectOptions(true), '</select></div>',
+              '<div class="field wide">', matcherLabel("bulk-color", "Color", "Choose one color, reset to the default, or leave each current color unchanged."), '<select id="bulk-color"><option>No change</option><option>Reset</option><option>Blue</option><option>Purple</option><option>Red</option><option>Orange</option><option>Green</option><option>Gray</option></select></div></div>',
+              '<p class="field-hint">Matching identifiers and streaming assignments cannot be changed in bulk.</p>'
+            ].join(""),
+            buttons: [{ label: "Cancel", action: closeDialog }, { label: "Apply to " + count, className: "button-primary", action: function () { closeDialog(); selectedRows.clear(); renderTable(); showToast("Bulk edit simulated. No playlist was changed."); } }]
+          });
+          return;
+        }
+        if (action === "move") {
+          openDialog({ title: "Move " + count + " aliases", subtitle: "The destination list must already exist.", body: '<div class="field">' + matcherLabel("move-list", "Destination Alias List", "Move the selected Aliases and all of their matching and streaming assignments to one existing list.") + '<select id="move-list"><option>State Patrol</option><option>Regional Interop</option></select></div><p>Matching rules and streaming assignments move with each Alias.</p>', buttons: [{ label: "Cancel", action: closeDialog }, { label: "Move aliases", className: "button-primary", action: function () { closeDialog(); selectedRows.clear(); renderTable(); showToast("Move simulated. No playlist was changed."); } }] });
+          return;
+        }
+        openDialog({ title: "Delete " + count + " aliases?", subtitle: "Only explicitly checked rows on this page are included.", body: '<p>The selected Alias names, matching identifiers, recording choices, and streaming assignments will be removed from this list.</p><div class="inline-notice error"><strong>No history is stored.</strong><span>This mockup does not add an alias change log or recovery table.</span></div>', buttons: [{ label: "Cancel", action: closeDialog }, { label: "Delete aliases", className: "button-danger", action: function () { closeDialog(); selectedRows.clear(); renderTable(); showToast("Delete simulated. No playlist was changed."); } }] });
+      }
+
+      function matcherLabel(forId, label, help) {
+        return '<div class="field-label"><label for="' + forId + '">' + escapeHtml(label) + '</label>' + helpButton(label, help) + '</div>';
+      }
+
+      function otherKindForType(type) {
+        var value = String(type || "").toLowerCase();
+        if (value.indexOf("ambe") >= 0 || value.indexOf("tone sequence") >= 0) return "AMBE tone sequence";
+        if (value.indexOf("lojack") >= 0) return "LoJack function / ID";
+        if (value.indexOf("user status") >= 0) return "P25 User Status";
+        if (value.indexOf("unit status") >= 0) return "P25 Unit Status";
+        if (value.indexOf("esn") >= 0) return "ESN";
+        return "DCS";
+      }
+
+      function dcsOptions(selected) {
+        var output = '<option value="">Select a DCS code</option>';
+        [{ prefix: "N", label: "Normal" }, { prefix: "I", label: "Inverted" }].forEach(function (group) {
+          output += '<optgroup label="' + group.label + '">';
+          output += DCS_CODES.map(function (code) {
+            var value = group.prefix + code;
+            return '<option value="' + value + '"' + (selected === value ? " selected" : "") + '>DCS-' + code + (group.prefix === "I" ? " Inverted" : "") + '</option>';
+          }).join("");
+          output += '</optgroup>';
+        });
+        return output;
+      }
+
+      function lojackFunctionOptions(selected) {
+        return LOJACK_FUNCTIONS.map(function (item) { return '<option' + (item === selected ? " selected" : "") + '>' + escapeHtml(item) + '</option>'; }).join("");
+      }
+
+      function allAmbeToneChoices() {
+        return AMBE_TONE_GROUPS.reduce(function (values, group) { return values.concat(group.values); }, []);
+      }
+
+      function normalizeAmbeTone(value) {
+        var source = String(value || "").trim();
+        var choices = allAmbeToneChoices();
+        var exact = choices.find(function (item) { return item.toLowerCase() === source.toLowerCase(); });
+        if (exact) return exact;
+        var numeric = source.match(/([0-9]+(?:\.[0-9]+)?)/);
+        if (numeric) {
+          var requested = Number(numeric[1]);
+          var closest = AMBE_TONE_GROUPS[3].values.reduce(function (best, item) {
+            return Math.abs(Number(item.replace(" Hz", "")) - requested) < Math.abs(Number(best.replace(" Hz", "")) - requested) ? item : best;
+          });
+          return closest;
+        }
+        return "DTMF 0";
+      }
+
+      function toneOptions(selected) {
+        var output = "";
+        AMBE_TONE_GROUPS.forEach(function (group) {
+          output += '<optgroup label="' + escapeHtml(group.label) + '">';
+          output += group.values.map(function (value) { return '<option' + (value === selected ? " selected" : "") + '>' + escapeHtml(value) + '</option>'; }).join("");
+          output += '</optgroup>';
+        });
+        return output;
+      }
+
+      function createOtherDrafts(currentType, currentValue) {
+        var kind = otherKindForType(currentType);
+        var value = String(currentValue || "");
+        var drafts = {
+          DCS: { code: "" },
+          ESN: { value: "" },
+          "LoJack function / ID": { functionName: "0-UNKNOWN", id: "" },
+          "P25 User Status": { status: "0" },
+          "P25 Unit Status": { status: "0" },
+          "AMBE tone sequence": { tones: [] }
+        };
+        if (!currentType) return drafts;
+        if (kind === "DCS") {
+          var dcsCode = value.match(/([0-9]{3})/);
+          if (dcsCode) drafts.DCS.code = (/inverted/i.test(value) || /^I/i.test(value) ? "I" : "N") + dcsCode[1];
+        } else if (kind === "ESN") {
+          drafts.ESN.value = value.replace(/^ESN\s*:\s*/i, "");
+        } else if (kind === "LoJack function / ID") {
+          drafts[kind].functionName = LOJACK_FUNCTIONS.find(function (item) { return value.indexOf(item) === 0; }) || "0-UNKNOWN";
+          var lojackId = value.match(/(?:ID\s*[: ]\s*|·\s*)([A-Z0-9*]{1,5})$/i);
+          drafts[kind].id = lojackId ? lojackId[1].toUpperCase() : "";
+        } else if (kind === "P25 User Status" || kind === "P25 Unit Status") {
+          var status = value.match(/\b([0-9]{1,3})\b/);
+          drafts[kind].status = status ? status[1] : "0";
+        } else if (kind === "AMBE tone sequence") {
+          drafts[kind].tones = value.split(/\s+·\s+/).map(function (entry) {
+            var tone = entry.match(/^(.+?)\s*\/\s*([0-9]+)\s*ms$/i);
+            return tone ? { tone: normalizeAmbeTone(tone[1]), duration: String(Math.max(20, Math.min(1000, Math.round(Number(tone[2]) / 20) * 20))) } : null;
+          }).filter(Boolean);
+        }
+        return drafts;
+      }
+
+      function toneRowMarkup(tone, index, length) {
+        return [
+          '<div class="tone-row" data-tone-row="', index, '"><span class="tone-number" aria-label="Position ', index + 1, '">', index + 1, '</span>',
+          '<div class="tone-choice-control"><label class="sr-only" for="tone-choice-', index, '">Tone ', index + 1, '</label><span class="tone-mobile-label" aria-hidden="true">Tone</span><select id="tone-choice-', index, '" data-tone-choice required>', toneOptions(tone.tone), '</select></div>',
+          '<div class="tone-duration-cell"><label class="sr-only" for="tone-duration-', index, '">Minimum duration for tone ', index + 1, '</label><span class="tone-mobile-label" aria-hidden="true">Minimum duration</span><div class="tone-duration-control"><input id="tone-duration-', index, '" data-tone-duration type="number" inputmode="numeric" min="20" max="1000" step="20" required value="', escapeHtml(tone.duration), '" aria-describedby="tone-unit-', index, '"><span id="tone-unit-', index, '" class="tone-unit">ms</span></div></div>',
+          '<div class="tone-actions"><button type="button" data-tone-action="up" data-tone-index="', index, '" aria-label="Move tone ', index + 1, ' up" title="Move up"', index === 0 ? " disabled" : "", '>⌃</button><button type="button" data-tone-action="down" data-tone-index="', index, '" aria-label="Move tone ', index + 1, ' down" title="Move down"', index === length - 1 ? " disabled" : "", '>⌄</button><button class="button-danger tone-remove" type="button" data-tone-action="remove" data-tone-index="', index, '" aria-label="Remove tone ', index + 1, '" title="Remove">×</button></div></div>'
+        ].join("");
+      }
+
+      function otherMatcherFields(kind, draft) {
+        if (kind === "DCS") return '<div class="field full">' + matcherLabel("dcs-code", "DCS code", "Choose one normal or inverted Digital Coded Squelch code. DCS matching is used with NBFM channels.") + '<select id="dcs-code" required>' + dcsOptions(draft.code) + '</select></div>';
+        if (kind === "ESN") return '<div class="field full">' + matcherLabel("esn-value", "ESN", "Enter the Electronic Serial Number exactly as decoded. An asterisk (*) can match a variable character; matching is case-sensitive.") + '<input id="esn-value" required value="' + escapeHtml(draft.value) + '" placeholder="Example: 1A2B3C or 1A*B3C"><p class="field-hint">Existing or imported ESN matchers remain editable.</p></div>';
+        if (kind === "LoJack function / ID") return [
+          '<div class="field">', matcherLabel("lojack-function", "LoJack function", "Choose the decoded LoJack command or reply function that must match."), '<select id="lojack-function" required>', lojackFunctionOptions(draft.functionName), '</select></div>',
+          '<div class="field">', matcherLabel("lojack-id", "LoJack ID", "Enter five letters, numbers, or wildcard characters. Use * to match any one character, for example AB*12. A middle X or Y means tower. Transponders use 0–9, A, C–H, J–N, or P–W; B, I, O, and Z are unused."), '<input id="lojack-id" required maxlength="5" minlength="5" pattern="[A-Za-z0-9*]{5}" value="', escapeHtml(draft.id), '" placeholder="AB*12" autocapitalize="characters"><p class="field-hint">The middle character identifies a tower or transponder; open the information icon for the accepted format.</p></div>'
+        ].join("");
+        if (kind === "P25 User Status") return '<div class="field full">' + matcherLabel("p25-user-status", "P25 User Status", "Match a P25 user status value decoded over the air. Allowed values are 0 through 255.") + '<input id="p25-user-status" type="number" inputmode="numeric" min="0" max="255" step="1" required value="' + escapeHtml(draft.status) + '"></div>';
+        if (kind === "P25 Unit Status") return '<div class="field full">' + matcherLabel("p25-unit-status", "P25 Unit Status", "Match a P25 unit status value decoded over the air. Allowed values are 0 through 255.") + '<input id="p25-unit-status" type="number" inputmode="numeric" min="0" max="255" step="1" required value="' + escapeHtml(draft.status) + '"></div>';
+        var tones = draft.tones || [];
+        return [
+          '<div class="field full tone-editor"><div class="tone-editor-head"><div class="field-label">Ordered tones ', helpButton("Ordered AMBE tones", "Every configured tone must appear in this order. Each duration is the minimum time the received tone must last. New tones start as DTMF 0 with a 40 millisecond minimum."), '</div><button class="tone-add" type="button" data-tone-action="add">Add tone</button></div>',
+          '<div class="tone-table">', tones.length ? '<div class="tone-list-header"><span aria-hidden="true">#</span><div class="tone-column-label"><span>Tone</span>' + helpButton("Tone", "Choose a DTMF, KNOX, call-progress, or discrete AMBE tone. Tones must be received in this same order.") + '</div><div class="tone-column-label"><span>Minimum duration</span>' + helpButton("Minimum duration", "The received tone must last at least this long. Values use 20 millisecond steps.") + '</div><span class="sr-only">Row actions</span></div>' : "",
+          '<div id="tone-list" class="tone-list">', tones.length ? tones.map(function (tone, index) { return toneRowMarkup(tone, index, tones.length); }).join("") : '<p class="tone-empty">No tones yet. Add the first tone to build the sequence.</p>', '</div></div>',
+          '<p id="tone-list-error" class="field-error" hidden></p></div>'
+        ].join("");
+      }
+
+      function captureOtherDraft(kind, drafts) {
+        if (kind === "DCS") drafts.DCS.code = document.getElementById("dcs-code").value;
+        else if (kind === "ESN") drafts.ESN.value = document.getElementById("esn-value").value;
+        else if (kind === "LoJack function / ID") { drafts[kind].functionName = document.getElementById("lojack-function").value; drafts[kind].id = document.getElementById("lojack-id").value; }
+        else if (kind === "P25 User Status") drafts[kind].status = document.getElementById("p25-user-status").value;
+        else if (kind === "P25 Unit Status") drafts[kind].status = document.getElementById("p25-unit-status").value;
+        else drafts[kind].tones = Array.from(document.querySelectorAll("[data-tone-row]")).map(function (row) { return { tone: row.querySelector("[data-tone-choice]").value, duration: row.querySelector("[data-tone-duration]").value }; });
+      }
+
+      function wireOtherMatcherForm(current) {
+        var kindSelect = document.getElementById("other-kind");
+        var fields = document.getElementById("other-fields");
+        var status = document.getElementById("other-layout-status");
+        var drafts = createOtherDrafts(current ? current.type : "", current ? current.value : "");
+        var activeKind = kindSelect.value;
+
+        function renderOtherFields(announce) {
+          closeHelp();
+          fields.innerHTML = otherMatcherFields(activeKind, drafts[activeKind]);
+          wireHelpButtons();
+          var lojackId = document.getElementById("lojack-id");
+          if (lojackId) lojackId.addEventListener("input", function () { var start = lojackId.selectionStart; lojackId.value = lojackId.value.toUpperCase(); lojackId.setSelectionRange(start, start); });
+          if (announce) status.textContent = activeKind + " fields are now shown.";
+        }
+
+        kindSelect.addEventListener("change", function () {
+          captureOtherDraft(activeKind, drafts);
+          activeKind = kindSelect.value;
+          renderOtherFields(true);
+        });
+        fields.addEventListener("click", function (event) {
+          var button = event.target.closest("[data-tone-action]");
+          if (!button || activeKind !== "AMBE tone sequence") return;
+          captureOtherDraft(activeKind, drafts);
+          var tones = drafts[activeKind].tones;
+          var action = button.dataset.toneAction;
+          var index = Number(button.dataset.toneIndex);
+          var focusIndex = index;
+          if (action === "add") { tones.push({ tone: "DTMF 0", duration: "40" }); focusIndex = tones.length - 1; }
+          else if (action === "remove") { tones.splice(index, 1); focusIndex = Math.min(index, tones.length - 1); }
+          else if (action === "up" && index > 0) { var previous = tones[index - 1]; tones[index - 1] = tones[index]; tones[index] = previous; focusIndex = index - 1; }
+          else if (action === "down" && index < tones.length - 1) { var next = tones[index + 1]; tones[index + 1] = tones[index]; tones[index] = next; focusIndex = index + 1; }
+          renderOtherFields(false);
+          status.textContent = action === "add" ? "Tone added." : action === "remove" ? "Tone removed." : "Tone moved to position " + (focusIndex + 1) + ".";
+          var nextFocus = focusIndex >= 0 ? document.getElementById("tone-choice-" + focusIndex) : fields.querySelector("[data-tone-action='add']");
+          if (nextFocus) nextFocus.focus();
+        });
+        renderOtherFields(false);
+      }
+
+      function matcherForm(type, current) {
+        var currentType = current ? current.type : "";
+        var currentValue = current ? current.value : "";
+        var lowerType = currentType.toLowerCase();
+        var kind = lowerType.indexOf("range") >= 0 ? "range" : lowerType.indexOf("fully qualified") >= 0 ? "fq" : "exact";
+        var protocolMatch = currentValue.match(/^(P25|DMR|NXDN|NBFM)\s+·/i);
+        var protocol = kind === "fq" ? "P25" : protocolMatch ? protocolMatch[1].toUpperCase() : "P25";
+        var values = currentValue.match(/·\s*([0-9]+)(?:–([0-9]+))?$/);
+        var fqValue = currentValue.match(/·\s*(?:TG|Radio)\s+([0-9]+)$/i);
+        var defaultStart = type === "talkgroup" ? "5000" : "1201045";
+        var defaultEnd = type === "talkgroup" ? "5199" : "1201099";
+        var start = fqValue ? fqValue[1] : values ? values[1] : defaultStart;
+        var end = values && values[2] ? values[2] : defaultEnd;
+        var exactNetwork = currentValue.match(/WACN\s+([0-9A-F]+)\s+·\s+System\s+([0-9A-F]+)/i);
+        var scope = exactNetwork ? "exact" : "any";
+        var wacn = exactNetwork ? exactNetwork[1].toUpperCase() : "";
+        var system = exactNetwork ? exactNetwork[2].toUpperCase() : "";
+        if (type === "talkgroup" || type === "radio") return [
+          '<div class="form-grid"><div class="field wide">', matcherLabel("match-kind", "Match type", type === "talkgroup" ? "Choose one decoded Talkgroup, an inclusive range, or a P25 identity qualified by network and system." : "Choose one decoded Radio ID, an inclusive range, or a P25 identity qualified by network and system."),
+          '<select id="match-kind"><option value="exact"', kind === "exact" ? " selected" : "", '>', type === "talkgroup" ? "Talkgroup" : "Radio ID", '</option><option value="range"', kind === "range" ? " selected" : "", '>', type === "talkgroup" ? "Talkgroup Range" : "Radio ID Range", '</option><option value="fq" data-p25-only', kind === "fq" ? " selected" : "", '>P25 fully qualified ', type === "talkgroup" ? "Talkgroup" : "Radio", '</option></select></div>',
+          '<div class="field wide">', matcherLabel("match-protocol", "Protocol", "The selected protocol controls the valid match types, numeric range, and protocol-specific fields."), '<select id="match-protocol"><option value="P25"', protocol === "P25" ? " selected" : "", '>P25</option><option value="DMR"', protocol === "DMR" ? " selected" : "", '>DMR</option><option value="NXDN"', protocol === "NXDN" ? " selected" : "", '>NXDN</option>', type === "talkgroup" ? '<option value="NBFM"' + (protocol === "NBFM" ? " selected" : "") + '>NBFM</option>' : "", '</select></div>',
+          '<div class="field">', matcherLabel("match-value", type === "talkgroup" ? "Talkgroup / range start" : "Radio ID / range start", type === "talkgroup" ? "One Talkgroup, or the first value in an inclusive range. Its valid range changes with Protocol." : "One Radio ID, or the first value in an inclusive range. Its valid range changes with Protocol."), '<input id="match-value" type="number" inputmode="numeric" required value="', start, '" aria-describedby="match-value-hint"><p id="match-value-hint" class="field-hint"></p></div>',
+          '<div id="match-end-field" class="field" hidden>', matcherLabel("match-end", "Range end", type === "talkgroup" ? "The final Talkgroup in an inclusive range." : "The final Radio ID in an inclusive range."), '<input id="match-end" type="number" inputmode="numeric" value="', end, '"></div>',
+          '<div id="p25-scope-field" class="field wide" hidden>', matcherLabel("network-scope", "P25 network scope", "Any network uses wildcards for both WACN and System. Exact scope requires both values together."), '<select id="network-scope"><option value="any"', scope === "any" ? " selected" : "", '>Any WACN / System (* / *)</option><option value="exact"', scope === "exact" ? " selected" : "", '>Exact WACN + System</option></select></div>',
+          '<div class="field" data-p25-exact hidden>', matcherLabel("wacn", "WACN", "Up to five hexadecimal digits. This field is used only when Exact WACN + System is selected."), '<input id="wacn" value="', wacn, '" placeholder="*" maxlength="5" pattern="[0-9A-Fa-f]{1,5}"></div>',
+          '<div class="field" data-p25-exact hidden>', matcherLabel("system-id", "System", "Up to three hexadecimal digits. This field is used only when Exact WACN + System is selected."), '<input id="system-id" value="', system, '" placeholder="*" maxlength="3" pattern="[0-9A-Fa-f]{1,3}"></div>',
+          '<div class="field full"><p id="match-protocol-note" class="field-hint" role="status"></p></div></div>'
+        ].join("");
+        var selectedOtherKind = otherKindForType(currentType);
+        var otherDrafts = createOtherDrafts(currentType, currentValue);
+        var otherKinds = ["DCS", "ESN", "LoJack function / ID", "P25 User Status", "P25 Unit Status", "AMBE tone sequence"];
+        return [
+          '<div class="form-grid"><div class="field wide">', matcherLabel("other-kind", "Other match type", "Choose the decoded value this Alias should match. The fields below change to show only what that matcher uses."),
+          '<select id="other-kind">', otherKinds.map(function (item) { return '<option' + (item === selectedOtherKind ? " selected" : "") + '>' + escapeHtml(item) + '</option>'; }).join(""), '</select></div>',
+          '<p id="other-layout-status" class="sr-only" role="status" aria-live="polite"></p>',
+          '<div id="other-fields" class="other-fields">', otherMatcherFields(selectedOtherKind, otherDrafts[selectedOtherKind]), '</div></div>'
+        ].join("");
+      }
+
+      function identifierFromDialog(type) {
+        if (type === "talkgroup" || type === "radio") {
+          var kind = document.getElementById("match-kind").value;
+          var protocol = document.getElementById("match-protocol").value;
+          var start = document.getElementById("match-value").value;
+          var end = document.getElementById("match-end").value;
+          var exactType = type === "talkgroup" ? "Talkgroup" : "Radio ID";
+          if (kind === "range") return { type: type === "talkgroup" ? "Talkgroup Range" : "Radio ID Range", value: protocol + " · " + start + "–" + end };
+          if (kind === "fq") {
+            var scope = document.getElementById("network-scope").value;
+            var network = scope === "any" ? "Any WACN/System" : "WACN " + document.getElementById("wacn").value.toUpperCase() + " · System " + document.getElementById("system-id").value.toUpperCase();
+            return { type: type === "talkgroup" ? "P25 fully qualified talkgroup" : "P25 fully qualified Radio", value: network + " · " + (type === "talkgroup" ? "TG " : "Radio ") + start };
+          }
+          return { type: exactType, value: protocol + " · " + start };
+        }
+        var otherKind = document.getElementById("other-kind").value;
+        if (otherKind === "DCS") {
+          var dcsCode = document.getElementById("dcs-code").value;
+          return { type: "DCS", value: "DCS-" + dcsCode.slice(1) + (dcsCode.charAt(0) === "I" ? " Inverted" : "") };
+        }
+        if (otherKind === "ESN") return { type: "ESN", value: document.getElementById("esn-value").value.trim() };
+        if (otherKind === "LoJack function / ID") return { type: otherKind, value: document.getElementById("lojack-function").value + " · ID " + document.getElementById("lojack-id").value.toUpperCase() };
+        if (otherKind === "P25 User Status") return { type: otherKind, value: document.getElementById("p25-user-status").value };
+        if (otherKind === "P25 Unit Status") return { type: otherKind, value: document.getElementById("p25-unit-status").value };
+        return { type: otherKind, value: Array.from(document.querySelectorAll("[data-tone-row]")).map(function (row) { return row.querySelector("[data-tone-choice]").value + " / " + row.querySelector("[data-tone-duration]").value + " ms"; }).join(" · ") };
+      }
+
+      function validateMatcherForm() {
+        var kind = document.getElementById("match-kind");
+        if (kind && kind.value === "range") {
+          var start = document.getElementById("match-value");
+          var end = document.getElementById("match-end");
+          end.setCustomValidity(Number(end.value) <= Number(start.value) ? "Range end must be greater than the starting value." : "");
+        }
+        var otherKind = document.getElementById("other-kind");
+        if (otherKind && otherKind.value === "ESN") {
+          var esn = document.getElementById("esn-value");
+          esn.setCustomValidity(esn.value.trim() ? "" : "Enter an ESN value.");
+        }
+        if (otherKind && otherKind.value === "AMBE tone sequence") {
+          var toneRows = appDialog.querySelectorAll("[data-tone-row]");
+          var toneError = document.getElementById("tone-list-error");
+          if (!toneRows.length) {
+            toneError.textContent = "Add at least one tone.";
+            toneError.hidden = false;
+            var addTone = appDialog.querySelector("[data-tone-action='add']");
+            if (addTone) addTone.focus();
+            return false;
+          }
+          toneError.hidden = true;
+          toneError.textContent = "";
+        }
+        var invalid = appDialog.querySelector("input:not(:disabled):invalid, select:not(:disabled):invalid, textarea:not(:disabled):invalid");
+        if (invalid) { invalid.reportValidity(); invalid.focus(); return false; }
+        return true;
+      }
+
+      function wireMatcherForm(type, current) {
+        if (type !== "talkgroup" && type !== "radio") { wireOtherMatcherForm(current); return; }
+        var protocol = document.getElementById("match-protocol");
+        var kind = document.getElementById("match-kind");
+        var scope = document.getElementById("network-scope");
+        var rangeField = document.getElementById("match-end-field");
+        var scopeField = document.getElementById("p25-scope-field");
+        var exactFields = Array.from(document.querySelectorAll("[data-p25-exact]"));
+        var start = document.getElementById("match-value");
+        var end = document.getElementById("match-end");
+        var fqOption = kind.querySelector('[value="fq"]');
+        var note = document.getElementById("match-protocol-note");
+
+        function refreshMatcherFields() {
+          var selectedProtocol = protocol.value;
+          var isP25 = selectedProtocol === "P25";
+          fqOption.hidden = !isP25;
+          fqOption.disabled = !isP25;
+          if (!isP25 && kind.value === "fq") kind.value = "exact";
+          var isRange = kind.value === "range";
+          var isFullyQualified = isP25 && kind.value === "fq";
+          var isExactNetwork = isFullyQualified && scope.value === "exact";
+          rangeField.hidden = !isRange;
+          end.disabled = !isRange;
+          end.required = isRange;
+          scopeField.hidden = !isFullyQualified;
+          scope.disabled = !isFullyQualified;
+          exactFields.forEach(function (field) {
+            field.hidden = !isExactNetwork;
+            var input = field.querySelector("input");
+            input.disabled = !isExactNetwork;
+            input.required = isExactNetwork;
+            input.placeholder = isExactNetwork ? (input.id === "wacn" ? "ABCDE" : "123") : "*";
+          });
+          var minimum = 0;
+          var maximum = 65535;
+          if (type === "talkgroup" && selectedProtocol === "DMR") { minimum = 1; maximum = 16777215; }
+          else if (type === "talkgroup" && selectedProtocol === "NBFM") minimum = 1;
+          else if (type === "radio" && (selectedProtocol === "P25" || selectedProtocol === "DMR")) maximum = 16777215;
+          start.min = String(minimum);
+          start.max = String(maximum);
+          end.min = String(minimum);
+          end.max = String(maximum);
+          document.getElementById("match-value-hint").textContent = selectedProtocol + " allows " + minimum.toLocaleString() + " through " + maximum.toLocaleString() + ".";
+          note.textContent = isFullyQualified ? (scope.value === "any" ? "WACN and System are both wildcards by default." : "Exact P25 matching requires both WACN and System.") : selectedProtocol + " uses numeric " + (isRange ? "range" : "exact") + " matching; P25 network fields are not used.";
+        }
+
+        protocol.addEventListener("change", refreshMatcherFields);
+        kind.addEventListener("change", refreshMatcherFields);
+        scope.addEventListener("change", refreshMatcherFields);
+        refreshMatcherFields();
+      }
+
+      function showIdentifierAction(action, index) {
+        var alias = selectedAlias();
+        if (action === "delete") {
+          openDialog({ title: "Delete matching identifier?", subtitle: "The Alias remains, but this decoded value will no longer match it.", body: "<p>This is a short confirmation; normal matching edits stay inside the Alias page.</p>", buttons: [{ label: "Cancel", action: closeDialog }, { label: "Delete match", className: "button-danger", action: function () { alias.identifiers.splice(index, 1); if (index === 0) { alias.matchType = alias.identifiers[0] ? alias.identifiers[0].type : "No matching identifier"; alias.match = alias.identifiers[0] ? alias.identifiers[0].value : "—"; } dirty = true; closeDialog(); renderEditor(); renderTable(); showToast("Matcher deletion staged. Save the Alias to keep it."); } }] });
+          return;
+        }
+        var current = index == null ? null : alias.identifiers[index];
+        var type = action.replace("add-", "");
+        if (action === "edit") type = current && current.type.indexOf("Talkgroup") >= 0 ? "talkgroup" : current && current.type.indexOf("Radio") >= 0 ? "radio" : "other";
+        openDialog({ title: action === "edit" ? "Edit matching identifier" : "Add " + type.charAt(0).toUpperCase() + type.slice(1) + " match", subtitle: "Only fields used by the chosen matcher are saved.", body: matcherForm(type, current), buttons: [{ label: "Cancel", action: closeDialog }, { label: action === "edit" ? "Apply match" : "Add match", className: "button-primary", action: function () { if (!validateMatcherForm()) return; var nextIdentifier = identifierFromDialog(type); if (index == null) alias.identifiers.push(nextIdentifier); else alias.identifiers[index] = nextIdentifier; if (index === 0 || (index == null && alias.identifiers.length === 1)) { alias.matchType = nextIdentifier.type; alias.match = nextIdentifier.value; } dirty = true; closeDialog(); renderEditor(); renderTable(); showToast("Matching change staged. Save the Alias to keep it."); } }] });
+        wireMatcherForm(type, current);
+      }
+
+      function handleEditorAction(action) {
+        var alias = selectedAlias();
+        if (!alias) return;
+        if (action === "cancel" || action === "reset") { if (dirty || alias.id === "new") confirmLeave(function () { if (alias.id === "new") { aliases = aliases.filter(function (item) { return item.id !== "new"; }); selectedAliasId = aliases[0] ? aliases[0].id : null; } else if (editorSavedSnapshot) { var index = aliases.findIndex(function (item) { return item.id === alias.id; }); if (index >= 0) aliases[index] = deepClone(editorSavedSnapshot); selectedAliasId = editorSavedSnapshot.id; } dirty = false; renderAll(); }); return; }
+        if (action === "export") { showToast("Preserved matcher export prepared in this mockup."); return; }
+        if (action === "show-overlap") { category = alias.category; searchTerm = alias.match.indexOf("5000") >= 0 ? "5000" : "12010"; document.getElementById("alias-search").value = searchTerm; scenario = "normal"; updateCategoryButtons(); renderTable(); showToast("Showing aliases that can match the same decoded value."); return; }
+        if (action === "clone") {
+          openDialog({ title: "Clone " + alias.name, subtitle: "The copy gets a new identity and stays in " + currentListName + ".", body: '<div class="field">' + matcherLabel("clone-name", "Alias name", "The copy receives a new Alias identity. Its matching identifiers are copied and may overlap until edited.") + '<input id="clone-name" maxlength="80" value="' + escapeHtml(alias.name + " Copy") + '"></div><p>Matching identifiers are copied. Review overlaps before saving the clone.</p>', buttons: [{ label: "Cancel", action: closeDialog }, { label: "Clone alias", className: "button-primary", action: function () { closeDialog(); showToast("Alias clone simulated."); } }] });
+          return;
+        }
+        if (action === "move") { selectedRows = new Set([alias.id]); updateSelectionToolbar(); showBulkAction("move"); return; }
+        openDialog({ title: "Delete " + alias.name + "?", subtitle: "The Alias and its matching identifiers will be removed from " + currentListName + ".", body: '<dl class="impact-grid"><div><dt>Matching identifiers</dt><dd>' + alias.identifiers.length + '</dd></div><div><dt>Stream assignments</dt><dd>' + alias.streams.length + '</dd></div></dl>', buttons: [{ label: "Cancel", action: closeDialog }, { label: "Delete alias", className: "button-danger", action: function () { closeDialog(); showToast("Alias delete simulated. No playlist was changed."); } }] });
+      }
+
+      function showToast(copy) {
+        var toast = document.getElementById("toast");
+        toast.textContent = copy;
+        toast.hidden = false;
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(function () { toast.hidden = true; }, 3000);
+      }
+
+      function applyScenario(next) {
+        scenario = next;
+        aliases = deepClone(aliasSeeds);
+        if (scenario === "empty" || scenario === "no-lists") aliases = [];
+        editorSavedSnapshot = null;
+        editorSnapshotId = null;
+        selectedRows.clear();
+        activeFilters.clear();
+        searchTerm = "";
+        currentPage = 1;
+        dirty = scenario === "validation" || scenario === "conflict";
+        document.body.classList.toggle("narrow-preview", scenario === "narrow");
+        document.getElementById("alias-search").value = "";
+        document.querySelectorAll("[data-filter]").forEach(function (input) { input.checked = false; });
+        document.getElementById("filter-count").textContent = "0";
+        document.getElementById("alias-list-select").disabled = scenario === "no-lists";
+        document.querySelectorAll('[data-list-action="clone"], [data-list-action="rename"], [data-list-action="delete"]').forEach(function (button) { button.disabled = scenario === "no-lists"; });
+        document.getElementById("new-alias").disabled = scenario === "no-lists";
+        document.getElementById("list-count").textContent = scenario === "no-lists" ? "No lists" : scenario === "empty" ? "0 aliases" : "2,843 aliases";
+        if (scenario === "bulk") { category = "talkgroup"; selectedAliasId = "a1"; ["a1", "a2", "a4"].forEach(function (id) { selectedRows.add(id); }); }
+        else if (scenario === "other") { category = "other"; selectedAliasId = "a9"; }
+        else if (scenario === "overlap") { category = "talkgroup"; selectedAliasId = "a3"; }
+        else if (scenario === "unknown") { category = "other"; selectedAliasId = "a10"; }
+        else { category = "talkgroup"; selectedAliasId = scenario === "empty" || scenario === "loading" || scenario === "list-error" || scenario === "no-lists" ? null : "a1"; }
+        if (scenario === "no-results") searchTerm = "nothing can match this";
+        updateCategoryButtons();
+        renderAll();
+        if (scenario === "list-impact") showListAction("delete");
+      }
+
+      function updateCategoryButtons() {
+        document.querySelectorAll("[data-category]").forEach(function (button) { button.setAttribute("aria-pressed", String(button.dataset.category === category)); });
+      }
+
+      function reviewEntry(id) { return reviewData.entries[id] || { state: "", note: "", updatedAt: "" }; }
+      function cleanReviewData(candidate) {
+        var entries = {};
+        var validIds = new Set(reviewSections.map(function (section) { return section[0]; }));
+        if (candidate && typeof candidate === "object" && candidate.entries && typeof candidate.entries === "object") {
+          Object.keys(candidate.entries).forEach(function (id) {
+            var value = candidate.entries[id];
+            if (!validIds.has(id) || !value || typeof value !== "object") return;
+            var state = ["", "approved", "change", "discuss"].indexOf(value.state) >= 0 ? value.state : "";
+            var note = typeof value.note === "string" ? value.note.slice(0, MAX_NOTE_LENGTH) : "";
+            if (state || note) entries[id] = { state: state, note: note, updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "" };
+          });
+        }
+        return { entries: entries, updatedAt: candidate && typeof candidate.updatedAt === "string" ? candidate.updatedAt : "" };
+      }
+      function setReviewStatus(copy, warning) { reviewSaveState.textContent = copy; reviewSaveState.classList.toggle("warning", Boolean(warning)); }
+      function initializeReviewStorage() {
+        try {
+          var probe = REVIEW_STORAGE_KEY + ".probe";
+          window.localStorage.setItem(probe, "ok");
+          window.localStorage.removeItem(probe);
+          var stored = window.localStorage.getItem(REVIEW_STORAGE_KEY);
+          if (stored) reviewData = cleanReviewData(JSON.parse(stored));
+          setReviewStatus(Object.keys(reviewData.entries).length ? "Loaded your saved browser review." : "Ready — notes save automatically in this browser.");
+        } catch (error) { reviewStorageAvailable = false; setReviewStatus("Browser storage is unavailable. Download a backup before closing this page.", true); }
+      }
+      function writeReview() {
+        reviewData.updatedAt = new Date().toISOString();
+        if (reviewStorageAvailable) {
+          try { window.localStorage.setItem(REVIEW_STORAGE_KEY, JSON.stringify({ format: REVIEW_FORMAT, version: REVIEW_VERSION, updatedAt: reviewData.updatedAt, entries: reviewData.entries })); setReviewStatus("Saved automatically at " + new Date(reviewData.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + "."); }
+          catch (error) { reviewStorageAvailable = false; setReviewStatus("Could not save in this browser. Download a backup before closing this page.", true); }
+        } else setReviewStatus("Browser storage is unavailable. Notes are in page memory only; download a backup before closing.", true);
+      }
+      function saveReviewEntry(id) {
+        var state = document.getElementById("review-state-" + id);
+        var note = document.getElementById("review-note-" + id);
+        if (!state || !note) return;
+        var value = { state: state.value, note: note.value.slice(0, MAX_NOTE_LENGTH), updatedAt: new Date().toISOString() };
+        if (!value.state && !value.note) delete reviewData.entries[id]; else reviewData.entries[id] = value;
+        writeReview();
+      }
+      function flushReviewTimers() { reviewTimers.forEach(function (timer, id) { window.clearTimeout(timer); saveReviewEntry(id); }); reviewTimers.clear(); }
+      function reviewOptions(selected) { return [["", "Not reviewed"], ["approved", "Approve as shown"], ["change", "Change requested"], ["discuss", "Discuss later"]].map(function (option) { return '<option value="' + option[0] + '"' + (option[0] === selected ? " selected" : "") + '>' + option[1] + '</option>'; }).join(""); }
+      function renderReview() {
+        document.getElementById("review-content").innerHTML = reviewSections.map(function (section) {
+          var entry = reviewEntry(section[0]);
+          return '<section class="review-card"><h3>' + escapeHtml(section[1]) + '</h3><p>' + escapeHtml(section[2]) + '</p><label class="sr-only" for="review-state-' + section[0] + '">Review choice for ' + escapeHtml(section[1]) + '</label><select id="review-state-' + section[0] + '" data-review-state="' + section[0] + '">' + reviewOptions(entry.state) + '</select><label class="sr-only" for="review-note-' + section[0] + '">Note for ' + escapeHtml(section[1]) + '</label><textarea id="review-note-' + section[0] + '" data-review-note="' + section[0] + '" maxlength="' + MAX_NOTE_LENGTH + '" placeholder="Add a decision, requested change, or question…">' + escapeHtml(entry.note) + '</textarea><div class="review-card-foot"><span>Saved only in this browser</span><span id="review-count-' + section[0] + '">' + entry.note.length + ' / ' + MAX_NOTE_LENGTH + '</span></div></section>';
+        }).join("");
+      }
+      function openReview() { closeHelp(); renderReview(); reviewReturnFocus = document.activeElement; reviewDrawer.hidden = false; reviewScrim.hidden = false; document.body.style.overflow = "hidden"; document.getElementById("close-review").focus(); }
+      function closeReview() { flushReviewTimers(); reviewDrawer.hidden = true; reviewScrim.hidden = true; document.body.style.overflow = ""; if (reviewReturnFocus && reviewReturnFocus.isConnected) reviewReturnFocus.focus(); }
+      function trapReviewFocus(event) {
+        if (reviewDrawer.hidden || appDialog.open || event.key !== "Tab") return;
+        var focusable = Array.from(reviewDrawer.querySelectorAll('button:not(:disabled), select:not(:disabled), textarea:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])'));
+        if (!focusable.length) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+      function downloadReview() {
+        flushReviewTimers();
+        var value = { format: REVIEW_FORMAT, version: REVIEW_VERSION, mockup: "settings-shell-aliases-v1", exportedAt: new Date().toISOString(), evidence: ["CFG-04", "CFG-05", "CFG-06", "CFG-07", "OTHER-01"], entries: reviewData.entries };
+        var blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json;charset=utf-8" });
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "sdrtrunk-aliases-mockup-review-" + new Date().toISOString().slice(0, 10) + ".json";
+        document.body.append(link); link.click(); var url = link.href; link.remove(); window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000); setReviewStatus("Downloaded a review backup.");
+      }
+      function clearReview() {
+        openDialog({ title: "Clear this browser review?", subtitle: "This affects only the Aliases mockup notes in this browser.", body: "<p>Download a review backup first if you may want these notes later.</p>", buttons: [{ label: "Cancel", action: closeDialog }, { label: "Clear review", className: "button-danger", action: function () { reviewData = { entries: {}, updatedAt: new Date().toISOString() }; try { window.localStorage.removeItem(REVIEW_STORAGE_KEY); } catch (error) { reviewStorageAvailable = false; } closeDialog(); renderReview(); document.getElementById("close-review").focus(); setReviewStatus("Review cleared from this browser."); } }] });
+      }
+
+      tableBody.addEventListener("click", function (event) {
+        if (event.target.closest("[data-select-id]")) return;
+        var open = event.target.closest("[data-open-id]") || event.target.closest("[data-row-id]");
+        if (open) selectAlias(open.dataset.openId || open.dataset.rowId);
+      });
+      tableBody.addEventListener("change", function (event) { var checkbox = event.target.closest("[data-select-id]"); if (!checkbox) return; if (checkbox.checked) selectedRows.add(checkbox.dataset.selectId); else selectedRows.delete(checkbox.dataset.selectId); renderTable(); });
+      selectPage.addEventListener("change", function () { visibleAliases().forEach(function (alias) { if (selectPage.checked) selectedRows.add(alias.id); else selectedRows.delete(alias.id); }); renderTable(); });
+      listState.addEventListener("click", function (event) { if (event.target.closest("[data-list-retry]")) { scenario = "normal"; document.getElementById("preview-scenario").value = scenario; selectedAliasId = "a1"; renderAll(); } });
+      editorPanel.addEventListener("click", function (event) {
+        var color = event.target.closest("[data-color]");
+        if (color) { document.getElementById("custom-color").value = color.dataset.color; editorPanel.querySelectorAll("[data-color]").forEach(function (button) { var selected = button === color; button.classList.toggle("is-selected", selected); button.setAttribute("aria-pressed", String(selected)); }); markDirty(); return; }
+        var identifier = event.target.closest("[data-identifier-action]"); if (identifier) { stageEditorDraft(); showIdentifierAction(identifier.dataset.identifierAction, identifier.dataset.identifierIndex == null ? null : Number(identifier.dataset.identifierIndex)); return; }
+        var action = event.target.closest("[data-editor-action]"); if (action) handleEditorAction(action.dataset.editorAction);
+      });
+      document.querySelectorAll("[data-category]").forEach(function (button) { button.addEventListener("click", function () { var nextCategory = button.dataset.category; continueAfterUnsaved(function () { category = nextCategory; currentPage = 1; selectedRows.clear(); selectedAliasId = visibleAliases()[0] ? visibleAliases()[0].id : null; updateCategoryButtons(); renderAll(); }); }); });
+      document.querySelectorAll("[data-filter]").forEach(function (input) { input.addEventListener("change", function () { if (input.checked) activeFilters.add(input.dataset.filter); else activeFilters.delete(input.dataset.filter); document.getElementById("filter-count").textContent = String(activeFilters.size); currentPage = 1; selectedRows.clear(); renderTable(); }); });
+      document.getElementById("alias-search").addEventListener("input", function (event) { searchTerm = event.target.value; currentPage = 1; selectedRows.clear(); renderTable(); });
+      document.getElementById("clear-search").addEventListener("click", function () { searchTerm = ""; document.getElementById("alias-search").value = ""; renderTable(); document.getElementById("alias-search").focus(); });
+      document.getElementById("alias-list-select").addEventListener("change", function (event) { var nextList = event.target.value; event.target.value = currentListName; continueAfterUnsaved(function () { currentListName = nextList; document.getElementById("alias-list-select").value = currentListName; aliases = deepClone(aliasSeeds); selectedRows.clear(); selectedAliasId = "a1"; renderAll(); showToast("Showing representative aliases for " + currentListName + "."); }); });
+      document.getElementById("new-alias").addEventListener("click", function () { continueAfterUnsaved(createNewAlias); });
+      function createNewAlias() { aliases = aliases.filter(function (alias) { return alias.id !== "new"; }); aliases.unshift({ id: "new", category: category, matchType: "No match yet", match: "—", protocol: category === "other" ? "Other" : "P25", name: "", group: "", record: false, priority: null, icon: "radio", color: "#1769aa", streams: [], warning: "", identifiers: [] }); selectedAliasId = "new"; dirty = true; editorSavedSnapshot = null; editorSnapshotId = null; document.getElementById("list-count").textContent = "1 unsaved alias"; renderAll(); focusEditorTitle(); }
+      document.querySelectorAll("[data-list-action]").forEach(function (button) { button.addEventListener("click", function () { showListAction(button.dataset.listAction); }); });
+      document.querySelectorAll("[data-bulk-action]").forEach(function (button) { button.addEventListener("click", function () { showBulkAction(button.dataset.bulkAction); }); });
+      document.getElementById("previous-page").addEventListener("click", function () { if (currentPage > 1) { currentPage -= 1; selectedRows.clear(); renderTable(); showToast("Requested previous bounded server page."); } });
+      document.getElementById("next-page").addEventListener("click", function () { currentPage += 1; selectedRows.clear(); renderTable(); showToast("Requested next bounded server page."); });
+      document.getElementById("preview-scenario").addEventListener("change", function (event) { var nextScenario = event.target.value; event.target.value = scenario; continueAfterUnsaved(function () { document.getElementById("preview-scenario").value = nextScenario; applyScenario(nextScenario); }); });
+      document.querySelectorAll("[data-future-page]").forEach(function (button) { button.addEventListener("click", function () { showToast(button.dataset.futurePage + " is outside this Aliases mockup."); }); });
+      document.getElementById("dialog-close").addEventListener("click", closeDialog);
+      appDialog.addEventListener("click", function (event) { if (event.target === appDialog) closeDialog(); });
+      appDialog.addEventListener("cancel", function (event) { event.preventDefault(); closeDialog(); });
+      document.getElementById("icon-search").addEventListener("input", renderIconGrid);
+      document.getElementById("icon-category-list").addEventListener("click", function (event) { var button = event.target.closest("[data-icon-category]"); if (!button) return; iconDialogCategory = button.dataset.iconCategory; renderIconCategories(); renderIconGrid(); });
+      document.getElementById("icon-grid").addEventListener("click", function (event) { var button = event.target.closest("[data-icon-choice]"); if (button) updateIconDialogSelection(button.dataset.iconChoice); });
+      document.getElementById("icon-dialog-close").addEventListener("click", function () { closeIconDialog(false); });
+      document.getElementById("icon-dialog-cancel").addEventListener("click", function () { closeIconDialog(false); });
+      document.getElementById("icon-dialog-use").addEventListener("click", function () { closeIconDialog(true); });
+      iconDialog.addEventListener("click", function (event) { if (event.target === iconDialog) closeIconDialog(false); });
+      iconDialog.addEventListener("cancel", function (event) { event.preventDefault(); closeIconDialog(false); });
+      document.getElementById("open-review").addEventListener("click", openReview);
+      document.getElementById("close-review").addEventListener("click", closeReview);
+      reviewScrim.addEventListener("click", closeReview);
+      document.getElementById("download-review").addEventListener("click", downloadReview);
+      document.getElementById("clear-review").addEventListener("click", clearReview);
+      document.getElementById("review-content").addEventListener("change", function (event) { var id = event.target.dataset.reviewState; if (id) saveReviewEntry(id); });
+      document.getElementById("review-content").addEventListener("input", function (event) { var id = event.target.dataset.reviewNote; if (!id) return; document.getElementById("review-count-" + id).textContent = event.target.value.length + " / " + MAX_NOTE_LENGTH; if (reviewTimers.has(id)) window.clearTimeout(reviewTimers.get(id)); reviewTimers.set(id, window.setTimeout(function () { reviewTimers.delete(id); saveReviewEntry(id); }, 350)); });
+      document.addEventListener("pointerdown", function (event) { if (!helpPopover.hidden && !helpPopover.contains(event.target) && !event.target.closest(".help-button")) closeHelp(); });
+      document.addEventListener("keydown", function (event) { trapReviewFocus(event); if (event.key === "Escape") { if (appDialog.open || iconDialog.open) return; if (!reviewDrawer.hidden) closeReview(); else if (!helpPopover.hidden) closeHelp(true); } });
+      window.addEventListener("resize", function () { if (helpVisibleFor) positionHelp(helpVisibleFor); });
+      window.addEventListener("pagehide", flushReviewTimers);
+
+      initializeReviewStorage();
+      wireHelpButtons();
+      renderAll();
+    }());
+  </script>
+</body>
+</html>

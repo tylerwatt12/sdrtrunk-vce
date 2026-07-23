@@ -1,0 +1,1045 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce — Dashboard and Live Systems mockup</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page:#edf1f4; --surface:#fff; --surface-2:#f5f7f9; --surface-3:#e8edf1;
+      --ink:#18212a; --muted:#65717d; --line:#c9d1d8; --line-strong:#9ba8b3;
+      --header:#202a33; --header-2:#2c3944; --accent:#0b7168; --accent-hover:#095d56;
+      --accent-soft:#d9efec; --blue:#075eaa; --blue-soft:#e7f1fb; --warning:#8a5200;
+      --warning-soft:#fff1d6; --danger:#9b2743; --danger-soft:#fbe8ed;
+      --success:#176b3a; --success-soft:#e2f3e9; --violet:#6d3ba3; --violet-soft:#f0e8fa;
+      --shadow:0 6px 20px rgb(20 32 44 / 9%);
+      font-family:"Segoe UI",Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+    }
+    @media (prefers-color-scheme:dark) {
+      :root {
+        --page:#111820; --surface:#18212a; --surface-2:#202b35; --surface-3:#2b3742;
+        --ink:#e5ebf0; --muted:#aeb8c1; --line:#3b4854; --line-strong:#596976;
+        --header:#0d1318; --header-2:#24313b; --accent:#55c7ba; --accent-hover:#79d6cc;
+        --accent-soft:#193d39; --blue:#82bff3; --blue-soft:#18324a; --warning:#f0bd67;
+        --warning-soft:#48351c; --danger:#ff99b0; --danger-soft:#4a222c;
+        --success:#85d6a2; --success-soft:#193b27; --violet:#d2a8ff; --violet-soft:#342446;
+        --shadow:0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+    * { box-sizing:border-box; }
+    html { min-width:320px; background:var(--page); }
+    body { min-height:100vh; margin:0; color:var(--ink); background:var(--page); font-size:14px; }
+    button,input,select,textarea { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:7px; }
+    button { min-height:36px; padding:7px 12px; cursor:pointer; }
+    button:hover:not(:disabled) { border-color:var(--accent); }
+    button:disabled,input:disabled,select:disabled { cursor:not-allowed; opacity:.5; }
+    button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,a:focus-visible {
+      outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent); outline-offset:2px;
+    }
+    [hidden] { display:none !important; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+    .topbar {
+      position:sticky; top:0; z-index:30; min-height:52px;
+      display:grid; grid-template-columns:max-content minmax(0,1fr) max-content; align-items:center; gap:20px;
+      padding:0 18px; color:#fff; background:var(--header); border-bottom:1px solid #0e151b;
+      box-shadow:0 2px 8px rgb(0 0 0 / 18%);
+    }
+    .brand { color:#fff; font-size:17px; font-weight:760; text-decoration:none; white-space:nowrap; }
+    .main-nav { align-self:stretch; display:flex; min-width:0; gap:2px; overflow-x:auto; }
+    .main-nav a { min-height:51px; display:flex; align-items:center; padding:0 13px; color:#dce4eb; border-bottom:3px solid transparent; text-decoration:none; white-space:nowrap; }
+    .main-nav a:hover,.main-nav a.active { color:#fff; background:var(--header-2); border-bottom-color:#35b8a9; }
+    .account-area { display:flex; align-items:center; gap:8px; color:#dce4eb; white-space:nowrap; font-size:12px; }
+    .account-dot { width:8px; height:8px; border-radius:50%; background:#54d177; box-shadow:0 0 0 3px rgb(84 209 119 / 16%); }
+    .topbar button { min-height:32px; padding:4px 9px; color:#fff; background:transparent; border-color:#71808d; }
+    .topbar .settings-link { color:#fff; background:#2e625e; border-color:#5c918b; }
+
+    .review-strip { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:9px 18px; padding:9px 18px; color:var(--blue); background:var(--blue-soft); border-bottom:1px solid color-mix(in srgb,var(--blue) 35%,var(--line)); }
+    .review-strip strong { color:var(--ink); }
+    .review-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    .review-actions label { color:var(--ink); font-size:.76rem; font-weight:720; }
+    .review-actions select { min-height:34px; max-width:270px; padding:5px 30px 5px 8px; }
+    .review-button,.primary { color:#fff; background:var(--accent); border-color:var(--accent); font-weight:720; }
+    .review-button:hover:not(:disabled),.primary:hover:not(:disabled) { background:var(--accent-hover); }
+
+    .page { width:min(1480px,100%); margin:0 auto; padding:22px clamp(12px,2.2vw,28px) 50px; }
+    .page-head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:14px; margin-bottom:16px; }
+    .page-head h1 { margin:0; font-size:clamp(1.55rem,3vw,2.15rem); letter-spacing:-.025em; }
+    .page-head p { max-width:850px; margin:7px 0 0; color:var(--muted); line-height:1.48; }
+    .head-status { display:flex; align-items:center; gap:8px; }
+    .badge,.count-badge,.status-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:.7rem; font-weight:760; white-space:nowrap; }
+    .badge::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+    .good { color:var(--success); background:var(--success-soft); }
+    .warn { color:var(--warning); background:var(--warning-soft); }
+    .bad { color:var(--danger); background:var(--danger-soft); }
+    .info { color:var(--blue); background:var(--blue-soft); }
+    .neutral { color:var(--muted); background:var(--surface-3); }
+
+    .notice { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:14px; padding:12px 14px; border:1px solid var(--line); border-radius:9px; background:var(--surface); box-shadow:var(--shadow); }
+    .notice strong { display:block; margin-bottom:3px; }
+    .notice p { margin:0; color:var(--muted); font-size:.78rem; line-height:1.42; }
+    .notice.good { border-color:color-mix(in srgb,var(--success) 35%,var(--line)); }
+    .notice.warn { border-color:color-mix(in srgb,var(--warning) 45%,var(--line)); }
+    .notice.bad { border-color:color-mix(in srgb,var(--danger) 40%,var(--line)); }
+
+    .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:13px; }
+    .summary-card,.panel { min-width:0; background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); }
+    .summary-card { padding:14px; }
+    .summary-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+    .summary-label { color:var(--muted); font-size:.72rem; font-weight:760; text-transform:uppercase; letter-spacing:.045em; }
+    .summary-value { display:block; margin-top:7px; font-size:1.5rem; line-height:1.08; }
+    .summary-detail { margin:8px 0 0; color:var(--muted); font-size:.75rem; line-height:1.45; }
+    .mini-list { display:grid; gap:6px; margin:11px 0 0; padding:0; list-style:none; }
+    .mini-list li { display:flex; justify-content:space-between; gap:10px; padding-top:6px; border-top:1px solid var(--line); font-size:.72rem; }
+    .mini-list span { min-width:0; color:var(--muted); overflow-wrap:anywhere; }
+    .mini-list strong { flex:0 0 auto; font-size:.71rem; }
+    .meter { height:6px; margin-top:9px; overflow:hidden; background:var(--surface-3); border-radius:999px; }
+    .meter span { display:block; height:100%; background:var(--accent); border-radius:inherit; }
+    .meter.warn span { background:var(--warning); }
+
+    .dashboard-grid { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(300px,.75fr); gap:14px; margin-top:14px; align-items:start; }
+    .panel-head { min-height:56px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; background:var(--surface-2); border-bottom:1px solid var(--line); border-radius:10px 10px 0 0; }
+    .panel-head h2 { margin:0; font-size:1rem; }
+    .panel-head p { margin:4px 0 0; color:var(--muted); font-size:.74rem; }
+    .panel-body { padding:14px; }
+    .link-button { color:var(--accent); background:transparent; border-color:var(--line-strong); font-weight:700; }
+    .attention-list,.route-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+    .attention-item { display:grid; grid-template-columns:minmax(0,1fr) max-content; gap:10px; padding:10px; background:var(--warning-soft); border:1px solid color-mix(in srgb,var(--warning) 35%,var(--line)); border-radius:8px; }
+    .attention-item strong { display:block; font-size:.8rem; }
+    .attention-item p { margin:3px 0 0; color:var(--warning); font-size:.71rem; line-height:1.38; }
+    .route-list button { width:100%; display:flex; justify-content:space-between; text-align:left; background:var(--surface-2); border-color:var(--line); }
+    .route-list button::after { content:"›"; color:var(--muted); }
+
+    .active-list { display:grid; gap:8px; max-height:560px; margin:0; padding:0; overflow:auto; list-style:none; }
+    .active-call { display:grid; grid-template-columns:minmax(150px,.9fr) minmax(190px,1.15fr) minmax(190px,1.15fr) minmax(150px,.75fr); gap:12px; align-items:center; padding:10px 11px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .active-call strong,.active-call span { display:block; overflow-wrap:anywhere; }
+    .active-call span { margin-top:3px; color:var(--muted); font-size:.7rem; }
+    .empty { padding:28px 14px; color:var(--muted); text-align:center; }
+
+    .public-overview { margin-top:15px; }
+    .public-grid { display:grid; grid-template-columns:1.05fr 1.35fr .8fr; gap:13px; }
+    .signal-tile { padding:14px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .signal-main { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-top:10px; }
+    .signal-main strong { font-size:1.65rem; }
+    .signal-main span { color:var(--muted); font-size:.72rem; }
+    .bar-chart { height:112px; display:flex; align-items:flex-end; gap:4px; padding-top:10px; }
+    .bar-chart span { flex:1 1 0; min-width:3px; background:var(--accent); border-radius:3px 3px 0 0; opacity:.82; }
+    .chart-legend { display:flex; flex-wrap:wrap; gap:7px 14px; margin-top:8px; color:var(--muted); font-size:.7rem; }
+    .count-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .count-grid div { padding:9px; background:var(--surface-2); border-radius:7px; }
+    .count-grid strong { display:block; font-size:1.05rem; }
+    .count-grid span { color:var(--muted); font-size:.69rem; }
+
+    .live-shell { min-width:0; }
+    .live-banner { margin-bottom:12px; padding:10px 12px; color:var(--warning); background:var(--warning-soft); border:1px solid color-mix(in srgb,var(--warning) 40%,var(--line)); border-radius:8px; font-size:.76rem; }
+    .group-tabs { display:flex; gap:6px; overflow-x:auto; padding:0 0 9px; }
+    .group-picker { display:none; margin-bottom:9px; }
+    .group-picker label { display:block; margin-bottom:4px; font-size:.7rem; font-weight:720; }
+    .group-picker input { width:100%; min-height:38px; padding:7px 9px; }
+    .group-tab { flex:0 0 auto; display:flex; align-items:center; gap:7px; background:var(--surface); }
+    .group-tab.active { color:var(--accent); background:var(--accent-soft); border-color:var(--accent); font-weight:720; }
+    .group-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+    .group-dot.active { background:var(--success); }
+    .workspace { overflow:hidden; background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); }
+    .group-summary { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:11px 13px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .group-summary strong { display:block; }
+    .group-summary span { color:var(--muted); font-size:.71rem; }
+    .live-toolbar { display:flex; flex-wrap:wrap; align-items:flex-end; gap:9px; padding:10px 12px; border-bottom:1px solid var(--line); }
+    .live-toolbar .field { min-width:170px; }
+    .live-toolbar .search-field { flex:1 1 280px; }
+    .field label { display:block; margin:0 0 4px; font-size:.7rem; font-weight:720; }
+    .field input,.field select { width:100%; min-height:36px; padding:6px 8px; }
+    .row-count { margin-left:auto; align-self:center; color:var(--muted); font-size:.72rem; }
+    .display-options { flex:1 0 100%; padding-top:2px; }
+    .display-options summary { width:max-content; cursor:pointer; color:var(--accent); font-size:.73rem; font-weight:720; }
+    .display-option-grid { display:grid; grid-template-columns:repeat(3,minmax(170px,260px)); gap:10px; margin-top:9px; padding:10px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .protocol-format { grid-column:1 / -1; }
+    .protocol-format > strong { display:block; margin-bottom:7px; font-size:.73rem; }
+    .protocol-format-grid { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr)); gap:8px; }
+    .saved-local { display:block; min-height:17px; margin-top:7px; color:var(--success); font-size:.68rem; }
+
+    .table-scroll { overflow:auto; max-height:520px; }
+    .live-table { width:100%; min-width:1420px; border-collapse:separate; border-spacing:0; font-size:.73rem; }
+    .live-table th { position:sticky; top:0; z-index:2; padding:0; color:var(--muted); background:var(--surface-2); border-bottom:1px solid var(--line-strong); text-align:left; }
+    .live-table th button { width:100%; min-height:38px; padding:7px 8px; text-align:left; color:inherit; background:transparent; border:0; border-radius:0; font-size:.69rem; font-weight:760; }
+    .live-table th[aria-sort="ascending"] button::after { content:" ↑"; }
+    .live-table th[aria-sort="descending"] button::after { content:" ↓"; }
+    .live-table td { height:39px; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+    .live-table tbody tr { cursor:pointer; }
+    .live-table tbody tr:hover { background:var(--surface-2); }
+    .live-table tbody tr.selected { background:var(--accent-soft); box-shadow:inset 3px 0 0 var(--accent); }
+    .live-table tbody.stale { opacity:.68; }
+    .status-pill.call { color:var(--blue); background:var(--blue-soft); }
+    .status-pill.control { color:var(--warning); background:var(--warning-soft); }
+    .status-pill.encrypted { color:var(--violet); background:var(--violet-soft); }
+    .status-pill.data { color:var(--accent); background:var(--accent-soft); }
+    .status-pill.idle { color:var(--muted); background:var(--surface-3); }
+    .decode-good { color:var(--success); font-weight:720; }
+    .decode-warn { color:var(--warning); font-weight:720; }
+    .decode-bad { color:var(--danger); font-weight:720; }
+    .alias-cell { max-width:180px; overflow:hidden; text-overflow:ellipsis; }
+    .mobile-rows { display:none; }
+
+    .detail-panel { border-top:1px solid var(--line-strong); background:var(--surface); }
+    .detail-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:12px 14px; background:var(--surface-2); }
+    .detail-head h2 { margin:0; font-size:1rem; }
+    .detail-head p { margin:4px 0 0; color:var(--muted); font-size:.72rem; }
+    .detail-head button { width:34px; min-width:34px; padding:0; }
+    .detail-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; padding:12px 14px; }
+    .detail-field { min-width:0; }
+    .detail-field span { display:block; color:var(--muted); font-size:.66rem; font-weight:720; text-transform:uppercase; letter-spacing:.04em; }
+    .detail-field strong { display:block; margin-top:4px; overflow-wrap:anywhere; font-size:.78rem; }
+    .detail-actions { display:flex; flex-wrap:wrap; gap:8px; padding:0 14px 13px; }
+    .detail-message { padding:20px; color:var(--muted); text-align:center; }
+
+    .state-card { max-width:700px; margin:45px auto; padding:clamp(20px,4vw,34px); text-align:center; background:var(--surface); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); }
+    .state-card h2 { margin:0; font-size:1.4rem; }
+    .state-card p { margin:9px auto 18px; color:var(--muted); line-height:1.5; }
+    .login-form { max-width:390px; display:grid; gap:11px; margin:0 auto; text-align:left; }
+    .login-form button { width:100%; }
+    .login-message { min-height:18px; color:var(--muted); text-align:center; font-size:.72rem; }
+
+    .review-scrim { position:fixed; inset:0; z-index:80; background:rgb(6 12 18 / 56%); }
+    .review-drawer { position:fixed; top:0; right:0; bottom:0; z-index:90; width:min(550px,100vw); display:flex; flex-direction:column; background:var(--surface); border-left:1px solid var(--line); box-shadow:-10px 0 35px rgb(0 0 0 / 26%); }
+    .review-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:15px 16px; background:var(--surface-2); border-bottom:1px solid var(--line); }
+    .review-head h2 { margin:0; font-size:1.15rem; }
+    .review-head p { margin:5px 0 0; color:var(--muted); font-size:.76rem; }
+    .review-head button { width:35px; min-width:35px; padding:0; font-size:1.2rem; }
+    .review-content { flex:1 1 auto; overflow-y:auto; padding:13px; }
+    .review-card { margin-bottom:11px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+    .review-card h3 { margin:0; font-size:.88rem; }
+    .review-card p { margin:5px 0 9px; color:var(--muted); font-size:.72rem; line-height:1.42; }
+    .review-card select,.review-card textarea { width:100%; padding:7px 8px; }
+    .review-card textarea { min-height:74px; margin-top:7px; resize:vertical; }
+    .review-card-foot { display:flex; justify-content:space-between; gap:8px; margin-top:5px; color:var(--muted); font-size:.66rem; }
+    .review-footer { padding:12px 14px; background:var(--surface-2); border-top:1px solid var(--line); }
+    .review-save-state { margin:0 0 8px; color:var(--muted); font-size:.7rem; }
+    .review-footer-buttons { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+    .danger { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 55%,var(--line)); }
+    .toast { position:fixed; left:50%; bottom:20px; z-index:100; max-width:min(520px,calc(100vw - 24px)); transform:translateX(-50%); padding:10px 13px; color:#fff; background:#15212a; border-radius:8px; box-shadow:var(--shadow); font-size:.76rem; }
+
+    @media (max-width:1100px) {
+      .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .dashboard-grid,.public-grid { grid-template-columns:1fr; }
+      .detail-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    }
+    @media (max-width:760px) {
+      .topbar { grid-template-columns:max-content minmax(0,1fr); gap:10px; padding:0 11px; }
+      .main-nav { grid-column:1 / -1; order:3; height:44px; }
+      .main-nav a { min-height:43px; }
+      .account-area { justify-self:end; }
+      .review-strip { padding:9px 11px; }
+      .review-strip > span,.review-actions { width:100%; }
+      .review-actions select { flex:1 1 190px; min-width:0; max-width:none; }
+      .page { padding:16px 10px 34px; }
+      .active-call { grid-template-columns:1fr 1fr; }
+      .group-tabs { display:none; }
+      .group-picker { display:block; }
+      .desktop-table { display:none; }
+      .mobile-rows { display:grid; gap:8px; padding:10px; }
+      .mobile-row { display:grid; gap:7px; padding:11px; text-align:left; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; }
+      .mobile-row.selected { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
+      .mobile-row-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+      .mobile-row strong,.mobile-row span { overflow-wrap:anywhere; }
+      .mobile-row-meta { display:flex; flex-wrap:wrap; gap:5px 12px; color:var(--muted); font-size:.7rem; }
+      .detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .display-option-grid { grid-template-columns:1fr; }
+      .protocol-format-grid { grid-template-columns:1fr; }
+    }
+    @media (max-width:520px) {
+      .account-area > span:not(.account-dot) { display:none; }
+      .summary-grid { grid-template-columns:1fr; }
+      .active-call { grid-template-columns:1fr; }
+      .detail-grid { grid-template-columns:1fr; }
+      .live-toolbar .field { width:100%; }
+      .row-count { width:100%; margin-left:0; }
+    }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto !important; transition:none !important; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" data-view-link="dashboard">sdrtrunk-vce</a>
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="public-listener-recordings-v2.html#listen">Listen</a>
+      <a href="public-listener-recordings-v2.html#recordings">Recordings</a>
+      <a href="#" data-view-link="dashboard" class="active">Dashboard</a>
+      <a href="#" data-view-link="live">Live</a>
+      <a href="events-messages-v1.html#events" data-policy-nav="events">Events</a>
+      <a href="events-messages-v1.html#messages" data-policy-nav="messages">Messages</a>
+      <a href="#" data-static-link>Systems &amp; Sites</a>
+      <a href="#" data-static-link>Conventional</a>
+      <a href="#" data-static-link>Credits</a>
+    </nav>
+    <div class="account-area">
+      <span class="account-dot" aria-hidden="true"></span><span id="account-label">Administrator</span>
+      <button id="settings-button" class="settings-link" type="button">Settings</button>
+      <button id="account-button" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <div class="review-strip">
+    <span><strong>Interactive layout review.</strong> Switch pages, select rows, sort, filter, and preview failure/access states.</span>
+    <div class="review-actions">
+      <label for="preview-state">Preview</label>
+      <select id="preview-state">
+        <optgroup label="Dashboard">
+          <option value="dashboard-normal">Dashboard · receiving normally</option>
+          <option value="dashboard-peak">Dashboard · ten simultaneous calls</option>
+          <option value="dashboard-attention">Dashboard · needs attention</option>
+          <option value="dashboard-no-receivers">Dashboard · no receivers</option>
+          <option value="dashboard-no-channels">Dashboard · no channels running</option>
+          <option value="dashboard-no-calls">Dashboard · no active calls</option>
+          <option value="dashboard-stats-off">Dashboard · statistics collection off</option>
+          <option value="dashboard-partial">Dashboard · one status source unavailable</option>
+          <option value="dashboard-reconnecting">Dashboard · reconnecting with stale data</option>
+          <option value="dashboard-public">Dashboard · public view</option>
+          <option value="dashboard-session-ended">Dashboard · administrator session ended</option>
+          <option value="dashboard-locked">Dashboard · administrator-only</option>
+        </optgroup>
+        <optgroup label="Live Systems">
+          <option value="live-normal">Live Systems · live</option>
+          <option value="live-connecting">Live Systems · connecting</option>
+          <option value="live-reconnecting">Live Systems · reconnecting</option>
+          <option value="live-refreshing">Live Systems · refreshing after missed updates</option>
+          <option value="live-empty">Live Systems · no channels running</option>
+          <option value="live-no-match">Live Systems · no filter matches</option>
+          <option value="live-busy">Live Systems · view busy</option>
+          <option value="live-unavailable">Live Systems · unavailable, previous view retained</option>
+          <option value="live-first-load-unavailable">Live Systems · unavailable on first load</option>
+          <option value="live-public">Live Systems · public view</option>
+          <option value="live-public-messages-locked">Live Systems · public, Messages admin-only</option>
+          <option value="live-locked">Live Systems · administrator-only</option>
+          <option value="live-control-replacing">Live Systems · finding a new control channel</option>
+          <option value="live-selection-gone">Live Systems · selected channel ended</option>
+        </optgroup>
+      </select>
+      <button id="open-review" class="review-button" type="button">Review these layouts</button>
+    </div>
+  </div>
+
+  <main class="page">
+    <section id="dashboard-view" aria-labelledby="dashboard-title"></section>
+    <section id="live-view" aria-labelledby="live-title" hidden></section>
+    <section id="sign-in-view" class="state-card" hidden>
+      <h2 id="sign-in-title">Administrator sign-in required</h2>
+      <p id="sign-in-copy">This page is administrator-only on this receiver. Independently public pages remain available.</p>
+      <form id="login-form" class="login-form">
+        <div class="field"><label for="login-username">Administrator username</label><input id="login-username" autocomplete="username" required></div>
+        <div class="field"><label for="login-password">Password</label><input id="login-password" type="password" autocomplete="current-password" required></div>
+        <button class="primary" type="submit">Sign in</button>
+        <button id="return-public" type="button">Return to public pages</button>
+        <span id="login-message" class="login-message" role="status"></span>
+      </form>
+    </section>
+  </main>
+
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" role="dialog" aria-modal="true" aria-labelledby="review-title" hidden>
+    <header class="review-head"><div><h2 id="review-title">Review Dashboard and Live Systems</h2><p>Decisions stay in this browser until downloaded.</p></div><button id="close-review" type="button" aria-label="Close review">×</button></header>
+    <div id="review-content" class="review-content"></div>
+    <footer class="review-footer"><p id="review-save-state" class="review-save-state"></p><div class="review-footer-buttons"><button id="clear-review" class="danger" type="button">Clear</button><button id="download-review" type="button">Download notes</button><button id="done-review" class="primary" type="button">Done</button></div></footer>
+  </aside>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script>
+    "use strict";
+    (function(){
+      var dashboardView=document.getElementById("dashboard-view");
+      var liveView=document.getElementById("live-view");
+      var signInView=document.getElementById("sign-in-view");
+      var preview=document.getElementById("preview-state");
+      var currentScenario="dashboard-normal";
+      var currentView="dashboard";
+      var signInOrigin="dashboard";
+      var signInPolicyLocked=false;
+      var signInPublicScenario="dashboard-public";
+      var activeGroupId="conventional";
+      var liveSearch="";
+      var liveFilter="all";
+      var liveSort=null;
+      var liveColumnPreset="all";
+      var liveIdFormats={apco25:"default",dmr:"default",fleetsync:"default",mdc1200:"default",nbfm:"default",nxdn:"default"};
+      var liveAdvancedEncryption="default";
+      var selectedKey=null;
+      var selectedFocusTag="TR";
+      var liveScenario="live-normal";
+      var liveAdmin=true;
+      var livePolicies={events:true,messages:true};
+      var toastTimer=0;
+      var LIVE_DISPLAY_KEY="sdrtrunk-vce.mockup.admin-dashboard-live.display";
+      var PUBLIC_DISPLAY_DEFAULTS={encryption:false,formats:{apco25:"decimal",dmr:"decimal",fleetsync:"formatted",mdc1200:"decimal",nbfm:"decimal",nxdn:"decimal",unknown:"decimal"}};
+      try{
+        var savedLiveDisplay=JSON.parse(localStorage.getItem(LIVE_DISPLAY_KEY)||"null");
+        if(savedLiveDisplay){
+          if(["standard","identity","signal","all"].includes(savedLiveDisplay.columns))liveColumnPreset=savedLiveDisplay.columns;
+          if(["default","show","hide"].includes(savedLiveDisplay.encryption))liveAdvancedEncryption=savedLiveDisplay.encryption;
+          Object.keys(liveIdFormats).forEach(function(protocol){if(savedLiveDisplay.formats&&["default","decimal","hex","formatted"].includes(savedLiveDisplay.formats[protocol]))liveIdFormats[protocol]=savedLiveDisplay.formats[protocol];});
+        }
+      }catch(error){}
+
+      var currentCalls=[
+        {system:"GCRCN Simulcast",target:"CPD D3 DISP",targetId:"56131",source:"Car 312",sourceId:"1811332",frequency:"854.18750 MHz · Slot 1",decoder:"P25 Phase 1",state:"Call"},
+        {system:"GCRCN Simulcast",target:"Cuyahoga Fireground 2",targetId:"56507",source:"Engine 5",sourceId:"1862719",frequency:"855.66250 MHz · Slot 2",decoder:"P25 Phase 1",state:"Call"},
+        {system:"GCRCN Simulcast",target:"CPD D4 DISP",targetId:"56132",source:"Unit 9368",sourceId:"1889368",frequency:"855.18750 MHz · Slot 1",decoder:"P25 Phase 1",state:"Protected"},
+        {system:"County Conventional",target:"County Fire Dispatch",targetId:"Channel 4",source:"Station 12",sourceId:"",frequency:"154.19000 MHz",decoder:"NBFM",state:"Call"}
+      ];
+      var peakCalls=currentCalls.concat([
+        {system:"GCRCN Simulcast",target:"EMS Dispatch",targetId:"56522",source:"Medic 14",sourceId:"1880014",frequency:"854.96250 MHz · Slot 2",decoder:"P25 Phase 1",state:"Call"},
+        {system:"Ohio MARCS-IP",target:"Lake County TAC",targetId:"27610",source:"Unit 421",sourceId:"1940421",frequency:"855.31250 MHz · Slot 1",decoder:"P25 Phase 1",state:"Call"},
+        {system:"GCRCN Simulcast",target:"Transit Operations",targetId:"57041",source:"Bus 214",sourceId:"1902214",frequency:"856.16250 MHz · Slot 2",decoder:"P25 Phase 1",state:"Call"},
+        {system:"GCRCN Simulcast",target:"Public Works",targetId:"56910",source:"Truck 8",sourceId:"1890008",frequency:"855.91250 MHz · Slot 1",decoder:"P25 Phase 1",state:"Call"},
+        {system:"County Conventional",target:"County EMS",targetId:"Channel 5",source:"Medic 7",sourceId:"",frequency:"155.34000 MHz",decoder:"NBFM",state:"Call"},
+        {system:"GCRCN Simulcast",target:"County Service",targetId:"56628",source:"Radio 1878613",sourceId:"1878613",frequency:"854.71250 MHz · Slot 1",decoder:"P25 Phase 1",state:"Call"}
+      ]);
+
+      var groups=[
+        {id:"conventional",title:"Conventional",subtitle:"Configured conventional channels",active:true,rows:[
+          {key:"conv-1",status:"CALL",tags:"CONV",lcn:"County Fire Dispatch",slot:"",frequency:154.19000,callsign:"WQAB312",signal:-62.4,decode:null,sourceAlias:"Station 12",talkerAlias:"",sourceId:"12012",targetAlias:"County Fire Dispatch",targetId:"4",decoder:"NBFM",encryption:""},
+          {key:"conv-2",status:"IDLE",tags:"CONV",lcn:"County EMS",slot:"",frequency:155.34000,callsign:"KQH921",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"NBFM",encryption:""},
+          {key:"conv-3",status:"ACTIVE",tags:"CONV",lcn:"Weather Radio",slot:"",frequency:162.55000,callsign:"KIG86",signal:-48.8,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"Weather Radio",targetId:"7",decoder:"NBFM",encryption:""},
+          {key:"conv-4",status:"IDLE",tags:"CONV",lcn:"County Services",slot:"",frequency:453.87500,callsign:"WQBP441",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"DMR",encryption:""}
+        ]},
+        {id:"gcrcn",title:"GCRCN Simulcast",subtitle:"P25-1 · BEE00:49F · RFSS 01 · Site 01",active:true,rows:[
+          {key:"g-509",status:"CALL",tags:"VC",lcn:"0-509",slot:"1",frequency:854.18750,callsign:"",signal:null,decode:null,sourceAlias:"Car 312",talkerAlias:"",sourceId:"1811332",targetAlias:"CPD D3 DISP",targetId:"56131",decoder:"P25-1",encryption:""},
+          {key:"g-517",status:"IDLE",tags:"VC",lcn:"0-517",slot:"",frequency:854.23750,callsign:"",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"P25-1",encryption:""},
+          {key:"g-577",status:"ENCRYPTED",tags:"VC",lcn:"0-577",slot:"2",frequency:854.61250,callsign:"",signal:null,decode:null,sourceAlias:"TA: STR-PD CAR 13",talkerAlias:"STR-PD CAR 13",sourceId:"1878613",targetAlias:"Strongsville PD",targetId:"56628",decoder:"P25-1",encryption:"AES-256"},
+          {key:"g-593",status:"CALL",tags:"VC",lcn:"0-593",slot:"1",frequency:854.71250,callsign:"",signal:null,decode:null,sourceAlias:"Unit 9368",talkerAlias:"",sourceId:"1889368",targetAlias:"CPD D4 DISP",targetId:"56132",decoder:"P25-1",encryption:""},
+          {key:"g-613",status:"IDLE",tags:"VC",lcn:"0-613",slot:"",frequency:854.83750,callsign:"",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"P25-1",encryption:""},
+          {key:"g-633",status:"CALL",tags:"VC",lcn:"0-633",slot:"2",frequency:854.96250,callsign:"",signal:null,decode:null,sourceAlias:"Engine 5",talkerAlias:"",sourceId:"1862719",targetAlias:"Cuyahoga Fireground 2",targetId:"56507",decoder:"P25-1",encryption:""},
+          {key:"g-669",status:"IDLE",tags:"VC",lcn:"0-669",slot:"",frequency:855.18750,callsign:"",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"P25-1",encryption:""},
+          {key:"g-745",status:"DATA",tags:"DAT-A",lcn:"0-745",slot:"",frequency:855.66250,callsign:"",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"Packet Data",targetId:"",decoder:"P25-1",encryption:""},
+          {key:"g-773",status:"CALL",tags:"VC",lcn:"0-773",slot:"1",frequency:855.83750,callsign:"",signal:null,decode:null,sourceAlias:"Radio 1827201",talkerAlias:"",sourceId:"1827201",targetAlias:"CuyCO ProtSv",targetId:"56547",decoder:"P25-1",encryption:""},
+          {key:"g-793",status:"CONTROL",tags:"CC · ACC",lcn:"0-797",slot:"",frequency:855.98750,callsign:"",signal:-55.7,decode:99.7,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"P25-1",encryption:""},
+          {key:"g-821",status:"IDLE",tags:"ACC",lcn:"0-821",slot:"",frequency:856.13750,callsign:"",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"P25-1",encryption:""},
+          {key:"g-825",status:"IDLE",tags:"ACC",lcn:"0-825",slot:"",frequency:856.16250,callsign:"",signal:null,decode:null,sourceAlias:"",talkerAlias:"",sourceId:"",targetAlias:"",targetId:"",decoder:"P25-1",encryption:""}
+        ]},
+        {id:"gcrcn-backup",title:"GCRCN Backup Site",subtitle:"P25-1 · BEE00:49F · RFSS 01 · Site 07",active:false,rows:[]}
+      ];
+
+      var columns=[
+        {key:"status",label:"Status"},
+        {key:"tags",label:"Tags"},
+        {key:"lcn",label:"LCN / Channel"},
+        {key:"slot",label:"Slot"},
+        {key:"frequency",label:"MHz"},
+        {key:"callsign",label:"Callsign"},
+        {key:"signal",label:"Signal"},
+        {key:"decode",label:"Decode"},
+        {key:"sourceAlias",label:"Source Alias"},
+        {key:"sourceId",label:"Source ID"},
+        {key:"targetAlias",label:"Target Alias"},
+        {key:"targetId",label:"Target ID"},
+        {key:"decoder",label:"Decoder"}
+      ];
+
+      function escapeHtml(value){
+        return String(value==null?"":value).replace(/[&<>'"]/g,function(character){return {"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[character];});
+      }
+
+      function setAccount(admin){
+        document.getElementById("account-label").textContent=admin?"Administrator":"Public viewer";
+        document.getElementById("settings-button").hidden=!admin;
+        document.getElementById("account-button").textContent=admin?"Sign out":"Admin sign in";
+        document.querySelector(".account-dot").style.background=admin?"#54d177":"#8fa0ad";
+      }
+
+      function setRoutePolicies(admin,policies){
+        document.querySelectorAll("[data-policy-nav]").forEach(function(link){
+          link.hidden=!admin&&!policies[link.dataset.policyNav];
+        });
+      }
+
+      function activateNav(view){
+        document.querySelectorAll("[data-view-link]").forEach(function(link){link.classList.toggle("active",link.dataset.viewLink===view);});
+      }
+
+      function showToast(message){
+        var toast=document.getElementById("toast");
+        window.clearTimeout(toastTimer);
+        toast.textContent=message;
+        toast.hidden=false;
+        toastTimer=window.setTimeout(function(){toast.hidden=true;},2600);
+      }
+
+      function metricCard(label,value,state,detail,items,meter){
+        var list=(items||[]).map(function(item){return '<li><span>'+escapeHtml(item[0])+'</span><strong>'+escapeHtml(item[1])+'</strong></li>';}).join("");
+        var meterHtml=meter?'<div class="meter '+(meter[1]||"")+'" aria-label="'+escapeHtml(meter[2])+'"><span style="width:'+Number(meter[0])+'%"></span></div>':"";
+        return '<article class="summary-card"><div class="summary-top"><span class="summary-label">'+escapeHtml(label)+'</span><span class="status-pill '+state+'">'+escapeHtml(state==="good"?"Normal":state==="warn"?"Attention":state==="bad"?"Unavailable":"Current")+'</span></div><strong class="summary-value">'+escapeHtml(value)+'</strong><p class="summary-detail">'+escapeHtml(detail)+'</p>'+meterHtml+(list?'<ul class="mini-list">'+list+'</ul>':"")+'</article>';
+      }
+
+      function activeCallRows(calls){
+        if(!calls.length)return '<div class="empty">No calls are active right now.</div>';
+        return '<ul class="active-list">'+calls.map(function(call){
+          return '<li class="active-call"><div><strong>'+escapeHtml(call.system)+'</strong><span>'+escapeHtml(call.state)+'</span></div><div><strong>'+escapeHtml(call.target)+'</strong><span>Target '+escapeHtml(call.targetId)+'</span></div><div><strong>'+escapeHtml(call.source)+'</strong><span>'+(call.sourceId?"Radio "+escapeHtml(call.sourceId):"Source ID unavailable")+'</span></div><div><strong>'+escapeHtml(call.frequency)+'</strong><span>'+escapeHtml(call.decoder)+'</span></div></li>';
+        }).join("")+'</ul>';
+      }
+
+      function publicOverview(scenario){
+        var heights=[32,46,55,39,68,74,61,83,70,58,76,88,79,64,71,90,84,69,77,86,92,74,68,82];
+        var signalState="good";
+        var signalLabel="Healthy";
+        var signalValue="-55.7 dBFS";
+        var signalDetail="Decode 99.7%<br>Updated just now";
+        var signalCopy="One P25 site is currently reporting. Open Systems & Sites for channel, neighboring site, and recent activity details.";
+        if(scenario==="dashboard-no-receivers"||scenario==="dashboard-no-channels"){
+          signalState="neutral";signalLabel="Not reporting";signalValue="No current signal";signalDetail="Decode unavailable";
+          signalCopy=scenario==="dashboard-no-receivers"?"No receiver is currently supplying signal information.":"No running channel is currently supplying signal information.";
+        }else if(scenario==="dashboard-reconnecting"){
+          signalState="warn";signalLabel="Stale";signalDetail="Decode 99.7%<br>Last updated 14 sec ago";
+          signalCopy="The previous signal reading remains visible while Dashboard reconnects.";
+        }
+        var activity;
+        if(scenario==="dashboard-stats-off"){
+          activity='<div class="empty"><strong>Call summaries are off</strong><p>Live radio status continues above. Turn statistics collection on in Settings to resume this chart.</p></div>';
+        }else{
+          activity='<div><div class="summary-top"><div><strong>Call activity</strong><p class="summary-detail">Hourly summaries</p></div><strong>2,186 calls</strong></div><div class="bar-chart" aria-label="Illustrative hourly call activity">'+heights.map(function(height){return '<span style="height:'+height+'%"></span>';}).join("")+'</div><div class="chart-legend"><span>2,031 sent to streamer</span><span>2,142 recorded</span><span>1,984 P25 calls</span></div></div>';
+        }
+        return '<section class="panel public-overview"><header class="panel-head"><div><h2>Radio overview</h2><p>Current signal health, recent call activity, and saved radio totals.</p></div><span class="count-badge info">'+(scenario==="dashboard-stats-off"?"Statistics off":"Last 24 hours")+'</span></header><div class="panel-body public-grid">'+
+          '<div><div class="signal-tile"><div class="summary-top"><strong>GCRCN Simulcast</strong><span class="status-pill '+signalState+'">'+escapeHtml(signalLabel)+'</span></div><div class="signal-main"><strong>'+escapeHtml(signalValue)+'</strong><span>'+signalDetail+'</span></div></div><p class="summary-detail">'+escapeHtml(signalCopy)+'</p></div>'+
+          activity+
+          '<div><div class="count-grid"><div><strong>1</strong><span>System</span></div><div><strong>1</strong><span>Site</span></div><div><strong>184</strong><span>Talkgroups</span></div><div><strong>2,941</strong><span>Radios</span></div><div><strong>34</strong><span>Frequencies</span></div><div><strong>4</strong><span>Conventional</span></div></div><div class="route-list" style="margin-top:10px"><button type="button" data-demo-message="Would open Recent Sites">Recent Sites</button><button type="button" data-demo-message="Would open Top Talkgroups">Top Talkgroups</button><button type="button" data-demo-message="Would open Top Radios">Top Radios</button></div></div>'+
+        '</div></section>';
+      }
+
+      function renderDashboard(scenario){
+        currentView="dashboard";
+        currentScenario=scenario;
+        dashboardView.hidden=false;
+        liveView.hidden=true;
+        signInView.hidden=true;
+        activateNav("dashboard");
+        var admin=scenario!=="dashboard-public"&&scenario!=="dashboard-session-ended";
+        setAccount(admin);
+        var title=admin?"Administrator dashboard":"Dashboard";
+        var badgeClass="good";
+        var badgeText="Receiving normally";
+        var subtitle="BOSGAME · current receiver state · updated just now";
+        var noticeClass="good";
+        var noticeTitle="No problems need attention";
+        var noticeCopy="Receivers, active channels, uploads, storage, and statistics are reporting normally.";
+        var attention="";
+        var calls=currentCalls.slice();
+        var receiverValue="2 connected";
+        var receiverState="good";
+        var receiverDetail="Airspy R820T and RTL-SDR R828D";
+        var receiverItems=[["Airspy R820T","7 channels"],["RTL-SDR R828D","Ready"]];
+        var activityValue="2 running";
+        var activityState="good";
+        var activityDetail="1 control channel · 3 trunked calls · 1 conventional call";
+        var activityItems=[["GCRCN Simulcast","99.7% decode"],["County Conventional","Active"]];
+        var uploadValue="0 waiting";
+        var uploadState="good";
+        var uploadDetail="RadioResolve connected · last upload 8 seconds ago";
+        var uploadItems=[["Uploaded since launch","1,247"],["Errors since launch","0"]];
+        var resourceValue="18% CPU";
+        var resourceState="good";
+        var resourceDetail="612 MB heap used of 2 GB maximum";
+        var resourceItems=[["Recordings","34% of limit"],["Detailed event history","12% of limit"],["Activity database","142 MB"],["Statistics","Writing normally"]];
+
+        if(scenario==="dashboard-peak"){
+          calls=peakCalls;activityValue="10 active";activityDetail="Peak activity fixture · short calls may finish between updates";activityItems=[["GCRCN Simulcast","8 calls"],["County Conventional","2 calls"]];
+        }else if(scenario==="dashboard-attention"){
+          badgeClass="warn";badgeText="Needs attention";noticeClass="warn";noticeTitle="Three current problems need review";
+          noticeCopy="Radio decoding continues. These items link to the page where the administrator can investigate.";
+          attention='<ul class="attention-list">'+
+            '<li class="attention-item"><div><strong>RTL-SDR R828D disconnected</strong><p>Airspy decoding continues; the receiver disappeared 24 seconds ago.</p></div><button type="button" data-demo-message="Would open Settings → Hardware">Hardware</button></li>'+
+            '<li class="attention-item"><div><strong>RadioResolve is retrying</strong><p>Two completed calls are waiting; the radio and recording paths are not blocked.</p></div><button type="button" data-demo-message="Would open Settings → Streaming">Streaming</button></li>'+
+            '<li class="attention-item"><div><strong>GCRCN control channel is stale</strong><p>No valid control update has arrived for 18 seconds.</p></div><button type="button" data-demo-message="Would open Settings → Channels">Channels</button></li></ul>';
+          receiverValue="1 of 2";receiverState="warn";receiverDetail="RTL-SDR R828D disconnected";receiverItems=[["Airspy R820T","7 channels"],["RTL-SDR R828D","Disconnected"]];
+          uploadValue="2 waiting";uploadState="warn";uploadDetail="RadioResolve retrying · next attempt shortly";uploadItems=[["Uploaded since launch","1,247"],["Errors since launch","1"]];
+          activityState="warn";activityItems=[["GCRCN Simulcast","Control stale"],["County Conventional","Active"]];
+        }else if(scenario==="dashboard-no-receivers"){
+          badgeClass="bad";badgeText="No receivers";noticeClass="bad";noticeTitle="No receivers were found";
+          noticeCopy="Open Hardware to review receiver detection and enable status.";
+          receiverValue="0 connected";receiverState="bad";receiverDetail="No Airspy or RTL-SDR is available";receiverItems=[];
+          activityValue="0 running";activityState="warn";activityDetail="Channels cannot run without a receiver";activityItems=[];calls=[];
+        }else if(scenario==="dashboard-no-channels"){
+          badgeClass="warn";badgeText="Idle";noticeClass="warn";noticeTitle="Receivers are ready, but no channels are running";
+          noticeCopy="Open Channels to review automatic-start status or start a retained channel.";
+          activityValue="0 running";activityState="warn";activityDetail="Two receivers are available";activityItems=[["Configured channels","12"],["Auto-start channels","0"]];calls=[];
+        }else if(scenario==="dashboard-no-calls"){
+          calls=[];noticeTitle="Receiving normally";noticeCopy="No calls are active right now. Control and conventional channels continue decoding.";
+          activityDetail="1 control channel · no traffic calls";
+        }else if(scenario==="dashboard-stats-off"){
+          noticeClass="info";noticeTitle="Statistics collection is off";noticeCopy="Live radio status continues normally. Turn statistics collection on in Settings to resume call summaries.";
+          resourceItems=[["Recordings","34% of limit"],["Detailed event history","12% of limit"],["Activity database","142 MB"],["Statistics","Collection off"]];
+        }else if(scenario==="dashboard-partial"){
+          badgeClass="warn";badgeText="Partially available";noticeClass="warn";noticeTitle="Resource status is temporarily unavailable";
+          noticeCopy="Radio, receiver, and upload status remain current. Resource sampling will retry automatically.";
+          resourceValue="Unavailable";resourceState="bad";resourceDetail="The last valid resource update was 42 seconds ago";resourceItems=[];
+        }else if(scenario==="dashboard-reconnecting"){
+          badgeClass="warn";badgeText="Reconnecting";subtitle="BOSGAME · showing information last updated 14 seconds ago";
+          noticeClass="warn";noticeTitle="Dashboard updates are reconnecting";noticeCopy="The previous information remains visible and marked stale until the page catches up.";
+        }else if(scenario==="dashboard-session-ended"){
+          badgeClass="info";badgeText="Public view";subtitle="The newer administrator session ended this browser’s session.";
+          noticeClass="warn";noticeTitle="Administrator session ended";noticeCopy="Public Dashboard remains available. Sign in again to see receiver operations and Settings shortcuts.";
+        }
+
+        var adminContent="";
+        if(admin){
+          adminContent='<div class="notice '+noticeClass+'"><div><strong>'+escapeHtml(noticeTitle)+'</strong><p>'+escapeHtml(noticeCopy)+'</p></div>'+(noticeClass!=="good"?'<span class="status-pill '+noticeClass+'">'+(noticeClass==="bad"?"Action needed":"Review")+'</span>':'<span class="status-pill good">Current</span>')+'</div>'+
+            (attention?'<section class="panel" style="margin-bottom:14px"><header class="panel-head"><div><h2>Needs attention</h2><p>Current problems that may need administrator attention.</p></div></header><div class="panel-body">'+attention+'</div></section>':"")+
+            '<section class="summary-grid">'+
+              metricCard("Receivers",receiverValue,receiverState,receiverDetail,receiverItems)+
+              metricCard("Radio activity",activityValue,activityState,activityDetail,activityItems)+
+              metricCard("Uploads and streams",uploadValue,uploadState,uploadDetail,uploadItems)+
+              metricCard("Receiver resources",resourceValue,resourceState,resourceDetail,resourceItems,resourceState==="bad"?null:[18,resourceState==="warn"?"warn":"good","Current application CPU load"]) +
+            '</section>'+
+            '<div class="dashboard-grid"><section class="panel"><header class="panel-head"><div><h2>Active now</h2><p>A bounded scrolling snapshot supports at least ten simultaneous calls; completed-call audio remains on Listen.</p></div><button class="link-button" type="button" data-view-jump="live">Open Live Systems</button></header><div class="panel-body">'+activeCallRows(calls)+'</div></section>'+
+            '<aside class="panel"><header class="panel-head"><div><h2>Go to</h2><p>Review or change radio settings on their own pages.</p></div></header><div class="panel-body"><div class="route-list">'+
+              '<button type="button" data-demo-message="Would open Settings → Hardware">Hardware</button>'+
+              '<button type="button" data-demo-message="Would open Settings → Channels">Channels</button>'+
+              '<button type="button" data-demo-message="Would open Settings → Streaming">Streaming</button>'+
+              '<button type="button" data-demo-message="Would open Settings → Statistics">Statistics</button>'+
+              '<button type="button" data-demo-message="Would open Diagnostics">Diagnostics</button>'+
+            '</div></div></aside></div>';
+        }else{
+          var publicTitle=scenario==="dashboard-session-ended"?"Administrator session ended":"Public dashboard";
+          var publicCopy=scenario==="dashboard-session-ended"?"A newer administrator session replaced this one. Public radio summaries remain available; sign in again for receiver, upload, resource, and Settings status.":"Current radio summaries are available. Sign in for receiver, upload, resource, and Settings status.";
+          adminContent='<div class="notice info"><div><strong>'+escapeHtml(publicTitle)+'</strong><p>'+escapeHtml(publicCopy)+'</p></div><button type="button" data-admin-login>Administrator sign in</button></div>';
+        }
+
+        setRoutePolicies(admin,{events:true,messages:true});
+        dashboardView.innerHTML='<header class="page-head"><div><h1 id="dashboard-title">'+escapeHtml(title)+'</h1><p>'+escapeHtml(subtitle)+'</p></div><div class="head-status"><span class="badge '+badgeClass+'">'+escapeHtml(badgeText)+'</span></div></header>'+adminContent+publicOverview(scenario);
+        dashboardView.style.opacity="";
+        bindCommonActions(dashboardView);
+      }
+
+      function groupById(id){return groups.find(function(group){return group.id===id;})||groups[0];}
+      function frequency(value){return Number(value).toFixed(5);}
+      function statusClass(status){return status==="CALL"?"call":status==="CONTROL"?"control":status==="ENCRYPTED"?"encrypted":status==="DATA"||status==="ACTIVE"?"data":"idle";}
+      function decodeClass(value){return value==null?"":Number(value)>=90?"decode-good":Number(value)>=75?"decode-warn":"decode-bad";}
+      function tagMeaning(tags){
+        var meanings={CONV:"Conventional channel",CFG:"Configured site channel",VC:"Observed voice use",DAT:"Observed data use","DAT-A":"Announced data channel",CC:"Observed control use",ACC:"Alternate control channel"};
+        return String(tags||"").split(" · ").filter(Boolean).map(function(tag){return tag+" — "+(meanings[tag]||"Channel marker");}).join("; ");
+      }
+      function siteWideSelection(row){return row.status==="CONTROL"||String(row.tags).split(" · ").some(function(tag){return tag==="CFG"||tag==="ACC";});}
+      function activeForScenario(group){return liveScenario==="live-empty"?false:group.active;}
+      function scenarioRows(group){
+        if(liveScenario==="live-empty")return [];
+        if(liveScenario==="live-control-replacing"&&group.id==="gcrcn")return group.rows.filter(function(row){return row.status!=="CONTROL";});
+        return group.rows;
+      }
+      function currentColumns(){
+        var presets={
+          standard:["status","tags","lcn","slot","frequency","sourceAlias","targetAlias","decoder"],
+          identity:["status","lcn","frequency","sourceAlias","sourceId","targetAlias","targetId"],
+          signal:["status","tags","lcn","frequency","signal","decode","decoder"],
+          all:columns.map(function(column){return column.key;})
+        };
+        var keys=presets[liveColumnPreset]||presets.all;
+        return columns.filter(function(column){return keys.includes(column.key);});
+      }
+      function protocolKey(row){
+        var decoder=String(row.decoder||"").toUpperCase();
+        if(decoder.includes("P25"))return "apco25";
+        if(decoder.includes("DMR"))return "dmr";
+        if(decoder.includes("FLEETSYNC"))return "fleetsync";
+        if(decoder.includes("MDC"))return "mdc1200";
+        if(decoder.includes("NBFM"))return "nbfm";
+        if(decoder.includes("NXDN"))return "nxdn";
+        return "unknown";
+      }
+      function formatIdentifier(value,row){
+        if(!value)return "";
+        var protocol=protocolKey(row);
+        var choice=liveIdFormats[protocol]||"default";
+        if(choice==="default")choice=PUBLIC_DISPLAY_DEFAULTS.formats[protocol]||"decimal";
+        if(choice==="hex"&&/^\d+$/.test(String(value)))return "0x"+Number(value).toString(16).toUpperCase();
+        if(choice==="formatted"&&protocol==="fleetsync"&&/^\d+$/.test(String(value))){var numeric=Number(value);return ((numeric>>13)&0x7F)+"-"+(numeric&0x1FFF);}
+        return String(value);
+      }
+      function showAdvancedEncryption(){return liveAdvancedEncryption==="default"?PUBLIC_DISPLAY_DEFAULTS.encryption:liveAdvancedEncryption==="show";}
+      function formatChoiceOptions(protocol,choices,selected){
+        var labels={default:"Use public default",decimal:"Decimal",hex:"Hexadecimal",formatted:"Formatted"};
+        labels.default+=" ("+labels[PUBLIC_DISPLAY_DEFAULTS.formats[protocol]]+")";
+        return ["default"].concat(choices).map(function(choice){return '<option value="'+choice+'"'+(choice===selected?' selected':'')+'>'+labels[choice]+'</option>';}).join("");
+      }
+      function protocolFormatControls(){
+        var protocols=[
+          ["apco25","APCO-25",["decimal","hex"]],["dmr","DMR",["decimal","hex"]],["fleetsync","Fleetsync",["decimal","formatted"]],
+          ["mdc1200","MDC-1200",["decimal","hex"]],["nbfm","NBFM",["decimal","hex"]],["nxdn","NXDN",["decimal","hex"]]
+        ];
+        return protocols.map(function(protocol){return '<div class="field"><label for="id-format-'+protocol[0]+'">'+protocol[1]+' IDs</label><select id="id-format-'+protocol[0]+'" data-id-format="'+protocol[0]+'">'+formatChoiceOptions(protocol[0],protocol[2],liveIdFormats[protocol[0]])+'</select></div>';}).join("");
+      }
+      function saveLiveDisplay(){
+        try{localStorage.setItem(LIVE_DISPLAY_KEY,JSON.stringify({columns:liveColumnPreset,encryption:liveAdvancedEncryption,formats:liveIdFormats}));}catch(error){}
+        var status=document.getElementById("display-saved");
+        if(status)status.textContent="Saved in this browser";
+      }
+      function measurementFreshness(row,group){
+        if(!activeForScenario(group))return "Unavailable while this site is stopped";
+        if(row.signal==null&&row.decode==null)return "No signal or decode measurement for this row";
+        if(liveScenario==="live-reconnecting")return "Last observed 14 seconds ago · stale";
+        if(liveScenario==="live-refreshing")return "Previous value · refresh in progress";
+        if(liveScenario==="live-unavailable")return "Last observed 22 seconds ago · stale";
+        return "Updated just now";
+      }
+      function routeAction(label,allowed){
+        var destination=label==="Events"?"events-messages-v1.html#events":"events-messages-v1.html#messages";
+        return allowed?'<button type="button" data-route-destination="'+destination+'">'+label+'</button>':'<button type="button" data-admin-login>'+label+' · Sign in</button>';
+      }
+      function sortValue(row,key){var value=row[key];return value==null?"":value;}
+      function compareValues(left,right){
+        if(typeof left==="number"&&typeof right==="number")return left-right;
+        return String(left).localeCompare(String(right),undefined,{numeric:true,sensitivity:"base"});
+      }
+      function rowMatchesFilter(row){
+        if(liveFilter==="active"&&["IDLE","FADE","RESET","TEARDOWN"].includes(row.status))return false;
+        if(liveFilter==="calls"&&!["CALL","ENCRYPTED"].includes(row.status))return false;
+        if(liveFilter==="encrypted"&&row.status!=="ENCRYPTED")return false;
+        if(liveFilter==="control-data"&&!["CONTROL","DATA"].includes(row.status))return false;
+        if(!liveSearch)return true;
+        var haystack=columns.map(function(column){return row[column.key];}).concat([row.talkerAlias]).join(" ").toLowerCase();
+        return haystack.includes(liveSearch.toLowerCase());
+      }
+      function visibleRows(){
+        var rows=scenarioRows(groupById(activeGroupId)).filter(rowMatchesFilter);
+        if(liveSort){
+          rows=rows.slice().sort(function(left,right){
+            var result=compareValues(sortValue(left,liveSort.key),sortValue(right,liveSort.key));
+            return liveSort.direction==="asc"?result:-result;
+          });
+        }else{
+          rows=rows.slice().sort(function(left,right){return left.frequency-right.frequency||(Number(left.slot)||0)-(Number(right.slot)||0)||left.key.localeCompare(right.key);});
+        }
+        return rows;
+      }
+
+      function tableCell(row,key){
+        if(key==="status")return '<span class="status-pill '+statusClass(row.status)+'">'+escapeHtml(row.status+(row.encryption&&showAdvancedEncryption()?" · "+row.encryption:""))+'</span>';
+        if(key==="tags")return '<span title="'+escapeHtml(tagMeaning(row.tags))+'">'+escapeHtml(row.tags)+'</span>';
+        if(key==="frequency")return frequency(row.frequency);
+        if(key==="signal")return row.signal==null?"":Number(row.signal).toFixed(1)+" dBFS";
+        if(key==="decode")return row.decode==null?"":'<span class="'+decodeClass(row.decode)+'">'+Number(row.decode).toFixed(1)+'%</span>';
+        if(key==="sourceId"||key==="targetId")return escapeHtml(formatIdentifier(row[key],row));
+        return escapeHtml(row[key]||"");
+      }
+
+      function rowHtml(row){
+        return '<tr tabindex="0" role="button" aria-label="Select '+escapeHtml(row.lcn)+'" data-live-row="'+escapeHtml(row.key)+'" class="'+(selectedKey===row.key?"selected":"")+'">'+currentColumns().map(function(column){return '<td class="'+((column.key==="sourceAlias"||column.key==="targetAlias")?"alias-cell":"")+'">'+tableCell(row,column.key)+'</td>';}).join("")+'</tr>';
+      }
+
+      function mobileRowHtml(row){
+        var source=(row.sourceAlias||"Source not identified")+(row.sourceId?" · "+formatIdentifier(row.sourceId,row):"");
+        var target=(row.targetAlias||"Target not identified")+(row.targetId?" · "+formatIdentifier(row.targetId,row):"");
+        var status=row.status+(row.encryption&&showAdvancedEncryption()?" · "+row.encryption:"");
+        return '<button type="button" class="mobile-row '+(selectedKey===row.key?"selected":"")+'" data-live-row="'+escapeHtml(row.key)+'"><span class="mobile-row-top"><strong>'+escapeHtml(row.lcn)+' · '+frequency(row.frequency)+' MHz</strong><span class="status-pill '+statusClass(row.status)+'">'+escapeHtml(status)+'</span></span><span>'+escapeHtml(target)+'</span><span>'+escapeHtml(source)+'</span><span class="mobile-row-meta"><span title="'+escapeHtml(tagMeaning(row.tags))+'">'+escapeHtml(row.tags)+'</span><span>'+(row.slot?"Slot "+escapeHtml(row.slot):"No timeslot")+'</span><span>'+escapeHtml(row.decoder)+'</span><span class="'+decodeClass(row.decode)+'">'+(row.decode==null?"Decode unavailable":Number(row.decode).toFixed(1)+"% decode")+'</span></span></button>';
+      }
+
+      function renderGroupTabs(){
+        var host=document.getElementById("group-tabs");
+        if(!host)return;
+        host.innerHTML=groups.map(function(group){var active=activeForScenario(group);return '<button type="button" class="group-tab '+(group.id===activeGroupId?"active":"")+'" data-group="'+escapeHtml(group.id)+'"><span class="group-dot '+(active?"active":"")+'"></span>'+escapeHtml(group.title)+' · '+(active?"Active":"Stopped")+'</button>';}).join("");
+        host.querySelectorAll("[data-group]").forEach(function(button){button.addEventListener("click",function(){
+          var groupId=button.dataset.group;
+          activeGroupId=groupId;selectedKey=null;
+          if(liveScenario==="live-control-replacing"){
+            preview.value="live-normal";renderLive("live-normal");
+            var normalGroup=document.querySelector('[data-group="'+groupId+'"]');if(normalGroup)normalGroup.focus();return;
+          }
+          renderLiveRows();
+          var replacement=document.querySelector('[data-group="'+groupId+'"]');
+          if(replacement)replacement.focus();
+        });});
+        var picker=document.getElementById("group-search");
+        var options=document.getElementById("group-options");
+        if(picker&&options){
+          options.innerHTML=groups.map(function(group){return '<option value="'+escapeHtml(group.title)+'">'+(activeForScenario(group)?"Active":"Stopped")+'</option>';}).join("");
+          picker.value=groupById(activeGroupId).title;
+        }
+      }
+
+      function renderTableHeader(){
+        var head=document.getElementById("live-table-head");
+        if(!head)return;
+        var table=head.closest("table");
+        if(table)table.style.minWidth={standard:"980px",identity:"920px",signal:"820px",all:"1420px"}[liveColumnPreset]||"1420px";
+        head.innerHTML=currentColumns().map(function(column){
+          var direction=!liveSort||liveSort.key!==column.key?"none":liveSort.direction==="asc"?"ascending":"descending";
+          return '<th aria-sort="'+direction+'" data-column="'+column.key+'"><button type="button">'+escapeHtml(column.label)+'</button></th>';
+        }).join("");
+        head.querySelectorAll("th").forEach(function(header){
+          header.querySelector("button").addEventListener("click",function(){
+            var key=header.dataset.column;
+            if(!liveSort||liveSort.key!==key)liveSort={key:key,direction:"asc"};
+            else if(liveSort.direction==="asc")liveSort={key:key,direction:"desc"};
+            else liveSort=null;
+            renderTableHeader();renderLiveRows();
+          });
+        });
+      }
+
+      function renderLiveRows(){
+        var group=groupById(activeGroupId);
+        var rows=visibleRows();
+        renderGroupTabs();
+        document.getElementById("group-title").textContent=group.title;
+        document.getElementById("group-subtitle").textContent=group.subtitle;
+        var groupState=document.getElementById("group-state");
+        var findingControl=liveScenario==="live-control-replacing"&&group.id==="gcrcn";
+        groupState.textContent=findingControl?"Finding control":liveScenario==="live-empty"?"No channels":!activeForScenario(group)?"Stopped":group.id==="conventional"?"Active":"Control active";
+        groupState.className="status-pill "+(findingControl?"warn":!activeForScenario(group)?"neutral":"good");
+        document.getElementById("row-count").textContent=rows.length+" of "+scenarioRows(group).length+" rows";
+        var body=document.getElementById("live-table-body");
+        var mobile=document.getElementById("mobile-rows");
+        var table=document.querySelector(".live-table");
+        if(table)table.querySelector("tbody").classList.toggle("stale",!activeForScenario(group)||["live-reconnecting","live-refreshing","live-unavailable"].includes(liveScenario)||findingControl);
+        if(rows.length){
+          body.innerHTML=rows.map(rowHtml).join("");
+          mobile.innerHTML=rows.map(mobileRowHtml).join("");
+        }else{
+          var message=!group.active?"This site is stopped. No current channels are available.":liveScenario==="live-empty"?"No channels are running.":"No rows match your filters.";
+          var clearFilters=group.active&&liveScenario!=="live-empty"?' <button type="button" data-clear-filters>Clear filters</button>':"";
+          body.innerHTML='<tr><td colspan="'+currentColumns().length+'"><div class="empty">'+message+clearFilters+'</div></td></tr>';
+          mobile.innerHTML='<div class="empty">'+message+clearFilters+'</div>';
+        }
+        bindLiveRows();
+        renderDetail();
+      }
+
+      function bindLiveRows(){
+        document.querySelectorAll("[data-live-row]").forEach(function(element){
+          var select=function(){
+            selectedKey=element.dataset.liveRow;selectedFocusTag=element.tagName;
+            var key=selectedKey;
+            if(liveScenario==="live-control-replacing"){preview.value="live-normal";renderLive("live-normal");}
+            else renderLiveRows();
+            window.setTimeout(function(){
+              var replacement=Array.from(document.querySelectorAll('[data-live-row="'+key+'"]')).find(function(candidate){return candidate.tagName===selectedFocusTag;});
+              if(replacement)replacement.focus();
+              document.getElementById("detail-panel")?.scrollIntoView({block:"nearest"});
+            },0);
+          };
+          element.addEventListener("click",select);
+          if(element.tagName==="TR")element.addEventListener("keydown",function(event){if(event.key==="Enter"||event.key===" "){event.preventDefault();select();}});
+        });
+        document.querySelectorAll("[data-clear-filters]").forEach(function(button){button.addEventListener("click",function(){liveSearch="";liveFilter="all";document.getElementById("live-search").value="";document.getElementById("live-filter").value="all";renderLiveRows();});});
+      }
+
+      function focusLiveRow(key){
+        window.setTimeout(function(){
+          var replacement=Array.from(document.querySelectorAll('[data-live-row="'+key+'"]')).find(function(candidate){return candidate.tagName===selectedFocusTag;});
+          if(replacement)replacement.focus();
+        },0);
+      }
+
+      function renderDetail(){
+        var panel=document.getElementById("detail-panel");
+        if(!panel)return;
+        if(liveScenario==="live-control-replacing"&&activeGroupId==="gcrcn"&&selectedKey==="site:gcrcn"){
+          panel.hidden=false;
+          panel.innerHTML='<div class="detail-message"><strong>Site-wide context retained</strong><p>The previous control channel ended. This panel will follow the replacement control channel as soon as the receiver reports it.</p><button type="button" data-close-detail>Close</button></div>';
+          panel.querySelector("[data-close-detail]").addEventListener("click",function(){selectedKey=null;preview.value="live-normal";renderLive("live-normal");document.getElementById("live-search")?.focus();});
+          return;
+        }
+        if(liveScenario==="live-selection-gone"&&selectedKey==="gone"){
+          panel.hidden=false;
+          panel.innerHTML='<div class="detail-message"><strong>Selected channel is no longer active</strong><p>The exact frequency and timeslot are no longer present in the current channel list.</p><button type="button" data-close-detail>Close</button></div>';
+          panel.querySelector("[data-close-detail]").addEventListener("click",function(){selectedKey=null;renderLiveRows();document.getElementById("live-search")?.focus();});
+          return;
+        }
+        if(!selectedKey){panel.hidden=true;panel.innerHTML="";return;}
+        var group=groupById(activeGroupId);
+        var row=group.rows.find(function(candidate){return candidate.key===selectedKey;});
+        if(!row){panel.hidden=true;return;}
+        var selectedVisible=visibleRows().some(function(candidate){return candidate.key===selectedKey;});
+        panel.hidden=false;
+        if(!selectedVisible){
+          panel.innerHTML='<div class="detail-message"><strong>Selected channel is hidden by the current filter.</strong><p>Your selection remains open.</p><button type="button" data-clear-filters>Clear filters</button></div>';
+          panel.querySelector("[data-clear-filters]").addEventListener("click",function(){liveSearch="";liveFilter="all";document.getElementById("live-search").value="";document.getElementById("live-filter").value="all";renderLiveRows();});
+          return;
+        }
+        var source=(row.sourceAlias||"Not identified")+(row.talkerAlias&&row.sourceAlias.indexOf("TA:")!==0?" · Talker "+row.talkerAlias:"")+(row.sourceId?" · "+formatIdentifier(row.sourceId,row):"");
+        var target=(row.targetAlias||"Not identified")+(row.targetId?" · "+formatIdentifier(row.targetId,row):"");
+        var selectionScope=siteWideSelection(row)?"Site-wide context":"Exact frequency"+(row.slot?" · Slot "+row.slot:"");
+        var fields=[
+          ["Status",row.status],["Tags",tagMeaning(row.tags)],["LCN / channel",row.lcn],["Frequency",frequency(row.frequency)+" MHz"],["Timeslot",row.slot||"Not applicable"],["Callsign",row.callsign||"Not supplied"],
+          ["Source",source],["Target",target],["Signal",row.signal==null?"Unavailable":Number(row.signal).toFixed(1)+" dBFS"],["Decode",row.decode==null?"Unavailable":Number(row.decode).toFixed(1)+"%"],["Decoder",row.decoder],["Measurement",measurementFreshness(row,group)]
+        ];
+        if(row.encryption)fields.splice(11,0,["Encryption",showAdvancedEncryption()?row.encryption:"Encrypted"]);
+        panel.innerHTML='<div class="detail-head"><div><h2>'+escapeHtml(group.title)+' · '+escapeHtml(row.lcn)+'</h2><p>'+escapeHtml(selectionScope)+'</p></div><button type="button" data-close-detail aria-label="Close channel details">×</button></div><div class="detail-grid">'+fields.map(function(field){return '<div class="detail-field"><span>'+escapeHtml(field[0])+'</span><strong>'+escapeHtml(field[1])+'</strong></div>';}).join("")+'</div><div class="detail-actions">'+
+          '<button type="button" data-demo-message="Would open the existing site or channel details route">Open details</button>'+
+          routeAction("Events",liveAdmin||livePolicies.events)+
+          routeAction("Messages",liveAdmin||livePolicies.messages)+
+          (liveAdmin?'<button type="button" data-route-destination="selected-channel-diagnostics-v1.html#signal">View Signal</button><button type="button" data-route-destination="selected-channel-diagnostics-v1.html#symbols">View Symbols</button>':"")+
+        '</div>';
+        panel.querySelector("[data-close-detail]").addEventListener("click",function(){var formerKey=selectedKey;selectedKey=null;renderLiveRows();focusLiveRow(formerKey);});
+        bindCommonActions(panel);
+      }
+
+      function renderLive(scenario){
+        currentView="live";
+        currentScenario=scenario;
+        liveScenario=scenario;
+        liveAdmin=!["live-public","live-public-messages-locked"].includes(scenario);
+        livePolicies={events:true,messages:scenario!=="live-public-messages-locked"};
+        dashboardView.hidden=true;
+        liveView.hidden=false;
+        signInView.hidden=true;
+        liveView.style.opacity="";
+        activateNav("live");
+        setAccount(liveAdmin);
+        setRoutePolicies(liveAdmin,livePolicies);
+        var badgeText="Live";
+        var badgeClass="good";
+        var age="Updated just now";
+        var banner="";
+        if(scenario==="live-connecting"){badgeText="Connecting";badgeClass="warn";age="Waiting for current channel information";}
+        if(scenario==="live-reconnecting"){badgeText="Reconnecting";badgeClass="warn";age="Last updated 14 seconds ago";banner='<div class="live-banner">Updates are reconnecting. The previous channel list remains visible and marked stale.</div>';}
+        if(scenario==="live-refreshing"){badgeText="Refreshing";badgeClass="warn";age="Catching up after missed updates";banner='<div class="live-banner">Some updates were missed. Live Systems is refreshing all channel information; previous rows remain visible until it finishes.</div>';}
+        if(scenario==="live-public"){age="Public read-only view · updated just now";}
+        if(scenario==="live-public-messages-locked"){age="Public read-only view · updated just now";banner='<div class="live-banner">Messages is administrator-only on this receiver. Events and Live Systems remain public.</div>';}
+        if(scenario==="live-control-replacing"){badgeText="Finding control";badgeClass="warn";age="Site selection retained";banner='<div class="live-banner">The previous control channel ended. The site remains selected while the receiver finds its replacement.</div>';}
+        if(scenario==="live-unavailable"){badgeText="Unavailable";badgeClass="bad";age="Last updated 22 seconds ago";banner='<div class="live-banner">The current connection is unavailable. The previous channel view remains visible and marked stale. <button id="retry-live" type="button">Try again</button></div>';}
+        if(scenario==="live-first-load-unavailable"){badgeText="Unavailable";badgeClass="bad";age="No channel view received";}
+
+        liveView.innerHTML='<header class="page-head"><div><h1 id="live-title">Live Systems</h1><p>Current channel activity only. Select a row for context; completed-call audio remains on Listen.</p></div><div class="head-status"><span id="live-age" class="count-badge info">'+escapeHtml(age)+'</span><span class="badge '+badgeClass+'">'+escapeHtml(badgeText)+'</span></div></header>'+banner;
+
+        if(scenario==="live-connecting"){
+          liveView.innerHTML+='<section class="state-card"><h2>Connecting to Live Systems</h2><p>The table appears after current channel information is received.</p><span class="badge warn">Connecting</span></section>';
+          return;
+        }
+        if(scenario==="live-busy"){
+          liveView.innerHTML+='<section class="state-card"><h2>Live view is busy</h2><p>No Live Systems connection is available right now. Radio decoding and other allowed pages continue normally.</p><button type="button" data-demo-message="Would try Live Systems again">Try again</button></section>';
+          bindCommonActions(liveView);return;
+        }
+        if(scenario==="live-first-load-unavailable"){
+          liveView.innerHTML+='<section class="state-card"><h2>Live Systems is unavailable</h2><p>The server could not provide the current channel view. Radio decoding continues independently.</p><button type="button" data-demo-message="Would try Live Systems again">Try again</button></section>';
+          bindCommonActions(liveView);return;
+        }
+
+        liveView.innerHTML+='<div class="group-picker"><label for="group-search">Search or choose a system or site</label><input id="group-search" list="group-options" autocomplete="off" placeholder="Type a system or site name"><datalist id="group-options"></datalist></div><div id="group-tabs" class="group-tabs" aria-label="Live system groups"></div><section class="workspace"><header class="group-summary"><div><strong id="group-title"></strong><span id="group-subtitle"></span></div><span id="group-state" class="status-pill good">Control active</span></header><div class="live-toolbar">'+
+          '<div class="field search-field"><label for="live-search">Filter current rows</label><input id="live-search" type="search" placeholder="Channel, frequency, callsign, alias, ID, or decoder"></div>'+
+          '<div class="field"><label for="live-filter">Show</label><select id="live-filter"><option value="all">All rows</option><option value="active">Active now</option><option value="calls">Calls</option><option value="encrypted">Encrypted</option><option value="control-data">Control and data</option></select></div>'+
+          '<button id="reset-live-view" type="button">Reset view</button><span id="row-count" class="row-count"></span><details class="display-options"><summary>Display options</summary><div class="display-option-grid">'+
+            '<div class="field"><label for="column-preset">Columns</label><select id="column-preset"><option value="standard">Standard</option><option value="identity">Aliases and IDs</option><option value="signal">Signal and decode</option><option value="all">All fields</option></select></div>'+
+            '<div class="field"><label for="advanced-encryption">Advanced P25 encryption details</label><select id="advanced-encryption"><option value="default">Use public default (Hide)</option><option value="show">Show</option><option value="hide">Hide</option></select></div>'+
+            '<div class="protocol-format"><strong>Radio and talkgroup ID format by protocol</strong><div id="id-format-grid" class="protocol-format-grid">'+protocolFormatControls()+'</div><span id="display-saved" class="saved-local" role="status"></span></div></div></details></div>'+
+          '<div class="table-scroll desktop-table"><table class="live-table"><thead><tr id="live-table-head"></tr></thead><tbody id="live-table-body"></tbody></table></div>'+
+          '<div id="mobile-rows" class="mobile-rows"></div><section id="detail-panel" class="detail-panel" hidden></section></section>';
+
+        if(["live-reconnecting","live-refreshing","live-empty","live-no-match","live-unavailable"].includes(scenario))activeGroupId="gcrcn";
+        if(["live-selection-gone","live-control-replacing"].includes(scenario))activeGroupId="gcrcn";
+        if(scenario==="live-no-match"){liveSearch="not-present";liveFilter="all";}
+        else if(!["live-normal","live-public","live-public-messages-locked","live-reconnecting","live-refreshing","live-selection-gone","live-control-replacing","live-empty"].includes(scenario)){liveSearch="";liveFilter="all";}
+        if(scenario!=="live-no-match"&&liveSearch==="not-present")liveSearch="";
+        document.getElementById("live-search").value=liveSearch;
+        document.getElementById("live-filter").value=liveFilter;
+        document.getElementById("column-preset").value=liveColumnPreset;
+        document.getElementById("advanced-encryption").value=liveAdvancedEncryption;
+        document.getElementById("live-search").addEventListener("input",function(event){liveSearch=event.target.value;renderLiveRows();});
+        document.getElementById("live-filter").addEventListener("change",function(event){liveFilter=event.target.value;renderLiveRows();});
+        document.getElementById("column-preset").addEventListener("change",function(event){
+          liveColumnPreset=event.target.value;
+          if(liveSort&&!currentColumns().some(function(column){return column.key===liveSort.key;}))liveSort=null;
+          saveLiveDisplay();renderTableHeader();renderLiveRows();
+        });
+        document.getElementById("id-format-grid").addEventListener("change",function(event){if(!event.target.matches("[data-id-format]"))return;liveIdFormats[event.target.dataset.idFormat]=event.target.value;saveLiveDisplay();renderLiveRows();});
+        document.getElementById("advanced-encryption").addEventListener("change",function(event){liveAdvancedEncryption=event.target.value;saveLiveDisplay();renderLiveRows();});
+        document.getElementById("group-search").addEventListener("change",function(event){
+          var match=groups.find(function(group){return group.title.toLowerCase()===event.target.value.trim().toLowerCase();});
+          if(!match){event.target.value=groupById(activeGroupId).title;showToast("Choose a system or site from the list.");return;}
+          activeGroupId=match.id;selectedKey=null;
+          if(liveScenario==="live-control-replacing"){preview.value="live-normal";renderLive("live-normal");}
+          else renderLiveRows();
+          document.getElementById("group-search").focus();
+        });
+        document.getElementById("reset-live-view").addEventListener("click",function(){liveSearch="";liveFilter="all";liveSort=null;selectedKey=null;if(liveScenario==="live-control-replacing"){preview.value="live-normal";renderLive("live-normal");return;}document.getElementById("live-search").value="";document.getElementById("live-filter").value="all";renderTableHeader();renderLiveRows();});
+        if(scenario==="live-selection-gone")selectedKey="gone";
+        if(scenario==="live-control-replacing"){selectedKey="site:gcrcn";selectedFocusTag="TR";}
+        renderTableHeader();renderLiveRows();
+        var retryLive=document.getElementById("retry-live");
+        if(retryLive)retryLive.addEventListener("click",function(){showToast("Would try Live Systems again while keeping the previous view visible.");});
+      }
+
+      function showSignIn(view,policyLocked){
+        currentView=view;
+        signInOrigin=view;
+        signInPolicyLocked=policyLocked;
+        signInPublicScenario=currentScenario==="live-public-messages-locked"?"live-public-messages-locked":view==="live"?"live-public":"dashboard-public";
+        dashboardView.hidden=true;
+        liveView.hidden=true;
+        signInView.hidden=false;
+        activateNav(view);
+        setAccount(false);
+        document.getElementById("sign-in-title").textContent=policyLocked?"Administrator sign-in required":"Administrator sign-in";
+        document.getElementById("sign-in-copy").textContent=policyLocked?"This page is administrator-only on this receiver. Independently public pages remain available.":"Sign in to open administrator status and Settings. Public viewing remains available without signing in.";
+        document.getElementById("return-public").textContent=policyLocked?"Open public Listen":"Continue public viewing";
+        document.getElementById("login-message").textContent="";
+      }
+
+      function applyScenario(value){
+        currentScenario=value;
+        if(value==="dashboard-locked"){showSignIn("dashboard",true);return;}
+        if(value==="live-locked"){showSignIn("live",true);return;}
+        if(value.indexOf("dashboard-")===0)renderDashboard(value);else renderLive(value);
+      }
+
+      function bindCommonActions(root){
+        root.querySelectorAll("[data-demo-message]").forEach(function(button){button.addEventListener("click",function(){showToast(button.dataset.demoMessage);});});
+        root.querySelectorAll("[data-route-destination]").forEach(function(button){button.addEventListener("click",function(){window.location.href=button.dataset.routeDestination;});});
+        root.querySelectorAll("[data-view-jump]").forEach(function(button){button.addEventListener("click",function(){preview.value="live-normal";activeGroupId="gcrcn";liveSearch="";liveFilter="all";liveSort=null;selectedKey=null;applyScenario("live-normal");});});
+        root.querySelectorAll("[data-admin-login]").forEach(function(button){button.addEventListener("click",function(){showSignIn(currentView,false);document.getElementById("login-username").focus();});});
+      }
+
+      document.querySelectorAll("[data-view-link]").forEach(function(link){link.addEventListener("click",function(event){event.preventDefault();if(link.dataset.viewLink==="dashboard"){preview.value="dashboard-normal";applyScenario("dashboard-normal");}else{preview.value="live-normal";applyScenario("live-normal");}});});
+      document.querySelectorAll("[data-static-link]").forEach(function(link){link.addEventListener("click",function(event){event.preventDefault();showToast(link.textContent+" is represented by a separate route or mockup.");});});
+      preview.addEventListener("change",function(){selectedKey=null;liveSearch="";liveFilter="all";liveSort=null;applyScenario(preview.value);});
+      document.getElementById("settings-button").addEventListener("click",function(){showToast("Would open the approved Settings shell.");});
+      document.getElementById("account-button").addEventListener("click",function(){
+        var admin=document.getElementById("account-label").textContent==="Administrator";
+        if(admin){
+          if(currentView==="dashboard"){preview.value="dashboard-session-ended";applyScenario("dashboard-session-ended");}
+          else{preview.value="live-public";applyScenario("live-public");}
+        }else{showSignIn(currentView,false);document.getElementById("login-username").focus();}
+      });
+      document.getElementById("login-form").addEventListener("submit",function(event){
+        event.preventDefault();document.getElementById("login-password").value="";document.getElementById("login-message").textContent="Signed in for this preview";
+        window.setTimeout(function(){var next=signInOrigin==="live"?"live-normal":"dashboard-normal";preview.value=next;applyScenario(next);},300);
+      });
+      document.getElementById("return-public").addEventListener("click",function(){
+        if(signInPolicyLocked){window.location.href="public-listener-recordings-v2.html#listen";return;}
+        var next=signInPublicScenario;
+        preview.value=next;applyScenario(next);
+      });
+
+      var REVIEW_KEY="sdrtrunk-vce.mockup.admin-dashboard-live-v1.review";
+      var reviewSections=[
+        ["shell","Shared navigation and access","Dashboard and Live use the same lightweight shell as Listen. Spectrum is absent; Settings appears only for the administrator. Review MAIN-01 and ACCESS-001."],
+        ["dashboard","Administrator operational overview","Current receiver, radio, upload, resource, and active-call information leads the signed-in Dashboard."],
+        ["attention","Needs-attention workflow","Only current actionable problems appear, and each links to its owning Settings page. No disruptive command runs from Dashboard."],
+        ["public","Public Dashboard fallback","Existing radio summaries remain when Dashboard is public. Administrator-only operational details disappear after sign-out or session replacement."],
+        ["groups","Live system grouping","Conventional appears first, followed by deterministic active/stopped site groups with textual state. Review MAIN-02."],
+        ["table","Live table, sorting, and filters","The table preserves status, tags, LCN/channel, slot, frequency, callsign, signal, decode, aliases, IDs, and decoder. Sorting cycles back to the stable default; column, ID-format, and encryption-detail choices stay in the browser."],
+        ["selection","Selected channel context","One stable selection opens a lower detail panel. Details, Events, Messages, and the administrator-only Signal and Symbols actions remain separate destinations."],
+        ["live-access","Public and administrator Live views","Both roles receive the same read-only activity rows when Live is public. Signal and Symbols remain in Live but are rendered only after the administrator signs in; public visitors never see those actions."],
+        ["recovery","Connection and disappearance states","Connecting waits for current data; reconnecting keeps older rows visible; missed updates trigger a full refresh; unavailable, busy, stopped, empty, filtered, control-replacement, and ended-selection states are explicit."],
+        ["responsive","Narrow-screen behavior","A searchable system-and-site picker replaces the wide tabs, the table becomes accessible cards, selection details remain complete, and every essential control is keyboard/touch usable."]
+      ];
+      var reviewData=loadReview();
+      function loadReview(){try{return JSON.parse(localStorage.getItem(REVIEW_KEY)||"null")||{entries:{}};}catch(error){return {entries:{}};}}
+      function reviewOptions(selected){return [["","Not reviewed"],["approved","Looks good"],["change","Change requested"],["question","Question"],["later","Review later"]].map(function(option){return '<option value="'+option[0]+'"'+(selected===option[0]?' selected':'')+'>'+option[1]+'</option>';}).join("");}
+      function renderReview(){document.getElementById("review-content").innerHTML=reviewSections.map(function(section){var entry=reviewData.entries[section[0]]||{state:"",note:""};return '<section class="review-card"><h3>'+escapeHtml(section[1])+'</h3><p>'+escapeHtml(section[2])+'</p><label class="sr-only" for="review-state-'+section[0]+'">Decision for '+escapeHtml(section[1])+'</label><select id="review-state-'+section[0]+'" data-review-state="'+section[0]+'">'+reviewOptions(entry.state||"")+'</select><label class="sr-only" for="review-note-'+section[0]+'">Notes for '+escapeHtml(section[1])+'</label><textarea id="review-note-'+section[0]+'" data-review-note="'+section[0]+'" maxlength="3000" placeholder="Add a decision, requested change, or question…">'+escapeHtml(entry.note||"")+'</textarea><div class="review-card-foot"><span>Saved only in this browser</span><span data-review-count="'+section[0]+'">'+(entry.note||"").length+' / 3000</span></div></section>';}).join("");updateReviewStatus();}
+      function saveReview(id,patch){var entry=reviewData.entries[id]||{state:"",note:""};Object.assign(entry,patch);reviewData.entries[id]=entry;try{localStorage.setItem(REVIEW_KEY,JSON.stringify(reviewData));}catch(error){}updateReviewStatus();}
+      function updateReviewStatus(){var reviewed=reviewSections.filter(function(section){return reviewData.entries[section[0]]&&reviewData.entries[section[0]].state;}).length;document.getElementById("review-save-state").textContent=reviewed+" of "+reviewSections.length+" sections reviewed · saved in this browser";}
+      function openReview(){renderReview();document.getElementById("review-scrim").hidden=false;document.getElementById("review-drawer").hidden=false;document.getElementById("close-review").focus();}
+      function closeReview(){document.getElementById("review-scrim").hidden=true;document.getElementById("review-drawer").hidden=true;document.getElementById("open-review").focus();}
+      function downloadReview(){var payload={format:"sdrtrunk-vce-mockup-review",version:1,mockup:"admin-dashboard-live-v1",exportedAt:new Date().toISOString(),evidence:["MAIN-01","MAIN-02","MAIN-03","MAIN-08","PREF-14","PREF-15","ACCESS-001","ACCESS-002","DISP-002","DISP-004"],entries:reviewData.entries};var blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});var link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="sdrtrunk-dashboard-live-review-"+new Date().toISOString().slice(0,10)+".json";link.click();window.setTimeout(function(){URL.revokeObjectURL(link.href);},0);}
+      document.getElementById("open-review").addEventListener("click",openReview);
+      document.getElementById("close-review").addEventListener("click",closeReview);
+      document.getElementById("done-review").addEventListener("click",closeReview);
+      document.getElementById("review-scrim").addEventListener("click",closeReview);
+      document.getElementById("download-review").addEventListener("click",downloadReview);
+      document.getElementById("clear-review").addEventListener("click",function(){reviewData={entries:{}};try{localStorage.removeItem(REVIEW_KEY);}catch(error){}renderReview();});
+      document.getElementById("review-content").addEventListener("change",function(event){if(event.target.matches("[data-review-state]"))saveReview(event.target.dataset.reviewState,{state:event.target.value});});
+      document.getElementById("review-content").addEventListener("input",function(event){if(!event.target.matches("[data-review-note]"))return;var id=event.target.dataset.reviewNote;var count=document.querySelector('[data-review-count="'+id+'"]');if(count)count.textContent=event.target.value.length+" / 3000";saveReview(id,{note:event.target.value});});
+      document.addEventListener("keydown",function(event){if(event.key==="Escape"&&!document.getElementById("review-drawer").hidden)closeReview();});
+
+      renderDashboard("dashboard-normal");
+    }());
+  </script>
+</body>
+</html>

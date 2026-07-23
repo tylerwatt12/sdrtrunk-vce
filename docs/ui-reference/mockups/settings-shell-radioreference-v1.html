@@ -1,0 +1,1351 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SDRTrunk Web-First Settings — RadioReference Importer Review</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a1015;
+      --nav: #0e161d;
+      --surface: #121c24;
+      --surface-2: #17232d;
+      --surface-3: #1c2a35;
+      --line: #2a3a46;
+      --line-strong: #425563;
+      --ink: #e7eef4;
+      --muted: #9bacb8;
+      --accent: #22b8aa;
+      --accent-hover: #2bcabc;
+      --accent-soft: rgba(34, 184, 170, .13);
+      --blue: #63b5f7;
+      --blue-soft: rgba(99, 181, 247, .12);
+      --success: #62cf8c;
+      --success-soft: rgba(98, 207, 140, .12);
+      --warning: #f1bc65;
+      --warning-soft: rgba(241, 188, 101, .12);
+      --danger: #f17f98;
+      --danger-soft: rgba(241, 127, 152, .12);
+      --shadow: 0 16px 40px rgba(0, 0, 0, .25);
+      --radius: 11px;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--bg); }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 75% -10%, rgba(34, 184, 170, .08), transparent 28rem),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button, select, input, textarea {
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+    }
+    button { min-height: 36px; padding: 7px 11px; cursor: pointer; }
+    .button {
+      min-height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 7px 11px;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      text-decoration: none;
+    }
+    button:hover:not(:disabled) { background: var(--surface-3); border-color: #5b7180; }
+    .button:hover { background: var(--surface-3); border-color: #5b7180; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    button:disabled, input:disabled, select:disabled { opacity: .48; cursor: not-allowed; }
+    input, select { min-height: 39px; padding: 8px 10px; }
+    select { padding-right: 32px; }
+    textarea { width: 100%; min-height: 74px; padding: 9px 10px; resize: vertical; }
+    input::placeholder, textarea::placeholder { color: #738694; opacity: 1; }
+    [hidden] { display: none !important; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      min-height: 51px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 8px 16px;
+      background: rgba(10, 16, 21, .95);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+    }
+    .brand, .topbar-meta, .row, .actions, .title-row, .badges, .review-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-mark {
+      width: 29px;
+      height: 29px;
+      display: grid;
+      place-items: center;
+      color: #061111;
+      background: var(--accent);
+      border-radius: 8px;
+      font-weight: 900;
+    }
+    .brand strong { font-size: .92rem; }
+    .brand span, .topbar-meta { color: var(--muted); font-size: .73rem; }
+    .top-pill { padding: 4px 7px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; }
+
+    .settings-layout { display: grid; grid-template-columns: 224px minmax(0, 1fr); }
+    .settings-nav {
+      position: sticky;
+      top: 51px;
+      height: calc(100vh - 51px);
+      padding: 16px 12px;
+      overflow-y: auto;
+      background: var(--nav);
+      border-right: 1px solid var(--line);
+    }
+    .nav-group + .nav-group { margin-top: 18px; }
+    .nav-group h2 { margin: 0 8px 6px; color: var(--muted); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+    .settings-nav a {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 9px;
+      color: var(--ink);
+      text-decoration: none;
+      border-radius: 7px;
+      font-size: .8rem;
+    }
+    .settings-nav a:hover { background: var(--surface-2); }
+    .settings-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 750; }
+    .future { color: var(--muted); font-size: .64rem; }
+
+    main { min-width: 0; padding: 18px clamp(14px, 2.2vw, 30px) 64px; }
+    .max { max-width: 1600px; margin-inline: auto; }
+    .page-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .breadcrumbs { margin: 0 0 6px; color: var(--muted); font-size: .76rem; }
+    .page-head h1 { margin: 0; font-size: clamp(1.45rem, 2.4vw, 2rem); }
+    .page-head > div > p { max-width: 830px; margin: 7px 0 0; color: var(--muted); line-height: 1.45; }
+    .account-card {
+      min-width: min(100%, 340px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      box-shadow: var(--shadow);
+    }
+    .account-copy { min-width: 0; }
+    .account-copy strong, .account-copy span { display: block; }
+    .account-copy strong { font-size: .79rem; }
+    .account-copy span { margin-top: 2px; color: var(--muted); font-size: .68rem; }
+
+    .prototype-banner {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 16px;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+      border-radius: 8px;
+    }
+    .prototype-banner strong { color: var(--ink); }
+    .prototype-banner p { margin: 2px 0 0; color: var(--ink); font-size: .73rem; }
+    .scenario-control label { color: var(--ink); font-size: .72rem; font-weight: 700; }
+    .scenario-control select { min-height: 34px; padding-block: 5px; }
+
+    .card { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+    #main-content { margin-top: 13px; }
+    .card + .card { margin-top: 13px; }
+    .card-head {
+      min-height: 54px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 13px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .card-head h2, .card-head h3 { margin: 0; font-size: .94rem; }
+    .card-head p { margin: 3px 0 0; color: var(--muted); font-size: .71rem; line-height: 1.4; }
+    .card-body { padding: 13px; }
+    .section-title { display: flex; align-items: center; gap: 6px; }
+    .section-title h2, .section-title h3, .section-title h4 { margin: 0; }
+
+    .location-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(140px, 1fr)) minmax(150px, .8fr) minmax(210px, 1.2fr);
+      gap: 10px;
+    }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    .field-label { min-height: 23px; display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: .73rem; font-weight: 750; }
+    .field input:not([type="checkbox"]), .field select { width: 100%; }
+    .field-hint { margin: 5px 0 0; color: var(--muted); font-size: .68rem; line-height: 1.35; }
+    .help-button {
+      width: 21px;
+      min-width: 21px;
+      min-height: 21px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      color: var(--blue);
+      background: transparent;
+      border: 1px solid var(--blue);
+      border-radius: 50%;
+      font-size: .68rem;
+      font-weight: 850;
+      line-height: 1;
+    }
+    .help-button:hover:not(:disabled), .help-button[aria-expanded="true"] { color: #06131d; background: var(--blue); }
+
+    .table-tools {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .table-tools .field { flex: 1 1 190px; max-width: 350px; }
+    .result-count { color: var(--muted); font-size: .72rem; }
+    .table-wrap { min-width: 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+    table { width: 100%; min-width: 720px; border-collapse: collapse; }
+    th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); font-size: .75rem; vertical-align: middle; }
+    th { color: var(--muted); background: var(--surface-2); font-size: .68rem; letter-spacing: .03em; }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: rgba(255, 255, 255, .018); }
+    tbody tr.selected { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+    td .primary { display: block; font-weight: 750; }
+    td .secondary { display: block; margin-top: 2px; color: var(--muted); font-size: .68rem; }
+    .row-button { width: 100%; padding: 0; text-align: left; background: transparent; border: 0; }
+    .row-button:hover:not(:disabled) { background: transparent; }
+    .table-check { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 23px;
+      padding: 3px 7px;
+      color: var(--muted);
+      background: var(--surface-3);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: .65rem;
+      font-weight: 750;
+    }
+    .badge.blue { color: var(--blue); background: var(--blue-soft); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); }
+    .badge.system-type { color: #8fc8ff; background: rgba(73, 143, 209, .16); border-color: rgba(108, 177, 241, .42); }
+    .badge.agency-type { color: #d5adff; background: rgba(155, 96, 211, .16); border-color: rgba(190, 135, 241, .42); }
+    .badge.success { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 35%, var(--line)); }
+    .badge.warning { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
+    .badge.danger { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+    .pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 10px; color: var(--muted); font-size: .7rem; }
+
+    .workspace-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .workspace-head h2 { margin: 5px 0 0; font-size: 1.2rem; }
+    .back-button { color: var(--blue); background: transparent; border-color: transparent; padding-left: 0; }
+    .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)); gap: 8px; margin-top: 12px; }
+    .summary-item { padding: 9px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .summary-item dt { color: var(--muted); font-size: .65rem; font-weight: 700; text-transform: uppercase; }
+    .summary-item dd { margin: 4px 0 0; font-size: .78rem; font-weight: 750; }
+    .task-switch { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; padding: 5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; }
+    .task-switch button { flex: 1 1 180px; background: transparent; border-color: transparent; }
+    .task-switch button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); font-weight: 750; }
+
+    .split { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr); gap: 13px; }
+    .site-stack { display: grid; gap: 13px; }
+    .subcard { min-width: 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+    .subcard-head { padding: 9px 11px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+    .subcard-head h3 { margin: 0; font-size: .82rem; }
+    .subcard-head p { margin: 3px 0 0; color: var(--muted); font-size: .68rem; }
+    .subcard-body { padding: 11px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+    .form-grid .full { grid-column: 1 / -1; }
+    .segmented { display: flex; flex-wrap: wrap; gap: 5px; }
+    .segmented button { flex: 1 1 auto; min-height: 34px; padding: 6px 8px; font-size: .7rem; }
+    .segmented button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); font-weight: 750; }
+    .switch-field { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .switch-field input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); }
+    .switch-field strong, .switch-field span { display: block; }
+    .switch-field span { margin-top: 2px; color: var(--muted); font-size: .69rem; line-height: 1.36; }
+    .readout { min-height: 39px; display: flex; align-items: center; padding: 8px 10px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px; font-size: .74rem; }
+    .primary-action { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 750; }
+    .primary-action:hover:not(:disabled) { background: var(--accent-hover); }
+    .danger-action { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+
+    .notice {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 11px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+      border-radius: 8px;
+    }
+    .notice.warning { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
+    .notice.error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+    .notice.success { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 35%, var(--line)); }
+    .notice strong, .notice span { display: block; }
+    .notice span { margin-top: 2px; color: var(--ink); font-size: .71rem; line-height: 1.4; }
+    .empty-state { padding: 54px 18px; text-align: center; }
+    .empty-state h2 { margin: 0; }
+    .empty-state p { max-width: 620px; margin: 8px auto 16px; color: var(--muted); line-height: 1.5; }
+    .spinner { width: 34px; height: 34px; margin: 0 auto 14px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .detail-grid div { padding: 8px 9px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px; }
+    .detail-grid dt { color: var(--muted); font-size: .63rem; text-transform: uppercase; }
+    .detail-grid dd { margin: 3px 0 0; font-size: .74rem; font-weight: 700; overflow-wrap: anywhere; }
+    .impact-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+    .impact-grid div { padding: 9px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+    .impact-grid dt { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: .65rem; font-weight: 700; }
+    .impact-grid dd { margin: 4px 0 0; font-size: .8rem; font-weight: 750; }
+    .impact-grid .help-button { width: 18px; min-width: 18px; min-height: 18px; font-size: .6rem; }
+
+    dialog {
+      width: min(680px, calc(100vw - 28px));
+      max-height: min(760px, calc(100vh - 28px));
+      padding: 0;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .55);
+      overflow: hidden;
+    }
+    dialog::backdrop { background: rgba(3, 8, 11, .76); backdrop-filter: blur(3px); }
+    .dialog-head, .dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; background: var(--surface-2); }
+    .dialog-head { border-bottom: 1px solid var(--line); }
+    .dialog-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+    .dialog-head h2 { margin: 0; font-size: 1rem; }
+    .dialog-head p { margin: 3px 0 0; color: var(--muted); font-size: .71rem; }
+    .dialog-body { max-height: calc(100vh - 190px); padding: 15px; overflow: auto; }
+    .dialog-body .form-grid + .notice, .dialog-body .impact-grid + .notice { margin-top: 12px; }
+    .close-button { width: 36px; min-width: 36px; padding: 0; font-size: 1.15rem; }
+
+    .help-popover {
+      position: fixed;
+      z-index: 80;
+      width: min(330px, calc(100vw - 24px));
+      padding: 10px 11px;
+      color: var(--ink);
+      background: #192630;
+      border: 1px solid var(--blue);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .help-popover strong, .help-popover span { display: block; }
+    .help-popover strong { color: var(--blue); font-size: .75rem; }
+    .help-popover span { margin-top: 4px; font-size: .72rem; line-height: 1.45; }
+
+    .review-drawer {
+      position: fixed;
+      z-index: 60;
+      top: 0;
+      right: 0;
+      width: min(440px, 100vw);
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      background: var(--surface);
+      border-left: 1px solid var(--line-strong);
+      box-shadow: -18px 0 48px rgba(0, 0, 0, .4);
+    }
+    .review-head, .review-footer { padding: 13px 14px; background: var(--surface-2); }
+    .review-head { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); }
+    .review-head h2 { margin: 0; font-size: 1rem; }
+    .review-head p { margin: 4px 0 0; color: var(--muted); font-size: .7rem; }
+    .review-list { overflow-y: auto; padding: 12px; }
+    .review-item { padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+    .review-item + .review-item { margin-top: 9px; }
+    .review-item h3 { margin: 0 0 4px; font-size: .79rem; }
+    .review-item p { margin: 0 0 8px; color: var(--muted); font-size: .68rem; line-height: 1.4; }
+    .review-item select { width: 100%; min-height: 34px; margin-bottom: 7px; font-size: .72rem; }
+    .review-item textarea { font-size: .72rem; }
+    .review-footer { border-top: 1px solid var(--line); }
+    .review-footer span { display: block; margin-bottom: 8px; color: var(--muted); font-size: .68rem; }
+    .toast { position: fixed; z-index: 100; left: 50%; bottom: 22px; transform: translateX(-50%); max-width: min(560px, calc(100vw - 28px)); padding: 10px 13px; color: #07110d; background: var(--success); border-radius: 8px; box-shadow: var(--shadow); font-size: .76rem; font-weight: 750; }
+
+    @media (max-width: 1100px) {
+      .location-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .location-grid .search-field { grid-column: 1 / -1; }
+      .split { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .settings-layout { grid-template-columns: 1fr; }
+      .settings-nav { position: static; height: auto; display: flex; gap: 8px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      .nav-group { display: flex; gap: 5px; flex: 0 0 auto; }
+      .nav-group + .nav-group { margin-top: 0; }
+      .nav-group h2 { display: none; }
+      .settings-nav a { white-space: nowrap; }
+      .page-head { display: block; }
+      .account-card { margin-top: 12px; }
+      .location-grid, .form-grid, .summary-grid, .detail-grid, .impact-grid { grid-template-columns: 1fr; }
+      .field.full, .form-grid .full, .location-grid .search-field { grid-column: auto; }
+      main { padding-inline: 11px; }
+      .topbar-meta { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">S</span>
+      <div><strong>SDRTrunk</strong><span>Web-first administration</span></div>
+    </div>
+    <div class="topbar-meta">
+      <span class="top-pill">Admin session</span>
+      <span>Radio processing remains independent</span>
+    </div>
+  </header>
+
+  <div class="settings-layout">
+    <aside class="settings-nav" aria-label="Settings navigation">
+      <div class="nav-group">
+        <h2>Playlist Settings</h2>
+        <a href="settings-shell-hardware-v1.html">Hardware</a>
+        <a href="settings-shell-channels-v1.html">Channels</a>
+        <a href="settings-shell-aliases-v1.html">Aliases</a>
+        <a href="settings-shell-listen-lists-v1.html">Listen lists</a>
+        <a href="settings-shell-streaming-v1.html">Streaming</a>
+        <a href="#" aria-current="page">RadioReference</a>
+      </div>
+      <div class="nav-group">
+        <h2>General Settings</h2>
+        <a href="#">Calls <span class="future">later</span></a>
+        <a href="#">Audio <span class="future">later</span></a>
+        <a href="#">Voice &amp; keys <span class="future">later</span></a>
+        <a href="#">Performance <span class="future">later</span></a>
+        <a href="#">Display <span class="future">later</span></a>
+        <a href="#">Storage <span class="future">later</span></a>
+      </div>
+    </aside>
+
+    <main>
+      <div class="max">
+        <header class="page-head">
+          <div>
+            <p class="breadcrumbs">Settings / Playlist Settings / RadioReference</p>
+            <h1>RadioReference importer</h1>
+            <p>Find trunked systems and conventional agencies in one place, review exactly what will be created, and remain here after each import.</p>
+          </div>
+          <div id="account-card" class="account-card" aria-live="polite"></div>
+        </header>
+
+        <section class="prototype-banner">
+          <div>
+            <strong>Interactive design review</strong>
+            <p>Example data only. Browse results and import previews are temporary and are never written to an import-history database.</p>
+          </div>
+          <div class="actions scenario-control">
+            <label for="scenario">Preview</label>
+            <select id="scenario">
+              <option value="signed-in">Signed in</option>
+              <option value="signed-out">Signed out</option>
+              <option value="loading">Loading and Cancel</option>
+              <option value="stale">Older result ignored</option>
+              <option value="error">RadioReference unavailable</option>
+              <option value="expired">Premium expired</option>
+              <option value="mpt">Unsupported MPT system</option>
+            </select>
+            <button type="button" data-open-review>Review notes</button>
+          </div>
+        </section>
+
+        <section id="location-card" class="card">
+          <div class="card-head">
+            <div>
+              <div class="section-title"><h2>Location and results</h2><button class="help-button" type="button" data-help-title="Location and results" data-help="Country, State, and County determine which systems and agencies are available. Only the latest valid choices are remembered; downloaded result lists are temporary.">i</button></div>
+              <p>One browse list replaces the five desktop tabs.</p>
+            </div>
+            <span id="request-status" class="badge success">Ready</span>
+          </div>
+          <div class="card-body">
+            <div class="location-grid">
+              <div class="field">
+                <div class="field-label"><label for="country">Country</label><button class="help-button" type="button" data-help-title="Country" data-help="Chooses the country whose states and national agencies are available.">i</button></div>
+                <select id="country"><option>United States</option><option>Canada</option></select>
+              </div>
+              <div class="field">
+                <div class="field-label"><label for="state">State</label><button class="help-button" type="button" data-help-title="State" data-help="Chooses a state or similar region. This loads its counties, statewide agencies, and statewide trunked systems.">i</button></div>
+                <select id="state"><option>Ohio</option><option>Pennsylvania</option><option>Michigan</option></select>
+              </div>
+              <div class="field">
+                <div class="field-label"><label for="county">County</label><button class="help-button" type="button" data-help-title="County" data-help="Loads systems and agencies associated with this county, including county-wide conventional frequencies.">i</button></div>
+                <select id="county"><option>Example County</option><option>Neighbor County</option></select>
+              </div>
+              <div class="field">
+                <div class="field-label"><label for="group-filter">Group</label><button class="help-button" type="button" data-help-title="Group" data-help="Filters the combined list by where RadioReference supplied each result. It replaces the old County Systems, State Systems, County Agencies, State Agencies, and National Agencies tabs.">i</button></div>
+                <select id="group-filter">
+                  <option value="all">All results</option>
+                  <option value="county-system">County systems</option>
+                  <option value="state-system">State systems</option>
+                  <option value="county-agency">County agencies</option>
+                  <option value="state-agency">State agencies</option>
+                  <option value="national-agency">National agencies</option>
+                </select>
+              </div>
+              <div class="field search-field">
+                <div class="field-label"><label for="browse-search">Search results</label><button class="help-button" type="button" data-help-title="Search results" data-help="Searches the currently available systems and agencies by name. The server returns one small page at a time so large result sets remain responsive.">i</button></div>
+                <input id="browse-search" type="search" value="" placeholder="Search systems or agencies">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div id="main-content" aria-live="polite"></div>
+        <p class="field-hint" style="margin-top:14px">Catalog coverage: RR-001 through RR-022, plus XF-003, XF-005, XF-007, XF-008, XF-009, and XF-010.</p>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="app-dialog">
+    <div class="dialog-head">
+      <div><h2 id="dialog-title"></h2><p id="dialog-subtitle"></p></div>
+      <button class="close-button" type="button" aria-label="Close dialog" data-close-dialog>×</button>
+    </div>
+    <div id="dialog-body" class="dialog-body"></div>
+    <div id="dialog-footer" class="dialog-footer"></div>
+  </dialog>
+
+  <aside id="review-drawer" class="review-drawer" aria-label="RadioReference mockup review" hidden>
+    <div class="review-head">
+      <div><h2>RadioReference review</h2><p>Notes stay only in this browser unless exported.</p></div>
+      <button class="close-button" type="button" aria-label="Close review" data-close-review>×</button>
+    </div>
+    <div id="review-list" class="review-list"></div>
+    <div class="review-footer">
+      <span id="review-status">Saved in this browser</span>
+      <div class="review-actions">
+        <button type="button" data-export-review>Download notes</button>
+        <button class="primary-action" type="button" data-close-review>Done</button>
+      </div>
+    </div>
+  </aside>
+
+  <div id="help-popover" class="help-popover" role="tooltip" hidden><strong>Help</strong><span>More information about this setting.</span></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var browseResults = [
+        { id: "metro-p25", name: "Metro Regional Public Safety", kind: "system", type: "Trunked system", scope: "County", group: "county-system", detail: "P25 Phase II", supported: true },
+        { id: "state-p25", name: "Statewide Public Safety Network", kind: "system", type: "Trunked system", scope: "State", group: "state-system", detail: "P25 Phase I", supported: true },
+        { id: "legacy-mpt", name: "Legacy Transit Radio", kind: "system", type: "Trunked system", scope: "County", group: "county-system", detail: "MPT-1327", supported: false },
+        { id: "county-all", name: "Example County (All)", kind: "agency", type: "Conventional agency", scope: "County", group: "county-agency", detail: "County-wide frequencies", supported: true },
+        { id: "county-fire", name: "Example County Fire and EMS", kind: "agency", type: "Conventional agency", scope: "County", group: "county-agency", detail: "Public safety", supported: true },
+        { id: "state-interop", name: "State Interoperability", kind: "agency", type: "Conventional agency", scope: "State", group: "state-agency", detail: "Interoperability", supported: true },
+        { id: "national-weather", name: "National Weather Service", kind: "agency", type: "Conventional agency", scope: "National", group: "national-agency", detail: "Federal", supported: true }
+      ];
+
+      var sites = [
+        { id: "site-1", system: "001 / 0x001", rfss: "1 / 0x01", site: "12 / 0x0C", county: "Example County", name: "Downtown Simulcast" },
+        { id: "site-2", system: "001 / 0x001", rfss: "1 / 0x01", site: "18 / 0x12", county: "Neighbor County", name: "North Tower" },
+        { id: "site-3", system: "001 / 0x001", rfss: "2 / 0x02", site: "4 / 0x04", county: "Example County", name: "South Simulcast" }
+      ];
+
+      var frequencies = [
+        { id: "f1", type: "Control", lcn: 1, frequency: "853.78750 MHz", primary: true, alternate: false },
+        { id: "f2", type: "Alt Control", lcn: 2, frequency: "852.96250 MHz", primary: false, alternate: true },
+        { id: "f3", type: "Voice", lcn: 3, frequency: "851.62500 MHz", primary: false, alternate: false },
+        { id: "f4", type: "Voice", lcn: 4, frequency: "854.21250 MHz", primary: false, alternate: false }
+      ];
+
+      var talkgroups = [
+        { id: "101", number: "101", alpha: "DISPATCH 1", description: "County Dispatch", category: "Law Dispatch", mode: "Digital", encryption: "Unencrypted", alias: "County Dispatch" },
+        { id: "102", number: "102", alpha: "TAC 2", description: "County Tactical 2", category: "Law Tac", mode: "Digital", encryption: "Partially encrypted", alias: "" },
+        { id: "2201", number: "2201", alpha: "FIRE DISP", description: "Fire Dispatch", category: "Fire Dispatch", mode: "Digital", encryption: "Unencrypted", alias: "" },
+        { id: "2202", number: "2202", alpha: "FIRE TAC", description: "Fireground Tactical", category: "Fire Tac", mode: "Digital", encryption: "Fully encrypted", alias: "" },
+        { id: "3105", number: "3105", alpha: "EMS OPS", description: "EMS Operations", category: "EMS", mode: "Digital", encryption: "Unencrypted", alias: "EMS Operations" }
+      ];
+
+      var agencyFrequencies = [
+        { id: "a1", description: "County Fire Dispatch", alpha: "FIRE DISP", frequency: "154.19000 MHz", tone: "123.0 PL", mode: "FM", decoder: "NBFM", category: "Public Safety", subcategory: "Fire Dispatch", supported: true },
+        { id: "a2", description: "County EMS Dispatch", alpha: "EMS DISP", frequency: "155.34000 MHz", tone: "D023", mode: "FMN", decoder: "NBFM", category: "Public Safety", subcategory: "EMS", supported: true },
+        { id: "a3", description: "County Digital Operations", alpha: "DIG OPS", frequency: "453.61250 MHz", tone: "", mode: "P25", decoder: "P25 Conventional", category: "Public Safety", subcategory: "Interoperability", supported: true },
+        { id: "a4", description: "Legacy Analog Paging", alpha: "PAGING", frequency: "46.12000 MHz", tone: "67.0 PL", mode: "AM", decoder: "Unsupported after AM retirement", category: "Public Safety", subcategory: "Paging", supported: false }
+      ];
+
+      var HELP = {
+        protocol: "The trunking family and version reported by RadioReference. It determines which SDRTrunk decoder can be created.",
+        voice: "The type of traffic carried by the system. This can differ from the protocol used by its control channel.",
+        sites: "Sites are the individual transmitter locations or simulcast cells belonging to this trunked system. Selecting one loads only that site's frequencies.",
+        rfss: "RFSS means Radio Frequency Sub-System, part of a P25 site identifier. Decimal and hexadecimal values are shown together to match common radio references.",
+        lcn: "The logical channel number assigned to this frequency. SDRTrunk uses it when building DMR or NXDN channel mappings and per-frequency channel names.",
+        control: "Uses frequencies RadioReference marks as primary control channels.",
+        controlAlt: "Uses primary control channels plus frequencies marked as alternate control channels.",
+        selected: "Uses only the frequency rows checked in this table.",
+        all: "Uses every valid frequency RadioReference returned for this site.",
+        single: "Creates one channel that can rotate through all chosen frequencies.",
+        each: "Creates a separate channel for every chosen frequency. Each channel uses its LCN as the name.",
+        p25: "Selects the decoder used for this P25 Phase II system's control channel. RadioReference supplies the initial choice.",
+        aliasList: "Associates the imported channel or talkgroups with an existing alias list so names and rules can match during decoding.",
+        channelSystem: "The System name saved on the new channel. It starts with the RadioReference system name and follows the same validation as manual channel editing.",
+        channelSite: "The Site name saved on the new channel. It starts with the selected site's county or category.",
+        channelName: "The readable channel name. Single control-channel imports normally start with Control; per-frequency imports use each frequency's LCN.",
+        importPreview: "A temporary plan lists additions, updates, duplicates, conflicts, and warnings before anything is saved. If the saved configuration changes, the plan expires and must be reviewed again.",
+        talkgroupSearch: "Searches the talkgroup number, description, and any existing matching Alias without loading every talkgroup into the browser.",
+        category: "Limits the visible talkgroups or conventional frequencies to one RadioReference category. All matching results remain paged.",
+        importAll: "Creates aliases for every result matching the current search and category across all pages. Existing matching Aliases are shown as duplicates and skipped.",
+        alpha: "The short label supplied by RadioReference. It becomes the default channel or Alias name.",
+        tone: "The signaling tone reported for this frequency. The current importer displays it but does not apply it to the created channel.",
+        mode: "The transmission format reported by RadioReference. SDRTrunk uses it to choose a decoder.",
+        decoder: "The SDRTrunk decoder that will be placed on the new channel. It is chosen from the RadioReference mode.",
+        temporary: "Downloaded systems, agencies, sites, talkgroups, frequencies, previews, and task results remain only in bounded memory while needed. No permanent browse cache or import history is created."
+      };
+
+      var reviewSections = [
+        ["account", "Sign-in and account status", "Review the write-only credentials modal, premium status, expiration, and Sign out behavior."],
+        ["browse", "Unified browse list", "Review the Country, State, County, Group, search, paging, Type, and Scope layout."],
+        ["system", "System summary and sites", "Review protocol, flavor, voice, decimal/hex site IDs, site selection, and task switching."],
+        ["frequencies", "Frequency and channel choices", "Review Control, Control & Alternates, Selected, All, Single, per-frequency, P25, and channel fields."],
+        ["preview", "Channel import preview", "Review additions, updates, duplicates, conflicts, warnings, stale-plan protection, and remain-on-page behavior."],
+        ["talkgroups", "Talkgroup workflow", "Review Alias List, New Alias List, search, category, visible encryption information, detail, paging, and selected/all imports. Import does not create a separate live-listening gate."],
+        ["agency", "Agency frequency workflow", "Review category/subcategory filtering, source details, decoder selection, channel fields, and unsupported modes."],
+        ["states", "Loading and failure states", "Use Preview to inspect signed-out, loading/cancel, stale response, unavailable, expired, and unsupported MPT states."],
+        ["storage", "Performance and temporary data", "Confirm that requests are cancellable, stale results are ignored, and downloaded data is never stored as permanent history."]
+      ];
+
+      var state = {
+        scenario: "signed-in",
+        view: "browse",
+        systemTask: "sites",
+        selectedSite: "site-1",
+        frequencyMode: "control-alt",
+        configurationMode: "single",
+        p25Control: "tdma",
+        selectedFrequencies: new Set(["f1", "f2"]),
+        selectedTalkgroups: new Set(["102", "2202"]),
+        allMatchingTalkgroupsSelected: false,
+        selectedTalkgroup: "102",
+        selectedAgencyFrequency: "a1",
+        talkgroupSearch: "",
+        talkgroupCategory: "all",
+        browseSearch: "",
+        siteSearch: "",
+        group: "all",
+        aliasList: "Metro Aliases",
+        lastSuccess: ""
+      };
+
+      var REVIEW_KEY = "sdrtrunk-vce.mockup.settings-radioreference-v1.review";
+      var reviewData = loadReview();
+      var helpPinned = false;
+      var activeHelpButton = null;
+      var toastTimer = null;
+      var dialog = document.getElementById("app-dialog");
+      var dialogTitle = document.getElementById("dialog-title");
+      var dialogSubtitle = document.getElementById("dialog-subtitle");
+      var dialogBody = document.getElementById("dialog-body");
+      var dialogFooter = document.getElementById("dialog-footer");
+      var mainContent = document.getElementById("main-content");
+      var helpPopover = document.getElementById("help-popover");
+
+      function escapeHtml(value) {
+        return String(value == null ? "" : value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function helpButton(title, copy) {
+        return '<button class="help-button" type="button" aria-label="About ' + escapeHtml(title) + '" aria-expanded="false" data-help-title="' + escapeHtml(title) + '" data-help="' + escapeHtml(copy) + '">i</button>';
+      }
+
+      function fieldLabel(id, label, help) {
+        return '<div class="field-label"><label for="' + id + '">' + escapeHtml(label) + '</label>' + helpButton(label, help) + '</div>';
+      }
+
+      function aliasListOptions() {
+        var names = ["Metro Aliases", "County Public Safety"];
+        if (!names.includes(state.aliasList)) names.push(state.aliasList);
+        return names.map(function (name) {
+          return '<option' + (name === state.aliasList ? " selected" : "") + '>' + escapeHtml(name) + '</option>';
+        }).join("");
+      }
+
+      function renderAccount() {
+        var card = document.getElementById("account-card");
+        if (state.scenario === "signed-out") {
+          card.innerHTML = '<div class="account-copy"><strong>Not signed in</strong><span>A premium RadioReference account is required.</span></div><button class="primary-action" type="button" data-sign-in>Sign in</button>';
+        } else if (state.scenario === "expired") {
+          card.innerHTML = '<div class="account-copy"><strong>Premium access expired</strong><span>Example account · expired Jul 1, 2026</span></div><button type="button" data-sign-in>Update sign-in</button>';
+        } else if (state.scenario === "error") {
+          card.innerHTML = '<div class="account-copy"><strong>Account status unavailable</strong><span>The last request failed; credentials were not returned.</span></div><button type="button" data-retry>Retry</button>';
+        } else {
+          card.innerHTML = '<div class="account-copy"><strong><span class="badge success">Premium active</span> example-user</strong><span>Account expires Dec 31, 2026</span></div><button type="button" data-sign-out>Sign out</button>';
+        }
+      }
+
+      function locationEnabled() {
+        return state.scenario === "signed-in" && state.view === "browse";
+      }
+
+      function updateLocationControls() {
+        document.querySelectorAll("#location-card select, #location-card input").forEach(function (control) {
+          control.disabled = !locationEnabled();
+        });
+        var status = document.getElementById("request-status");
+        if (state.scenario === "loading") {
+          status.className = "badge warning";
+          status.textContent = "Loading";
+        } else if (state.scenario === "error") {
+          status.className = "badge danger";
+          status.textContent = "Unavailable";
+        } else if (state.scenario === "stale") {
+          status.className = "badge blue";
+          status.textContent = "Newer results kept";
+        } else if (state.scenario === "signed-out" || state.scenario === "expired") {
+          status.className = "badge warning";
+          status.textContent = "Sign-in required";
+        } else {
+          status.className = "badge success";
+          status.textContent = state.view === "browse" ? "Ready" : "Workspace open";
+        }
+      }
+
+      function render() {
+        renderAccount();
+        updateLocationControls();
+        if (state.scenario === "signed-out") {
+          renderSignedOut();
+        } else if (state.scenario === "loading") {
+          renderLoading();
+        } else if (state.scenario === "stale") {
+          renderStale();
+        } else if (state.scenario === "error") {
+          renderError();
+        } else if (state.scenario === "expired") {
+          renderExpired();
+        } else if (state.scenario === "mpt") {
+          renderUnsupported();
+        } else if (state.view === "system") {
+          renderSystem();
+        } else if (state.view === "agency") {
+          renderAgency();
+        } else {
+          renderBrowse();
+        }
+        wireDynamic();
+        wireHelpButtons(mainContent);
+        wireHelpButtons(document.getElementById("account-card"));
+      }
+
+      function renderSignedOut() {
+        mainContent.innerHTML = '<section class="card"><div class="empty-state"><h2>Sign in to browse RadioReference</h2><p>The browser never receives a saved RadioReference password. Enter or replace credentials in the sign-in dialog, then verify premium access before importing.</p><button class="primary-action" type="button" data-sign-in>Sign in</button></div></section>';
+      }
+
+      function renderLoading() {
+        mainContent.innerHTML = '<section class="card"><div class="empty-state"><div class="spinner" aria-hidden="true"></div><h2>Loading Example County results</h2><p>This request runs separately from tuner input, decoding, recording, streaming, and audio. Choosing another location cancels this result and any late response is ignored.</p><button type="button" data-cancel-load>Cancel request</button></div></section>';
+      }
+
+      function renderStale() {
+        mainContent.innerHTML = '<section class="card"><div class="card-body"><div class="notice success"><div><strong>Older results were ignored</strong><span>The State changed while the first request was running, so only the newest Pennsylvania results are shown. No old response replaced the current list.</span></div><button type="button" data-resume-browse>Continue</button></div></div></section>' + browseCardMarkup();
+      }
+
+      function renderError() {
+        mainContent.innerHTML = '<section class="card"><div class="empty-state"><h2>RadioReference is unavailable</h2><p>The request timed out or the provider returned an error. No saved channel, Alias, or location setting changed, and radio processing continues normally.</p><div class="actions" style="justify-content:center"><button type="button" data-resume-browse>Use previous location</button><button class="primary-action" type="button" data-retry>Retry</button></div></div></section>';
+      }
+
+      function renderExpired() {
+        mainContent.innerHTML = '<section class="card"><div class="empty-state"><h2>Premium subscription required</h2><p>The credentials are valid, but RadioReference reports that premium access has expired. Browse and import remain unavailable until the account is updated.</p><div class="actions" style="justify-content:center"><a class="button primary-action" href="https://www.radioreference.com/premium/" target="_blank" rel="noopener noreferrer">View RadioReference Premium</a><button type="button" data-sign-in>Update sign-in</button></div></div></section>';
+      }
+
+      function filteredBrowseResults() {
+        var search = state.browseSearch.trim().toLowerCase();
+        return browseResults.filter(function (item) {
+          var groupMatch = state.group === "all" || item.group === state.group;
+          var searchMatch = !search || item.name.toLowerCase().includes(search) || item.detail.toLowerCase().includes(search);
+          return groupMatch && searchMatch;
+        });
+      }
+
+      function browseCardMarkup() {
+        var rows = filteredBrowseResults();
+        var body = rows.map(function (item) {
+          var typeClass = item.kind === "system" ? "system-type" : "agency-type";
+          return '<tr><td><span class="primary">' + escapeHtml(item.name) + '</span><span class="secondary">' + escapeHtml(item.detail) + '</span></td><td><span class="badge ' + typeClass + '">' + escapeHtml(item.type) + '</span></td><td><span class="badge">' + escapeHtml(item.scope) + '</span></td><td>' + (item.supported ? '<span class="badge success">Supported</span>' : '<span class="badge danger">Cannot import</span>') + '</td><td><button type="button" data-open-result="' + escapeHtml(item.id) + '">' + (item.supported ? "Open" : "Review") + '</button></td></tr>';
+        }).join("");
+        if (!rows.length) body = '<tr><td colspan="5">No systems or agencies match the current Group and search.</td></tr>';
+        return '<section class="card"><div class="card-head"><div><div class="section-title"><h2>Systems and agencies</h2>' + helpButton("Temporary browse results", HELP.temporary) + '</div><p>Results are combined, tagged by type and scope, and returned one page at a time.</p></div><span class="result-count">' + rows.length + ' results · page 1 of 1</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Scope</th><th>Support</th><th></th></tr></thead><tbody>' + body + '</tbody></table></div><div class="pager"><button type="button" disabled>Previous</button><span>1–' + rows.length + ' of ' + rows.length + '</span><button type="button" disabled>Next</button></div></div></section>';
+      }
+
+      function renderBrowse() {
+        mainContent.innerHTML = browseCardMarkup();
+      }
+
+      function systemHeaderMarkup() {
+        return '<div class="workspace-head"><div><button class="back-button" type="button" data-back-browse>← Back to systems and agencies</button><div class="title-row"><h2>Metro Regional Public Safety</h2><span class="badge system-type">Trunked system</span><span class="badge success">Supported</span></div></div><div class="actions"><span class="badge blue">Current API result</span></div></div><dl class="summary-grid"><div class="summary-item"><dt>Protocol ' + helpButton("Protocol", HELP.protocol) + '</dt><dd>APCO-25</dd></div><div class="summary-item"><dt>Flavor</dt><dd>Phase II</dd></div><div class="summary-item"><dt>Voice ' + helpButton("Voice", HELP.voice) + '</dt><dd>Digital</dd></div><div class="summary-item"><dt>Scope</dt><dd>County</dd></div></dl><div class="task-switch" aria-label="System import task"><button type="button" data-system-task="sites" aria-pressed="' + (state.systemTask === "sites") + '">Sites, frequencies, and channels</button><button type="button" data-system-task="talkgroups" aria-pressed="' + (state.systemTask === "talkgroups") + '">Talkgroups and Aliases</button></div>';
+      }
+
+      function renderSystem() {
+        mainContent.innerHTML = '<section class="card"><div class="card-body">' + systemHeaderMarkup() + '</div></section>' + (state.systemTask === "talkgroups" ? talkgroupsMarkup() : sitesMarkup());
+      }
+
+      function sitesMarkup() {
+        var siteSearch = state.siteSearch.trim().toLowerCase();
+        var visibleSites = sites.filter(function (site) {
+          return !siteSearch || site.name.toLowerCase().includes(siteSearch);
+        });
+        var siteRows = visibleSites.map(function (site) {
+          return '<tr class="' + (site.id === state.selectedSite ? "selected" : "") + '"><td><button class="row-button" type="button" data-select-site="' + site.id + '">' + escapeHtml(site.system) + '</button></td><td>' + escapeHtml(site.rfss) + '</td><td>' + escapeHtml(site.site) + '</td><td>' + escapeHtml(site.county) + '</td><td><span class="primary">' + escapeHtml(site.name) + '</span></td></tr>';
+        }).join("");
+        if (!siteRows) siteRows = '<tr><td colspan="5">No site names match this search.</td></tr>';
+        siteRows = '<tr><td colspan="5"><div class="field" style="max-width:520px">' + fieldLabel("site-search", "Search site names", "Filters this system\'s sites by the Name column. It does not search or change frequencies.") + '<div class="row"><input id="site-search" style="flex:1 1 240px" type="search" value="' + escapeHtml(state.siteSearch) + '" placeholder="Search by site name"><button type="button" data-apply-site-search>Search</button></div></div></td></tr>' + siteRows;
+        var frequencyRows = frequencies.map(function (frequency) {
+          var selected = state.selectedFrequencies.has(frequency.id);
+          return '<tr><td><input class="table-check" type="checkbox" aria-label="Select ' + escapeHtml(frequency.frequency) + '" data-frequency-id="' + frequency.id + '"' + (selected ? " checked" : "") + '></td><td><span class="badge' + (frequency.primary ? " success" : frequency.alternate ? " warning" : "") + '">' + escapeHtml(frequency.type) + '</span></td><td>' + frequency.lcn + '</td><td>' + escapeHtml(frequency.frequency) + '</td></tr>';
+        }).join("");
+        var success = state.lastSuccess === "channel" ? '<div class="notice success"><div><strong>Channel configuration created</strong><span>The example import completed and this page remained open. No import-history record was created.</span></div></div>' : "";
+        return '<section class="card"><div class="card-head"><div><div class="section-title"><h2>Sites and frequencies</h2>' + helpButton("Sites and frequencies", HELP.sites) + '</div><p>Select one site, choose its usable frequencies, then review the proposed channel configuration.</p></div></div><div class="card-body"><div class="site-stack"><div class="subcard"><div class="subcard-head"><h3>1. Choose a site</h3><p>System, RFSS, and Site show decimal and hexadecimal values together.</p></div><div class="table-wrap" style="border:0;border-radius:0"><table><thead><tr><th>System</th><th>RFSS ' + helpButton("RFSS", HELP.rfss) + '</th><th>Site</th><th>County</th><th>Name</th></tr></thead><tbody>' + siteRows + '</tbody></table></div></div><div class="split"><div class="subcard"><div class="subcard-head"><h3>2. Choose frequencies</h3><p>Checked rows are used only when Selected is chosen.</p></div><div class="subcard-body"><div class="segmented" aria-label="Frequency set"><button type="button" data-frequency-mode="control" aria-pressed="' + (state.frequencyMode === "control") + '">Control</button><button type="button" data-frequency-mode="control-alt" aria-pressed="' + (state.frequencyMode === "control-alt") + '">Control &amp; Alternates</button><button type="button" data-frequency-mode="selected" aria-pressed="' + (state.frequencyMode === "selected") + '">Selected</button><button type="button" data-frequency-mode="all" aria-pressed="' + (state.frequencyMode === "all") + '">All</button></div></div><div class="table-wrap" style="border-inline:0;border-bottom:0;border-radius:0"><table style="min-width:520px"><thead><tr><th></th><th>Type</th><th>LCN ' + helpButton("LCN", HELP.lcn) + '</th><th>Frequency</th></tr></thead><tbody>' + frequencyRows + '</tbody></table></div></div><div class="subcard"><div class="subcard-head"><h3>3. Configure channel creation</h3><p>These choices are staged until Review import.</p></div><div class="subcard-body"><div class="form-grid"><div class="field full">' + fieldLabel("configuration-mode", "Configurations", "Choose whether to create one rotating channel or a separate channel for every chosen frequency.") + '<div id="configuration-mode" class="segmented"><button type="button" data-configuration-mode="single" aria-pressed="' + (state.configurationMode === "single") + '">Single</button><button type="button" data-configuration-mode="each" aria-pressed="' + (state.configurationMode === "each") + '">For Each Frequency</button></div></div><div class="field full">' + fieldLabel("p25-control", "P25 control decoder", HELP.p25) + '<div id="p25-control" class="segmented"><button type="button" data-p25-control="fdma" aria-pressed="' + (state.p25Control === "fdma") + '">FDMA Phase 1</button><button type="button" data-p25-control="tdma" aria-pressed="' + (state.p25Control === "tdma") + '">TDMA Phase 2</button></div></div><div class="field">' + fieldLabel("channel-system", "System", HELP.channelSystem) + '<input id="channel-system" type="text" value="" placeholder="Metro Regional Public Safety"></div><div class="field">' + fieldLabel("channel-site", "Site", HELP.channelSite) + '<input id="channel-site" type="text" value="" placeholder="Example County"></div><div class="field">' + fieldLabel("channel-name", "Name", HELP.channelName) + '<input id="channel-name" type="text" value="" placeholder="' + (state.configurationMode === "each" ? "Generated from each LCN" : "Control") + '"' + (state.configurationMode === "each" ? " disabled" : "") + '></div><div class="field">' + fieldLabel("channel-alias-list", "Alias List", HELP.aliasList) + '<div class="row"><select id="channel-alias-list" style="flex:1 1 180px">' + aliasListOptions() + '</select><button type="button" data-new-alias-list>New</button></div></div><div class="field full"><button class="primary-action" type="button" data-review-channel>Review channel import</button></div></div></div></div></div>' + success + '</div></section>';
+      }
+
+      function visibleTalkgroups() {
+        var search = state.talkgroupSearch.toLowerCase();
+        return talkgroups.filter(function (talkgroup) {
+          var categoryMatch = state.talkgroupCategory === "all" || talkgroup.category === state.talkgroupCategory;
+          var text = [talkgroup.number, talkgroup.description, talkgroup.alias].join(" ").toLowerCase();
+          return categoryMatch && (!search || text.includes(search));
+        });
+      }
+
+      function matchingTalkgroupCount() {
+        if (!state.talkgroupSearch && state.talkgroupCategory === "all") return 8;
+        return visibleTalkgroups().length;
+      }
+
+      function talkgroupsMarkup() {
+        var visible = visibleTalkgroups();
+        var rows = visible.map(function (talkgroup) {
+          var checked = state.allMatchingTalkgroupsSelected || state.selectedTalkgroups.has(talkgroup.id);
+          return '<tr class="' + (talkgroup.id === state.selectedTalkgroup ? "selected" : "") + '"><td><input class="table-check" type="checkbox" aria-label="Select talkgroup ' + talkgroup.number + '" data-talkgroup-id="' + talkgroup.id + '"' + (checked ? " checked" : "") + '></td><td><button class="row-button" type="button" data-open-talkgroup="' + talkgroup.id + '"><span class="primary">' + escapeHtml(talkgroup.number) + '</span><span class="secondary">' + escapeHtml(talkgroup.alpha) + '</span></button></td><td>' + escapeHtml(talkgroup.description) + '<span class="secondary">' + escapeHtml(talkgroup.category) + '</span></td><td>' + (talkgroup.alias ? '<span class="badge success">' + escapeHtml(talkgroup.alias) + '</span>' : '<span class="badge">No match</span>') + '</td></tr>';
+        }).join("");
+        var matchingCount = matchingTalkgroupCount();
+        var bulkSelectionRow = '<tr><td colspan="4"><div class="table-tools" style="margin:0"><label class="switch-field" style="flex:1 1 320px"><input id="select-all-talkgroups" type="checkbox"' + (state.allMatchingTalkgroupsSelected ? " checked" : "") + '><span><strong>Select all ' + matchingCount + ' matching talkgroups across all pages</strong><span>This selection follows the current Search and Category filters.</span></span></label><div class="actions"><button type="button" data-clear-talkgroup-selection>Clear selection</button><button class="primary-action" type="button" data-import-all>Import all matching Aliases</button>' + helpButton("Import all matching Aliases", HELP.importAll) + '</div></div></td></tr>';
+        rows = bulkSelectionRow + rows;
+        var selected = talkgroups.find(function (item) { return item.id === state.selectedTalkgroup; }) || visible[0];
+        var detail = selected ? talkgroupDetailMarkup(selected) : '<div class="empty-state"><p>Select a talkgroup to inspect it.</p></div>';
+        var success = state.lastSuccess === "talkgroups" ? '<div class="notice success" style="margin-top:12px"><div><strong>Alias import completed</strong><span>The temporary plan was committed once. Existing matching Aliases were skipped and no import history was saved.</span></div></div>' : "";
+        var categories = ["all", "Law Dispatch", "Law Tac", "Fire Dispatch", "Fire Tac", "EMS"].map(function (category) {
+          var label = category === "all" ? "All categories" : category;
+          return '<option value="' + escapeHtml(category) + '"' + (state.talkgroupCategory === category ? " selected" : "") + '>' + escapeHtml(label) + '</option>';
+        }).join("");
+        return '<section class="card"><div class="card-head"><div><div class="section-title"><h2>Talkgroups and Aliases</h2>' + helpButton("Talkgroup import", "Choose an Alias List before importing. Results are searched and paged on the server, and each import is reviewed before saving.") + '</div><p>Import selected rows or all currently matching search and category results.</p></div><span class="result-count">' + visible.length + ' matching · page 1 of 2</span></div><div class="card-body"><div class="form-grid" style="margin-bottom:12px"><div class="field">' + fieldLabel("talkgroup-alias-list", "Alias List", HELP.aliasList) + '<div class="row"><select id="talkgroup-alias-list" style="flex:1 1 180px">' + aliasListOptions() + '</select><button type="button" data-new-alias-list>New</button></div></div><div class="field">' + fieldLabel("talkgroup-category", "Category", HELP.category) + '<select id="talkgroup-category">' + categories + '</select></div><div class="field">' + fieldLabel("talkgroup-search", "Search", HELP.talkgroupSearch) + '<div class="row"><input id="talkgroup-search" style="flex:1 1 220px" type="search" value="' + escapeHtml(state.talkgroupSearch) + '" placeholder="Talkgroup, description, or existing Alias"><button type="button" data-apply-talkgroup-search>Search</button></div></div></div><div class="split"><div><div class="table-wrap"><table><thead><tr><th></th><th>Talkgroup</th><th>Description</th><th>Existing Alias</th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="pager"><button type="button" disabled>Previous</button><span>1–' + visible.length + ' of 8</span><button type="button">Next</button></div><div class="actions" style="margin-top:10px"><button type="button" data-import-selected>Review selected (' + state.selectedTalkgroups.size + ')</button><button class="primary-action" type="button" data-import-all>Review all matching</button>' + helpButton("Import all matching results", HELP.importAll) + '</div></div><div class="subcard"><div class="subcard-head"><h3>Talkgroup detail</h3><p>Inspect the source record and proposed Alias without leaving this page.</p></div><div class="subcard-body">' + detail + '</div></div></div>' + success + '</div></section>';
+      }
+
+      function talkgroupDetailMarkup(talkgroup) {
+        var encryptionClass = talkgroup.encryption === "Fully encrypted" ? "danger" : talkgroup.encryption === "Partially encrypted" ? "warning" : "success";
+        var existingAction = talkgroup.alias ? '<button type="button" data-open-alias>Open existing Alias</button>' : '<button class="primary-action" type="button" data-create-single-alias>Review this Alias</button>';
+        return '<dl class="detail-grid"><div><dt>Talkgroup</dt><dd>' + escapeHtml(talkgroup.number) + '</dd></div><div><dt>Alpha Tag ' + helpButton("Alpha Tag", HELP.alpha) + '</dt><dd>' + escapeHtml(talkgroup.alpha) + '</dd></div><div><dt>Mode</dt><dd>' + escapeHtml(talkgroup.mode) + '</dd></div><div><dt>Encryption</dt><dd><span class="badge ' + encryptionClass + '">' + escapeHtml(talkgroup.encryption) + '</span></dd></div><div style="grid-column:1/-1"><dt>Description</dt><dd>' + escapeHtml(talkgroup.description) + '</dd></div></dl><div class="form-grid" style="margin-top:11px"><div class="field">' + fieldLabel("alias-name", "Alias name", "The new Alias name starts with the RadioReference Alpha Tag. Leave the input blank to keep that suggested value.") + '<input id="alias-name" type="text" value="" placeholder="' + escapeHtml(talkgroup.alpha) + '"' + (talkgroup.alias ? " disabled" : "") + '></div><div class="field">' + fieldLabel("alias-group", "Group", "The new Alias group starts with the RadioReference talkgroup category and can be changed before import.") + '<input id="alias-group" type="text" value="" placeholder="' + escapeHtml(talkgroup.category) + '"' + (talkgroup.alias ? " disabled" : "") + '></div><div class="field full">' + existingAction + '</div></div>';
+      }
+
+      function agencyHeaderMarkup() {
+        return '<div class="workspace-head"><div><button class="back-button" type="button" data-back-browse>← Back to systems and agencies</button><div class="title-row"><h2>Example County Fire and EMS</h2><span class="badge agency-type">Conventional agency</span></div></div><span class="badge">County scope</span></div>';
+      }
+
+      function renderAgency() {
+        var rows = agencyFrequencies.map(function (frequency) {
+          return '<tr class="' + (frequency.id === state.selectedAgencyFrequency ? "selected" : "") + '"><td><button class="row-button" type="button" data-agency-frequency="' + frequency.id + '"><span class="primary">' + escapeHtml(frequency.description) + '</span><span class="secondary">' + escapeHtml(frequency.alpha) + '</span></button></td><td>' + escapeHtml(frequency.frequency) + '</td><td><span class="badge' + (frequency.supported ? " success" : " danger") + '">' + escapeHtml(frequency.mode) + '</span></td></tr>';
+        }).join("");
+        var selected = agencyFrequencies.find(function (item) { return item.id === state.selectedAgencyFrequency; }) || agencyFrequencies[0];
+        var success = state.lastSuccess === "agency" ? '<div class="notice success" style="margin-top:12px"><div><strong>Conventional channel created</strong><span>The current channel was saved and the importer remained open. No import-history record was created.</span></div></div>' : "";
+        mainContent.innerHTML = '<section class="card"><div class="card-body">' + agencyHeaderMarkup() + '</div></section><section class="card"><div class="card-head"><div><div class="section-title"><h2>Conventional frequencies</h2>' + helpButton("Conventional frequencies", "Choose an agency category and sub-category, then select one frequency to review its source details and proposed SDRTrunk channel.") + '</div><p>The County (All) result combines county-wide frequency categories that were separate in the desktop importer.</p></div></div><div class="card-body"><div class="form-grid" style="margin-bottom:12px"><div class="field">' + fieldLabel("agency-category", "Category", HELP.category) + '<select id="agency-category"><option>All categories</option><option>Public Safety</option><option>Public Works</option></select></div><div class="field">' + fieldLabel("agency-subcategory", "Sub-Category", "Narrows the selected agency category. Choosing All combines its sub-categories for this temporary result list.") + '<select id="agency-subcategory"><option>All sub-categories</option><option>Fire Dispatch</option><option>EMS</option><option>Interoperability</option><option>Paging</option></select></div></div><div class="split"><div class="table-wrap"><table style="min-width:560px"><thead><tr><th>Description</th><th>Frequency</th><th>Mode</th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="subcard"><div class="subcard-head"><h3>Frequency and proposed channel</h3><p>Source values are read-only; channel names can be adjusted before review.</p></div><div class="subcard-body">' + agencyDetailMarkup(selected) + '</div></div></div>' + success + '</div></section>';
+      }
+
+      function agencyDetailMarkup(frequency) {
+        var warning = frequency.supported ? "" : '<div class="notice warning" style="margin-bottom:10px"><div><strong>This mode is not supported</strong><span>AM is retired and this frequency cannot create a channel. The source record remains visible for reference.</span></div></div>';
+        return warning + '<dl class="detail-grid"><div><dt>Alpha Tag ' + helpButton("Alpha Tag", HELP.alpha) + '</dt><dd>' + escapeHtml(frequency.alpha) + '</dd></div><div><dt>Tone ' + helpButton("Tone", HELP.tone) + '</dt><dd>' + escapeHtml(frequency.tone || "None") + '</dd></div><div><dt>Mode ' + helpButton("Mode", HELP.mode) + '</dt><dd>' + escapeHtml(frequency.mode) + '</dd></div><div><dt>Frequency</dt><dd>' + escapeHtml(frequency.frequency) + '</dd></div></dl><div class="form-grid" style="margin-top:11px"><div class="field">' + fieldLabel("agency-system", "System", HELP.channelSystem) + '<input id="agency-system" type="text" value="" placeholder="' + escapeHtml(frequency.category) + '"' + (frequency.supported ? "" : " disabled") + '></div><div class="field">' + fieldLabel("agency-site", "Site", HELP.channelSite) + '<input id="agency-site" type="text" value="" placeholder="' + escapeHtml(frequency.subcategory) + '"' + (frequency.supported ? "" : " disabled") + '></div><div class="field">' + fieldLabel("agency-name", "Name", HELP.alpha) + '<input id="agency-name" type="text" value="" placeholder="' + escapeHtml(frequency.alpha) + '"' + (frequency.supported ? "" : " disabled") + '></div><div class="field">' + fieldLabel("agency-decoder", "Decoder", HELP.decoder) + '<div id="agency-decoder" class="readout">' + escapeHtml(frequency.decoder) + '</div></div><div class="field full"><button class="primary-action" type="button" data-review-agency' + (frequency.supported ? "" : " disabled") + '>Review channel import</button></div></div>';
+      }
+
+      function renderUnsupported() {
+        mainContent.innerHTML = '<section class="card"><div class="card-body"><div class="workspace-head"><div><button class="back-button" type="button" data-resume-browse>← Back to systems and agencies</button><div class="title-row"><h2>Legacy Transit Radio</h2><span class="badge danger">Unsupported</span></div></div></div><dl class="summary-grid"><div class="summary-item"><dt>Protocol</dt><dd>MPT-1327</dd></div><div class="summary-item"><dt>Import</dt><dd>Unavailable</dd></div><div class="summary-item"><dt>Browse data</dt><dd>Temporary</dd></div><div class="summary-item"><dt>Saved changes</dt><dd>None</dd></div></dl><div class="notice warning" style="margin-top:12px"><div><strong>MPT-1327 has been retired</strong><span>This system remains visible for reference, but importing it is unavailable. Choose another supported system or return to the browse list.</span></div><button type="button" data-resume-browse>Return</button></div></div></section>';
+      }
+
+      function wireDynamic() {
+        document.querySelectorAll("[data-sign-in]").forEach(function (button) { button.addEventListener("click", showSignInDialog); });
+        document.querySelectorAll("[data-sign-out]").forEach(function (button) { button.addEventListener("click", function () { state.scenario = "signed-out"; state.view = "browse"; document.getElementById("scenario").value = "signed-out"; render(); showToast("Signed out in this mockup."); }); });
+        document.querySelectorAll("[data-retry]").forEach(function (button) { button.addEventListener("click", retryRequest); });
+        document.querySelectorAll("[data-cancel-load]").forEach(function (button) { button.addEventListener("click", function () { state.scenario = "signed-in"; document.getElementById("scenario").value = "signed-in"; render(); showToast("Request cancelled; late results would be ignored."); }); });
+        document.querySelectorAll("[data-resume-browse]").forEach(function (button) { button.addEventListener("click", function () { state.scenario = "signed-in"; state.view = "browse"; document.getElementById("scenario").value = "signed-in"; render(); }); });
+        document.querySelectorAll("[data-open-result]").forEach(function (button) { button.addEventListener("click", function () { openResult(button.dataset.openResult); }); });
+        document.querySelectorAll("[data-back-browse]").forEach(function (button) { button.addEventListener("click", function () { state.view = "browse"; state.lastSuccess = ""; render(); }); });
+        document.querySelectorAll("[data-system-task]").forEach(function (button) { button.addEventListener("click", function () { state.systemTask = button.dataset.systemTask; render(); }); });
+        document.querySelectorAll("[data-select-site]").forEach(function (button) { button.addEventListener("click", function () { state.selectedSite = button.dataset.selectSite; state.lastSuccess = ""; render(); }); });
+        document.querySelectorAll("[data-frequency-mode]").forEach(function (button) { button.addEventListener("click", function () { applyFrequencyMode(button.dataset.frequencyMode); render(); }); });
+        document.querySelectorAll("[data-configuration-mode]").forEach(function (button) { button.addEventListener("click", function () { state.configurationMode = button.dataset.configurationMode; render(); }); });
+        document.querySelectorAll("[data-p25-control]").forEach(function (button) { button.addEventListener("click", function () { state.p25Control = button.dataset.p25Control; render(); }); });
+        document.querySelectorAll("[data-frequency-id]").forEach(function (input) { input.addEventListener("change", function () { toggleSet(state.selectedFrequencies, input.dataset.frequencyId, input.checked); state.frequencyMode = "selected"; render(); }); });
+        document.querySelectorAll("[data-review-channel]").forEach(function (button) { button.addEventListener("click", showChannelPreview); });
+        document.querySelectorAll("[data-new-alias-list]").forEach(function (button) { button.addEventListener("click", showNewAliasListDialog); });
+        document.querySelectorAll("[data-talkgroup-id]").forEach(function (input) { input.addEventListener("change", function () {
+          if (state.allMatchingTalkgroupsSelected) state.selectedTalkgroups = new Set(visibleTalkgroups().map(function (item) { return item.id; }));
+          state.allMatchingTalkgroupsSelected = false;
+          toggleSet(state.selectedTalkgroups, input.dataset.talkgroupId, input.checked);
+          render();
+        }); });
+        document.querySelectorAll("[data-open-talkgroup]").forEach(function (button) { button.addEventListener("click", function () { state.selectedTalkgroup = button.dataset.openTalkgroup; render(); }); });
+        document.querySelectorAll("[data-import-selected]").forEach(function (button) { button.addEventListener("click", function () { showTalkgroupPreview(state.allMatchingTalkgroupsSelected ? "all" : "selected"); }); });
+        document.querySelectorAll("[data-import-all]").forEach(function (button) {
+          button.textContent = "Import all matching Aliases";
+          button.addEventListener("click", function () { showTalkgroupPreview("all"); });
+        });
+        document.querySelectorAll("[data-clear-talkgroup-selection]").forEach(function (button) { button.addEventListener("click", function () { state.allMatchingTalkgroupsSelected = false; state.selectedTalkgroups.clear(); render(); }); });
+        document.querySelectorAll("[data-create-single-alias]").forEach(function (button) { button.addEventListener("click", function () { showTalkgroupPreview("single"); }); });
+        document.querySelectorAll("[data-open-alias]").forEach(function (button) { button.addEventListener("click", function () { showToast("Aliases would open filtered to this existing Alias."); }); });
+        document.querySelectorAll("[data-agency-frequency]").forEach(function (button) { button.addEventListener("click", function () { state.selectedAgencyFrequency = button.dataset.agencyFrequency; state.lastSuccess = ""; render(); }); });
+        document.querySelectorAll("[data-review-agency]").forEach(function (button) { button.addEventListener("click", showAgencyPreview); });
+        var channelAliasList = document.getElementById("channel-alias-list");
+        if (channelAliasList) channelAliasList.addEventListener("change", function () { state.aliasList = channelAliasList.value; });
+        var talkgroupAliasList = document.getElementById("talkgroup-alias-list");
+        if (talkgroupAliasList) talkgroupAliasList.addEventListener("change", function () { state.aliasList = talkgroupAliasList.value; });
+        var search = document.getElementById("talkgroup-search");
+        if (search) {
+          search.addEventListener("keydown", function (event) { if (event.key === "Enter") { event.preventDefault(); state.talkgroupSearch = search.value; resetTalkgroupSelection(); render(); } });
+        }
+        var applyTalkgroupSearch = document.querySelector("[data-apply-talkgroup-search]");
+        if (applyTalkgroupSearch) applyTalkgroupSearch.addEventListener("click", function () { state.talkgroupSearch = search ? search.value : ""; resetTalkgroupSelection(); render(); });
+        var category = document.getElementById("talkgroup-category");
+        if (category) category.addEventListener("change", function () { state.talkgroupCategory = category.value; resetTalkgroupSelection(); render(); });
+        var selectAllTalkgroups = document.getElementById("select-all-talkgroups");
+        if (selectAllTalkgroups) selectAllTalkgroups.addEventListener("change", function () {
+          state.allMatchingTalkgroupsSelected = selectAllTalkgroups.checked;
+          state.selectedTalkgroups = selectAllTalkgroups.checked ? new Set(visibleTalkgroups().map(function (item) { return item.id; })) : new Set();
+          render();
+        });
+        var siteSearch = document.getElementById("site-search");
+        if (siteSearch) {
+          siteSearch.addEventListener("keydown", function (event) { if (event.key === "Enter") { event.preventDefault(); state.siteSearch = siteSearch.value; render(); } });
+        }
+        var applySiteSearch = document.querySelector("[data-apply-site-search]");
+        if (applySiteSearch) applySiteSearch.addEventListener("click", function () { state.siteSearch = siteSearch ? siteSearch.value : ""; render(); });
+        if (state.view === "system" && state.systemTask === "talkgroups") {
+          var resultCount = mainContent.querySelector(".card:last-child .result-count");
+          if (resultCount) resultCount.textContent = matchingTalkgroupCount() + " matching · page 1 of 2";
+          var selectedButton = mainContent.querySelector("[data-import-selected]");
+          if (selectedButton) selectedButton.textContent = "Review selected (" + (state.allMatchingTalkgroupsSelected ? matchingTalkgroupCount() : state.selectedTalkgroups.size) + ")";
+        }
+      }
+
+      function toggleSet(set, value, checked) {
+        if (checked) set.add(value);
+        else set.delete(value);
+      }
+
+      function applyFrequencyMode(mode) {
+        state.frequencyMode = mode;
+        if (mode === "control") {
+          state.selectedFrequencies = new Set(frequencies.filter(function (item) { return item.primary; }).map(function (item) { return item.id; }));
+        } else if (mode === "control-alt") {
+          state.selectedFrequencies = new Set(frequencies.filter(function (item) { return item.primary || item.alternate; }).map(function (item) { return item.id; }));
+        } else if (mode === "all") {
+          state.selectedFrequencies = new Set(frequencies.map(function (item) { return item.id; }));
+        }
+      }
+
+      function resetTalkgroupSelection() {
+        state.allMatchingTalkgroupsSelected = false;
+        state.selectedTalkgroups.clear();
+      }
+
+      function openResult(id) {
+        var result = browseResults.find(function (item) { return item.id === id; });
+        if (!result) return;
+        state.lastSuccess = "";
+        if (!result.supported) {
+          state.scenario = "mpt";
+          document.getElementById("scenario").value = "mpt";
+        } else {
+          state.view = result.kind;
+          state.scenario = "signed-in";
+          document.getElementById("scenario").value = "signed-in";
+        }
+        render();
+      }
+
+      function retryRequest() {
+        state.scenario = "loading";
+        document.getElementById("scenario").value = "loading";
+        render();
+        window.setTimeout(function () {
+          if (state.scenario === "loading") {
+            state.scenario = "signed-in";
+            document.getElementById("scenario").value = "signed-in";
+            render();
+            showToast("Latest RadioReference results loaded.");
+          }
+        }, 900);
+      }
+
+      function showSignInDialog() {
+        openDialog({
+          title: "Sign in to RadioReference",
+          subtitle: "A premium account is required for browse and import.",
+          body: '<div class="form-grid"><div class="field full">' + fieldLabel("rr-username", "User name", "The RadioReference account name used only to test and establish the current importer session.") + '<input id="rr-username" type="text" autocomplete="username" value="" placeholder="Enter RadioReference user name"></div><div class="field full">' + fieldLabel("rr-password", "Password", "The password authenticates this RadioReference session. A saved password is never returned to or displayed in the browser.") + '<div class="row"><input id="rr-password" style="flex:1 1 220px" type="password" autocomplete="current-password" value="" placeholder="Enter password"><button type="button" data-show-password aria-pressed="false">Show</button></div></div><div class="field full"><div class="field-label"><span>Credential storage</span>' + helpButton("Store login credentials", "Stores only the current RadioReference sign-in through the protected secret setting so SDRTrunk can sign in after launch. It does not keep old credentials or login-attempt history.") + '</div><label class="switch-field"><input id="rr-store" type="checkbox"><span><strong>Store login credentials</strong><span>Leave off to use them for this session only.</span></span></label></div><div id="sign-in-result" class="field full" hidden></div></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Test connection", action: testSignIn },
+            { label: "Sign in", className: "primary-action", action: completeSignIn }
+          ]
+        });
+        var show = dialog.querySelector("[data-show-password]");
+        show.addEventListener("click", function () {
+          var password = document.getElementById("rr-password");
+          var visible = password.type === "text";
+          password.type = visible ? "password" : "text";
+          show.textContent = visible ? "Show" : "Hide";
+          show.setAttribute("aria-pressed", visible ? "false" : "true");
+        });
+      }
+
+      function credentialsPresent() {
+        var user = document.getElementById("rr-username");
+        var password = document.getElementById("rr-password");
+        if (!user.value.trim()) { user.setCustomValidity("Enter a user name."); user.reportValidity(); user.setCustomValidity(""); return false; }
+        if (!password.value) { password.setCustomValidity("Enter a password."); password.reportValidity(); password.setCustomValidity(""); return false; }
+        return true;
+      }
+
+      function testSignIn() {
+        if (!credentialsPresent()) return;
+        var result = document.getElementById("sign-in-result");
+        result.hidden = false;
+        result.innerHTML = '<div class="notice"><div><strong>Testing connection</strong><span>This cancellable check runs separately from radio processing.</span></div></div>';
+        window.setTimeout(function () {
+          if (dialog.open) result.innerHTML = '<div class="notice success"><div><strong>Premium access confirmed</strong><span>Account status is current-only and the password was not returned.</span></div></div>';
+        }, 650);
+      }
+
+      function completeSignIn() {
+        if (!credentialsPresent()) return;
+        state.scenario = "signed-in";
+        state.view = "browse";
+        document.getElementById("scenario").value = "signed-in";
+        closeDialog();
+        render();
+        showToast("Signed in for this mockup.");
+      }
+
+      function selectedFrequencyCount() {
+        if (state.frequencyMode === "control") return frequencies.filter(function (item) { return item.primary; }).length;
+        if (state.frequencyMode === "control-alt") return frequencies.filter(function (item) { return item.primary || item.alternate; }).length;
+        if (state.frequencyMode === "selected") return state.selectedFrequencies.size;
+        return frequencies.length;
+      }
+
+      function showChannelPreview() {
+        var count = selectedFrequencyCount();
+        if (!count) {
+          showToast("Select at least one usable frequency.");
+          return;
+        }
+        var additions = state.configurationMode === "each" ? count : 1;
+        openImportPreview({
+          title: "Review channel import",
+          subtitle: "Nothing is saved until Create channel configuration is confirmed.",
+          target: "Channels / Metro Regional Public Safety",
+          additions: additions,
+          updates: 0,
+          duplicates: 0,
+          conflicts: 0,
+          warnings: state.p25Control === "tdma" ? 0 : 1,
+          warningCopy: state.p25Control === "tdma" ? "No warnings." : "FDMA Phase 1 differs from the RadioReference-supplied TDMA control-channel choice.",
+          confirmLabel: additions === 1 ? "Create channel configuration" : "Create " + additions + " channel configurations",
+          onConfirm: function () { state.lastSuccess = "channel"; closeDialog(); render(); }
+        });
+      }
+
+      function showTalkgroupPreview(mode) {
+        var candidates;
+        if (mode === "single") {
+          candidates = talkgroups.filter(function (item) { return item.id === state.selectedTalkgroup; });
+        } else if (mode === "selected") {
+          candidates = talkgroups.filter(function (item) { return state.selectedTalkgroups.has(item.id); });
+        } else {
+          candidates = visibleTalkgroups();
+        }
+        if (!candidates.length) {
+          showToast("Select at least one talkgroup.");
+          return;
+        }
+        var candidateCount = mode === "all" ? matchingTalkgroupCount() : candidates.length;
+        var duplicates = candidates.filter(function (item) { return item.alias; }).length;
+        var additions = candidateCount - duplicates;
+        openImportPreview({
+          title: "Review Talkgroup Alias import",
+          subtitle: mode === "all" ? "Every matching unaliased result on all pages is included." : "Only the chosen talkgroups are included.",
+          target: "Alias List / " + state.aliasList,
+          additions: additions,
+          updates: 0,
+          duplicates: duplicates,
+          conflicts: 0,
+          warnings: 0,
+          warningCopy: "Encryption status remains visible source information. Import does not change live eligibility or playback priority.",
+          confirmLabel: additions ? "Create " + additions + (additions === 1 ? " Alias" : " Aliases") : "Close preview",
+          onConfirm: function () { state.lastSuccess = "talkgroups"; closeDialog(); render(); }
+        });
+      }
+
+      function showAgencyPreview() {
+        var frequency = agencyFrequencies.find(function (item) { return item.id === state.selectedAgencyFrequency; });
+        if (!frequency || !frequency.supported) return;
+        openImportPreview({
+          title: "Review conventional channel import",
+          subtitle: "The proposed channel uses the decoder selected from the RadioReference mode.",
+          target: "Channels / " + frequency.category + " / " + frequency.subcategory,
+          additions: 1,
+          updates: 0,
+          duplicates: 0,
+          conflicts: 0,
+          warnings: frequency.tone ? 1 : 0,
+          warningCopy: frequency.tone ? "RadioReference reports tone " + frequency.tone + ". The current importer displays this tone but does not apply it to the new channel." : "No warnings.",
+          confirmLabel: "Create conventional channel",
+          onConfirm: function () { state.lastSuccess = "agency"; closeDialog(); render(); }
+        });
+      }
+
+      function openImportPreview(config) {
+        openDialog({
+          title: config.title,
+          subtitle: config.subtitle,
+          body: '<div class="section-title" style="margin-bottom:9px"><h3>Temporary import plan</h3>' + helpButton("Temporary import plan", HELP.importPreview) + '</div><dl class="impact-grid"><div><dt>Target</dt><dd>' + escapeHtml(config.target) + '</dd></div><div><dt>Additions</dt><dd>' + config.additions + '</dd></div><div><dt>Updates</dt><dd>' + config.updates + '</dd></div><div><dt>Duplicates skipped</dt><dd>' + config.duplicates + '</dd></div><div><dt>Conflicts</dt><dd>' + config.conflicts + '</dd></div><div><dt>Warnings</dt><dd>' + config.warnings + '</dd></div></dl><div class="notice ' + (config.warnings ? "warning" : "success") + '"><div><strong>' + (config.warnings ? "Review warning" : "Ready to create") + '</strong><span>' + escapeHtml(config.warningCopy) + '</span></div></div><div class="notice" style="margin-top:10px"><div><strong>One all-or-nothing save</strong><span>If any item fails validation or the saved configuration changes before commit, nothing is partially imported and a fresh preview is required.</span></div></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: config.confirmLabel, className: "primary-action", action: config.onConfirm }
+          ]
+        });
+      }
+
+      function showNewAliasListDialog() {
+        openDialog({
+          title: "Create Alias List",
+          subtitle: "The name is trimmed and limited to 25 characters.",
+          body: '<div class="field">' + fieldLabel("new-alias-list", "Alias List name", "Creates one current Alias List that can receive imported channels or talkgroups. Blank and duplicate names are rejected.") + '<input id="new-alias-list" type="text" maxlength="25" value="" placeholder="Example: Metro Aliases"></div>',
+          buttons: [
+            { label: "Cancel", action: closeDialog },
+            { label: "Create Alias List", className: "primary-action", action: function () {
+              var input = document.getElementById("new-alias-list");
+              if (!input.value.trim()) { input.setCustomValidity("Enter an Alias List name."); input.reportValidity(); input.setCustomValidity(""); return; }
+              state.aliasList = input.value.trim();
+              closeDialog();
+              render();
+              showToast("Alias List created in this mockup.");
+            } }
+          ]
+        });
+      }
+
+      function openDialog(config) {
+        dialogTitle.textContent = config.title || "";
+        dialogSubtitle.textContent = config.subtitle || "";
+        dialogBody.innerHTML = config.body || "";
+        dialogFooter.innerHTML = "";
+        (config.buttons || []).forEach(function (item) {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.textContent = item.label;
+          if (item.className) button.className = item.className;
+          button.addEventListener("click", item.action);
+          dialogFooter.appendChild(button);
+        });
+        wireHelpButtons(dialog);
+        if (!dialog.open) dialog.showModal();
+      }
+
+      function closeDialog() {
+        if (dialog.open) dialog.close();
+      }
+
+      function showToast(copy) {
+        var toast = document.getElementById("toast");
+        if (toastTimer) window.clearTimeout(toastTimer);
+        toast.textContent = copy;
+        toast.hidden = false;
+        toastTimer = window.setTimeout(function () { toast.hidden = true; }, 2600);
+      }
+
+      function showHelp(button, pinned) {
+        if (activeHelpButton && activeHelpButton !== button) activeHelpButton.setAttribute("aria-expanded", "false");
+        activeHelpButton = button;
+        helpPinned = pinned;
+        button.setAttribute("aria-expanded", "true");
+        helpPopover.querySelector("strong").textContent = button.dataset.helpTitle;
+        helpPopover.querySelector("span").textContent = button.dataset.help;
+        helpPopover.hidden = false;
+        var rect = button.getBoundingClientRect();
+        var left = Math.min(window.innerWidth - helpPopover.offsetWidth - 10, Math.max(10, rect.left));
+        var top = rect.bottom + 7;
+        if (top + helpPopover.offsetHeight > window.innerHeight - 10) top = Math.max(10, rect.top - helpPopover.offsetHeight - 7);
+        helpPopover.style.left = left + "px";
+        helpPopover.style.top = top + "px";
+      }
+
+      function hideHelp(force) {
+        if (helpPinned && !force) return;
+        if (activeHelpButton) activeHelpButton.setAttribute("aria-expanded", "false");
+        activeHelpButton = null;
+        helpPinned = false;
+        helpPopover.hidden = true;
+      }
+
+      function wireHelpButtons(root) {
+        root.querySelectorAll("[data-help]:not([data-help-wired])").forEach(function (button) {
+          button.dataset.helpWired = "true";
+          button.addEventListener("mouseenter", function () { if (!helpPinned) showHelp(button, false); });
+          button.addEventListener("mouseleave", function () { if (!helpPinned) hideHelp(false); });
+          button.addEventListener("focus", function () { if (!helpPinned) showHelp(button, false); });
+          button.addEventListener("blur", function () { if (!helpPinned) hideHelp(false); });
+          button.addEventListener("click", function (event) {
+            event.stopPropagation();
+            if (activeHelpButton === button && helpPinned) hideHelp(true);
+            else showHelp(button, true);
+          });
+        });
+      }
+
+      function loadReview() {
+        try {
+          var parsed = JSON.parse(localStorage.getItem(REVIEW_KEY) || "{}");
+          return parsed && typeof parsed === "object" ? parsed : {};
+        } catch (error) {
+          return {};
+        }
+      }
+
+      function saveReview() {
+        localStorage.setItem(REVIEW_KEY, JSON.stringify(reviewData));
+        var status = document.getElementById("review-status");
+        status.textContent = "Saved in this browser · " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+
+      function renderReview() {
+        var list = document.getElementById("review-list");
+        list.innerHTML = reviewSections.map(function (section) {
+          var saved = reviewData[section[0]] || { status: "", note: "" };
+          return '<section class="review-item"><h3>' + escapeHtml(section[1]) + '</h3><p>' + escapeHtml(section[2]) + '</p><label class="sr-only" for="review-status-' + section[0] + '">Review decision</label><select id="review-status-' + section[0] + '" data-review-status="' + section[0] + '"><option value="">Not reviewed</option><option value="approved"' + (saved.status === "approved" ? " selected" : "") + '>Looks good</option><option value="change"' + (saved.status === "change" ? " selected" : "") + '>Change requested</option><option value="question"' + (saved.status === "question" ? " selected" : "") + '>Question</option><option value="later"' + (saved.status === "later" ? " selected" : "") + '>Review later</option></select><label class="sr-only" for="review-note-' + section[0] + '">Notes</label><textarea id="review-note-' + section[0] + '" maxlength="2000" data-review-note="' + section[0] + '" placeholder="Add a note or decision">' + escapeHtml(saved.note || "") + '</textarea></section>';
+        }).join("");
+        list.querySelectorAll("[data-review-status]").forEach(function (select) {
+          select.addEventListener("change", function () {
+            var key = select.dataset.reviewStatus;
+            reviewData[key] = reviewData[key] || {};
+            reviewData[key].status = select.value;
+            saveReview();
+          });
+        });
+        list.querySelectorAll("[data-review-note]").forEach(function (textarea) {
+          textarea.addEventListener("input", function () {
+            var key = textarea.dataset.reviewNote;
+            reviewData[key] = reviewData[key] || {};
+            reviewData[key].note = textarea.value;
+            saveReview();
+          });
+        });
+      }
+
+      function openReview() {
+        renderReview();
+        document.getElementById("review-drawer").hidden = false;
+      }
+
+      function closeReview() {
+        document.getElementById("review-drawer").hidden = true;
+      }
+
+      function exportReview() {
+        var payload = {
+          mockup: "settings-shell-radioreference-v1",
+          exportedAt: new Date().toISOString(),
+          review: reviewData
+        };
+        var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "sdrtrunk-radioreference-mockup-review.json";
+        link.click();
+        window.setTimeout(function () { URL.revokeObjectURL(link.href); }, 0);
+      }
+
+      document.getElementById("scenario").addEventListener("change", function (event) {
+        state.scenario = event.target.value;
+        state.view = state.scenario === "mpt" ? "system" : "browse";
+        state.lastSuccess = "";
+        render();
+      });
+      document.getElementById("group-filter").addEventListener("change", function (event) {
+        state.group = event.target.value;
+        render();
+      });
+      document.getElementById("browse-search").addEventListener("input", function (event) {
+        state.browseSearch = event.target.value;
+        render();
+      });
+      document.getElementById("country").addEventListener("change", retryRequest);
+      document.getElementById("state").addEventListener("change", retryRequest);
+      document.getElementById("county").addEventListener("change", retryRequest);
+      document.querySelectorAll("[data-open-review]").forEach(function (button) { button.addEventListener("click", openReview); });
+      document.querySelectorAll("[data-close-review]").forEach(function (button) { button.addEventListener("click", closeReview); });
+      document.querySelector("[data-export-review]").addEventListener("click", exportReview);
+      document.querySelector("[data-close-dialog]").addEventListener("click", closeDialog);
+      dialog.addEventListener("cancel", function (event) { event.preventDefault(); closeDialog(); });
+      document.addEventListener("click", function (event) {
+        if (!event.target.closest("[data-help]") && !event.target.closest("#help-popover")) hideHelp(true);
+      });
+      window.addEventListener("resize", function () { hideHelp(true); });
+      window.addEventListener("scroll", function () { hideHelp(true); }, true);
+      wireHelpButtons(document);
+      render();
+    }());
+  </script>
+</body>
+</html>

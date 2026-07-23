@@ -1,0 +1,2308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce Settings migration review</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #5f6b7a;
+      --border: #d8dee8;
+      --accent: #1261a0;
+      --accent-soft: #e8f2fb;
+      --agreed: #0f6b3f;
+      --agreed-soft: #e4f5eb;
+      --open: #8b5200;
+      --open-soft: #fff2d9;
+      --retire: #9a2e2e;
+      --retire-soft: #fde9e9;
+      --local: #5e3f9a;
+      --local-soft: #f0eafe;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #10141b;
+        --panel: #171d26;
+        --text: #e7ebf2;
+        --muted: #aab3c2;
+        --border: #344052;
+        --accent: #75bfff;
+        --accent-soft: #17334d;
+        --agreed: #79d6a5;
+        --agreed-soft: #173c2a;
+        --open: #f4bd61;
+        --open-soft: #493417;
+        --retire: #ff9a9a;
+        --retire-soft: #4b2225;
+        --local: #c3a9ff;
+        --local-soft: #302650;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    button, input, select, textarea { font: inherit; }
+    header { padding: 28px clamp(16px, 4vw, 54px) 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+    h1 { margin: 0 0 8px; font-size: clamp(1.45rem, 3vw, 2.15rem); }
+    header p { max-width: 980px; margin: 6px 0; color: var(--muted); line-height: 1.5; }
+    main { padding: 18px clamp(12px, 3vw, 40px) 48px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 18px rgb(0 0 0 / 0.05); }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .summary-card { padding: 14px 16px; }
+    .summary-card strong { display: block; font-size: 1.55rem; }
+    .summary-card span { color: var(--muted); font-size: .86rem; }
+    .controls { display: grid; grid-template-columns: minmax(230px, 2fr) repeat(4, minmax(145px, 1fr)) auto auto; gap: 10px; align-items: end; padding: 14px; margin-bottom: 14px; }
+    label { display: grid; gap: 5px; color: var(--muted); font-size: .78rem; font-weight: 650; letter-spacing: .02em; }
+    input, select, button, textarea { min-height: 39px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); padding: 8px 10px; }
+    input:focus, select:focus, textarea:focus, button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent); outline-offset: 1px; }
+    button { cursor: pointer; white-space: nowrap; }
+    button:hover { border-color: var(--accent); }
+    .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .review-workspace { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 18px; padding: 14px 16px; margin-bottom: 14px; }
+    .review-workspace h2 { margin: 0 0 3px; font-size: 1rem; }
+    .review-workspace p { max-width: 780px; margin: 0; color: var(--muted); font-size: .86rem; line-height: 1.45; }
+    .review-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+    .file-button { display: inline-flex; align-items: center; min-height: 39px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); font-size: inherit; font-weight: 400; letter-spacing: normal; cursor: pointer; }
+    .file-button:hover { border-color: var(--accent); }
+    .review-save-status { flex-basis: 100%; color: var(--muted); font-size: .8rem; text-align: right; }
+    .review-save-status.warning { color: var(--retire); font-weight: 650; }
+    .result-line { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; color: var(--muted); font-size: .9rem; }
+    .area-context { margin: 0 14px 4px; padding: 12px 14px; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 7px; line-height: 1.48; }
+    .area-context strong { display: block; margin-bottom: 2px; }
+    .table-wrap { overflow: auto; max-height: min(72vh, 980px); border-top: 1px solid var(--border); }
+    table { width: 100%; min-width: 1580px; border-collapse: separate; border-spacing: 0; font-size: .86rem; }
+    thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); color: var(--muted); text-align: left; font-size: .72rem; letter-spacing: .035em; text-transform: uppercase; }
+    tbody th { color: var(--text); text-align: left; white-space: nowrap; }
+    th, td { padding: 10px 11px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.42; }
+    tbody tr:hover { background: color-mix(in srgb, var(--accent-soft) 40%, transparent); }
+    td:nth-child(1), td:nth-child(7), td:nth-child(8) { white-space: nowrap; }
+    .field-name { font-weight: 650; }
+    .field-help { display: block; margin-top: 5px; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+    .context-copy { color: var(--muted); }
+    details.technical { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 7px; }
+    details.technical summary { color: var(--accent); cursor: pointer; font-size: .76rem; font-weight: 650; }
+    details.technical dl { display: grid; grid-template-columns: minmax(105px, auto) 1fr; gap: 5px 9px; margin: 9px 0 1px; font-size: .76rem; }
+    details.technical dt { color: var(--muted); font-weight: 650; }
+    details.technical dd { margin: 0; overflow-wrap: anywhere; }
+    .review-cell { min-width: 255px; }
+    .review-control { display: grid; gap: 8px; }
+    .review-control select { width: 100%; min-height: 42px; }
+    details.row-review summary { display: flex; min-height: 30px; align-items: center; gap: 7px; cursor: pointer; color: var(--accent); font-weight: 650; }
+    details.row-review summary::marker { color: var(--muted); }
+    .review-note-preview { min-width: 0; max-width: 150px; color: var(--muted); font-size: .74rem; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-review-editor { display: grid; gap: 9px; margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border); }
+    .row-review-editor textarea { width: 100%; min-height: 92px; resize: vertical; line-height: 1.4; }
+    .row-review-footer { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: .74rem; }
+    .row-save-status { min-height: 1.2em; }
+    code { color: var(--text); font-size: .78rem; overflow-wrap: anywhere; }
+    .badge { display: inline-flex; align-items: center; border: 1px solid currentColor; border-radius: 999px; padding: 2px 7px; font-size: .72rem; font-weight: 700; }
+    .agreed { color: var(--agreed); background: var(--agreed-soft); }
+    .proposed, .needs-decision, .pending { color: var(--open); background: var(--open-soft); }
+    .retire { color: var(--retire); background: var(--retire-soft); }
+    .local-javafx { color: var(--local); background: var(--local-soft); }
+    .move, .keep, .replace, .new { color: var(--accent); background: var(--accent-soft); }
+    .review-approved { color: var(--agreed); background: var(--agreed-soft); }
+    .review-change { color: var(--retire); background: var(--retire-soft); }
+    .review-question { color: var(--open); background: var(--open-soft); }
+    .review-deferred, .review-unreviewed { color: var(--muted); background: var(--bg); }
+    .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
+    .review-note { padding: 13px 16px; margin-bottom: 14px; line-height: 1.55; color: var(--muted); }
+    .review-note strong { color: var(--text); }
+    .review-note .legend { display: block; margin-top: 5px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+
+    @media (max-width: 1100px) {
+      .controls { grid-template-columns: 1fr 1fr; }
+      .controls label:first-child { grid-column: 1 / -1; }
+      .review-actions { justify-content: flex-start; }
+      .review-save-status { text-align: left; }
+    }
+
+    @media print {
+      body { background: #fff; color: #000; }
+      .controls, .summary, .review-note, .review-actions, .review-save-status, .result-line button { display: none; }
+      .panel { border: 0; box-shadow: none; }
+      .table-wrap { max-height: none; overflow: visible; }
+      table { min-width: 0; font-size: 7pt; }
+      thead th { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Settings migration review</h1>
+    <p>This is the checklist for moving Settings from the desktop application to the website. Each row says what exists today, where it should appear in the new design, and whether it stays, changes, or is removed.</p>
+    <p>Nothing is removed simply because it was missing from an early mockup. The old JavaFX location and source references are still available under <strong>Technical record</strong>, but they are hidden during normal review.</p>
+    <p>The first owner review has been reconciled into the planning status. Your browser-local review choices and notes remain intact as review evidence and are never silently overwritten.</p>
+  </header>
+
+  <main>
+    <section class="summary" aria-label="Ledger summary">
+      <div class="panel summary-card"><strong id="total-count">0</strong><span>total entries</span></div>
+      <div class="panel summary-card"><strong id="agreed-count">0</strong><span>already agreed</span></div>
+      <div class="panel summary-card"><strong id="proposed-count">0</strong><span>suggested, not approved</span></div>
+      <div class="panel summary-card"><strong id="decision-count">0</strong><span>needs your decision</span></div>
+      <div class="panel summary-card"><strong id="retire-count">0</strong><span>planned removals</span></div>
+      <div class="panel summary-card"><strong id="reviewed-count">0</strong><span>you have reviewed</span></div>
+      <div class="panel summary-card"><strong id="notes-count">0</strong><span>rows with your notes</span></div>
+    </section>
+
+    <aside class="panel review-note">
+      <strong>How to review:</strong> choose one area and read the rows as product choices, not programming tasks. Use <strong>My review</strong> on each row to approve it, record a different decision, or leave a question.
+      <span class="legend"><strong>Move to web</strong> keeps the feature in a new location. <strong>Redesign</strong> keeps the purpose but changes how it works. <strong>Remove</strong> intentionally retires it. <strong>Suggested</strong> means it was found in the old interface but has not been approved. <strong>Your decision needed</strong> marks a choice that has no safe default.</span>
+    </aside>
+
+    <section class="panel review-workspace" aria-labelledby="my-review-title">
+      <div>
+        <h2 id="my-review-title">Your browser notes</h2>
+        <p>Review choices and notes save automatically only in this browser on this computer. They do not change SDRTrunk or its database. Download a backup if you want to move them, preserve them outside the browser, or hand them back for implementation.</p>
+      </div>
+      <div class="review-actions">
+        <button id="next-unreviewed" type="button">Next unreviewed</button>
+        <button id="download-review" type="button">Download review backup</button>
+        <label class="file-button" for="load-review">Load/merge backup</label>
+        <input id="load-review" type="file" accept="application/json,.json" hidden>
+      </div>
+      <div id="review-save-status" class="review-save-status" role="status" aria-live="polite">Checking browser storage…</div>
+    </section>
+
+    <section class="panel" aria-labelledby="ledger-title">
+      <h2 id="ledger-title" class="sr-only">Field parity entries</h2>
+      <div class="controls">
+        <label>Search the ledger<input id="search" type="search" placeholder="Setting, feature, area, or row ID…"></label>
+        <label>Area<select id="area-filter"><option value="">All areas</option></select></label>
+        <label>Decision<select id="decision-filter"><option value="">All decisions</option></select></label>
+        <label>Planning status<select id="approval-filter"><option value="">All planning states</option></select></label>
+        <label>My review<select id="review-filter">
+          <option value="">All rows</option>
+          <option value="unreviewed">Not reviewed</option>
+          <option value="approved">Approve as written</option>
+          <option value="change">Decision or change noted</option>
+          <option value="discuss">Discuss later</option>
+          <option value="notes">Has my note</option>
+          <option value="no-notes">Has no note</option>
+        </select></label>
+        <button id="reset" type="button">Clear filters</button>
+        <button id="export" class="primary" type="button">Export filtered CSV</button>
+      </div>
+      <div id="area-context" class="area-context" aria-live="polite"></div>
+      <div class="result-line">
+        <span id="result-count" aria-live="polite">0 entries</span>
+        <span>Inventory pass: 2026-07-20</span>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable Settings migration review table">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">ID</th>
+              <th scope="col">My review</th>
+              <th scope="col">Area</th>
+              <th scope="col">Current setting or action</th>
+              <th scope="col">How it would work</th>
+              <th scope="col">Context and limits</th>
+              <th scope="col">Planned change</th>
+              <th scope="col">Planning status</th>
+            </tr>
+          </thead>
+          <tbody id="ledger-body"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden>No entries match these filters.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const R = (id, area, legacy, item, kind, destination, decision, owner, approval, evidence, constraint, notes = "") =>
+      ({id, area, legacy, item, kind, destination, decision, owner, approval, evidence, constraint, notes});
+
+    // Field inventory is intentionally embedded so this file works directly from disk without a server.
+    const rows = [
+      R("XF-001", "Cross-cutting", "All planned Settings routes", "Administrator authentication gate", "Access",
+        "Gate the complete /settings route and every settings API; redirect anonymous users to login.", "New",
+        "Web admin", "Agreed", "Approved conversation decision; docs/web-first-ui-migration-plan.md §3.1",
+        "One local administrator account; no per-user settings records or login-history table."),
+      R("XF-002", "Cross-cutting", "Configuration Editor + User Preferences", "Two navigation groups: Playlist Settings and General Settings", "Navigation",
+        "Persistent Settings navigation with the agreed six playlist pages and eight general pages.", "Replace",
+        "Web admin", "Agreed", "CFG-01, PREF-01; approved settings wireframe direction",
+        "Navigation state is browser-local and must not write to SQLite."),
+      R("XF-003", "Cross-cutting", "Immediate-mutation preference controls and Save/Reset editors", "Save, cancel, dirty-state, and stale-edit behavior", "Workflow",
+        "Load every editor from the application's current saved values, falling back to the real application default only when no value exists; use explicit Save/Cancel, unsaved-change protection, and revision checks.", "Replace",
+        "Web admin", "Agreed", "Configuration editors; docs/web-first-ui-migration-plan.md §4.5",
+        "Never use a mockup placeholder, browser guess, or hard-coded frontend value as the effective default. No revision-history/audit table; store only bounded current-state revision values.",
+        "Static wireframes may leave fields blank, but production pages must show the actual current application value. Page mockups must show validation and conflict states before implementation."),
+      R("XF-004", "Cross-cutting", "Numeric spinners and free-form unit labels", "Size, age, retention, timeout, frequency-correction, and rate inputs", "Input rule",
+        "Number-only controls with a fixed visible unit suffix such as GB, days, seconds, milliseconds, ppm, or MHz.", "Replace",
+        "Web admin", "Agreed", "Approved conversation decision",
+        "Validate bounds server-side; no arbitrary unit strings are persisted."),
+      R("XF-005", "Cross-cutting", "Long-running desktop actions", "Calibration, database maintenance, connection tests, imports, rescans", "Runtime safety",
+        "Cancellable bounded jobs with progress/status; commands never execute on USB, decoder, grant, recording, audio, or HTTP request threads.", "Replace",
+        "Headless runtime service", "Agreed", "Latency requirements in conversation; docs/web-first-ui-migration-plan.md",
+        "No job-history or telemetry table. Keep only current bounded in-memory status unless explicit retained history is approved."),
+      R("XF-006", "Cross-cutting", "Configuration persistence", "Any newly proposed settings schema or stored data", "Database rule",
+        "Prefer existing configuration/application_settings storage; document every unavoidable migration before implementation.", "Keep",
+        "Headless runtime service", "Agreed", "AGENTS.md Database Schema Changes; approved forward-looking rule",
+        "Current-state configuration may persist. No new unbounded stats, audit, event, raw-message, cache, or revision history."),
+      R("XF-007", "Cross-cutting", "Desktop alerts and short dialogs", "Confirmations and focused secret/safety workflows", "Modal rule",
+        "Use modals only for voice keys, GUID unlock, destructive/bulk confirmation, list clone/rename/move, RadioReference sign-in, provider type, and unsaved changes.", "Replace",
+        "Web admin", "Agreed", "Approved layout discussion",
+        "Modal state is transient; never persist dialog history.",
+        "Long editors, spectrum, and staged imports remain full-page or inline workspaces."),
+      R("XF-008", "Cross-cutting", "Remote collections and dense JavaFX tables", "Large channel/alias/talkgroup/provider result sets", "Scale rule",
+        "Bounded server-side search, sorting, filtering, paging, and bulk commands; virtualize visible rows.", "Replace",
+        "Web admin", "Agreed", "Alias lists may contain thousands of entries; N100/8 GB target",
+        "Queries must be bounded and index-backed. Never load an entire large alias list into the browser."),
+      R("XF-009", "Cross-cutting", "Desktop UI event bus", "UI navigation requests and toolkit-owned models", "Architecture",
+        "Typed query/command services and DTOs; browser routes never touch Swing/JavaFX models or tuner controllers directly.", "Replace",
+        "Headless runtime service", "Agreed", "docs/web-first-ui-migration-plan.md §§2, 4.4",
+        "Bounded in-memory transport queues; no raw event persistence."),
+      R("XF-010", "Cross-cutting", "Legacy desktop settings surface", "Fields absent from a low-fidelity wireframe", "Parity rule",
+        "Remain in this ledger until explicitly kept, moved, replaced, retired, or assigned to local JavaFX.", "Keep",
+        "Design process", "Agreed", "docs/ui-reference/README.md coverage rule",
+        "A missing mockup field is not authorization to delete code or data."),
+      R("XF-011", "Cross-cutting", "All web Settings forms", "Plain-language help beside every settings field or field group", "Help pattern",
+        "Place one consistent circled information button beside every field label. Hover or keyboard focus shows help temporarily; click or tap keeps it open until dismissed.", "New",
+        "Web admin", "Agreed", "Approved conversation decision",
+        "Help text and the vector icon ship with the page and cause no web request, database write, logging, or radio work.",
+        "The button must work with keyboard and screen readers. Validation errors, safety warnings, units, ranges, and disruptive effects remain visible instead of being hidden in help."),
+
+      R("CH-001", "Channels", "Preferences > Application", "Channel Auto-Start Timeout (0–30 seconds)", "Field",
+        "Playlist Settings > Channels > auto-start behavior; number input with fixed seconds suffix.", "Move",
+        "Web admin", "Agreed", "PREF-02; ApplicationPreferenceEditor.java:54-73",
+        "Bounded current setting; use existing application_settings storage."),
+      R("CALL-001", "General / Calls", "Audio > Call Management", "Detect duplicate calls by talkgroup or patchgroup within matching System names", "Field",
+        "General Settings > Calls > Duplicate detection.", "Move", "Web admin", "Agreed",
+        "PREF-03; CallManagementPreferenceEditor.java:72-87",
+        "Bounded current setting; request processing must remain off latency-sensitive paths."),
+      R("CALL-002", "General / Calls", "Audio > Call Management", "Detect duplicate calls by Radio ID", "Field",
+        "General Settings > Calls with the existing side-effect explanation adjacent to the toggle.", "Move",
+        "Web admin", "Agreed", "PREF-03; CallManagementPreferenceEditor.java:89-104",
+        "Bounded current setting.",
+        "The warning explains ambiguous suppression when one radio transmits to differently configured talkgroups."),
+      R("CALL-003", "General / Calls", "Audio > Call Management", "Suppress duplicate listening/playback", "Field",
+        "General Settings > Calls; suppress duplicate browser listening and enable the control only when at least one duplicate detector is active.", "Replace",
+        "Web admin", "Agreed", "PREF-03; CallManagementPreferenceEditor.java:110-124",
+        "Bounded current setting. Current browser audio discards every duplicate unconditionally; the web migration must make it honor this choice after local speaker playback retires."),
+      R("CALL-004", "General / Calls", "Audio > Call Management", "Suppress duplicate recording", "Field",
+        "General Settings > Calls; enabled only when at least one duplicate detector is active.", "Move",
+        "Web admin", "Agreed", "PREF-03; CallManagementPreferenceEditor.java:126-132",
+        "Bounded current setting."),
+      R("CALL-005", "General / Calls", "Audio > Call Management", "Suppress duplicate streaming", "Field",
+        "General Settings > Calls; enabled only when at least one duplicate detector is active.", "Move",
+        "Web admin", "Agreed", "PREF-03; CallManagementPreferenceEditor.java:134-140",
+        "Bounded current setting."),
+      R("CALL-006", "General / Calls", "Audio > Call Management", "Patch Group Streaming option", "Field",
+        "General Settings > Calls > stream patch calls as patchgroup or constituent talkgroups.", "Move",
+        "Web admin", "Agreed", "PREF-03; CallManagementPreferenceEditor.java:145-151; PatchGroupStreamingOption.java",
+        "Bounded enum setting."),
+
+      R("AUD-001", "General / Audio", "Audio > MP3", "Normalize audio before MP3 encoding", "Field",
+        "General Settings > Audio > Recording & encoding.", "Move", "Web admin", "Agreed",
+        "PREF-04; MP3PreferenceEditor.java:164-170", "Bounded current setting."),
+      R("AUD-002", "General / Audio", "Audio > MP3", "LAME encoder setting", "Field",
+        "General Settings > Audio; retain every supported MP3Setting choice.", "Move", "Web admin", "Agreed",
+        "PREF-04; MP3PreferenceEditor.java:75-112", "Bounded enum setting."),
+      R("AUD-003", "General / Audio", "Audio > MP3", "Input audio sample rate", "Field",
+        "General Settings > Audio; choices depend on encoder setting and incompatible changes reset with an inline notice.", "Move",
+        "Web admin", "Agreed", "PREF-04; MP3PreferenceEditor.java:80-157",
+        "Bounded enum setting; validation must occur before committing."),
+      R("AUD-004", "General / Audio", "Audio > Record", "Audio recording format", "Field",
+        "General Settings > Audio > Recording format; preserve all RecordFormat values.", "Move",
+        "Web admin", "Agreed", "PREF-06; RecordPreferenceEditor.java:60-82",
+        "Bounded enum setting."),
+      R("AUD-005", "General / Audio", "Audio > Playback/Tones", "Node audio playback/output device and Test action", "Field + action",
+        "No web replacement; receiver is headless and browser audio has its own client-side output device.", "Retire",
+        "Removed", "Agreed", "PREF-05; PlaybackPreferenceEditor.java:83-87, 126-153; approved conversation decision",
+        "Remove node playback-device probing from the headless radio configuration path."),
+      R("AUD-006", "General / Audio", "Audio > Playback/Tones", "Maximum queued local playback calls (0 = unlimited)", "Field",
+        "No settings field if the local playback subsystem retires.", "Retire", "Removed", "Agreed",
+        "PREF-05; PlaybackPreferenceEditor.java:89-94, 156-207",
+        "Do not carry an unlimited node playback queue into browser audio.",
+        "Confirm that no retained non-UI workflow consumes the local playback queue before deletion."),
+      R("AUD-007", "General / Audio", "Audio > Playback/Tones", "Start tone: enable, frequency, volume, and Test", "Field group",
+        "No web replacement with local node playback retired.", "Retire", "Removed", "Agreed",
+        "PREF-05; PlaybackPreferenceEditor.java:96-108, 211-247",
+        "Delete tone generation only after proving it is local playback-only."),
+      R("AUD-008", "General / Audio", "Audio > Playback/Tones", "Drop/Do Not Monitor tone: enable, frequency, volume, and Test", "Field group",
+        "No web replacement with local node playback retired.", "Retire", "Removed", "Agreed",
+        "PREF-05; PlaybackPreferenceEditor.java:110-120, 250-304",
+        "Delete tone generation only after proving it is local playback-only."),
+
+      R("PERF-001", "General / Performance", "CPU > Vector Calibration", "Enable SIMD vector operations", "Field",
+        "General Settings > Performance.", "Move", "Web admin", "Agreed",
+        "PREF-07; VectorCalibrationPreferenceEditor.java:104-115, 315-327",
+        "Bounded current setting; changing it must not run calibration synchronously."),
+      R("PERF-002", "General / Performance", "CPU > Vector Calibration", "Hide calibration dialog when new calibrations are available", "Field",
+        "Replace the desktop preference with a small attention badge on the General Settings > Performance menu item when calibration needs attention. Do not create notifications.", "Replace",
+        "Web admin", "Agreed", "PREF-07; VectorCalibrationPreferenceEditor.java:117-123, 330-342; approved review decision",
+        "Current status only; no notification or calibration-history table."),
+      R("PERF-003", "General / Performance", "CPU > Vector Calibration", "Calibrations pending count and current progress/status", "Status",
+        "General Settings > Performance status panel.", "Move", "Web admin", "Agreed",
+        "PREF-07; VectorCalibrationPreferenceEditor.java:125-135, 274-312",
+        "Current bounded in-memory job status only."),
+      R("PERF-004", "General / Performance", "CPU > Vector Calibration", "Calibrate action", "Action",
+        "General Settings > Performance; explicit impact confirmation, cancellable job, progress, and restart-required result.", "Replace",
+        "Headless runtime service", "Agreed", "PREF-07; VectorCalibrationPreferenceEditor.java:217-271",
+        "Never run on radio/USB/decoder/HTTP threads; no calibration-run history."),
+      R("PERF-005", "General / Performance", "CPU > Vector Calibration", "Reset All Calibrations action", "Action",
+        "General Settings > Performance with confirmation.", "Move", "Web admin", "Agreed",
+        "PREF-07; VectorCalibrationPreferenceEditor.java:201-213",
+        "Bounded current calibration state only."),
+      R("PERF-006", "General / Performance", "CPU > Vector Calibration", "Calibration console output", "Status",
+        "Keep progress in the calibration view and write normal calibration messages to SDRTrunk's application log, which is available from the admin Logs page.", "Replace",
+        "Web admin", "Agreed", "PREF-07; VectorCalibrationPreferenceEditor.java:150-197; approved review decision",
+        "Read the existing ten-day rolling log files; never duplicate console output in a database or new history store."),
+      R("PERF-007", "General / Performance", "Source > Tuners", "Polyphase/Heterodyne channelizer selection", "Field",
+        "Remove the selector; Polyphase is the sole supported implementation.", "Retire", "Removed", "Agreed",
+        "PREF-16; TunerPreferenceEditor.java:95-172; approved conversation decision",
+        "Delete heterodyne runtime/code after dependency audit; no migration value required beyond selecting Polyphase."),
+      R("PERF-008", "General / Performance", "Funcube tuner support", "FCD Pro/FCD Pro+ device support and editors", "Subsystem",
+        "No web form; remove Funcube support completely.", "Retire", "Removed", "Agreed",
+        "Approved conversation decision; source/tuner/fcd/**",
+        "Explicit code/config compatibility retirement; do not leave hidden runtime allocation paths."),
+
+      R("DEC-001", "General / Decoders & encryption", "Decoder > JMBE Audio Library", "Installed JMBE version and file/status", "Status",
+        "General Settings > Decoders & encryption > JMBE card; show version and compatible/not-installed status, not an arbitrary host path.", "Replace",
+        "Web admin", "Agreed", "PREF-08; JmbeLibraryPreferenceEditor.java:130-148, 260-282",
+        "Read-only current status; redact host paths from normal web DTOs."),
+      R("DEC-002", "General / Decoders & encryption", "Decoder > JMBE Audio Library", "Create Library / Check For Library Update", "Action",
+        "Managed asynchronous JMBE install/update job with explicit version preview.", "Replace",
+        "Headless runtime service", "Agreed", "PREF-08; JmbeLibraryPreferenceEditor.java:154-251",
+        "Write only to portable data/jmbe; bounded current job status, no update-history table."),
+      R("DEC-003", "General / Decoders & encryption", "Decoder > JMBE Audio Library", "Select existing JMBE jar", "Action",
+        "Managed browser upload/replace into portable data/jmbe; no remote host file browser.", "Replace",
+        "Web admin", "Agreed", "PREF-08; JmbeLibraryPreferenceEditor.java:286-318",
+        "Bound upload size/type; preserve only the selected current jar."),
+      R("DEC-004", "General / Decoders & encryption", "Decoder > JMBE Audio Library", "Reset/remove selected JMBE library", "Action",
+        "Remove/disable JMBE with confirmation and decoder impact explanation.", "Move",
+        "Web admin", "Agreed", "PREF-08; JmbeLibraryPreferenceEditor.java:320-329",
+        "Recoverable file handling where practical; no deleted-file history."),
+      R("DEC-005", "General / Decoders & encryption", "Decoder > JMBE Audio Library", "Alert when a decoder requires missing JMBE", "Field",
+        "Show an attention badge on General Settings > Voice decoders and keys when JMBE is missing or needs attention. Do not create an alert preference or notification feed.", "Replace",
+        "Web admin", "Agreed", "PREF-08; JmbeLibraryPreferenceEditor.java:96-114; approved review decision",
+        "Current status only; checking it and drawing the badge remain outside radio processing."),
+      R("DEC-006", "General / Decoders & encryption", "Decoder > Voice Decryption Module", "Module status, name/version, and selected file", "Status",
+        "General Settings > Decoders & encryption > Voice module card; expose compatible status/name/version, not an arbitrary host path.", "Replace",
+        "Web admin", "Agreed", "PREF-09; VoiceDecryptionModulePreferenceEditor.java:52-77, 107-114",
+        "Read-only current status; secret-safe and path-redacted DTO."),
+      R("DEC-007", "General / Decoders & encryption", "Decoder > Voice Decryption Module", "Select Module and Reset", "Action",
+        "Install or remove a reviewed/pinned module artifact in portable data/modules; stage and validate replacement, then activate it on the next normal restart.", "Replace",
+        "Web admin", "Agreed", "PREF-09; VoiceDecryptionModulePreferenceEditor.java:64-104",
+        "Never hot-load an arbitrary uploaded executable. Keep the current working module until staged validation and restart activation succeed; no module-version history."),
+      R("KEY-001", "General / Decoders & encryption", "Voice Encryption Keys window", "Manage voice keys entry point", "Workflow",
+        "Open the approved focused modal from the Decoders & encryption page.", "Replace",
+        "Web admin", "Agreed", "OTHER-03; approved modal decision",
+        "Authenticated admin only; never expose key material in list/status responses."),
+      R("KEY-002", "General / Decoders & encryption", "Voice Encryption Keys window", "Vault state/status; Create, Unlock, Lock, Change Password", "Workflow",
+        "Administrator web workflow for vault status, key management, and focused Create, Unlock, Lock, and Change Password dialogs. No runtime Java window remains.", "Move",
+        "Web admin", "Agreed", "OTHER-03; EncryptionKeyPreferenceEditor.java:109-146, 216-283; approved review decision",
+        "Secrets are write-only; no authentication attempt history table."),
+      R("KEY-003", "General / Decoders & encryption", "Voice Encryption Keys window", "Save/forget vault password and prompt on application launch", "Field + action",
+        "After a successful web unlock, offer the separate setting 'Auto-unlock vault on launch — Unsafe!'. When disabled or not configured, start without decryption and wait for a web unlock.", "Replace",
+        "Headless runtime service", "Agreed", "EncryptionKeyPreferenceEditor.java:150-160, 272-293, 490-526; approved review decision",
+        "The saved unlock secret stays local, is never returned by the API, and is removed when auto-unlock is disabled.",
+        "Changing the vault password updates the saved launch secret when auto-unlock remains enabled; no Java startup prompt or countdown returns."),
+      R("KEY-004", "General / Decoders & encryption", "Voice Encryption Keys window", "Export vault", "Action",
+        "Authenticated modal action requiring password re-entry, returning a download.", "Move",
+        "Web admin", "Agreed", "EncryptionKeyPreferenceEditor.java:295-326, 449-487",
+        "No server-side export copies or export-history rows."),
+      R("KEY-005", "General / Decoders & encryption", "Voice Encryption Keys table", "Columns: Enabled, Label, Protocol, Algorithm, Key ID, key-present status, Scope", "View",
+        "Bounded table inside the voice-key modal; key hex never appears in table data.", "Move",
+        "Web admin", "Agreed", "EncryptionKeyPreferenceEditor.java:169-211",
+        "Vault-backed current configuration only."),
+      R("KEY-006", "General / Decoders & encryption", "Voice Encryption Key editor", "Add/Edit fields: enabled, label, protocol, algorithm, algorithm ID, key ID, key hex, scope", "Field group",
+        "Nested add/edit form in the voice-key modal; preserve decimal/hex validation ranges and algorithm consistency.", "Move",
+        "Web admin", "Agreed", "EncryptionKeyPreferenceEditor.java:590-703",
+        "Key hex is write-only and redacted after submit."),
+      R("KEY-007", "General / Decoders & encryption", "Voice Encryption Keys window", "Remove key", "Action",
+        "Destructive confirmation inside the modal.", "Move", "Web admin", "Agreed",
+        "EncryptionKeyPreferenceEditor.java:328-340", "Delete current vault item; no tombstone/history row."),
+
+      R("DISP-001", "General / Live display & IDs", "Display > Systems", "Retain last call source/target on idle rows", "Field",
+        "No web replacement; idle rows do not retain the previous call's source or target.", "Retire", "Removed", "Agreed",
+        "PREF-11; NowPlayingPreferenceEditor.java:74-80, 103-114; approved review decision",
+        "Remove the preference and its display-only retention behavior without creating replacement storage."),
+      R("DISP-002", "General / Live display & IDs", "Display > Systems", "Show advanced P25 encryption status", "Field",
+        "The administrator sets the public default and each visitor may override it in that browser.", "Replace", "Browser-local or admin default", "Agreed",
+        "PREF-11; NowPlayingPreferenceEditor.java:82-84, 116-127; approved review decision",
+        "Visitor overrides stay in browser storage; do not create listener accounts or per-listener database rows."),
+      R("DISP-003", "General / Live display & IDs", "Display > Systems", "P25 grant idle age-out (milliseconds)", "Field",
+        "General Settings > Live display & IDs with number-only milliseconds suffix.", "Move",
+        "Web admin", "Agreed", "PREF-11; NowPlayingPreferenceEditor.java:87-93, 130-143; approved review decision",
+        "Bounded node-wide runtime setting."),
+      R("DISP-004", "General / Live display & IDs", "Display > Talkgroup & Radio ID", "Per-protocol identifier display format", "Field family",
+        "Retain every supported display style. The administrator sets public defaults and each visitor may override them in that browser.", "Replace",
+        "Browser-local or admin default", "Agreed", "PREF-12; TalkgroupFormatPreferenceEditor.java:61-80; approved review decision",
+        "Visitor overrides stay in browser storage; APIs continue carrying the actual numeric identifiers."),
+      R("DISP-005", "General / Live display & IDs", "Display > Talkgroup & Radio ID", "Per-protocol Fixed Width", "Field family",
+        "No web replacement; do not add leading-zero or fixed-width controls.", "Retire",
+        "Removed", "Agreed", "PREF-12; TalkgroupFormatPreferenceEditor.java:109-125; approved review decision",
+        "Remove the appearance option without adding replacement listener state."),
+      R("DISP-006", "General / Live display & IDs", "Display > Channel Events", "Timestamp Format", "Field",
+        "No migrated setting.", "Retire", "Removed", "Agreed",
+        "PREF-10; DecodeEventViewPreferenceEditor.java:60-78; approved conversation decision",
+        "Browser uses its defined timestamp presentation; remove the legacy preference after its last consumer retires."),
+
+      R("STOR-001", "General / Storage", "File Storage > Directories", "Application Logs host directory", "Field + actions",
+        "Retained local node administration or CLI only; web may show a redacted logical status.", "Move",
+        "Local JavaFX", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:252-283",
+        "Current path setting only; web cannot browse arbitrary host paths."),
+      R("STOR-002", "General / Storage", "File Storage > Directories", "Event Logs host directory", "Field + actions",
+        "Retained local node administration or CLI; web selects only a logical destination.", "Move",
+        "Local JavaFX", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:293-324",
+        "Current path setting only."),
+      R("STOR-003", "General / Storage", "File Storage > Directories", "JMBE Libraries host directory", "Field + actions",
+        "Replace path selection with managed web JMBE upload under portable data/jmbe; local recovery may expose the root.", "Replace",
+        "Web admin + Local JavaFX recovery", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:334-365",
+        "Current managed root only."),
+      R("STOR-004", "General / Storage", "File Storage > Directories", "Recordings host directory", "Field + actions",
+        "Retained local node administration or CLI; web selects only the configured logical recording destination.", "Move",
+        "Local JavaFX", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:375-406",
+        "Current path setting only; no arbitrary remote file browser."),
+      R("STOR-005", "General / Storage", "File Storage > Directories", "Screen Captures host directory", "Field + actions",
+        "Remove with the desktop screen-capture command unless a later browser export workflow demonstrates a need.", "Retire",
+        "Removed", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:416-447; SDRTrunk.java screen capture actions",
+        "No replacement storage schema."),
+      R("STOR-006", "General / Storage", "File Storage > Directories", "Streaming temporary-file host directory", "Field + actions",
+        "Retained local node administration or CLI; provider pages use the configured logical workspace.", "Move",
+        "Local JavaFX", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:457-488",
+        "Current path setting only."),
+      R("STOR-007", "General / Storage", "File Storage > Directories", "Event log maximum usage threshold (legacy MB)", "Field",
+        "General Settings > Storage; number-only input with fixed GB suffix and explicit conversion/rounding behavior.", "Move",
+        "Web admin", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:198-205, 235-244; approved unit decision",
+        "Bounded current warning threshold. The current meter does not delete files or enforce a storage cap.",
+        "Use a numeric step that can preserve useful sub-GB legacy values rather than free-form 'GB' text."),
+      R("STOR-008", "General / Storage", "File Storage > Directories", "Recording maximum usage threshold (legacy MB)", "Field",
+        "General Settings > Storage; number-only input with fixed GB suffix and explicit conversion/rounding behavior.", "Move",
+        "Web admin", "Agreed", "PREF-13; DirectoryPreferenceEditor.java:207-210, 219-229; approved unit decision",
+        "Bounded current warning threshold. The current meter does not delete recordings or enforce a storage cap."),
+      R("STOR-009", "General / Storage", "New Recordings browser", "Recorded call retention", "Field",
+        "General Settings > Storage; number-only days input, separate from Statistics retention and the non-deleting storage warning threshold.", "New",
+        "Web admin", "Agreed", "Approved Recordings design direction; settings-shell-general-v1.html",
+        "Finite current setting. Expiration removes audio and its compact lookup entry in bounded background batches off radio paths; shared links never extend retention."),
+      R("STOR-010", "General / Storage", "New recording storage contract", "Fixed recorded-call directory convention", "Backend convention",
+        "Hard-code one immutable versioned hierarchy under the configured recordings root: date, system, site, channel, talkgroup, then the call file. Do not expose a layout/template setting.", "New",
+        "Headless runtime", "Agreed", "web-first-ui-migration-plan.md §6.8; updated recording convention decision",
+        "One canonical file only. Cross-platform-safe stable path components, atomic finalization, bounded date cleanup, and strict managed-root validation must pass before the Recordings catalog works. Store a compact retention-bound directory-bucket reference instead of repeating a full path per call."),
+
+      R("STAT-001", "General / Statistics", "Stats & Web > Stats Server", "Collect Summary Statistics", "Field",
+        "General Settings > Statistics.", "Move", "Web admin", "Agreed",
+        "PREF-14; StatsServerPreferenceEditor.java:107-123",
+        "Grandfather existing schema. No newly proposed unbounded summaries or dimensions."),
+      R("STAT-002", "General / Statistics", "Stats & Web > Stats Server", "Store Detailed Event History", "Field",
+        "General Settings > Statistics with an explicit storage/retention explanation.", "Move",
+        "Web admin", "Agreed", "PREF-14; StatsServerPreferenceEditor.java:125-138; approved database rule",
+        "Detailed rows are allowed only as the explicit retention-bound detailed history feature."),
+      R("STAT-003", "General / Statistics", "Stats & Web > Stats Server", "Retain time-based data for N days", "Field",
+        "General Settings > Statistics; number-only input with fixed days suffix and existing min/max.", "Move",
+        "Web admin", "Agreed", "PREF-14; StatsServerPreferenceEditor.java:83-90, 141-153; approved unit decision",
+        "Retention enforcement and representative-volume tests are release gates."),
+      R("STAT-004", "General / Statistics", "Stats & Web > Stats Server", "Database file location", "Status",
+        "Show a logical portable-data location and current size/status to the admin; do not expose arbitrary host paths publicly.", "Replace",
+        "Web admin", "Agreed", "PREF-14; StatsServerPreferenceEditor.java:87-90",
+        "Read-only status; no new schema."),
+      R("STAT-005", "General / Statistics", "Stats & Web > Stats Server", "Run Maintenance", "Action",
+        "Asynchronous Statistics maintenance job with current result.", "Move", "Web admin", "Agreed",
+        "PREF-14; StatsServerPreferenceEditor.java:155-165",
+        "Runs retention cleanup, WAL checkpoint, optimization off radio paths; no job history."),
+      R("STAT-006", "General / Statistics", "Stats & Web > Stats Server", "Shrink Database", "Action",
+        "Asynchronous destructive/impact-confirmed Statistics action.", "Move", "Web admin", "Agreed",
+        "PREF-14; StatsServerPreferenceEditor.java:167-188",
+        "No history; surface temporary disk-space and runtime impact before start."),
+      R("STAT-007", "General / Statistics", "Stats & Web > Stats Server", "Check Database", "Action",
+        "Asynchronous quick-check with bounded current result.", "Move", "Web admin", "Agreed",
+        "PREF-14; StatsServerPreferenceEditor.java:190-200",
+        "Do not persist check output."),
+      R("STAT-008", "General / Statistics", "Stats & Web > Stats Server", "Reset Lifetime Stats", "Action",
+        "Destructive modal confirming that summaries/history are deleted but configuration is unchanged.", "Move",
+        "Web admin", "Agreed", "PREF-14; StatsServerPreferenceEditor.java:202-223",
+        "Delete only the existing stats scope; no reset audit row."),
+      R("STAT-009", "General / Statistics", "Stats & Web > Stats Server", "Maintenance running/idle/result status", "Status",
+        "Bounded live status in Statistics page.", "Move", "Web admin", "Agreed",
+        "PREF-14; StatsServerPreferenceEditor.java:225-284",
+        "Current in-memory status only."),
+
+      R("ACCESS-001", "General / Public web access", "Existing stats web routes", "Dashboard, statistics, Systems/Sites, Conventional, and other existing read-only web pages", "Access policy",
+        "Public by default for the existing profile, with per-feature switches that change a feature to admin-only when off.", "Replace",
+        "Web admin", "Agreed", "Existing stats-web navigation; approved conversation decision",
+        "Fixed-cardinality current policy in existing application_settings; no access-history schema."),
+      R("ACCESS-002", "General / Public web access", "Existing browser call audio", "Anonymous live calls and audio", "Access policy",
+        "Public/admin-only toggle; capacity target is ten simultaneous unauthenticated listeners.", "Move",
+        "Web admin", "Agreed", "WebFeature.CALL_AUDIO; approved ten-listener target",
+        "Bounded subscriber queues; no listener identity/session history."),
+      R("ACCESS-003", "General / Public web access", "Wideband spectrum", "Wideband FFT/waterfall visibility and interaction", "Access policy",
+        "Permanent admin-only policy; no public switch is shown.", "Keep", "Web admin", "Agreed",
+        "WebFeature.WIDEBAND_SIGNAL; approved release decision",
+        "Only one administrator login session may exist on the receiver. Multiple tabs in that browser share it; a newer successful login ends the older browser session. Exactly one spectrum view may be active; no frames are stored."),
+      R("ACCESS-004", "General / Public web access", "Planned Events", "Events visibility", "Access policy",
+        "Independent public/admin-only switch.", "New", "Web admin", "Agreed",
+        "WebFeature.EVENTS; MAIN-04", "Bounded live memory only unless explicit detailed event history is enabled."),
+      R("ACCESS-005", "General / Public web access", "Planned Messages", "Messages visibility", "Access policy",
+        "Independent public/admin-only switch.", "New", "Web admin", "Agreed",
+        "WebFeature.MESSAGES; MAIN-05", "Bounded live memory; never add persistent raw-message logging."),
+      R("ACCESS-006", "General / Public web access", "Planned selected-channel signal/symbol view", "Selected-channel FFT and symbol graph visibility", "Access policy",
+        "Keep View Signal and View Symbols on Live, but render both actions only for the signed-in administrator. Do not create a duplicate active-channel list inside Settings.", "New",
+        "Web admin", "Agreed", "WebFeature.SELECTED_CHANNEL_SIGNAL; MAIN-06; approved review decision",
+        "Only one selected-channel signal view may run at once. Produce data only while it is open and never store frame or symbol history."),
+      R("ACCESS-007", "General / Public web access", "Credits/About", "Credits and licensing visibility", "Access policy",
+        "Always public informational route; no toggle unless later content becomes sensitive.", "Replace",
+        "Public web", "Agreed", "Existing stats-web Credits; OTHER-06",
+        "Static assets only."),
+      R("ACCESS-008", "General / Public web access", "Planned Listen route", "Listen lists and browser audio visibility", "Access policy",
+        "Independent public/admin-only switch for Listen and its media endpoints; keep Live access separate.", "New",
+        "Web admin", "Agreed", "public-listener-recordings-v2.html; approved ten-listener target",
+        "Ten bounded browser listeners; no visitor identity, queue, playback, or listening-history rows."),
+      R("ACCESS-009", "General / Public web access", "Planned Recordings route", "Recorded-call browse and playback visibility", "Access policy",
+        "Independent public/admin-only switch enforced for navigation, metadata search, playlist resolution, and audio.", "New",
+        "Web admin", "Agreed", "public-listener-recordings-v2.html",
+        "No metadata is revealed when locked. Guest playlist fragments are not authorization and create no server persistence."),
+
+      R("CH-002", "Channels", "Configuration Editor > Channels list", "Search System, Site, Name, and protocol", "Search",
+        "Playlist Settings > Channels toolbar; bounded server-side search.", "Replace", "Web admin", "Agreed",
+        "CFG-02; ChannelEditor.java:326", "Bounded/index-backed query; no saved-search table."),
+      R("CH-003", "Channels", "Configuration Editor > Channels list", "All / Playing / Auto-Start filters", "Filter",
+        "Do not port these filters and do not add Protocol or Alias List filters initially. Keep the separate channel search field.", "Retire",
+        "Removed", "Agreed", "ChannelEditor.java:247,367; approved review decision",
+        "No filter state or replacement storage is needed."),
+      R("CH-004", "Channels", "Configuration Editor > Channels list", "Columns: System, Site, Name, frequency/frequencies, Protocol, Playing state", "View",
+        "Virtualized Channels table.", "Move", "Web admin", "Agreed",
+        "ChannelEditor.java:412,460-476,687", "Bounded page; playing state delivered at a bounded update rate."),
+      R("CH-005", "Channels", "Configuration Editor > Channels list", "Auto-Start boolean column", "View",
+        "Replace checkmark with nullable Start order: blank means disabled; number means enabled.", "Replace",
+        "Web admin", "Agreed", "ChannelEditor.java:436; approved conversation decision",
+        "Uses existing auto_start and auto_start_order columns."),
+      R("CH-006", "Channels", "Configuration Editor > Channels list", "Start order column and +/− controls", "Field + view",
+        "Show actual nullable order. Conflicts shift affected channels atomically; rows move only when table is sorted by this column.", "Replace",
+        "Web admin", "Agreed", "ChannelConfigurationEditor.java:476,489; approved conversation decision",
+        "Serialized current-state mutation; no ordering-history table."),
+      R("CH-007", "Channels", "Configuration Editor > Channels list", "Single channel selection", "Workflow",
+        "Row selection opens the full editor panel/page.", "Move", "Web admin", "Agreed",
+        "ChannelEditor.java:494; approved master/detail direction", "No persistence."),
+      R("CH-008", "Channels", "Configuration Editor > Channels list", "Multi-select", "Workflow",
+        "Checkbox selection used only to Start or Stop the selected channels. Other edits remain one channel at a time.", "New", "Web admin", "Agreed",
+        "Approved conversation and review decision; current ChannelEditor is single-select", "Selection stays in the browser and is limited to explicitly selected channel IDs."),
+      R("CH-009", "Channels", "Configuration Editor > Channels list", "New channel by decoder", "Action",
+        "Add Channel menu, in order: P25 Conventional, P25 Trunked Phase 1, P25 Trunked Phase 2, DMR, NBFM, and NXDN.", "Move",
+        "Web admin", "Agreed", "ChannelEditor.java:529; approved review decision",
+        "Creates one current channel. AM, LTR, LTR-Net, Passport, and MPT options are removed with their decoder support."),
+      R("CH-010", "Channels", "Configuration Editor > Channels list", "Clone channel", "Action",
+        "Row/selection action; copy source, decoder, logging, recording, and alias list, but generate a new GUID.", "Move",
+        "Web admin", "Agreed", "ChannelEditor.java:605; Channel.java:127",
+        "Current-state configuration only; no clone audit."),
+      R("CH-011", "Channels", "Configuration Editor > Channels list", "Delete channel", "Action",
+        "Row/bulk destructive confirmation; stop a playing channel safely before removal.", "Move",
+        "Web admin", "Agreed", "ChannelEditor.java:562",
+        "Serialized mutation; no deletion tombstone/history."),
+      R("CH-012", "Channels", "Channel editor > identity", "System, Site, and Name", "Field group",
+        "Channels > Identity section.", "Move", "Web admin", "Agreed",
+        "CFG-03; ChannelConfigurationEditor.java:548,569,587; approved conversation fields",
+        "Bounded current strings; enforce existing lengths/validation."),
+      R("CH-013", "Channels", "Channel editor > identity", "Site GUID", "Field",
+        "Read-only by default; explicit warning/unlock modal; prohibit edits while running.", "Replace",
+        "Web admin", "Agreed", "ChannelConfigurationEditor.java:608,673; approved GUID warning",
+        "Stable current identifier only; never repurpose as the generic configuration ID."),
+      R("CH-014", "Channels", "Channel model", "Automatic GUID creation and clone behavior", "Hidden behavior",
+        "Backend must preserve an existing GUID on reads/ordinary edits and issue a new GUID for a clone.", "Keep",
+        "Headless runtime service", "Agreed", "Channel.java:444,127",
+        "No GUID history."),
+      R("CH-015", "Channels", "Channel editor > identity", "Alias List selector", "Field",
+        "Channels > Identity; select an existing alias list.", "Move", "Web admin", "Agreed",
+        "ChannelConfigurationEditor.java:596,704; approved conversation field",
+        "Bounded foreign reference to current configuration."),
+      R("CH-016", "Channels", "Channel editor", "New Alias List action", "Action",
+        "Remove from the channel editor; centralize create/clone/rename/delete on Aliases.", "Replace",
+        "Web admin", "Agreed", "ChannelConfigurationEditor.java:722",
+        "Avoid duplicate list-creation workflows."),
+      R("CH-017", "Channels", "Channel editor", "Save and Reset", "Action",
+        "Sticky editor action bar; restart confirmation when a running channel changes; Reset restores saved state.", "Move",
+        "Web admin", "Agreed", "ChannelConfigurationEditor.java:769,815",
+        "Durable-before-success current-state write; no edit history."),
+      R("CH-018", "Channels", "Channel editor", "Unsaved-change prompt", "Workflow",
+        "Browser route/selection guard modal.", "Move", "Web admin", "Agreed",
+        "ChannelEditor.java:160", "Transient only."),
+      R("CH-019", "Channels", "Channel editor", "Play / Stop", "Runtime action",
+        "Channel action bar or row menu with asynchronous result and resource impact.", "Move",
+        "Web admin", "Agreed", "ChannelConfigurationEditor.java:326",
+        "Serialized command; must never block critical radio threads."),
+      R("CH-020", "Channels", "Channel editor", "Missing JMBE prerequisite alert", "Validation",
+        "Web validation/modal linking to Decoders & encryption.", "Replace",
+        "Web admin", "Agreed", "ChannelConfigurationEditor.java:360",
+        "No JavaFX navigation from headless runtime."),
+      R("CH-021", "Channels", "Channel editor", "Clear Statistics for This Site", "Action",
+        "Move to a dedicated Statistics Management page with a destructive confirmation; available only for a supported site identity.", "Move",
+        "Web admin", "Agreed", "ChannelConfigurationEditor.java:831; approved review decision",
+        "Existing stats scope only; no reset-history row."),
+
+      R("CH-022", "Channels", "Channel editor > Source", "Single frequency (1–9999.999999 MHz)", "Field",
+        "Number-only MHz input.", "Move", "Web admin", "Agreed",
+        "FrequencyEditor.java:124; FrequencyField.java:32", "Bounded current value; server validates hardware/runtime range."),
+      R("CH-023", "Channels", "Channel editor > Source", "Control frequencies", "Field list",
+        "Repeatable numeric MHz rows with Add/Remove for DMR, NXDN, and P25 trunking.", "Move",
+        "Web admin", "Agreed", "FrequencyEditor.java:124,402,598; approved control-frequency concept",
+        "Bounded list with protocol-specific validation."),
+      R("CH-024", "Channels", "Channel editor > Source", "Minimum and maximum working-frequency envelope", "Field group",
+        "Remove the controls and their working-frequency-envelope behavior completely.", "Retire",
+        "Removed", "Agreed", "FrequencyEditor.java:111,118; approved review decision",
+        "Handle existing saved values in the explicit backed-up configuration migration; do not silently repair or alter storage during normal startup."),
+      R("CH-025", "Channels", "Channel editor > Source", "Preferred tuner", "Field",
+        "Source section receiver selector.", "Move", "Web admin", "Agreed",
+        "FrequencyEditor.java:132,419", "Stable tuner identity reference; handle unavailable receiver without data loss."),
+      R("CH-026", "Channels", "Channel editor > Source", "Frequency rotation delay", "Field",
+        "Control-frequency behavior; number-only milliseconds input with protocol-specific bounds.", "Move",
+        "Web admin", "Agreed", "FrequencyEditor.java:142,344",
+        "DMR/NXDN 200–2000 ms; P25 Phase 1 400–2000 ms; retain shared Phase 2 bounds."),
+      R("CH-027", "Channels", "Multi-frequency source configuration", "Preferred starting frequency", "Hidden value",
+        "Round-trip losslessly; if absent, first control frequency may be the runtime starting point.", "Keep",
+        "Headless runtime service", "Agreed", "SourceConfigTunerMultipleFrequency.java:78",
+        "Never erase it when saving unrelated fields."),
+      R("CH-028", "Channels", "Legacy source variants", "Sound Card/Mixer input", "Source type",
+        "Remove sound-card/mixer input support completely; it has no headless web replacement.", "Retire",
+        "Removed", "Agreed", "SourceType.java:23; SourceConfigMixer.java:26; approved review decision",
+        "Handle existing saved variants in the explicit backed-up configuration migration rather than normal startup."),
+      R("CH-029", "Channels", "Legacy source variants", "IQ Recording source", "Source type",
+        "Keep as an admin-only recording tuner under Hardware > Add New Tuner. Select a compatible I/Q WAV file from SDRTrunk's designated managed recordings folder; do not upload it.", "Move",
+        "Web admin", "Agreed", "SourceType.java:27; SourceConfigRecording.java:21; approved review decision",
+        "The website does not browse arbitrary receiver paths. Preserve only the selected current managed path."),
+      R("CH-030", "Channels", "Legacy source variants", "No Source configuration", "Source type",
+        "Compatibility state for imported/unsupported channels; never silently convert while editing another field.", "Keep",
+        "Headless runtime service", "Agreed", "SourceConfigNone.java:25",
+        "Current-state compatibility only."),
+
+      R("CH-031", "Channels", "AM decoder", "Bandwidth: 3, 5, 8.33, 15, or 25 kHz", "Field",
+        "No web replacement; remove with AM decoder support.", "Retire", "Removed", "Agreed",
+        "AMConfigurationEditor.java:132; DecodeConfigAnalog.java:98; approved AM retirement", "No replacement setting."),
+      R("CH-032", "Channels", "AM decoder", "Squelch threshold −110 to 0 dB and auto-track", "Field group",
+        "No web replacement; remove with AM decoder support.", "Retire", "Removed", "Agreed",
+        "AMConfigurationEditor.java:140,148; approved AM retirement", "No replacement setting."),
+      R("CH-033", "Channels", "AM decoder", "Talkgroup to assign (1–65535)", "Field",
+        "No web replacement; remove with AM decoder support.", "Retire", "Removed", "Agreed",
+        "AMConfigurationEditor.java:157; DecodeConfigAnalog.java:76; approved AM retirement", "No replacement setting."),
+      R("CH-034", "Channels", "NBFM decoder", "Bandwidth: 7.5, 12.5, or 25 kHz; Talkgroup 1–65535", "Field group",
+        "Decoder settings.", "Move", "Web admin", "Agreed",
+        "NBFMConfigurationEditor.java:143,151", "Bounded enums/numeric value."),
+      R("CH-035", "Channels", "NBFM decoder", "De-emphasis: None, 750 µs, or 530 µs", "Field",
+        "Decoder > Audio processing.", "Move", "Web admin", "Agreed",
+        "NBFMConfigurationEditor.java:159; DecodeConfigNBFM.java:33",
+        "Applies to decoded/recorded/streamed audio, not retired node playback."),
+      R("CH-036", "Channels", "NBFM decoder", "Output gain 0.25–4.0; high-pass; low-pass; cutoff 2000–4000 Hz", "Field group",
+        "Decoder > Audio processing with fixed multiplier/Hz units.", "Move",
+        "Web admin", "Agreed", "NBFMConfigurationEditor.java:167-191,492,541",
+        "Bounded current settings."),
+      R("CH-037", "Channels", "NBFM decoder", "Voice enhance 0–100%; squelch trim; tail 0–300 ms; head 0–150 ms; bass boost 0–12 dB", "Field group",
+        "Decoder > Audio processing with conditional fixed-unit inputs.", "Move",
+        "Web admin", "Agreed", "NBFMConfigurationEditor.java:199-231,443,460,509,526",
+        "Bounded current settings."),
+      R("CH-038", "Channels", "DMR decoder", "Maximum traffic channels 0–50; Ignore data calls; Ignore CRC/RAS; compressed talkgroups", "Field group",
+        "Decoder settings; advanced flags remain progressively disclosed.", "Move",
+        "Web admin", "Agreed", "DMRConfigurationEditor.java:139-163,503",
+        "Max traffic channels is an important N100 resource bound."),
+      R("CH-039", "Channels", "DMR decoder", "LCN/downlink-frequency map with computed TS1/TS2 IDs", "Field table",
+        "Decoder settings > LCN map.", "Move", "Web admin", "Agreed",
+        "DMRConfigurationEditor.java:171,275,293; TimeslotFrequency.java:124",
+        "Bounded current configuration; not the retiring MPT named Channel Map."),
+      R("CH-040", "Channels", "DMR decoder", "Hidden uplink frequency per LCN", "Hidden value",
+        "Round-trip losslessly or expose only as an advanced field.", "Keep",
+        "Headless runtime service", "Agreed", "TimeslotFrequency.java:82",
+        "Web saves must not zero a value merely because the default UI hides it."),
+      R("CH-041", "Channels", "LTR and LTR-Net decoders", "Message direction OSW/ISW", "Field",
+        "No web replacement; remove with LTR and LTR-Net support.", "Retire", "Removed", "Agreed",
+        "LTRConfigurationEditor.java:139; LTRNetConfigurationEditor.java:139; approved retirement", "No replacement setting."),
+      R("CH-042", "Channels", "Passport decoder", "No decoder-specific fields", "Status",
+        "No web replacement; remove with Passport decoder support.", "Retire",
+        "Removed", "Agreed", "PassportConfigurationEditor.java:94; approved Passport retirement",
+        "Do not create an empty compatibility form."),
+      R("CH-043", "Channels", "P25 Conventional decoder", "Fixed C4FM modulation", "Read-only value",
+        "Decoder summary.", "Move", "Web admin", "Agreed",
+        "P25ConventionalConfigurationEditor.java:94,187", "No persisted interactive selector."),
+      R("CH-044", "Channels", "P25 Phase 1 decoder", "Modulation C4FM/LSM; maximum traffic channels 0–50; Ignore data calls", "Field group",
+        "Decoder settings.", "Move", "Web admin", "Agreed",
+        "P25P1ConfigurationEditor.java:125-141,228,305",
+        "Max traffic channels is an important N100 resource bound."),
+      R("CH-045", "Channels", "P25 Phase 1 decoder", "Learn announced control channels", "Field",
+        "Source/decoder behavior.", "Move", "Web admin", "Agreed",
+        "P25P1ConfigurationEditor.java:149,290",
+        "Mutates the bounded current source-frequency list; serialize with configuration writes."),
+      R("CH-046", "Channels", "P25 Phase 2 decoder", "Maximum traffic channels 0–50; Ignore data calls; Learn announced control channels", "Field group",
+        "Decoder settings.", "Move", "Web admin", "Agreed",
+        "P25P2ConfigurationEditor.java:123-139,256,271",
+        "Max traffic channels is an important N100 resource bound."),
+      R("CH-047", "Channels", "P25 Phase 2 decoder", "Advanced WACN, System, and NAC scramble parameters", "Field group",
+        "Decoder > Advanced traffic-channel parameters; distinguish System parameter from channel identity System.", "Move",
+        "Web admin", "Agreed", "P25P2ConfigurationEditor.java:142-158,289-313",
+        "Bounded numeric current settings; normally auto-detected."),
+      R("CH-048", "Channels", "NXDN decoder", "Mode 4800/9600/Type D; talker-alias UTF-8/BIG5; maximum traffic channels 0–50", "Field group",
+        "Decoder settings.", "Move", "Web admin", "Agreed",
+        "NXDNConfigurationEditor.java:145-161,326,488; Encoding.java:27",
+        "Max traffic channels is an important N100 resource bound."),
+      R("CH-049", "Channels", "NXDN decoder", "Ignore data calls and Ignore encrypted calls", "Field group",
+        "Decoder settings.", "Move", "Web admin", "Agreed",
+        "NXDNConfigurationEditor.java:169,177,509,524", "Bounded current settings."),
+      R("CH-050", "Channels", "NXDN decoder", "Channel-number/downlink-frequency map", "Field table",
+        "Decoder settings > NXDN Channel map.", "Move", "Web admin", "Agreed",
+        "NXDNConfigurationEditor.java:180,301; DecodeConfigNXDN.java:76; clarified map decision",
+        "Bounded current configuration; this is independent of retiring MPT named maps."),
+      R("CH-051", "Channels", "NXDN decoder", "Hidden uplink frequency per channel number", "Hidden value",
+        "Round-trip losslessly or expose only as an advanced field.", "Keep",
+        "Headless runtime service", "Agreed", "ObservableChannelFrequency.java:34; ChannelFrequency.java:92",
+        "Web saves must not zero hidden data."),
+
+      R("CH-052", "Channels", "AM channel > Logging", "Call Events and Decoded Messages", "Field group",
+        "No web replacement; remove with AM decoder support.", "Retire",
+        "Removed", "Agreed", "AMConfigurationEditor.java:233,476; approved AM retirement",
+        "Do not spend migration work repairing controls for a decoder being removed."),
+      R("CH-053", "Channels", "NBFM channel", "Logging: Call Events, Decoded Messages; auxiliaries: DCS, Fleetsync II, LJ1200, MDC1200, Tait 1200; Baseband I/Q recording", "Field group",
+        "Logging, Auxiliary decoders, and Recording sections.", "Move",
+        "Web admin", "Agreed", "NBFMConfigurationEditor.java:277,318,334",
+        "Bounded current selections; runtime logging/recording queues remain bounded."),
+      R("CH-054", "Channels", "DMR channel", "Call/traffic event and decoded-message logging; Baseband, bitstream, MBE, and traffic equivalents", "Field group",
+        "Logging & recording section.", "Move", "Web admin", "Agreed",
+        "DMRConfigurationEditor.java:257,544", "Current configuration only."),
+      R("CH-055", "Channels", "LTR and LTR-Net channels", "Call/decoded-message logging; Fleetsync II/MDC1200 auxiliaries; Baseband I/Q recording", "Field group",
+        "No web replacement; remove with LTR and LTR-Net support.", "Retire",
+        "Removed", "Agreed", "LTRConfigurationEditor.java:213,229,267; LTRNetConfigurationEditor.java:213,229,267; approved retirement",
+        "No replacement configuration."),
+      R("CH-056", "Channels", "Passport channel", "Call/decoded-message logging; Fleetsync II/MDC1200 auxiliaries; Baseband I/Q recording", "Field group",
+        "No web replacement; remove with Passport support.", "Retire",
+        "Removed", "Agreed", "PassportConfigurationEditor.java:163,179,194; approved retirement",
+        "No replacement configuration."),
+      R("CH-057", "Channels", "P25 Conventional channel", "Call/decoded-message logging; Baseband, bitstream, and MBE recording", "Field group",
+        "Logging & recording section.", "Move", "Web admin", "Agreed",
+        "P25ConventionalConfigurationEditor.java:152,169", "Current configuration only."),
+      R("CH-058", "Channels", "P25 Phase 1 channel", "Call/traffic event and decoded-message logging; Baseband, bitstream, MBE, and traffic equivalents", "Field group",
+        "Logging & recording section.", "Move", "Web admin", "Agreed",
+        "P25P1ConfigurationEditor.java:210,323", "Current configuration only."),
+      R("CH-059", "Channels", "P25 Phase 2 channel", "Call/decoded-message logging; Baseband, bitstream, MBE, and all traffic equivalents", "Field group",
+        "Logging & recording section.", "Move", "Web admin", "Agreed",
+        "P25P2ConfigurationEditor.java:227,325", "Preserve exact current choice set."),
+      R("CH-060", "Channels", "NXDN channel", "Call/traffic event and decoded-message logging; Baseband, bitstream, MBE, and traffic equivalents", "Field group",
+        "Logging & recording section.", "Move", "Web admin", "Agreed",
+        "NXDNConfigurationEditor.java:266,559", "Current configuration only."),
+      R("CH-061", "Channels", "Alias editor > Record projection", "Channel-level logging and recording", "Scope distinction",
+        "Remain on each Channel even though the separate Alias Record tab/projection retires.", "Keep",
+        "Web admin", "Agreed", "Approved channel requirements; CFG-03, CFG-05",
+        "Do not conflate channel recorder settings with the alias Record boolean."),
+
+      R("CH-062", "Channels", "Channels list bulk menu", "Delete selected; Assign alias list; Set preferred tuner; set logging/recording types on/off; Remove auto-start", "Bulk actions",
+        "Do not add these bulk edit operations. Delete, alias assignment, tuner assignment, logging, recording, and auto-start edits remain one channel at a time.", "Retire",
+        "Removed", "Agreed", "Approved Start/Stop-only review decision",
+        "No bulk-edit command or history is needed."),
+      R("CH-063", "Channels", "Channels list bulk menu", "Place selected starting at order N; Clone selected; Start/Stop selected; same-decoder field changes", "Bulk actions",
+        "Offer Start Selected and Stop Selected only. Do not add bulk start-order placement, cloning, or decoder-field changes.", "New",
+        "Web admin", "Agreed", "Approved Start/Stop-only review decision",
+        "Preview the selected count and available tuner capacity before Start; apply commands through a small serialized queue with no operation history."),
+      R("CH-064", "Channels", "Channels list bulk menu", "Bulk source-frequency replacement", "Bulk action",
+        "Do not include by default because it is unusually destructive.", "Retire",
+        "Removed", "Agreed", "Channel audit recommendation",
+        "Individual/staged edits remain available."),
+
+      R("MPT-001", "Channels / retirement", "New Channel menu and MPT editor", "MPT-1327 decoder, source, logging, recording, max traffic channels, and call timeout", "Subsystem",
+        "No web replacement; remove runtime and editor support.", "Retire",
+        "Removed", "Agreed", "Approved conversation decision; MPT1327ConfigurationEditor.java",
+        "Back up deployed configuration before explicit one-off migration; no runtime schema mutation."),
+      R("MPT-002", "Channels / retirement", "MPT editor + Channel Map Editor", "Named Channel Map selector; map create/clone/delete; range First/Last/Base/Step", "Subsystem",
+        "No web Channel Maps page; retire with MPT.", "Retire",
+        "Removed", "Agreed", "ChannelMapEditor.java:105,390,430; DecoderFactory.java:450",
+        "Existing configuration_channel_map storage remains untouched at normal startup. DMR LCN maps and NXDN channel-number maps are separate features and remain supported."),
+      R("MPT-003", "Channels / retirement", "Persisted legacy MPT data", "Old MPT channel/config JSON and configuration_channel_map rows", "Compatibility",
+        "One compatibility release may parse a hidden disabled tombstone so configuration load cannot fail, followed by a backed-up external migration.", "Replace",
+        "Migration tooling", "Agreed", "Source audit; AGENTS.md schema rules",
+        "No normal-runtime ALTER/DROP/repair. No new schema. MPT channels never allocate a tuner."),
+      R("MPT-004", "Channels / retirement", "Protocol/factory/RR/alias support", "MPT enum, sync, factory, alias-format, RadioReference mapping, and decoder package branches", "Code retirement",
+        "Remove in a coordinated retirement slice after compatibility policy is approved.", "Retire",
+        "Removed", "Agreed", "Approved complete MPT retirement",
+        "Preserve unrelated LTR-Net OTA maps, DMR LCN maps, P25 band plans, and NXDN maps."),
+
+      R("HW-001", "Hardware", "Tuners inventory", "Status: enabled, disabled, error, available", "Status",
+        "Playlist Settings > Hardware receiver list.", "Move", "Web admin", "Agreed",
+        "MAIN-08; DiscoveredTunerModel.java:56", "Bounded live state at a low update rate."),
+      R("HW-002", "Hardware", "Tuners inventory", "Tuner class and type/model", "Status",
+        "Receiver list manufacturer/family and model columns.", "Move", "Web admin", "Agreed",
+        "MAIN-08; DiscoveredTunerModel.java:58-59", "Read-only capability metadata."),
+      R("HW-003", "Hardware", "Tuners inventory", "Current frequency, channel count, and locked state", "Status",
+        "Receiver list/detail context.", "Move", "Web admin", "Agreed",
+        "DiscoveredTunerModel.java:568,578", "Bounded status updates; no tuner-statistics history."),
+      R("HW-004", "Hardware", "Tuners inventory", "Select tuner", "Workflow",
+        "Click a receiver row to open its capability-driven detail workspace.", "Replace",
+        "Web admin", "Agreed", "TunerViewPanel.java:96; approved layout direction",
+        "Selection is browser-local."),
+      R("HW-005", "Hardware", "Tuners inventory", "Unique per-device admin identity", "Backend identity",
+        "Introduce a stable runtime/config identity so two tuners of the same class are both selectable.", "New",
+        "Headless runtime service", "Agreed", "TunerSpectrumFrameSource.java:266-299",
+        "Bounded current identity; no connection/history records.",
+        "The current class-name spectrum target deliberately omits duplicate classes."),
+      R("HW-006", "Hardware", "Selected tuner", "Stable serial/model identity", "Status",
+        "Admin-only tuner heading; use model/serial as the default label.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:263; MAIN-09, MAIN-10",
+        "No public hardware page is planned, so model and serial do not need a public-redaction mode."),
+      R("HW-007", "Hardware", "Rough Hardware wireframe", "Custom display name", "Field",
+        "Allow a short optional friendly name such as 'Roof Airspy' while always showing the actual model and serial number.", "New",
+        "Web admin", "Agreed", "settings-layout-wireframe-v3.html; approved review decision",
+        "Store only the current bounded label; no name history."),
+      R("HW-008", "Hardware", "Selected tuner", "Status and detailed error message", "Status",
+        "Tuner heading/status panel.", "Move", "Web admin", "Agreed",
+        "TunerEditor.java:207", "Current status only; no error-history table."),
+      R("HW-009", "Hardware", "Selected tuner", "Enable/disable and restart-after-error", "Action",
+        "Conditional tuner header actions with active-channel impact preview.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:618,645; receiver enable/disable requirement",
+        "Serialized per physical device; never block USB/radio threads."),
+      R("HW-010", "Hardware", "Selected tuner", "Center frequency", "Field",
+        "Tuning section; numeric fixed-frequency unit; locked when active channels prevent changes.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:316", "Validate against hardware and configured extents."),
+      R("HW-011", "Hardware", "Selected tuner", "Manual PPM correction −1000 to +1000, step 0.1", "Field",
+        "Advanced tuning with fixed ppm suffix.", "Move", "Web admin", "Agreed",
+        "TunerEditor.java:287; approved tuner correction concept", "Bounded current setting."),
+      R("HW-012", "Hardware", "Selected tuner", "Measured error/PPM and decoder auto-PPM", "Status + field",
+        "Advanced tuning; keep measured and configured values distinct.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:178,236",
+        "Bounded current status/setting; decoder feedback must remain non-blocking."),
+      R("HW-013", "Hardware", "Selected tuner", "User minimum/maximum frequency and Reset extents", "Field group + action",
+        "Advanced tuning with fixed units and server-side span validation.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:326,471,543",
+        "Maximum must remain at least one sample-rate span above minimum."),
+      R("HW-014", "Hardware", "Selected tuner", "Active-channel lock explanation", "Status",
+        "Inline reason beside disabled frequency/sample-rate controls.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:192",
+        "Current state only."),
+      R("HW-015", "Hardware", "Selected tuner", "Log Tuner State", "Diagnostic action",
+        "Overflow action returning visible success and optionally a bounded diagnostic download.", "Replace",
+        "Web admin", "Agreed", "TunerViewPanel.java:118",
+        "Do not persist diagnostic request history or expose secrets."),
+      R("HW-016", "Hardware", "Selected tuner", "Start/stop wideband baseband recording", "Action",
+        "Recording section using managed server storage.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:676",
+        "Never buffer IQ recordings through HTTP; command only arms the recorder."),
+      R("HW-017", "Hardware", "Selected tuner", "Baseband recording filename and size", "Status",
+        "Recording section with managed filename and bounded-rate size updates.", "Replace",
+        "Web admin", "Agreed", "TunerEditor.java:221",
+        "No unrestricted host path in DTO."),
+      R("HW-018", "Hardware", "Selected tuner", "Immediate apply on every tuner control change", "Workflow",
+        "Coalesce slider/input changes and serialize hardware mutations per physical device; distinguish live-safe from disruptive settings.", "Replace",
+        "Headless runtime service", "Agreed", "TunerEditor.java:819; latency requirements",
+        "Bounded command queue with latest-value coalescing; no command history."),
+
+      R("HW-019", "Hardware", "Tuners inventory", "Add Recording Tuner", "Action",
+        "Hardware > Recording sources.", "Move", "Web admin", "Agreed",
+        "MAIN-11; TunerViewPanel.java:204", "Current source configuration only."),
+      R("HW-020", "Hardware", "Add Recording Tuner", "Select WAV file", "Field + action",
+        "List compatible I/Q WAV files from SDRTrunk's designated managed recordings folder. The administrator selects a server-side file; there is no upload or arbitrary host-file browser.", "Replace",
+        "Web admin", "Agreed", "AddRecordingTunerDialog.java:83; approved review decision",
+        "Keep only the selected current managed path and validate it remains inside the allowed folder."),
+      R("HW-021", "Hardware", "Add Recording Tuner", "Recording center frequency", "Field",
+        "Add-recording modal with numeric fixed Hz/MHz unit.", "Move",
+        "Web admin", "Agreed", "AddRecordingTunerDialog.java:142", "Bounded current configuration."),
+      R("HW-022", "Hardware", "Recording tuner", "File path and Remove Recording Tuner", "Status + action",
+        "Show managed filename; removal uses confirmation.", "Replace",
+        "Web admin", "Agreed", "RecordingTunerEditor.java:110; TunerViewPanel.java:221",
+        "No unrestricted host path; no removal history."),
+
+      R("HW-023", "Hardware", "Airspy R820T tuner", "Sample rate and Gain mode: Linearity, Sensitivity, Custom", "Field group",
+        "Capability-driven Airspy device/gain sections.", "Move",
+        "Web admin", "Agreed", "MAIN-09; AirspyTunerEditor.java:444,466",
+        "Device-provided sample-rate options; lock disruptive changes while channels are active."),
+      R("HW-024", "Hardware", "Airspy R820T tuner", "Master gain; Custom-mode IF gain", "Field group",
+        "Conditional Airspy gain controls.", "Move", "Web admin", "Agreed",
+        "AirspyTunerEditor.java:351,406", "Coalesce slider writes."),
+      R("HW-025", "Hardware", "Airspy R820T tuner", "Mixer AGC/gain and LNA AGC/gain", "Field group",
+        "Custom-mode controls; AGC disables its paired manual stage.", "Move",
+        "Web admin", "Agreed", "AirspyTunerEditor.java:186,213,251,296",
+        "Coalesce slider writes."),
+      R("HW-026", "Hardware", "Airspy R820T tuner", "Serial, firmware, part, and board ID", "Status",
+        "Tuner Information modal.", "Move", "Web admin", "Agreed",
+        "AirspyTunerEditor.java:658", "Read-only hardware metadata."),
+      R("HW-027", "Hardware", "Airspy HF+ tuner", "Sample rate, attenuation, AGC, and LNA", "Field group",
+        "Airspy HF+-specific capability sections.", "Move",
+        "Web admin", "Agreed", "AirspyHfTunerEditor.java:218,260,290,321",
+        "Do not substitute generic Airspy controls."),
+      R("HW-028", "Hardware", "HydraSDR tuner", "Sample rate; gain mode/master/IF; mixer AGC/gain; LNA AGC/gain; Bias-T", "Field group",
+        "HydraSDR capability-driven device/gain sections.", "Move",
+        "Web admin", "Agreed", "HydraSdrTunerEditor.java:174,251,504",
+        "Dynamic supported options; coalesce slider writes."),
+      R("HW-029", "Hardware", "HydraSDR tuner", "Serial, firmware, part, and board ID", "Status",
+        "Tuner Information modal.", "Move", "Web admin", "Agreed",
+        "HydraSdrTunerEditor.java:696", "Read-only hardware metadata."),
+      R("HW-030", "Hardware", "HackRF tuner", "Sample rate; amplifier; LNA/IF gain; VGA/baseband gain", "Field group",
+        "HackRF capability-driven device/gain sections.", "Move",
+        "Web admin", "Agreed", "HackRFTunerEditor.java:154,191,227,257",
+        "Lock disruptive values while active; coalesce gain writes."),
+      R("HW-031", "Hardware", "HackRF tuner", "Board, serial, part, and firmware", "Status",
+        "Tuner Information modal.", "Move", "Web admin", "Agreed",
+        "HackRFTunerEditor.java:330", "Read-only hardware metadata."),
+
+      R("HW-032", "Hardware", "RTL-SDR shared", "Sample rate and conditional Bias-T", "Field group",
+        "RTL capability-driven device section.", "Move",
+        "Web admin", "Agreed", "MAIN-10; RTL2832TunerConfiguration.java:41-42",
+        "Render Bias-T only when controller reports support; lock sample rate while active."),
+      R("HW-033", "Hardware", "RTL E4000", "Master gain mode/preset; manual Mixer, LNA, and IF gain", "Field group",
+        "E4000-specific conditional gain section.", "Move",
+        "Web admin", "Agreed", "E4KTunerEditor.java:230,259,289,319",
+        "Coalesce gain writes."),
+      R("HW-034", "Hardware", "RTL FC0013", "AGC and conditional manual LNA gain", "Field group",
+        "FC0013-specific gain section.", "Move",
+        "Web admin", "Agreed", "FC0013TunerEditor.java:223,298",
+        "AGC disables manual LNA."),
+      R("HW-035", "Hardware", "RTL R820T/R828D", "Master gain/preset; conditional Mixer, LNA, and VGA gain", "Field group",
+        "R8x-specific gain section.", "Move",
+        "Web admin", "Agreed", "MAIN-10; R8xTunerEditor.java:255,292,364,405",
+        "Manual mode exposes stages; coalesce writes."),
+      R("HW-036", "Hardware", "RTL tuner information", "USB ID, vendor, product, serial, IR, and remote-wake flags", "Status",
+        "Tuner Information modal.", "Move", "Web admin", "Agreed",
+        "R8xTunerEditor.java:488 and sibling editors", "Read-only hardware metadata."),
+      R("HW-037", "Hardware", "Unknown/failed RTL", "Identity, status, enable/retry only", "Status + action",
+        "Unsupported receiver state without fabricated frequency/gain controls.", "Replace",
+        "Web admin", "Agreed", "RTL2832UnknownTunerEditor.java:52",
+        "Current status only."),
+      R("HW-038", "Hardware", "Detected FC0012/FC2580", "Detection exists without functional editor/controller support", "Compatibility",
+        "Show the detected device as unsupported with a short explanation and no settings controls.", "Replace",
+        "Web admin", "Agreed", "TunerFactory.java:397; approved review decision",
+        "Detection does not imply support; do not start it or create configuration until real controller support exists."),
+
+      R("HW-039", "Hardware", "SDRplay shared", "Supported sample rate; total gain; IF gain mode Automatic/Manual; LNA state/gain; manual IF/baseband reduction", "Field group",
+        "Capability-driven SDRplay device/gain sections.", "Move",
+        "Web admin", "Agreed", "Rsp1TunerEditor.java:176; RspTunerEditor.java:110,124,240,302",
+        "LNA range changes with frequency; capabilities come from backend, not hard-coded browser data."),
+      R("HW-040", "Hardware", "SDRplay shared", "Gain overload alert", "Status",
+        "Read-only gain warning.", "Move", "Web admin", "Agreed",
+        "RspTunerEditor.java:164", "It resembles a Swing button but is not an action."),
+      R("HW-041", "Hardware", "RSP1A/RSP1B", "Bias-T, DAB filter, and FM filter", "Field group",
+        "Model-specific device/filters sections.", "Move",
+        "Web admin", "Agreed", "Rsp1aTunerEditor.java:254,282,310",
+        "Only render on RSP1A/RSP1B."),
+      R("HW-042", "Hardware", "RSP2", "ANT B Bias-T, FM filter, external reference output, antenna A/B/High-Z", "Field group",
+        "RSP2-specific device/filters sections.", "Move",
+        "Web admin", "Agreed", "Rsp2TunerEditor.java:268,296,324,353",
+        "Make antenna applicability explicit."),
+      R("HW-043", "Hardware", "Source > Tuners preference", "RSPduo mode: Dual, Single Tuner 1, Single Tuner 2", "Field",
+        "Physical RSPduo heading above nested logical Tuner 1/Tuner 2 cards.", "Replace",
+        "Web admin", "Agreed", "RspDuoSelectionMode.java:25; approved conversation decision",
+        "Backend must key the mode per physical serial instead of one process-global preference; current-state only."),
+      R("HW-044", "Hardware", "RSPduo Tuner 2", "Slave-mode disable/sample-rate restriction explanation", "Status",
+        "Nested Tuner 2 card showing the master/slave reason.", "Move",
+        "Web admin", "Agreed", "RspDuoTuner2Editor.java:163", "Current hardware state."),
+      R("HW-045", "Hardware", "RSPduo Tuner 1", "AM port High-Z/50Ω; DAB, FM, AM filters", "Field group",
+        "Tuner 1 device/filters sections.", "Move",
+        "Web admin", "Agreed", "RspDuoTuner1Editor.java:319,349",
+        "Tuner-specific current state."),
+      R("HW-046", "Hardware", "RSPduo Tuner 2", "DAB/FM filters and Bias-T", "Field group",
+        "Tuner 2 device/filters sections.", "Move",
+        "Web admin", "Agreed", "RspDuoTuner2Editor.java:331,387",
+        "Tuner-specific current state."),
+      R("HW-047", "Hardware", "RSPduo logical editors", "External reference output and RSPduo Preferences button", "Field + navigation",
+        "Show external reference once on the physical device; remove the preferences-navigation button.", "Replace",
+        "Web admin", "Agreed", "RspDuoTuner1Editor.java:433,459",
+        "Avoid duplicated physical-device controls."),
+      R("HW-048", "Hardware", "RSPdx/RSPdxR2", "ANT B Bias-T, HDR mode, FM/DAB filters, and Antenna A/B/C", "Field group",
+        "RSPdx-specific device/filters sections.", "Move",
+        "Web admin", "Agreed", "RspDxTunerEditor.java:289,317,345,401",
+        "Frequency/antenna applicability comes from capability metadata."),
+      R("HW-049", "Hardware", "RSPdx/RSPdxR2", "HDR bandwidth", "Field",
+        "No web replacement; remove the unusable HDR bandwidth control and supporting setting.", "Retire",
+        "Removed", "Agreed", "RspDxTunerEditor.java:428-455; approved review decision",
+        "The current control is permanently disabled and does not reload a usable value."),
+      R("HW-052", "Hardware", "Shared tuner frequency controls", "Keep center frequency fixed", "Field",
+        "Frequency and correction section for every supported tuner; keep it separate from the temporary active-channel lock state.", "Move",
+        "Web admin", "Agreed", "TunerEditor.java:267-291,933; TunerConfiguration.java:150-162; approved source-parity addition",
+        "Default is off. When on, SDRTrunk does not automatically retune this tuner and assigns only channels already inside its current usable passband. Enabling or disabling it does not retune immediately. Store only the current per-tuner setting; no history."),
+
+      R("SPEC-001", "Hardware / Spectrum", "Main web navigation", "Standalone Spectrum tab", "Navigation",
+        "Remove top-level route; spectrum appears only after View Spectrum on a selected tuner.", "Retire",
+        "Removed", "Agreed", "stats-web/index.html:17; approved conversation decision",
+        "No persistence."),
+      R("SPEC-002", "Hardware / Spectrum", "Selected tuner", "View Spectrum / Close Spectrum", "Action",
+        "Open/release the exclusive full-width lower Hardware workspace for the selected receiver.", "Replace",
+        "Web admin", "Agreed", "TunerEditor.java:589; approved layout and one-session decisions",
+        "Exactly one producer/socket node-wide; leaving/changing tuner releases it."),
+      R("SPEC-003", "Hardware / Spectrum", "Selected tuner", "New Spectrum Display / multiple windows", "Action",
+        "No replacement.", "Retire", "Removed", "Agreed",
+        "TunerEditor.java:565; approved one-spectrum design", "Prevents duplicate producers."),
+      R("SPEC-004", "Hardware / Spectrum", "Current web spectrum", "Receiver dropdown", "Field",
+        "Remove inside-plot selector; View Spectrum passes the already selected Hardware tuner.", "Replace",
+        "Web admin", "Agreed", "wideband-signal.js:117; approved Hardware context",
+        "Unique per-device admin identity required."),
+      R("SPEC-005", "Hardware / Spectrum", "Web/Swing spectrum", "FFT and waterfall canvases", "View",
+        "Large full-width lower portion of Hardware.", "Move",
+        "Web admin", "Agreed", "MAIN-12; wideband-signal.js:177",
+        "Canvas buffers bounded to viewport/history policy; no frames in SQLite."),
+      R("SPEC-006", "Hardware / Spectrum", "Current web spectrum", "Pause and Reset zoom", "Action",
+        "Spectrum toolbar.", "Move", "Browser-local + signal service", "Agreed",
+        "wideband-signal.js:133,136", "Pause is local; reset requests bounded full-span data."),
+      R("SPEC-007", "Hardware / Spectrum", "Current web spectrum", "Lower display limit", "Field",
+        "Fixed dB control; recolor future rows while old-limit rows scroll away naturally.", "Move",
+        "Browser-local", "Agreed", "wideband-signal.js:147; approved behavior",
+        "No persistence required unless later chosen as browser-local storage."),
+      R("SPEC-008", "Hardware / Spectrum", "Current web spectrum", "Wheel/keyboard zoom; click-drag/keyboard pan; Reset", "Interaction",
+        "Both charts; pan only while zoomed.", "Move",
+        "Web admin", "Agreed", "wideband-signal.js:1113,1147; approved interaction",
+        "Zoom may use more CPU but sends only the cropped viewport; bounded commands."),
+      R("SPEC-009", "Hardware / Spectrum", "Current web spectrum", "Temporary blurred transform then refined higher-resolution data", "Behavior",
+        "Retain approved zoom transition.", "Keep", "Web admin", "Agreed",
+        "wideband-signal.js:1288; approved conversation behavior",
+        "No extra history; replace only incoming rows."),
+      R("SPEC-010", "Hardware / Spectrum", "Current web spectrum", "Hover vertical guide plus frequency/power popup above cursor", "View",
+        "Both charts; no persistent readout panel.", "Move",
+        "Browser-local", "Agreed", "wideband-signal.js:1346; approved UI changes",
+        "Derived from current frame only."),
+      R("SPEC-011", "Hardware / Spectrum", "Current web spectrum", "Horizontal dB grid and labels", "View",
+        "FFT chart.", "Move", "Browser-local", "Agreed",
+        "wideband-signal.js:995; approved feature", "Derived rendering only."),
+      R("SPEC-012", "Hardware / Spectrum", "Current web spectrum", "Stats for nerds: peak, center, span, zoom, rate, bins, FFT detail, drops, generation", "Popup",
+        "Right-click popup only.", "Move", "Browser-local", "Agreed",
+        "wideband-signal.js:233; approved UI changes", "Current bounded counters only; never persist telemetry."),
+      R("SPEC-013", "Hardware / Spectrum", "Swing spectrum", "Channel overlays: All, Enabled, None; click overlay to edit channel", "View + navigation",
+        "Spectrum display options and link to Channels editor.", "Move",
+        "Web admin", "Agreed", "SpectralDisplayPanel.java:633,693",
+        "Overlay state browser-local; channel query bounded."),
+      R("SPEC-014", "Hardware / Spectrum", "Swing spectrum", "Channel/spectrum/cursor/gradient colors", "Field group",
+        "Browser-local palette options using web/vector assets.", "Replace",
+        "Browser-local", "Agreed", "SpectralDisplayPanel.java:654",
+        "Do not port AWT color plumbing or store per-listener rows."),
+      R("SPEC-015", "Hardware / Spectrum", "Swing spectrum", "Averaging", "Field",
+        "Keep as an advanced display option in the browser.", "Move", "Browser-local", "Agreed",
+        "SpectralDisplayPanel.java:685; approved review decision", "Keep only in browser state; no server or database persistence."),
+      R("SPEC-016", "Hardware / Spectrum", "Swing spectrum", "Manual FFT width 512–32768 and frame rate 14–50 FPS", "Field group",
+        "Replace with adaptive bounded backend policy; browser cannot freely raise receiver-node work.", "Replace",
+        "Headless runtime service", "Agreed", "SpectralDisplayPanel.java:704,715",
+        "N100 resource cap and current viewer demand determine work."),
+      R("SPEC-017", "Hardware / Spectrum", "Swing spectrum", "FFT window type; smoothing type/amount", "Field group",
+        "Do not expose these controls. Use reviewed built-in FFT-window and smoothing defaults.", "Replace",
+        "Browser-local + signal service", "Agreed", "SpectralDisplayPanel.java:730,741; approved review decision",
+        "No saved setting or performance history."),
+      R("SPEC-018", "Hardware / Spectrum", "Swing spectrum", "Zoom slider 1×–64×; show another tuner; Disable display", "Interaction group",
+        "Replace with wheel/drag/reset, Hardware selection, and Close Spectrum.", "Replace",
+        "Web admin", "Agreed", "SpectralDisplayPanel.java:772,779,831",
+        "One producer; bounded viewport."),
+
+      R("HW-050", "Hardware / retirement", "Source > Tuners", "Channelizer selector and Polyphase/Heterodyne explanations", "Field + view",
+        "No Hardware or General field; Polyphase is fixed.", "Retire",
+        "Removed", "Agreed", "TunerPreferenceEditor.java:91-172; approved decision",
+        "Remove heterodyne manager/construction/recording branches in the retirement slice."),
+      R("HW-051", "Hardware / retirement", "Funcube Pro and Pro+", "All gain/correction/info fields plus detection, mixer source, configurations, controllers, editors", "Subsystem",
+        "No web replacement; remove complete Funcube support.", "Retire",
+        "Removed", "Agreed", "FCD1TunerEditor.java; FCD2TunerEditor.java; TunerFactory.java:364",
+        "Explicit configuration compatibility policy before code removal; no hidden allocation path."),
+
+      R("AL-001", "Aliases", "Configuration Editor > Aliases", "Alias List selector", "Field",
+        "Playlist Settings > Aliases header; select one existing list before browsing aliases.", "Move",
+        "Web admin", "Agreed", "CFG-04; AliasConfigurationEditor.java:252,303",
+        "Current list identity only."),
+      R("AL-002", "Aliases", "Configuration Editor > Aliases", "Create, Clone, Rename, and Delete Alias List", "Action group",
+        "Separate list-level actions beside the selector; short modals and destructive confirmation.", "Replace",
+        "Web admin", "Agreed", "AliasConfigurationEditor.java:335,365,397; approved conversation decision",
+        "Current-state configuration only; no clone/rename/delete audit. Preserve existing name validation/max length."),
+      R("AL-003", "Aliases", "Configuration Editor > Aliases", "Alias search", "Search",
+        "Bounded server-side search across alias, group, and matching identifier.", "Replace",
+        "Web admin", "Agreed", "AliasConfigurationEditor.java:253; thousands-entry requirement",
+        "Index-backed bounded query; no saved-search records."),
+      R("AL-004", "Aliases", "Alias and identifier projections", "Talkgroup, Radio, and Other category selection", "Filter",
+        "Three task-oriented filters above one canonical alias table.", "Replace",
+        "Web admin", "Agreed", "CFG-04, CFG-05; approved conversation taxonomy",
+        "Browser-local filter; no duplicate editable state."),
+      R("AL-005", "Aliases", "Alias list table", "Columns: matching ID/type, Alias, Group, Record, Priority, vector icon/color", "View",
+        "Virtualized/paged alias table; columns adapt to Talkgroup/Radio/Other.", "Replace",
+        "Web admin", "Agreed", "AliasConfigurationEditor.java:437-489; approved wireframe direction",
+        "Return only a bounded page, approximately 100 rows."),
+      R("AL-006", "Aliases", "Alias list table", "Pagination/result count", "Workflow",
+        "Server-side page/search with clear range and total; never materialize thousands in the DOM.", "New",
+        "Web admin", "Agreed", "Approved thousands-entry requirement",
+        "Bounded index-backed query; page state browser-local."),
+      R("AL-007", "Aliases", "Alias list table", "Multi-select and bulk edit", "Workflow",
+        "Checkbox selection with explicit Apply for Color, vector Icon, Priority, and Record. Listen-list membership is edited on its own page.", "Replace",
+        "Web admin", "Agreed", "AliasBulkEditor.java:89-170,260-423; approved multi-select requirement",
+        "One bounded serialized mutation over explicit alias IDs; no bulk history."),
+      R("AL-008", "Aliases", "Alias list table", "Create, Clone, Delete, and Move alias(es)", "Action group",
+        "Row/bulk actions; Move chooses a destination Alias List; destructive confirmation for delete.", "Replace",
+        "Web admin", "Agreed", "AliasConfigurationEditor.java:582,609,640; approved conversation decision",
+        "Current-state configuration only; clone receives its own stable ID/revision."),
+      R("AL-009", "Aliases", "Alias editor", "Alias name and Group", "Field group",
+        "Type-aware alias detail editor.", "Move", "Web admin", "Agreed",
+        "AliasItemEditor.java:1038,1067,1187,1201; approved field list",
+        "Bounded current strings with existing validation."),
+      R("AL-010", "Aliases", "Alias editor", "Listen and playback Priority including Default and Do Not Monitor", "Field group",
+        "Retire the Listen/Do Not Monitor eligibility control. Keep numeric Priority independently for ordering competing calls that already match a visitor's Listen list.", "Replace",
+        "Web admin", "Agreed", "AliasItemEditor.java:1046,1053,1110; updated Listen-list decision",
+        "The web path never consults the legacy -1 value. Preserve it temporarily only while legacy desktop playback remains; it cannot exclude a web Listen-list member."),
+      R("AL-011", "Aliases", "Alias editor", "Record", "Field",
+        "Alias detail toggle and bulk field.", "Move", "Web admin", "Agreed",
+        "AliasItemEditor.java:1075; approved field list",
+        "Distinct from channel-level technical recorder settings. It controls future saved call audio and Recordings admission, never live Listen-list eligibility."),
+      R("AL-012", "Aliases", "Alias editor + Icon Manager", "Icon selection", "Field",
+        "Choose from a small built-in vector icon library.", "Replace",
+        "Web admin", "Agreed", "AliasItemEditor.java:1082,1157; OTHER-01; approved vector-icon decision",
+        "Persist a stable vector icon key only; no uploaded raster blobs."),
+      R("AL-013", "Aliases", "Icon Manager", "Raster icon add/edit/delete and legacy icon assets", "Subsystem",
+        "No web asset manager; retire after mapping existing aliases to built-in vectors/default.", "Retire",
+        "Removed", "Agreed", "OTHER-01; approved decision",
+        "One-off backed-up configuration migration if stored icon names need replacement; no runtime schema changes."),
+      R("AL-014", "Aliases", "Alias editor", "Color", "Field",
+        "Browser color input/palette, usable in detail and bulk edit.", "Move",
+        "Web admin", "Agreed", "AliasItemEditor.java:1060; approved field list",
+        "Bounded current color value."),
+      R("AL-015", "Aliases", "Identifiers pane", "Talkgroup and Talkgroup Range with protocol", "Field family",
+        "Integrated Talkgroup matching fields in the alias detail; no separate Identifiers pane/tab.", "Replace",
+        "Web admin", "Agreed", "TalkgroupEditor.java; TalkgroupRangeEditor.java; approved no-Identifier-tab direction",
+        "Canonical current match data must remain editable and lossless."),
+      R("AL-016", "Aliases", "Identifiers pane", "P25 Fully Qualified Talkgroup: WACN, System, Talkgroup", "Field family",
+        "Advanced Talkgroup matching form. Talkgroup is required; WACN and System are either both exact values or both Any by default. Exact matches win over wildcard matches.", "Replace",
+        "Web admin", "Agreed", "P25FullyQualifiedTalkgroupEditor.java:71-224; approved review decision",
+        "WACN 0–0xFFFFF; System 0–0xFFF; Talkgroup 0–0xFFFF. Pre-index exact and wildcard matches so decoding never waits on a web request or list scan."),
+      R("AL-017", "Aliases", "Identifiers pane", "Radio ID and Radio ID Range with protocol", "Field family",
+        "Integrated Radio matching fields in the alias detail.", "Replace",
+        "Web admin", "Agreed", "RadioIdEditor.java; RadioIdRangeEditor.java; approved Radio category",
+        "Preserve protocol-specific formatting/ranges."),
+      R("AL-018", "Aliases", "Identifiers pane", "P25 Fully Qualified Radio ID: WACN, System, Radio ID", "Field family",
+        "Advanced Radio matching form. Radio ID is required; WACN and System are either both exact values or both Any by default. Exact matches win over wildcard matches.", "Replace",
+        "Web admin", "Agreed", "P25FullyQualifiedRadioIdEditor.java:71-224; approved review decision",
+        "WACN 0–0xFFFFF; System 0–0xFFF; Radio 0–0xFFFFFF. Pre-index exact and wildcard matches so decoding never waits on a web request or list scan."),
+      R("AL-019", "Aliases", "Identifiers pane", "Other supported matches: DCS, ESN, LoJack function/ID, P25 User Status, P25 Unit Status, AMBE tone sequence/durations", "Field family",
+        "Type-specific Other forms; progressively disclose only the selected matcher.", "Replace",
+        "Web admin", "Agreed", "DcsEditor.java; EsnEditor.java; LojackEditor.java; UserStatusEditor.java; UnitStatusEditor.java; TonesEditor.java",
+        "Preserve current ranges and ordered tone list; legacy/unrecognized values round-trip losslessly."),
+      R("AL-020", "Aliases", "Identifiers pane", "Identifier overlap indicator and Show Overlap", "Status + action",
+        "Inline overlap warning linking to a filtered alias result set.", "Replace",
+        "Web admin", "Agreed", "AliasItemEditor.java:692; CFG-04",
+        "Computed current-state query; no overlap-history table."),
+      R("AL-021", "Aliases", "Identifiers pane", "MPT-1327 protocol match options", "Field family",
+        "Remove with complete MPT retirement.", "Retire",
+        "Removed", "Agreed", "AliasItemEditor.java MPT menu; AliasIDType.MPT1327",
+        "Compatibility parser/migration follows MPT policy."),
+      R("AL-022", "Aliases", "Streaming pane", "Available/selected broadcast destinations", "Field list",
+        "Compact Streaming destinations assignment in alias detail; provider configuration does not repeat aliases.", "Replace",
+        "Web admin", "Agreed", "AliasItemEditor.java:833-974; approved parent-Aliases assignment",
+        "Bounded references to current providers; API never returns provider secrets."),
+      R("AL-023", "Aliases", "Streaming pane", "Stream this Alias as Talkgroup override", "Field",
+        "Keep the optional field under Aliases > Streaming. Leave it blank to send the talkgroup SDRTrunk decoded; enter 1–65,535 only when a streaming provider must receive matched calls under a different talkgroup number.", "Move",
+        "Web admin", "Agreed", "AliasItemEditor.java:441-449,852; StreamAsTalkgroup.java; approved review decision",
+        "This changes only the outgoing streamed target/talkgroup. It does not change decoding or the separately reported transmitting radio ID.",
+        "Use the universal information button to explain the normal blank behavior and a conventional-repeater collision example."),
+      R("AL-024", "Aliases", "Actions pane", "Beep and Audio Clip actions", "Subsystem",
+        "No web replacement.", "Retire", "Removed", "Agreed",
+        "CFG-07; BeepEditor.java; ClipEditor.java; approved omission of Actions",
+        "The explicit backed-up migration reports existing actions before removing their configuration; normal startup never executes or repairs them."),
+      R("AL-025", "Aliases", "Actions pane", "Script action, file picker, interval, and Test", "Subsystem",
+        "Remove scripts entirely.", "Retire", "Removed", "Agreed",
+        "CFG-07; ScriptEditor.java; explicit approved script retirement",
+        "Do not execute or migrate scripts into the web runtime."),
+      R("AL-026", "Aliases", "Alias editor", "Save and Reset", "Action",
+        "Explicit Save/Cancel/Reset with dirty-state protection.", "Replace",
+        "Web admin", "Agreed", "AliasItemEditor.java:1227,1242",
+        "Aggregate-level durable write with revision; no revision history."),
+      R("AL-027", "Aliases", "Aliases by Identifier tab", "Standalone Identifier projection/editor", "View",
+        "Retire the separate tab; replace with Talkgroup/Radio/Other filters and overlap links.", "Retire",
+        "Removed", "Agreed", "CFG-05; AliasViewByIdentifierEditor.java; approved decision",
+        "Matching data remains in canonical alias records."),
+      R("AL-028", "Aliases", "Aliases by Recording tab", "Separate Record/Don't Record transfer lists", "View",
+        "Retire the separate tab; use Record filter/column and bulk edit.", "Retire",
+        "Removed", "Agreed", "CFG-05; AliasViewByRecordingEditor.java; approved decision",
+        "Record boolean remains canonical."),
+      R("AL-029", "Aliases", "New main-branch NXDN identifier menu", "NXDN Talkgroup, Talkgroup Range, Radio ID, Radio ID Range, and AMBE Audio Tones", "Field family",
+        "Use the integrated Talkgroup and Radio dialogs with NXDN selected for exact values and ranges; use the shared ordered AMBE tone editor for tone matching.", "Move",
+        "Web admin", "Agreed", "AliasItemEditor.java:767-772; main commit 2021af7a; approved source-parity request",
+        "NXDN over-the-air identifiers are 16-bit, so the web contract validates 0-65,535 and requires a range start lower than its end. The generic tone matcher is not stored as NXDN-only. Correct the Java editor's accidental generic 24-bit fallback before parity sign-off; use existing alias storage and add no schema."),
+
+      R("LIST-001", "Listen lists", "New Playlist Settings page", "Saved Listen-list master/detail editor", "View + workflow",
+        "Playlist Settings > Listen lists after Aliases; search, New, Clone, Delete, explicit Save/Cancel, and current revision conflict handling.", "New",
+        "Web admin", "Agreed", "settings-shell-listen-lists-v1.html",
+        "Current administrator configuration only; no revision history, per-visitor row, or usage history."),
+      R("LIST-002", "Listen lists", "New Listen filter configuration", "Name, short description, and Available on Listen", "Field group",
+        "Saved list details with a clear distinction between availability and the separate public/admin Listen policy.", "New",
+        "Web admin", "Agreed", "settings-shell-listen-lists-v1.html",
+        "Current values persist until list deletion. Production loads saved values; mockup examples are not defaults."),
+      R("LIST-003", "Listen lists", "Existing channels and talkgroup aliases", "Talkgroup and channel membership", "Search + membership",
+        "Bounded searches and a current-members table. Missing members stay visible and removable instead of being silently rewritten.", "New",
+        "Web admin", "Agreed", "settings-shell-listen-lists-v1.html; AL-010",
+        "Store only current stable member references. Membership is authoritative for live browser audio; it does not start channels, retune receivers, or enable recording."),
+      R("LIST-004", "Listen lists", "New browser audio contract", "Listen-list delivery bypasses legacy Listen and Record gates", "Runtime behavior",
+        "A visitor hears a completed call when it matches the selected Listen list, even when Record is off or the retained desktop Alias value is Do Not Monitor.", "New",
+        "Web runtime", "Agreed", "AudioCallCoordinator.java; StatsWebCallService.java; updated Listen-list decision",
+        "Use an immutable in-memory membership index and bounded non-blocking handoff. Encode a matching call once for all subscribers; visitor selection and queues create no database rows."),
+      R("LIST-005", "Listen lists", "New Recordings contract", "Successful destination-talkgroup-Record calls are the only searchable recordings", "Runtime behavior",
+        "Admit a call to the Recordings catalog only after its destination talkgroup had Record enabled and its audio file was written successfully. Live-only calls never appear in Recordings search.", "New",
+        "Web runtime", "Agreed", "AudioRecordingManager.java; public-listener-recordings-v2.html; updated recording-search decision",
+        "Turning Record off affects future calls. Existing retained calls remain searchable only until recorded-call retention removes the audio and catalog entry."),
+
+      R("STR-001", "Streaming", "Configuration Editor > Streaming list", "Columns: Enabled, Name, Format/provider type, Stream Status, Last Error", "View",
+        "Playlist Settings > Streaming provider list/detail.", "Move",
+        "Web admin", "Agreed", "CFG-08; StreamingEditor.java:399-445",
+        "Bounded current status; no status/error history table."),
+      R("STR-002", "Streaming", "Configuration Editor > Streaming", "Add provider by type", "Action",
+        "Add Provider type modal preserving every supported provider except Unknown.", "Move",
+        "Web admin", "Agreed", "StreamingEditor.java:320-346; BroadcastServerType.java",
+        "Creates one current provider configuration."),
+      R("STR-003", "Streaming", "Configuration Editor > Streaming", "Clone and Delete provider", "Action group",
+        "Provider header actions with secret-safe clone and destructive confirmation.", "Replace",
+        "Web admin", "Agreed", "StreamingEditor.java:367; approved add/clone/delete requirement",
+        "Cloned write-only credentials require explicit handling; no action history."),
+      R("STR-004", "Streaming", "Every provider editor", "Format/type, Enabled, Name, Save, Reset", "Field + actions",
+        "Common provider identity/status section and explicit Save/Cancel.", "Move",
+        "Web admin", "Agreed", "AbstractBroadcastEditor.java:65,102,161,175,189",
+        "Stable current provider record with optimistic revision; no revision history."),
+      R("STR-005", "Streaming", "Provider editors", "Passwords and API keys", "Secret field",
+        "Write-only secret controls: blank/unchanged semantics, replace action, never echo the stored value.", "Replace",
+        "Web admin", "Agreed", "AbstractStreamEditor.java:126-152 and provider editors; migration-plan secret rule",
+        "Never return, log, diff, or place secrets in diagnostics/browser state."),
+      R("STR-006", "Streaming", "Provider editors", "Test Connection", "Action",
+        "Asynchronous bounded test with current result; never block recording/upload/radio or HTTP threads.", "Replace",
+        "Headless runtime service", "Agreed", "BroadcastifyCallEditor.java:289; provider workflow",
+        "No connection-test history or response-body persistence."),
+      R("STR-007", "Streaming", "Streaming > Aliases tab", "Available/selected alias transfer lists", "View",
+        "No provider-level Aliases tab; assign destinations from each alias.", "Retire",
+        "Removed", "Agreed", "StreamAliasSelectionEditor.java; approved conversation decision",
+        "Provider-to-alias references remain canonical through the Alias page."),
+      R("STR-008", "Streaming", "Streaming toolbar", "Refresh Broadcastify feeds from RadioReference account", "Action",
+        "Provider list action with logged-in requirement and bounded current result.", "Move",
+        "Web admin", "Agreed", "StreamingEditor.java:355-360,264",
+        "Do not persist provider-feed API responses as an unbounded cache."),
+      R("STR-009", "Streaming", "Broadcastify Feed editor", "Server, Port, Mount Point, Password, Max Recording Age seconds, Delay seconds, Feed ID, Verbose Logging", "Field group",
+        "Broadcastify Feed provider form; fixed numeric units and secret-safe password.", "Move",
+        "Web admin", "Agreed", "BroadcastifyStreamEditor.java:102-203",
+        "Current configuration only; verbose logging must remain bounded and must not capture secrets."),
+      R("STR-010", "Streaming", "Broadcastify Calls editor", "API Key, System ID, Broadcastify URL, Max Recording Age seconds, periodic Keep-Alive, Ping Interval minutes", "Field group",
+        "Broadcastify Calls provider form.", "Move",
+        "Web admin", "Agreed", "BroadcastifyCallEditor.java:133-197",
+        "Current config; bounded keep-alive scheduling; API key write-only."),
+      R("STR-011", "Streaming", "Icecast 2 HTTP/TCP editors", "Server, Port, Mount Point, Inline Metadata, User Name, Password, Max Age seconds, Delay seconds, Description, Genre, URL", "Field group",
+        "Icecast provider form shared by HTTP 2.4+ and TCP 2.3 variants.", "Move",
+        "Web admin", "Agreed", "IcecastStreamEditor.java:110-219",
+        "Current config; password write-only; fixed seconds units."),
+      R("STR-012", "Streaming", "OpenMHz editor", "API Key, System Short Name, Upload Server URL, Max Recording Age seconds", "Field group",
+        "OpenMHz provider form.", "Move", "Web admin", "Agreed",
+        "OpenMHzEditor.java:123-171", "Current config; API key write-only."),
+      R("STR-013", "Streaming", "Rdio Scanner editor", "API Key, System ID, RdioScanner URL, fixed /api/call-upload path, Max Recording Age seconds", "Field group",
+        "Rdio Scanner provider form; show composed endpoint clearly.", "Move",
+        "Web admin", "Agreed", "RdioScannerEditor.java:131-190",
+        "Current config; API key write-only."),
+      R("STR-014", "Streaming", "RadioResolve editor", "Mode, URL, API Key, Node Name, Node Timezone, Max Recording Age seconds, Concurrent Uploads, Ignore Certificate Errors", "Field group",
+        "RadioResolve provider form with explicit fixed-unit/resource controls.", "Move",
+        "Web admin", "Agreed", "RadioResolveEditor.java:136-179; production upload requirements",
+        "API key write-only; concurrent uploads bounded for N100; no upload-history schema beyond grandfathered behavior."),
+      R("STR-015", "Streaming", "Shoutcast v1 editor", "Public, Server, Port, Password, Max Age seconds, Delay seconds, Description, Genre", "Field group",
+        "Shoutcast provider form.", "Move", "Web admin", "Agreed",
+        "ShoutcastV1StreamEditor.java:104-189", "Current config; password write-only."),
+      R("STR-016", "Streaming", "Unknown provider editor", "Legacy unknown provider fields/status", "Compatibility",
+        "Read-only/repair state for imported unknown configurations; cannot create a new Unknown provider.", "Replace",
+        "Web admin", "Agreed", "UnknownStreamEditor.java:74-131; StreamingEditor.java creation exclusions",
+        "Round-trip existing config losslessly or require explicit conversion/delete."),
+
+      R("RR-001", "RadioReference", "RadioReference login dialog", "User Name, Password, Show password, Store Login Credentials, Test Connection", "Field + actions",
+        "RadioReference Sign-in modal.", "Replace", "Web admin", "Agreed",
+        "CFG-09; LoginDialog.java:130-276; approved sign-in workflow",
+        "Credentials are write-only and stored only through the existing protected current setting; no login-attempt history."),
+      R("RR-002", "RadioReference", "RadioReference header", "Premium account status, signed-in username, account expiration, Login/Sign out", "Status + action",
+        "RadioReference page header.", "Move", "Web admin", "Agreed",
+        "RadioReferenceEditor.java:423-527", "Current redacted account status only."),
+      R("RR-003", "RadioReference", "RadioReference location controls", "Country, State, County", "Field group",
+        "Top-level browse filters preserving last valid selection.", "Move",
+        "Web admin", "Agreed", "RadioReferenceEditor.java:379-395,603-713; approved workflow",
+        "Small current preference values only; do not persist API result sets."),
+      R("RR-004", "RadioReference", "Five legacy tabs", "County/State Trunked Systems and County/State/National Agencies", "Navigation",
+        "One unified results list with Type and Scope tags plus a Group dropdown.", "Replace",
+        "Web admin", "Agreed", "RadioReferenceEditor.java:189-292; approved pain-point solution",
+        "API results remain bounded/ephemeral; no durable browse cache."),
+      R("RR-005", "RadioReference", "Unified proposed browse list", "Name, Type, Scope, Open", "View",
+        "Paged/filterable browse results.", "New", "Web admin", "Agreed",
+        "Approved settings wireframe direction", "Bounded server-side results."),
+      R("RR-006", "RadioReference", "System selector/workspace", "System selection; Protocol, flavor, and Voice type", "View",
+        "System import workspace header and summary.", "Move",
+        "Web admin", "Agreed", "SystemEditor.java:107-217; SystemSiteSelectionEditor.java:84-182",
+        "Current API result only."),
+      R("RR-007", "RadioReference", "System Site view", "Site columns: System, RFSS, Site, County, Name", "View",
+        "Sites & frequencies step table.", "Move", "Web admin", "Agreed",
+        "SystemSiteSelectionEditor.java:213-237", "Bounded current API response."),
+      R("RR-008", "RadioReference", "Site editor", "Frequency table: Type, LCN, Frequency; select Control, Control & Alternates, Selected, or All", "Field table",
+        "Sites & frequencies step with row selection and frequency-set controls.", "Replace",
+        "Web admin", "Agreed", "SiteEditor.java:1010-1122",
+        "Staged browser/server memory until commit; no import-preview table."),
+      R("RR-009", "RadioReference", "Site editor", "Create Single configuration or For Each Frequency", "Field",
+        "Channel configuration step.", "Move", "Web admin", "Agreed",
+        "SiteEditor.java:966-1004", "Staged choice only."),
+      R("RR-010", "RadioReference", "Site editor", "P25 control type: FDMA Phase 1 or TDMA Phase 2", "Field",
+        "Conditional channel configuration choice for P25 Phase 2 systems.", "Move",
+        "Web admin", "Agreed", "SiteEditor.java:842-886", "Staged choice only."),
+      R("RR-011", "RadioReference", "Site editor", "Channel fields: System, Site, Name, Alias List", "Field group",
+        "Channel configuration step; validate against the same channel service as manual editing.", "Move",
+        "Web admin", "Agreed", "SiteEditor.java:176-203,901-929",
+        "On commit, writes bounded current channel configuration only."),
+      R("RR-012", "RadioReference", "Site editor", "Create Channel Configuration and Go To Channel Editor", "Action + field",
+        "Preview and create the selected channel configuration, then remain in RadioReference. Do not add a Go To Channel Editor action.", "Replace",
+        "Web admin", "Agreed", "SiteEditor.java:1134-1204; approved review decision",
+        "Save the current channel once and in order; no import job or history table."),
+      R("RR-013", "RadioReference", "System Talkgroup view", "Alias List, New Alias List, Search, Category", "Field + actions",
+        "Talkgroups step; reuse central alias-list service and bounded table search.", "Move",
+        "Web admin", "Agreed", "SystemTalkgroupSelectionEditor.java:127-151,440-596",
+        "No durable API result cache; list creation writes current config only."),
+      R("RR-014", "RadioReference", "System Talkgroup view", "Set encrypted talkgroups to Muted", "Field",
+        "Do not port this legacy Do Not Monitor shortcut. Keep RadioReference encryption status visible; Listen lists decide live eligibility.", "Retire", "Removed", "Agreed",
+        "SystemTalkgroupSelectionEditor.java:189-201; updated Listen-list decision", "Remove the obsolete preference during the explicit migration; normal startup does not rewrite it."),
+      R("RR-015", "RadioReference", "System Talkgroup view", "Columns: Talkgroup, Description, existing Alias; Import All/selected", "View + action",
+        "Paged/filterable talkgroup step with explicit alias-list target and selected/import-all commit.", "Replace",
+        "Web admin", "Agreed", "SystemTalkgroupSelectionEditor.java:301-360,606-621",
+        "Preview in bounded memory; commit only current alias records, no import history."),
+      R("RR-016", "RadioReference", "Talkgroup detail", "Talkgroup, Alpha Tag, Description, Mode/encryption", "Status",
+        "Talkgroup detail/preview drawer.", "Move", "Web admin", "Agreed",
+        "TalkgroupEditor.java:71-176", "Current API response only."),
+      R("RR-017", "RadioReference", "Talkgroup detail", "Create alias Name and Group; View/Edit existing Alias", "Field + action",
+        "Inline import edit and link to canonical Aliases editor.", "Replace",
+        "Web admin", "Agreed", "TalkgroupEditor.java:203-301",
+        "Writes current alias aggregate only."),
+      R("RR-018", "RadioReference", "Agency browser", "Agency; Category; Sub-Category; frequency columns Description, Frequency, Mode", "View + fields",
+        "Unified Agency result opens a conventional-frequency workspace.", "Replace",
+        "Web admin", "Agreed", "AgencyEditor.java; AgencyFrequencyEditor.java:96-224",
+        "Bounded API response; no persistent API cache."),
+      R("RR-019", "RadioReference", "Agency frequency detail", "Alpha Tag, Tone, Mode, Frequency; proposed Channel System, Site, Name, Decoder", "Field group",
+        "Conventional channel preview/edit step.", "Move",
+        "Web admin", "Agreed", "FrequencyEditor.java:91-166",
+        "Staged in memory, then validated by channel service."),
+      R("RR-020", "RadioReference", "Agency frequency detail", "Create and View Channel Editor After Create", "Action + field",
+        "Create the conventional channel and remain in RadioReference. Do not automatically open Channels or add a post-import Go To Channels action.", "Replace",
+        "Web admin", "Agreed", "FrequencyEditor.java:331-363; approved review decision",
+        "Save only the current channel; no import history."),
+      R("RR-021", "RadioReference", "MPT-compatible RadioReference systems", "MPT decoder/import mapping", "Compatibility",
+        "Show unsupported after MPT retirement; do not create an MPT channel.", "Retire",
+        "Removed", "Agreed", "RadioReferenceDecoder.java mappings; approved MPT retirement",
+        "No hidden tuner allocation; no runtime data migration."),
+      R("RR-022", "RadioReference", "All remote browse/import calls", "Loading, cancellation, stale response, unavailable/error states", "Workflow",
+        "Cancellable asynchronous requests; discard stale responses when location/system selection changes.", "Replace",
+        "Headless runtime service", "Agreed", "RadioReferenceEditor.java and SystemEditor.java request sequencing",
+        "Never wait on radio/USB/decoder threads; bounded result memory; no raw response persistence."),
+
+      R("LOCAL-001", "Local node administration", "Stats & Web > Web Server", "Enable web server", "Field",
+        "Retained local JavaFX Web Server utility.", "Move", "Local JavaFX", "Agreed",
+        "PREF-15; WebServerPreferenceEditor.java:203-216; approved ownership boundary",
+        "Existing bounded current application setting."),
+      R("LOCAL-002", "Local node administration", "Stats & Web > Web Server", "Listen Address as host-or-IP:port, default 127.0.0.1:8090", "Field",
+        "One local JavaFX text field.", "Replace", "Local JavaFX", "Agreed",
+        "WebServerPreferenceEditor.java:219-256; approved simplified binding decision",
+        "Current setting only; server validates exact address/port."),
+      R("LOCAL-003", "Local node administration", "Older web server network modes", "LAN-only / Tailscale-only selectors", "Field",
+        "No replacement; binding address is the complete network exposure control.", "Retire",
+        "Removed", "Agreed", "Approved simplified server decision",
+        "Remove obsolete compatibility branches after settings migration."),
+      R("LOCAL-004", "Local node administration", "Stats & Web > Web Server", "Enable HTTPS and Certificate names/SANs", "Field group",
+        "Retained local JavaFX TLS controls.", "Move", "Local JavaFX", "Agreed",
+        "WebServerPreferenceEditor.java:266-307; approved TLS decision",
+        "Current TLS mode/SAN input only."),
+      R("LOCAL-005", "Local node administration", "Stats & Web > Web Server", "Generate Self-Signed certificate", "Action",
+        "Retained local JavaFX action.", "Move", "Local JavaFX", "Agreed",
+        "WebServerPreferenceEditor.java:320-327; approved TLS decision",
+        "Fixed current certificate/key files under portable data/security/tls; no certificate history."),
+      R("LOCAL-006", "Local node administration", "Stats & Web > Web Server", "Select/import Certificate and matching Private Key", "Action group",
+        "Retained local JavaFX file actions with installed-material status.", "Move",
+        "Local JavaFX", "Agreed", "WebServerPreferenceEditor.java:331-365; approved simple Apache-like storage",
+        "Bounded PEM input; fixed current files; no uploaded-copy/history table."),
+      R("LOCAL-007", "Local node administration", "Stats & Web > Web Server", "HTTPS status and Web URL", "Status",
+        "Retained local JavaFX readout; web may show only a redacted server status.", "Move",
+        "Local JavaFX", "Agreed", "WebServerPreferenceEditor.java:152-155,353-372",
+        "Derived current status."),
+      R("LOCAL-008", "Local node administration", "Stats & Web > Web Server", "Start/Stop server and apply-on-next-start behavior", "Action + status",
+        "Retained local JavaFX service control.", "Move",
+        "Local JavaFX", "Agreed", "WebServerPreferenceEditor.java:162-170,376-394; approved service-control boundary",
+        "No service-control history; one process/data-root owner."),
+      R("LOCAL-009", "Local node administration", "Stats & Web > Web Server", "Web administrator status; Set/Repair Administrator; Username, Password, Confirm", "Workflow",
+        "Retained local JavaFX account bootstrap/reset.", "Move",
+        "Local JavaFX", "Agreed", "WebServerPreferenceEditor.java:172-182,398-418,662-689",
+        "Exactly one bounded administrator identity; password hash only, no credential history."),
+      R("LOCAL-010", "Local node administration", "Stats & Web > Web Server", "Editable assets folder", "Status",
+        "Development-only local readout; omit from normal packaged admin workflow or place under Diagnostics.", "Replace",
+        "Local JavaFX", "Agreed", "WebServerPreferenceEditor.java:156-159",
+        "No browser mutation of arbitrary asset roots."),
+      R("LOCAL-011", "Local node administration", "File Storage > Directories", "Physical application/event/JMBE/recording/streaming roots and Change/Reset", "Field group",
+        "Local-only managed-root/recovery section if custom paths remain supported.", "Replace",
+        "Local JavaFX", "Agreed", "PREF-13; DirectoryPreferenceEditor.java",
+        "Current paths only; preserve portable-runtime defaults and never mutate legacy ~/SDRTrunk input."),
+      R("LOCAL-012", "Local node administration", "Planned platform services", "Enable/autostart/status/restart and non-radio service configuration", "Field + actions",
+        "Retained/future local JavaFX node-service section.", "New",
+        "Local JavaFX", "Agreed", "Approved JavaFX ownership boundary; docs/web-first-ui-migration-plan.md §3.1",
+        "Current service configuration/status only; no service-event history."),
+    ];
+
+    const columns = ["id", "area", "legacy", "item", "kind", "destination", "decision", "owner", "approval", "evidence", "constraint", "notes"];
+    const body = document.getElementById("ledger-body");
+    const search = document.getElementById("search");
+    const areaFilter = document.getElementById("area-filter");
+    const decisionFilter = document.getElementById("decision-filter");
+    const approvalFilter = document.getElementById("approval-filter");
+    const reviewFilter = document.getElementById("review-filter");
+    const resultCount = document.getElementById("result-count");
+    const areaContext = document.getElementById("area-context");
+    const reviewSaveStatus = document.getElementById("review-save-status");
+    const reviewFileInput = document.getElementById("load-review");
+    const tableWrap = document.querySelector(".table-wrap");
+    const empty = document.getElementById("empty");
+    const REVIEW_STORAGE_KEY = "sdrtrunk.settings-migration-review.v1";
+    const REVIEW_FORMAT = "sdrtrunk-settings-migration-review";
+    const REVIEW_VERSION = 1;
+    const REVIEW_INVENTORY = "2026-07-21";
+    const MAX_REVIEW_NOTE_LENGTH = 2000;
+    const MAX_REVIEW_BACKUP_BYTES = 2 * 1024 * 1024;
+    const validRowIds = new Set(rows.map((row) => row.id));
+    const pendingNoteSaves = new Map();
+    let reviewStorageAvailable = true;
+    let reviewStorageIssue = "";
+    let reviewData = {entries: {}, updatedAt: ""};
+
+    const areaLabels = {
+      "Cross-cutting": "Applies everywhere",
+      "Channels / retirement": "Channels being removed",
+      "General / Calls": "General Settings / Calls",
+      "General / Audio": "General Settings / Audio",
+      "General / Performance": "General Settings / Performance",
+      "General / Decoders & encryption": "General Settings / Voice decoders and keys",
+      "General / Live display & IDs": "General Settings / Display and radio IDs",
+      "General / Storage": "General Settings / Storage",
+      "General / Statistics": "General Settings / Statistics",
+      "General / Public web access": "General Settings / Public access",
+      "Listen lists": "Playlist Settings / Listen lists",
+      "Hardware / Spectrum": "Hardware / Spectrum and waterfall",
+      "Hardware / retirement": "Hardware support being removed",
+      "Local node administration": "Local JavaFX setup utility"
+    };
+
+    const areaDescriptions = {
+      "Cross-cutting": "Rules that apply to every Settings page, such as login, saving, large lists, and protecting live radio work.",
+      "Channels": "A channel tells SDRTrunk what system and frequencies to follow, which decoder to use, and what technical data to log or record.",
+      "Channels / retirement": "Older channel types and supporting controls that are intentionally being removed from both the interface and SDRTrunk itself.",
+      "General / Calls": "Controls for recognizing the same transmission when it is received more than once, then choosing whether duplicate copies are played, recorded, or streamed.",
+      "General / Audio": "Audio recording and MP3 encoding settings. Speaker output attached to the receiver computer is excluded because the finished receiver runs without a desktop or speakers.",
+      "General / Performance": "CPU calibration and processing choices. Calibration is a short benchmark that finds the fastest safe processing method for this computer.",
+      "General / Decoders & encryption": "Optional voice-decoder files and the encrypted store that holds voice keys. Saved secrets can be replaced but are never shown in the browser.",
+      "General / Live display & IDs": "Controls only how live calls, talkgroup IDs, radio IDs, and encryption details are displayed. These do not change the underlying radio identifiers.",
+      "General / Storage": "Storage limits and application-managed folders. The website will not act as a general file browser for the receiver computer.",
+      "General / Statistics": "Current activity totals, optional detailed event history, automatic deletion, and database maintenance. New data must never grow forever.",
+      "General / Public web access": "One switch per public feature decides whether visitors can use it without signing in or whether it is reserved for the administrator.",
+      "Listen lists": "Saved listening choices made from existing talkgroups and channels. Membership decides what each visitor can hear live without enabling recording or changing receiver operation.",
+      "Hardware": "Detected receivers and the controls each model actually supports. Settings apply to the selected physical tuner, not every tuner.",
+      "Hardware / Spectrum": "The live FFT shows signal strength across frequency; the waterfall shows a scrolling history of that same view. Only one administrator can open it at a time.",
+      "Hardware / retirement": "Unsupported tuner and signal-processing code that will be removed completely rather than left hidden in a headless receiver.",
+      "Aliases": "An alias turns a radio identifier, such as a talkgroup or radio ID, into a readable name and controls recording, playback priority, color, icon, and streaming behavior. Listen-list membership now controls live browser eligibility.",
+      "Streaming": "Settings for sending calls or audio to Broadcastify, RadioResolve, OpenMHz, Rdio Scanner, Icecast, and other providers. Passwords and API keys are never displayed after they are saved.",
+      "RadioReference": "A step-by-step import page for finding systems, sites, frequencies, talkgroups, and agencies, previewing them, and then creating normal SDRTrunk channels or aliases.",
+      "Local node administration": "Server, HTTPS, administrator-account, service, and physical-folder controls that stay in the JavaFX setup utility on the receiver itself. Radio configuration moves to the website."
+    };
+
+    const decisionLabels = {
+      Keep: "Keep",
+      Move: "Move to web",
+      New: "Add",
+      Pending: "Not decided",
+      Replace: "Redesign",
+      Retire: "Remove"
+    };
+
+    const approvalLabels = {
+      Agreed: "Agreed",
+      Proposed: "Suggested",
+      "Needs decision": "Your decision needed"
+    };
+
+    const reviewStateLabels = {
+      "": "Not reviewed",
+      approved: "Approve as written",
+      change: "Decision or change noted",
+      discuss: "Discuss later"
+    };
+    const validReviewStates = new Set(Object.keys(reviewStateLabels));
+
+    const ownerLabels = {
+      "Browser-local": "This browser only",
+      "Browser-local + signal service": "Browser and live signal service",
+      "Browser-local or admin default": "This browser or an admin-set default",
+      "Design process": "Design checklist",
+      "Headless runtime service": "SDRTrunk background service",
+      "Local JavaFX": "Local JavaFX setup utility",
+      "Migration tooling": "One-time settings conversion",
+      "Public web": "Public website",
+      "Removed": "Removed",
+      "Web admin": "Administrator website",
+      "Web admin + Local JavaFX recovery": "Administrator website with local recovery",
+      "Web admin or Removed": "Administrator website or removed"
+    };
+
+    const planOverrides = {
+      "XF-001": "Require the administrator to sign in before opening Settings or making a change. Anyone who is not signed in is sent to the login page.",
+      "XF-002": "Keep the Playlist Settings and General Settings menus visible while moving between pages. Remember the selected page only in that browser.",
+      "XF-003": "Open each page with SDRTrunk’s current saved values. If a setting has never been saved, use SDRTrunk’s real built-in default. Use Save and Cancel, warn before leaving with unsaved changes, and stop an older browser tab from overwriting a newer edit.",
+      "XF-004": "Let the admin enter only the number. The page supplies a fixed unit such as GB, days, seconds, ppm, or MHz and checks the allowed range before saving.",
+      "XF-005": "Run calibration, maintenance, tests, imports, and rescans in the background with progress and Cancel controls. They must never delay tuning, decoding, recording, streaming, or live audio.",
+      "XF-006": "Reuse the existing settings database whenever possible. Plan and review any unavoidable database change before implementation.",
+      "XF-007": "Use small pop-up dialogs only for short confirmations, passwords, and dangerous actions. Keep long editors, spectrum, and imports on the main page.",
+      "XF-008": "Search, sort, filter, and load large lists one page at a time so thousands of aliases or talkgroups remain responsive on an N100 receiver.",
+      "XF-009": "The website asks the SDRTrunk background service for information and sends changes through it. The page never controls tuner hardware directly or depends on desktop-only screen code.",
+      "XF-010": "Keep every field in this checklist until it is explicitly assigned a new home or intentionally removed.",
+      "CH-002": "Search System, Site, Name, and protocol from the Channels toolbar. SDRTrunk searches the saved channels and returns only one small page of matches.",
+      "CH-014": "Keep a channel’s permanent GUID during ordinary edits. Give a clone a new GUID so it is treated as a separate configured site.",
+      "CH-018": "Warn before leaving the channel editor or selecting another channel when there are unsaved changes.",
+      "MPT-001": "Do not create an MPT web editor. Remove the MPT decoder, source, logging, recording, traffic-channel, and timeout support in the planned retirement work.",
+      "HW-051": "Do not create Funcube web settings. Remove Funcube detection, configuration, and control support after deciding how old saved configurations are reported.",
+      "HW-052": "Add one common Keep center frequency fixed choice to every supported tuner. It prevents automatic retuning but does not stop an administrator from choosing a new center frequency while the tuner is idle.",
+      "SPEC-001": "Remove the separate Spectrum page. Open spectrum only by selecting a tuner in Hardware and choosing View Spectrum.",
+      "SPEC-003": "Do not allow extra spectrum windows or feeds; one administrator may open one spectrum view at a time.",
+      "SPEC-016": "Let SDRTrunk choose safe chart detail and update speed based on the N100 performance limit and whether spectrum is being viewed. The browser cannot force an unsafe rate.",
+      "AL-003": "Search alias name, group, or matching radio identifier. SDRTrunk searches the full list and returns one small page of matches.",
+      "AL-006": "Show a clear result count and page range. Load about 100 aliases at a time instead of placing thousands on one page.",
+      "AL-026": "Use Save, Cancel, and Reset, and warn before leaving with unsaved alias changes.",
+      "AL-029": "Allow NXDN exact and range matches for Talkgroups and Radio IDs. The same ordered AMBE tone matcher used by other digital voice protocols also works with NXDN.",
+      "STR-004": "Show the provider type, enabled state, name, and current connection status, with explicit Save and Cancel actions.",
+      "STR-006": "Run Test Connection in the background and show its latest result. It must never delay decoding, recording, or uploads.",
+      "STR-008": "While signed in to RadioReference, refresh the current list of Broadcastify feeds without keeping a permanent copy of the downloaded response.",
+      "STR-013": "Show the complete Rdio Scanner upload address assembled from the server URL and the fixed call-upload path.",
+      "RR-011": "Review System, Site, Name, and Alias List using the same rules as a manually created channel, then create the channel.",
+      "RR-013": "Choose an existing Alias List or create one, then search and filter the talkgroups being considered for import.",
+      "RR-015": "Show talkgroups one page at a time, choose an Alias List, and import either the selected rows or all matching rows after a preview.",
+      "RR-018": "Open a conventional-frequency import page for the chosen agency, with category, description, frequency, and mode information.",
+      "RR-021": "Explain that MPT systems are unsupported after retirement and never create or start an MPT channel.",
+      "RR-022": "Allow cancellation. If the admin chooses another location or system while results are loading, ignore the older results when they arrive."
+    };
+
+    const contextOverrides = {
+      "XF-001": "There is one local administrator account. Save only that current account; do not keep login or sign-in history.",
+      "XF-002": "Moving around Settings does not create database records or affect another visitor’s browser.",
+      "XF-003": "Blank fields in a static mockup are not defaults. The finished page displays current SDRTrunk values and keeps only a small current change number for conflict detection; it does not build an edit or audit history.",
+      "XF-004": "SDRTrunk checks the allowed minimum and maximum again before saving and never stores user-entered unit text.",
+      "XF-005": "Keep only the active task and its latest result in temporary memory. Do not build permanent task or performance history.",
+      "XF-006": "Save current settings, but do not add statistics, audits, events, messages, downloaded-data copies, or edit histories that can grow forever.",
+      "XF-007": "The pop-up contents disappear when it closes and are never stored as dialog history.",
+      "XF-008": "Only the requested page and visible rows are loaded. Database lookups must remain fast as lists grow.",
+      "XF-009": "Use small capped transfer queues and discard live event data after use unless Detailed Event History explicitly stores it.",
+      "CH-001": "This is the startup countdown that gives the administrator a chance to cancel automatic channel startup.",
+      "CH-005": "A blank value means the channel does not start automatically. A number means it starts in that position.",
+      "CH-006": "If a number is already used, assigning it to another channel shifts the later channels down automatically.",
+      "CH-013": "A GUID is the permanent internal ID that links a configured site to its saved data and web pages. Editing it can break those links.",
+      "CH-014": "An ordinary edit keeps the same permanent ID. A clone receives a new one so SDRTrunk never treats two configured sites as the same site.",
+      "CH-019": "Start or Stop may take a moment or fail when no tuner has enough capacity. The page reports the result without pausing radio processing.",
+      "CH-020": "JMBE is the optional voice-decoder library needed to hear or record certain digital voice formats.",
+      "CH-024": "This working-range feature is intentionally removed; normal startup never silently rewrites old saved values.",
+      "CH-026": "Rotation delay is how long SDRTrunk listens before trying the next listed control frequency when it has not found the system.",
+      "CH-028": "Sound-card input is intentionally removed along with its source type and supporting code.",
+      "CH-029": "Select a compatible I/Q WAV file from SDRTrunk’s managed recordings folder. The browser does not upload files or browse the rest of the receiver computer.",
+      "CH-038": "Maximum traffic channels limits how many simultaneous calls this system may follow, directly affecting tuner and CPU use.",
+      "CH-039": "An LCN map matches channel numbers broadcast by a DMR system to their actual frequencies.",
+      "CH-040": "Imported data may include an uplink frequency. Saving any other field must preserve that hidden value exactly.",
+      "CH-047": "WACN, System, and NAC identify a P25 network and are normally learned automatically. Manual values belong under Advanced.",
+      "CH-050": "An NXDN channel-number map matches the numbers broadcast by the system to their actual frequencies.",
+      "CH-051": "Imported data may include an uplink frequency. Saving any other field must preserve that hidden value exactly.",
+      "CH-052": "AM support is being removed, so these broken legacy logging controls are not rebuilt for the website.",
+      "CH-061": "Channel recording settings choose technical decoder output. The Alias Record switch decides which matching calls are recorded; these are separate controls.",
+      "CH-062": "Only Start and Stop use multi-select. Other channel fields continue to be edited one channel at a time.",
+      "CH-063": "Before starting several selected channels, show how many will start and whether the tuners have enough capacity.",
+      "AUD-001": "Normalization makes unusually loud and quiet recordings more consistent before MP3 compression.",
+      "AUD-003": "Offer only sample rates that work with the selected MP3 encoder. Check the choice again before saving.",
+      "AUD-005": "This controls speakers attached to the receiver computer. It is removed because the receiver runs without speakers; each browser listener chooses their own output device.",
+      "CALL-003": "When this is on, browser listeners hear only one copy of a detected duplicate call. Recording and streaming have their own choices.",
+      "PERF-002": "A badge on the Performance menu item quietly shows that calibration needs attention. It does not create a notification or saved notification history.",
+      "KEY-003": "Auto-unlock is offered only after a successful web unlock. If it is off, SDRTrunk starts without decryption until the administrator unlocks the vault from the website.",
+      "DISP-002": "The administrator chooses the public default, and each visitor may override it only in that browser.",
+      "DISP-003": "Age-out is how long an idle P25 grant remains visible before it disappears.",
+      "DISP-004": "The choice changes only how an ID is written on screen; it never changes the underlying talkgroup or radio ID.",
+      "DISP-005": "The fixed-width and leading-zero display option is intentionally removed.",
+      "STOR-007": "This is the reference point for the event-log storage meter. Reaching it shows high usage; the current application does not delete logs automatically.",
+      "STOR-008": "This is the reference point for the recording storage meter. Reaching it shows high usage; the current application does not delete recordings automatically.",
+      "STOR-009": "This is a separate deletion age for recorded calls. When a call expires, both its audio and Recordings lookup entry are removed; Statistics retention is unchanged.",
+      "STOR-010": "The folder structure is built into SDRTrunk so every installation uses the same date, system, site, channel, and talkgroup organization. Administrators choose only the recordings root, not the layout underneath it.",
+      "STAT-001": "The existing statistics database may continue as it works today. Do not add new statistics or categories that can grow forever.",
+      "STAT-002": "Individual event records are stored only when Detailed Event History is enabled.",
+      "STAT-003": "Records older than the chosen number of days are deleted automatically; release testing must prove cleanup works at realistic size.",
+      "STAT-005": "Remove expired data and perform routine database housekeeping in the background without interrupting radio work.",
+      "ACCESS-002": "Support ten listeners who are not signed in. Each listener gets a small capped audio queue so a slow connection cannot consume growing memory.",
+      "ACCESS-003": "There is one administrator account and one active administrator browser session for the entire receiver. A newer login replaces the older session; tabs in the same browser share the session.",
+      "ACCESS-005": "Keep only a small amount of recent live message data for current viewers. Do not save every decoded message forever.",
+      "ACCESS-006": "View Signal and View Symbols remain in Live, but public visitors never see them. One selected-channel diagnostic workspace can run at a time.",
+      "ACCESS-008": "Listen can be public independently from Live and Recordings. Its queue and playback choices stay in each browser.",
+      "ACCESS-009": "Recordings access protects the search results, shared-playlist resolution, and audio—not only the navigation link.",
+      "LIST-001": "Listen lists are current administrator-made choices on the Listen page. They do not record edit history or listener activity.",
+      "HW-003": "Locked means active channels are using this receiver, so disruptive tuning or sample-rate changes stay disabled until those channels stop.",
+      "HW-005": "Each physical tuner needs its own identity, usually model plus serial number, so two identical tuners can both be selected.",
+      "HW-007": "A friendly name makes similar tuners easier to recognize, while the real model and serial number always remain visible.",
+      "HW-038": "Do not offer settings for detected hardware that SDRTrunk cannot actually control. The page should explain the limitation clearly.",
+      "HW-011": "PPM is frequency calibration. Manual is the saved correction; measured is the current error estimate; automatic correction lets the decoder adjust it.",
+      "HW-015": "This creates one troubleshooting snapshot. It does not turn on an ongoing diagnostic history.",
+      "HW-016": "Baseband recording captures the tuner’s full raw bandwidth and can create very large files quickly.",
+      "HW-023": "Sample rate controls usable bandwidth and CPU load. Gain controls received signal strength.",
+      "HW-043": "An RSPduo is one physical radio with two internal tuner sections. Its mode is saved separately for each physical RSPduo.",
+      "HW-049": "The old HDR bandwidth control is unusable and is intentionally removed instead of being ported.",
+      "HW-052": "When this is on, a channel outside the bandwidth currently being received must use another tuner or will not start. Turning it on or off does not move the tuner immediately.",
+      "SPEC-002": "Closing spectrum or choosing another tuner ends the one live signal feed and frees its resources.",
+      "SPEC-003": "This prevents SDRTrunk from creating more than one live spectrum feed and wasting receiver resources.",
+      "SPEC-005": "Keep only enough waterfall rows to fill the visible chart. Spectrum frames are never stored in the database.",
+      "SPEC-006": "Pause freezes only this browser display; tuning, decoding, recording, streaming, and the receiver continue normally.",
+      "SPEC-007": "Changing the lower limit recolors new waterfall rows. Existing rows keep their old colors and scroll away naturally.",
+      "SPEC-008": "While zooming, briefly stretch the old image, then replace it with sharper data for only the visible frequency range.",
+      "SPEC-010": "The frequency and power value come from the current frame and disappear with the cursor; no readout history is saved.",
+      "SPEC-012": "Peak is the strongest point; span is the visible width; rate is updates per second; bins are frequency points; drops are missed display updates.",
+      "SPEC-015": "Averaging makes the display calmer but may hide very brief changes. It affects only the chart, not decoding.",
+      "SPEC-017": "SDRTrunk uses reviewed built-in values for smoothing and FFT window type; these controls are not shown.",
+      "AL-003": "SDRTrunk searches the full alias list but sends the browser only one page, so lists with thousands of entries remain responsive.",
+      "AL-010": "The old Listen/Do Not Monitor control does not move to the website. A visitor's selected Listen list decides eligibility; numeric Priority may order eligible calls but cannot block one.",
+      "LIST-003": "Adding a talkgroup or channel makes its matching calls eligible for visitors using this list, even when those calls are not recorded.",
+      "LIST-004": "The live web path ignores the retired Listen/Do Not Monitor value and the Record switch. It stays bounded and shares one encoded call among matching visitors.",
+      "LIST-005": "A call appears in Recordings only after its destination talkgroup had Record enabled and its audio file was saved successfully. Live-only calls never create catalog entries.",
+      "AL-016": "Talkgroup is required. WACN and System are either both exact or both Any; an exact match wins over the Any-network match.",
+      "AL-018": "Radio ID is required. WACN and System are either both exact or both Any; an exact match wins over the Any-network match.",
+      "AL-023": "Normally, streaming sends the talkgroup SDRTrunk decoded. Enter a different number only when a provider must receive this alias under another talkgroup—for example, to distinguish conventional repeaters that all decode as talkgroup 1. This changes only the streamed target; the transmitting radio ID stays separate and unchanged. Leave blank for normal behavior.",
+      "AL-029": "Choose NXDN in Add Talkgroup match or Add Radio match. Exact values and inclusive ranges are supported. Range end must be greater than range start. AMBE tones use the shared ordered-tone matcher.",
+      "STR-005": "The saved password or API key is never displayed, logged, or included in diagnostics. An admin may replace it but cannot reveal it.",
+      "STR-006": "The check runs in the background and cannot make decoding, recording, or active uploads wait. Only the latest result is shown.",
+      "STR-014": "Max Recording Age decides when a queued recording is too old to upload. Concurrent Uploads limits how many recordings RadioResolve sends at once.",
+      "RR-004": "This replaces several county, state, and national tabs with one list whose tags explain where each result came from.",
+      "RR-005": "SDRTrunk returns one small page of matching systems or agencies at a time.",
+      "RR-007": "RFSS means Radio Frequency Sub-System, which is part of a P25 site identifier.",
+      "RR-008": "LCN means Logical Channel Number, the number a radio system uses to map a channel to its actual frequency. Preview data exists only during this import.",
+      "RR-009": "Create Single makes one channel configuration from the chosen frequencies. For Each Frequency makes a separate configuration for every chosen frequency.",
+      "RR-015": "Show a preview, then create the selected aliases once. Do not keep a separate permanent import history.",
+      "RR-016": "Alpha Tag is the short label supplied by RadioReference. Mode describes whether the talkgroup is digital, analog, or encrypted.",
+      "RR-018": "Downloaded agency and frequency data exists only while the import page is open and is not kept as a permanent copy.",
+      "RR-019": "Alpha Tag is the short label supplied by RadioReference. Review the proposed channel name and decoder before creating it.",
+      "RR-022": "Loading must never slow tuner input, decoding, recording, or audio. Downloaded results are discarded after the import page is closed.",
+      "LOCAL-002": "127.0.0.1:8090 allows access only from the receiver computer. Binding to another network address allows connections through that network, subject to its firewall.",
+      "LOCAL-004": "Certificate names are the website names or IP addresses that the HTTPS certificate must cover.",
+      "LOCAL-005": "Replacing the self-signed certificate and key changes the current pair only; it does not create a certificate history.",
+      "LOCAL-008": "Settings that require a restart take effect the next time the web server starts. Start and stop actions are not kept as history.",
+      "LOCAL-009": "Store the password securely, never as plain text, and do not retain old passwords."
+    };
+
+    const itemHelp = {
+      "CH-053": "Baseband I/Q means raw tuner samples and produces large diagnostic files.",
+      "CH-054": "Bitstream means decoded data bits rather than playable audio.",
+      "CH-055": "MBE means compressed digital voice frames.",
+      "CH-056": "Traffic variants apply to voice or data channels opened by a trunked-system grant.",
+      "HW-024": "AGC means automatic gain control; it adjusts signal gain without manual slider changes.",
+      "HW-025": "LNA means low-noise amplifier; IF is an intermediate-frequency gain stage; VGA is a variable-gain amplifier.",
+      "HW-031": "Bias-T supplies DC power through the antenna cable for compatible accessories.",
+      "STR-009": "Max Recording Age is how old a queued recording may be before SDRTrunk stops trying to send it.",
+      "STR-010": "Max Recording Age is how old a queued recording may be before SDRTrunk stops trying to send it.",
+      "STR-011": "Max Age is how old a queued recording may be before SDRTrunk stops trying to send it.",
+      "STR-012": "Max Recording Age is how old a queued recording may be before SDRTrunk stops trying to send it.",
+      "STR-013": "Max Recording Age is how old a queued recording may be before SDRTrunk stops trying to send it.",
+      "STR-015": "Max Age is how old a queued recording may be before SDRTrunk stops trying to send it."
+    };
+
+    const itemOverrides = {
+      "XF-001": "Administrator sign-in",
+      "XF-003": "Save, Cancel, unsaved changes, and edits from another browser tab",
+      "XF-006": "Any new database storage proposed for Settings",
+      "XF-009": "Keeping the website separate from tuners and old desktop screens",
+      "XF-010": "Fields not shown in an early layout sketch",
+      "MPT-003": "Old saved MPT channels and named Channel Map data",
+      "MPT-004": "All remaining MPT-1327 support throughout SDRTrunk",
+      "HW-005": "Telling two identical physical tuners apart",
+      "STR-011": "Server, Port, stream path, include current call/title information, User Name, Password, Max Age, Delay, Description, Genre, and URL"
+    };
+
+    const escapeHtml = (value) => String(value ?? "")
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+    const slug = (value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const badge = (value, label = value) => `<span class="badge ${slug(value)}">${escapeHtml(label)}</span>`;
+
+    function simplify(value) {
+      let text = String(value ?? "");
+      const replacements = [
+        [/bounded server-side search/gi, "search performed by SDRTrunk across the full saved list"],
+        [/no replacement storage schema/gi, "no replacement storage is needed"],
+        [/fixed-cardinality current policy in existing application_settings/gi, "one current access setting for each feature in the existing settings store"],
+        [/remove runtime and editor support/gi, "remove the decoder and editor support"],
+        [/no normal-runtime ALTER\/DROP\/repair/gi, "do not change or repair the database during normal operation"],
+        [/no runtime schema changes/gi, "do not change the database during normal operation"],
+        [/runtime schema mutation/gi, "database changes during normal operation"],
+        [/portable-runtime defaults/gi, "portable-install defaults"],
+        [/HTTP threads/gi, "web requests"],
+        [/USB\/radio threads/gi, "tuner input or radio work"],
+        [/revision checks on mutable aggregates/gi, "a check that prevents an older page from overwriting a newer edit"],
+        [/optimistic revision/gi, "protection against an older page overwriting a newer edit"],
+        [/typed query\/command services and DTOs/gi, "a dedicated settings service"],
+        [/server-side/gi, "handled by SDRTrunk"],
+        [/browser-local/gi, "kept only in this browser"],
+        [/node-wide/gi, "for this entire SDRTrunk receiver"],
+        [/headless runtime service/gi, "SDRTrunk background service"],
+        [/headless runtime/gi, "SDRTrunk running without a desktop screen"],
+        [/headlessly/gi, "without a desktop screen"],
+        [/asynchronous/gi, "background"],
+        [/cancellable/gi, "cancelable"],
+        [/virtualized/gi, "paged"],
+        [/virtualize visible rows/gi, "load only the rows currently visible"],
+        [/materialize thousands in the DOM/gi, "load thousands of rows onto the page"],
+        [/materialize/gi, "load"],
+        [/index-backed/gi, "designed to stay fast"],
+        [/\bunbounded\b/gi, "able to grow without a limit"],
+        [/bounded query/gi, "limited, one-page-at-a-time lookup"],
+        [/bounded page/gi, "one limited page at a time"],
+        [/bounded result/gi, "limited current result"],
+        [/bounded current setting/gi, "only the current setting"],
+        [/bounded current status/gi, "only the current status"],
+        [/bounded current value/gi, "only the current value"],
+        [/bounded current strings/gi, "only the current text values"],
+        [/bounded enum setting/gi, "a short, fixed list of choices"],
+        [/bounded enum/gi, "a short, fixed list of choices"],
+        [/bounded enums/gi, "short, fixed lists of choices"],
+        [/bounded integer/gi, "limited whole number"],
+        [/bounded numeric/gi, "limited number"],
+        [/bounded in-memory/gi, "small and temporary"],
+        [/bounded memory/gi, "limited temporary memory"],
+        [/bounded subscriber queues/gi, "small capped queues for each viewer"],
+        [/bounded command queue/gi, "small capped change queue"],
+        [/bounded transport queues/gi, "small capped transfer queues"],
+        [/\bbounded\b/gi, "limited"],
+        [/current-state/gi, "current"],
+        [/current config(?:uration)?/gi, "current setup"],
+        [/canonical current/gi, "main saved"],
+        [/\bcanonical\b/gi, "main saved"],
+        [/round-trip losslessly/gi, "preserve unchanged"],
+        [/persisted/gi, "saved"],
+        [/persistence/gi, "storage"],
+        [/\bpersist\b/gi, "save"],
+        [/SQLite/gi, "the settings database"],
+        [/schema objects/gi, "database structures"],
+        [/schema/gi, "database structure"],
+        [/serialized mutation/gi, "change applied one at a time"],
+        [/serialized durable commit/gi, "save applied once and in order"],
+        [/serialized command/gi, "hardware change applied one at a time"],
+        [/serialized/gi, "applied one at a time"],
+        [/atomic(?:ally)?/gi, "as one complete change"],
+        [/write-only/gi, "replaceable but never displayed"],
+        [/redacted/gi, "with sensitive details hidden"],
+        [/ephemeral/gi, "temporary"],
+        [/staged in memory/gi, "kept only while this page is open"],
+        [/staged choice/gi, "choice kept only until the import is created"],
+        [/host path/gi, "full folder path on the receiver"],
+        [/DTOs?/g, "web data"],
+        [/telemetry/gi, "performance measurements"],
+        [/subscriber-driven/gi, "produced only while someone is viewing"],
+        [/probe leases?/gi, "temporary exclusive access to receiver diagnostics"],
+        [/\bprobe\b/gi, "diagnostic view"],
+        [/\bviewport\b/gi, "visible chart area"],
+        [/producer\/socket/gi, "live spectrum feed/connection"],
+        [/one producer/gi, "one live spectrum feed"],
+        [/WAL checkpoint/gi, "database housekeeping"],
+        [/tombstone/gi, "deleted-item record"],
+        [/foreign reference/gi, "link"],
+        [/enum/gi, "dropdown choice"],
+        [/aggregate-level durable write/gi, "save of the complete item"],
+        [/writes current alias aggregate only/gi, "saves only the current alias"],
+        [/writes current channel only/gi, "saves only the current channel"],
+        [/API response/gi, "downloaded result"],
+        [/API result/gi, "downloaded result"],
+        [/API cache/gi, "permanent saved copy of downloaded data"],
+        [/durable browse cache/gi, "permanent saved copy of browsing results"],
+        [/durable API result cache/gi, "permanent saved copy of downloaded results"],
+        [/raw response/gi, "complete downloaded response"],
+        [/runtime logging/gi, "logging while SDRTrunk is running"],
+        [/runtime allocation/gi, "background tuner use"],
+        [/runtime data migration/gi, "automatic settings conversion while SDRTrunk is running"],
+        [/runtime/gi, "live application"],
+        [/latency-sensitive paths/gi, "time-sensitive radio work"],
+        [/radio\/USB\/decoder\/HTTP threads/gi, "tuner input, decoding, or web requests"],
+        [/USB, decoder, grant, recording, audio, or HTTP request threads/gi, "tuner input, decoding, call handling, recording, audio, or web requests"],
+        [/radio\/USB\/decoder threads/gi, "tuner input or decoding"],
+        [/radio\/USB\/decoder/gi, "tuner input and decoding"],
+        [/no revision-history\/audit table/gi, "do not keep an edit or change history"],
+        [/no ([a-z-]+)-history table/gi, "do not keep a permanent $1 history"],
+        [/no ([a-z-]+) history table/gi, "do not keep a permanent $1 history"],
+        [/no action history/gi, "do not keep a permanent action history"],
+        [/no history/gi, "do not keep a permanent history"],
+        [/no audit/gi, "do not keep a permanent change log"],
+        [/no frames in the settings database/gi, "never save spectrum frames"],
+        [/no frames in SQLite/gi, "never save spectrum frames"],
+        [/no new database structure/gi, "do not add new permanent database storage"],
+        [/no arbitrary unit strings are saved/gi, "save only the number, not user-entered unit text"],
+        [/fixed-cardinality/gi, "one current setting for each known feature"],
+        [/grandfather existing database structure/gi, "keep the existing database as it works today"],
+        [/capability metadata/gi, "the selected tuner’s supported features"],
+        [/capabilities come from backend/gi, "use the features reported by the selected tuner"],
+        [/capability-driven/gi, "show only supported"],
+        [/coalesce slider writes/gi, "send only the newest slider value at a safe rate"],
+        [/latest-value coalescing/gi, "sending only the newest adjustment at a safe rate"],
+        [/migration tooling/gi, "one-time settings conversion"],
+        [/one-off backed-up configuration migration/gi, "one-time, backed-up settings conversion"],
+        [/low-fidelity wireframe/gi, "early layout sketch"],
+        [/\bbackend\b/gi, "SDRTrunk service"],
+        [/\bcache\b/gi, "permanent saved copy"],
+        [/\broute\b/gi, "page"],
+        [/\bendpoint\b/gi, "upload address"],
+        [/\bcommit\b/gi, "save"],
+        [/\brevision\b/gi, "change number"],
+        [/\ballocation\b/gi, "tuner use"],
+        [/\bmetadata\b/gi, "details"],
+        [/\bquery\b/gi, "lookup"],
+        [/raw-message/gi, "complete-message"],
+        [/in-memory/gi, "temporary"],
+        [/\bproducer\b/gi, "live feed"],
+        [/hard-coded/gi, "fixed in the web page"],
+        [/modal/gi, "small pop-up dialog"]
+      ];
+      replacements.forEach(([pattern, replacement]) => { text = text.replace(pattern, replacement); });
+      return text.replace(/\s+/g, " ").trim();
+    }
+
+    function plainPlan(row) {
+      return simplify(planOverrides[row.id] || row.destination);
+    }
+
+    function plainItem(row) {
+      return itemOverrides[row.id] || row.item;
+    }
+
+    function plainContext(row) {
+      if (contextOverrides[row.id]) return contextOverrides[row.id];
+      const source = [row.notes, row.constraint].filter(Boolean).join(" ");
+      return simplify(source || "This entry makes sure the setting is not lost during the move to the web interface.");
+    }
+
+    function technicalRecord(row) {
+      const fields = [
+        ["Where it exists today", row.legacy],
+        ["Control type", row.kind],
+        ["Responsible part", ownerLabels[row.owner] || row.owner],
+        ["Source reference", row.evidence],
+        ["Engineering/storage note", row.constraint],
+        ...(row.notes ? [["Additional note", row.notes]] : [])
+      ];
+      return `<details class="technical"><summary>Technical record (optional)</summary><dl>${fields.map(([label, value]) =>
+        `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl></details>`;
+    }
+
+    function emptyReviewEntry() {
+      return {state: "", note: "", updatedAt: ""};
+    }
+
+    function reviewEntry(rowId) {
+      return reviewData.entries[rowId] || emptyReviewEntry();
+    }
+
+    function cleanReviewEntry(value) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+      const state = typeof value.state === "string" && validReviewStates.has(value.state) ? value.state : "";
+      const note = typeof value.note === "string" ? value.note.slice(0, MAX_REVIEW_NOTE_LENGTH) : "";
+      if (!state && !note) return null;
+      const updatedAt = typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt)) ? value.updatedAt : "";
+      return {state, note, updatedAt};
+    }
+
+    function cleanReviewEntries(value) {
+      const entries = {};
+      let unknown = 0;
+      let invalid = 0;
+      if (!value || typeof value !== "object" || Array.isArray(value)) return {entries, unknown, invalid: 1};
+      Object.entries(value).forEach(([rowId, candidate]) => {
+        if (!validRowIds.has(rowId)) { unknown += 1; return; }
+        const cleaned = cleanReviewEntry(candidate);
+        if (cleaned) entries[rowId] = cleaned;
+        else if (candidate != null) invalid += 1;
+      });
+      return {entries, unknown, invalid};
+    }
+
+    function parseReviewDocument(value, requireBackupHeader = false) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("The review file is not a valid object.");
+      if (requireBackupHeader && value.format !== REVIEW_FORMAT) throw new Error("This is not an SDRTrunk Settings review backup.");
+      if (requireBackupHeader && value.version !== REVIEW_VERSION) throw new Error("This review backup version is not supported.");
+      if (!requireBackupHeader && value.version != null && value.version !== REVIEW_VERSION) throw new Error("The saved browser review uses a newer format.");
+      const cleaned = cleanReviewEntries(value.entries);
+      return {entries: cleaned.entries, unknown: cleaned.unknown, invalid: cleaned.invalid, updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : ""};
+    }
+
+    function setReviewSaveStatus(message, warning = false) {
+      reviewSaveStatus.textContent = message;
+      reviewSaveStatus.classList.toggle("warning", warning);
+    }
+
+    function formatReviewTime(value) {
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"}) : "just now";
+    }
+
+    function initializeReviewStorage() {
+      try {
+        const probeKey = `${REVIEW_STORAGE_KEY}.probe`;
+        window.localStorage.setItem(probeKey, "ok");
+        if (window.localStorage.getItem(probeKey) !== "ok") throw new Error("Browser storage verification failed.");
+        window.localStorage.removeItem(probeKey);
+      } catch (error) {
+        reviewStorageAvailable = false;
+        reviewStorageIssue = error instanceof Error ? error.message : "Browser storage is unavailable.";
+      }
+      if (reviewStorageAvailable) {
+        try {
+          const stored = window.localStorage.getItem(REVIEW_STORAGE_KEY);
+          if (stored) reviewData = parseReviewDocument(JSON.parse(stored));
+        } catch (error) {
+          reviewStorageIssue = error instanceof Error ? error.message : "Saved review data could not be read.";
+        }
+      }
+      if (reviewStorageAvailable && !reviewStorageIssue) {
+        const count = Object.keys(reviewData.entries).length;
+        setReviewSaveStatus(count ? `Loaded ${count} saved review ${count === 1 ? "row" : "rows"} from this browser.` : "Ready — your review saves automatically in this browser.");
+      } else if (reviewStorageAvailable) {
+        setReviewSaveStatus("Saved browser review data could not be read. Load a backup if you have one; your next edit will start a new saved review.", true);
+      } else {
+        setReviewSaveStatus("Browser storage is unavailable. Notes will last only until this page closes; download a backup before leaving.", true);
+      }
+    }
+
+    function latestStoredEntries() {
+      if (!reviewStorageAvailable) return {...reviewData.entries};
+      try {
+        const stored = window.localStorage.getItem(REVIEW_STORAGE_KEY);
+        return stored ? parseReviewDocument(JSON.parse(stored)).entries : {};
+      } catch (_) {
+        return {...reviewData.entries};
+      }
+    }
+
+    function writeReviewEntries(entries, message) {
+      const updatedAt = new Date().toISOString();
+      reviewData = {entries, updatedAt};
+      if (reviewStorageAvailable) {
+        try {
+          window.localStorage.setItem(REVIEW_STORAGE_KEY, JSON.stringify({
+            format: REVIEW_FORMAT,
+            version: REVIEW_VERSION,
+            inventory: REVIEW_INVENTORY,
+            updatedAt,
+            entries
+          }));
+          reviewStorageIssue = "";
+          setReviewSaveStatus(message || `Saved in this browser at ${formatReviewTime(updatedAt)}.`);
+        } catch (error) {
+          reviewStorageAvailable = false;
+          reviewStorageIssue = error instanceof Error ? error.message : "Browser storage write failed.";
+          setReviewSaveStatus("Could not save in this browser. Your current notes remain on this page; download a backup before leaving.", true);
+        }
+      } else {
+        setReviewSaveStatus("Browser storage is unavailable. Your current notes remain on this page; download a backup before leaving.", true);
+      }
+      updateReviewCounts();
+    }
+
+    function saveReviewEntry(rowId, changes) {
+      if (!validRowIds.has(rowId)) return;
+      const current = reviewEntry(rowId);
+      const state = changes.state === undefined ? current.state : (validReviewStates.has(changes.state) ? changes.state : "");
+      const note = changes.note === undefined ? current.note : String(changes.note).slice(0, MAX_REVIEW_NOTE_LENGTH);
+      const entries = latestStoredEntries();
+      if (!state && !note) delete entries[rowId];
+      else entries[rowId] = {state, note, updatedAt: new Date().toISOString()};
+      writeReviewEntries(entries);
+      updateReviewRow(rowId);
+      setRowSaveStatus(rowId, "Saved automatically");
+    }
+
+    function notePreview(note) {
+      const compact = String(note || "").replace(/\s+/g, " ").trim();
+      return compact.length > 70 ? `${compact.slice(0, 67)}…` : compact;
+    }
+
+    function reviewStateOptions(selected) {
+      return Object.entries(reviewStateLabels).map(([value, label]) =>
+        `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    }
+
+    function reviewControl(row) {
+      const review = reviewEntry(row.id);
+      const preview = notePreview(review.note);
+      const stateClass = review.state || "unreviewed";
+      const fieldLabel = `${row.id} — ${plainItem(row)}`;
+      return `<div class="review-control">
+        <label class="sr-only" for="review-state-${escapeHtml(row.id)}">My review for ${escapeHtml(fieldLabel)}</label>
+        <select id="review-state-${escapeHtml(row.id)}" class="row-review-state review-${escapeHtml(stateClass)}" data-row-id="${escapeHtml(row.id)}">${reviewStateOptions(review.state)}</select>
+        <details class="row-review">
+          <summary><span id="review-note-label-${escapeHtml(row.id)}">${review.note ? "Edit note" : "Add note"}</span><span id="review-note-preview-${escapeHtml(row.id)}" class="review-note-preview"${review.note ? "" : " hidden"}>${escapeHtml(preview)}</span></summary>
+          <div class="row-review-editor">
+            <label for="review-note-${escapeHtml(row.id)}">Note for ${escapeHtml(fieldLabel)}</label>
+            <textarea id="review-note-${escapeHtml(row.id)}" class="row-review-note" data-row-id="${escapeHtml(row.id)}" maxlength="${MAX_REVIEW_NOTE_LENGTH}" placeholder="Record your decision, requested change, or question…">${escapeHtml(review.note)}</textarea>
+            <div class="row-review-footer"><span id="review-note-count-${escapeHtml(row.id)}">${review.note.length} / ${MAX_REVIEW_NOTE_LENGTH}</span><span id="row-save-status-${escapeHtml(row.id)}" class="row-save-status">Saved automatically in this browser</span></div>
+          </div>
+        </details>
+      </div>`;
+    }
+
+    function updateReviewCounts() {
+      const entries = Object.values(reviewData.entries);
+      document.getElementById("reviewed-count").textContent = entries.filter((entry) => entry.state).length;
+      document.getElementById("notes-count").textContent = entries.filter((entry) => entry.note).length;
+    }
+
+    function setRowSaveStatus(rowId, message) {
+      const status = document.getElementById(`row-save-status-${rowId}`);
+      if (status) status.textContent = message;
+    }
+
+    function updateReviewRow(rowId) {
+      const review = reviewEntry(rowId);
+      const state = document.getElementById(`review-state-${rowId}`);
+      if (state) state.className = `row-review-state review-${review.state || "unreviewed"}`;
+      const label = document.getElementById(`review-note-label-${rowId}`);
+      if (label) label.textContent = review.note ? "Edit note" : "Add note";
+      const preview = document.getElementById(`review-note-preview-${rowId}`);
+      if (preview) {
+        preview.textContent = notePreview(review.note);
+        preview.hidden = !review.note;
+      }
+      const count = document.getElementById(`review-note-count-${rowId}`);
+      if (count) count.textContent = `${review.note.length} / ${MAX_REVIEW_NOTE_LENGTH}`;
+    }
+
+    function scheduleNoteSave(rowId, note) {
+      const previous = pendingNoteSaves.get(rowId);
+      if (previous) window.clearTimeout(previous.timer);
+      setRowSaveStatus(rowId, "Saving…");
+      const timer = window.setTimeout(() => {
+        pendingNoteSaves.delete(rowId);
+        saveReviewEntry(rowId, {note});
+      }, 350);
+      pendingNoteSaves.set(rowId, {timer, note});
+    }
+
+    function flushPendingNote(rowId) {
+      const pending = pendingNoteSaves.get(rowId);
+      if (!pending) return;
+      window.clearTimeout(pending.timer);
+      pendingNoteSaves.delete(rowId);
+      saveReviewEntry(rowId, {note: pending.note});
+    }
+
+    function flushAllPendingNotes() {
+      [...pendingNoteSaves.keys()].forEach(flushPendingNote);
+    }
+
+    function fillFilter(select, key) {
+      [...new Set(rows.map((row) => row[key]).filter(Boolean))].sort().forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        if (key === "area") option.textContent = areaLabels[value] || value;
+        else if (key === "decision") option.textContent = decisionLabels[value] || value;
+        else if (key === "approval") option.textContent = approvalLabels[value] || value;
+        else option.textContent = value;
+        select.append(option);
+      });
+    }
+
+    function matchesBaseFilters(row) {
+      const term = search.value.trim().toLowerCase();
+      if (areaFilter.value && row.area !== areaFilter.value) return false;
+      if (decisionFilter.value && row.decision !== decisionFilter.value) return false;
+      if (approvalFilter.value && row.approval !== approvalFilter.value) return false;
+      const review = reviewEntry(row.id);
+      const searchable = [...columns.map((key) => row[key]), plainItem(row), plainPlan(row), plainContext(row), areaLabels[row.area], reviewStateLabels[review.state], review.note].join(" ").toLowerCase();
+      return !term || searchable.includes(term);
+    }
+
+    function matchesReviewFilter(row) {
+      const review = reviewEntry(row.id);
+      switch (reviewFilter.value) {
+        case "unreviewed": return !review.state;
+        case "approved": return review.state === "approved";
+        case "change": return review.state === "change";
+        case "discuss": return review.state === "discuss";
+        case "notes": return Boolean(review.note);
+        case "no-notes": return !review.note;
+        default: return true;
+      }
+    }
+
+    function filteredRows() {
+      return rows.filter((row) => matchesBaseFilters(row) && matchesReviewFilter(row));
+    }
+
+    function renderAreaContext() {
+      if (areaFilter.value) {
+        areaContext.innerHTML = `<strong>${escapeHtml(areaLabels[areaFilter.value] || areaFilter.value)}</strong>${escapeHtml(areaDescriptions[areaFilter.value] || "This section records every setting and action that must be accounted for before its old desktop screen is removed.")}`;
+      } else {
+        areaContext.innerHTML = "<strong>Start with one area</strong>Choose an Area above to see a short explanation of what that part of SDRTrunk controls. Technical source notes stay collapsed inside each row.";
+      }
+    }
+
+    function render(preserveScroll = false) {
+      const previousTop = preserveScroll ? tableWrap.scrollTop : 0;
+      const previousLeft = preserveScroll ? tableWrap.scrollLeft : 0;
+      const visible = filteredRows();
+      body.innerHTML = visible.map((row) => `<tr id="row-${escapeHtml(row.id)}">
+        <th scope="row"><strong>${escapeHtml(row.id)}</strong></th>
+        <td class="review-cell">${reviewControl(row)}</td>
+        <td>${escapeHtml(areaLabels[row.area] || row.area)}</td>
+        <td><span class="field-name">${escapeHtml(plainItem(row))}</span>${itemHelp[row.id] ? `<span class="field-help">${escapeHtml(itemHelp[row.id])}</span>` : ""}</td>
+        <td>${escapeHtml(plainPlan(row))}</td>
+        <td><span class="context-copy">${escapeHtml(plainContext(row))}</span>${technicalRecord(row)}</td>
+        <td>${badge(row.decision, decisionLabels[row.decision] || row.decision)}</td>
+        <td>${badge(row.approval, approvalLabels[row.approval] || row.approval)}</td>
+      </tr>`).join("");
+      resultCount.textContent = `${visible.length} of ${rows.length} entries`;
+      empty.hidden = visible.length !== 0;
+      renderAreaContext();
+      updateReviewCounts();
+      if (preserveScroll) {
+        tableWrap.scrollTop = previousTop;
+        tableWrap.scrollLeft = previousLeft;
+      }
+    }
+
+    function csvValue(value) { return `"${String(value ?? "").replaceAll('"', '""')}"`; }
+    function csvReviewNote(value) {
+      const text = String(value ?? "");
+      return csvValue(/^[=+\-@\t\r]/.test(text) ? `'${text}` : text);
+    }
+    function exportCsv() {
+      flushAllPendingNotes();
+      const exportColumns = [
+        ["ID", (row) => row.id],
+        ["My review", (row) => reviewStateLabels[reviewEntry(row.id).state]],
+        ["My note", (row) => reviewEntry(row.id).note, true],
+        ["My review last changed", (row) => reviewEntry(row.id).updatedAt],
+        ["Area", (row) => areaLabels[row.area] || row.area],
+        ["Current setting or action", plainItem],
+        ["How it would work", plainPlan],
+        ["Context and limits", plainContext],
+        ["Planned change", (row) => decisionLabels[row.decision] || row.decision],
+        ["Planning status", (row) => approvalLabels[row.approval] || row.approval],
+        ["Where it exists today", (row) => row.legacy],
+        ["Control type", (row) => row.kind],
+        ["Responsible part", (row) => ownerLabels[row.owner] || row.owner],
+        ["Source reference", (row) => row.evidence],
+        ["Engineering/storage note", (row) => row.constraint],
+        ["Additional note", (row) => row.notes]
+      ];
+      const header = exportColumns.map(([label]) => csvValue(label)).join(",");
+      const data = filteredRows().map((row) => exportColumns.map(([, value, isReviewNote]) => isReviewNote ? csvReviewNote(value(row)) : csvValue(value(row))).join(","));
+      const blob = new Blob([[header, ...data].join("\n")], {type: "text/csv;charset=utf-8"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "sdrtrunk-settings-migration-review-filtered.csv";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
+
+    function reviewBackupDocument() {
+      return {
+        format: REVIEW_FORMAT,
+        version: REVIEW_VERSION,
+        inventory: REVIEW_INVENTORY,
+        exportedAt: new Date().toISOString(),
+        entries: reviewData.entries
+      };
+    }
+
+    function downloadReviewBackup() {
+      flushAllPendingNotes();
+      const contents = JSON.stringify(reviewBackupDocument(), null, 2);
+      const blob = new Blob([contents], {type: "application/json;charset=utf-8"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `sdrtrunk-settings-migration-review-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      const count = Object.keys(reviewData.entries).length;
+      setReviewSaveStatus(`Downloaded a backup containing ${count} review ${count === 1 ? "row" : "rows"}.`);
+    }
+
+    async function loadReviewBackup(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      try {
+        if (file.size > MAX_REVIEW_BACKUP_BYTES) throw new Error("The selected review backup is too large.");
+        const contents = await file.text();
+        if (new Blob([contents]).size > MAX_REVIEW_BACKUP_BYTES) throw new Error("The selected review backup is too large.");
+        const imported = parseReviewDocument(JSON.parse(contents), true);
+        const importedCount = Object.keys(imported.entries).length;
+        if (!importedCount && (imported.unknown || imported.invalid)) throw new Error("The backup contains no usable rows for this ledger.");
+        const merged = {...latestStoredEntries(), ...imported.entries};
+        const details = [
+          imported.unknown ? `${imported.unknown} unknown ${imported.unknown === 1 ? "row was" : "rows were"} ignored` : "",
+          imported.invalid ? `${imported.invalid} empty or invalid ${imported.invalid === 1 ? "row was" : "rows were"} ignored` : ""
+        ].filter(Boolean).join("; ");
+        writeReviewEntries(merged, `Loaded and merged ${importedCount} review ${importedCount === 1 ? "row" : "rows"}${details ? `; ${details}` : ""}.`);
+        render(true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The review backup could not be loaded.";
+        setReviewSaveStatus(message, true);
+      } finally {
+        event.target.value = "";
+      }
+    }
+
+    function goToNextUnreviewed() {
+      flushAllPendingNotes();
+      const next = rows.find((row) => matchesBaseFilters(row) && !reviewEntry(row.id).state);
+      if (!next) {
+        setReviewSaveStatus("Every row matching the current search and area filters has a review choice.");
+        return;
+      }
+      reviewFilter.value = "unreviewed";
+      render(true);
+      const reveal = () => {
+        const target = document.getElementById(`row-${next.id}`);
+        const control = document.getElementById(`review-state-${next.id}`);
+        if (target) target.scrollIntoView({block: "center", inline: "nearest"});
+        if (control) control.focus({preventScroll: true});
+      };
+      if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(reveal);
+      else window.setTimeout(reveal, 0);
+    }
+
+    body.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLSelectElement) || !target.classList.contains("row-review-state")) return;
+      const rowId = target.dataset.rowId;
+      saveReviewEntry(rowId, {state: target.value});
+      if (reviewFilter.value) render(true);
+    });
+
+    body.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLTextAreaElement) || !target.classList.contains("row-review-note")) return;
+      const rowId = target.dataset.rowId;
+      const count = document.getElementById(`review-note-count-${rowId}`);
+      if (count) count.textContent = `${target.value.length} / ${MAX_REVIEW_NOTE_LENGTH}`;
+      scheduleNoteSave(rowId, target.value);
+    });
+
+    body.addEventListener("focusout", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLTextAreaElement) || !target.classList.contains("row-review-note")) return;
+      flushPendingNote(target.dataset.rowId);
+      if (reviewFilter.value === "notes" || reviewFilter.value === "no-notes") render(true);
+    });
+
+    window.addEventListener("pagehide", flushAllPendingNotes);
+    window.addEventListener("storage", (event) => {
+      if (event.key !== REVIEW_STORAGE_KEY) return;
+      if (pendingNoteSaves.size) {
+        setReviewSaveStatus("Another tab changed this review. Finish the current note, then reload this page to see that change.", true);
+        return;
+      }
+      try {
+        reviewData = event.newValue ? parseReviewDocument(JSON.parse(event.newValue)) : {entries: {}, updatedAt: ""};
+        render(true);
+        setReviewSaveStatus("Review choices were refreshed from another browser tab.");
+      } catch (_) {
+        setReviewSaveStatus("Another tab saved review data that this page could not read.", true);
+      }
+    });
+
+    initializeReviewStorage();
+    fillFilter(areaFilter, "area");
+    fillFilter(decisionFilter, "decision");
+    fillFilter(approvalFilter, "approval");
+    document.getElementById("total-count").textContent = rows.length;
+    document.getElementById("agreed-count").textContent = rows.filter((row) => row.approval === "Agreed").length;
+    document.getElementById("proposed-count").textContent = rows.filter((row) => row.approval === "Proposed").length;
+    document.getElementById("decision-count").textContent = rows.filter((row) => row.approval === "Needs decision").length;
+    document.getElementById("retire-count").textContent = rows.filter((row) => row.decision === "Retire").length;
+    updateReviewCounts();
+    [search, areaFilter, decisionFilter, approvalFilter, reviewFilter].forEach((control) => control.addEventListener("input", () => render()));
+    document.getElementById("reset").addEventListener("click", () => {
+      search.value = ""; areaFilter.value = ""; decisionFilter.value = ""; approvalFilter.value = ""; reviewFilter.value = ""; render();
+    });
+    document.getElementById("export").addEventListener("click", exportCsv);
+    document.getElementById("next-unreviewed").addEventListener("click", goToNextUnreviewed);
+    document.getElementById("download-review").addEventListener("click", downloadReviewBackup);
+    reviewFileInput.addEventListener("change", loadReviewBackup);
+    render();
+  </script>
+</body>
+</html>

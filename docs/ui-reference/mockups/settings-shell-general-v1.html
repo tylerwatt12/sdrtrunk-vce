@@ -1,0 +1,1022 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce Settings — General Settings mockup</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #edf1f4;
+      --surface: #fff;
+      --surface-2: #f5f7f9;
+      --surface-3: #e8edf1;
+      --ink: #18212a;
+      --muted: #65717d;
+      --line: #c9d1d8;
+      --line-strong: #9ba8b3;
+      --header: #202a33;
+      --header-2: #2c3944;
+      --accent: #0b7168;
+      --accent-hover: #095d56;
+      --accent-soft: #d9efec;
+      --blue: #075eaa;
+      --blue-soft: #e7f1fb;
+      --warning: #8a5200;
+      --warning-soft: #fff1d6;
+      --danger: #9b2743;
+      --danger-soft: #fbe8ed;
+      --success: #176b3a;
+      --success-soft: #e2f3e9;
+      --shadow: 0 6px 20px rgb(20 32 44 / 9%);
+      --radius: 10px;
+      font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111820;
+        --surface: #18212a;
+        --surface-2: #202b35;
+        --surface-3: #2b3742;
+        --ink: #e5ebf0;
+        --muted: #aeb8c1;
+        --line: #3b4854;
+        --line-strong: #596976;
+        --header: #0d1318;
+        --header-2: #24313b;
+        --accent: #55c7ba;
+        --accent-hover: #79d6cc;
+        --accent-soft: #193d39;
+        --blue: #82bff3;
+        --blue-soft: #18324a;
+        --warning: #f0bd67;
+        --warning-soft: #48351c;
+        --danger: #ff99b0;
+        --danger-soft: #4a222c;
+        --success: #85d6a2;
+        --success-soft: #193b27;
+        --shadow: 0 8px 24px rgb(0 0 0 / 28%);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page); }
+    body { min-height: 100vh; margin: 0; color: var(--ink); background: var(--page); font-size: 14px; }
+    button, input, select, textarea { font: inherit; }
+    button, input, select, textarea {
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+    }
+    button { min-height: 34px; padding: 6px 11px; cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .55; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
+    summary:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+      outline-offset: 2px;
+    }
+    [hidden] { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 30; min-height: 50px;
+      display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 24px;
+      padding: 0 18px; color: #fff; background: var(--header); border-bottom: 1px solid #0e151b;
+      box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+    }
+    .brand { font-size: 17px; font-weight: 750; letter-spacing: -.01em; }
+    .global-nav { align-self: stretch; display: flex; min-width: 0; gap: 2px; overflow-x: auto; }
+    .global-nav button { min-height: 49px; padding: 0 13px; color: #dce4eb; background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: 0; }
+    .global-nav button:hover, .global-nav button[aria-current="page"] { color: #fff; background: var(--header-2); border-bottom-color: #35b8a9; }
+    .admin-summary { display: flex; align-items: center; gap: 9px; color: #dce4eb; white-space: nowrap; font-size: 12px; }
+    .admin-dot { width: 8px; height: 8px; border-radius: 50%; background: #54d177; box-shadow: 0 0 0 3px rgb(84 209 119 / 16%); }
+
+    .settings-shell { min-height: calc(100vh - 50px); display: grid; grid-template-columns: 238px minmax(0, 1fr); }
+    .settings-nav { position: sticky; top: 50px; height: calc(100vh - 50px); overflow-y: auto; padding: 18px 12px 30px; background: var(--surface); border-right: 1px solid var(--line); }
+    .settings-nav h2 { margin: 0 8px 18px; font-size: 1.08rem; }
+    .nav-group { margin: 0 0 21px; }
+    .nav-group h3 { margin: 0 9px 7px; color: var(--muted); font-size: .7rem; letter-spacing: .075em; text-transform: uppercase; }
+    .settings-nav button { width: 100%; min-height: 37px; display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 7px 10px; text-align: left; background: transparent; border: 0; border-radius: 7px; }
+    .settings-nav button:hover { background: var(--surface-2); }
+    .settings-nav button[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+    .status-tag { padding: 2px 6px; color: var(--muted); background: var(--surface-3); border-radius: 999px; font-size: .64rem; font-weight: 700; }
+    .attention-tag { color: var(--warning); background: var(--warning-soft); }
+
+    .settings-main { min-width: 0; padding: 18px clamp(14px, 2.2vw, 30px) 90px; }
+    .page-head { max-width: 1320px; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 14px; margin: 0 auto 14px; }
+    .breadcrumbs { margin: 0 0 6px; color: var(--muted); font-size: .78rem; }
+    .page-head h1 { margin: 0; font-size: clamp(1.45rem, 2.5vw, 2rem); line-height: 1.15; }
+    .page-head p { max-width: 800px; margin: 7px 0 0; color: var(--muted); line-height: 1.45; }
+    .page-actions, .panel-actions, .action-row, .review-footer-buttons, .modal-footer, .scenario-control, .status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .page-actions { justify-content: flex-end; }
+    .button-primary, .review-button { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .button-primary:hover:not(:disabled), .review-button:hover:not(:disabled) { background: var(--accent-hover); }
+    .button-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); background: var(--surface); }
+    .button-link { color: var(--blue); background: transparent; border-color: transparent; }
+
+    .prototype-banner { max-width: 1320px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; margin: 0 auto 14px; padding: 10px 13px; color: var(--blue); background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); border-radius: 8px; }
+    .prototype-banner strong { color: var(--ink); }
+    .scenario-control label { font-size: .78rem; font-weight: 700; }
+    .scenario-control select { min-height: 34px; padding: 5px 30px 5px 8px; }
+    .save-status { max-width: 1320px; margin: 0 auto 12px; padding: 8px 11px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
+    .save-status.dirty { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
+    .save-status.success { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 35%, var(--line)); }
+    .save-status.error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+
+    .settings-form, .settings-page { max-width: 1320px; margin: 0 auto; }
+    .settings-page { display: grid; gap: 14px; }
+    .panel { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .panel-head { min-height: 58px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
+    .panel-head h2, .panel-head h3 { margin: 0; font-size: 1rem; }
+    .panel-head p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+    .panel-body { padding: 14px; }
+    .panel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card { min-width: 0; padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; }
+    .card h3 { margin: 0; font-size: 1rem; }
+    .card > p { margin: 6px 0 12px; color: var(--muted); line-height: 1.45; }
+    .subhead { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: .83rem; font-weight: 750; }
+    .stack { display: grid; gap: 10px; }
+    .field { min-width: 0; }
+    .field label, .field-label { display: flex; align-items: center; gap: 6px; margin: 0 0 5px; font-size: .78rem; font-weight: 720; }
+    .field input:not([type="checkbox"]):not([type="file"]), .field select, .field textarea { width: 100%; min-height: 39px; padding: 7px 9px; }
+    .field textarea { min-height: 82px; resize: vertical; }
+    .field-help { margin: 5px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+    .unit-input { display: grid; grid-template-columns: minmax(0, 1fr) max-content; }
+    .unit-input input { border-radius: 7px 0 0 7px !important; }
+    .unit { min-width: 52px; display: grid; place-items: center; margin-left: -1px; padding: 0 9px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: 0 7px 7px 0; font-size: .76rem; font-weight: 700; }
+    .toggle-row { min-height: 48px; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .toggle-row:last-child { border-bottom: 0; }
+    .toggle-copy { min-width: 0; }
+    .toggle-copy strong { display: flex; align-items: center; gap: 6px; font-size: .84rem; }
+    .toggle-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: .73rem; line-height: 1.4; }
+    .toggle { position: relative; flex: 0 0 auto; width: 40px; height: 23px; margin-top: 1px; }
+    .toggle input { position: absolute; opacity: 0; }
+    .toggle span { position: absolute; inset: 0; background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: 999px; transition: .15s ease; }
+    .toggle span::after { content: ""; position: absolute; width: 17px; height: 17px; top: 2px; left: 2px; background: var(--surface); border-radius: 50%; box-shadow: 0 1px 3px rgb(0 0 0 / 25%); transition: .15s ease; }
+    .toggle input:checked + span { background: var(--accent); border-color: var(--accent); }
+    .toggle input:checked + span::after { transform: translateX(17px); }
+    .toggle input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+    .toggle input:disabled + span { opacity: .48; }
+    .help-button { width: 22px; min-width: 22px; height: 22px; min-height: 22px; display: inline-grid; place-items: center; padding: 0; color: var(--blue); background: transparent; border: 2px solid currentColor; border-radius: 50%; font-size: .72rem; font-weight: 850; line-height: 1; }
+    .help-popover { position: fixed; z-index: 100; width: min(340px, calc(100vw - 24px)); padding: 10px 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 10px 30px rgb(0 0 0 / 24%); font-size: .77rem; line-height: 1.45; }
+    .help-popover strong { display: block; margin-bottom: 4px; }
+    .help-popover button { position: absolute; top: 5px; right: 5px; width: 25px; min-width: 25px; height: 25px; min-height: 25px; padding: 0; border: 0; background: transparent; }
+
+    .inline-notice { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; color: var(--blue); background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 32%, var(--line)); border-radius: 8px; line-height: 1.42; }
+    .inline-notice.warning { color: var(--warning); background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
+    .inline-notice.danger { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+    .inline-notice strong { display: block; color: var(--ink); margin-bottom: 2px; }
+    .inline-notice span { color: inherit; font-size: .76rem; }
+    .status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; color: var(--muted); background: var(--surface-3); border-radius: 999px; font-size: .69rem; font-weight: 750; }
+    .status-pill.success { color: var(--success); background: var(--success-soft); }
+    .status-pill.warning { color: var(--warning); background: var(--warning-soft); }
+    .status-pill.locked { color: var(--blue); background: var(--blue-soft); }
+    .progress { height: 9px; overflow: hidden; background: var(--surface-3); border-radius: 999px; }
+    .progress span { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s ease; }
+    .definition-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 0; }
+    .definition-list > * { min-width: 0; }
+    .definition-list dt { color: var(--muted); font-size: .7rem; font-weight: 750; }
+    .definition-list dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+
+    .data-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { color: var(--muted); background: var(--surface-2); font-size: .7rem; letter-spacing: .02em; }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr[data-vault-key-row] { cursor: pointer; }
+    tbody tr[data-vault-key-row]:hover td { background: var(--surface-2); }
+    tbody tr[data-vault-key-row][aria-selected="true"] td { background: var(--blue-soft); }
+    td select { min-height: 34px; min-width: 150px; padding: 5px 28px 5px 8px; }
+    .access-name strong { display: flex; align-items: center; gap: 6px; }
+    .access-name span { display: block; margin-top: 3px; color: var(--muted); font-size: .72rem; }
+    .policy-control { display: flex; align-items: center; gap: 8px; }
+
+    .sticky-save { position: fixed; right: 22px; bottom: 18px; z-index: 25; display: flex; align-items: center; gap: 8px; padding: 8px; background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); backdrop-filter: blur(8px); }
+
+    .modal-scrim, .review-scrim { position: fixed; inset: 0; z-index: 80; background: rgb(6 12 18 / 56%); }
+    .modal { position: fixed; z-index: 90; left: 50%; top: 50%; width: min(760px, calc(100vw - 24px)); max-height: calc(100vh - 24px); display: flex; flex-direction: column; transform: translate(-50%, -50%); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 18px 60px rgb(0 0 0 / 34%); }
+    .modal.wide { width: min(1080px, calc(100vw - 24px)); }
+    .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+    .modal-head h2 { margin: 0; font-size: 1.15rem; }
+    .modal-head p { margin: 5px 0 0; color: var(--muted); font-size: .77rem; line-height: 1.4; }
+    .modal-close { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; font-size: 1.3rem; }
+    .modal-body { min-width: 0; overflow: auto; padding: 15px 16px; }
+    .modal-footer { justify-content: flex-end; padding: 12px 16px; background: var(--surface-2); border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; }
+
+    .review-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 90; width: min(540px, 100vw); display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line); box-shadow: -10px 0 35px rgb(0 0 0 / 26%); }
+    .review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 15px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+    .review-head h2 { margin: 0; font-size: 1.15rem; }
+    .review-head p { margin: 5px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+    .review-content { flex: 1; overflow-y: auto; padding: 12px; }
+    .review-card { margin-bottom: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; }
+    .review-card h3 { margin: 0; font-size: .92rem; }
+    .review-card p { margin: 5px 0 9px; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+    .review-card select, .review-card textarea { width: 100%; padding: 7px; }
+    .review-card textarea { min-height: 72px; margin-top: 7px; resize: vertical; }
+    .review-card-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: var(--muted); font-size: .68rem; }
+    .review-footer { padding: 12px; background: var(--surface-2); border-top: 1px solid var(--line); }
+    .review-save-state { margin: 0 0 8px; color: var(--muted); font-size: .75rem; }
+    .review-save-state.warning { color: var(--warning); }
+    .review-footer-buttons { justify-content: flex-end; }
+
+    @media (max-width: 900px) {
+      .settings-shell { grid-template-columns: 1fr; }
+      .settings-nav { position: static; top: auto; width: 100%; height: auto; display: flex; gap: 10px; overflow-x: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .settings-nav h2 { display: none; }
+      .nav-group { min-width: max-content; display: flex; align-items: center; gap: 3px; margin: 0; }
+      .nav-group h3 { margin: 0 5px 0 0; }
+      .settings-nav button { width: auto; white-space: nowrap; }
+      .panel-grid, .cards { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .topbar { grid-template-columns: max-content minmax(0, 1fr); gap: 10px; padding: 0 10px; }
+      .global-nav { grid-column: 1 / -1; order: 3; height: 43px; }
+      .global-nav button { min-height: 42px; }
+      .admin-summary { justify-self: end; }
+      .settings-main { padding: 14px 10px 100px; }
+      .page-actions { width: 100%; justify-content: flex-start; }
+      .page-actions button { flex: 1 1 auto; }
+      .definition-list { grid-template-columns: 1fr; }
+      .sticky-save { left: 10px; right: 10px; bottom: 10px; justify-content: flex-end; }
+      .sticky-save span { margin-right: auto; }
+      .toggle-row { gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">sdrtrunk-vce</div>
+    <nav class="global-nav" aria-label="Main navigation">
+      <button type="button">Dashboard</button><button type="button">Systems</button><button type="button">Events</button><button type="button">Messages</button><button type="button" aria-current="page">Settings</button>
+    </nav>
+    <div class="admin-summary"><span class="admin-dot" aria-hidden="true"></span><span>Administrator</span><button type="button">Sign out</button></div>
+  </header>
+
+  <div class="settings-shell">
+    <aside class="settings-nav" aria-label="Settings navigation">
+      <h2>Settings</h2>
+      <section class="nav-group">
+        <h3>Playlist Settings</h3>
+        <button type="button">Hardware</button>
+        <button type="button">Channels</button>
+        <button type="button">Aliases</button>
+        <button type="button">Listen lists</button>
+        <button type="button">Streaming</button>
+        <button type="button">RadioReference</button>
+      </section>
+      <section class="nav-group" id="general-nav">
+        <h3>General Settings</h3>
+        <button type="button" data-page="calls" aria-current="page">Calls</button>
+        <button type="button" data-page="audio">Audio</button>
+        <button type="button" data-page="voice">Voice decoders &amp; keys <span id="voice-attention" class="status-tag attention-tag">1</span></button>
+        <button type="button" data-page="performance">Performance <span id="performance-attention" class="status-tag attention-tag">3</span></button>
+        <button type="button" data-page="display">Display &amp; radio IDs</button>
+        <button type="button" data-page="storage">Storage</button>
+        <button type="button" data-page="statistics">Statistics</button>
+        <button type="button" data-page="access">Public access</button>
+      </section>
+    </aside>
+
+    <main class="settings-main">
+      <header class="page-head">
+        <div><p class="breadcrumbs">Settings / General Settings / <span id="breadcrumb-page">Calls</span></p><h1 id="page-title">Calls</h1><p id="page-description">Choose how SDRTrunk recognizes and handles the same call received more than once.</p></div>
+        <div class="page-actions"><button id="cancel-top" type="button" disabled>Cancel</button><button id="save-top" class="button-primary" type="button" disabled>Save changes</button><button id="open-review" class="review-button" type="button">Review this mockup</button></div>
+      </header>
+
+      <div class="prototype-banner">
+        <div><strong>Interactive layout review.</strong> Try every General Settings page, field help, dependency, confirmation, and background-job state. No setting is actually changed.</div>
+        <div class="scenario-control"><label for="preview-scenario">Preview</label><select id="preview-scenario"><option value="normal">Normal</option><option value="jmbe-missing">JMBE missing</option><option value="vault-missing">Voice-key vault missing</option><option value="module-active">Voice module active</option><option value="calibrating">Calibration running</option><option value="recording-cleanup">Recorded-call cleanup</option><option value="maintenance">Statistics maintenance</option><option value="conflict">Save conflict</option></select></div>
+      </div>
+      <div id="save-status" class="save-status" role="status">No unsaved changes.</div>
+
+      <form id="settings-form" class="settings-form">
+        <section class="settings-page" data-settings-page="calls">
+          <article class="panel">
+            <header class="panel-head"><div><h2>Duplicate call detection</h2><p>Compare calls only across channels that use the same System name.</p></div></header>
+            <div class="panel-body">
+              <div class="toggle-row">
+                <div class="toggle-copy"><strong>Match talkgroup or patch group <button class="help-button" type="button" data-help-title="Talkgroup duplicate detection" data-help="Treat two calls as copies of the same transmission when their talkgroup or patch-group value matches and their channel configurations use the same System name.">i</button></strong><span>Best general-purpose match for receiving the same system on overlapping channels.</span></div>
+                <label class="toggle"><input id="detect-talkgroup" type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Match duplicate calls by talkgroup</span></label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy"><strong>Match radio ID <button class="help-button" type="button" data-help-title="Radio ID duplicate detection" data-help="Treat calls as duplicates when the same transmitting radio appears at the same time. This can be ambiguous when that radio transmits on two talkgroups with different recording or streaming rules.">i</button></strong><span>Use cautiously when the same radio can appear on differently configured talkgroups.</span></div>
+                <label class="toggle"><input id="detect-radio" type="checkbox" data-dirty><span aria-hidden="true"></span><span class="sr-only">Match duplicate calls by radio ID</span></label>
+              </div>
+              <div id="radio-warning" class="inline-notice warning" hidden><div><strong>Radio ID matching can suppress the wrong copy.</strong><span>If one radio speaks on two differently configured talkgroups at once, SDRTrunk cannot know which copy should keep the recording or streaming behavior.</span></div></div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <header class="panel-head"><div><h2>When a duplicate is found</h2><p>These controls are available when at least one detector above is enabled.</p></div></header>
+            <div class="panel-body">
+              <fieldset id="suppression-fieldset" class="stack" style="border:0;padding:0;margin:0">
+                <legend class="sr-only">Duplicate suppression</legend>
+                <div class="toggle-row"><div class="toggle-copy"><strong>Suppress duplicate browser listening <button class="help-button" type="button" data-help-title="Browser listening" data-help="Send only one copy of duplicate call audio to browser listeners.">i</button></strong><span>Listeners hear one copy instead of overlapping duplicate audio.</span></div><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Suppress duplicate browser listening</span></label></div>
+                <div class="toggle-row"><div class="toggle-copy"><strong>Suppress duplicate recording <button class="help-button" type="button" data-help-title="Duplicate recordings" data-help="Write one recording for a detected duplicate call instead of saving the same audio more than once.">i</button></strong><span>Prevents matching calls from producing multiple recordings.</span></div><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Suppress duplicate recording</span></label></div>
+                <div class="toggle-row"><div class="toggle-copy"><strong>Suppress duplicate streaming <button class="help-button" type="button" data-help-title="Duplicate streaming" data-help="Upload or stream only one copy of a detected duplicate call. Provider uploads continue through their own small, limited waiting lines.">i</button></strong><span>Prevents matching calls from being sent more than once.</span></div><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Suppress duplicate streaming</span></label></div>
+              </fieldset>
+            </div>
+          </article>
+
+          <article class="panel">
+            <header class="panel-head"><div><h2>Patch-group streaming</h2><p>Choose how one patched call is identified when sent to streaming providers.</p></div></header>
+            <div class="panel-body"><div class="field" style="max-width:520px"><label for="patch-streaming">Stream a patch-group call as <button class="help-button" type="button" data-help-title="Patch-group streaming" data-help="Patch Group sends the call once under the combined patch-group identity. Individual Talkgroups sends one copy for every talkgroup included in that patch, which can increase upload work.">i</button></label><select id="patch-streaming" data-dirty><option value="">Choose how patched calls are sent</option><option>Patch Group</option><option>Individual Talkgroups</option></select></div></div>
+          </article>
+        </section>
+
+        <section class="settings-page" data-settings-page="audio" hidden>
+          <div class="cards">
+            <article class="card"><h3>Audio recordings</h3><p>Select the format used when a channel or Alias is configured to record call audio.</p><div class="field"><label for="record-format">Recording format <button class="help-button" type="button" data-help-title="Recording format" data-help="WAVE keeps uncompressed audio and uses more storage. MP3 uses the encoder choices on this page and produces smaller files.">i</button></label><select id="record-format" data-dirty><option value="">Choose a recording format</option><option value="wave">WAVE</option><option value="mp3">MP3</option></select></div></article>
+            <article class="card"><h3>MP3 preparation</h3><p>These settings also apply when a streaming provider needs MP3, even if recordings use WAVE.</p><div class="toggle-row"><div class="toggle-copy"><strong>Normalize before encoding <button class="help-button" type="button" data-help-title="Audio normalization" data-help="Adjust unusually loud and quiet audio toward a more consistent level before MP3 compression. This adds a small amount of processing to each encoded call.">i</button></strong><span>Makes recording volume more consistent before MP3 compression.</span></div><label class="toggle"><input type="checkbox" data-dirty><span aria-hidden="true"></span><span class="sr-only">Normalize audio before MP3 encoding</span></label></div></article>
+          </div>
+          <article class="panel">
+            <header class="panel-head"><div><h2>MP3 encoder</h2><p>Choose a voice-optimized LAME setting, then choose one of the sample formats it supports.</p></div></header>
+            <div class="panel-body panel-grid">
+              <div class="field"><label for="mp3-setting">Encoder setting <button class="help-button" type="button" data-help-title="MP3 encoder setting" data-help="Constant bit rate uses a predictable amount of data. Average and variable bit rate may use more data where it improves audio.">i</button></label><select id="mp3-setting" data-dirty><option value="">Choose an encoder setting</option><option value="cbr16">CBR — 16 kbps</option><option value="cbr32">CBR — 32 kbps</option><option value="abr56">ABR — 56 kbps</option><option value="vbr5">VBR — Better quality</option><option value="vbr7">VBR — Good quality</option></select></div>
+              <div class="field"><label for="audio-sample-rate">Input sample format <button class="help-button" type="button" data-help-title="Input sample format" data-help="SDRTrunk normally decodes voice at 8 kHz and resamples it before MP3 encoding. Available bit depths and sample rates depend on the selected encoder setting.">i</button></label><select id="audio-sample-rate" data-dirty disabled><option value="">Choose an encoder setting first</option></select><p id="sample-rate-notice" class="field-help">Only compatible sample formats will be offered.</p></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="settings-page" data-settings-page="voice" hidden>
+          <div class="cards">
+            <article class="card" id="jmbe-card"><div class="status-line"><h3>JMBE audio library</h3><span id="jmbe-status" class="status-pill warning">Not installed</span></div><p>Optional voice support required for listening to or recording some digital voice formats.</p><dl class="definition-list"><dt>Version</dt><dd id="jmbe-version">Not installed</dd><dt>Managed location</dt><dd>Portable JMBE folder</dd></dl><div class="action-row" style="margin-top:13px"><button id="jmbe-install" type="button">Install or check for update</button><button id="jmbe-upload" type="button">Install approved JMBE file</button><button id="jmbe-remove" class="button-danger" type="button" disabled>Remove</button><button class="help-button" type="button" data-help-title="JMBE library" data-help="JMBE decodes supported digital voice. SDRTrunk manages one selected library file in its portable data folder, checks compatibility before activation, and shows an attention badge when the library is missing.">i</button></div></article>
+            <article class="card"><div class="status-line"><h3>Voice decryption module</h3><span id="module-status" class="status-pill">Not installed</span></div><p>An optional compatible module enables the protected key vault and known-key voice decryption.</p><dl class="definition-list"><dt>Active module</dt><dd id="module-name">None</dd><dt>Next restart</dt><dd id="module-next">No change pending</dd></dl><div class="action-row" style="margin-top:13px"><button id="module-upload" type="button">Install compatible module</button><button id="module-cancel-stage" type="button" hidden>Cancel pending change</button><button id="module-remove" class="button-danger" type="button" disabled>Remove active module</button><button class="help-button" type="button" data-help-title="Voice decryption module" data-help="Without a compatible module, SDRTrunk can still identify and log protected calls but cannot decrypt their audio. A replacement is checked, staged, and activated on the next normal restart.">i</button></div></article>
+          </div>
+          <article class="panel"><header class="panel-head"><div><h2>Voice encryption keys</h2><p>The key list and secret fields stay inside one focused vault dialog.</p></div><span id="vault-page-status" class="status-pill locked">Vault locked</span></header><div class="panel-body"><div class="inline-notice"><div><strong>Secrets are write-only.</strong><span>Key material and saved vault passwords are never returned to the browser after saving and never appear in diagnostics.</span></div></div><div class="action-row" style="margin-top:12px"><button id="manage-keys" type="button">Manage voice keys</button><button class="help-button" type="button" data-help-title="Encryption key vault" data-help="The vault is a password-protected file containing the current voice keys. While it is locked, configured calls can still be identified but known-key audio decryption is unavailable.">i</button></div></div></article>
+        </section>
+
+        <section class="settings-page" data-settings-page="performance" hidden>
+          <article class="panel"><header class="panel-head"><div><h2>CPU vector processing</h2><p>Use short calibrations to choose the fastest safe processing method for this receiver.</p></div><span id="calibration-status" class="status-pill warning">3 need calibration</span></header><div class="panel-body">
+            <div class="toggle-row"><div class="toggle-copy"><strong>Enable optimized vector operations <button class="help-button" type="button" data-help-title="Optimized vector operations" data-help="Allows SDRTrunk to use CPU instructions that process several signal values at once when the computer supports them. Calibrations choose the safest fast implementation for each operation.">i</button></strong><span>Recommended on supported CPUs.</span></div><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Enable optimized vector operations</span></label></div>
+            <div style="margin-top:14px"><dl class="definition-list"><dt>Calibrations remaining</dt><dd id="calibration-count">3</dd><dt>Current state</dt><dd id="calibration-state">Ready</dd></dl><div id="calibration-progress-wrap" style="margin-top:12px" hidden><div class="progress"><span id="calibration-progress"></span></div><p id="calibration-progress-copy" class="field-help">Running calibration 1 of 3…</p></div><div class="action-row" style="margin-top:13px"><button id="calibrate" type="button">Calibrate</button><button id="cancel-calibration" type="button" hidden>Cancel calibration</button><button id="reset-calibrations" class="button-danger" type="button">Reset all calibrations</button><button class="help-button" type="button" data-help-title="Calibration job" data-help="Each calibration normally lasts about 20–40 seconds. It runs as a cancellable background job away from tuner input, decoding, recording, streaming, audio, and web request handling. A restart is required to use new results.">i</button></div></div>
+          </div></article>
+          <article class="panel"><header class="panel-head"><div><h2>Current calibration output <button class="help-button" type="button" data-help-title="Calibration output" data-help="This area shows the calibration that is running now. More detail is also written to SDRTrunk’s normal rolling application logs.">i</button></h2><p>Follow the active calibration and its latest result here.</p></div></header><div class="panel-body"><pre id="calibration-output" style="min-height:90px;margin:0;padding:12px;overflow:auto;color:var(--muted);background:var(--surface-2);border-radius:8px;white-space:pre-wrap">No calibration is running.</pre></div></article>
+        </section>
+
+        <section class="settings-page" data-settings-page="display" hidden>
+          <article class="panel"><header class="panel-head"><div><h2>Live display defaults</h2><p>The administrator chooses the public default. Each visitor may override display-only choices in their own browser.</p></div></header><div class="panel-body">
+            <div class="toggle-row"><div class="toggle-copy"><strong>Show advanced P25 encryption details by default <button class="help-button" type="button" data-help-title="Advanced P25 encryption details" data-help="Shows additional P25 encryption state in live system views. This changes only what is displayed; it does not enable decryption. A visitor may choose a different view in that browser.">i</button></strong><span>Visitors can override this presentation choice locally without creating an account.</span></div><label class="toggle"><input type="checkbox" data-dirty><span aria-hidden="true"></span><span class="sr-only">Show advanced P25 encryption details by default</span></label></div>
+            <div class="field" style="max-width:420px;margin-top:14px"><label for="grant-age">P25 grant idle age-out <button class="help-button" type="button" data-help-title="P25 grant idle age-out" data-help="Controls how long an idle P25 traffic grant remains visible before it disappears. Allowed range: 100–15,000 milliseconds in 100 millisecond steps.">i</button></label><div class="unit-input"><input id="grant-age" type="number" min="100" max="15000" step="100" placeholder="100–15,000" data-dirty><span class="unit">ms</span></div></div>
+          </div></article>
+          <article class="panel"><header class="panel-head"><div><h2>Talkgroup and radio ID format</h2><p>Choose how each supported protocol displays its identifiers. The underlying numeric ID never changes.</p></div></header><div class="panel-body"><div class="data-table-wrap"><table><thead><tr><th>Protocol</th><th>Public default <button class="help-button" type="button" data-help-title="Identifier display style" data-help="Decimal shows the stored number. Hexadecimal shows the same number in base 16. Formatted uses a grouped style where the protocol supports it. Visitors may override this display only in their browser.">i</button></th></tr></thead><tbody id="format-table"></tbody></table></div></div></article>
+        </section>
+
+        <section class="settings-page" data-settings-page="storage" hidden>
+          <article class="panel"><header class="panel-head"><div><h2>Storage warning thresholds</h2><p>These values control usage meters and warnings. They do not delete recordings or logs.</p></div></header><div class="panel-body panel-grid">
+            <div class="field"><label for="event-threshold">Event logs warning threshold <button class="help-button" type="button" data-help-title="Event log threshold" data-help="The storage meter warns when event logs reach this amount. It does not delete files. Enter a decimal GB value in 0.1 GB steps; SDRTrunk stores the nearest whole MB for compatibility.">i</button></label><div class="unit-input"><input id="event-threshold" type="number" min="0.1" step="0.1" placeholder="e.g. 0.2" data-dirty><span class="unit">GB</span></div></div>
+            <div class="field"><label for="recording-threshold">Recordings warning threshold <button class="help-button" type="button" data-help-title="Recording threshold" data-help="The storage meter warns when recordings reach this amount. It does not delete recordings. Enter a decimal GB value in 0.1 GB steps; SDRTrunk stores the nearest whole MB for compatibility.">i</button></label><div class="unit-input"><input id="recording-threshold" type="number" min="0.1" step="0.1" placeholder="e.g. 2.0" data-dirty><span class="unit">GB</span></div></div>
+          </div></article>
+          <article class="panel"><header class="panel-head"><div><h2>Recorded call retention</h2><p>This controls saved call audio and the Recordings catalog. It is separate from activity and detailed event history.</p></div><span id="recording-cleanup-status" class="status-pill">No cleanup running</span></header><div class="panel-body panel-grid">
+            <div class="field"><label for="recording-retention-days">Keep recorded calls for <button class="help-button" type="button" data-help-title="Recorded call retention" data-help="Recorded calls older than this many days are deleted in small background batches. Their lookup entries are removed at the same time. This does not delete activity summaries or detailed event history.">i</button></label><div class="unit-input"><input id="recording-retention-days" type="number" min="1" max="3650" step="1" placeholder="1–3,650" data-dirty><span class="unit">days</span></div><p class="field-help">The implementation loads the receiver’s current value here. Lowering it requires confirmation because older audio may become unavailable immediately.</p></div>
+            <div class="inline-notice warning"><div><strong>Shared links do not extend retention.</strong><span>When a recorded call expires, its audio and lookup entry are removed and queues or guest playlists skip it. Activity/history rows follow the separate Statistics setting.</span></div></div>
+            <div id="recording-cleanup-progress" style="grid-column:1/-1" hidden><div class="progress"><span style="width:38%"></span></div><p class="field-help">Removing expired audio and matching lookup entries in small background batches. Recording, decoding, playback, and uploads continue independently.</p></div>
+          </div></article>
+          <article class="panel"><header class="panel-head"><div><h2>Application-managed folders <button class="help-button" type="button" data-help-title="Managed storage folders" data-help="Shows where SDRTrunk currently writes each kind of file. Physical folder changes are made from the receiver’s local node utility.">i</button></h2><p>Review the active logical destination for each kind of file.</p></div></header><div class="panel-body"><div class="data-table-wrap"><table><thead><tr><th>Purpose</th><th>Current destination</th><th>Where it is changed</th></tr></thead><tbody><tr><td>Application logs</td><td>Portable logs folder</td><td>Local node utility</td></tr><tr><td>Event logs</td><td>Configured event-log destination</td><td>Local node utility</td></tr><tr><td>Recordings</td><td>Configured recording destination</td><td>Local node utility</td></tr><tr><td>Streaming workspace</td><td>Portable temporary workspace</td><td>Local node utility</td></tr><tr><td>JMBE library</td><td>Portable JMBE folder</td><td>Voice decoders &amp; keys</td></tr></tbody></table></div></div></article>
+        </section>
+
+        <section class="settings-page" data-settings-page="statistics" hidden>
+          <article class="panel"><header class="panel-head"><div><h2>Statistics collection</h2><p>Summary data powers dashboard and directory pages. Detailed event rows are optional and retention-bound.</p></div></header><div class="panel-body">
+            <div class="toggle-row"><div class="toggle-copy"><strong>Collect summary statistics <button class="help-button" type="button" data-help-title="Summary statistics" data-help="Stores compact lifetime and hourly summaries used by the dashboard and directory pages.">i</button></strong><span>Provides totals and trends for the existing web pages.</span></div><label class="toggle"><input id="stats-summary" type="checkbox" data-dirty><span aria-hidden="true"></span><span class="sr-only">Collect summary statistics</span></label></div>
+            <fieldset id="stats-dependent" style="border:0;padding:0;margin:0" disabled>
+              <div class="toggle-row"><div class="toggle-copy"><strong>Store detailed event history <button class="help-button" type="button" data-help-title="Detailed event history" data-help="Stores individual compact P25 activity rows for history pages. This is the only explicit detailed long-term event feature, and older rows are automatically removed using the retention value below.">i</button></strong><span>Can grow faster than summaries, so automatic deletion is mandatory.</span></div><label class="toggle"><input type="checkbox" data-dirty><span aria-hidden="true"></span><span class="sr-only">Store detailed event history</span></label></div>
+              <div class="field" style="max-width:420px;margin-top:14px"><label for="retention-days">Retain time-based data for <button class="help-button" type="button" data-help-title="Statistics retention" data-help="Deletes time-based data older than this age during normal maintenance. Allowed range: 1–365 days.">i</button></label><div class="unit-input"><input id="retention-days" type="number" min="1" max="365" step="1" placeholder="1–365" data-dirty><span class="unit">days</span></div></div>
+            </fieldset>
+          </div></article>
+          <article class="panel"><header class="panel-head"><div><h2>Database status and maintenance <button class="help-button" type="button" data-help-title="Statistics database status" data-help="Shows the current SDRTrunk database size and whether statistics are being written normally.">i</button></h2><p>Run cleanup, space recovery, and health checks without interrupting radio activity.</p></div><span id="maintenance-status" class="status-pill">Idle</span></header><div class="panel-body"><dl class="definition-list"><dt>Database</dt><dd>Portable data / database / sdrtrunk.sqlite</dd><dt>Current size</dt><dd>184 MB</dd><dt>Statistics writes</dt><dd><span id="stats-write-status" class="status-pill success">Healthy</span></dd></dl><div id="maintenance-progress" style="margin-top:12px" hidden><div class="progress"><span style="width:46%"></span></div><p class="field-help">Removing expired rows and preparing the database for fast searches…</p></div><div class="action-row" style="margin-top:13px"><button type="button" data-maintenance="maintain">Run maintenance</button><button type="button" data-maintenance="shrink">Shrink database</button><button type="button" data-maintenance="check">Check database</button><button type="button" class="button-danger" data-maintenance="reset">Reset lifetime stats</button><button id="cancel-maintenance" type="button" hidden>Cancel current task</button><button class="help-button" type="button" data-help-title="Database maintenance" data-help="Maintenance removes expired data and prepares the database for fast searches. Shrink rebuilds the file and temporarily needs extra disk space. Check reports database health. Reset deletes statistics and detailed history but leaves configuration unchanged.">i</button></div><p id="maintenance-result" class="field-help">No maintenance is currently running.</p></div></article>
+        </section>
+
+        <section class="settings-page" data-settings-page="access" hidden>
+          <article class="panel"><header class="panel-head"><div><h2>Public access</h2><p>Checked means visitors can open the feature without signing in. Unchecked keeps the feature available to the administrator only.</p></div></header><div class="panel-body"><div class="data-table-wrap"><table><thead><tr><th>Feature</th><th>Who can use it</th></tr></thead><tbody>
+            <tr><td class="access-name"><strong>Dashboard and radio pages <button class="help-button" type="button" data-help-title="Dashboard and radio pages" data-help="Controls the existing read-only dashboard, statistics, Systems and Sites, Conventional, and directory pages as one group.">i</button></strong><span>Existing status, statistics, systems, sites, conventional, and directory views</span></td><td><div class="policy-control"><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Dashboard and radio pages are public</span></label><span>Public</span></div></td></tr>
+            <tr><td class="access-name"><strong>Live radio activity <button class="help-button" type="button" data-help-title="Live radio activity" data-help="Controls the read-only Live page. Signed-in administrators also see Signal and Symbols actions there; those diagnostic actions are never shown to public visitors.">i</button></strong><span>Current systems, channels, and active radio calls</span></td><td><div class="policy-control"><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Live radio activity is public</span></label><span>Public</span></div></td></tr>
+            <tr><td class="access-name"><strong>Listen and browser audio <button class="help-button" type="button" data-help-title="Listen and browser audio" data-help="Allows up to ten visitors who are not signed in to choose a Listen list and hear completed calls. Every listener uses a small capped browser queue so a slow connection cannot consume growing memory.">i</button></strong><span>Administrator-made Listen lists and up to ten simultaneous listeners</span></td><td><div class="policy-control"><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Listen and browser audio are public</span></label><span>Public</span></div></td></tr>
+            <tr><td class="access-name"><strong>Recordings browse and playback <button class="help-button" type="button" data-help-title="Recordings access" data-help="Controls browsing, filtering, playlist resolution, and playback of retained recorded calls. Turning public access off reveals no recording metadata to visitors who are not signed in.">i</button></strong><span>Recorded-call search, playback, and no-database guest playlists</span></td><td><div class="policy-control"><label class="toggle"><input type="checkbox" data-dirty checked><span aria-hidden="true"></span><span class="sr-only">Recordings are public</span></label><span>Public</span></div></td></tr>
+            <tr><td class="access-name"><strong>Events <button class="help-button" type="button" data-help-title="Events access" data-help="Controls the live Events view. Turning public access off promptly disconnects visitors who are not signed in. Events are saved long-term only when Detailed Event History is explicitly enabled.">i</button></strong><span>Live decoded events</span></td><td><div class="policy-control"><label class="toggle"><input type="checkbox" data-dirty><span aria-hidden="true"></span><span class="sr-only">Events are public</span></label><span>Admin only</span></div></td></tr>
+            <tr><td class="access-name"><strong>Messages <button class="help-button" type="button" data-help-title="Messages access" data-help="Controls the live decoded-message view for current viewers.">i</button></strong><span>Live decoded messages</span></td><td><div class="policy-control"><label class="toggle"><input type="checkbox" data-dirty><span aria-hidden="true"></span><span class="sr-only">Messages are public</span></label><span>Admin only</span></div></td></tr>
+            <tr><td class="access-name"><strong>Wideband spectrum <button class="help-button" type="button" data-help-title="Wideband spectrum access" data-help="Spectrum is always reserved for the administrator and limited to one active view for the receiver.">i</button></strong><span>Hardware FFT and waterfall</span></td><td><span class="status-pill locked">Always admin only</span></td></tr>
+            <tr><td class="access-name"><strong>Selected-channel Signal and Symbols <button class="help-button" type="button" data-help-title="Selected-channel diagnostics access" data-help="Live shows Signal and Symbols actions only after the administrator signs in. Public visitors never see these actions. Only one selected-channel diagnostic workspace can run at a time.">i</button></strong><span>Selected-channel FFT, power, and symbol graph opened from Live</span></td><td><span class="status-pill locked">Always admin only</span></td></tr>
+            <tr><td class="access-name"><strong>Credits and licensing <button class="help-button" type="button" data-help-title="Credits and licensing" data-help="Static credits, open-source notices, and license information contain no private receiver data and remain available without signing in.">i</button></strong><span>Static informational page</span></td><td><span class="status-pill success">Always public</span></td></tr>
+          </tbody></table></div></div></article>
+        </section>
+      </form>
+    </main>
+  </div>
+
+  <div class="sticky-save" aria-label="Save controls"><span id="sticky-status">Saved</span><button id="cancel-sticky" type="button" disabled>Cancel</button><button id="save-sticky" class="button-primary" type="button" disabled>Save changes</button></div>
+
+  <div id="help-popover" class="help-popover" role="tooltip" hidden><strong id="help-title"></strong><span id="help-text"></span><button id="help-close" type="button" aria-label="Close help">×</button></div>
+  <div id="modal-scrim" class="modal-scrim" hidden></div>
+  <section id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+    <header class="modal-head"><div><h2 id="modal-title"></h2><p id="modal-subtitle"></p></div><button id="modal-close" class="modal-close" type="button" aria-label="Close dialog">×</button></header>
+    <div id="modal-body" class="modal-body"></div><footer id="modal-footer" class="modal-footer"></footer>
+  </section>
+
+  <div id="review-scrim" class="review-scrim" hidden></div>
+  <aside id="review-drawer" class="review-drawer" aria-labelledby="review-title" aria-modal="true" hidden>
+    <div class="review-head"><div><h2 id="review-title">Review General Settings</h2><p>Record decisions and notes directly in this browser. Nothing is sent to SDRTrunk.</p></div><button id="close-review" type="button" aria-label="Close review">×</button></div>
+    <div id="review-content" class="review-content"></div>
+    <div class="review-footer"><p id="review-save-state" class="review-save-state"></p><div class="review-footer-buttons"><button id="clear-review" class="button-danger" type="button">Clear</button><button id="download-review" type="button">Download notes</button><button id="done-review" class="button-primary" type="button">Done</button></div></div>
+  </aside>
+
+  <script>
+    "use strict";
+    (function () {
+      var pageDetails = {
+        calls: ["Calls", "Choose how SDRTrunk recognizes and handles the same call received more than once."],
+        audio: ["Audio", "Configure call recording formats and the MP3 files used by recordings and provider uploads."],
+        voice: ["Voice decoders & keys", "Manage optional voice libraries, the compatible decryption module, and the protected voice-key vault."],
+        performance: ["Performance", "Review CPU vector processing and run one limited calibration job away from live radio work."],
+        display: ["Display & radio IDs", "Set public display defaults without changing the radio identifiers SDRTrunk decodes."],
+        storage: ["Storage", "Set storage warning thresholds and review logical application-managed destinations."],
+        statistics: ["Statistics", "Control existing summaries, explicit retention-bound event history, and database maintenance."],
+        access: ["Public access", "Choose which web features visitors may use without signing in." ]
+      };
+      var currentPage = "calls";
+      var dirty = false;
+      var lastFocus = null;
+      var conflictPreview = false;
+      var calibrationTimer = null;
+      var maintenanceTimer = null;
+      var vaultUnlocked = false;
+      var vaultExists = true;
+      var autoUnlock = false;
+      var jmbeInstalled = true;
+      var jmbeJobTimer = null;
+      var jmbeJobProgress = 0;
+      var moduleInstalled = false;
+      var moduleStaged = false;
+      var vaultKeySelected = false;
+      var helpPinned = false;
+      var currentHelpButton = null;
+
+      var form = document.getElementById("settings-form");
+      var saveStatus = document.getElementById("save-status");
+      var saveButtons = [document.getElementById("save-top"), document.getElementById("save-sticky")];
+      var cancelButtons = [document.getElementById("cancel-top"), document.getElementById("cancel-sticky")];
+
+      function escapeHtml(value) {
+        return String(value == null ? "" : value).replace(/[&<>'"]/g, function (character) {
+          return {"&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;"}[character];
+        });
+      }
+
+      function helpButton(title, text) {
+        return '<button class="help-button" type="button" data-help-title="' + escapeHtml(title) + '" data-help="' + escapeHtml(text) + '">i</button>';
+      }
+
+      function setDirty(next) {
+        dirty = next;
+        saveButtons.concat(cancelButtons).forEach(function (button) { button.disabled = !dirty; });
+        document.getElementById("sticky-status").textContent = dirty ? "Unsaved" : "Saved";
+        saveStatus.className = "save-status" + (dirty ? " dirty" : "");
+        saveStatus.textContent = dirty ? "You have unsaved changes on " + pageDetails[currentPage][0] + "." : "No unsaved changes.";
+      }
+
+      function showPage(page, force) {
+        if (!pageDetails[page] || page === currentPage) return;
+        if (dirty && !force) {
+          openDialog({
+            title: "Leave with unsaved changes?",
+            subtitle: "Changes on " + pageDetails[currentPage][0] + " have not been saved.",
+            body: '<p>You can stay here and save, or discard these changes and continue.</p>',
+            buttons: [
+              {label: "Stay", action: closeDialog},
+              {label: "Discard and continue", className: "button-danger", action: function () { form.reset(); setDirty(false); updateDependencies(); updateSampleRates(false); closeDialog(); showPage(page, true); }}
+            ]
+          });
+          return;
+        }
+        currentPage = page;
+        document.querySelectorAll("[data-settings-page]").forEach(function (section) { section.hidden = section.dataset.settingsPage !== page; });
+        document.querySelectorAll("#general-nav [data-page]").forEach(function (button) {
+          if (button.dataset.page === page) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+        });
+        document.getElementById("breadcrumb-page").textContent = pageDetails[page][0];
+        document.getElementById("page-title").textContent = pageDetails[page][0];
+        document.getElementById("page-description").textContent = pageDetails[page][1];
+        window.scrollTo({top: 0, behavior: "smooth"});
+      }
+
+      function saveChanges() {
+        if (!dirty) return;
+        if (conflictPreview) {
+          saveStatus.className = "save-status error";
+          saveStatus.textContent = "This page changed in another administrator tab. Reload the current values before saving so newer changes are not overwritten.";
+          return;
+        }
+        setDirty(false);
+        saveStatus.className = "save-status success";
+        saveStatus.textContent = "Changes saved.";
+      }
+
+      function cancelChanges() {
+        if (!dirty) return;
+        openDialog({title: "Discard unsaved changes?", subtitle: "Return every field on this page to its last saved value.", body: "<p>Your unsaved edits will be lost.</p>", buttons: [{label:"Keep editing", action:closeDialog}, {label:"Discard changes", className:"button-danger", action:function(){ form.reset(); setDirty(false); updateDependencies(); updateSampleRates(false); closeDialog(); }}]});
+      }
+
+      function updateDependencies() {
+        var detectorEnabled = document.getElementById("detect-talkgroup").checked || document.getElementById("detect-radio").checked;
+        document.getElementById("suppression-fieldset").disabled = !detectorEnabled;
+        document.getElementById("radio-warning").hidden = !document.getElementById("detect-radio").checked;
+        var statsEnabled = document.getElementById("stats-summary").checked;
+        document.getElementById("stats-dependent").disabled = !statsEnabled;
+        updateAccessLabels();
+      }
+
+      var audioFormats = {
+        cbr16: ["16-bit · 8 kHz (no resample)", "32-bit · 8 kHz (no resample)", "16-bit · 16 kHz", "32-bit · 16 kHz"],
+        cbr32: ["16-bit · 8 kHz (no resample)", "32-bit · 8 kHz (no resample)", "16-bit · 16 kHz", "32-bit · 16 kHz", "16-bit · 22.05 kHz", "32-bit · 22.05 kHz"],
+        vbr7: ["16-bit · 8 kHz (no resample)", "32-bit · 8 kHz (no resample)", "16-bit · 16 kHz", "32-bit · 16 kHz", "16-bit · 22.05 kHz", "32-bit · 22.05 kHz"],
+        abr56: ["16-bit · 8 kHz (no resample)", "32-bit · 8 kHz (no resample)", "16-bit · 16 kHz", "32-bit · 16 kHz", "16-bit · 22.05 kHz", "32-bit · 22.05 kHz", "16-bit · 44.1 kHz", "32-bit · 44.1 kHz"],
+        vbr5: ["16-bit · 8 kHz (no resample)", "32-bit · 8 kHz (no resample)", "16-bit · 16 kHz", "32-bit · 16 kHz", "16-bit · 22.05 kHz", "32-bit · 22.05 kHz", "16-bit · 44.1 kHz", "32-bit · 44.1 kHz"]
+      };
+
+      function updateSampleRates(showNotice) {
+        var encoder = document.getElementById("mp3-setting").value;
+        var sample = document.getElementById("audio-sample-rate");
+        var previousLabel = sample.selectedIndex >= 0 ? sample.options[sample.selectedIndex].textContent : "";
+        var options = audioFormats[encoder] || [];
+        sample.innerHTML = options.length ? '<option value="">Choose an input sample format</option>' + options.map(function (label, index) { return '<option value="' + index + '">' + label + '</option>'; }).join("") : '<option value="">Choose an encoder setting first</option>';
+        sample.disabled = !options.length;
+        if (!options.length) {
+          document.getElementById("sample-rate-notice").textContent = "Only compatible sample formats will be offered.";
+          return;
+        }
+        var selectedIndex = options.indexOf(previousLabel);
+        var defaultIndex = options.indexOf("16-bit · 16 kHz");
+        sample.value = String(selectedIndex >= 0 ? selectedIndex : defaultIndex);
+        if (showNotice && previousLabel && previousLabel.indexOf("Choose ") !== 0 && selectedIndex < 0) document.getElementById("sample-rate-notice").textContent = "The previous sample format is not supported by this encoder, so it was reset to 16-bit · 16 kHz.";
+        else document.getElementById("sample-rate-notice").textContent = "16-bit · 16 kHz is used when no saved choice is available.";
+      }
+
+      var formatProtocols = [
+        ["APCO-25 (Phase 1 & 2)", ["Decimal", "Hexadecimal"]],
+        ["DMR", ["Decimal", "Hexadecimal"]],
+        ["Fleetsync", ["Decimal", "Formatted"]],
+        ["MDC-1200", ["Decimal", "Hexadecimal"]],
+        ["NBFM", ["Decimal", "Hexadecimal"]],
+        ["NXDN", ["Decimal", "Hexadecimal"]]
+      ];
+
+      function renderFormatTable() {
+        document.getElementById("format-table").innerHTML = formatProtocols.map(function (row, index) {
+          return '<tr><td>' + escapeHtml(row[0]) + '</td><td><label class="sr-only" for="format-' + index + '">Display style for ' + escapeHtml(row[0]) + '</label><select id="format-' + index + '" data-dirty><option value="">Choose a display style</option>' + row[1].map(function (choice) { return '<option>' + choice + '</option>'; }).join("") + '</select></td></tr>';
+        }).join("");
+      }
+
+      function updateAccessLabels() {
+        document.querySelectorAll("[data-settings-page=access] .policy-control").forEach(function (control) {
+          var checkbox = control.querySelector("input[type=checkbox]");
+          var label = control.querySelector("span:last-child");
+          if (checkbox && label) label.textContent = checkbox.checked ? "Public" : "Admin only";
+        });
+      }
+
+      function openDialog(config) {
+        lastFocus = document.activeElement;
+        var modal = document.getElementById("modal");
+        modal.classList.toggle("wide", Boolean(config.wide));
+        document.getElementById("modal-title").textContent = config.title || "";
+        document.getElementById("modal-subtitle").textContent = config.subtitle || "";
+        document.getElementById("modal-body").innerHTML = config.body || "";
+        var footer = document.getElementById("modal-footer");
+        footer.innerHTML = "";
+        (config.buttons || [{label:"Close", action:closeDialog}]).forEach(function (definition) {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.textContent = definition.label;
+          if (definition.className) button.className = definition.className;
+          if (definition.disabled) button.disabled = true;
+          button.addEventListener("click", definition.action || closeDialog);
+          footer.appendChild(button);
+        });
+        document.getElementById("modal-scrim").hidden = false;
+        modal.hidden = false;
+        window.setTimeout(function () { var target = modal.querySelector("input:not([disabled]), select:not([disabled]), button:not([disabled])"); if (target) target.focus(); }, 0);
+        if (config.afterOpen) config.afterOpen();
+      }
+
+      function closeDialog() {
+        document.getElementById("modal-scrim").hidden = true;
+        document.getElementById("modal").hidden = true;
+        document.getElementById("modal-body").innerHTML = "";
+        document.getElementById("modal-footer").innerHTML = "";
+        if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+      }
+
+      function confirmArtifact(kind) {
+        if (kind === "jmbe-install") {
+          openDialog({title:"Install JMBE audio library", subtitle:"The check and build run as one limited background task.", body:'<div class="inline-notice"><div><strong>Compatible release available</strong><span>Version 1.0.9 will be built, checked, and placed in the portable JMBE folder. Voice decoding continues to use the current library until the new copy is ready.</span></div></div>', buttons:[{label:"Cancel", action:closeDialog}, {label:"Install", className:"button-primary", action:startJmbeInstall}]});
+        } else if (kind === "jmbe-upload") {
+          openDialog({title:"Install approved JMBE file", subtitle:"Choose a JMBE library file to validate and install in managed storage.", body:'<div class="field"><label for="artifact-file">JMBE library file ' + helpButton("Approved JMBE file", "The file is staged and checked for a compatible JMBE version and the required decoder support before it can replace the active library.") + '</label><input id="artifact-file" type="file" accept=".jar,application/java-archive"></div>', buttons:[{label:"Cancel", action:closeDialog}, {label:"Validate and install", className:"button-primary", action:function(){ jmbeInstalled=true; updateVoiceCards(); closeDialog(); }}]});
+        } else if (kind === "module-upload") {
+          openDialog({title:"Install compatible voice module", subtitle:"The replacement is checked now and activates on the next normal restart.", body:'<div class="field"><label for="module-file">Voice module file ' + helpButton("Compatible voice module", "SDRTrunk checks that the module works with this version and supports usable encryption methods before staging it for the next restart.") + '</label><input id="module-file" type="file" accept=".jar,application/java-archive"></div><div class="inline-notice warning" style="margin-top:12px"><div><strong>Restart required.</strong><span>The active module remains in use until the next normal application start.</span></div></div>', buttons:[{label:"Cancel", action:closeDialog}, {label:"Stage for restart", className:"button-primary", action:function(){ moduleStaged=true; updateVoiceCards(); closeDialog(); }}]});
+        }
+      }
+
+      function startJmbeInstall() {
+        clearInterval(jmbeJobTimer);
+        jmbeJobProgress = 8;
+        openDialog({title:"Installing JMBE audio library", subtitle:"You may leave this dialog open or cancel while the build is running.", body:'<div class="progress"><span id="jmbe-install-progress" style="width:8%"></span></div><p id="jmbe-install-copy" class="field-help">Preparing the compatible library…</p>', buttons:[{label:"Cancel installation", action:cancelJmbeInstall}]});
+        jmbeJobTimer = window.setInterval(function () {
+          jmbeJobProgress = Math.min(100, jmbeJobProgress + 18);
+          var bar = document.getElementById("jmbe-install-progress");
+          var copy = document.getElementById("jmbe-install-copy");
+          if (bar) bar.style.width = jmbeJobProgress + "%";
+          if (copy) copy.textContent = jmbeJobProgress < 65 ? "Building and checking the library…" : "Finishing installation…";
+          updateVoiceCards();
+          if (jmbeJobProgress >= 100) finishJmbeInstall();
+        }, 350);
+        updateVoiceCards();
+      }
+
+      function finishJmbeInstall() {
+        clearInterval(jmbeJobTimer);
+        jmbeJobTimer = null;
+        jmbeInstalled = true;
+        updateVoiceCards();
+        openDialog({title:"JMBE installation complete", subtitle:"The compatible library is ready to use.", body:'<div class="inline-notice"><div><strong>Version 1.0.9 installed</strong><span>Digital voice channels that require JMBE can now produce audio.</span></div></div>', buttons:[{label:"Close", className:"button-primary", action:closeDialog}]});
+      }
+
+      function cancelJmbeInstall() {
+        clearInterval(jmbeJobTimer);
+        jmbeJobTimer = null;
+        updateVoiceCards();
+        openDialog({title:"JMBE installation cancelled", subtitle:"The previous library state is unchanged.", body:'<p>You can start the installation again whenever you are ready.</p>', buttons:[{label:"Close", action:closeDialog}]});
+      }
+
+      function updateVoiceCards() {
+        var jmbeStatus = document.getElementById("jmbe-status");
+        jmbeStatus.textContent = jmbeJobTimer ? "Installing · " + jmbeJobProgress + "%" : jmbeInstalled ? "Compatible" : "Not installed";
+        jmbeStatus.className = "status-pill " + (jmbeJobTimer ? "warning" : jmbeInstalled ? "success" : "warning");
+        document.getElementById("jmbe-version").textContent = jmbeInstalled ? "1.0.9" : "Not installed";
+        document.getElementById("jmbe-remove").disabled = !jmbeInstalled || Boolean(jmbeJobTimer);
+        document.getElementById("voice-attention").hidden = jmbeInstalled;
+        var moduleStatus = document.getElementById("module-status");
+        moduleStatus.textContent = moduleStaged ? (moduleInstalled ? "Compatible · change pending" : "Not installed · change pending") : moduleInstalled ? "Compatible" : "Not installed";
+        moduleStatus.className = "status-pill " + (moduleStaged ? "warning" : moduleInstalled ? "success" : "");
+        document.getElementById("module-name").textContent = moduleInstalled ? "Compatible voice module 1.0" : "None";
+        document.getElementById("module-next").textContent = moduleStaged ? "Install compatible voice module 1.1" : "No change pending";
+        document.getElementById("module-cancel-stage").hidden = !moduleStaged;
+        document.getElementById("module-remove").disabled = !moduleInstalled;
+      }
+
+      function removeArtifact(kind) {
+        var isJmbe = kind === "jmbe";
+        openDialog({title:"Remove " + (isJmbe ? "JMBE audio library" : "voice decryption module") + "?", subtitle:isJmbe ? "Affected digital voice will no longer produce playable or recordable audio." : "Saved keys remain protected, but known-key decryption will be unavailable.", body:'<p>The selected file will be removed from SDRTrunk.</p>', buttons:[{label:"Cancel", action:closeDialog}, {label:"Remove", className:"button-danger", action:function(){ if(isJmbe) jmbeInstalled=false; else moduleInstalled=false; updateVoiceCards(); closeDialog(); }}]});
+      }
+
+      function vaultBody() {
+        if (!vaultExists) {
+          return '<div class="inline-notice warning"><div><strong>No vault exists.</strong><span>Create a password-protected vault before adding voice keys.</span></div></div>';
+        }
+        if (!vaultUnlocked) {
+          return '<div class="inline-notice"><div><strong>Vault locked</strong><span>Decrypted key material is not loaded in memory. Unlock to view key status or make changes.</span></div></div>';
+        }
+        return '<div class="toggle-row"><div class="toggle-copy"><strong>Auto-unlock vault on launch — Unsafe! ' + helpButton("Auto-unlock vault", "Off is safer: SDRTrunk starts without decryption until the administrator unlocks the vault from the website. Turning this on saves a local launch secret that is never sent back to the website. Turning it off removes that secret.") + '</strong><span>This setting appears only after a successful web unlock.</span></div><label class="toggle"><input id="vault-auto-unlock" type="checkbox"' + (autoUnlock ? ' checked' : '') + '><span aria-hidden="true"></span><span class="sr-only">Auto-unlock vault on launch</span></label></div>' +
+          '<div class="data-table-wrap" style="margin-top:14px"><table><thead><tr><th>Enabled</th><th>Label</th><th>Protocol</th><th>Algorithm</th><th>Key ID</th><th>Key</th><th>Scope</th></tr></thead><tbody><tr data-vault-key-row tabindex="0" aria-selected="false"><td>Yes</td><td>Dispatch test</td><td>APCO-25</td><td>AES-256</td><td>0x2A</td><td>Configured (32 bytes)</td><td>Talkgroup 1201</td></tr></tbody></table></div><div class="action-row" style="margin-top:12px"><button type="button" data-vault-action="add">Add key</button><button type="button" data-vault-action="edit" disabled>Edit selected</button><button type="button" class="button-danger" data-vault-action="remove" disabled>Remove selected</button></div>';
+      }
+
+      function openVault() {
+        var buttons = [];
+        if (!vaultExists) buttons.push({label:"Create vault", className:"button-primary", action:function(){ openVaultPassword("Create voice-key vault", true); }});
+        else if (!vaultUnlocked) buttons.push({label:"Unlock", className:"button-primary", action:function(){ openVaultPassword("Unlock voice-key vault", false); }});
+        else {
+          buttons.push({label:"Change password", action:openChangePassword});
+          buttons.push({label:"Export vault", action:openExportVault});
+          buttons.push({label:"Lock", action:function(){ vaultUnlocked=false; updateVaultStatus(); closeDialog(); }});
+        }
+        buttons.unshift({label:"Close", action:closeDialog});
+        openDialog({title:"Voice encryption keys", subtitle:"Current keys live only in the protected vault. Secret key bytes are never shown in the table.", body:vaultBody(), buttons:buttons, wide:vaultUnlocked, afterOpen:function(){
+          vaultKeySelected = false;
+          var auto = document.getElementById("vault-auto-unlock");
+          if (auto) auto.addEventListener("change", function(){ autoUnlock=auto.checked; });
+          var row = document.querySelector("[data-vault-key-row]");
+          function selectRow() {
+            if (!row) return;
+            vaultKeySelected = true;
+            row.setAttribute("aria-selected", "true");
+            document.querySelectorAll('[data-vault-action="edit"], [data-vault-action="remove"]').forEach(function(button){ button.disabled = false; });
+          }
+          if (row) {
+            row.addEventListener("click", selectRow);
+            row.addEventListener("keydown", function(event){ if(event.key === "Enter" || event.key === " "){ event.preventDefault(); selectRow(); }});
+          }
+        }});
+      }
+
+      function updateVaultStatus() {
+        document.getElementById("vault-page-status").textContent = !vaultExists ? "Vault missing" : vaultUnlocked ? "Vault unlocked" : "Vault locked";
+        document.getElementById("vault-page-status").className = "status-pill " + (vaultUnlocked ? "success" : "locked");
+      }
+
+      function openVaultPassword(title, create) {
+        openDialog({title:title, subtitle:create ? "Choose a password for the new protected vault." : "Enter the vault password. Auto-unlock is offered separately after success.", body:'<div class="stack"><div class="field"><label for="vault-password">Password ' + helpButton("Vault password", "The password unlocks the local voice-key vault. It is submitted only for this action and is not returned to the browser after use.") + '</label><input id="vault-password" type="password" autocomplete="off" placeholder="Enter vault password"></div>' + (create ? '<div class="field"><label for="vault-confirm">Confirm password</label><input id="vault-confirm" type="password" autocomplete="off" placeholder="Enter it again"></div>' : '') + '<p id="vault-password-error" class="field-help" style="color:var(--danger)" hidden></p></div>', buttons:[{label:"Cancel", action:openVault}, {label:create?"Create vault":"Unlock", className:"button-primary", action:function(){ var password=document.getElementById("vault-password").value; var confirm=document.getElementById("vault-confirm"); var error=document.getElementById("vault-password-error"); if(!password || (confirm && confirm.value!==password)){ error.hidden=false; error.textContent=!password?"Enter a vault password.":"The passwords do not match."; return; } vaultExists=true; vaultUnlocked=true; updateVaultStatus(); openVault(); }}]});
+      }
+
+      function openChangePassword() {
+        openDialog({title:"Change vault password", subtitle:"If auto-unlock remains enabled, its saved launch secret is updated in the same operation.", body:'<div class="stack"><div class="field"><label for="old-password">Current password</label><input id="old-password" type="password" autocomplete="off" placeholder="Enter current password"></div><div class="field"><label for="new-password">New password</label><input id="new-password" type="password" autocomplete="new-password" placeholder="Enter new password"></div><div class="field"><label for="confirm-password">Confirm new password</label><input id="confirm-password" type="password" autocomplete="new-password" placeholder="Enter it again"></div></div>', buttons:[{label:"Cancel", action:openVault}, {label:"Change password", className:"button-primary", action:openVault}]});
+      }
+
+      function openExportVault() {
+        openDialog({title:"Export encrypted vault", subtitle:"Re-enter the vault password to download one encrypted backup.", body:'<div class="field"><label for="export-password">Vault password ' + helpButton("Vault export", "The encrypted vault is returned directly as one browser download. The receiver does not keep a second copy.") + '</label><input id="export-password" type="password" autocomplete="off" placeholder="Re-enter vault password"></div>', buttons:[{label:"Cancel", action:openVault}, {label:"Download encrypted vault", className:"button-primary", action:function(){ openVault(); }}]});
+      }
+
+      var algorithms = {
+        p25: [["AES-256", "0x84", "32 bytes", 32], ["AES-128", "0x85", "16 bytes", 16], ["DES-OFB", "0x81", "8 bytes", 8], ["Motorola ADP", "0xAA", "up to 5 bytes", 5, true]],
+        dmr: [["DMRA RC4/EP", "0x21", "5 bytes", 5], ["DMRA AES-128", "0x24", "16 bytes", 16], ["DMRA AES-256", "0x25", "32 bytes", 32]],
+        nxdn: [["Scrambler", "0x01", "2 bytes", 2], ["DES-OFB", "0x02", "8 bytes", 8], ["AES-256-OFB", "0x03", "32 bytes", 32]]
+      };
+
+      function openKeyEditor(editing) {
+        var keyPlaceholder = editing ? "Leave blank to keep the current key" : "Write-only hexadecimal pairs";
+        var keyHelp = editing ? "Leave this field blank to keep the current secret. Enter hexadecimal byte pairs only when replacing it; spaces, colons, underscores, and hyphens are ignored." : "Enter a non-empty secret as hexadecimal byte pairs. Spaces, colons, underscores, and hyphens are ignored. Saved key material is never displayed again.";
+        var body = '<div class="panel-grid">' +
+          '<div class="field"><label for="key-enabled">Enabled ' + helpButton("Enabled key", "A disabled key stays saved in the vault but is ignored when encrypted calls are matched.") + '</label><label class="toggle"><input id="key-enabled" type="checkbox" checked><span aria-hidden="true"></span><span class="sr-only">Key enabled</span></label></div>' +
+          '<div class="field"><label for="key-label">Label ' + helpButton("Private key label", "An optional administrator-only name used to recognize this key.") + '</label><input id="key-label" type="text" maxlength="100" placeholder="Optional private label"></div>' +
+          '<div class="field"><label for="key-protocol">Protocol ' + helpButton("Key protocol", "Limits the key to encrypted calls using APCO-25, DMR, or NXDN.") + '</label><select id="key-protocol"><option value="">Choose a protocol</option><option value="p25">APCO-25</option><option value="dmr">DMR</option><option value="nxdn">NXDN</option></select></div>' +
+          '<div class="field"><label for="key-algorithm">Algorithm ' + helpButton("Encryption algorithm", "Choose the encryption method reported by the radio system. The list changes with protocol and includes only methods supported by the installed module.") + '</label><select id="key-algorithm" disabled><option value="">Choose a protocol first</option></select></div>' +
+          '<div class="field"><label for="algorithm-id">Algorithm ID ' + helpButton("Algorithm ID", "The numeric algorithm code sent over the air. It is filled from the selected algorithm and cannot be edited separately.") + '</label><input id="algorithm-id" type="text" readonly placeholder="Filled from algorithm"></div>' +
+          '<div class="field"><label for="key-id">Key ID ' + helpButton("Key ID", "The key number transmitted with the encrypted call. Enter decimal or hexadecimal from 0 to 65,535.") + '</label><input id="key-id" type="text" inputmode="text" placeholder="0–65,535 or 0x0000–0xFFFF"></div>' +
+          '<div class="field"><label for="key-hex">Key hex ' + helpButton("Secret key bytes", keyHelp) + '</label><input id="key-hex" type="password" autocomplete="off" placeholder="' + keyPlaceholder + '"><p id="key-length" class="field-help">Choose an algorithm to see its required length.</p></div>' +
+          '<div class="field"><label for="key-scope">Scope ' + helpButton("Optional key scope", "Leave blank to match any call with the same protocol, algorithm, and key ID. Enter part of a call identifier, such as a talkgroup or radio ID, to limit where this key is used.") + '</label><input id="key-scope" type="text" placeholder="Optional talkgroup, radio ID, or identifier text"></div>' +
+          '<div id="key-editor-error" class="inline-notice danger" style="grid-column:1/-1" role="alert" hidden><div><strong>Check the key details.</strong><span id="key-editor-error-copy"></span></div></div></div>';
+        openDialog({title:editing ? "Edit voice encryption key" : "Add voice encryption key", subtitle:"Only algorithms supported by the installed module are offered for the chosen protocol.", wide:true, body:body, buttons:[{label:"Cancel", action:openVault}, {label:editing ? "Save changes" : "Add key", className:"button-primary", action:function(){validateKeyEditor(editing);}}], afterOpen:function(){
+          var protocol=document.getElementById("key-protocol"), algorithm=document.getElementById("key-algorithm");
+          function updateAlgorithms(){ var choices=algorithms[protocol.value]||[]; algorithm.disabled=!choices.length; algorithm.innerHTML=choices.length?'<option value="">Choose an algorithm</option>'+choices.map(function(row,index){return '<option value="'+index+'">'+row[0]+'</option>';}).join(""):'<option value="">Choose a protocol first</option>'; document.getElementById("algorithm-id").value=""; document.getElementById("key-length").textContent="Choose an algorithm to see its required length."; }
+          function updateAlgorithmDetails(){ var row=algorithm.value === "" ? null : (algorithms[protocol.value]||[])[Number(algorithm.value)]; document.getElementById("algorithm-id").value=row?row[1]:""; document.getElementById("key-length").textContent=row?"Required key length: "+row[2]+".":"Choose an algorithm to see its required length."; }
+          protocol.addEventListener("change", updateAlgorithms);
+          algorithm.addEventListener("change", updateAlgorithmDetails);
+          if (editing) {
+            document.getElementById("key-label").value = "Dispatch test";
+            protocol.value = "p25";
+            updateAlgorithms();
+            algorithm.value = "0";
+            updateAlgorithmDetails();
+            document.getElementById("key-id").value = "0x2A";
+            document.getElementById("key-scope").value = "Talkgroup 1201";
+          }
+        }});
+      }
+
+      function validateKeyEditor(editing) {
+        var protocol = document.getElementById("key-protocol");
+        var algorithm = document.getElementById("key-algorithm");
+        var keyIdText = document.getElementById("key-id").value.trim();
+        var keyText = document.getElementById("key-hex").value.trim();
+        var normalizedKey = keyText.replace(/[\s:_-]/g, "");
+        var row = algorithm.value === "" ? null : (algorithms[protocol.value] || [])[Number(algorithm.value)];
+        var errors = [];
+        if (!protocol.value) errors.push("Choose a protocol.");
+        if (!row) errors.push("Choose an encryption algorithm.");
+        if (!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(keyIdText)) errors.push("Enter a Key ID from 0 to 65,535 in decimal or hexadecimal.");
+        else {
+          var keyId = /^0x/i.test(keyIdText) ? parseInt(keyIdText.slice(2), 16) : parseInt(keyIdText, 10);
+          if (keyId > 65535) errors.push("Key ID cannot be greater than 65,535.");
+        }
+        if (!editing && !normalizedKey) errors.push("Enter the secret key bytes.");
+        if (editing && !normalizedKey && (protocol.value !== "p25" || algorithm.value !== "0")) errors.push("Enter a replacement key when changing the protocol or algorithm.");
+        if (normalizedKey) {
+          if (!/^[0-9a-f]+$/i.test(normalizedKey) || normalizedKey.length % 2 !== 0) errors.push("Key hex must contain complete hexadecimal byte pairs.");
+          else if (row) {
+            var byteCount = normalizedKey.length / 2;
+            if (row[4] ? byteCount > row[3] : byteCount !== row[3]) errors.push(row[4] ? "This algorithm accepts no more than " + row[3] + " key bytes." : "This algorithm requires exactly " + row[3] + " key bytes.");
+          }
+        }
+        var error = document.getElementById("key-editor-error");
+        if (errors.length) {
+          document.getElementById("key-editor-error-copy").textContent = errors.join(" ");
+          error.hidden = false;
+          return;
+        }
+        openVault();
+      }
+
+      function beginCalibration(staticPreview) {
+        clearInterval(calibrationTimer);
+        showPage("performance", true);
+        document.getElementById("calibration-status").textContent = "Calibration running";
+        document.getElementById("calibration-status").className = "status-pill warning";
+        document.getElementById("calibration-state").textContent = "Measuring vector routines";
+        document.getElementById("calibration-progress-wrap").hidden = false;
+        document.getElementById("calibrate").disabled = true;
+        document.getElementById("reset-calibrations").disabled = true;
+        document.getElementById("cancel-calibration").hidden = false;
+        document.getElementById("calibration-output").textContent = "Calibration 1/3 — Complex mixer\nMeasuring scalar and vector implementations…";
+        var progress = staticPreview ? 42 : 8;
+        document.getElementById("calibration-progress").style.width = progress + "%";
+        if (!staticPreview) calibrationTimer = window.setInterval(function(){ progress += 18; document.getElementById("calibration-progress").style.width=Math.min(progress,100)+"%"; if(progress>=100){ clearInterval(calibrationTimer); calibrationTimer=null; finishCalibration(); } }, 450);
+      }
+
+      function finishCalibration() {
+        document.getElementById("calibration-status").textContent = "Restart required";
+        document.getElementById("calibration-status").className = "status-pill success";
+        document.getElementById("calibration-state").textContent = "Complete · restart to apply";
+        document.getElementById("calibration-count").textContent = "0";
+        document.getElementById("calibration-progress-wrap").hidden = true;
+        document.getElementById("calibrate").disabled = true;
+        document.getElementById("reset-calibrations").disabled = false;
+        document.getElementById("cancel-calibration").hidden = true;
+        document.getElementById("calibration-output").textContent = "Calibration complete. Restart SDRTrunk to use the new CPU choices.";
+        document.getElementById("performance-attention").hidden = true;
+      }
+
+      function cancelCalibration() {
+        clearInterval(calibrationTimer); calibrationTimer=null;
+        document.getElementById("calibration-status").textContent = "3 need calibration";
+        document.getElementById("calibration-status").className = "status-pill warning";
+        document.getElementById("calibration-state").textContent = "Cancelled at a safe boundary";
+        document.getElementById("calibration-progress-wrap").hidden = true;
+        document.getElementById("calibrate").disabled = false;
+        document.getElementById("reset-calibrations").disabled = false;
+        document.getElementById("cancel-calibration").hidden = true;
+        document.getElementById("calibration-output").textContent = "Calibration cancelled. Results completed before cancellation remain available.";
+      }
+
+      function beginMaintenance(operation, staticPreview) {
+        clearInterval(maintenanceTimer);
+        showPage("statistics", true);
+        document.getElementById("maintenance-status").textContent = operation + " running";
+        document.getElementById("maintenance-status").className = "status-pill warning";
+        document.getElementById("maintenance-progress").hidden = false;
+        document.getElementById("maintenance-result").textContent = "The active job is running in the background without making radio work or normal website responses wait.";
+        document.getElementById("cancel-maintenance").hidden = false;
+        document.querySelectorAll("[data-maintenance]").forEach(function(button){button.disabled=true;});
+        if (!staticPreview) maintenanceTimer = window.setInterval(function(){ clearInterval(maintenanceTimer); maintenanceTimer=null; finishMaintenance(operation); }, 1600);
+      }
+
+      function finishMaintenance(operation) {
+        document.getElementById("maintenance-status").textContent = "Idle";
+        document.getElementById("maintenance-status").className = "status-pill success";
+        document.getElementById("maintenance-progress").hidden = true;
+        document.getElementById("maintenance-result").textContent = operation + " completed successfully.";
+        document.getElementById("cancel-maintenance").hidden = true;
+        document.querySelectorAll("[data-maintenance]").forEach(function(button){button.disabled=false;});
+      }
+
+      function cancelMaintenance() {
+        clearInterval(maintenanceTimer);
+        maintenanceTimer = null;
+        document.getElementById("maintenance-status").textContent = "Idle";
+        document.getElementById("maintenance-status").className = "status-pill";
+        document.getElementById("maintenance-progress").hidden = true;
+        document.getElementById("maintenance-result").textContent = "The task was cancelled at a safe stopping point.";
+        document.getElementById("cancel-maintenance").hidden = true;
+        document.querySelectorAll("[data-maintenance]").forEach(function(button){button.disabled=false;});
+      }
+
+      function requestMaintenance(operation) {
+        if (operation === "shrink") openDialog({title:"Shrink statistics database?", subtitle:"The rebuild may take time and temporarily needs extra free disk space.", body:"<p>Radio work continues independently, but database history pages may be briefly unavailable.</p>", buttons:[{label:"Cancel", action:closeDialog}, {label:"Shrink database", className:"button-primary", action:function(){closeDialog();beginMaintenance("Shrink",false);}}]});
+        else if (operation === "reset") openDialog({title:"Reset lifetime statistics?", subtitle:"This deletes statistics summaries and detailed event history.", body:'<div class="inline-notice danger"><div><strong>Configuration is not changed.</strong><span>Channels, aliases, streaming providers, radio settings, and administrator settings remain intact.</span></div></div>', buttons:[{label:"Cancel", action:closeDialog}, {label:"Reset statistics", className:"button-danger", action:function(){closeDialog();beginMaintenance("Reset",false);}}]});
+        else beginMaintenance(operation === "check" ? "Check" : "Maintenance", false);
+      }
+
+      function resetRuntimeScenarios() {
+        clearInterval(calibrationTimer); calibrationTimer=null;
+        clearInterval(maintenanceTimer); maintenanceTimer=null;
+        clearInterval(jmbeJobTimer); jmbeJobTimer=null; jmbeJobProgress=0;
+        jmbeInstalled=true;
+        moduleInstalled=false;
+        moduleStaged=false;
+        vaultExists=true;
+        vaultUnlocked=false;
+        autoUnlock=false;
+        vaultKeySelected=false;
+        updateVoiceCards();
+        updateVaultStatus();
+        document.getElementById("calibration-status").textContent="3 need calibration";
+        document.getElementById("calibration-status").className="status-pill warning";
+        document.getElementById("calibration-count").textContent="3";
+        document.getElementById("calibration-state").textContent="Ready";
+        document.getElementById("calibration-progress-wrap").hidden=true;
+        document.getElementById("calibrate").disabled=false;
+        document.getElementById("reset-calibrations").disabled=false;
+        document.getElementById("cancel-calibration").hidden=true;
+        document.getElementById("calibration-output").textContent="No calibration is running.";
+        document.getElementById("performance-attention").hidden=false;
+        document.getElementById("maintenance-status").textContent="Idle";
+        document.getElementById("maintenance-status").className="status-pill";
+        document.getElementById("maintenance-progress").hidden=true;
+        document.getElementById("maintenance-result").textContent="No maintenance is currently running.";
+        document.getElementById("cancel-maintenance").hidden=true;
+        document.querySelectorAll("[data-maintenance]").forEach(function(button){button.disabled=false;});
+        document.getElementById("recording-cleanup-status").textContent="No cleanup running";
+        document.getElementById("recording-cleanup-status").className="status-pill";
+        document.getElementById("recording-cleanup-progress").hidden=true;
+        conflictPreview=false;
+        if (!dirty) { saveStatus.className="save-status"; saveStatus.textContent="No unsaved changes."; }
+      }
+
+      function applyScenario(scenario) {
+        resetRuntimeScenarios();
+        if (scenario === "jmbe-missing") { jmbeInstalled=false; updateVoiceCards(); showPage("voice", true); }
+        else if (scenario === "vault-missing") { vaultExists=false; updateVaultStatus(); showPage("voice", true); }
+        else if (scenario === "module-active") { moduleInstalled=true; updateVoiceCards(); showPage("voice", true); }
+        else if (scenario === "calibrating") beginCalibration(true);
+        else if (scenario === "recording-cleanup") { showPage("storage", true); document.getElementById("recording-cleanup-status").textContent="Cleanup running"; document.getElementById("recording-cleanup-status").className="status-pill warning"; document.getElementById("recording-cleanup-progress").hidden=false; }
+        else if (scenario === "maintenance") beginMaintenance("Maintenance", true);
+        else if (scenario === "conflict") { conflictPreview=true; showPage("calls", true); setDirty(true); saveStatus.className="save-status error"; saveStatus.textContent="A newer settings revision exists in another administrator tab. Saving this older form will be rejected."; }
+      }
+
+      function showHelp(button, pin) {
+        var popover=document.getElementById("help-popover"), rect=button.getBoundingClientRect();
+        currentHelpButton=button; helpPinned=Boolean(pin);
+        document.getElementById("help-title").textContent=button.dataset.helpTitle || "About this setting";
+        document.getElementById("help-text").textContent=button.dataset.help || "";
+        popover.hidden=false;
+        popover.style.left=Math.max(12, Math.min(window.innerWidth-352, rect.left)) + "px";
+        var top=rect.bottom+7;
+        if(top+popover.offsetHeight>window.innerHeight-12) top=Math.max(12, rect.top-popover.offsetHeight-7);
+        popover.style.top=top+"px";
+        button.setAttribute("aria-expanded", "true");
+      }
+
+      function hideHelp(force) {
+        if (helpPinned && !force) return;
+        document.getElementById("help-popover").hidden=true;
+        if(currentHelpButton) currentHelpButton.setAttribute("aria-expanded","false");
+        currentHelpButton=null; helpPinned=false;
+      }
+
+      var REVIEW_STORAGE_KEY="sdrtrunk-vce.mockup.settings-general-v1.review";
+      var REVIEW_VERSION=1;
+      var MAX_NOTE_LENGTH=3000;
+      var reviewSections=[
+        ["navigation", "General Settings navigation and saving", "Eight focused pages, persistent Playlist/General navigation, explicit Save/Cancel, unsaved-change warning, and stale-edit protection."],
+        ["calls", "Calls", "Talkgroup and Radio ID duplicate detection, the visible ambiguity warning, browser listening/recording/streaming suppression, and patch-group behavior."],
+        ["audio", "Audio", "WAVE/MP3 recording, normalization, every MP3 encoder setting, and conditional input formats."],
+        ["voice", "Voice decoders and keys", "Managed JMBE, restart-bound compatible voice module, status badges, protected vault, post-unlock Auto-unlock, and write-only key editing."],
+        ["performance", "Performance", "SIMD choice, attention badge, CPU-impact confirmation, cancellable calibration, current progress, and normal logs."],
+        ["display", "Display and radio IDs", "Advanced P25 details, grant age-out, supported-protocol formats, and browser-local visitor overrides."],
+        ["storage", "Storage", "Number-only decimal GB warning thresholds, separate finite recorded-call retention, logical destinations, and local-only physical path changes."],
+        ["statistics", "Statistics", "Existing summaries, explicit retention-bound detailed history, 1–365 day retention, logical database status, and asynchronous maintenance actions."],
+        ["access", "Public access", "Separate Live, Listen, and Recordings policies, the ten-listener audio target, and Signal/Symbol actions that appear only to the signed-in administrator on Live."],
+        ["help", "Information help", "Every field or field group uses the same bundled plain-English information control with hover, focus, click, touch, and screen-reader behavior."],
+        ["states", "Warnings, jobs, and conflicts", "Preview missing JMBE and vault states, active and pending modules, calibration, maintenance, and stale-save behavior."]
+      ];
+      var reviewStorageAvailable=true;
+      var reviewData=loadReview();
+
+      function loadReview(){ try{ var parsed=JSON.parse(window.localStorage.getItem(REVIEW_STORAGE_KEY)||"null"); if(parsed&&parsed.version===REVIEW_VERSION&&parsed.entries) return parsed; }catch(error){reviewStorageAvailable=false;} return {version:REVIEW_VERSION,updatedAt:null,entries:{}}; }
+      function reviewOptions(selected){ return [["","Not reviewed"],["approved","Looks good"],["change","Change requested"],["question","Question"],["later","Review later"]].map(function(option){return '<option value="'+option[0]+'"'+(selected===option[0]?' selected':'')+'>'+option[1]+'</option>';}).join(""); }
+      function renderReview(){ document.getElementById("review-content").innerHTML=reviewSections.map(function(section){var entry=reviewData.entries[section[0]]||{state:"",note:""};return '<section class="review-card"><h3>'+escapeHtml(section[1])+'</h3><p>'+escapeHtml(section[2])+'</p><label class="sr-only" for="review-state-'+section[0]+'">Decision for '+escapeHtml(section[1])+'</label><select id="review-state-'+section[0]+'" data-review-state="'+section[0]+'">'+reviewOptions(entry.state||"")+'</select><label class="sr-only" for="review-note-'+section[0]+'">Notes for '+escapeHtml(section[1])+'</label><textarea id="review-note-'+section[0]+'" data-review-note="'+section[0]+'" maxlength="'+MAX_NOTE_LENGTH+'" placeholder="Add a decision, requested change, or question…">'+escapeHtml(entry.note||"")+'</textarea><div class="review-card-foot"><span>Saved only in this browser</span><span data-review-count="'+section[0]+'">'+(entry.note||"").length+' / '+MAX_NOTE_LENGTH+'</span></div></section>';}).join(""); updateReviewStatus(); }
+      function saveReviewEntry(id,patch){var entry=reviewData.entries[id]||{state:"",note:""};Object.assign(entry,patch);reviewData.entries[id]=entry;reviewData.updatedAt=new Date().toISOString();try{window.localStorage.setItem(REVIEW_STORAGE_KEY,JSON.stringify(reviewData));reviewStorageAvailable=true;}catch(error){reviewStorageAvailable=false;}updateReviewStatus();}
+      function updateReviewStatus(){var status=document.getElementById("review-save-state");status.classList.toggle("warning",!reviewStorageAvailable);if(!reviewStorageAvailable){status.textContent="Browser storage is unavailable. Download notes before closing this page.";return;}var reviewed=reviewSections.filter(function(section){return reviewData.entries[section[0]]&&reviewData.entries[section[0]].state;}).length;status.textContent=reviewed+" of "+reviewSections.length+" sections reviewed · saved in this browser";}
+      function openReview(){renderReview();document.getElementById("review-scrim").hidden=false;document.getElementById("review-drawer").hidden=false;document.getElementById("close-review").focus();}
+      function closeReview(){document.getElementById("review-scrim").hidden=true;document.getElementById("review-drawer").hidden=true;document.getElementById("open-review").focus();}
+      function downloadReview(){var payload={format:"sdrtrunk-vce-mockup-review",version:REVIEW_VERSION,mockup:"settings-shell-general-v1",exportedAt:new Date().toISOString(),evidence:["XF-001–011","CALL-001–006","AUD-001–008","PERF-001–008","DEC-001–007","KEY-001–007","DISP-001–006","STOR-001–009","STAT-001–009","ACCESS-001–009"],entries:reviewData.entries};var blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});var link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="sdrtrunk-general-settings-mockup-review-"+new Date().toISOString().slice(0,10)+".json";link.click();window.setTimeout(function(){URL.revokeObjectURL(link.href);},0);}
+
+      renderFormatTable();
+      updateDependencies();
+      updateVoiceCards();
+      updateVaultStatus();
+
+      document.getElementById("general-nav").addEventListener("click", function(event){var button=event.target.closest("[data-page]");if(button)showPage(button.dataset.page,false);});
+      form.addEventListener("input", function(event){if(event.target.matches("[data-dirty]")){setDirty(true);updateDependencies();}});
+      form.addEventListener("change", function(event){if(event.target.matches("[data-dirty]")){setDirty(true);updateDependencies();}if(event.target.id==="mp3-setting")updateSampleRates(true);});
+      saveButtons.forEach(function(button){button.addEventListener("click",saveChanges);});
+      cancelButtons.forEach(function(button){button.addEventListener("click",cancelChanges);});
+      document.getElementById("preview-scenario").addEventListener("change",function(event){applyScenario(event.target.value);});
+      document.getElementById("modal-close").addEventListener("click",closeDialog);
+      document.getElementById("modal-scrim").addEventListener("click",closeDialog);
+
+      document.getElementById("jmbe-install").addEventListener("click",function(){confirmArtifact("jmbe-install");});
+      document.getElementById("jmbe-upload").addEventListener("click",function(){confirmArtifact("jmbe-upload");});
+      document.getElementById("module-upload").addEventListener("click",function(){confirmArtifact("module-upload");});
+      document.getElementById("jmbe-remove").addEventListener("click",function(){removeArtifact("jmbe");});
+      document.getElementById("module-cancel-stage").addEventListener("click",function(){moduleStaged=false;updateVoiceCards();});
+      document.getElementById("module-remove").addEventListener("click",function(){removeArtifact("module");});
+      document.getElementById("manage-keys").addEventListener("click",openVault);
+      document.addEventListener("click",function(event){var action=event.target.closest("[data-vault-action]");if(!action||action.disabled)return;if(action.dataset.vaultAction==="add")openKeyEditor(false);else if(action.dataset.vaultAction==="edit"&&vaultKeySelected)openKeyEditor(true);else if(vaultKeySelected)openDialog({title:"Remove selected voice key?",subtitle:"The selected key will be removed from the vault.",body:"<p>The secret cannot be recovered from SDRTrunk after removal.</p>",buttons:[{label:"Cancel",action:openVault},{label:"Remove key",className:"button-danger",action:openVault}]});});
+
+      document.getElementById("calibrate").addEventListener("click",function(){openDialog({title:"Run CPU calibration?",subtitle:"Calibration can heavily use the CPU for several minutes.",body:'<div class="inline-notice warning"><div><strong>Live radio work stays isolated.</strong><span>The limited calibration job runs separately from tuner input, USB handling, decoding, grants, recording, audio, uploads, and normal website responses.</span></div></div>',buttons:[{label:"Cancel",action:closeDialog},{label:"Start calibration",className:"button-primary",action:function(){closeDialog();beginCalibration(false);}}]});});
+      document.getElementById("cancel-calibration").addEventListener("click",cancelCalibration);
+      document.getElementById("reset-calibrations").addEventListener("click",function(){openDialog({title:"Reset all CPU calibrations?",subtitle:"Every saved CPU choice will return to an uncalibrated state.",body:"<p>Run calibration again when you are ready to measure each processing method.</p>",buttons:[{label:"Cancel",action:closeDialog},{label:"Reset calibrations",className:"button-danger",action:function(){closeDialog();document.getElementById("calibration-count").textContent="3";document.getElementById("calibration-state").textContent="Ready to recalibrate";}}]});});
+      document.querySelectorAll("[data-maintenance]").forEach(function(button){button.addEventListener("click",function(){requestMaintenance(button.dataset.maintenance);});});
+      document.getElementById("cancel-maintenance").addEventListener("click",cancelMaintenance);
+
+      document.addEventListener("pointerover",function(event){var button=event.target.closest(".help-button");if(button&&!helpPinned)showHelp(button,false);});
+      document.addEventListener("pointerout",function(event){var button=event.target.closest(".help-button");if(button&&!button.contains(event.relatedTarget))window.setTimeout(function(){hideHelp(false);},80);});
+      document.addEventListener("focusin",function(event){if(event.target.matches(".help-button"))showHelp(event.target,false);});
+      document.addEventListener("focusout",function(event){if(event.target.matches(".help-button"))window.setTimeout(function(){hideHelp(false);},80);});
+      document.addEventListener("click",function(event){var button=event.target.closest(".help-button");if(button){event.preventDefault();event.stopPropagation();if(currentHelpButton===button&&helpPinned)hideHelp(true);else showHelp(button,true);}else if(helpPinned&&!event.target.closest("#help-popover"))hideHelp(true);});
+      document.getElementById("help-close").addEventListener("click",function(){hideHelp(true);if(currentHelpButton)currentHelpButton.focus();});
+      window.addEventListener("resize",function(){if(currentHelpButton)showHelp(currentHelpButton,helpPinned);});
+
+      document.getElementById("open-review").addEventListener("click",openReview);
+      document.getElementById("close-review").addEventListener("click",closeReview);
+      document.getElementById("done-review").addEventListener("click",closeReview);
+      document.getElementById("review-scrim").addEventListener("click",closeReview);
+      document.getElementById("download-review").addEventListener("click",downloadReview);
+      document.getElementById("clear-review").addEventListener("click",function(){openDialog({title:"Clear this browser review?",subtitle:"This affects only General Settings mockup notes in this browser.",body:"<p>Download a copy first if you may want these notes later.</p>",buttons:[{label:"Cancel",action:closeDialog},{label:"Clear review",className:"button-danger",action:function(){reviewData={version:REVIEW_VERSION,updatedAt:null,entries:{}};try{window.localStorage.removeItem(REVIEW_STORAGE_KEY);reviewStorageAvailable=true;}catch(error){reviewStorageAvailable=false;}closeDialog();renderReview();}}]});});
+      document.getElementById("review-content").addEventListener("change",function(event){if(event.target.matches("[data-review-state]"))saveReviewEntry(event.target.dataset.reviewState,{state:event.target.value});});
+      document.getElementById("review-content").addEventListener("input",function(event){if(!event.target.matches("[data-review-note]"))return;var id=event.target.dataset.reviewNote;var count=document.querySelector('[data-review-count="'+id+'"]');if(count)count.textContent=event.target.value.length+" / "+MAX_NOTE_LENGTH;saveReviewEntry(id,{note:event.target.value});});
+
+      document.addEventListener("keydown",function(event){if(event.key!=="Escape")return;if(!document.getElementById("review-drawer").hidden)closeReview();else if(!document.getElementById("modal").hidden)closeDialog();else hideHelp(true);});
+    }());
+  </script>
+</body>
+</html>
