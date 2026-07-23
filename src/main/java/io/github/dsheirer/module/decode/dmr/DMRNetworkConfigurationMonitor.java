@@ -40,7 +40,9 @@ import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.ControlChanne
 import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.TrafficChannelSystemParameters;
 import io.github.dsheirer.module.decode.dmr.message.type.Model;
 import io.github.dsheirer.module.decode.dmr.message.type.SystemIdentityCode;
+import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -72,10 +74,89 @@ public class DMRNetworkConfigurationMonitor
     private Integer mColorCodeTS2;
 
     /**
+     * Immutable structured snapshot of the network configuration observed so far.
+     */
+    public synchronized DMRNetworkConfigurationSnapshot getSnapshot()
+    {
+        List<DMRNetworkConfigurationSnapshot.Channel> channels = mObservedChannelMap.values().stream()
+            .sorted(Comparator.comparingInt(DMRChannel::getChannelNumber)
+                .thenComparingInt(DMRChannel::getTimeslot))
+            .map(channel -> new DMRNetworkConfigurationSnapshot.Channel(
+                channel.getClass().getSimpleName(), channel.getChannelNumber(), channel.getTimeslot(),
+                positive(channel.getDownlinkFrequency()), positive(channel.getUplinkFrequency())))
+            .toList();
+        List<DMRNetworkConfigurationSnapshot.NeighborSite> neighbors = new ArrayList<>();
+
+        mNeighborSites.stream()
+            .sorted(Comparator.comparingInt(site -> site.getValue()))
+            .forEach(site -> neighbors.add(new DMRNetworkConfigurationSnapshot.NeighborSite(
+                "CONNECT_PLUS", null, site.getValue(), null, null, null, null, null, null, null)));
+
+        mTier3NeighborSites.values().stream()
+            .sorted(Comparator.comparingInt(neighbor ->
+                neighbor.getNeighborSystemIdentityCode().getSite().getValue()))
+            .forEach(neighbor -> {
+                SystemIdentityCode identity = neighbor.getNeighborSystemIdentityCode();
+                DMRChannel channel = neighbor.getNeighborChannel();
+                neighbors.add(new DMRNetworkConfigurationSnapshot.NeighborSite(
+                    "TIER_III", value(identity.getNetwork()), value(identity.getSite()),
+                    identity.getModel() != null ? identity.getModel().name() : null,
+                    neighbor.getNeighborChannelNumber(), positive(channel.getDownlinkFrequency()),
+                    positive(channel.getUplinkFrequency()),
+                    neighbor.hasNetworkConnectionStatus() ? neighbor.isActiveNetworkConnection() : null,
+                    neighbor.getConfirmedChannelPriority(), neighbor.getAdjacentChannelPriority()));
+            });
+
+        return new DMRNetworkConfigurationSnapshot("DMR", getVariant(), value(mDMRNetwork), value(mDMRSite),
+            mBrand, mTier3Model != null ? mTier3Model.name() : null, mMode, mChannelType,
+            mColorCodeTS1, mColorCodeTS2, channels, neighbors);
+    }
+
+    private String getVariant()
+    {
+        if(BRAND_MOTOROLA_CONNECT_PLUS.equals(mBrand))
+        {
+            return "CONNECT_PLUS";
+        }
+        else if(BRAND_MOTOROLA_CAPACITY_MAX_TIER_3_TRUNKING.equals(mBrand))
+        {
+            return "CAPACITY_MAX";
+        }
+        else if(BRAND_HYTERA_TIER_3_TRUNKING.equals(mBrand))
+        {
+            return "HYTERA_TIER_III";
+        }
+        else if(!mNeighborSites.isEmpty())
+        {
+            return "CONNECT_PLUS";
+        }
+        else if(mBrand != null || mTier3Model != null || mDMRNetwork != null || mDMRSite != null)
+        {
+            return "TIER_III";
+        }
+        else if(!mTier3NeighborSites.isEmpty())
+        {
+            return "TIER_III";
+        }
+
+        return null;
+    }
+
+    private static Integer value(io.github.dsheirer.identifier.integer.IntegerIdentifier identifier)
+    {
+        return identifier != null ? identifier.getValue() : null;
+    }
+
+    private static Long positive(long frequency)
+    {
+        return frequency > 0 ? frequency : null;
+    }
+
+    /**
      * Process a DMR message
      * @param message to process that has already been checked for isValid()
      */
-    public void process(DMRMessage message)
+    public synchronized void process(DMRMessage message)
     {
         if(message instanceof CSBKMessage csbk)
         {
@@ -96,7 +177,7 @@ public class DMRNetworkConfigurationMonitor
      * Processes data messages to capture the color code for each timeslot.
      * @param dm data message
      */
-    public void process(DataMessage dm)
+    public synchronized void process(DataMessage dm)
     {
         if(dm.getTimeslot() == 1)
         {
@@ -111,7 +192,7 @@ public class DMRNetworkConfigurationMonitor
     /**
      * Processes link control messages
      */
-    public void process(LCMessage linkControl)
+    public synchronized void process(LCMessage linkControl)
     {
         switch(linkControl.getOpcode())
         {
@@ -177,7 +258,7 @@ public class DMRNetworkConfigurationMonitor
     /**
      * Processes Control Signalling Blocks (CSBK)
      */
-    public void process(CSBKMessage csbk)
+    public synchronized void process(CSBKMessage csbk)
     {
         switch(csbk.getOpcode())
         {

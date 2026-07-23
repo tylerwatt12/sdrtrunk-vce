@@ -19,6 +19,9 @@
 
 package io.github.dsheirer.module.decode.nxdn;
 
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNLayer3Message;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.AdjacentSiteInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.AdjacentSiteInformationTypeD;
@@ -28,8 +31,13 @@ import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.FailureStatusInfor
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.Neighbor;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.ServiceInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.SiteInformation;
+import io.github.dsheirer.module.decode.nxdn.layer3.scch.RepeaterFree;
+import io.github.dsheirer.module.decode.nxdn.layer3.scch.RepeaterHaltCWID;
 import io.github.dsheirer.module.decode.nxdn.layer3.scch.RepeaterIdle;
 import io.github.dsheirer.module.decode.nxdn.layer3.scch.SiteID;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.ChannelStructure;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.LocationID;
+import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -51,14 +59,238 @@ public class NXDNNetworkConfigurationMonitor
     private AdjacentSiteInformationTypeD mTypeDNeighborA;
     private AdjacentSiteInformationTypeD mTypeDNeighborB;
     private Integer mTypeDRepeater;
+    private String mTypeDRepeaterStatus;
     private List<Integer> mTypeDObservedRepeaters = new ArrayList<>();
     private SiteID mTypeDSiteID;
+    private Integer mRAN;
+    private boolean mObservedTypeD;
 
     /**
      * Constructs an instance
      */
     public NXDNNetworkConfigurationMonitor()
     {
+    }
+
+    /**
+     * Immutable structured snapshot of the network configuration observed so far.
+     */
+    public NXDNNetworkConfigurationSnapshot getSnapshot()
+    {
+        LocationID currentLocation = getCurrentLocation();
+        List<String> services = getServices();
+        List<String> restrictions = getRestrictions();
+        List<NXDNNetworkConfigurationSnapshot.Channel> controlChannels = getControlChannels();
+        List<NXDNNetworkConfigurationSnapshot.NeighborSite> neighbors = getNeighbors();
+        List<Integer> repeaters = mTypeDObservedRepeaters.stream().distinct().sorted().toList();
+        NXDNNetworkConfigurationSnapshot.Station station = mDigitalStationIDInformation != null ?
+            new NXDNNetworkConfigurationSnapshot.Station(mDigitalStationIDInformation.getCharacters(),
+                mDigitalStationIDInformation.isValidCharacterCRC(),
+                mDigitalStationIDInformation.getStationIDOption().toString()) : null;
+        NXDNNetworkConfigurationSnapshot.SiteConfiguration siteConfiguration = null;
+
+        if(mSiteInformation != null)
+        {
+            ChannelStructure structure = mSiteInformation.getChannelStructure();
+            siteConfiguration = new NXDNNetworkConfigurationSnapshot.SiteConfiguration(
+                mSiteInformation.getVersionNumber(), mSiteInformation.getAdjacentSiteAllocation(),
+                mSiteInformation.getChannelAccessInformation().toString(),
+                structure.getNumberOfBCCHFramesPerSuperFrame(), structure.getNumberOfGroupsPerRCCH(),
+                structure.getNumberOfPagingFrames(), structure.getNumberOfMultiPurposeFrames(),
+                structure.getNumberOfGroupIterationsPerSuperframe());
+        }
+
+        NXDNNetworkConfigurationSnapshot.FailureStatus failureStatus = mFailureStatusInformation != null ?
+            new NXDNNetworkConfigurationSnapshot.FailureStatus(location(mFailureStatusInformation.getLocationID()),
+                mFailureStatusInformation.getCallTimer().toString()) : null;
+
+        return new NXDNNetworkConfigurationSnapshot("NXDN", getVariant(), mRAN, location(currentLocation),
+            mTypeDSiteID != null ? mTypeDSiteID.getSite() : null,
+            mTypeDSiteID != null ? mTypeDSiteID.getSiteType().name() : null,
+            station, siteConfiguration, services, restrictions, failureStatus, controlChannels, neighbors,
+            mTypeDRepeater, mTypeDRepeaterStatus, repeaters);
+    }
+
+    private String getVariant()
+    {
+        if(mObservedTypeD || mTypeDSiteID != null || mTypeDRepeater != null ||
+            mTypeDNeighborA != null || mTypeDNeighborB != null)
+        {
+            return "TYPE_D";
+        }
+
+        return getCurrentLocation() != null || mControlChannelInformation != null || mSiteInformation != null ||
+            mDigitalStationIDInformation != null || !mNeighborMap.isEmpty() ? "TYPE_C" : null;
+    }
+
+    private LocationID getCurrentLocation()
+    {
+        if(mSiteInformation != null)
+        {
+            return mSiteInformation.getLocationID();
+        }
+        else if(mControlChannelInformation != null)
+        {
+            return mControlChannelInformation.getLocationID();
+        }
+        else if(mServiceInformation != null)
+        {
+            return mServiceInformation.getLocationID();
+        }
+        else if(mFailureStatusInformation != null)
+        {
+            return mFailureStatusInformation.getLocationID();
+        }
+
+        return null;
+    }
+
+    private List<String> getServices()
+    {
+        if(mServiceInformation != null)
+        {
+            return mServiceInformation.getServiceInformation().getServices().stream()
+                .map(Object::toString).toList();
+        }
+        else if(mSiteInformation != null)
+        {
+            return mSiteInformation.getServiceInformation().getServices().stream()
+                .map(Object::toString).toList();
+        }
+
+        return List.of();
+    }
+
+    private List<String> getRestrictions()
+    {
+        if(mServiceInformation != null)
+        {
+            return List.copyOf(mServiceInformation.getRestrictionInformation().getRestrictions());
+        }
+        else if(mSiteInformation != null)
+        {
+            return List.copyOf(mSiteInformation.getRestrictionInformation().getRestrictions());
+        }
+
+        return List.of();
+    }
+
+    private List<NXDNNetworkConfigurationSnapshot.Channel> getControlChannels()
+    {
+        List<NXDNNetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
+
+        if(mControlChannelInformation != null)
+        {
+            if(mControlChannelInformation.hasChannel1())
+            {
+                channels.add(channel("CONTROL_1", mControlChannelInformation.getChannel1(),
+                    mControlChannelInformation.getFlags().name()));
+            }
+
+            if(mControlChannelInformation.hasChannel2())
+            {
+                channels.add(channel("CONTROL_2", mControlChannelInformation.getChannel2(),
+                    mControlChannelInformation.getFlags().name()));
+            }
+        }
+        else if(mSiteInformation != null)
+        {
+            if(mSiteInformation.hasChannel1())
+            {
+                channels.add(channel("CONTROL_1", mSiteInformation.getChannel1(), null));
+            }
+
+            if(mSiteInformation.hasChannel2())
+            {
+                channels.add(channel("CONTROL_2", mSiteInformation.getChannel2(), null));
+            }
+        }
+
+        return channels;
+    }
+
+    private List<NXDNNetworkConfigurationSnapshot.NeighborSite> getNeighbors()
+    {
+        List<NXDNNetworkConfigurationSnapshot.NeighborSite> neighbors = new ArrayList<>();
+        mNeighborMap.values().stream().sorted(java.util.Comparator.comparingInt(Neighbor::id))
+            .forEach(neighbor -> neighbors.add(new NXDNNetworkConfigurationSnapshot.NeighborSite(
+                "TYPE_C", neighbor.id(), location(neighbor.locationID()),
+                channel("CONTROL", neighbor.channel(), null), null)));
+        addTypeDNeighbors(neighbors, mTypeDNeighborA);
+        addTypeDNeighbors(neighbors, mTypeDNeighborB);
+        return neighbors;
+    }
+
+    private void addTypeDNeighbors(List<NXDNNetworkConfigurationSnapshot.NeighborSite> neighbors,
+                                   AdjacentSiteInformationTypeD adjacent)
+    {
+        if(adjacent == null)
+        {
+            return;
+        }
+
+        neighbors.add(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
+            typeDLocation(adjacent.getSystemID1(), adjacent.getSite1().getValue()), null,
+            adjacent.getSiteOption1().isIsolatedSite()));
+
+        if(adjacent.hasSite2())
+        {
+            neighbors.add(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
+                typeDLocation(adjacent.getSystemID2(), adjacent.getSite2().getValue()), null,
+                adjacent.getSiteOption2().isIsolatedSite()));
+        }
+    }
+
+    private static NXDNNetworkConfigurationSnapshot.Location typeDLocation(LocationID system, int site)
+    {
+        return new NXDNNetworkConfigurationSnapshot.Location("TYPE_D",
+            system.getSystem().getValue(), site, system.getSiteOrIntegrator().getValue());
+    }
+
+    private static NXDNNetworkConfigurationSnapshot.Location location(LocationID location)
+    {
+        if(location == null)
+        {
+            return null;
+        }
+
+        String category = location.getCategory().getValue();
+        boolean typeD = "TYPE-D".equals(category);
+        return new NXDNNetworkConfigurationSnapshot.Location(category, location.getSystem().getValue(),
+            typeD ? null : location.getSiteOrIntegrator().getValue(),
+            typeD ? location.getSiteOrIntegrator().getValue() : null);
+    }
+
+    private static NXDNNetworkConfigurationSnapshot.Channel channel(String role, NXDNChannel channel,
+                                                                     String notification)
+    {
+        if(channel == null)
+        {
+            return null;
+        }
+
+        if(channel instanceof NXDNChannelDFA dfa)
+        {
+            return new NXDNNetworkConfigurationSnapshot.Channel(role, "DFA", null,
+                dfa.getOutboundChannelNumber(), dfa.getInboundChannelNumber(),
+                dfa.getBandwidth().name(), positive(dfa.getDownlinkFrequency()),
+                positive(dfa.getUplinkFrequency()), notification);
+        }
+        else if(channel instanceof NXDNChannelLookup lookup)
+        {
+            return new NXDNNetworkConfigurationSnapshot.Channel(role, "CHANNEL", lookup.getChannelNumber(),
+                null, null, null, positive(lookup.getDownlinkFrequency()),
+                positive(lookup.getUplinkFrequency()), notification);
+        }
+
+        return new NXDNNetworkConfigurationSnapshot.Channel(role, channel.getClass().getSimpleName(),
+            null, null, null, null, positive(channel.getDownlinkFrequency()),
+            positive(channel.getUplinkFrequency()), notification);
+    }
+
+    private static Long positive(long frequency)
+    {
+        return frequency > 0 ? frequency : null;
     }
 
     public String getSummary()
@@ -145,6 +377,13 @@ public class NXDNNetworkConfigurationMonitor
 
     public void process(NXDNLayer3Message layer3)
     {
+        if(layer3.hasRAN())
+        {
+            mRAN = layer3.getRAN();
+        }
+
+        mObservedTypeD |= layer3.isTypeD();
+
         switch(layer3.getMessageType())
         {
             case CONTROL_OUT_23_BC_DIGITAL_STATION_ID_INFORMATION:
@@ -236,11 +475,25 @@ public class NXDNNetworkConfigurationMonitor
                 if(layer3 instanceof RepeaterIdle ri)
                 {
                     mTypeDRepeater = ri.getRepeater();
-
-                    if(!mTypeDObservedRepeaters.contains(ri.getRepeater2()))
-                    {
-                        mTypeDObservedRepeaters.add(ri.getRepeater2());
-                    }
+                    mTypeDRepeaterStatus = "IDLE";
+                    addObservedRepeater(ri.getRepeater2());
+                }
+                break;
+            case TYPE_D_SCCH_OUT_INFO_4_REPEATER_FREE:
+                if(layer3 instanceof RepeaterFree free)
+                {
+                    mTypeDRepeater = null;
+                    mTypeDRepeaterStatus = "FREE";
+                    addObservedRepeater(free.getRepeater());
+                    addObservedRepeater(free.getRepeater2());
+                }
+                break;
+            case TYPE_D_SCCH_OUT_INFO_4_REPEATER_HALT:
+                if(layer3 instanceof RepeaterHaltCWID halt)
+                {
+                    mTypeDRepeater = halt.getRepeater();
+                    mTypeDRepeaterStatus = "HALTED_CWID";
+                    addObservedRepeater(halt.getRepeater2());
                 }
                 break;
             case TYPE_D_SCCH_OUT_INFO_4_SITE_ID:
@@ -249,6 +502,14 @@ public class NXDNNetworkConfigurationMonitor
                     mTypeDSiteID = siteID;
                 }
                 break;
+        }
+    }
+
+    private void addObservedRepeater(int repeater)
+    {
+        if(repeater > 0 && !mTypeDObservedRepeaters.contains(repeater))
+        {
+            mTypeDObservedRepeaters.add(repeater);
         }
     }
 }

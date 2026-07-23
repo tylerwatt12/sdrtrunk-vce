@@ -12,24 +12,15 @@
 package io.github.dsheirer.metadata.site;
 
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 
 /**
- * Stable, session-observed site metadata for an external consumer.
+ * Protocol-neutral site metadata event for live consumers.
  */
-public record SiteMetadataEvent(Channel channel, P25NetworkConfigurationSnapshot snapshot,
-                                long observedAtEpochMilliseconds)
+public record ProtocolSiteMetadataEvent(Channel channel, SiteMetadataSnapshot snapshot,
+                                        long observedAtEpochMilliseconds)
 {
     public boolean isUseful()
     {
         return channel != null && snapshot != null && snapshot.isUseful();
-    }
-
-    /**
-     * Protocol-neutral view of this legacy P25 event.
-     */
-    public ProtocolSiteMetadataEvent asProtocolSiteMetadataEvent()
-    {
-        return new ProtocolSiteMetadataEvent(channel, snapshot, observedAtEpochMilliseconds);
     }
 }
