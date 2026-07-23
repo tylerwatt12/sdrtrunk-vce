@@ -82,11 +82,51 @@ public final class P25EncryptionDetails
 
             if(encryption != Encryption.UNKNOWN)
             {
-                algorithm = encryption.toString();
+                algorithm = abbreviation(encryption);
             }
         }
 
         return algorithm + " K:" + toHex(encryptionKey.getKey());
+    }
+
+    private static String abbreviation(Encryption encryption)
+    {
+        return switch(encryption)
+        {
+            case ACCORDION_3 -> "ACRD3";
+            case BATON_AUTO_EVEN -> "BAT-E";
+            case FIREFLY_TYPE1 -> "FIREF";
+            case MAYFLY_TYPE1 -> "MAYFL";
+            case SAVILLE -> "SAVIL";
+            case MOTOROLA_PADSTONE -> "PADSTN";
+            case BATON_AUTO_ODD -> "BAT-O";
+            case DES_OFB -> "DESOFB";
+            case TRIPLE_DES_2_KEY -> "3DES2";
+            case TRIPLE_DES_3_KEY -> "3DES3";
+            case AES_256 -> "AES256";
+            case AES_128 -> "AES128";
+            case AES_CBC -> "AESCBC";
+            case AES_128_OFB -> "A128OF";
+            case DES_XL -> "DESXL";
+            case DVI_XL -> "DVIXL";
+            case DVP_XL -> "DVPXL";
+            case DVP_SPFL -> "DVPSPF";
+            case HAYSTACK -> "HAYSTK";
+            case MOTOROLA_A4 -> "MOT-A4";
+            case MOTOROLA_A5 -> "MOT-A5";
+            case MOTOROLA_A6 -> "MOT-A6";
+            case MOTOROLA_A7 -> "MOT-A7";
+            case MOTOROLA_A8 -> "MOT-A8";
+            case MOTOROLA_A9 -> "MOT-A9";
+            case MOTOROLA_ADP -> "ADP";
+            case MOTOROLA_AB -> "CFX256";
+            case MOTOROLA_AC -> "MOT-AC";
+            case MOTOROLA_AD -> "MOT-AD";
+            case MOTOROLA_AE -> "MOT-AE";
+            case MOTOROLA_AF -> "A256GM";
+            case MOTOROLA_B0 -> "DVPB0";
+            case UNENCRYPTED, UNKNOWN -> "ALG:" + toHex(encryption.getValue(), 2);
+        };
     }
 
     private static String toHex(int value)
