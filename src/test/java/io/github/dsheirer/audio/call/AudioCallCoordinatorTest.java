@@ -25,7 +25,6 @@ import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifi
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
-import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
 import io.github.dsheirer.preference.duplicate.ICallManagementProvider;
 import io.github.dsheirer.preference.duplicate.TestCallManagementProvider;
 import java.util.ArrayList;
@@ -41,18 +40,30 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AudioCallCoordinatorTest
 {
     @Test
-    void playbackHandoffAndDuplicateSuppressionUpdateSharedPlaybackCall() throws Exception
+    void coordinatorApiCannotReconnectDecodedCallSpeakerPlayback()
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        for(var constructor : AudioCallCoordinator.class.getDeclaredConstructors())
+        {
+            for(Class<?> parameterType : constructor.getParameterTypes())
+            {
+                assertFalse(parameterType.getPackageName().equals("io.github.dsheirer.audio.playback"),
+                    "The call coordinator must not accept a receiver-speaker playback dependency");
+            }
+        }
+    }
+
+    @Test
+    void duplicateStateAndAudioBuffersReachCompletedCallConsumers() throws Exception
+    {
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
-            playbackCalls::add, null, null, null);
+            recorded::add, null, null);
 
         try
         {
@@ -66,20 +77,19 @@ class AudioCallCoordinatorTest
                 System.currentTimeMillis(), audio1));
             coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, snapshot2,
                 System.currentTimeMillis(), audio2));
+            coordinator.receive(completionEvent(snapshot1));
+            coordinator.receive(completionEvent(snapshot2));
 
-            awaitCondition(() -> playbackCalls.size() == 2, "Expected playback handoff for both active calls");
-            awaitCondition(() -> playbackCalls.stream().anyMatch(ManagedPlayableAudioCall::isDuplicate),
-                "Expected duplicate suppression to mark one playback call as duplicate");
+            awaitCondition(() -> recorded.size() == 2, "Expected both completed calls");
+            CompletedAudioCall first = getCompletedCall(recorded, snapshot1.callId());
+            CompletedAudioCall second = getCompletedCall(recorded, snapshot2.callId());
 
-            ManagedPlayableAudioCall first = playbackCalls.get(0);
-            ManagedPlayableAudioCall second = playbackCalls.get(1);
-
-            assertEquals(1, first.getAudioBufferCount());
-            assertEquals(1, second.getAudioBufferCount());
-            assertArrayEquals(audio1, first.getAudioBuffer(0));
-            assertArrayEquals(audio2, second.getAudioBuffer(0));
-            assertTrue(first.isDuplicate() || second.isDuplicate(),
-                "One active playback call should be marked duplicate");
+            assertEquals(1, first.audioBuffers().size());
+            assertEquals(1, second.audioBuffers().size());
+            assertArrayEquals(audio1, first.audioBuffers().getFirst());
+            assertArrayEquals(audio2, second.audioBuffers().getFirst());
+            assertTrue(first.snapshot().duplicate() || second.snapshot().duplicate(),
+                "One completed call should carry the duplicate designation");
         }
         finally
         {
@@ -95,7 +105,7 @@ class AudioCallCoordinatorTest
         List<CompletedAudioCall> webCalls = new CopyOnWriteArrayList<>();
         CountDownLatch completionLatch = new CountDownLatch(3);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(false, false),
-            null, call -> {
+            call -> {
                 recorded.add(call);
                 completionLatch.countDown();
             }, call -> {
@@ -145,9 +155,9 @@ class AudioCallCoordinatorTest
         String preferredGuid = "00000000-0000-0000-0000-000000000002";
         String lateHigherPriorityGuid = "00000000-0000-0000-0000-000000000003";
         Map<String, Integer> priorities = Map.of(firstGuid, 20, preferredGuid, 10, lateHigherPriorityGuid, 0);
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
-            playbackCalls::add, null, null, null, guid -> priorities.getOrDefault(guid, Integer.MAX_VALUE), 25L);
+            completedCalls::add, null, null, guid -> priorities.getOrDefault(guid, Integer.MAX_VALUE), 25L);
 
         try
         {
@@ -160,16 +170,17 @@ class AudioCallCoordinatorTest
 
             coordinator.receive(audioEvent(first, 160));
             coordinator.receive(audioEvent(preferred, 160));
-
-            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, first.callId()) &&
-                !isPlaybackDuplicate(playbackCalls, preferred.callId()),
-                "Configured source priority should select the preferred source");
-
             coordinator.receive(audioEvent(lateHigherPriority, 160));
+            coordinator.receive(completionEvent(preferred));
+            coordinator.receive(completionEvent(first));
+            coordinator.receive(completionEvent(lateHigherPriority));
 
-            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, lateHigherPriority.callId()),
+            awaitCondition(() -> completedCalls.size() == 3, "Expected all completed calls");
+            assertTrue(isCompletedDuplicate(completedCalls, first.callId()),
+                "Configured source priority should select the preferred source");
+            assertFalse(isCompletedDuplicate(completedCalls, preferred.callId()));
+            assertTrue(isCompletedDuplicate(completedCalls, lateHigherPriority.callId()),
                 "A late higher-priority source must not preempt the sticky live survivor");
-            assertFalse(isPlaybackDuplicate(playbackCalls, preferred.callId()));
         }
         finally
         {
@@ -180,9 +191,9 @@ class AudioCallCoordinatorTest
     @Test
     void earlierStartAndRegistrationOrderAreIndependentOfCallIdHashOrder() throws Exception
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
-            playbackCalls::add, null, null, null);
+            completedCalls::add, null, null);
 
         try
         {
@@ -193,9 +204,12 @@ class AudioCallCoordinatorTest
 
             coordinator.receive(audioEvent(registeredFirst, 160));
             coordinator.receive(audioEvent(earlierStart, 160));
+            coordinator.receive(completionEvent(earlierStart));
+            coordinator.receive(completionEvent(registeredFirst));
 
-            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, registeredFirst.callId()) &&
-                !isPlaybackDuplicate(playbackCalls, earlierStart.callId()),
+            awaitCondition(() -> completedCalls.size() == 2, "Expected both completed calls");
+            assertTrue(isCompletedDuplicate(completedCalls, registeredFirst.callId()));
+            assertFalse(isCompletedDuplicate(completedCalls, earlierStart.callId()),
                 "Earlier call start should win regardless of map/hash order");
         }
         finally
@@ -208,7 +222,7 @@ class AudioCallCoordinatorTest
     void registrationOrdinalAndStableCallIdProvideDeterministicFallbacks()
     {
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
-            null, null, null, null);
+            null, null, null);
 
         try
         {
@@ -231,10 +245,9 @@ class AudioCallCoordinatorTest
     @Test
     void completingStickySurvivorDoesNotPromoteDuplicateMidCall() throws Exception
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
-        CountDownLatch completed = new CountDownLatch(1);
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
-            playbackCalls::add, call -> completed.countDown(), null, null);
+            completedCalls::add, null, null);
 
         try
         {
@@ -245,31 +258,27 @@ class AudioCallCoordinatorTest
 
             coordinator.receive(audioEvent(survivor, 160));
             coordinator.receive(audioEvent(duplicate, 160));
-            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, duplicate.callId()),
-                "Second candidate should be the initial duplicate");
-
             coordinator.receive(completionEvent(survivor));
-            assertTrue(completed.await(1, TimeUnit.SECONDS));
             coordinator.receive(audioEvent(duplicate, 160));
-
-            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, duplicate.callId()),
-                "Remaining call must stay suppressed after the sticky survivor completes");
 
             AudioCallSnapshot newTransmission = snapshot(3, 3, 1200, 9003, "Test System", null,
                 3_000L, 4_000L, 1, false);
             AudioCallSnapshot newTransmissionDuplicate = snapshot(4, 4, 1200, 9004, "Test System", null,
                 3_000L, 4_000L, 1, false);
             coordinator.receive(audioEvent(newTransmission, 160));
-
-            awaitCondition(() -> playbackCalls.size() == 3,
-                "Expected the later transmission to reach playback");
-            assertFalse(isPlaybackDuplicate(playbackCalls, newTransmission.callId()),
-                "A sealed old cohort must not black-hole a new call while its loser lingers");
-
             coordinator.receive(audioEvent(newTransmissionDuplicate, 160));
-            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, newTransmissionDuplicate.callId()),
+            coordinator.receive(completionEvent(duplicate));
+            coordinator.receive(completionEvent(newTransmission));
+            coordinator.receive(completionEvent(newTransmissionDuplicate));
+
+            awaitCondition(() -> completedCalls.size() == 4, "Expected all completed calls");
+            assertFalse(isCompletedDuplicate(completedCalls, survivor.callId()));
+            assertTrue(isCompletedDuplicate(completedCalls, duplicate.callId()),
+                "Remaining call must stay suppressed after the sticky survivor completes");
+            assertFalse(isCompletedDuplicate(completedCalls, newTransmission.callId()),
+                "A sealed old cohort must not black-hole a new call while its loser lingers");
+            assertTrue(isCompletedDuplicate(completedCalls, newTransmissionDuplicate.callId()),
                 "The new temporal cohort should independently suppress its own duplicate");
-            assertFalse(isPlaybackDuplicate(playbackCalls, newTransmission.callId()));
         }
         finally
         {
@@ -280,9 +289,9 @@ class AudioCallCoordinatorTest
     @Test
     void mixedTalkgroupAndRadioMatchesDoNotFormATransitiveDuplicateGroup() throws Exception
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
-            playbackCalls::add, null, null, null);
+            completedCalls::add, null, null);
 
         try
         {
@@ -296,13 +305,16 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(talkgroupAnchor, 160));
             coordinator.receive(audioEvent(bridge, 160));
             coordinator.receive(audioEvent(radioAnchor, 160));
+            coordinator.receive(completionEvent(talkgroupAnchor));
+            coordinator.receive(completionEvent(bridge));
+            coordinator.receive(completionEvent(radioAnchor));
 
-            awaitCondition(() -> playbackCalls.size() == 3 &&
-                playbackCalls.stream().filter(ManagedPlayableAudioCall::isDuplicate).count() == 1,
+            awaitCondition(() -> completedCalls.size() == 3, "Expected all completed calls");
+            assertEquals(1, completedCalls.stream().filter(call -> call.snapshot().duplicate()).count(),
                 "Only calls that directly match the elected anchor should be grouped");
-            assertFalse(isPlaybackDuplicate(playbackCalls, talkgroupAnchor.callId()));
-            assertTrue(isPlaybackDuplicate(playbackCalls, bridge.callId()));
-            assertFalse(isPlaybackDuplicate(playbackCalls, radioAnchor.callId()),
+            assertFalse(isCompletedDuplicate(completedCalls, talkgroupAnchor.callId()));
+            assertTrue(isCompletedDuplicate(completedCalls, bridge.callId()));
+            assertFalse(isCompletedDuplicate(completedCalls, radioAnchor.callId()),
                 "A talkgroup edge followed by a radio edge must not suppress the unrelated endpoint");
         }
         finally
@@ -314,9 +326,9 @@ class AudioCallCoordinatorTest
     @Test
     void bridgeFirstCannotAttachUnrelatedEndpointToOpenCohort() throws Exception
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
-            playbackCalls::add, null, null, null);
+            completedCalls::add, null, null);
 
         try
         {
@@ -330,13 +342,16 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(bridge, 160));
             coordinator.receive(audioEvent(talkgroupEndpoint, 160));
             coordinator.receive(audioEvent(radioEndpoint, 160));
+            coordinator.receive(completionEvent(bridge));
+            coordinator.receive(completionEvent(talkgroupEndpoint));
+            coordinator.receive(completionEvent(radioEndpoint));
 
-            awaitCondition(() -> playbackCalls.size() == 3 &&
-                playbackCalls.stream().filter(ManagedPlayableAudioCall::isDuplicate).count() == 1,
+            awaitCondition(() -> completedCalls.size() == 3, "Expected all completed calls");
+            assertEquals(1, completedCalls.stream().filter(call -> call.snapshot().duplicate()).count(),
                 "An open cohort must remain pairwise compatible");
-            assertFalse(isPlaybackDuplicate(playbackCalls, bridge.callId()));
-            assertTrue(isPlaybackDuplicate(playbackCalls, talkgroupEndpoint.callId()));
-            assertFalse(isPlaybackDuplicate(playbackCalls, radioEndpoint.callId()));
+            assertFalse(isCompletedDuplicate(completedCalls, bridge.callId()));
+            assertTrue(isCompletedDuplicate(completedCalls, talkgroupEndpoint.callId()));
+            assertFalse(isCompletedDuplicate(completedCalls, radioEndpoint.callId()));
         }
         finally
         {
@@ -356,7 +371,7 @@ class AudioCallCoordinatorTest
     {
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
-            null, null, streamed::add, null, DuplicateCallPriorityProvider.NONE, 500L);
+            null, streamed::add, null, DuplicateCallPriorityProvider.NONE, 500L);
 
         try
         {
@@ -385,9 +400,9 @@ class AudioCallCoordinatorTest
     @Test
     void exactConfiguredSystemNameStillBoundsDuplicateGroups() throws Exception
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
-            playbackCalls::add, null, null, null);
+            completedCalls::add, null, null);
 
         try
         {
@@ -398,10 +413,12 @@ class AudioCallCoordinatorTest
 
             coordinator.receive(audioEvent(first, 160));
             coordinator.receive(audioEvent(whitespaceDifference, 160));
+            coordinator.receive(completionEvent(first));
+            coordinator.receive(completionEvent(whitespaceDifference));
 
-            awaitCondition(() -> playbackCalls.size() == 2, "Expected both playback calls");
-            assertFalse(isPlaybackDuplicate(playbackCalls, first.callId()));
-            assertFalse(isPlaybackDuplicate(playbackCalls, whitespaceDifference.callId()));
+            awaitCondition(() -> completedCalls.size() == 2, "Expected both completed calls");
+            assertFalse(isCompletedDuplicate(completedCalls, first.callId()));
+            assertFalse(isCompletedDuplicate(completedCalls, whitespaceDifference.callId()));
         }
         finally
         {
@@ -414,7 +431,7 @@ class AudioCallCoordinatorTest
     {
         CountDownLatch streamed = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
-            null, null, call -> streamed.countDown(), null, DuplicateCallPriorityProvider.NONE, 500L);
+            null, call -> streamed.countDown(), null, DuplicateCallPriorityProvider.NONE, 500L);
 
         try
         {
@@ -437,7 +454,7 @@ class AudioCallCoordinatorTest
     {
         CountDownLatch streamed = new CountDownLatch(2);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false, false), null, null, call -> streamed.countDown(), null,
+            new TestCallManagementProvider(true, false, false), null, call -> streamed.countDown(), null,
             DuplicateCallPriorityProvider.NONE, 500L);
 
         try
@@ -469,7 +486,7 @@ class AudioCallCoordinatorTest
         CountDownLatch immediateFanout = new CountDownLatch(4);
         CountDownLatch streamingFanout = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false, true), null, call -> {
+            new TestCallManagementProvider(true, false, true), call -> {
                 recorded.add(call);
                 immediateFanout.countDown();
             }, call -> {
@@ -518,16 +535,14 @@ class AudioCallCoordinatorTest
     @Test
     void progressingCleanerPastInitialWatchdogCompletesAndWins() throws Exception
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
         CountDownLatch firstCompletion = new CountDownLatch(1);
         CountDownLatch streamingFanout = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false, true), playbackCalls::add,
-            call -> firstCompletion.countDown(), call -> {
+            new TestCallManagementProvider(true, false, true), call -> firstCompletion.countDown(), call -> {
                 streamed.add(call);
                 streamingFanout.countDown();
-            }, null, DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
+            }, null, DuplicateCallPriorityProvider.NONE, 300L, 3_000L);
 
         try
         {
@@ -540,14 +555,11 @@ class AudioCallCoordinatorTest
             coordinator.receive(completionEvent(sparse));
             assertTrue(firstCompletion.await(1, TimeUnit.SECONDS));
 
-            Thread.sleep(70);
+            Thread.sleep(100);
             coordinator.receive(audioEvent(cleaner, 2_000));
-            awaitCondition(() -> getPlaybackBufferCount(playbackCalls, cleaner.callId()) >= 2,
-                "Expected first cleaner progress update");
-            Thread.sleep(70);
+            Thread.sleep(200);
             coordinator.receive(audioEvent(cleaner, 2_000));
-            awaitCondition(() -> getPlaybackBufferCount(playbackCalls, cleaner.callId()) >= 3,
-                "Expected cleaner progress beyond the initial watchdog");
+            Thread.sleep(100);
             assertTrue(streamed.isEmpty(),
                 "A known member that is still progressing must not be treated as an orphan");
 
@@ -570,7 +582,7 @@ class AudioCallCoordinatorTest
         CountDownLatch completedFanout = new CountDownLatch(2);
         CountDownLatch streamingFanout = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false, true), null, null, call -> {
+            new TestCallManagementProvider(true, false, true), null, call -> {
                 streamed.add(call);
                 streamingFanout.countDown();
             }, call -> completedFanout.countDown(), DuplicateCallPriorityProvider.NONE, 120L);
@@ -606,11 +618,14 @@ class AudioCallCoordinatorTest
     void detectionToggleReleasesLiveAndPendingCalls() throws Exception
     {
         MutableCallManagementProvider preferences = new MutableCallManagementProvider(true, false, true);
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
         CountDownLatch firstCompleted = new CountDownLatch(1);
-        AudioCallCoordinator coordinator = new AudioCallCoordinator(preferences, playbackCalls::add,
-            call -> firstCompleted.countDown(), streamed::add, null, DuplicateCallPriorityProvider.NONE, 500L);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(preferences,
+            call -> {
+                recorded.add(call);
+                firstCompleted.countDown();
+            }, streamed::add, null, DuplicateCallPriorityProvider.NONE, 500L);
 
         try
         {
@@ -620,22 +635,19 @@ class AudioCallCoordinatorTest
                 1_000L, 2_000L, 1, false);
             coordinator.receive(audioEvent(first, 160));
             coordinator.receive(audioEvent(second, 160));
-            awaitCondition(() -> isPlaybackDuplicate(playbackCalls, second.callId()),
-                "Expected an active duplicate before disabling detection");
             coordinator.receive(completionEvent(first));
             assertTrue(firstCompleted.await(1, TimeUnit.SECONDS));
 
             preferences.setDetectionEnabled(false);
             coordinator.receive(audioEvent(second, 160));
+            coordinator.receive(completionEvent(second));
 
-            awaitCondition(() -> !isPlaybackDuplicate(playbackCalls, second.callId()) && streamed.size() == 1,
+            awaitCondition(() -> streamed.size() == 2 && recorded.size() == 2,
                 "Disabling detection should release live state and pending streaming candidates");
             assertFalse(streamed.getFirst().snapshot().duplicate());
-
-            coordinator.receive(completionEvent(second));
-            awaitCondition(() -> streamed.size() == 2,
-                "The formerly suppressed live call should stream normally after detection is disabled");
             assertFalse(streamed.get(1).snapshot().duplicate());
+            assertFalse(getCompletedCall(recorded, second.callId()).snapshot().duplicate(),
+                "The formerly suppressed live call should complete normally after detection is disabled");
         }
         finally
         {
@@ -649,7 +661,7 @@ class AudioCallCoordinatorTest
         CountDownLatch completed = new CountDownLatch(1);
         CountDownLatch streamed = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false, true), null, call -> completed.countDown(),
+            new TestCallManagementProvider(true, false, true), call -> completed.countDown(),
             call -> streamed.countDown(), null, DuplicateCallPriorityProvider.NONE, 100L);
 
         try
@@ -718,16 +730,15 @@ class AudioCallCoordinatorTest
         return new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed, System.currentTimeMillis(), null);
     }
 
-    private static boolean isPlaybackDuplicate(List<ManagedPlayableAudioCall> playbackCalls, AudioCallId callId)
+    private static boolean isCompletedDuplicate(List<CompletedAudioCall> completedCalls, AudioCallId callId)
     {
-        return playbackCalls.stream().filter(call -> call.callId().equals(callId)).findFirst()
-            .map(ManagedPlayableAudioCall::isDuplicate).orElse(false);
+        return getCompletedCall(completedCalls, callId).snapshot().duplicate();
     }
 
-    private static int getPlaybackBufferCount(List<ManagedPlayableAudioCall> playbackCalls, AudioCallId callId)
+    private static CompletedAudioCall getCompletedCall(List<CompletedAudioCall> completedCalls, AudioCallId callId)
     {
-        return playbackCalls.stream().filter(call -> call.callId().equals(callId)).findFirst()
-            .map(ManagedPlayableAudioCall::getAudioBufferCount).orElse(0);
+        return completedCalls.stream().filter(call -> call.snapshot().callId().equals(callId)).findFirst()
+            .orElseThrow(() -> new AssertionError("Missing completed call " + callId));
     }
 
     private static void assertConfiguredPriorityBridgePermutation(boolean radioEndpointFirst) throws Exception
@@ -736,9 +747,9 @@ class AudioCallCoordinatorTest
         String radioGuid = "00000000-0000-0000-0000-000000000012";
         String bridgeGuid = "00000000-0000-0000-0000-000000000013";
         Map<String, Integer> priorities = Map.of(talkgroupGuid, 10, radioGuid, 10, bridgeGuid, 0);
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, true),
-            playbackCalls::add, null, null, null, guid -> priorities.getOrDefault(guid, Integer.MAX_VALUE), 25L);
+            completedCalls::add, null, null, guid -> priorities.getOrDefault(guid, Integer.MAX_VALUE), 25L);
 
         try
         {
@@ -761,13 +772,16 @@ class AudioCallCoordinatorTest
             }
 
             coordinator.receive(audioEvent(preferredBridge, 160));
+            coordinator.receive(completionEvent(preferredBridge));
+            coordinator.receive(completionEvent(talkgroupEndpoint));
+            coordinator.receive(completionEvent(radioEndpoint));
 
-            awaitCondition(() -> playbackCalls.size() == 3 &&
-                playbackCalls.stream().filter(ManagedPlayableAudioCall::isDuplicate).count() == 1,
+            awaitCondition(() -> completedCalls.size() == 3, "Expected all completed calls");
+            assertEquals(1, completedCalls.stream().filter(call -> call.snapshot().duplicate()).count(),
                 "Configured bridge priority must still produce a pairwise clique");
-            assertFalse(isPlaybackDuplicate(playbackCalls, preferredBridge.callId()));
-            assertTrue(isPlaybackDuplicate(playbackCalls, talkgroupEndpoint.callId()) ^
-                    isPlaybackDuplicate(playbackCalls, radioEndpoint.callId()),
+            assertFalse(isCompletedDuplicate(completedCalls, preferredBridge.callId()));
+            assertTrue(isCompletedDuplicate(completedCalls, talkgroupEndpoint.callId()) ^
+                    isCompletedDuplicate(completedCalls, radioEndpoint.callId()),
                 "Exactly one mutually incompatible endpoint may join the preferred bridge");
         }
         finally

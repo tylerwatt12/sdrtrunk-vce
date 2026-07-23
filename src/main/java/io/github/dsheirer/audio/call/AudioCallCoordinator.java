@@ -20,8 +20,6 @@
 package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
-import io.github.dsheirer.audio.playback.AudioPlaybackManager;
-import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -46,7 +44,7 @@ import java.util.function.Consumer;
 
 /**
  * Serialized owner of live audio call state. Normalizes immutable producer events, applies duplicate suppression,
- * feeds playback directly via managed playable calls, and emits completed immutable calls for recording/streaming.
+ * and emits completed immutable calls for recording, configured streaming providers, and browser playback.
  */
 public class AudioCallCoordinator implements Listener<AudioCallEvent>
 {
@@ -59,7 +57,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final Map<Long, DuplicateGroup> mDuplicateGroups = new HashMap<>();
     private final ICallManagementProvider mCallManagementProvider;
     private final DuplicateCallPriorityProvider mDuplicateCallPriorityProvider;
-    private final Consumer<ManagedPlayableAudioCall> mPlaybackConsumer;
     private final Consumer<CompletedAudioCall> mRecordingConsumer;
     private final Consumer<CompletedAudioCall> mStreamingConsumer;
     private final Consumer<CompletedAudioCall> mWebConsumer;
@@ -69,12 +66,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private long mNextDuplicateGroupOrdinal;
     private volatile boolean mDisposed;
 
-    public AudioCallCoordinator(UserPreferences userPreferences, AudioPlaybackManager audioPlaybackManager,
-                                AudioRecordingManager audioRecordingManager,
+    public AudioCallCoordinator(UserPreferences userPreferences, AudioRecordingManager audioRecordingManager,
                                 AudioStreamingManager audioStreamingManager,
                                 Consumer<CompletedAudioCall> webConsumer)
     {
-        this(userPreferences, audioPlaybackManager, audioRecordingManager, audioStreamingManager, webConsumer,
+        this(userPreferences, audioRecordingManager, audioStreamingManager, webConsumer,
             DuplicateCallPriorityProvider.NONE);
     }
 
@@ -82,14 +78,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
      * Constructs an audio-call coordinator with an optional stable source-priority hook for deterministic duplicate
      * elections.
      */
-    public AudioCallCoordinator(UserPreferences userPreferences, AudioPlaybackManager audioPlaybackManager,
-                                AudioRecordingManager audioRecordingManager,
+    public AudioCallCoordinator(UserPreferences userPreferences, AudioRecordingManager audioRecordingManager,
                                 AudioStreamingManager audioStreamingManager,
                                 Consumer<CompletedAudioCall> webConsumer,
                                 DuplicateCallPriorityProvider duplicateCallPriorityProvider)
     {
         this(userPreferences.getCallManagementPreference(),
-            audioPlaybackManager != null ? audioPlaybackManager::receive : null,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
             audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
             duplicateCallPriorityProvider, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
@@ -97,31 +91,28 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
-                         Consumer<ManagedPlayableAudioCall> playbackConsumer,
                          Consumer<CompletedAudioCall> recordingConsumer,
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer)
     {
-        this(callManagementProvider, playbackConsumer, recordingConsumer, streamingConsumer, webConsumer,
+        this(callManagementProvider, recordingConsumer, streamingConsumer, webConsumer,
             DuplicateCallPriorityProvider.NONE, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
             DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
-                         Consumer<ManagedPlayableAudioCall> playbackConsumer,
                          Consumer<CompletedAudioCall> recordingConsumer,
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer,
                          DuplicateCallPriorityProvider duplicateCallPriorityProvider,
                          long streamingDuplicateWatchdogMilliseconds)
     {
-        this(callManagementProvider, playbackConsumer, recordingConsumer, streamingConsumer, webConsumer,
+        this(callManagementProvider, recordingConsumer, streamingConsumer, webConsumer,
             duplicateCallPriorityProvider, streamingDuplicateWatchdogMilliseconds,
             deriveOrphanCeilingMilliseconds(streamingDuplicateWatchdogMilliseconds));
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
-                         Consumer<ManagedPlayableAudioCall> playbackConsumer,
                          Consumer<CompletedAudioCall> recordingConsumer,
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer,
@@ -130,7 +121,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          long streamingDuplicateOrphanCeilingMilliseconds)
     {
         mCallManagementProvider = callManagementProvider;
-        mPlaybackConsumer = playbackConsumer;
         mRecordingConsumer = recordingConsumer;
         mStreamingConsumer = streamingConsumer;
         mWebConsumer = webConsumer;
@@ -208,16 +198,14 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         if(context == null)
         {
-            context = new ManagedAudioCall(incomingSnapshot, createPlaybackCall(incomingSnapshot),
-                mNextRegistrationOrdinal++);
+            context = new ManagedAudioCall(incomingSnapshot, mNextRegistrationOrdinal++);
             mCalls.put(incomingSnapshot.callId(), context);
         }
 
         // Ownership boundary:
         // 1) producers emit immutable AudioCallEvent/AudioCallSnapshot objects
-        // 2) the coordinator is the only writer of live call state and playback-call buffers
-        // 3) playback/recording/streaming consume snapshots or coordinator-owned playback calls and do not mutate
-        //    the shared call context directly
+        // 2) the coordinator is the only writer of live call state and call audio buffers
+        // 3) recording, configured streaming providers, and browser playback consume completed immutable calls
         context.snapshot = incomingSnapshot.withDuplicate(context.snapshot != null && context.snapshot.duplicate());
 
         if(isProgressEvent(event))
@@ -225,18 +213,9 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             context.lastProgressNanos = System.nanoTime();
         }
 
-        if(context.playbackCall != null)
-        {
-            context.playbackCall.updateSnapshot(context.snapshot);
-        }
-
         if(event.audioFrame() != null)
         {
             context.audioBuffers.add(event.audioFrame());
-            if(context.playbackCall != null)
-            {
-                context.playbackCall.appendAudio(event.audioFrame());
-            }
         }
 
         updateDuplicateState(context);
@@ -270,18 +249,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             case CALL_CREATED, ACTIVITY, METADATA_UPDATED, BURST_STARTED, BURST_ENDED, AUDIO_FRAME -> true;
             case DUPLICATE_UPDATED, CALL_COMPLETED -> false;
         };
-    }
-
-    private ManagedPlayableAudioCall createPlaybackCall(AudioCallSnapshot snapshot)
-    {
-        if(mPlaybackConsumer == null || snapshot == null)
-        {
-            return null;
-        }
-
-        ManagedPlayableAudioCall playbackCall = new ManagedPlayableAudioCall(snapshot);
-        mPlaybackConsumer.accept(playbackCall);
-        return playbackCall;
     }
 
     /**
@@ -452,11 +419,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         if(call.snapshot.duplicate() != duplicate)
         {
             call.snapshot = call.snapshot.withDuplicate(duplicate);
-
-            if(call.playbackCall != null)
-            {
-                call.playbackCall.updateSnapshot(call.snapshot);
-            }
         }
     }
 
@@ -984,16 +946,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
         private AudioCallSnapshot snapshot;
         private final List<float[]> audioBuffers = new ArrayList<>();
-        private final ManagedPlayableAudioCall playbackCall;
         private final long registrationOrdinal;
         private long lastProgressNanos = System.nanoTime();
         private Long duplicateGroupId;
 
-        private ManagedAudioCall(AudioCallSnapshot snapshot, ManagedPlayableAudioCall playbackCall,
-                                 long registrationOrdinal)
+        private ManagedAudioCall(AudioCallSnapshot snapshot, long registrationOrdinal)
         {
             this.snapshot = snapshot;
-            this.playbackCall = playbackCall;
             this.registrationOrdinal = registrationOrdinal;
         }
     }

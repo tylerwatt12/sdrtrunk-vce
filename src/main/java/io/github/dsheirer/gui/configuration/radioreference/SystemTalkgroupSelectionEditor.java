@@ -55,7 +55,6 @@ import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -79,7 +78,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 {
 
     private final TalkgroupCategory ALL_TALKGROUPS = new TalkgroupCategory();
-    private UserPreferences mUserPreferences;
     private ConfigurationManager mConfigurationManager;
     private TableView<AliasedTalkgroup> mTalkgroupTableView;
     private ComboBox<TalkgroupCategory> mTalkgroupCategoryComboBox;
@@ -97,14 +95,12 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     private Button mImportAllTalkgroupsButton;
     private Label mPlaceholderLabel;
     private ProgressIndicator mProgressIndicator;
-    private CheckBox mEncryptedAsDoNotMonitorCheckBox;
 
     public SystemTalkgroupSelectionEditor(UserPreferences userPreferences, ConfigurationManager configurationManager)
     {
         //Register to receive flash alias box requests
         MyEventBus.getGlobalEventBus().register(this);
 
-        mUserPreferences = userPreferences;
         mConfigurationManager = configurationManager;
 
         ALL_TALKGROUPS.setName("(All Talkgroups)");
@@ -128,10 +124,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         listBox.getChildren().addAll(importLabel, getAliasListNameComboBox(), getNewAliasListButton());
         GridPane.setConstraints(listBox, 0, row);
         getChildren().add(listBox);
-
-        GridPane.setConstraints(getEncryptedAsDoNotMonitorCheckBox(), 1, row);
-        GridPane.setHalignment(getEncryptedAsDoNotMonitorCheckBox(), HPos.CENTER);
-        getChildren().add(getEncryptedAsDoNotMonitorCheckBox());
 
         HBox searchBox = new HBox();
         searchBox.setSpacing(5);
@@ -184,22 +176,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         clear();
         setLoading(true);
-    }
-
-    private CheckBox getEncryptedAsDoNotMonitorCheckBox()
-    {
-        if(mEncryptedAsDoNotMonitorCheckBox == null)
-        {
-            mEncryptedAsDoNotMonitorCheckBox = new CheckBox("Set Encrypted Talkgroups To Muted");
-            mEncryptedAsDoNotMonitorCheckBox.setDisable(true);
-            mEncryptedAsDoNotMonitorCheckBox.selectedProperty().set(mUserPreferences.getRadioReferencePreference()
-                .isEncryptedTalkgroupDoNotMonitor());
-            mEncryptedAsDoNotMonitorCheckBox.selectedProperty()
-                .addListener((observable, oldValue, newValue) -> mUserPreferences.getRadioReferencePreference()
-                    .setEncryptedTalkgroupDoNotMonitor(mEncryptedAsDoNotMonitorCheckBox.isSelected()));
-        }
-
-        return mEncryptedAsDoNotMonitorCheckBox;
     }
 
     private void setLoading(boolean loading)
@@ -276,7 +252,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         boolean supported = getRadioReferenceDecoder() != null &&
             getRadioReferenceDecoder().hasSupportedProtocol(getCurrentSystem());
         getImportAllTalkgroupsButton().setDisable(!supported);
-        getEncryptedAsDoNotMonitorCheckBox().setDisable(!supported);
         setLoading(false);
     }
 
@@ -354,13 +329,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             String group = (talkgroupCategory != null ? talkgroupCategory.getName() : null);
             Alias alias = getRadioReferenceDecoder().createAlias(talkgroup, getCurrentSystem(),
                     getAliasListNameComboBox().getSelectionModel().getSelectedItem(), group);
-
-            if(getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get() &&
-                    TalkgroupEncryption.lookup(talkgroup.getEncryptionState()) == TalkgroupEncryption.FULL)
-            {
-                int priority = io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR;
-                alias.addAliasID(new io.github.dsheirer.alias.id.priority.Priority(priority));
-            }
 
             createdAliases.add(alias);
         }
@@ -631,8 +599,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                     String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
                     getTalkgroupEditor().setTalkgroup((selected != null ? selected.getTalkgroup() : null),
                         getCurrentSystem(), getRadioReferenceDecoder(), (selected != null ? selected.getAlias() : null),
-                        aliasListName, (talkgroupCategory != null ? talkgroupCategory.getName() : null),
-                        getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get());
+                        aliasListName, (talkgroupCategory != null ? talkgroupCategory.getName() : null));
                 });
             mTalkgroupFilteredList = new FilteredList<>(mTalkgroupList);
             SortedList<AliasedTalkgroup> sortedList = new SortedList<>(mTalkgroupFilteredList);

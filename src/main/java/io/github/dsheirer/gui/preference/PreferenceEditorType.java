@@ -32,7 +32,6 @@ public enum PreferenceEditorType
     VOICE_DECRYPTION_MODULE("Voice Decryption Module"),
     AUDIO_MP3("MP3"),
     AUDIO_RECORD("Record"),
-    AUDIO_OUTPUT("Playback/Tones"),
     AUDIO_CALL_MANAGEMENT("Call Management"),
     SOURCE_TUNERS("Tuners"),
     STATS_SERVER("Stats Server"),

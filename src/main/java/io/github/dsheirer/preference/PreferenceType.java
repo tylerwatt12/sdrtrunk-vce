@@ -34,7 +34,6 @@ public enum PreferenceType
     MP3,
     MULTI_FREQUENCY,
     NOW_PLAYING,
-    PLAYBACK,
     RADIO_REFERENCE,
     RECORD,
     SPECTRUM,

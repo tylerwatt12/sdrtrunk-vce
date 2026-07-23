@@ -57,7 +57,6 @@ public class TalkgroupEditor extends GridPane
     private System mSystem;
     private Talkgroup mTalkgroup;
     private Alias mAlias;
-    private boolean mSetEncryptedDoNotMonitor;
 
     public TalkgroupEditor(ConfigurationManager configurationManager)
     {
@@ -146,14 +145,13 @@ public class TalkgroupEditor extends GridPane
 
 
     public void setTalkgroup(Talkgroup talkgroup, System system, RadioReferenceDecoder decoder, Alias alias,
-                             String aliasListName, String group, boolean setEncryptedDoNotMonitor)
+                             String aliasListName, String group)
     {
         mRadioReferenceDecoder = decoder;
         mTalkgroup = talkgroup;
         mSystem = system;
         mAliasListName = aliasListName;
         mAlias = alias;
-        mSetEncryptedDoNotMonitor = setEncryptedDoNotMonitor;
 
         if(talkgroup != null)
         {
@@ -279,13 +277,6 @@ public class TalkgroupEditor extends GridPane
                     Alias alias = mRadioReferenceDecoder.createAlias(mTalkgroup, mSystem, mAliasListName,
                         getAliasGroupTextField().getText());
                     alias.setName(getAliasNameTextField().getText());
-                    if(mSetEncryptedDoNotMonitor &&
-                        TalkgroupEncryption.lookup(mTalkgroup.getEncryptionState()) == TalkgroupEncryption.FULL)
-                    {
-                        int priority = io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR;
-                        alias.addAliasID(new io.github.dsheirer.alias.id.priority.Priority(priority));
-                    }
-
                     mConfigurationManager.getAliasModel().addAlias(alias);
                 }
             });

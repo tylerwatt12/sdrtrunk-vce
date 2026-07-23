@@ -19,8 +19,6 @@
 package io.github.dsheirer.controller;
 
 import com.jidesoft.swing.JideTabbedPane;
-import io.github.dsheirer.audio.playback.AudioPanel;
-import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.channel.metadata.NowPlayingPanel;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
@@ -42,7 +40,6 @@ public class ControllerPanel extends JPanel
 {
     private static final long serialVersionUID = 1L;
 
-    private AudioPanel mAudioPanel;
     private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
@@ -50,8 +47,8 @@ public class ControllerPanel extends JPanel
     private ConfigurationManager mConfigurationManager;
     private boolean mSystemsVisible;
 
-    public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
-                           IconModel iconModel, MapService mapService, SettingsManager settingsManager,
+    public ControllerPanel(ConfigurationManager configurationManager, IconModel iconModel, MapService mapService,
+                           SettingsManager settingsManager,
                            TunerManager tunerManager, UserPreferences userPreferences,
                            StatsWebServerService statsWebServerService, boolean systemsVisible,
                            boolean lowerViewsVisible,
@@ -60,8 +57,6 @@ public class ControllerPanel extends JPanel
         mConfigurationManager = configurationManager;
         mSystemsVisible = systemsVisible;
         mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", systemsVisible);
-        mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
-            configurationManager.getAliasModel());
         mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
             statsWebServerService, lowerViewsVisible, lowerViewsVisibilityListener);
         mMapPanel = new MapPanel(mapService, configurationManager.getAliasModel(), iconModel, settingsManager);
@@ -104,15 +99,12 @@ public class ControllerPanel extends JPanel
 
     public void dispose()
     {
-        mAudioPanel.dispose();
         mNowPlayingPanel.dispose();
     }
 
     private void init()
     {
-        setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[]0[grow,fill]0[]"));
-
-        add(mAudioPanel, "wrap");
+        setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[grow,fill]0[]"));
 
         mTabbedPane = new JideTabbedPane();
         mTabbedPane.setFont(this.getFont());
