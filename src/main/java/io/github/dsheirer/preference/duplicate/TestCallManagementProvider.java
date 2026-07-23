@@ -26,6 +26,7 @@ public class TestCallManagementProvider implements ICallManagementProvider
 {
     private final boolean mByTalkgroup;
     private final boolean mByRadio;
+    private final boolean mSuppressDuplicateStreaming;
 
     /**
      * Constructs an instance
@@ -34,8 +35,20 @@ public class TestCallManagementProvider implements ICallManagementProvider
      */
     public TestCallManagementProvider(boolean byTalkgroup, boolean byRadio)
     {
+        this(byTalkgroup, byRadio, true);
+    }
+
+    /**
+     * Constructs an instance
+     * @param byTalkgroup to enable duplicate detection by talkgroup
+     * @param byRadio to enable duplicate detection by radio
+     * @param suppressDuplicateStreaming to select one completed duplicate candidate for streaming
+     */
+    public TestCallManagementProvider(boolean byTalkgroup, boolean byRadio, boolean suppressDuplicateStreaming)
+    {
         mByTalkgroup = byTalkgroup;
         mByRadio = byRadio;
+        mSuppressDuplicateStreaming = suppressDuplicateStreaming;
     }
 
     @Override
@@ -54,5 +67,11 @@ public class TestCallManagementProvider implements ICallManagementProvider
     public boolean isDuplicateCallDetectionByRadioEnabled()
     {
         return mByRadio;
+    }
+
+    @Override
+    public boolean isDuplicateStreamingSuppressionEnabled()
+    {
+        return mSuppressDuplicateStreaming;
     }
 }

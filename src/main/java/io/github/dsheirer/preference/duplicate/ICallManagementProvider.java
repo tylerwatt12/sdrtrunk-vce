@@ -27,4 +27,13 @@ public interface ICallManagementProvider
     boolean isDuplicateCallDetectionEnabled();
     boolean isDuplicateCallDetectionByTalkgroupEnabled();
     boolean isDuplicateCallDetectionByRadioEnabled();
+
+    /**
+     * Indicates if duplicate candidates should be reduced to one completed call before they enter the streaming
+     * pipeline.
+     */
+    default boolean isDuplicateStreamingSuppressionEnabled()
+    {
+        return false;
+    }
 }

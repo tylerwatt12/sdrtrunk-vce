@@ -165,6 +165,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                     trafficChannel.setAliasListName(mParentChannel.getAliasListName());
                     trafficChannel.setSystem(mParentChannel.getSystem());
                     trafficChannel.setSite(mParentChannel.getSite());
+                    trafficChannel.setRadresGuid(mParentChannel.getRadresGuid());
                     trafficChannel.setDecodeConfiguration(copyDecodeConfiguration(decodeConfig));
                     trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
                     trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
