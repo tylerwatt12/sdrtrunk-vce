@@ -17,6 +17,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
+import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileStore;
@@ -276,6 +277,7 @@ public final class PreviousBuildUpgradeService
         {
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
+            TrunkedSiteSchema.validate(connection);
             requireIntegrity(connection);
             requireForeignKeysValid(connection);
         }
