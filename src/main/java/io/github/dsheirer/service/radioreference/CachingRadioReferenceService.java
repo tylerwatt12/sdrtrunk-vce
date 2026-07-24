@@ -26,7 +26,6 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import io.github.dsheirer.rrapi.RadioReferenceException;
-import io.github.dsheirer.rrapi.RadioReferenceService;
 import io.github.dsheirer.rrapi.type.AgencyInfo;
 import io.github.dsheirer.rrapi.type.AuthorizationInformation;
 import io.github.dsheirer.rrapi.type.CountyInfo;
@@ -41,7 +40,7 @@ import java.util.List;
 /**
  * Provides local caching for frequently retrieved items from the radio reference service
  */
-public class CachingRadioReferenceService extends RadioReferenceService
+public class CachingRadioReferenceService extends SecureRadioReferenceService
 {
     private LoadingCache<Integer,AgencyInfo> mAgencyInfoCache;
     private LoadingCache<Integer,CountyInfo> mCountyInfoCache;

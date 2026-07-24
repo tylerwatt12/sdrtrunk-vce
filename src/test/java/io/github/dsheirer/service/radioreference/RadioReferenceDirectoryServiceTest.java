@@ -41,12 +41,14 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class RadioReferenceDirectoryServiceTest
@@ -187,6 +189,102 @@ class RadioReferenceDirectoryServiceTest
     }
 
     @Test
+    void rejectsMismatchedLocationHierarchyBeforeLoadingTheChild() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            LocationSelection wrongState = new LocationSelection(1, 99, null);
+            assertEquals(Code.INVALID_REQUEST,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> service.browse(wrongState, "", EntryGroup.ALL, ScopeFilter.ALL, 10)).code());
+            assertEquals(0, gateway.stateCalls.get(),
+                "a state that is not in the selected country must not be fetched");
+
+            LocationSelection wrongCounty = new LocationSelection(1, 10, 999);
+            assertEquals(Code.INVALID_REQUEST,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> service.browse(wrongCounty, "", EntryGroup.ALL, ScopeFilter.ALL, 10)).code());
+            assertEquals(1, gateway.stateCalls.get());
+            assertEquals(0, gateway.countyCalls.get(),
+                "a county that is not in the selected state must not be fetched");
+        }
+    }
+
+    @Test
+    void enumeratesMoreThanFiveHundredCombinedResultsWithoutDiscardingTheTail() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        List<TrunkedSystem> systems = new ArrayList<>();
+
+        for(int index = 0; index < 1_201; index++)
+        {
+            systems.add(new TrunkedSystem(10_000 + index, "Paged System %04d".formatted(index), "", 1, 2, 3));
+        }
+
+        gateway.county = new CountyDirectory(gateway.county.county(), systems, List.of());
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            LocationSelection selection = new LocationSelection(1, 10, 100);
+            List<Integer> ids = new ArrayList<>();
+            int offset = 0;
+            int pageCount = 0;
+
+            do
+            {
+                BoundedPage<DirectoryEntry> page = service.browse(selection, "paged system",
+                    EntryGroup.TRUNKED_SYSTEMS, ScopeFilter.COUNTY, offset, 500);
+                assertEquals(1_201, page.totalItems());
+                assertEquals(offset, page.offset());
+                ids.addAll(page.items().stream().map(entry -> entry.detail().id()).toList());
+                pageCount++;
+
+                if(page.nextOffset() == null)
+                {
+                    break;
+                }
+
+                offset = page.nextOffset();
+            }
+            while(true);
+
+            assertEquals(3, pageCount);
+            assertEquals(1_201, ids.size());
+            assertEquals(1_201, ids.stream().distinct().count());
+            assertEquals(10_000, ids.getFirst());
+            assertEquals(11_200, ids.getLast());
+            assertEquals(3, gateway.countyCalls.get(), "each page is a fresh bounded directory request");
+        }
+    }
+
+    @Test
+    void rejectsAnOversizedRelevantDirectoryInsteadOfSilentlyTruncatingIt() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        List<TrunkedSystem> systems = new ArrayList<>();
+
+        for(int index = 0; index <= 10_000; index++)
+        {
+            systems.add(new TrunkedSystem(20_000 + index, "Oversized %05d".formatted(index), "", 1, 2, 3));
+        }
+
+        gateway.county = new CountyDirectory(gateway.county.county(), systems, List.of());
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            assertEquals(Code.RESULT_SET_TOO_LARGE,
+                assertThrows(RadioReferenceDirectoryException.class,
+                    () -> service.browse(new LocationSelection(1, 10, 100), "",
+                        EntryGroup.TRUNKED_SYSTEMS, ScopeFilter.COUNTY, 0, 500)).code());
+        }
+    }
+
+    @Test
     void rejectsExcessWaitingRequestsWithoutStartingMoreRemoteWork() throws Exception
     {
         FakeGateway gateway = populatedGateway();
@@ -233,17 +331,20 @@ class RadioReferenceDirectoryServiceTest
             1, 1, Duration.ofMillis(75), Duration.ofMillis(50), CLOCK))
         {
             service.login("user", "secret".toCharArray());
-            gateway.blockCountries(false);
+            gateway.blockCountries(true);
 
             RadioReferenceDirectoryException timeout =
                 assertTimeoutPreemptively(Duration.ofMillis(500),
                     () -> assertThrows(RadioReferenceDirectoryException.class,
                         () -> service.countries("", 10)));
             assertEquals(Code.TIMEOUT, timeout.code());
+            assertEquals(1, service.runtimeStatus().activeRequests(),
+                "the deadline bounds the caller wait but cannot stop an upstream call that ignores interruption");
+
+            gateway.releaseCountries.countDown();
             waitFor(() -> service.runtimeStatus().activeRequests() == 0);
 
             gateway.blockCountries = false;
-            gateway.releaseCountries.countDown();
             assertFalse(service.countries("", 10).items().isEmpty());
         }
     }
@@ -256,22 +357,30 @@ class RadioReferenceDirectoryServiceTest
             1, 1, Duration.ofSeconds(5), Duration.ofMillis(25), CLOCK);
         service.login("user", "secret".toCharArray());
         gateway.blockCountries(true);
-        ExecutorService caller = Executors.newSingleThreadExecutor();
+        ExecutorService caller = Executors.newFixedThreadPool(2);
 
         try
         {
-            Future<?> call = caller.submit(() -> countries(service));
+            Future<?> active = caller.submit(() -> countries(service));
             assertTrue(gateway.countriesEntered.await(1, TimeUnit.SECONDS));
+            Future<?> waiting = caller.submit(() -> countries(service));
+            waitFor(() -> service.runtimeStatus().waitingRequests() == 1);
 
             assertTimeoutPreemptively(Duration.ofMillis(500), service::close);
+            active.get(500, TimeUnit.MILLISECONDS);
+            waiting.get(500, TimeUnit.MILLISECONDS);
             assertEquals(AccountState.CLOSED, service.status().state());
             assertTrue(service.runtimeStatus().closed());
+            assertFalse(service.runtimeStatus().remoteWorkerTerminated());
+            assertEquals(1, service.runtimeStatus().activeRequests(),
+                "logical close does not claim that an interruption-ignoring upstream call has stopped");
+            assertEquals(0, service.runtimeStatus().waitingRequests());
             assertEquals(Code.CLOSED,
                 assertThrows(RadioReferenceDirectoryException.class,
                     () -> service.countries("", 10)).code());
 
             gateway.releaseCountries.countDown();
-            call.get(1, TimeUnit.SECONDS);
+            waitFor(() -> service.runtimeStatus().remoteWorkerTerminated());
         }
         finally
         {
@@ -384,6 +493,8 @@ class RadioReferenceDirectoryServiceTest
         private volatile boolean closed;
         private volatile boolean blockCountries;
         private volatile boolean ignoreCountryInterrupt;
+        private final AtomicInteger stateCalls = new AtomicInteger();
+        private final AtomicInteger countyCalls = new AtomicInteger();
         private CountDownLatch countriesEntered = new CountDownLatch(1);
         private CountDownLatch releaseCountries = new CountDownLatch(0);
 
@@ -443,12 +554,14 @@ class RadioReferenceDirectoryServiceTest
         @Override
         public StateDirectory state(int stateId)
         {
+            stateCalls.incrementAndGet();
             return state;
         }
 
         @Override
         public CountyDirectory county(int countyId)
         {
+            countyCalls.incrementAndGet();
             return county;
         }
 

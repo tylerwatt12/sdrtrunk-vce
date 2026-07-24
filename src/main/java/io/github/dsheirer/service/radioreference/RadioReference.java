@@ -21,7 +21,6 @@ package io.github.dsheirer.service.radioreference;
 
 import com.google.common.annotations.VisibleForTesting;
 import io.github.dsheirer.rrapi.RadioReferenceException;
-import io.github.dsheirer.rrapi.RadioReferenceService;
 import io.github.dsheirer.rrapi.response.Fault;
 import io.github.dsheirer.rrapi.type.AuthorizationInformation;
 import io.github.dsheirer.rrapi.type.UserInfo;
@@ -46,7 +45,7 @@ public class RadioReference
     private static final Logger mLog = LoggerFactory.getLogger(RadioReference.class);
 
     public static final String SDRTRUNK_APP_KEY = "88969092";
-    private RadioReferenceService mRadioReferenceService;
+    private SecureRadioReferenceService mRadioReferenceService;
     private AuthorizationInformation mAuthorizationInformation;
     private StringProperty mUserName = new SimpleStringProperty();
     private StringProperty mPassword = new SimpleStringProperty();
@@ -123,7 +122,7 @@ public class RadioReference
      * @return service
      * @throws RadioReferenceException if there is an issue creating the service (ie login credentials missing)
      */
-    public RadioReferenceService getService() throws RadioReferenceException
+    public SecureRadioReferenceService getService() throws RadioReferenceException
     {
         if(mRadioReferenceService == null)
         {
@@ -154,8 +153,12 @@ public class RadioReference
     public static boolean testConnection(String userName, String password) throws RadioReferenceException
     {
         AuthorizationInformation credentials = new AuthorizationInformation(SDRTRUNK_APP_KEY, userName, password);
-        RadioReferenceService service = new RadioReferenceService(credentials);
-        service.getUserInfo();
+
+        try(SecureRadioReferenceService service = new SecureRadioReferenceService(credentials))
+        {
+            service.getUserInfo();
+        }
+
         return true;
     }
 
@@ -173,8 +176,12 @@ public class RadioReference
 
         try
         {
-            RadioReferenceService service = new RadioReferenceService(credentials);
-            UserInfo ui = service.getUserInfo();
+            UserInfo ui;
+
+            try(SecureRadioReferenceService service = new SecureRadioReferenceService(credentials))
+            {
+                ui = service.getUserInfo();
+            }
 
             if(ui == null)
             {
@@ -346,6 +353,7 @@ public class RadioReference
         //Set the service to null so that the next call to getService() will recreate it
         if(mRadioReferenceService != null)
         {
+            mRadioReferenceService.close();
             mRadioReferenceService = null;
         }
 

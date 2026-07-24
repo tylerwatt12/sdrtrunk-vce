@@ -34,6 +34,8 @@ public final class RadioReferenceDirectoryException extends Exception
         {
             case INVALID_REQUEST -> "The RadioReference request is invalid";
             case INVALID_CREDENTIALS -> "RadioReference rejected the credentials";
+            case RESULT_SET_TOO_LARGE -> "The RadioReference directory response exceeds the safety limit";
+            case INSECURE_TRANSPORT -> "Secure RadioReference credential transport is unavailable";
             case NOT_AUTHENTICATED -> "RadioReference is not signed in";
             case PREMIUM_REQUIRED -> "A current RadioReference premium subscription is required";
             case BUSY -> "RadioReference already has the maximum number of requests waiting";
@@ -48,6 +50,8 @@ public final class RadioReferenceDirectoryException extends Exception
     {
         INVALID_REQUEST,
         INVALID_CREDENTIALS,
+        RESULT_SET_TOO_LARGE,
+        INSECURE_TRANSPORT,
         NOT_AUTHENTICATED,
         PREMIUM_REQUIRED,
         BUSY,

@@ -10,10 +10,16 @@
  */
 package io.github.dsheirer.service.radioreference;
 
-import io.github.dsheirer.rrapi.RadioReferenceException;
-import io.github.dsheirer.rrapi.RadioReferenceService;
-import io.github.dsheirer.rrapi.response.Fault;
-import io.github.dsheirer.rrapi.type.AuthorizationInformation;
+import io.github.dsheirer.rrapi.request.GetCountryInfo;
+import io.github.dsheirer.rrapi.request.GetCountryList;
+import io.github.dsheirer.rrapi.request.GetCountyInfo;
+import io.github.dsheirer.rrapi.request.GetStateInfo;
+import io.github.dsheirer.rrapi.request.GetUserData;
+import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
+import io.github.dsheirer.rrapi.response.GetCountryListResponse;
+import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
+import io.github.dsheirer.rrapi.response.GetStateInfoResponse;
+import io.github.dsheirer.rrapi.response.GetUserDataResponse;
 import io.github.dsheirer.rrapi.type.CountryInfo;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.StateInfo;
@@ -22,29 +28,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Adapter for the native RadioReference API client.  This adapter performs no caching.
+ * Adapter for the native RadioReference XML models using SDRTrunk's HTTPS-only transport.
  */
 final class RrapiRadioReferenceGateway implements RadioReferenceGateway
 {
-    private static final String APPLICATION_KEY = "88969092";
-    private RadioReferenceService mService;
+    static final String APPLICATION_KEY = "88969092";
+    private SecureRadioReferenceSoapClient mClient;
 
     RrapiRadioReferenceGateway(String userName, char[] password) throws RadioReferenceGatewayException
     {
-        try
-        {
-            AuthorizationInformation authorization =
-                new AuthorizationInformation(APPLICATION_KEY, userName, new String(password));
-            mService = new RadioReferenceService(authorization);
-        }
-        catch(RadioReferenceException exception)
-        {
-            throw sanitized(exception);
-        }
-        catch(RuntimeException exception)
-        {
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-        }
+        mClient = SecureRadioReferenceSoapClient.production(userName, password);
+    }
+
+    RrapiRadioReferenceGateway(SecureRadioReferenceSoapClient client)
+    {
+        mClient = client;
     }
 
     @Override
@@ -52,12 +50,13 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         try
         {
-            UserInfo userInfo = service().getUserInfo();
+            GetUserDataResponse response = client().execute(GetUserData::create, GetUserDataResponse.class);
+            UserInfo userInfo = response.getUserInfo();
             return userInfo == null ? null : new Account(userInfo.getUserName(), userInfo.getExpirationDate());
         }
-        catch(RadioReferenceException exception)
+        catch(RuntimeException exception)
         {
-            throw sanitized(exception);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
     }
 
@@ -67,17 +66,22 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         try
         {
             List<Country> countries = new ArrayList<>();
+            GetCountryListResponse response =
+                client().execute(GetCountryList::create, GetCountryListResponse.class);
 
-            for(io.github.dsheirer.rrapi.type.Country country: service().getCountries())
+            if(response.getCountries() != null)
             {
-                countries.add(new Country(country.getCountryId(), country.getName(), country.getCountryCode()));
+                for(io.github.dsheirer.rrapi.type.Country country: response.getCountries())
+                {
+                    countries.add(new Country(country.getCountryId(), country.getName(), country.getCountryCode()));
+                }
             }
 
             return countries;
         }
-        catch(RadioReferenceException | RuntimeException exception)
+        catch(RuntimeException exception)
         {
-            throw sanitized(exception);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
     }
 
@@ -86,7 +90,10 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         try
         {
-            CountryInfo info = service().getCountryInfo(countryId);
+            GetCountryInfoResponse response =
+                client().execute(authorization -> GetCountryInfo.create(authorization, countryId),
+                    GetCountryInfoResponse.class);
+            CountryInfo info = response.getCountryInfo();
 
             if(info == null)
             {
@@ -106,9 +113,9 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             return new CountryDirectory(new Country(info.getCountryId(), info.getName(), info.getCountryCode()),
                 states, agencies(info.getAgencies()));
         }
-        catch(RadioReferenceException | RuntimeException exception)
+        catch(RuntimeException exception)
         {
-            throw sanitized(exception);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
     }
 
@@ -117,7 +124,10 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         try
         {
-            StateInfo info = service().getStateInfo(stateId);
+            GetStateInfoResponse response =
+                client().execute(authorization -> GetStateInfo.create(authorization, stateId),
+                    GetStateInfoResponse.class);
+            StateInfo info = response.getStateInfo();
 
             if(info == null)
             {
@@ -137,9 +147,9 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             return new StateDirectory(new State(info.getStateId(), info.getName(), info.getStateEntityType()),
                 counties, systems(info.getSystems()), agencies(info.getAgencies()));
         }
-        catch(RadioReferenceException | RuntimeException exception)
+        catch(RuntimeException exception)
         {
-            throw sanitized(exception);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
     }
 
@@ -148,7 +158,10 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         try
         {
-            CountyInfo info = service().getCountyInfo(countyId);
+            GetCountyInfoResponse response =
+                client().execute(authorization -> GetCountyInfo.create(authorization, countyId),
+                    GetCountyInfoResponse.class);
+            CountyInfo info = response.getCountyInfo();
 
             if(info == null)
             {
@@ -158,22 +171,22 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             return new CountyDirectory(new County(info.getCountyId(), info.getName(), info.getHeader()),
                 systems(info.getSystems()), agencies(info.getAgencies()));
         }
-        catch(RadioReferenceException | RuntimeException exception)
+        catch(RuntimeException exception)
         {
-            throw sanitized(exception);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
     }
 
-    private RadioReferenceService service() throws RadioReferenceGatewayException
+    private SecureRadioReferenceSoapClient client() throws RadioReferenceGatewayException
     {
-        RadioReferenceService service = mService;
+        SecureRadioReferenceSoapClient client = mClient;
 
-        if(service == null)
+        if(client == null)
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
 
-        return service;
+        return client;
     }
 
     private static List<Agency> agencies(List<io.github.dsheirer.rrapi.type.Agency> source)
@@ -207,25 +220,15 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         return systems;
     }
 
-    private static RadioReferenceGatewayException sanitized(Exception exception)
-    {
-        if(exception instanceof RadioReferenceException radioReferenceException &&
-            radioReferenceException.hasFault())
-        {
-            Fault fault = radioReferenceException.getFault();
-
-            if(fault != null && "AUTH".equalsIgnoreCase(fault.getFaultCode()))
-            {
-                return new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_CREDENTIALS);
-            }
-        }
-
-        return new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-    }
-
     @Override
     public void close()
     {
-        mService = null;
+        SecureRadioReferenceSoapClient client = mClient;
+        mClient = null;
+
+        if(client != null)
+        {
+            client.close();
+        }
     }
 }

@@ -24,8 +24,7 @@ public final class RadioReferenceGatewayException extends Exception
 
     public RadioReferenceGatewayException(Kind kind)
     {
-        super(kind == Kind.INVALID_CREDENTIALS ? "RadioReference rejected the credentials" :
-            "RadioReference is unavailable");
+        super(message(kind));
         mKind = Objects.requireNonNull(kind);
     }
 
@@ -37,6 +36,21 @@ public final class RadioReferenceGatewayException extends Exception
     public enum Kind
     {
         INVALID_CREDENTIALS,
+        INVALID_LOCATION,
+        RESULT_SET_TOO_LARGE,
+        INSECURE_TRANSPORT,
         UNAVAILABLE
+    }
+
+    private static String message(Kind kind)
+    {
+        return switch(Objects.requireNonNull(kind))
+        {
+            case INVALID_CREDENTIALS -> "RadioReference rejected the credentials";
+            case INVALID_LOCATION -> "The RadioReference location selection is inconsistent";
+            case RESULT_SET_TOO_LARGE -> "The RadioReference directory response exceeds the safety limit";
+            case INSECURE_TRANSPORT -> "The RadioReference client does not provide secure credential transport";
+            case UNAVAILABLE -> "RadioReference is unavailable";
+        };
     }
 }

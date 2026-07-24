@@ -24,8 +24,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
@@ -38,9 +40,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Bounded session and directory service for RadioReference.
  *
- * <p>Every remote operation runs on a dedicated, bounded executor and has one total deadline that includes queue
- * time.  No operation runs on a decoder, tuner, audio or HTTP caller thread.  Results are request-local and are not
- * cached or written to a database.</p>
+ * <p>Every remote operation runs on a dedicated, bounded executor and has one total caller deadline that includes
+ * queue time.  A timeout cancels the future and interrupts the worker, but cannot force an upstream library call that
+ * ignores interruption to stop.  {@link #runtimeStatus()} exposes whether remote work remains.  Results are
+ * request-local and are not cached or written to a database.</p>
  */
 public final class RadioReferenceDirectoryService implements AutoCloseable
 {
@@ -64,6 +67,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private final Object mSessionLock = new Object();
     private final RadioReferenceGatewayFactory mGatewayFactory;
     private final ThreadPoolExecutor mExecutor;
+    private final Set<Future<?>> mRequests = ConcurrentHashMap.newKeySet();
     private final int mMaximumRemoteConcurrency;
     private final int mMaximumWaitingRequests;
     private final long mRequestDeadlineNanos;
@@ -204,8 +208,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.CLOSED);
                 }
 
-                AccountStatus failure = exception.code() == RadioReferenceDirectoryException.Code.INVALID_CREDENTIALS ?
-                    AccountStatus.invalidCredentials() : AccountStatus.unavailable();
+                AccountStatus failure = switch(exception.code())
+                {
+                    case INVALID_CREDENTIALS -> AccountStatus.invalidCredentials();
+                    case INSECURE_TRANSPORT -> AccountStatus.secureTransportRequired();
+                    default -> AccountStatus.unavailable();
+                };
                 setFailedLoginStatus(generation, failure);
                 return failure;
             }
@@ -227,7 +235,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public RuntimeStatus runtimeStatus()
     {
         return new RuntimeStatus(mExecutor.getActiveCount(), mExecutor.getQueue().size(),
-            mMaximumRemoteConcurrency, mMaximumWaitingRequests, mClosed);
+            mMaximumRemoteConcurrency, mMaximumWaitingRequests, mClosed, mExecutor.isTerminated());
     }
 
     public void logout()
@@ -253,11 +261,16 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public BoundedPage<DirectoryOption> countries(String search, int limit)
         throws RadioReferenceDirectoryException
     {
+        return countries(search, 0, limit);
+    }
+
+    public BoundedPage<DirectoryOption> countries(String search, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
         String normalizedSearch = normalizedSearch(search);
-        validateLimit(limit);
+        validatePage(offset, limit);
         List<RadioReferenceGateway.Country> countries = invokePremium(RadioReferenceGateway::countries);
         List<DirectoryOption> options = new ArrayList<>();
-        boolean sourceTruncated = false;
         int scanned = 0;
 
         if(countries != null)
@@ -266,8 +279,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             {
                 if(scanned++ >= MAXIMUM_REMOTE_ITEMS_SCANNED)
                 {
-                    sourceTruncated = true;
-                    break;
+                    throw tooLarge();
                 }
 
                 if(country != null && country.id() > 0 && matches(normalizedSearch, country.name(), country.code()))
@@ -277,27 +289,31 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             }
         }
 
-        return optionPage(options, limit, sourceTruncated);
+        return optionPage(options, offset, limit);
     }
 
     public BoundedPage<DirectoryOption> states(int countryId, String search, int limit)
         throws RadioReferenceDirectoryException
     {
+        return states(countryId, search, 0, limit);
+    }
+
+    public BoundedPage<DirectoryOption> states(int countryId, String search, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
         validateId(countryId);
         String normalizedSearch = normalizedSearch(search);
-        validateLimit(limit);
+        validatePage(offset, limit);
         RadioReferenceGateway.CountryDirectory directory =
-            invokePremium(gateway -> required(gateway.country(countryId)));
+            invokePremium(gateway -> verifiedCountry(gateway.country(countryId), countryId));
         List<DirectoryOption> options = new ArrayList<>();
-        boolean sourceTruncated = false;
         int scanned = 0;
 
         for(RadioReferenceGateway.State state: directory.states())
         {
             if(scanned++ >= MAXIMUM_REMOTE_ITEMS_SCANNED)
             {
-                sourceTruncated = true;
-                break;
+                throw tooLarge();
             }
 
             if(state != null && state.id() > 0 && matches(normalizedSearch, state.name(), state.code()))
@@ -306,27 +322,31 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             }
         }
 
-        return optionPage(options, limit, sourceTruncated);
+        return optionPage(options, offset, limit);
     }
 
     public BoundedPage<DirectoryOption> counties(int stateId, String search, int limit)
         throws RadioReferenceDirectoryException
     {
+        return counties(stateId, search, 0, limit);
+    }
+
+    public BoundedPage<DirectoryOption> counties(int stateId, String search, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
         validateId(stateId);
         String normalizedSearch = normalizedSearch(search);
-        validateLimit(limit);
+        validatePage(offset, limit);
         RadioReferenceGateway.StateDirectory directory =
-            invokePremium(gateway -> required(gateway.state(stateId)));
+            invokePremium(gateway -> verifiedState(gateway.state(stateId), stateId));
         List<DirectoryOption> options = new ArrayList<>();
-        boolean sourceTruncated = false;
         int scanned = 0;
 
         for(RadioReferenceGateway.County county: directory.counties())
         {
             if(scanned++ >= MAXIMUM_REMOTE_ITEMS_SCANNED)
             {
-                sourceTruncated = true;
-                break;
+                throw tooLarge();
             }
 
             if(county != null && county.id() > 0 && matches(normalizedSearch, county.name(), county.header()))
@@ -335,7 +355,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             }
         }
 
-        return optionPage(options, limit, sourceTruncated);
+        return optionPage(options, offset, limit);
     }
 
     /**
@@ -346,6 +366,18 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                                                ScopeFilter scopeFilter, int limit)
         throws RadioReferenceDirectoryException
     {
+        return browse(selection, search, group, scopeFilter, 0, limit);
+    }
+
+    /**
+     * Returns one stable, bounded page.  Repeating the same filters with {@link BoundedPage#nextOffset()} enumerates
+     * every accepted result when the upstream directory is unchanged between requests.  The service rejects a source
+     * larger than its safety bound instead of silently making the unscanned tail inaccessible.
+     */
+    public BoundedPage<DirectoryEntry> browse(LocationSelection selection, String search, EntryGroup group,
+                                               ScopeFilter scopeFilter, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
         validateSelection(selection);
         String normalizedSearch = normalizedSearch(search);
         if(group == null || scopeFilter == null)
@@ -353,12 +385,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
 
-        validateLimit(limit);
+        validatePage(offset, limit);
 
-        LocationSnapshot snapshot = invokePremium(gateway -> new LocationSnapshot(
-            required(gateway.country(selection.countryId())),
-            selection.stateId() == null ? null : required(gateway.state(selection.stateId())),
-            selection.countyId() == null ? null : required(gateway.county(selection.countyId()))));
+        LocationSnapshot snapshot = invokePremium(gateway -> locationSnapshot(gateway, selection));
         EntryAccumulator accumulator = new EntryAccumulator(normalizedSearch, group, scopeFilter);
         accumulator.addAgencies(snapshot.country().agencies(), EntryScope.NATIONAL);
 
@@ -375,16 +404,14 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             accumulator.addAgencies(snapshot.county().agencies(), EntryScope.COUNTY);
         }
 
-        List<DirectoryEntry> entries = new ArrayList<>(accumulator.entries().values());
-        entries.sort(ENTRY_ORDER);
-        boolean truncated = accumulator.sourceTruncated() || entries.size() > limit;
-
-        if(entries.size() > limit)
+        if(accumulator.overflowed())
         {
-            entries = new ArrayList<>(entries.subList(0, limit));
+            throw tooLarge();
         }
 
-        return new BoundedPage<>(entries, truncated);
+        List<DirectoryEntry> entries = new ArrayList<>(accumulator.entries().values());
+        entries.sort(ENTRY_ORDER);
+        return page(entries, offset, limit);
     }
 
     private void setFailedLoginStatus(long generation, AccountStatus status)
@@ -509,6 +536,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         try
         {
             future = mExecutor.submit(request::execute);
+            mRequests.add(future);
+
+            if(mClosed)
+            {
+                cancel(future);
+            }
         }
         catch(RejectedExecutionException exception)
         {
@@ -542,13 +575,14 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             if(exception.getCause() instanceof RadioReferenceGatewayException gatewayException)
             {
-                throw new RadioReferenceDirectoryException(
-                    gatewayException.kind() == RadioReferenceGatewayException.Kind.INVALID_CREDENTIALS ?
-                        RadioReferenceDirectoryException.Code.INVALID_CREDENTIALS :
-                        RadioReferenceDirectoryException.Code.UNAVAILABLE);
+                throw new RadioReferenceDirectoryException(directoryCode(gatewayException.kind()));
             }
 
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.UNAVAILABLE);
+        }
+        finally
+        {
+            mRequests.remove(future);
         }
     }
 
@@ -574,19 +608,143 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         return value;
     }
 
-    private static BoundedPage<DirectoryOption> optionPage(List<DirectoryOption> options, int limit,
-                                                            boolean sourceTruncated)
+    private static RadioReferenceDirectoryException.Code directoryCode(RadioReferenceGatewayException.Kind kind)
+    {
+        return switch(kind)
+        {
+            case INVALID_CREDENTIALS -> RadioReferenceDirectoryException.Code.INVALID_CREDENTIALS;
+            case INVALID_LOCATION -> RadioReferenceDirectoryException.Code.INVALID_REQUEST;
+            case RESULT_SET_TOO_LARGE -> RadioReferenceDirectoryException.Code.RESULT_SET_TOO_LARGE;
+            case INSECURE_TRANSPORT -> RadioReferenceDirectoryException.Code.INSECURE_TRANSPORT;
+            case UNAVAILABLE -> RadioReferenceDirectoryException.Code.UNAVAILABLE;
+        };
+    }
+
+    private static LocationSnapshot locationSnapshot(RadioReferenceGateway gateway, LocationSelection selection)
+        throws RadioReferenceGatewayException
+    {
+        RadioReferenceGateway.CountryDirectory country =
+            verifiedCountry(gateway.country(selection.countryId()), selection.countryId());
+        RadioReferenceGateway.StateDirectory state = null;
+        RadioReferenceGateway.CountyDirectory county = null;
+
+        if(selection.stateId() != null)
+        {
+            requireState(country.states(), selection.stateId());
+            state = verifiedState(gateway.state(selection.stateId()), selection.stateId());
+        }
+
+        if(selection.countyId() != null)
+        {
+            requireCounty(state.counties(), selection.countyId());
+            county = verifiedCounty(gateway.county(selection.countyId()), selection.countyId());
+        }
+
+        return new LocationSnapshot(country, state, county);
+    }
+
+    private static RadioReferenceGateway.CountryDirectory verifiedCountry(
+        RadioReferenceGateway.CountryDirectory directory, int expectedId) throws RadioReferenceGatewayException
+    {
+        directory = required(directory);
+
+        if(directory.country() == null || directory.country().id() != expectedId)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+        }
+
+        return directory;
+    }
+
+    private static RadioReferenceGateway.StateDirectory verifiedState(
+        RadioReferenceGateway.StateDirectory directory, int expectedId) throws RadioReferenceGatewayException
+    {
+        directory = required(directory);
+
+        if(directory.state() == null || directory.state().id() != expectedId)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+        }
+
+        return directory;
+    }
+
+    private static RadioReferenceGateway.CountyDirectory verifiedCounty(
+        RadioReferenceGateway.CountyDirectory directory, int expectedId) throws RadioReferenceGatewayException
+    {
+        directory = required(directory);
+
+        if(directory.county() == null || directory.county().id() != expectedId)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+        }
+
+        return directory;
+    }
+
+    private static void requireState(List<RadioReferenceGateway.State> states, int expectedId)
+        throws RadioReferenceGatewayException
+    {
+        int scanned = 0;
+
+        for(RadioReferenceGateway.State state: states)
+        {
+            if(scanned++ >= MAXIMUM_REMOTE_ITEMS_SCANNED)
+            {
+                throw new RadioReferenceGatewayException(
+                    RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+            }
+
+            if(state != null && state.id() == expectedId)
+            {
+                return;
+            }
+        }
+
+        throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+    }
+
+    private static void requireCounty(List<RadioReferenceGateway.County> counties, int expectedId)
+        throws RadioReferenceGatewayException
+    {
+        int scanned = 0;
+
+        for(RadioReferenceGateway.County county: counties)
+        {
+            if(scanned++ >= MAXIMUM_REMOTE_ITEMS_SCANNED)
+            {
+                throw new RadioReferenceGatewayException(
+                    RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
+            }
+
+            if(county != null && county.id() == expectedId)
+            {
+                return;
+            }
+        }
+
+        throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+    }
+
+    private static BoundedPage<DirectoryOption> optionPage(List<DirectoryOption> options, int offset, int limit)
     {
         options.sort(Comparator.comparing(DirectoryOption::name, String.CASE_INSENSITIVE_ORDER)
             .thenComparingInt(DirectoryOption::id));
-        boolean truncated = sourceTruncated || options.size() > limit;
+        return page(options, offset, limit);
+    }
 
-        if(options.size() > limit)
-        {
-            options = new ArrayList<>(options.subList(0, limit));
-        }
+    private static <T> BoundedPage<T> page(List<T> items, int offset, int limit)
+    {
+        int totalItems = items.size();
+        int start = Math.min(offset, totalItems);
+        int end = Math.min(start + limit, totalItems);
+        Integer nextOffset = end < totalItems ? end : null;
+        return new BoundedPage<>(items.subList(start, end), offset, nextOffset, totalItems);
+    }
 
-        return new BoundedPage<>(options, truncated);
+    private static RadioReferenceDirectoryException tooLarge()
+    {
+        return new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.RESULT_SET_TOO_LARGE);
     }
 
     private static String normalizedCredential(String value, int maximumLength)
@@ -654,9 +812,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
     }
 
-    private static void validateLimit(int limit) throws RadioReferenceDirectoryException
+    private static void validatePage(int offset, int limit) throws RadioReferenceDirectoryException
     {
-        if(limit <= 0 || limit > MAXIMUM_RESULT_LIMIT)
+        if(offset < 0 || offset > MAXIMUM_REMOTE_ITEMS_SCANNED ||
+            limit <= 0 || limit > MAXIMUM_RESULT_LIMIT)
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
@@ -720,6 +879,11 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
     }
 
+    /**
+     * Stops accepting requests, cancels every known caller future, interrupts remote workers and waits no longer than
+     * the configured shutdown interval.  An upstream call that ignores interruption can remain active afterward; its
+     * worker is a daemon and {@link RuntimeStatus#remoteWorkerTerminated()} remains false until it actually exits.
+     */
     @Override
     public void close()
     {
@@ -740,7 +904,21 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
 
         close(previous);
-        mExecutor.shutdownNow();
+
+        for(Future<?> request: mRequests)
+        {
+            request.cancel(true);
+        }
+
+        List<Runnable> neverStarted = mExecutor.shutdownNow();
+
+        for(Runnable runnable: neverStarted)
+        {
+            if(runnable instanceof Future<?> future)
+            {
+                future.cancel(false);
+            }
+        }
 
         try
         {
@@ -773,7 +951,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         private final ScopeFilter mScopeFilter;
         private final Map<EntryKey,DirectoryEntry> mEntries = new LinkedHashMap<>();
         private int mScanned;
-        private boolean mSourceTruncated;
+        private boolean mOverflowed;
 
         private EntryAccumulator(String search, EntryGroup group, ScopeFilter scopeFilter)
         {
@@ -855,7 +1033,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             if(mScanned >= MAXIMUM_REMOTE_ITEMS_SCANNED)
             {
-                mSourceTruncated = true;
+                mOverflowed = true;
                 return false;
             }
 
@@ -879,9 +1057,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             return mEntries;
         }
 
-        private boolean sourceTruncated()
+        private boolean overflowed()
         {
-            return mSourceTruncated;
+            return mOverflowed;
         }
     }
 
@@ -943,6 +1121,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         VALID_PREMIUM,
         EXPIRED_PREMIUM,
         INVALID_CREDENTIALS,
+        SECURE_TRANSPORT_REQUIRED,
         UNAVAILABLE,
         CLOSED
     }
@@ -986,6 +1165,11 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             return new AccountStatus(AccountState.UNAVAILABLE, "", "");
         }
 
+        private static AccountStatus secureTransportRequired()
+        {
+            return new AccountStatus(AccountState.SECURE_TRANSPORT_REQUIRED, "", "");
+        }
+
         private static AccountStatus closed()
         {
             return new AccountStatus(AccountState.CLOSED, "", "");
@@ -1008,7 +1192,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     }
 
     public record RuntimeStatus(int activeRequests, int waitingRequests, int maximumRemoteConcurrency,
-                                int maximumWaitingRequests, boolean closed)
+                                int maximumWaitingRequests, boolean closed, boolean remoteWorkerTerminated)
     {
     }
 
@@ -1016,11 +1200,25 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     {
     }
 
-    public record BoundedPage<T>(List<T> items, boolean truncated)
+    public record BoundedPage<T>(List<T> items, int offset, Integer nextOffset, int totalItems)
     {
         public BoundedPage
         {
             items = items == null ? List.of() : List.copyOf(items);
+        }
+
+        public boolean hasMore()
+        {
+            return nextOffset != null;
+        }
+
+        /**
+         * Compatibility name for first-page callers.  A true value means another page is available, never that data
+         * has been discarded.
+         */
+        public boolean truncated()
+        {
+            return hasMore();
         }
     }
 
