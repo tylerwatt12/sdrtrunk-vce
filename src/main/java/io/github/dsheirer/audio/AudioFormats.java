@@ -20,9 +20,6 @@
 package io.github.dsheirer.audio;
 
 import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.DataLine;
-import javax.sound.sampled.Line;
-import javax.sound.sampled.SourceDataLine;
 
 /**
  * Audio formats
@@ -41,12 +38,10 @@ public class AudioFormats
 	public static final float PCM_44100_HZ_RATE = 44100;
 
 	public static final int ONE_CHANNEL = 1;
-	public static final int TWO_CHANNELS = 2;
 	public static final int PCM_SAMPLE_SIZE_16_BITS = 16;
 	public static final int PCM_SAMPLE_SIZE_32_BITS = 32;
 	public static final int PCM_FRAME_SIZE_BYTES_16_BIT_MONO = 2;
 	public static final int PCM_FRAME_SIZE_BYTES_32_BIT_MONO = 4;
-	public static final int PCM_FRAME_SIZE_BYTES_16_BIT_STEREO = 4;
 
 	public static final AudioFormat PCM_SIGNED_8000_HZ_32_BIT_MONO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
 					PCM_8_KHZ_RATE,
@@ -112,23 +107,4 @@ public class AudioFormats
 					PCM_44100_HZ_RATE,
 					LITTLE_ENDIAN );
 
-	public static final AudioFormat PCM_SIGNED_8000_HZ_16BITS_STEREO = new AudioFormat( AudioFormat.Encoding.PCM_SIGNED,
-					PCM_8_KHZ_RATE,
-					PCM_SAMPLE_SIZE_16_BITS,
-					TWO_CHANNELS,
-					PCM_FRAME_SIZE_BYTES_16_BIT_STEREO,
-					PCM_8_KHZ_RATE,
-					LITTLE_ENDIAN );
-
-	/**
-	 * Source Data Line Info for a 48 kHz, 16-bits signed PCM one channel
-	 */
-	public static final Line.Info MONO_SOURCE_DATALINE_INFO = 
-		new DataLine.Info( SourceDataLine.class, PCM_SIGNED_8000_HZ_16_BIT_MONO);
-	
-	/**
-	 * Source Data Line Info for a 48 kHz, 16-bits signed PCM two channels
-	 */
-	public static final Line.Info STEREO_SOURCE_DATALINE_INFO = 
-		new DataLine.Info( SourceDataLine.class, PCM_SIGNED_8000_HZ_16BITS_STEREO);
 }

@@ -92,7 +92,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final String ERROR_STOPPING_CHANNEL_LABEL = "Error stopping channel [";
     private static final Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
     private static final String TUNER_UNAVAILABLE_DESCRIPTION = "TUNER UNAVAILABLE";
-    private static final String DECODER_UNAVAILABLE_DESCRIPTION = "DECODER UNAVAILABLE";
+    private static final String CONFIGURATION_UNAVAILABLE_DESCRIPTION = "CHANNEL CONFIGURATION UNAVAILABLE";
     private static final long NOW_PLAYING_TRAFFIC_CHANNEL_HANG_TIME_MILLISECONDS =
         Math.max(0, Long.getLong("sdrtrunk.nowPlaying.trafficChannelHangMs", 5000L));
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
@@ -529,8 +529,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         if(!isRunnable(channel))
         {
             mChannelEventBroadcaster.broadcast(new ChannelEvent(channel,
-                ChannelEvent.Event.NOTIFICATION_PROCESSING_START_REJECTED, DECODER_UNAVAILABLE_DESCRIPTION));
-            throw new ChannelException("Decoder is retired or unsupported");
+                ChannelEvent.Event.NOTIFICATION_PROCESSING_START_REJECTED, CONFIGURATION_UNAVAILABLE_DESCRIPTION));
+            throw new ChannelException("Channel source or decoder is retired or unsupported");
         }
 
         //Ensure that we can get a source before we construct a new processing chain
@@ -1049,9 +1049,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Indicates whether a saved channel has a decoder that can safely enter the source-allocation path.  This check is
-     * deliberately performed before requesting a tuner source so that retired compatibility configurations cannot
-     * reserve tuner bandwidth or create a persistent retry loop.
+     * Indicates whether a saved channel has a decoder and source that can safely enter the source-allocation path.
+     * This check is deliberately performed before requesting a tuner source so that retired compatibility
+     * configurations cannot reserve tuner bandwidth or create a persistent retry loop.
      */
     static boolean isRunnable(Channel channel)
     {

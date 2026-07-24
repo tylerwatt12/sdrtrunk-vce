@@ -23,6 +23,7 @@ import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceException;
+import io.github.dsheirer.source.config.SourceConfigMixer;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
@@ -30,7 +31,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class ChannelProcessingManagerRetiredDecoderTest
+class ChannelProcessingManagerRetiredConfigurationTest
 {
     @Test
     void rejectsRetiredDecoderBeforeRequestingATunerSource() throws Exception
@@ -63,6 +64,21 @@ class ChannelProcessingManagerRetiredDecoderTest
 
         assertTrue(ChannelProcessingManager.isRunnable(active));
         assertEquals(List.of(active), model.getAutoStartChannels());
+    }
+
+    @Test
+    void rejectsRetiredSoundCardSourceBeforeRequestingAnyHardware() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        CountingTunerManager tunerManager = new CountingTunerManager(preferences);
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, tunerManager, new AliasModel(),
+            preferences);
+        Channel retiredSource = channel("Retired sound card", new DecodeConfigDMR());
+        retiredSource.setSourceConfiguration(new SourceConfigMixer());
+
+        assertThrows(ChannelException.class, () -> manager.start(retiredSource));
+        assertEquals(0, tunerManager.getSourceRequests());
+        assertFalse(ChannelProcessingManager.isRunnable(retiredSource));
     }
 
     private static Channel channel(String name,

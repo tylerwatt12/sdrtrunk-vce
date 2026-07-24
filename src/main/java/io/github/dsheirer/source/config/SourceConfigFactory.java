@@ -30,6 +30,11 @@ public class SourceConfigFactory
 
     public static SourceConfiguration getSourceConfiguration(SourceType source)
     {
+        if(source != null && source.isRetiredCompatibility())
+        {
+            throw new IllegalArgumentException("Retired source configurations cannot be created");
+        }
+
         SourceConfiguration retVal;
 
         switch(source)
@@ -39,9 +44,6 @@ public class SourceConfigFactory
                 break;
             case TUNER_MULTIPLE_FREQUENCIES:
                 retVal = new SourceConfigTunerMultipleFrequency();
-                break;
-            case MIXER:
-                retVal = new SourceConfigMixer();
                 break;
             case NONE:
             default:
@@ -59,14 +61,13 @@ public class SourceConfigFactory
     {
         if(config != null)
         {
+            if(config.getSourceType() != null && config.getSourceType().isRetiredCompatibility())
+            {
+                throw new IllegalArgumentException("Retired source configurations cannot be copied");
+            }
+
             switch(config.getSourceType())
             {
-                case MIXER:
-                    SourceConfigMixer originalMixer = (SourceConfigMixer) config;
-                    SourceConfigMixer copyMixer = new SourceConfigMixer();
-                    copyMixer.setChannel(originalMixer.getChannel());
-                    copyMixer.setMixer(originalMixer.getMixer());
-                    return copyMixer;
                 case RECORDING:
                     SourceConfigRecording originalRec = (SourceConfigRecording) config;
                     SourceConfigRecording copyRec = new SourceConfigRecording();

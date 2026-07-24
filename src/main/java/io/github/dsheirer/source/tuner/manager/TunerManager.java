@@ -26,7 +26,6 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
-import io.github.dsheirer.source.mixer.MixerManager;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerFactory;
@@ -66,8 +65,8 @@ import org.usb4java.HotplugCallbackHandle;
 import org.usb4java.LibUsb;
 
 /**
- * Tuner manager provides access to tuners using USB, recording, sound-card and system-daemon accessible devices. This
- * manager also supports hot-plug detection and black-listing of discovered tuners so that they can be used with other
+ * Tuner manager provides access to tuners using USB, recording, and system-daemon accessible devices. This manager
+ * also supports hot-plug detection and black-listing of discovered tuners so that they can be used with other
  * software applications.
  */
 public class TunerManager implements IDiscoveredTunerStatusListener
@@ -562,13 +561,15 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public Source getSource(SourceConfiguration config, ChannelSpecification channelSpecification,
                             String threadName) throws SourceException
     {
+        if(config == null || config.getSourceType() == null || !config.getSourceType().isActive())
+        {
+            throw new SourceException("Channel source is retired or unsupported");
+        }
+
         Source retVal = null;
 
         switch(config.getSourceType())
         {
-            case MIXER:
-                retVal = MixerManager.getSource(config);
-                break;
             case TUNER:
                 if(config instanceof SourceConfigTuner)
                 {

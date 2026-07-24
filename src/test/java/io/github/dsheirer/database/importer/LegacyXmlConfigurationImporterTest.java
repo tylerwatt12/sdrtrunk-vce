@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.database.importer;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -204,6 +205,42 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(1, state.getChannels().size());
         assertEquals("Supported DMR", state.getChannels().get(0).getName());
         assertEquals(DecoderType.DMR, state.getChannels().get(0).getDecodeConfiguration().getDecoderType());
+    }
+
+    @Test
+    void skipsRetiredSoundCardChannelsWithoutChangingTheLegacyXml() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("mixed-sound-card.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <channel system="Legacy" site="Audio Input" name="Retired Sound Card" enabled="true" order="1">
+                <alias_list_name>Legacy</alias_list_name>
+                <source_configuration type="sourceConfigMixer" source_type="MIXER"
+                    mixer="Legacy Line Input" channel="RIGHT"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+              <channel system="Current" site="DMR Site" name="Supported DMR" enabled="true" order="2">
+                <alias_list_name>Current</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="460000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+            </playlist>
+            """);
+        byte[] original = Files.readAllBytes(xml);
+
+        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+
+        assertEquals(1, state.getChannels().size());
+        assertEquals("Supported DMR", state.getChannels().get(0).getName());
+        assertEquals(DecoderType.DMR, state.getChannels().get(0).getDecodeConfiguration().getDecoderType());
+        assertArrayEquals(original, Files.readAllBytes(xml),
+            "reading a legacy playlist must never rewrite or delete its retired sound-card channel");
     }
 
     @Test

@@ -12,6 +12,7 @@
 package io.github.dsheirer.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
@@ -20,7 +21,10 @@ import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.SourceType;
+import io.github.dsheirer.source.config.SourceConfigFactory;
+import io.github.dsheirer.source.config.SourceConfigMixer;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
 class ChannelConfigurationPolicyTest
@@ -30,11 +34,15 @@ class ChannelConfigurationPolicyTest
     {
         Channel active = channel(new DecodeConfigDMR());
         Channel retired = channel(new DecodeConfigMPT1327());
+        Channel retiredSource = channel(new DecodeConfigDMR());
+        retiredSource.setSourceConfiguration(new SourceConfigMixer());
 
         assertTrue(ChannelConfigurationPolicy.isActive(active));
         assertFalse(ChannelConfigurationPolicy.isRetired(active));
         assertFalse(ChannelConfigurationPolicy.isActive(retired));
         assertTrue(ChannelConfigurationPolicy.isRetired(retired));
+        assertFalse(ChannelConfigurationPolicy.isActive(retiredSource));
+        assertTrue(ChannelConfigurationPolicy.isRetired(retiredSource));
     }
 
     @Test
@@ -42,6 +50,7 @@ class ChannelConfigurationPolicyTest
     {
         assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "TUNER"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("MPT1327", "TUNER"));
+        assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "MIXER"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "REMOVED_SOURCE"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("FUTURE_DECODER", "TUNER"));
     }
@@ -55,6 +64,12 @@ class ChannelConfigurationPolicyTest
         assertTrue(Protocol.MPT1327.isRetiredCompatibility());
         assertFalse(Protocol.TALKGROUP_PROTOCOLS.contains(Protocol.MPT1327));
         assertTrue(SourceType.TUNER.isActive());
+        assertTrue(SourceType.MIXER.isRetiredCompatibility());
+        assertFalse(Arrays.asList(SourceType.getTypes()).contains(SourceType.MIXER));
+        assertThrows(IllegalArgumentException.class,
+            () -> SourceConfigFactory.getSourceConfiguration(SourceType.MIXER));
+        assertThrows(IllegalArgumentException.class,
+            () -> SourceConfigFactory.copy(new SourceConfigMixer()));
     }
 
     private static Channel channel(io.github.dsheirer.module.decode.config.DecodeConfiguration decoder)

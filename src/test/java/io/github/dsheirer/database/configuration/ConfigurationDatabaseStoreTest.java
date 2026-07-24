@@ -14,6 +14,7 @@ package io.github.dsheirer.database.configuration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
@@ -142,12 +143,13 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void preservesRetiredChannelsAndLegacyChannelMapsWithoutLoadingThem() throws Exception
+    void preservesRetiredDecoderAndSoundCardRowsWithoutLoadingThem() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retired-configuration.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         String retainedJson = "{\"type\":\"retired-channel\",\"payload\":\"must remain byte-for-byte\"}";
+        String soundCardJson = "{\"type\":\"retired-sound-card\",\"payload\":\"must also remain byte-for-byte\"}";
         String channelMapJson = "{\"name\":\"Retired Map\",\"ranges\":[{\"first\":1,\"last\":9}]}";
 
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -159,6 +161,14 @@ class ConfigurationDatabaseStoreTest
                 ) VALUES (77, 9, 'Legacy System', 'Legacy Site', 'Retired MPT', 'Legacy Aliases', 'legacy-guid',
                     1, 4, 'MPT1327', 'TUNER', 451000000, 2, 1, 1, ?)
                 """);
+            PreparedStatement soundCardStatement = connection.prepareStatement("""
+                INSERT INTO configuration_channel (
+                    id, sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
+                    auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
+                    recording_enabled, event_logging_enabled, config_json
+                ) VALUES (78, 10, 'Legacy System', 'Audio Input', 'Retired Sound Card', 'Legacy Aliases',
+                    'legacy-sound-guid', 1, 5, 'DMR', 'MIXER', NULL, 0, 0, 1, ?)
+                """);
             PreparedStatement mapStatement = connection.prepareStatement("""
                 INSERT INTO configuration_channel_map (id, sort_order, name, config_json)
                 VALUES (88, 3, 'Retired Map', ?)
@@ -166,6 +176,8 @@ class ConfigurationDatabaseStoreTest
         {
             channelStatement.setString(1, retainedJson);
             channelStatement.executeUpdate();
+            soundCardStatement.setString(1, soundCardJson);
+            soundCardStatement.executeUpdate();
             mapStatement.setString(1, channelMapJson);
             mapStatement.executeUpdate();
         }
@@ -194,6 +206,12 @@ class ConfigurationDatabaseStoreTest
                        recording_enabled, event_logging_enabled, config_json
                 FROM configuration_channel WHERE id = 77
                 """);
+            PreparedStatement soundCardQuery = connection.prepareStatement("""
+                SELECT sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
+                       auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
+                       recording_enabled, event_logging_enabled, config_json
+                FROM configuration_channel WHERE id = 78
+                """);
             PreparedStatement mapQuery = connection.prepareStatement("""
                 SELECT sort_order, name, config_json FROM configuration_channel_map WHERE id = 88
                 """))
@@ -216,6 +234,26 @@ class ConfigurationDatabaseStoreTest
                 assertEquals(1, resultSet.getInt("recording_enabled"));
                 assertEquals(1, resultSet.getInt("event_logging_enabled"));
                 assertEquals(retainedJson, resultSet.getString("config_json"));
+            }
+
+            try(ResultSet resultSet = soundCardQuery.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                assertEquals(10, resultSet.getInt("sort_order"));
+                assertEquals("Legacy System", resultSet.getString("system_name"));
+                assertEquals("Audio Input", resultSet.getString("site_name"));
+                assertEquals("Retired Sound Card", resultSet.getString("name"));
+                assertEquals("Legacy Aliases", resultSet.getString("alias_list_name"));
+                assertEquals("legacy-sound-guid", resultSet.getString("radres_guid"));
+                assertEquals(1, resultSet.getInt("auto_start"));
+                assertEquals(5, resultSet.getInt("auto_start_order"));
+                assertEquals("DMR", resultSet.getString("decoder_type"));
+                assertEquals("MIXER", resultSet.getString("source_type"));
+                assertNull(resultSet.getObject("primary_frequency_hz"));
+                assertEquals(0, resultSet.getInt("frequency_count"));
+                assertEquals(0, resultSet.getInt("recording_enabled"));
+                assertEquals(1, resultSet.getInt("event_logging_enabled"));
+                assertEquals(soundCardJson, resultSet.getString("config_json"));
             }
 
             try(ResultSet resultSet = mapQuery.executeQuery())
