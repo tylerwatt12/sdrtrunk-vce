@@ -13,10 +13,12 @@ package io.github.dsheirer.gui.configuration.radioreference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Flavor;
 import io.github.dsheirer.rrapi.type.Mode;
 import io.github.dsheirer.rrapi.type.System;
@@ -52,6 +54,30 @@ class RadioReferenceDecoderSelectionTest
     {
         assertEquals(DecoderType.P25_PHASE1, trunkedDecoderType("Phase I"));
         assertEquals(DecoderType.P25_PHASE2, trunkedDecoderType("Phase II"));
+    }
+
+    @Test
+    void treatsMptSystemsAsUnsupported()
+    {
+        Type type = new Type();
+        type.setTypeId(1);
+        type.setName("MPT-1327");
+        Flavor flavor = new Flavor();
+        flavor.setFlavorId(2);
+        flavor.setName("Standard");
+        Voice voice = new Voice();
+        voice.setVoiceId(3);
+        voice.setName("Analog");
+        System system = new System();
+        system.setTypeId(type.getTypeId());
+        system.setFlavorId(flavor.getFlavorId());
+        system.setVoiceId(voice.getVoiceId());
+
+        RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
+            Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
+
+        assertNull(decoder.getDecoderType(system));
+        assertEquals(Protocol.UNKNOWN, decoder.getProtocol(system));
     }
 
     private static DecoderType trunkedDecoderType(String flavorName)

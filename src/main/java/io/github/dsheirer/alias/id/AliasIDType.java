@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.alias.id;
 
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -47,23 +48,52 @@ public enum AliasIDType
     FLEETSYNC("Fleetsync"),
     LEGACY_TALKGROUP("Legacy Talkgroup"),
     MDC1200("MDC-1200"),
-    MPT1327("MPT-1327"),
+    MPT1327("MPT-1327", Availability.RETIRED_COMPATIBILITY),
     NON_RECORDABLE("Audio Non-Recordable");
 
     private String mLabel;
+    private Availability mAvailability;
 
     AliasIDType(String label)
     {
+        this(label, Availability.ACTIVE);
+    }
+
+    AliasIDType(String label, Availability availability)
+    {
         mLabel = label;
+        mAvailability = availability;
     }
 
     //Values used by the View-By alias editor
-    public static final Set<AliasIDType> VIEW_BY_VALUES = Set.copyOf(EnumSet.of(TALKGROUP, TALKGROUP_RANGE, RADIO_ID,
+    public static final Set<AliasIDType> VIEW_BY_VALUES = activeOnly(EnumSet.of(TALKGROUP, TALKGROUP_RANGE, RADIO_ID,
         RADIO_ID_RANGE, P25_FULLY_QUALIFIED_RADIO_ID, P25_FULLY_QUALIFIED_TALKGROUP, UNIT_STATUS, STATUS, TONES));
+
+    private static Set<AliasIDType> activeOnly(EnumSet<AliasIDType> candidates)
+    {
+        candidates.removeIf(type -> !type.isActive());
+        return Collections.unmodifiableSet(candidates);
+    }
 
     @Override
     public String toString()
     {
         return mLabel;
+    }
+
+    public boolean isActive()
+    {
+        return mAvailability == Availability.ACTIVE;
+    }
+
+    public boolean isRetiredCompatibility()
+    {
+        return mAvailability == Availability.RETIRED_COMPATIBILITY;
+    }
+
+    public enum Availability
+    {
+        ACTIVE,
+        RETIRED_COMPATIBILITY
     }
 }

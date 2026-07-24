@@ -27,10 +27,10 @@ import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.action.AliasActionType;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.database.DatabaseFileInstaller;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
@@ -118,8 +118,7 @@ public class LegacyXmlConfigurationImporter
         });
 
         return new ImportResult(normalizedXml, normalizedDatabase, state.getAliases().size(),
-            state.getBroadcastConfigurations().size(), state.getChannelMaps().size(), state.getChannels().size(),
-            p25ConventionalConversions);
+            state.getBroadcastConfigurations().size(), state.getChannels().size(), p25ConventionalConversions);
     }
 
     public static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
@@ -134,8 +133,9 @@ public class LegacyXmlConfigurationImporter
                 alias.setAliasActions(alias.getAliasActions().stream()
                     .filter(action -> !(action instanceof RetiredAliasAction)).toList()));
             state.setBroadcastConfigurations(nonNull(playlist.getBroadcastConfigurations()));
-            state.setChannelMaps(nonNull(playlist.getChannelMaps()));
-            state.setChannels(nonNull(playlist.getChannels()));
+            state.setChannels(new ArrayList<>(nonNull(playlist.getChannels()).stream()
+                .filter(channel -> !ChannelConfigurationPolicy.isRetired(channel))
+                .toList()));
             return state;
         }
     }
@@ -237,16 +237,15 @@ public class LegacyXmlConfigurationImporter
         if(aliases.size() != expected.getAliases().size() || actualIdentifierCount != expectedIdentifierCount ||
             actualActionCount != expectedActionCount ||
             actual.getBroadcastConfigurations().size() != expected.getBroadcastConfigurations().size() ||
-            actual.getChannelMaps().size() != expected.getChannelMaps().size() ||
             actual.getChannels().size() != expected.getChannels().size())
         {
             throw new IOException("Migrated SQLite validation failed: expected aliases=" + expected.getAliases().size() +
                 " aliasIdentifiers=" + expectedIdentifierCount + " aliasActions=" + expectedActionCount +
-                " streams=" + expected.getBroadcastConfigurations().size() + " channelMaps=" +
-                expected.getChannelMaps().size() + " channels=" + expected.getChannels().size() +
+                " streams=" + expected.getBroadcastConfigurations().size() + " channels=" +
+                expected.getChannels().size() +
                 " but loaded aliases=" + aliases.size() + " aliasIdentifiers=" + actualIdentifierCount +
-                " aliasActions=" + actualActionCount + " streams=" + actual.getBroadcastConfigurations().size() + " channelMaps=" +
-                actual.getChannelMaps().size() + " channels=" + actual.getChannels().size());
+                " aliasActions=" + actualActionCount + " streams=" + actual.getBroadcastConfigurations().size() +
+                " channels=" + actual.getChannels().size());
         }
     }
 
@@ -260,8 +259,8 @@ public class LegacyXmlConfigurationImporter
         return aliases.stream().mapToInt(alias -> alias.getAliasActions().size()).sum();
     }
 
-    public record ImportResult(Path sourceXml, Path database, int aliasCount, int streamCount, int channelMapCount,
-                               int channelCount, int p25ConventionalConversions)
+    public record ImportResult(Path sourceXml, Path database, int aliasCount, int streamCount, int channelCount,
+                               int p25ConventionalConversions)
     {
     }
 
@@ -271,7 +270,6 @@ public class LegacyXmlConfigurationImporter
         private int mVersion = ConfigurationManager.CONFIGURATION_CURRENT_VERSION;
         private List<Alias> mAliases = new ArrayList<>();
         private List<BroadcastConfiguration> mBroadcastConfigurations = new ArrayList<>();
-        private List<ChannelMap> mChannelMaps = new ArrayList<>();
         private List<Channel> mChannels = new ArrayList<>();
 
         @JacksonXmlProperty(isAttribute = true, localName = "version")
@@ -305,17 +303,6 @@ public class LegacyXmlConfigurationImporter
         public void setBroadcastConfigurations(List<BroadcastConfiguration> broadcastConfigurations)
         {
             mBroadcastConfigurations = broadcastConfigurations;
-        }
-
-        @JacksonXmlProperty(isAttribute = false, localName = "channel_map")
-        public List<ChannelMap> getChannelMaps()
-        {
-            return mChannelMaps;
-        }
-
-        public void setChannelMaps(List<ChannelMap> channelMaps)
-        {
-            mChannelMaps = channelMaps;
         }
 
         @JacksonXmlProperty(isAttribute = false, localName = "channel")

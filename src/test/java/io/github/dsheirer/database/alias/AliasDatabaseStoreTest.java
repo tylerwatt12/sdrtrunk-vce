@@ -16,11 +16,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasFactory;
+import io.github.dsheirer.alias.AliasIdentifierPolicy;
 import io.github.dsheirer.alias.action.RecurringAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
+import io.github.dsheirer.alias.id.AliasIDType;
+import io.github.dsheirer.alias.id.legacy.mpt1327.MPT1327ID;
 import io.github.dsheirer.alias.id.legacy.nonrecordable.NonRecordable;
 import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.record.Record;
@@ -236,6 +240,40 @@ class AliasDatabaseStoreTest
 
         assertTrue(store.isInitialized());
         assertTrue(store.loadAliases().isEmpty());
+    }
+
+    @Test
+    void preservesButHidesRetiredMptAliasIdentifiers() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("retired-mpt-alias.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        AliasDatabaseStore store = new AliasDatabaseStore(database);
+
+        Alias alias = new Alias("Legacy MPT Alias");
+        alias.setAliasListName("Legacy");
+        MPT1327ID legacyIdentifier = new MPT1327ID();
+        legacyIdentifier.setIdent("001-0001");
+        alias.addAliasID(legacyIdentifier);
+        alias.addAliasID(new Talkgroup(Protocol.MPT1327, 8_193));
+
+        store.replaceAliases(List.of(alias));
+        Alias loaded = store.loadAliases().get(0);
+        assertEquals(2, loaded.getAliasIdentifiers().size());
+        assertTrue(loaded.getAliasIdentifiers().stream().noneMatch(AliasIdentifierPolicy::isUserVisible));
+        assertTrue(AliasIDType.MPT1327.isRetiredCompatibility());
+        MPT1327ID loadedLegacy = loaded.getAliasIdentifiers().stream()
+            .filter(MPT1327ID.class::isInstance)
+            .map(MPT1327ID.class::cast)
+            .findFirst()
+            .orElseThrow();
+        assertEquals("001-0001", loadedLegacy.getIdent());
+        MPT1327ID copiedLegacy = (MPT1327ID)AliasFactory.copyOf(loadedLegacy);
+        assertEquals("001-0001", copiedLegacy.getIdent());
+
+        store.replaceAliases(List.of(loaded));
+        Alias savedAgain = store.loadAliases().get(0);
+        assertEquals(2, savedAgain.getAliasIdentifiers().size());
+        assertTrue(savedAgain.getAliasIdentifiers().stream().noneMatch(AliasIdentifierPolicy::isUserVisible));
     }
 
     private static boolean hasIdentifier(Alias alias, Class<? extends AliasID> type)

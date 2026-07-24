@@ -27,25 +27,45 @@ public enum SourceType
     RECORDING("IQ Recording");
 
     private String mDisplayString;
+    private Availability mAvailability;
 
     SourceType(String displayString)
     {
+        this(displayString, Availability.ACTIVE);
+    }
+
+    SourceType(String displayString, Availability availability)
+    {
         mDisplayString = displayString;
+        mAvailability = availability;
     }
 
     public static SourceType[] getTypes()
     {
-        SourceType[] types = new SourceType[3];
-        types[0] = SourceType.TUNER;
-        types[1] = SourceType.TUNER_MULTIPLE_FREQUENCIES;
-        types[2] = SourceType.MIXER;
+        return java.util.stream.Stream.of(SourceType.TUNER, SourceType.TUNER_MULTIPLE_FREQUENCIES, SourceType.MIXER)
+            .filter(SourceType::isActive)
+            .toArray(SourceType[]::new);
+    }
 
-        return types;
+    public boolean isActive()
+    {
+        return mAvailability == Availability.ACTIVE;
+    }
+
+    public boolean isRetiredCompatibility()
+    {
+        return mAvailability == Availability.RETIRED_COMPATIBILITY;
     }
 
     @Override
     public String toString()
     {
         return mDisplayString;
+    }
+
+    public enum Availability
+    {
+        ACTIVE,
+        RETIRED_COMPATIBILITY
     }
 }

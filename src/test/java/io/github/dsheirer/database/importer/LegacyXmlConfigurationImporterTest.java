@@ -59,7 +59,6 @@ class LegacyXmlConfigurationImporterTest
 
         assertEquals(1, result.aliasCount());
         assertEquals(1, result.streamCount());
-        assertEquals(1, result.channelMapCount());
         assertEquals(2, result.channelCount());
         assertEquals(1, result.p25ConventionalConversions());
 
@@ -77,7 +76,6 @@ class LegacyXmlConfigurationImporterTest
         ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
         assertEquals(2, state.getChannels().size());
         assertEquals(1, state.getBroadcastConfigurations().size());
-        assertEquals(1, state.getChannelMaps().size());
 
         assertInstanceOf(RadioResolveConfiguration.class, state.getBroadcastConfigurations().get(0));
         RadioResolveConfiguration stream = (RadioResolveConfiguration)state.getBroadcastConfigurations().get(0);
@@ -170,6 +168,42 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(1, state.getAliases().size());
         assertTrue(state.getAliases().get(0).getAliasActions().isEmpty());
         assertTrue(state.getAliases().get(0).getAliasIdentifiers().stream().anyMatch(Talkgroup.class::isInstance));
+    }
+
+    @Test
+    void skipsRetiredMptChannelsAndChannelMapsFromMixedLegacyXml() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("mixed-mpt.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <channel_map name="Retired Map">
+                <range first="0" last="4095" base="451000000" size="12500"/>
+              </channel_map>
+              <channel system="Legacy" site="MPT Site" name="Retired MPT" enabled="true" order="1">
+                <alias_list_name>Legacy</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="451000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigMPT1327" channel_map_name="Retired Map"
+                    sync="FRENCH" traffic_channel_pool_size="8" call_timeout="30"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+              <channel system="Current" site="DMR Site" name="Supported DMR" enabled="true" order="2">
+                <alias_list_name>Current</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="460000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+            </playlist>
+            """);
+
+        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+
+        assertEquals(1, state.getChannels().size());
+        assertEquals("Supported DMR", state.getChannels().get(0).getName());
+        assertEquals(DecoderType.DMR, state.getChannels().get(0).getDecodeConfiguration().getDecoderType());
     }
 
     @Test

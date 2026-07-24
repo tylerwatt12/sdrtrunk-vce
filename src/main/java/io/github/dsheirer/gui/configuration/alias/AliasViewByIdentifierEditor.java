@@ -20,6 +20,7 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasIdentifierPolicy;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
@@ -125,7 +126,7 @@ public class AliasViewByIdentifierEditor extends VBox
         {
             for(AliasID aliasID: alias.getAliasIdentifiers())
             {
-                if(aliasID.getType() == type)
+                if(aliasID.getType() == type && AliasIdentifierPolicy.isUserVisible(aliasID))
                 {
                     getAliasAndIdentifierTableView().getItems().add(new AliasAndIdentifier(alias, aliasID));
                 }

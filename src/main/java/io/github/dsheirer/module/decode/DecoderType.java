@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode;
 
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -32,7 +33,7 @@ public enum DecoderType
     DMR("DMR","DMR", Protocol.DMR),
     LTR("LTR", "LTR", Protocol.LTR),
     LTR_NET("LTR-Net", "LTR-Net", Protocol.LTR_NET),
-    MPT1327("MPT1327", "MPT1327", Protocol.MPT1327),
+    MPT1327("MPT1327", "MPT1327", Protocol.MPT1327, Availability.RETIRED_COMPATIBILITY),
     NBFM("NBFM", "NBFM", Protocol.NBFM),
     NXDN("NXDN", "NXDN", Protocol.NXDN),
     PASSPORT("Passport", "Passport", Protocol.PASSPORT),
@@ -50,19 +51,26 @@ public enum DecoderType
     private String mDisplayString;
     private String mShortDisplayString;
     private Protocol mProtocol;
+    private Availability mAvailability;
 
     DecoderType(String displayString, String shortDisplayString, Protocol protocol)
+    {
+        this(displayString, shortDisplayString, protocol, Availability.ACTIVE);
+    }
+
+    DecoderType(String displayString, String shortDisplayString, Protocol protocol, Availability availability)
     {
         mDisplayString = displayString;
         mShortDisplayString = shortDisplayString;
         mProtocol = protocol;
+        mAvailability = availability;
     }
 
     /**
      * Primary decoders that operate on I/Q sample streams
      */
     public static final Set<DecoderType> PRIMARY_DECODERS =
-        Set.copyOf(EnumSet.of(DecoderType.AM,
+        activeOnly(EnumSet.of(DecoderType.AM,
         DecoderType.DMR,
         DecoderType.LTR,
         DecoderType.LTR_NET,
@@ -78,7 +86,7 @@ public enum DecoderType
      * Auxiliary decoders that operate on in-band signalling in the decoded audio channel
      */
     public static final Set<DecoderType> AUX_DECODERS =
-        Set.copyOf(EnumSet.of(DecoderType.DCS,
+        activeOnly(EnumSet.of(DecoderType.DCS,
         DecoderType.FLEETSYNC2,
         DecoderType.LJ_1200,
         DecoderType.MDC1200,
@@ -87,7 +95,7 @@ public enum DecoderType
     /**
      * Decoders that produce a (recordable) bitstream
      */
-    public static final Set<DecoderType> BITSTREAM_DECODERS = Set.copyOf(EnumSet.of(DecoderType.DMR,
+    public static final Set<DecoderType> BITSTREAM_DECODERS = activeOnly(EnumSet.of(DecoderType.DMR,
         DecoderType.MPT1327, DecoderType.NXDN, DecoderType.P25_CONVENTIONAL, DecoderType.P25_PHASE1,
         DecoderType.P25_PHASE2));
 
@@ -95,8 +103,14 @@ public enum DecoderType
      * Decoders that produce (recordable) MBE audio codec frames
      */
     public static final Set<DecoderType> MBE_AUDIO_CODEC_DECODERS =
-        Set.copyOf(EnumSet.of(DecoderType.DMR, DecoderType.P25_CONVENTIONAL, DecoderType.P25_PHASE1,
+        activeOnly(EnumSet.of(DecoderType.DMR, DecoderType.P25_CONVENTIONAL, DecoderType.P25_PHASE1,
             DecoderType.P25_PHASE2, DecoderType.NXDN));
+
+    private static Set<DecoderType> activeOnly(EnumSet<DecoderType> candidates)
+    {
+        candidates.removeIf(decoderType -> !decoderType.isActive());
+        return Collections.unmodifiableSet(candidates);
+    }
 
     public Protocol getProtocol()
     {
@@ -111,6 +125,21 @@ public enum DecoderType
     public String getShortDisplayString()
     {
         return mShortDisplayString;
+    }
+
+    /**
+     * Indicates whether this decoder can be selected and run.  Retired compatibility entries remain in this enum only
+     * so that persisted configuration written by an older release can be recognized without activating old decoder
+     * code.
+     */
+    public boolean isActive()
+    {
+        return mAvailability == Availability.ACTIVE;
+    }
+
+    public boolean isRetiredCompatibility()
+    {
+        return mAvailability == Availability.RETIRED_COMPATIBILITY;
     }
 
     @Override
@@ -133,5 +162,11 @@ public enum DecoderType
     public boolean providesMBEAudioFrames()
     {
         return MBE_AUDIO_CODEC_DECODERS.contains(this);
+    }
+
+    public enum Availability
+    {
+        ACTIVE,
+        RETIRED_COMPATIBILITY
     }
 }

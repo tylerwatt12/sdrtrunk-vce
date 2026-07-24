@@ -26,6 +26,7 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.legacy.mobileID.Min;
+import io.github.dsheirer.alias.id.legacy.mpt1327.MPT1327ID;
 import io.github.dsheirer.alias.id.legacy.siteID.SiteID;
 import io.github.dsheirer.alias.id.lojack.LoJackFunctionAndID;
 import io.github.dsheirer.alias.id.priority.Priority;
@@ -82,6 +83,12 @@ public class AliasFactory
                 Min copyMin = new Min();
                 copyMin.setMin(originalMin.getMin());
                 return copyMin;
+            case MPT1327:
+                MPT1327ID originalMpt = (MPT1327ID)id;
+                MPT1327ID copyMpt = new MPT1327ID();
+                copyMpt.setIdent(originalMpt.getIdent());
+                copyMpt.setOverlap(originalMpt.overlapProperty().get());
+                return copyMpt;
             case P25_FULLY_QUALIFIED_RADIO_ID:
                 P25FullyQualifiedRadio originalP25 = (P25FullyQualifiedRadio) id;
                 P25FullyQualifiedRadio copyP25 = new P25FullyQualifiedRadio(originalP25.getWacn(),
@@ -147,7 +154,7 @@ public class AliasFactory
                 return copyUnitStatusID;
 
             //Legacy identifiers ... not supported
-            case FLEETSYNC, LEGACY_TALKGROUP, LTR_NET_UID, MDC1200, MPT1327, NON_RECORDABLE:
+            case FLEETSYNC, LEGACY_TALKGROUP, LTR_NET_UID, MDC1200, NON_RECORDABLE:
                 return null;
             default:
                 mLog.warn("Unrecognized Alias ID Type [{}] cannot make copy of instance", id.getType());

@@ -23,6 +23,7 @@ import com.google.common.collect.Ordering;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasFactory;
+import io.github.dsheirer.alias.AliasIdentifierPolicy;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.action.AliasActionType;
@@ -62,6 +63,7 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.IntegerFormat;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.List;
@@ -143,6 +145,7 @@ public class AliasItemEditor extends Editor<Alias>
     private ListView<String> mAvailableStreamsView;
     private ListView<BroadcastChannel> mSelectedStreamsView;
     private ListView<AliasID> mIdentifiersList;
+    private final List<AliasID> mRetiredIdentifiers = new ArrayList<>();
     private ListView<AliasAction> mActionsList;
     private Button mAddStreamButton;
     private Button mRemoveStreamButton;
@@ -233,6 +236,7 @@ public class AliasItemEditor extends Editor<Alias>
 
         getIdentifiersList().setDisable(disable);
         getIdentifiersList().getItems().clear();
+        mRetiredIdentifiers.clear();
         getAddIdentifierButton().setDisable(disable);
 
         getActionsList().setDisable(disable);
@@ -265,7 +269,11 @@ public class AliasItemEditor extends Editor<Alias>
                 {
                     AliasID copy = AliasFactory.copyOf(aliasID);
 
-                    if(copy != null)
+                    if(!AliasIdentifierPolicy.isUserVisible(aliasID))
+                    {
+                        mRetiredIdentifiers.add(copy != null ? copy : aliasID);
+                    }
+                    else if(copy != null)
                     {
                         getIdentifiersList().getItems().add(copy);
                     }
@@ -332,6 +340,12 @@ public class AliasItemEditor extends Editor<Alias>
 
                 //Remove and replace the remaining non-audio identifiers
                 alias.removeNonAudioIdentifiers();
+
+                for(AliasID retiredIdentifier: mRetiredIdentifiers)
+                {
+                    AliasID copy = AliasFactory.copyOf(retiredIdentifier);
+                    alias.addAliasID(copy != null ? copy : retiredIdentifier);
+                }
 
                 for(AliasID aliasID: getIdentifiersList().getItems())
                 {
@@ -718,10 +732,6 @@ public class AliasItemEditor extends Editor<Alias>
             mdcMenu.getItems().add(new AddTalkgroupItem(Protocol.MDC1200));
             mdcMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.MDC1200));
 
-            Menu mptMenu = new ProtocolMenu(Protocol.MPT1327);
-            mptMenu.getItems().add(new AddTalkgroupItem(Protocol.MPT1327));
-            mptMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.MPT1327));
-
             Menu nbfmMenu = new ProtocolMenu(Protocol.NBFM);
             nbfmMenu.getItems().add(new AddTalkgroupItem(Protocol.NBFM));
             nbfmMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.NBFM));
@@ -746,7 +756,7 @@ public class AliasItemEditor extends Editor<Alias>
             Menu lojackMenu = new ProtocolMenu(Protocol.LOJACK);
             lojackMenu.getItems().add(new AddLojackItem());
 
-            mAddIdentifierButton.getItems().addAll(amMenu, p25Menu, dmrMenu, fleetsyncMenu, ltrMenu, mdcMenu, mptMenu,
+            mAddIdentifierButton.getItems().addAll(amMenu, p25Menu, dmrMenu, fleetsyncMenu, ltrMenu, mdcMenu,
                 nbfmMenu, nxdnMenu, passportMenu, taitMenu, new SeparatorMenuItem(), lojackMenu);
         }
 
