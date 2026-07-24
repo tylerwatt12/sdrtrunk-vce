@@ -207,6 +207,7 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.13.2'
     implementation 'com.google.guava:guava:33.5.0-jre'
     implementation 'com.github.oshi:oshi-core:7.4.0'
+    implementation 'net.java.dev.jna:jna-platform-jpms:5.19.1'
     implementation 'com.jidesoft:jide-oss:3.6.18'
     implementation 'com.miglayout:miglayout-swing:11.4.2'
     implementation 'com.mpatric:mp3agic:0.9.1'

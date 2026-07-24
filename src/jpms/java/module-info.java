@@ -17,6 +17,7 @@ open module sdr.trunk {
     requires com.google.common;
     requires com.google.gson;
     requires com.github.oshi;
+    requires com.sun.jna.platform;
     requires com.miglayout.swing;
     requires commons.math3;
     requires io.github.dsheirer.rrapi;
