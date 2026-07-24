@@ -73,12 +73,17 @@ public class BroadcastModelLifecycleTest
         Thread startThread = new Thread(model.removeNextStart(), "broadcast-lifecycle-test-start");
         startThread.start();
 
-        assertTrue(startEntered.await(2, TimeUnit.SECONDS));
-        model.removeBroadcastConfiguration(configuration);
-        assertNull(model.getBroadcaster(configuration.getName()));
-
-        releaseStart.countDown();
-        startThread.join(TimeUnit.SECONDS.toMillis(2));
+        try
+        {
+            assertTrue(startEntered.await(2, TimeUnit.SECONDS));
+            model.removeBroadcastConfiguration(configuration);
+            assertNull(model.getBroadcaster(configuration.getName()));
+        }
+        finally
+        {
+            releaseStart.countDown();
+            startThread.join(TimeUnit.SECONDS.toMillis(2));
+        }
 
         assertFalse(startThread.isAlive());
         assertTrue(broadcaster.wasStartInterrupted());
@@ -151,15 +156,23 @@ public class BroadcastModelLifecycleTest
             "broadcast-delayed-delete-test");
         deleteThread.start();
 
-        /*
-         * The fixed implementation keeps list removal behind the lifecycle lock held by broadcaster creation.
-         * A short timeout therefore proves delete cannot expose a half-removed configuration while the factory is
-         * still publishing.  Releasing the factory then lets delete invalidate and detach the created instance.
-         */
-        assertFalse(configurationRemoved.await(100, TimeUnit.MILLISECONDS));
-        releaseFactory.countDown();
-        restartThread.join(TimeUnit.SECONDS.toMillis(2));
-        deleteThread.join(TimeUnit.SECONDS.toMillis(2));
+        try
+        {
+            /*
+             * The fixed implementation blocks delete on the lifecycle lock before list removal.  Waiting until the
+             * delete thread is actually blocked avoids a scheduler-timing false pass.  The old implementation first
+             * removed the list row and then blocked while invalidating the generation, so the listener would already
+             * have fired at this point.
+             */
+            assertTrue(awaitThreadState(deleteThread, Thread.State.BLOCKED, 2, TimeUnit.SECONDS));
+            assertEquals(1L, configurationRemoved.getCount());
+        }
+        finally
+        {
+            releaseFactory.countDown();
+            restartThread.join(TimeUnit.SECONDS.toMillis(2));
+            deleteThread.join(TimeUnit.SECONDS.toMillis(2));
+        }
 
         assertFalse(restartThread.isAlive());
         assertFalse(deleteThread.isAlive());
@@ -172,6 +185,24 @@ public class BroadcastModelLifecycleTest
         assertEquals(1, racedBroadcaster.getDisposeCount());
         assertFalse(racedBroadcaster.isActive());
         assertNull(model.getBroadcaster(configuration.getName()));
+    }
+
+    private static boolean awaitThreadState(Thread thread, Thread.State state, long timeout, TimeUnit timeUnit)
+        throws InterruptedException
+    {
+        long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+
+        while(System.nanoTime() < deadline)
+        {
+            if(thread.getState() == state)
+            {
+                return true;
+            }
+
+            Thread.sleep(1);
+        }
+
+        return thread.getState() == state;
     }
 
     private static TestBroadcastConfiguration createConfiguration(String name)
