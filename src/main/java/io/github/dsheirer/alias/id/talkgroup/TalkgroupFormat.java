@@ -50,6 +50,8 @@ public enum TalkgroupFormat
         "<html>MPT-1327 valid ranges are 0-127(prefix)<br>and 1-8192(ident) (ie. 000-0001 to 127-8192)"),
     NBFM(1, 0xFFFF,
             "NBFM valid value range is 1-65,535"),
+    NXDN(0, 0xFFFF,
+        "<html>NXDN talkgroup valid range is 0 to 65,535"),
     PASSPORT(1, 0xFFFF,
         "Passport valid value range is 1-65,535"),
     UNKNOWN(1, 0xFFFFFF,
@@ -147,6 +149,8 @@ public enum TalkgroupFormat
                 return AM;
             case APCO25:
                 return APCO25;
+            case DMR:
+                return DMR;
             case FLEETSYNC:
                 return FLEETSYNC;
             case LTR:
@@ -158,6 +162,8 @@ public enum TalkgroupFormat
                 return MPT1327;
             case NBFM:
                 return NBFM;
+            case NXDN:
+                return NXDN;
             case PASSPORT:
                 return PASSPORT;
             default:
