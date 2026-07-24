@@ -20,7 +20,6 @@ package io.github.dsheirer.channel.metadata.activity;
 
 import com.google.common.base.Joiner;
 import com.google.common.eventbus.Subscribe;
-import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
@@ -59,6 +58,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
+import javax.swing.JTabbedPane;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
@@ -107,7 +107,7 @@ public class ChannelActivityPanel extends JPanel
     private boolean mApplyingColumnWidths;
     private boolean mActive;
     private boolean mRegisteredForPreferences;
-    private JideTabbedPane mTabbedPane;
+    private JTabbedPane mTabbedPane;
 
     public ChannelActivityPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences)
     {
@@ -257,11 +257,11 @@ public class ChannelActivityPanel extends JPanel
         }
     }
 
-    private JideTabbedPane getTabbedPane()
+    private JTabbedPane getTabbedPane()
     {
         if(mTabbedPane == null)
         {
-            mTabbedPane = new JideTabbedPane(JideTabbedPane.TOP, JideTabbedPane.WRAP_TAB_LAYOUT);
+            mTabbedPane = new JTabbedPane(JTabbedPane.TOP, JTabbedPane.WRAP_TAB_LAYOUT);
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
             mTabbedPane.addChangeListener(event -> updateTableVisibility());
@@ -290,7 +290,6 @@ public class ChannelActivityPanel extends JPanel
         {
             int index = getTabbedPane().indexOfComponent(scrollPane);
             getTabbedPane().setIconAt(index, new TabStatusIcon(tableModel));
-            getTabbedPane().setTabClosableAt(index, false);
             getTabbedPane().setToolTipTextAt(index, getTabToolTip(tableModel));
         }
         else
