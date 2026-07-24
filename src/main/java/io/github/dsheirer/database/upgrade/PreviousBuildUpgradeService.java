@@ -16,6 +16,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
+import io.github.dsheirer.record.RecordedCallCatalogSchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
@@ -154,11 +155,16 @@ public final class PreviousBuildUpgradeService
 
         listener.update("Checking previous data");
         int sourceVersion = readP25ActivitySchemaVersion(database);
+        boolean catalogOnlyUpgrade = sourceVersion == CURRENT_VERSION &&
+            requiresRecordedCallCatalogInstallation(database);
 
-        if(!isSupportedSourceVersion(sourceVersion))
+        if(!isSupportedSourceVersion(sourceVersion) && !catalogOnlyUpgrade)
         {
-            throw new IOException("This upgrade supports P25 activity database versions " +
-                supportedSourceVersionsLabel() + " only. Found v" + sourceVersion + ".");
+            throw new IOException(sourceVersion == CURRENT_VERSION ?
+                "This P25 activity v21 database already has the current recorded-call catalog and does not " +
+                    "require an upgrade." :
+                "This upgrade supports P25 activity database versions " + supportedSourceVersionsLabel() +
+                    ", or v21 when its recorded-call catalog is wholly absent. Found v" + sourceVersion + ".");
         }
 
         Path databaseDirectory = database.getParent();
@@ -168,7 +174,7 @@ public final class PreviousBuildUpgradeService
         Files.createDirectories(backupDirectory);
         String identity = BACKUP_TIME.format(LocalDateTime.now()) + "-" +
             UUID.randomUUID().toString().substring(0, 8);
-        Path backup = backupDirectory.resolve("sdrtrunk-before-v21-" + identity + ".sqlite");
+        Path backup = backupDirectory.resolve("sdrtrunk-before-database-upgrade-" + identity + ".sqlite");
         Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".upgrade-" +
             UUID.randomUUID());
 
@@ -272,6 +278,56 @@ public final class PreviousBuildUpgradeService
         return SUPPORTED_SOURCE_VERSIONS.contains(version);
     }
 
+    /**
+     * Indicates whether the current portable database has an explicit supported upgrade path.
+     *
+     * <p>P25 v19 and v20 use the full P25 upgrade. P25 v21 is eligible only when the recorded-call catalog is wholly
+     * absent. A partial, unknown, or malformed catalog is rejected instead of being repaired.</p>
+     */
+    public static boolean requiresCurrentUpgrade(Path database, int p25ActivityVersion)
+        throws IOException, SQLException
+    {
+        if(isSupportedSourceVersion(p25ActivityVersion))
+        {
+            return true;
+        }
+
+        return p25ActivityVersion == CURRENT_VERSION && requiresRecordedCallCatalogInstallation(database);
+    }
+
+    public static boolean requiresRecordedCallCatalogInstallation(Path database) throws IOException, SQLException
+    {
+        Path normalized = database.toAbsolutePath().normalize();
+
+        if(!Files.isRegularFile(normalized))
+        {
+            throw new IOException("SDRTrunk SQLite database does not exist: " + normalized);
+        }
+
+        try(Connection connection = openReadOnly(normalized))
+        {
+            SdrTrunkDatabaseSchema.validate(connection);
+            P25ActivityLogSchema.validate(connection);
+            TrunkedSiteSchema.validate(connection);
+            String version = RecordedCallCatalogSchema.schemaVersion(connection);
+
+            if(version == null)
+            {
+                requireRecordedCallCatalogObjectsAbsent(connection);
+                return true;
+            }
+
+            if(Integer.toString(RecordedCallCatalogSchema.SCHEMA_VERSION).equals(version))
+            {
+                RecordedCallCatalogSchema.validate(connection);
+                return false;
+            }
+
+            throw new SQLException("Unsupported recorded-call catalog schema version [" + version +
+                "]. Refusing automatic repair.");
+        }
+    }
+
     public static String supportedSourceVersionsLabel()
     {
         return "v19 or v20";
@@ -289,8 +345,28 @@ public final class PreviousBuildUpgradeService
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
+            RecordedCallCatalogSchema.validate(connection);
             requireIntegrity(connection);
             requireForeignKeysValid(connection);
+        }
+    }
+
+    private static void requireRecordedCallCatalogObjectsAbsent(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT type, name FROM sqlite_master
+                WHERE name GLOB 'recorded_call*' OR name GLOB 'idx_recorded_call*'
+                ORDER BY type, name
+                LIMIT 1
+                """))
+        {
+            if(resultSet.next())
+            {
+                throw new SQLException("Recorded-call catalog metadata is absent but " +
+                    resultSet.getString("type") + " [" + resultSet.getString("name") +
+                    "] already exists. Refusing to repair an ambiguous partial schema.");
+            }
         }
     }
 

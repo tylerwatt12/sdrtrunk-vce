@@ -94,6 +94,36 @@ final class ManagedRecordingPath
     }
 
     /**
+     * Creates and resolves the one real recording root shared by the writer, catalog admission, and retention.
+     * Platform aliases and an explicitly configured root symlink are resolved once; links below this boundary remain
+     * forbidden.
+     */
+    static Path prepareRoot(Path recordingRoot)
+    {
+        Objects.requireNonNull(recordingRoot, "Recording root cannot be null");
+        Path normalized = recordingRoot.toAbsolutePath().normalize();
+
+        try
+        {
+            Files.createDirectories(normalized);
+            Path realRoot = normalized.toRealPath();
+            BasicFileAttributes attributes =
+                Files.readAttributes(realRoot, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+
+            if(attributes.isSymbolicLink() || !attributes.isDirectory())
+            {
+                throw new IOException("Recording root is not a real directory");
+            }
+
+            return realRoot;
+        }
+        catch(IOException exception)
+        {
+            throw new IllegalArgumentException("Unable to prepare the recording root: " + normalized, exception);
+        }
+    }
+
+    /**
      * Parses a path relative to the configured recordings root.
      */
     static Optional<ManagedRecordingPath> parse(Path relativePath)
@@ -167,14 +197,29 @@ final class ManagedRecordingPath
         }
 
         Path configuredRoot = recordingRoot.toAbsolutePath().normalize();
+        Path realRoot = configuredRoot.toRealPath();
         Path normalizedCandidate = candidate.normalize();
+        Path candidateRoot = normalizedCandidate;
 
-        if(!normalizedCandidate.startsWith(configuredRoot))
+        for(int index = 0; index < RELATIVE_NAME_COUNT; index++)
+        {
+            candidateRoot = candidateRoot.getParent();
+
+            if(candidateRoot == null)
+            {
+                return Optional.empty();
+            }
+        }
+
+        //Resolve only the configured/candidate roots, never a component inside the managed tree.  This accepts
+        //platform aliases such as /var and /private/var while the component walk below still rejects every symbolic
+        //link beneath the verified recording root.
+        if(!candidateRoot.toRealPath().equals(realRoot))
         {
             return Optional.empty();
         }
 
-        Path relative = configuredRoot.relativize(normalizedCandidate);
+        Path relative = candidateRoot.relativize(normalizedCandidate);
         Optional<ManagedRecordingPath> parsed = parse(relative);
 
         if(parsed.isEmpty())
@@ -182,7 +227,7 @@ final class ManagedRecordingPath
             return Optional.empty();
         }
 
-        Path current = recordingRoot.toRealPath();
+        Path current = realRoot;
 
         for(int index = 0; index < relative.getNameCount(); index++)
         {

@@ -112,6 +112,28 @@ class ManagedRecordingPathTest
     }
 
     @Test
+    void acceptsTheSameRootThroughAPlatformDirectoryAlias() throws Exception
+    {
+        Path realRoot = Files.createDirectory(mTemporaryFolder.resolve("real"));
+        Path aliasRoot = mTemporaryFolder.resolve("alias");
+
+        try
+        {
+            Files.createSymbolicLink(aliasRoot, realRoot);
+        }
+        catch(UnsupportedOperationException | IOException | SecurityException exception)
+        {
+            Assumptions.assumeTrue(false, "Symbolic links are unavailable for this filesystem");
+            return;
+        }
+
+        Path recording = realRoot.resolve(VALID_RECORDING);
+        Files.createDirectories(recording.getParent());
+        Files.write(recording, new byte[] {1});
+        assertTrue(ManagedRecordingPath.inspect(aliasRoot, recording).isPresent());
+    }
+
+    @Test
     void recognizesOnlyExactWriterReservationsAndWorkNames()
     {
         Path reservation = VALID_RECORDING.getParent().resolve('.' +
