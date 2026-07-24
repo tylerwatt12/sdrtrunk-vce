@@ -30,11 +30,10 @@ import java.util.prefs.Preferences;
  */
 public class TunerPreference extends Preference
 {
-    private Preferences mPreferences = Preferences.userNodeForPackage(TunerPreference.class);
-    private static final String PREFERENCE_KEY_CHANNELIZER_TYPE = "channelizer.type";
+    static final String RETIRED_PREFERENCE_KEY_CHANNELIZER_TYPE = "channelizer.type";
     private static final String PREFERENCE_KEY_RSP_DUO_TUNER_MODE = "rsp.duo.tuner.mode";
 
-    private ChannelizerType mChannelizerType;
+    private final Preferences mPreferences;
     private RspDuoSelectionMode mRspDuoSelectionMode;
 
     /**
@@ -44,54 +43,22 @@ public class TunerPreference extends Preference
      */
     public TunerPreference(Listener<PreferenceType> updateListener)
     {
+        this(updateListener, Preferences.userNodeForPackage(TunerPreference.class));
+    }
+
+    TunerPreference(Listener<PreferenceType> updateListener, Preferences preferences)
+    {
         super(updateListener);
+        mPreferences = preferences;
+
+        //Retired preference values are deliberately ignored.  All tuners now use the polyphase channelizer.
+        mPreferences.remove(RETIRED_PREFERENCE_KEY_CHANNELIZER_TYPE);
     }
 
     @Override
     public PreferenceType getPreferenceType()
     {
         return PreferenceType.TUNER;
-    }
-
-
-    /**
-     * Channelizer type used by the tuners
-     */
-    public ChannelizerType getChannelizerType()
-    {
-        if(mChannelizerType == null)
-        {
-            String type = mPreferences.get(PREFERENCE_KEY_CHANNELIZER_TYPE, ChannelizerType.POLYPHASE.name());
-
-            if(type != null)
-            {
-                if(type.equalsIgnoreCase(ChannelizerType.POLYPHASE.name()))
-                {
-                    mChannelizerType = ChannelizerType.POLYPHASE;
-                }
-                else if(type.equalsIgnoreCase(ChannelizerType.HETERODYNE.name()))
-                {
-                    mChannelizerType = ChannelizerType.HETERODYNE;
-                }
-            }
-
-            if(type == null)
-            {
-                mChannelizerType = ChannelizerType.POLYPHASE;
-            }
-        }
-
-        return mChannelizerType;
-    }
-
-    /**
-     * Sets the channelizer type use by tuners
-     */
-    public void setChannelizerType(ChannelizerType type)
-    {
-        mChannelizerType = type;
-        mPreferences.put(PREFERENCE_KEY_CHANNELIZER_TYPE, mChannelizerType.name());
-        notifyPreferenceUpdated();
     }
 
     /**

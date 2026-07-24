@@ -21,7 +21,6 @@ package io.github.dsheirer.source.tuner;
 
 import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.airspy.AirspyTuner;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
@@ -138,51 +137,50 @@ public class TunerFactory
     /**
      * Creates one or two (e.g. RSPduo) Discovered RSP tuner instances for the RSP device.
      * @param deviceInfo describing the RSP device
-     * @param channelizerType to use with the device
      * @param selectionMode to specify how to configure an RSPduo dual-tuner device.
      * @return zero or more discovered RSP tuners.
      */
-    public static List<DiscoveredRspTuner> getRspTuners(DeviceInfo deviceInfo, ChannelizerType channelizerType, RspDuoSelectionMode selectionMode)
+    public static List<DiscoveredRspTuner> getRspTuners(DeviceInfo deviceInfo, RspDuoSelectionMode selectionMode)
     {
         List<DiscoveredRspTuner> tuners = new ArrayList<>();
 
         switch(deviceInfo.getDeviceType())
         {
             case RSP1:
-                tuners.add(new DiscoveredRsp1Tuner(deviceInfo, channelizerType));
+                tuners.add(new DiscoveredRsp1Tuner(deviceInfo));
                 break;
             case RSP1A:
-                tuners.add(new DiscoveredRsp1aTuner(deviceInfo, channelizerType));
+                tuners.add(new DiscoveredRsp1aTuner(deviceInfo));
                 break;
             case RSP1B:
-                tuners.add(new DiscoveredRsp1bTuner(deviceInfo, channelizerType));
+                tuners.add(new DiscoveredRsp1bTuner(deviceInfo));
                 break;
             case RSP2:
-                tuners.add(new DiscoveredRsp2Tuner(deviceInfo, channelizerType));
+                tuners.add(new DiscoveredRsp2Tuner(deviceInfo));
                 break;
             case RSPdx:
             case RSPdxR2:
-                tuners.add(new DiscoveredRspDxTuner(deviceInfo, channelizerType));
+                tuners.add(new DiscoveredRspDxTuner(deviceInfo));
                 break;
             case RSPduo:
                 switch(selectionMode)
                 {
                     case SINGLE_1:
                         deviceInfo.setDeviceSelectionMode(DeviceSelectionMode.SINGLE_TUNER_1);
-                        tuners.add(new DiscoveredRspDuoTuner1(deviceInfo, channelizerType));
+                        tuners.add(new DiscoveredRspDuoTuner1(deviceInfo));
                         break;
                     case SINGLE_2:
                         deviceInfo.setDeviceSelectionMode(DeviceSelectionMode.SINGLE_TUNER_2);
-                        tuners.add(new DiscoveredRspDuoTuner2(deviceInfo, channelizerType));
+                        tuners.add(new DiscoveredRspDuoTuner2(deviceInfo));
                         break;
                     case DUAL:
                         MasterSlaveBridge bridge = new MasterSlaveBridge();
                         deviceInfo.setDeviceSelectionMode(DeviceSelectionMode.MASTER_TUNER_1);
-                        tuners.add(new DiscoveredRspDuoTuner1(deviceInfo, channelizerType, bridge));
+                        tuners.add(new DiscoveredRspDuoTuner1(deviceInfo, bridge));
 
                         DeviceInfo deviceInfoTuner2 = deviceInfo.copy();
                         deviceInfoTuner2.setDeviceSelectionMode(DeviceSelectionMode.SLAVE_TUNER_2);
-                        tuners.add(new DiscoveredRspDuoTuner2(deviceInfoTuner2, channelizerType, bridge));
+                        tuners.add(new DiscoveredRspDuoTuner2(deviceInfoTuner2, bridge));
                         break;
                 }
                 break;
@@ -197,13 +195,12 @@ public class TunerFactory
     /**
      * Locates the matching RSP device described by the device info object and creates an RSP tuner instance.
      * @param deviceInfo to match
-     * @param channelizerType for the tuner
      * @param tunerErrorListener to monitor the tuner's status
      * @return constructed RSP tuner instance
      * @throws SDRPlayException if the device is not available or is not supported
      */
-    public static RspTuner getRspTuner(DeviceInfo deviceInfo, ChannelizerType channelizerType,
-                                       ITunerErrorListener tunerErrorListener) throws SDRPlayException
+    public static RspTuner getRspTuner(DeviceInfo deviceInfo, ITunerErrorListener tunerErrorListener)
+            throws SDRPlayException
     {
         //API instance is retained across the lifecycle of the constructed device, so we only close it if we don't get
         //a device from it.
@@ -230,7 +227,7 @@ public class TunerFactory
                     {
                         IControlRsp1 controlRsp1 = new ControlRsp1(rsp1Device);
                         Rsp1TunerController rsp1TunerController = new Rsp1TunerController(controlRsp1, tunerErrorListener);
-                        return new RspTuner(rsp1TunerController, tunerErrorListener, channelizerType);
+                        return new RspTuner(rsp1TunerController, tunerErrorListener);
                     }
                     break;
                 case RSP1A:
@@ -238,7 +235,7 @@ public class TunerFactory
                     {
                         IControlRsp1a controlRsp1a = new ControlRsp1a(rsp1aDevice);
                         Rsp1aTunerController rsp1aTunerController = new Rsp1aTunerController(controlRsp1a, tunerErrorListener);
-                        return new RspTuner(rsp1aTunerController, tunerErrorListener, channelizerType);
+                        return new RspTuner(rsp1aTunerController, tunerErrorListener);
                     }
                     break;
                 case RSP1B:
@@ -246,7 +243,7 @@ public class TunerFactory
                     {
                         IControlRsp1b controlRsp1b = new ControlRsp1b(rsp1bDevice);
                         Rsp1bTunerController rsp1bTunerController = new Rsp1bTunerController(controlRsp1b, tunerErrorListener);
-                        return new RspTuner(rsp1bTunerController, tunerErrorListener, channelizerType);
+                        return new RspTuner(rsp1bTunerController, tunerErrorListener);
                     }
                     break;
                 case RSP2:
@@ -254,7 +251,7 @@ public class TunerFactory
                     {
                         IControlRsp2 controlRsp2 = new ControlRsp2(rsp2Device);
                         Rsp2TunerController rsp2TunerController = new Rsp2TunerController(controlRsp2, tunerErrorListener);
-                        return new RspTuner(rsp2TunerController, tunerErrorListener, channelizerType);
+                        return new RspTuner(rsp2TunerController, tunerErrorListener);
                     }
                     break;
                 case RSPdx:
@@ -263,7 +260,7 @@ public class TunerFactory
                     {
                         IControlRspDx controlRspDx = new ControlRspDx(rspDxDevice);
                         RspDxTunerController rspDxTunerController = new RspDxTunerController(controlRspDx, tunerErrorListener);
-                        return new RspTuner(rspDxTunerController, tunerErrorListener, channelizerType);
+                        return new RspTuner(rspDxTunerController, tunerErrorListener);
                     }
                     break;
                 case RSPduo:
@@ -274,11 +271,11 @@ public class TunerFactory
                             case SINGLE_TUNER_1:
                                 IControlRspDuoTuner1 controlRspDuoTuner1 = new ControlRspDuoTuner1Single(rspDuoDevice);
                                 RspDuoTuner1Controller rspDuoTuner1Controller = new RspDuoTuner1Controller(controlRspDuoTuner1, tunerErrorListener);
-                                return new RspTuner(rspDuoTuner1Controller, tunerErrorListener, channelizerType);
+                                return new RspTuner(rspDuoTuner1Controller, tunerErrorListener);
                             case SINGLE_TUNER_2:
                                 IControlRspDuoTuner2 controlRspDuoTuner2 = new ControlRspDuoTuner2Single(rspDuoDevice);
                                 RspDuoTuner2Controller rspDuoTuner2Controller = new RspDuoTuner2Controller(controlRspDuoTuner2, tunerErrorListener);
-                                return new RspTuner(rspDuoTuner2Controller, tunerErrorListener, channelizerType);
+                                return new RspTuner(rspDuoTuner2Controller, tunerErrorListener);
                             default:
                                 throw new SDRPlayException("This method only supports RSPduo single tuner configurations");
                         }
@@ -296,14 +293,13 @@ public class TunerFactory
     /**
      * Locates the matching RSP device described by the device info object and creates an RSP tuner instance.
      * @param deviceInfo to match
-     * @param channelizerType for the tuner
      * @param tunerErrorListener to monitor the tuner's status
      * @param bridge to link master/slave instances together
      * @return constructed RSP tuner instance
      * @throws SDRPlayException if the device is not available or is not supported
      */
-    public static RspTuner getRspDuoTuner(DeviceInfo deviceInfo, ChannelizerType channelizerType,
-                                       ITunerErrorListener tunerErrorListener, MasterSlaveBridge bridge) throws SDRPlayException
+    public static RspTuner getRspDuoTuner(DeviceInfo deviceInfo, ITunerErrorListener tunerErrorListener,
+                                         MasterSlaveBridge bridge) throws SDRPlayException
     {
         SDRplay api = new SDRplay();
 
@@ -318,11 +314,11 @@ public class TunerFactory
                     case MASTER_TUNER_1:
                         IControlRspDuoTuner1 controlRspDuoTuner1 = new ControlRspDuoTuner1Master(rspDuoDevice, bridge);
                         RspDuoTuner1Controller rspDuoTuner1Controller = new RspDuoTuner1Controller(controlRspDuoTuner1, tunerErrorListener);
-                        return new RspTuner(rspDuoTuner1Controller, tunerErrorListener, channelizerType);
+                        return new RspTuner(rspDuoTuner1Controller, tunerErrorListener);
                     case SLAVE_TUNER_2:
                         IControlRspDuoTuner2 controlRspDuoTuner2 = new ControlRspDuoTuner2Slave(rspDuoDevice, bridge);
                         RspDuoTuner2Controller rspDuoTuner2Controller = new RspDuoTuner2Controller(controlRspDuoTuner2, tunerErrorListener);
-                        return new RspTuner(rspDuoTuner2Controller, tunerErrorListener, channelizerType);
+                        return new RspTuner(rspDuoTuner2Controller, tunerErrorListener);
                     default:
                         throw new SDRPlayException("This method only supports RSPduo single tuner configurations");
                 }
@@ -338,25 +334,29 @@ public class TunerFactory
      * @param portAddress usb
      * @param bus usb
      * @param tunerErrorListener to listen for errors from the tuner
-     * @param channelizerType for the tuner
      * @return instantiated tuner
      * @throws SourceException if the tuner class is unrecognized
      */
-    public static Tuner getUsbTuner(TunerClass tunerClass, String portAddress, int bus, ITunerErrorListener tunerErrorListener,
-                                    ChannelizerType channelizerType) throws SourceException
+    public static Tuner getUsbTuner(TunerClass tunerClass, String portAddress, int bus,
+                                    ITunerErrorListener tunerErrorListener) throws SourceException
     {
         switch(tunerClass)
         {
             case AIRSPY:
-                return new AirspyTuner(new AirspyTunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
+                return new AirspyTuner(new AirspyTunerController(bus, portAddress, tunerErrorListener),
+                        tunerErrorListener);
             case AIRSPY_HF:
-                return new AirspyHfTuner(new AirspyHfTunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
+                return new AirspyHfTuner(new AirspyHfTunerController(bus, portAddress, tunerErrorListener),
+                        tunerErrorListener);
             case HACKRF:
-                return new HackRFTuner(new HackRFTunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
+                return new HackRFTuner(new HackRFTunerController(bus, portAddress, tunerErrorListener),
+                        tunerErrorListener);
             case HYDRASDR:
-                return new HydraSdrTuner(new HydraSdrTunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
+                return new HydraSdrTuner(new HydraSdrTunerController(bus, portAddress, tunerErrorListener),
+                        tunerErrorListener);
             case RTL2832:
-                return new RTL2832Tuner(new RTL2832TunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
+                return new RTL2832Tuner(new RTL2832TunerController(bus, portAddress, tunerErrorListener),
+                        tunerErrorListener);
             default:
                 throw new SourceException("Unrecognized tuner class [" + tunerClass + "]");
         }

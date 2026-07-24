@@ -24,19 +24,6 @@ class CenterFrequencyLockTest
         new ChannelSpecification(50_000, 12_500, 6_250, 7_000);
 
     @Test
-    void heterodyneManagerDoesNotRetuneLockedController() throws Exception
-    {
-        TestTunerController controller = new TestTunerController();
-        long centerFrequency = controller.getFrequency();
-        controller.setCenterFrequencyLocked(true);
-        HeterodyneChannelSourceManager manager = new HeterodyneChannelSourceManager(controller);
-
-        assertNull(manager.getSource(new TunerChannel(centerFrequency + 2_000_000, 12_500),
-            CHANNEL_SPECIFICATION, "locked-heterodyne-test"));
-        assertEquals(centerFrequency, controller.getFrequency());
-    }
-
-    @Test
     void polyphaseManagerDoesNotRetuneLockedController() throws Exception
     {
         TestTunerController controller = new TestTunerController();

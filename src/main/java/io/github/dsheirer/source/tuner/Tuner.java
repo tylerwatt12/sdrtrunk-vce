@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.source.tuner;
 
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventProcessor;
@@ -26,8 +25,6 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerEvent.Event;
 import io.github.dsheirer.source.tuner.manager.ChannelSourceManager;
-import io.github.dsheirer.source.tuner.manager.HeterodyneChannelSourceManager;
-import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,24 +55,13 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
      * Abstract tuner class.
      * @param tunerController for the tuner
      * @param tunerErrorListener to listen for tuner errors
-     * @param channelizerType for the channelizer
+     * @param channelSourceManager channel source manager for the tuner
      */
-    protected Tuner(TunerController tunerController, ITunerErrorListener tunerErrorListener, ChannelizerType channelizerType)
+    protected Tuner(TunerController tunerController, ITunerErrorListener tunerErrorListener,
+                    ChannelSourceManager channelSourceManager)
     {
         this(tunerController, tunerErrorListener);
-
-        if(channelizerType == ChannelizerType.POLYPHASE)
-        {
-            setChannelSourceManager(new PolyphaseChannelSourceManager(mTunerController));
-        }
-        else if(channelizerType == ChannelizerType.HETERODYNE)
-        {
-            setChannelSourceManager(new HeterodyneChannelSourceManager(mTunerController));
-        }
-        else
-        {
-            throw new IllegalArgumentException("Unrecognized channelizer type: " + channelizerType);
-        }
+        setChannelSourceManager(channelSourceManager);
     }
 
     /**

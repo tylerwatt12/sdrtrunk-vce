@@ -39,7 +39,6 @@ import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.ChannelFrequencyCorrectionStatusNotification;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
-import io.github.dsheirer.source.tuner.channel.HalfBandTunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
@@ -183,14 +182,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
                     sb.append(" CF:").append(FREQUENCY_FORMAT.format(pcs.getTunerCenterFrequency() / 1E6d));
                     LOGGER.info(sb.toString());
                     LOGGER.info("Output Processor: " + pcs.getStateDescription());
-                }
-                else if(source instanceof HalfBandTunerChannelSource hbtcs)
-                {
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("Heterodyne Channel - CF:").append(FREQUENCY_FORMAT.format(hbtcs.getFrequency() / 1E6d));
-                    sb.append(" SR:").append(FREQUENCY_FORMAT.format(hbtcs.getSampleRate() / 1E6d));
-                    sb.append(" Mixer:").append(FREQUENCY_FORMAT.format(hbtcs.getMixerFrequency() / 1E6d));
-                    LOGGER.info(sb.toString());
                 }
                 else
                 {

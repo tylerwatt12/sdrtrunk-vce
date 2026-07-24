@@ -18,11 +18,11 @@
  */
 package io.github.dsheirer.source.tuner.hydrasdr;
 
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerController.BoardID;
+import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,12 +37,10 @@ public class HydraSdrTuner extends Tuner
      * Constructs an instance
      * @param controller for the HydraSDR
      * @param tunerErrorListener to listen for errors from this tuner
-     * @param channelizerType for the channelizer
      */
-    public HydraSdrTuner(HydraSdrTunerController controller, ITunerErrorListener tunerErrorListener,
-                       ChannelizerType channelizerType)
+    public HydraSdrTuner(HydraSdrTunerController controller, ITunerErrorListener tunerErrorListener)
     {
-        super(controller, tunerErrorListener, channelizerType);
+        super(controller, tunerErrorListener, new PolyphaseChannelSourceManager(controller));
     }
 
     @Override

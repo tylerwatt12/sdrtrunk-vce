@@ -21,7 +21,6 @@ package io.github.dsheirer.source.tuner.manager;
 
 import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -281,9 +280,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                                 {
                                     mLog.info("Discovered tuner at USB Bus [" + bus + "] Port [" + portAddress +
                                             "] Tuner Class [" + tunerClass + "]");
-                                    ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
                                     DiscoveredUSBTuner discoveredUSBTuner = new DiscoveredUSBTuner(tunerClass, bus,
-                                            portAddress, channelizerType);
+                                            portAddress);
                                     discoveredUSBTuners.add(discoveredUSBTuner);
                                 }
                             }
@@ -364,7 +362,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private void discoverSdrPlayTuners()
     {
-        ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
         RspDuoSelectionMode duoSelectionMode = mUserPreferences.getTunerPreference().getRspDuoTunerMode();
 
         //Note: we have to keep this first API instance open while we use any RSP tuners, otherwise the additional API
@@ -397,7 +394,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                 for(DeviceInfo deviceInfo: deviceInfos)
                 {
-                    List<DiscoveredRspTuner> tuners = TunerFactory.getRspTuners(deviceInfo, channelizerType, duoSelectionMode);
+                    List<DiscoveredRspTuner> tuners = TunerFactory.getRspTuners(deviceInfo, duoSelectionMode);
 
                     for(DiscoveredRspTuner tuner: tuners)
                     {
@@ -438,7 +435,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             if(tunerConfiguration instanceof RecordingTunerConfiguration recordingTunerConfiguration)
             {
                 DiscoveredRecordingTuner discoveredRecordingTuner =
-                        new DiscoveredRecordingTuner(mUserPreferences, recordingTunerConfiguration);
+                        new DiscoveredRecordingTuner(recordingTunerConfiguration);
 
                 discoveredRecordingTuner.addTunerStatusListener(this);
                 discoveredRecordingTuner.setEnabled(false);
@@ -856,9 +853,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                         {
                             mLog.info("Tuner plug-in detected at USB Bus [" + bus + "] Port [" + port +
                                     "] Tuner Class [" + tunerClass + "]");
-                            ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
                             DiscoveredUSBTuner discoveredUSBTuner = new DiscoveredUSBTuner(tunerClass, bus,
-                                    portAddress, channelizerType);
+                                    portAddress);
 
                             addUsbTuner(discoveredUSBTuner);
                         }
