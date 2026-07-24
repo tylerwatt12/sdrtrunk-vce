@@ -1,6 +1,6 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2022 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,27 +27,20 @@ import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.Image;
 import java.awt.Point;
 import java.awt.geom.Line2D;
-import java.awt.image.ColorModel;
-import java.awt.image.MemoryImageSource;
+import java.awt.image.BufferedImage;
+import java.awt.image.IndexColorModel;
 import java.text.DecimalFormat;
 import java.util.Arrays;
-import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import javax.swing.JPanel;
+import org.apache.commons.math3.util.FastMath;
 
 public class WaterfallPanel extends JPanel implements DFTResultsListener,
     Pausable,
     SettingChangeListener
 {
     private static final long serialVersionUID = 1L;
-
-    private static final Logger mLog =
-        LoggerFactory.getLogger(WaterfallPanel.class);
 
     private static DecimalFormat CURSOR_FORMAT = new DecimalFormat("0.00000");
     private static final String PAUSED = "PAUSED - Right Click to Unpause";
@@ -57,10 +50,10 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     private byte[] mPausedPixels;
     private int mDFTSize = 4096;
     private int mImageHeight = 700;
-    private transient MemoryImageSource mMemoryImageSource;
-    private transient ColorModel mColorModel = WaterfallColorModel.getDefaultColorModel();
+    private transient IndexColorModel mColorModel = WaterfallColorModel.getDefaultColorModel();
     private Color mColorSpectrumCursor;
-    private transient Image mWaterfallImage;
+    private transient BufferedImage mWaterfallImage;
+    private boolean mWaterfallImageDirty = true;
 
     private Point mCursorLocation = new Point(0, 0);
     private boolean mCursorVisible = false;
@@ -69,6 +62,8 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     private boolean mDisabled = true;
     private int mZoom = 0;
     private int mDFTZoomWindowOffset = 0;
+    private int mNewestPixelRow = 0;
+    private int mPausedNewestPixelRow = 0;
 
     private SettingsManager mSettingsManager;
 
@@ -99,27 +94,37 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
         }
 
         mSettingsManager = null;
-        mMemoryImageSource = null;
+
+        if(mWaterfallImage != null)
+        {
+            mWaterfallImage.flush();
+            mWaterfallImage = null;
+        }
+
+        mPixels = null;
+        mPausedPixels = null;
     }
 
     /**
-     * Resets the memory image source and byte backing array when the DFT point
-     * size has changed
+     * Resets the full-resolution history and display image when the DFT point size changes.
      */
     private void reset()
     {
         mPixels = new byte[mDFTSize * mImageHeight];
+        mNewestPixelRow = 0;
+        mWaterfallImageDirty = true;
 
-        mMemoryImageSource = new MemoryImageSource(mDFTSize,
-            mImageHeight,
-            mColorModel,
-            mPixels,
-            0,
-            mDFTSize);
+        if(mPaused)
+        {
+            mPausedPixels = mPixels.clone();
+            mPausedNewestPixelRow = mNewestPixelRow;
+        }
 
-        mMemoryImageSource.setAnimated(true);
-
-        mWaterfallImage = createImage(mMemoryImageSource);
+        if(mWaterfallImage != null)
+        {
+            mWaterfallImage.flush();
+            mWaterfallImage = null;
+        }
 
         repaint();
     }
@@ -129,12 +134,14 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
      */
     public void setPaused(boolean paused)
     {
-        if(paused)
+        if(paused && !mPaused)
         {
             mPausedPixels = mPixels.clone();
+            mPausedNewestPixelRow = mNewestPixelRow;
         }
 
         mPaused = paused;
+        mWaterfallImageDirty = true;
 
         repaint();
     }
@@ -173,6 +180,8 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     public void setZoom(int zoom)
     {
         mZoom = zoom;
+        mWaterfallImageDirty = true;
+        repaint();
     }
 
     /**
@@ -191,6 +200,8 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     public void setZoomWindowOffset(int offset)
     {
         mDFTZoomWindowOffset = offset;
+        mWaterfallImageDirty = true;
+        repaint();
     }
 
     /**
@@ -257,31 +268,6 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     }
 
     /**
-     * Calculates the x-axis pixel offset from zero where to start rendering the
-     * waterfall image
-     *
-     * @param multiplier - current zoom multiplier
-     * @return x-axis pixel offset
-     */
-    private double getPixelOffset(int multiplier)
-    {
-        double offset = 0;
-
-        if(mZoom != 0)
-        {
-            double binPixelWidth = getBinPixelWidth(multiplier);
-            offset = -binPixelWidth * (mDFTZoomWindowOffset);
-        }
-
-        return offset;
-    }
-
-    private double getBinPixelWidth(int multiplier)
-    {
-        return ((double)getWidth() * (double)multiplier) / mDFTSize;
-    }
-
-    /**
      * Renders the screen at each refresh
      */
     @Override
@@ -289,11 +275,23 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     {
         super.paintComponent(g);
 
-        int multiplier = getZoomMultiplier();
+        prepareWaterfallImage();
 
-        double binPixelWidth = getBinPixelWidth(multiplier);
-        int offset = (int)(getPixelOffset(multiplier) - binPixelWidth);
-        g.drawImage(mWaterfallImage, offset, 0, (getWidth() * multiplier) + (int)binPixelWidth, mImageHeight, this);
+        if(mWaterfallImage != null)
+        {
+            int newestRow = mPaused ? mPausedNewestPixelRow : mNewestPixelRow;
+            int topRowCount = mImageHeight - newestRow;
+
+            g.drawImage(mWaterfallImage, 0, 0, getWidth(), topRowCount, 0, newestRow, mWaterfallImage.getWidth(),
+                mImageHeight, this);
+
+            if(newestRow > 0)
+            {
+                g.drawImage(mWaterfallImage, 0, topRowCount, getWidth(), mImageHeight, 0, 0,
+                    mWaterfallImage.getWidth(), newestRow, this);
+            }
+        }
+
         Graphics2D graphics = (Graphics2D)g;
         graphics.setColor(mColorSpectrumCursor);
 
@@ -315,6 +313,73 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
 
         paintZoomIndicator(graphics);
         graphics.dispose();
+    }
+
+    private void prepareWaterfallImage()
+    {
+        int imageWidth = getWidth();
+
+        if(imageWidth <= 0)
+        {
+            return;
+        }
+
+        if(mWaterfallImage == null || mWaterfallImage.getWidth() != imageWidth)
+        {
+            if(mWaterfallImage != null)
+            {
+                mWaterfallImage.flush();
+            }
+
+            mWaterfallImage = new BufferedImage(imageWidth, mImageHeight, BufferedImage.TYPE_BYTE_INDEXED, mColorModel);
+            mWaterfallImageDirty = true;
+        }
+
+        if(mWaterfallImageDirty)
+        {
+            byte[] sourcePixels = mPaused ? mPausedPixels : mPixels;
+            byte[] displayPixels = new byte[imageWidth * mImageHeight];
+
+            for(int row = 0; row < mImageHeight; row++)
+            {
+                renderDisplayRow(sourcePixels, row * mDFTSize, mDFTSize, getZoomMultiplier(),
+                    mDFTZoomWindowOffset, displayPixels, row * imageWidth, imageWidth);
+            }
+
+            mWaterfallImage.getRaster().setDataElements(0, 0, imageWidth, mImageHeight, displayPixels);
+            mWaterfallImageDirty = false;
+        }
+    }
+
+    /**
+     * Maps a full-resolution history row into the visible display width.  When multiple FFT bins map to the same
+     * display pixel, retains the strongest bin so that narrow signals remain visible.
+     */
+    static void renderDisplayRow(byte[] source, int sourceOffset, int sourceWidth, int zoomMultiplier,
+                                 int zoomOffset, byte[] destination, int destinationOffset, int destinationWidth)
+    {
+        int visibleBinCount = Math.max(1, sourceWidth / Math.max(1, zoomMultiplier));
+        int firstVisibleBin = Math.max(0, Math.min(zoomOffset, sourceWidth - visibleBinCount));
+
+        for(int x = 0; x < destinationWidth; x++)
+        {
+            int firstBin = firstVisibleBin + (int)((long)x * visibleBinCount / destinationWidth);
+            int nextBin = firstVisibleBin + (int)((long)(x + 1) * visibleBinCount / destinationWidth);
+
+            if(nextBin <= firstBin)
+            {
+                nextBin = firstBin + 1;
+            }
+
+            int maximum = 0;
+
+            for(int bin = firstBin; bin < nextBin && bin < sourceWidth; bin++)
+            {
+                maximum = Math.max(maximum, Byte.toUnsignedInt(source[sourceOffset + bin]));
+            }
+
+            destination[destinationOffset + x] = (byte)maximum;
+        }
     }
 
     /**
@@ -390,7 +455,7 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
 
         //Task the swing event thread to add the new pixels to the pixel array and update the display
         EventQueue.invokeLater(() -> {
-            if(mMemoryImageSource != null)
+            if(mPixels != null)
             {
                 //If our FFT size changes, reset our pixel map and image source
                 if(mDFTSize != newPixels.length)
@@ -399,18 +464,27 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
                     reset();
                 }
 
-                //Move the pixels down a row and add in the new pixels row
-                System.arraycopy(mPixels, 0, mPixels, mDFTSize, mPixels.length - mDFTSize);
-                System.arraycopy(newPixels, 0, mPixels, 0, newPixels.length);
+                //Use a ring buffer so that only the newest scanline has to be copied and uploaded to Java2D.
+                mNewestPixelRow = mNewestPixelRow == 0 ? mImageHeight - 1 : mNewestPixelRow - 1;
+                System.arraycopy(newPixels, 0, mPixels, mNewestPixelRow * mDFTSize, newPixels.length);
 
-                if(mPaused)
+                if(!mPaused)
                 {
-                    mMemoryImageSource.newPixels(mPausedPixels, mColorModel, 0, mDFTSize);
+                    if(mWaterfallImage != null && !mWaterfallImageDirty)
+                    {
+                        byte[] displayRow = new byte[mWaterfallImage.getWidth()];
+                        renderDisplayRow(mPixels, mNewestPixelRow * mDFTSize, mDFTSize, getZoomMultiplier(),
+                            mDFTZoomWindowOffset, displayRow, 0, displayRow.length);
+                        mWaterfallImage.getRaster().setDataElements(0, mNewestPixelRow, displayRow.length, 1,
+                            displayRow);
+                    }
+                    else
+                    {
+                        mWaterfallImageDirty = true;
+                    }
                 }
-                else
-                {
-                    mMemoryImageSource.newPixels(mPixels, mColorModel, 0, mDFTSize);
-                }
+
+                repaint();
             }
         });
     }
@@ -418,20 +492,16 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     public void clearWaterfall()
     {
         Arrays.fill(mPixels, (byte)0);
-        mDisabled = true;
+        mNewestPixelRow = 0;
 
-        EventQueue.invokeLater(() -> {
-            if(mMemoryImageSource != null)
-            {
-                try
-                {
-                    mMemoryImageSource.newPixels(mPixels, mColorModel, 0, mDFTSize);
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Temporary error updating cleared waterfall panel - " + e.getLocalizedMessage());
-                }
-            }
-        });
+        if(mPaused)
+        {
+            Arrays.fill(mPausedPixels, (byte)0);
+            mPausedNewestPixelRow = 0;
+        }
+
+        mDisabled = true;
+        mWaterfallImageDirty = true;
+        repaint();
     }
 }
