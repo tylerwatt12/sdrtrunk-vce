@@ -259,7 +259,6 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            RecordedCallCatalogSchema.validate(connection);
             return mStore.search(connection, search);
         }
     }
@@ -273,7 +272,6 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            RecordedCallCatalogSchema.validate(connection);
             return mStore.searchForward(connection, search, after);
         }
     }
@@ -288,7 +286,6 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            RecordedCallCatalogSchema.validate(connection);
             return mStore.resolveCalls(connection, publicCallIds);
         }
     }
@@ -303,7 +300,6 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            RecordedCallCatalogSchema.validate(connection);
             return mStore.listIdentities(connection, kind, scopeKey, afterValueKey, pageSize);
         }
     }
@@ -316,7 +312,6 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            RecordedCallCatalogSchema.validate(connection);
             return mStore.resolveMedia(connection, publicCallId);
         }
     }
@@ -330,7 +325,6 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
 
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            RecordedCallCatalogSchema.validate(connection);
             Optional<RecordedCallCatalogStore.ResolvedMedia> resolved =
                 mStore.resolveMediaDescriptor(connection, publicCallId);
 
@@ -434,7 +428,6 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
 
             try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
             {
-                RecordedCallCatalogSchema.validate(connection);
                 mRetainedBytes.set(mStore.totalRetainedBytes(connection));
                 cleanup(connection);
                 mState = State.RUNNING;

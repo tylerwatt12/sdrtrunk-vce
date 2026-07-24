@@ -18,10 +18,13 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -131,6 +134,25 @@ class RecordedCallCatalogServiceTest
             .calls().isEmpty());
         assertTrue(service.listIdentities(RecordedCallIdentityKind.SYSTEM, "", "", 10).isEmpty());
         assertTrue(service.resolveMedia(RecordedCallCatalogTokens.callId(COMPLETED, callId)).isEmpty());
+        service.close();
+    }
+
+    @Test
+    void runtimeReadsDoNotRepeatWholeSchemaValidation() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("database/sdrtrunk.sqlite");
+        Path root = mTemporaryFolder.resolve("recordings");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        RecordedCallCatalogService service = new RecordedCallCatalogService(database, root, 30);
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("DROP INDEX " + RecordedCallCatalogSchema.DURATION_TIME_INDEX);
+        }
+
+        assertTrue(service.listIdentities(RecordedCallIdentityKind.SYSTEM, "", "", 10).isEmpty(),
+            "bounded runtime reads must trust the single startup schema validation instead of rescanning sqlite_master");
         service.close();
     }
 
