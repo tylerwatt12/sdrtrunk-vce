@@ -25,7 +25,8 @@ class TunerSettingsDeserializerTest
             {
               "disabledTuners": [
                 {"tunerClass": "AIRSPY", "id": "airspy-disabled"},
-                {"tunerClass": "FUTURE_TUNER", "id": "future-disabled"}
+                {"tunerClass": "FUTURE_TUNER", "id": "future-disabled"},
+                null
               ],
               "tunerConfigurations": [
                 {
@@ -51,7 +52,7 @@ class TunerSettingsDeserializerTest
         assertEquals("airspy-1", airspy.getUniqueID());
         assertEquals(853_762_500L, airspy.getFrequency());
         assertEquals(1.5d, airspy.getFrequencyCorrection());
-        assertEquals(2, settings.getIgnoredEntryCount());
+        assertEquals(3, settings.getIgnoredEntryCount());
     }
 
     @Test
@@ -62,14 +63,15 @@ class TunerSettingsDeserializerTest
               "disabledTuners": [],
               "tunerConfigurations": [
                 {"type": "airspyTunerConfiguration", "uniqueID": "airspy-1"},
-                {"type": "airspyTunerConfiguration", "frequency": "not-a-number"}
+                {"type": "airspyTunerConfiguration", "frequency": "not-a-number"},
+                {"type": "airspyTunerConfiguration"}
               ]
             }
             """, TunerSettings.class);
 
         assertEquals(1, settings.getTunerConfigurations().size());
         assertEquals("airspy-1", settings.getTunerConfigurations().getFirst().getUniqueID());
-        assertEquals(1, settings.getIgnoredEntryCount());
+        assertEquals(2, settings.getIgnoredEntryCount());
     }
 
     @Test

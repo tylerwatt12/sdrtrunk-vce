@@ -79,7 +79,17 @@ public class TunerSettingsDeserializer extends StdDeserializer<TunerSettings>
         {
             try
             {
-                entries.add(codec.treeToValue(entryNode, entryType));
+                T entry = codec.treeToValue(entryNode, entryType);
+
+                if(isUsable(entry))
+                {
+                    entries.add(entry);
+                }
+                else
+                {
+                    ignoredCount++;
+                    mLog.warn("Ignoring incomplete {} entry [{}]", label, describe(entryNode));
+                }
             }
             catch(JsonProcessingException | RuntimeException e)
             {
@@ -90,6 +100,22 @@ public class TunerSettingsDeserializer extends StdDeserializer<TunerSettings>
         }
 
         return new EntryList<>(entries, ignoredCount);
+    }
+
+    private static boolean isUsable(Object entry)
+    {
+        if(entry instanceof DisabledTuner disabledTuner)
+        {
+            return disabledTuner.tunerClass() != null && disabledTuner.id() != null && !disabledTuner.id().isBlank();
+        }
+
+        if(entry instanceof TunerConfiguration tunerConfiguration)
+        {
+            return tunerConfiguration.getTunerType() != null && tunerConfiguration.getUniqueID() != null &&
+                !tunerConfiguration.getUniqueID().isBlank();
+        }
+
+        return entry != null;
     }
 
     private static String describe(JsonNode entryNode)
