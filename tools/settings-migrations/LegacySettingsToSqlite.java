@@ -51,6 +51,8 @@ public class LegacySettingsToSqlite
             throw new IllegalArgumentException("Database does not exist: " + database);
         }
 
+        TunerSettings tunerSettings = tunerPath != null && Files.isRegularFile(tunerPath) ?
+            MAPPER.readValue(tunerPath.toFile(), TunerSettings.class) : null;
         checkpoint(database);
         Path backup = database.resolveSibling(database.getFileName() + ".pre-settings-migration-" +
             TIMESTAMP.format(LocalDateTime.now()) + ".bak");
@@ -63,9 +65,9 @@ public class LegacySettingsToSqlite
         applyLegacyColors(ui, properties);
         store.save(ApplicationSettingsStore.UI_SETTINGS, ui);
 
-        if(tunerPath != null && Files.isRegularFile(tunerPath))
+        if(tunerSettings != null)
         {
-            store.save(ApplicationSettingsStore.TUNER_SETTINGS, MAPPER.readValue(tunerPath.toFile(), TunerSettings.class));
+            store.save(ApplicationSettingsStore.TUNER_SETTINGS, tunerSettings);
         }
 
         migratePreferences(database, properties);

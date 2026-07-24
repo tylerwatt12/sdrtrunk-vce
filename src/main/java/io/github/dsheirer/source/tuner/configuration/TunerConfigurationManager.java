@@ -67,6 +67,13 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
                 .orElseGet(TunerSettings::new);
             mDisabledTunerList.addAll(settings.getDisabledTuners());
             mTunerConfigurations.addAll(settings.getTunerConfigurations());
+
+            if(settings.getIgnoredEntryCount() > 0)
+            {
+                mLog.warn("Removed [{}] unsupported or malformed tuner settings entries",
+                    settings.getIgnoredEntryCount());
+                saveConfigurations();
+            }
         }
         catch(Exception e)
         {
