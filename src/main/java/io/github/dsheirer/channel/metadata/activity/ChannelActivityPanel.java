@@ -261,7 +261,7 @@ public class ChannelActivityPanel extends JPanel
     {
         if(mTabbedPane == null)
         {
-            mTabbedPane = new JideTabbedPane();
+            mTabbedPane = new JideTabbedPane(JideTabbedPane.TOP, JideTabbedPane.WRAP_TAB_LAYOUT);
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
             mTabbedPane.addChangeListener(event -> updateTableVisibility());
