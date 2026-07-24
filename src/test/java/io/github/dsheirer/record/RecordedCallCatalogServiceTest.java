@@ -28,6 +28,10 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -268,6 +272,59 @@ class RecordedCallCatalogServiceTest
         assertThrows(IllegalArgumentException.class,
             () -> new RecordedCallCatalogService(database, root, 30,
                 RecordedCallCatalogService.MAXIMUM_RETAINED_BYTES + 1));
+    }
+
+    @Test
+    void retentionLimitPairIsNeverPublishedInAHybridState() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("database.sqlite");
+        Path root = mTemporaryFolder.resolve("recordings");
+        int firstDays = 3_650;
+        long firstBytes = 64;
+        int secondDays = 1;
+        long secondBytes = 8_192;
+        RecordedCallCatalogService service =
+            new RecordedCallCatalogService(database, root, firstDays, firstBytes);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<?> writer = executor.submit(() -> {
+            start.await();
+
+            for(int x = 0; x < 250_000; x++)
+            {
+                service.setRetentionLimits(secondDays, secondBytes);
+                service.setRetentionLimits(firstDays, firstBytes);
+            }
+
+            return null;
+        });
+
+        int reads = 0;
+
+        try
+        {
+            start.countDown();
+
+            do
+            {
+                RecordedCallCatalogService.Status status = service.status();
+                boolean first = status.retentionDays() == firstDays &&
+                    status.maximumRetainedBytes() == firstBytes;
+                boolean second = status.retentionDays() == secondDays &&
+                    status.maximumRetainedBytes() == secondBytes;
+                assertTrue(first || second, "retention readers must observe one complete settings request");
+                reads++;
+            }
+            while(!writer.isDone() || reads < 10_000);
+
+            writer.get(5, TimeUnit.SECONDS);
+            assertTrue(reads >= 10_000);
+        }
+        finally
+        {
+            executor.shutdownNow();
+            service.close();
+        }
     }
 
     private static RecordedCallArtifact artifact(Path root, long completed) throws Exception

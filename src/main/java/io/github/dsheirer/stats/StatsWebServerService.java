@@ -101,9 +101,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     {
         if(preferenceType == PreferenceType.RECORD && mRecordedCallCatalogService != null)
         {
-            mRecordedCallCatalogService.setRetentionDays(
-                mUserPreferences.getRecordPreference().getRecordedCallRetentionDays());
-            mRecordedCallCatalogService.setMaximumRetainedBytes(
+            mRecordedCallCatalogService.setRetentionLimits(
+                mUserPreferences.getRecordPreference().getRecordedCallRetentionDays(),
                 mUserPreferences.getRecordPreference().getRecordedCallMaximumRetainedBytes());
         }
 

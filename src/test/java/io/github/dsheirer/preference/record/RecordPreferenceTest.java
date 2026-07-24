@@ -52,6 +52,14 @@ class RecordPreferenceTest
             assertEquals(45, reloaded.getRecordedCallRetentionDays());
             assertEquals(4_096, reloaded.getRecordedCallMaximumRetainedMiB());
             assertEquals(6, updates.get());
+
+            preference.setRecordedCallRetentionLimits(60, 8_192);
+            assertEquals(60, preference.getRecordedCallRetentionDays());
+            assertEquals(8_192, preference.getRecordedCallMaximumRetainedMiB());
+            assertEquals(7, updates.get(), "a paired retention save must publish exactly one update");
+            RecordPreference pairedReload = new RecordPreference(ignored -> {}, preferences);
+            assertEquals(60, pairedReload.getRecordedCallRetentionDays());
+            assertEquals(8_192, pairedReload.getRecordedCallMaximumRetainedMiB());
         }
         finally
         {

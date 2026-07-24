@@ -77,8 +77,7 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
     private final AtomicLong mWriteFailures = new AtomicLong();
     private final AtomicLong mRetentionRowsDeleted = new AtomicLong();
     private final AtomicLong mRetainedBytes = new AtomicLong();
-    private volatile int mRetentionDays;
-    private volatile long mMaximumRetainedBytes;
+    private volatile RetentionLimits mRetentionLimits;
     private volatile State mState = State.STOPPED;
     private volatile String mLastError;
     private volatile long mLastSuccessfulWriteMs;
@@ -127,8 +126,7 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
         mCurrentTime = Objects.requireNonNull(currentTime, "Clock cannot be null");
         mCleanupIntervalMs = cleanupIntervalMs;
         mRetentionBatchSize = retentionBatchSize;
-        setRetentionDays(retentionDays);
-        setMaximumRetainedBytes(maximumRetainedBytes);
+        setRetentionLimits(retentionDays, maximumRetainedBytes);
     }
 
     public void start()
@@ -216,7 +214,25 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
         return mAccepting.get();
     }
 
-    public void setRetentionDays(int retentionDays)
+    public synchronized void setRetentionDays(int retentionDays)
+    {
+        RetentionLimits current = mRetentionLimits;
+        setRetentionLimits(retentionDays, current != null ? current.maximumRetainedBytes() :
+            DEFAULT_MAXIMUM_RETAINED_BYTES);
+    }
+
+    public synchronized void setMaximumRetainedBytes(long maximumRetainedBytes)
+    {
+        RetentionLimits current = mRetentionLimits;
+        setRetentionLimits(current != null ? current.retentionDays() : MINIMUM_RETENTION_DAYS,
+            maximumRetainedBytes);
+    }
+
+    /**
+     * Atomically replaces both recorded-call retention limits.  Publishing the pair as one immutable value prevents
+     * cleanup from observing one limit from an old settings request and the other from a new request.
+     */
+    public synchronized void setRetentionLimits(int retentionDays, long maximumRetainedBytes)
     {
         if(retentionDays < MINIMUM_RETENTION_DAYS || retentionDays > MAXIMUM_RETENTION_DAYS)
         {
@@ -224,28 +240,17 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
                 MINIMUM_RETENTION_DAYS + " and " + MAXIMUM_RETENTION_DAYS + " days");
         }
 
-        int previous = mRetentionDays;
-        mRetentionDays = retentionDays;
-
-        if(previous > 0 && retentionDays < previous)
-        {
-            mCleanupRestartRequested.set(true);
-            mCleanupRequested.set(true);
-        }
-    }
-
-    public void setMaximumRetainedBytes(long maximumRetainedBytes)
-    {
         if(maximumRetainedBytes < 1 || maximumRetainedBytes > MAXIMUM_RETAINED_BYTES)
         {
             throw new IllegalArgumentException("Recorded-call maximum retained bytes must be between 1 and " +
                 MAXIMUM_RETAINED_BYTES);
         }
 
-        long previous = mMaximumRetainedBytes;
-        mMaximumRetainedBytes = maximumRetainedBytes;
+        RetentionLimits previous = mRetentionLimits;
+        mRetentionLimits = new RetentionLimits(retentionDays, maximumRetainedBytes);
 
-        if(previous > 0 && maximumRetainedBytes < previous)
+        if(previous != null && (retentionDays < previous.retentionDays() ||
+            maximumRetainedBytes < previous.maximumRetainedBytes()))
         {
             mCleanupRestartRequested.set(true);
             mCleanupRequested.set(true);
@@ -343,7 +348,8 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
 
     public Status status()
     {
-        return new Status(mState, mRetentionDays, mMaximumRetainedBytes, mRetainedBytes.get(),
+        RetentionLimits limits = mRetentionLimits;
+        return new Status(mState, limits.retentionDays(), limits.maximumRetainedBytes(), mRetainedBytes.get(),
             mQueue.size(), mRecoveryQueue.size(),
             mQueue.remainingCapacity() + mQueue.size(),
             mAccepted.get(), mRejected.get(), mDropped.get(), mInserted.get(), mDuplicate.get(), mInvalid.get(),
@@ -609,7 +615,7 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
             mDuplicate.addAndGet(duplicates);
             long retainedBytes = mRetainedBytes.addAndGet(insertedBytes);
 
-            if(retainedBytes > mMaximumRetainedBytes)
+            if(retainedBytes > mRetentionLimits.maximumRetainedBytes())
             {
                 mCleanupRequested.set(true);
             }
@@ -648,7 +654,8 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
     private void cleanup(Connection connection) throws SQLException
     {
         long now = mCurrentTime.getAsLong();
-        long retentionMs = TimeUnit.DAYS.toMillis(mRetentionDays);
+        RetentionLimits limits = mRetentionLimits;
+        long retentionMs = TimeUnit.DAYS.toMillis(limits.retentionDays());
         long cutoff = Math.max(1, now - retentionMs);
 
         if(mCleanupRestartRequested.getAndSet(false))
@@ -657,7 +664,7 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
         }
 
         RecordedCallCatalogStore.RetentionResult result =
-            mStore.cleanupRetention(connection, cutoff, mRetainedBytes.get(), mMaximumRetainedBytes,
+            mStore.cleanupRetention(connection, cutoff, mRetainedBytes.get(), limits.maximumRetainedBytes(),
                 mRetentionBatchSize, mCleanupCursor);
         mRetentionRowsDeleted.addAndGet(result.rowsDeleted());
         mRetainedBytes.updateAndGet(current -> Math.max(0, current - result.bytesRemoved()));
@@ -676,6 +683,10 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
         {
             mLastError = "Unable to delete " + result.fileFailures() + " expired recording file(s)";
         }
+    }
+
+    private record RetentionLimits(int retentionDays, long maximumRetainedBytes)
+    {
     }
 
     private void fail(Exception exception)

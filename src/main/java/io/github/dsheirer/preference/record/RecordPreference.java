@@ -178,6 +178,23 @@ public class RecordPreference extends Preference
         notifyPreferenceUpdated();
     }
 
+    /**
+     * Saves both recorded-call retention limits and publishes one preference update after the complete pair is
+     * available to listeners.
+     */
+    public synchronized void setRecordedCallRetentionLimits(int retentionDays, int maximumRetainedMiB)
+    {
+        mRecordedCallRetentionDays = clamp(retentionDays, MINIMUM_RECORDED_CALL_RETENTION_DAYS,
+            MAXIMUM_RECORDED_CALL_RETENTION_DAYS);
+        mRecordedCallMaximumRetainedMiB = clamp(maximumRetainedMiB,
+            MINIMUM_RECORDED_CALL_MAXIMUM_RETAINED_MIB,
+            MAXIMUM_RECORDED_CALL_MAXIMUM_RETAINED_MIB);
+        mPreferences.putInt(PREFERENCE_KEY_RECORDED_CALL_RETENTION_DAYS, mRecordedCallRetentionDays);
+        mPreferences.putInt(PREFERENCE_KEY_RECORDED_CALL_MAXIMUM_RETAINED_MIB,
+            mRecordedCallMaximumRetainedMiB);
+        notifyPreferenceUpdated();
+    }
+
     private static int clamp(int value, int minimum, int maximum)
     {
         return Math.max(minimum, Math.min(maximum, value));
