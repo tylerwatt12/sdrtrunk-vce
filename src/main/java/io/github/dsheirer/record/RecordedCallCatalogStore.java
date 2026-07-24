@@ -28,10 +28,14 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Synchronous SQLite operations used only by the catalog's background worker and bounded web readers.
@@ -43,6 +47,8 @@ final class RecordedCallCatalogStore
     static final int FORMAT_WAVE = 1;
     static final int FORMAT_MP3 = 2;
     static final int MAXIMUM_FACET_PAGE_SIZE = 200;
+    static final int MAXIMUM_BATCH_SIZE = 200;
+    private static final String PRIMARY_KEY_INDEX = "sqlite_autoindex_recorded_call_1";
     static final String RETENTION_OLDEST_SQL = """
         SELECT c.producer_id, c.call_sequence, c.timeslot, c.completed_at_ms, c.format_code,
                c.byte_size, b.relative_directory
@@ -246,6 +252,43 @@ final class RecordedCallCatalogStore
     }
 
     /**
+     * Searches from oldest to newest after an optional composite primary-key cursor. The filter object's
+     * newest-first {@code before} cursor must be absent so the two cursor directions cannot be confused.
+     */
+    RecordedCallCatalogPage searchForward(Connection connection, RecordedCallCatalogSearch search,
+                                          RecordedCallCatalogSearch.Cursor after) throws SQLException
+    {
+        Objects.requireNonNull(connection, "SQLite connection cannot be null");
+        Objects.requireNonNull(search, "Recorded-call search cannot be null");
+        SearchStatement query = buildForwardSearchStatement(search, after);
+        List<RecordedCallCatalogEntry> calls = new ArrayList<>(search.pageSize() + 1);
+
+        try(PreparedStatement statement = connection.prepareStatement(query.sql()))
+        {
+            bind(statement, query.parameters());
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    calls.add(entry(resultSet));
+                }
+            }
+        }
+
+        boolean hasMore = calls.size() > search.pageSize();
+
+        if(hasMore)
+        {
+            calls.remove(calls.size() - 1);
+        }
+
+        RecordedCallCatalogSearch.Cursor cursor =
+            hasMore && !calls.isEmpty() ? calls.get(calls.size() - 1).cursor() : null;
+        return new RecordedCallCatalogPage(calls, cursor);
+    }
+
+    /**
      * Builds the exact public search statement used at runtime. Package visibility allows representative-volume tests
      * to EXPLAIN this statement instead of testing a simplified SQL surrogate.
      */
@@ -324,6 +367,199 @@ final class RecordedCallCatalogStore
             """);
         parameters.add(search.pageSize() + 1);
         return new SearchStatement(sql.toString(), List.copyOf(parameters));
+    }
+
+    /**
+     * Builds the exact oldest-first public search statement used at runtime.
+     *
+     * <p>The recorded-call table remains the outer side of a cross join so SQLite walks the composite primary key in
+     * ascending order and stops at the bounded page limit. This avoids an offset or a temporary full-result sort even
+     * when a bucket identity filter is present.</p>
+     */
+    static SearchStatement buildForwardSearchStatement(RecordedCallCatalogSearch search,
+                                                       RecordedCallCatalogSearch.Cursor after)
+    {
+        Objects.requireNonNull(search, "Recorded-call search cannot be null");
+
+        if(search.before() != null)
+        {
+            throw new IllegalArgumentException(
+                "Newest-first before cursor cannot be combined with an oldest-first search");
+        }
+
+        List<Object> parameters = new ArrayList<>();
+        StringBuilder sql = new StringBuilder("""
+            SELECT c.producer_id, c.call_sequence, c.timeslot, c.completed_at_ms, c.start_at_ms,
+                   c.duration_ms, c.byte_size, c.format_code, c.flags, b.relative_directory,
+                   b.system_key, b.system_label, b.site_key, b.site_label,
+                   b.channel_key, b.channel_label, b.talkgroup_key, b.talkgroup_label,
+                   c.source_radio_key
+            FROM recorded_call AS c INDEXED BY %s
+            CROSS JOIN recorded_call_bucket AS b ON b.id = c.bucket_id
+            WHERE c.completed_at_ms >= ? AND c.completed_at_ms < ?
+              AND c.duration_ms >= ? AND c.duration_ms <= ?
+            """.formatted(PRIMARY_KEY_INDEX));
+        sql.append(" AND (c.flags & ").append(FLAG_RECORD_ELIGIBLE).append(") != 0\n");
+        parameters.add(search.fromInclusiveMs());
+        parameters.add(search.toExclusiveMs());
+        parameters.add(search.minimumDurationMs());
+        parameters.add(search.maximumDurationMs());
+        appendKey(sql, parameters, "b.system_key", search.systemKey());
+        appendKey(sql, parameters, "b.site_key", search.siteKey());
+        appendKey(sql, parameters, "b.talkgroup_key", search.talkgroupKey());
+        appendKey(sql, parameters, "b.channel_key", search.channelKey());
+        appendKey(sql, parameters, "c.source_radio_key", search.sourceRadioKey());
+
+        if(after != null)
+        {
+            sql.append("""
+                 AND (c.completed_at_ms, c.producer_id, c.call_sequence, c.timeslot) > (?, ?, ?, ?)
+                """);
+            RecordedCallCatalogTokens.CursorValues cursor = after.values();
+            parameters.add(cursor.completedAtMs());
+            parameters.add(cursor.callId().producerId());
+            parameters.add(cursor.callId().sequence());
+            parameters.add(cursor.callId().timeslot());
+        }
+
+        sql.append("""
+             ORDER BY c.completed_at_ms, c.producer_id, c.call_sequence, c.timeslot
+             LIMIT ?
+            """);
+        parameters.add(search.pageSize() + 1);
+        return new SearchStatement(sql.toString(), List.copyOf(parameters));
+    }
+
+    /**
+     * Resolves one bounded batch of public call IDs to path-free metadata in request order. Missing, expired, and
+     * non-record-eligible rows all produce an empty result at their original list position.
+     */
+    List<Optional<RecordedCallCatalogMetadata>> resolveCalls(Connection connection, List<String> publicCallIds)
+        throws SQLException
+    {
+        Objects.requireNonNull(connection, "SQLite connection cannot be null");
+        BatchRequest request = batchRequest(publicCallIds);
+
+        if(request.ids().isEmpty())
+        {
+            return List.of();
+        }
+
+        Map<String,RecordedCallCatalogMetadata> available = new HashMap<>(request.ids().size());
+
+        try(PreparedStatement statement = connection.prepareStatement(request.statement().sql()))
+        {
+            bind(statement, request.statement().parameters());
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    RecordedCallCatalogEntry entry = entry(resultSet);
+                    available.put(entry.id(), entry.metadata());
+                }
+            }
+        }
+
+        List<Optional<RecordedCallCatalogMetadata>> aligned = new ArrayList<>(request.ids().size());
+
+        for(String id: request.ids())
+        {
+            aligned.add(Optional.ofNullable(available.get(id)));
+        }
+
+        return List.copyOf(aligned);
+    }
+
+    /**
+     * Builds the one-query batch lookup used at runtime. Four parameters identify each requested composite primary
+     * key and one parameter applies the public record-eligibility gate, for at most 801 SQLite parameters.
+     */
+    static SearchStatement buildBatchResolveStatement(List<String> publicCallIds)
+    {
+        BatchRequest request = batchRequest(publicCallIds);
+
+        if(request.ids().isEmpty())
+        {
+            throw new IllegalArgumentException("Recorded-call batch must contain at least one public call ID");
+        }
+
+        return request.statement();
+    }
+
+    private static BatchRequest batchRequest(List<String> publicCallIds)
+    {
+        if(publicCallIds == null)
+        {
+            throw new IllegalArgumentException("Recorded-call batch cannot be null");
+        }
+
+        if(publicCallIds.size() > MAXIMUM_BATCH_SIZE)
+        {
+            throw new IllegalArgumentException("Recorded-call batch cannot exceed " + MAXIMUM_BATCH_SIZE + " IDs");
+        }
+
+        if(publicCallIds.isEmpty())
+        {
+            return new BatchRequest(List.of(), null);
+        }
+
+        List<String> ids = new ArrayList<>(publicCallIds.size());
+        List<RecordedCallCatalogTokens.CursorValues> values = new ArrayList<>(publicCallIds.size());
+        Set<BatchKey> unique = new HashSet<>(publicCallIds.size());
+
+        for(String id: publicCallIds)
+        {
+            RecordedCallCatalogTokens.CursorValues parsed = RecordedCallCatalogTokens.parseCallId(id);
+            String canonical = RecordedCallCatalogTokens.callId(parsed.completedAtMs(), parsed.callId());
+            BatchKey key = BatchKey.from(parsed);
+
+            if(!canonical.equals(id))
+            {
+                throw new IllegalArgumentException("Recorded-call batch ID is not canonical");
+            }
+
+            if(!unique.add(key))
+            {
+                throw new IllegalArgumentException("Recorded-call batch cannot contain duplicate IDs");
+            }
+
+            ids.add(id);
+            values.add(parsed);
+        }
+
+        List<Object> parameters = new ArrayList<>(1 + values.size() * 4);
+        parameters.add(FLAG_RECORD_ELIGIBLE);
+        StringBuilder sql = new StringBuilder("""
+            SELECT c.producer_id, c.call_sequence, c.timeslot, c.completed_at_ms, c.start_at_ms,
+                   c.duration_ms, c.byte_size, c.format_code, c.flags, b.relative_directory,
+                   b.system_key, b.system_label, b.site_key, b.site_label,
+                   b.channel_key, b.channel_label, b.talkgroup_key, b.talkgroup_label,
+                   c.source_radio_key
+            FROM recorded_call AS c
+            JOIN recorded_call_bucket AS b ON b.id = c.bucket_id
+            WHERE (c.flags & ?) != 0
+              AND (c.completed_at_ms, c.producer_id, c.call_sequence, c.timeslot) IN (VALUES
+            """);
+
+        for(int index = 0; index < values.size(); index++)
+        {
+            if(index > 0)
+            {
+                sql.append(",\n");
+            }
+
+            sql.append("    (?, ?, ?, ?)");
+            RecordedCallCatalogTokens.CursorValues value = values.get(index);
+            parameters.add(value.completedAtMs());
+            parameters.add(value.callId().producerId());
+            parameters.add(value.callId().sequence());
+            parameters.add(value.callId().timeslot());
+        }
+
+        sql.append("\n)\n");
+        return new BatchRequest(List.copyOf(ids),
+            new SearchStatement(sql.toString(), List.copyOf(parameters)));
     }
 
     /**
@@ -1166,6 +1402,23 @@ final class RecordedCallCatalogStore
         SearchStatement
         {
             parameters = List.copyOf(parameters);
+        }
+    }
+
+    private record BatchRequest(List<String> ids, SearchStatement statement)
+    {
+        private BatchRequest
+        {
+            ids = List.copyOf(ids);
+        }
+    }
+
+    private record BatchKey(long completedAtMs, long producerId, long callSequence, int timeslot)
+    {
+        private static BatchKey from(RecordedCallCatalogTokens.CursorValues values)
+        {
+            AudioCallId callId = values.callId();
+            return new BatchKey(values.completedAtMs(), callId.producerId(), callId.sequence(), callId.timeslot());
         }
     }
 }

@@ -39,4 +39,13 @@ public record RecordedCallCatalogEntry(String id, long completedAtMs, long start
         return RecordedCallCatalogSearch.Cursor.create(completedAtMs,
             RecordedCallCatalogTokens.parseCallId(id).callId());
     }
+
+    /**
+     * Creates the public metadata projection without exposing the managed recording path.
+     */
+    public RecordedCallCatalogMetadata metadata()
+    {
+        return new RecordedCallCatalogMetadata(id, completedAtMs, startAtMs, durationMs, byteSize, format,
+            encrypted, system, site, channel, talkgroup, sourceRadio);
+    }
 }

@@ -24,6 +24,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -68,6 +71,27 @@ class RecordedCallCatalogVolumeTest
                 1_000, 1_100, null);
             assertGeneratedPlanUses(connection, selectiveDuration,
                 RecordedCallCatalogSchema.DURATION_TIME_INDEX);
+
+            int forwardRow = ROWS / 2;
+            RecordedCallCatalogSearch.Cursor forwardCursor = RecordedCallCatalogSearch.Cursor.create(
+                START + forwardRow, new AudioCallId(forwardRow / 10_000L, forwardRow, 0));
+            assertGeneratedForwardPlanUses(connection, broadDuration, forwardCursor, "PRIMARY KEY");
+            assertGeneratedForwardPlanUses(connection, selectiveDuration, forwardCursor, "PRIMARY KEY");
+            assertGeneratedForwardPlanUses(connection, search("system-0", null, null, null, null,
+                    0, RecordedCallCatalogSearch.MAXIMUM_CALL_DURATION_MS, null),
+                forwardCursor, "PRIMARY KEY");
+            assertGeneratedForwardPlanUses(connection, search("system-0", "site-0", null, null, null,
+                    0, RecordedCallCatalogSearch.MAXIMUM_CALL_DURATION_MS, null),
+                forwardCursor, "PRIMARY KEY");
+            assertGeneratedForwardPlanUses(connection, search("system-0", null, "talkgroup-0", null, null,
+                    0, RecordedCallCatalogSearch.MAXIMUM_CALL_DURATION_MS, null),
+                forwardCursor, "PRIMARY KEY");
+            assertGeneratedForwardPlanUses(connection, search(null, "site-0", null, "channel-0", null,
+                    0, RecordedCallCatalogSearch.MAXIMUM_CALL_DURATION_MS, null),
+                forwardCursor, "PRIMARY KEY");
+            assertGeneratedForwardPlanUses(connection, search(null, null, null, null, "radio-0",
+                    0, RecordedCallCatalogSearch.MAXIMUM_CALL_DURATION_MS, null),
+                forwardCursor, "PRIMARY KEY");
 
             assertGeneratedPlanUses(connection, search("system-0", null, null, null, null,
                     0, RecordedCallCatalogSearch.MAXIMUM_CALL_DURATION_MS, null),
@@ -136,6 +160,31 @@ class RecordedCallCatalogVolumeTest
                 store.search(connection, selectiveDuration).calls().size());
             assertEquals(RecordedCallCatalogSearch.MAXIMUM_PAGE_SIZE,
                 store.search(connection, broadDuration).calls().size());
+            RecordedCallCatalogPage forward = store.searchForward(connection, broadDuration, forwardCursor);
+            assertEquals(RecordedCallCatalogSearch.MAXIMUM_PAGE_SIZE, forward.calls().size());
+            assertTrue(forward.nextCursor() != null);
+            assertEquals(START + forwardRow + 1, forward.calls().getFirst().completedAtMs());
+
+            List<String> batchIds = new ArrayList<>(RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE);
+
+            for(int offset = 0; offset < RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE; offset++)
+            {
+                int row = ROWS - 1 - offset;
+                batchIds.add(RecordedCallCatalogTokens.callId(START + row,
+                    new AudioCallId(row / 10_000L, row, 0)));
+            }
+
+            RecordedCallCatalogStore.SearchStatement batchStatement =
+                RecordedCallCatalogStore.buildBatchResolveStatement(batchIds);
+            assertEquals(801, batchStatement.parameters().size());
+            assertTrue(batchStatement.parameters().size() <= 999);
+            String batchPlan =
+                explain(connection, batchStatement.sql(), batchStatement.parameters().toArray());
+            assertTrue(batchPlan.contains("SEARCH c USING PRIMARY KEY"), batchPlan);
+            assertFalse(batchPlan.contains("SCAN c"), batchPlan);
+            List<Optional<RecordedCallCatalogMetadata>> batch = store.resolveCalls(connection, batchIds);
+            assertEquals(batchIds, batch.stream().map(Optional::orElseThrow)
+                .map(RecordedCallCatalogMetadata::id).toList());
 
             assertEquals(10, store.listIdentities(connection, RecordedCallIdentityKind.SYSTEM, "", "", 20).size());
             assertEquals(10, store.listIdentities(connection, RecordedCallIdentityKind.SITE, "system-0", "", 20)
@@ -181,6 +230,19 @@ class RecordedCallCatalogVolumeTest
         {
             assertTrue(plan.contains(index), plan);
         }
+    }
+
+    private static void assertGeneratedForwardPlanUses(Connection connection, RecordedCallCatalogSearch search,
+                                                       RecordedCallCatalogSearch.Cursor after,
+                                                       String expected) throws Exception
+    {
+        RecordedCallCatalogStore.SearchStatement statement =
+            RecordedCallCatalogStore.buildForwardSearchStatement(search, after);
+        String plan = explain(connection, statement.sql(), statement.parameters().toArray());
+        assertTrue(plan.contains("SEARCH c"), plan);
+        assertTrue(plan.contains(expected), plan);
+        assertFalse(plan.contains("SCAN c"), plan);
+        assertFalse(plan.contains("USE TEMP B-TREE"), plan);
     }
 
     private static void insertVolume(Connection connection) throws Exception

@@ -43,6 +43,7 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
 {
     public static final int MINIMUM_RETENTION_DAYS = 1;
     public static final int MAXIMUM_RETENTION_DAYS = 3_650;
+    public static final int MAXIMUM_BATCH_SIZE = RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE;
     public static final int DEFAULT_QUEUE_CAPACITY = 2_048;
     public static final int DEFAULT_RETENTION_BATCH_SIZE = 250;
     public static final long DEFAULT_MAXIMUM_RETAINED_BYTES = 2_000L * 1024 * 1024;
@@ -259,6 +260,35 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
         {
             RecordedCallCatalogSchema.validate(connection);
             return mStore.search(connection, search);
+        }
+    }
+
+    /**
+     * Runs one bounded oldest-first website query after an optional composite primary-key cursor.
+     */
+    public RecordedCallCatalogPage searchForward(RecordedCallCatalogSearch search,
+                                                 RecordedCallCatalogSearch.Cursor after)
+        throws IOException, SQLException
+    {
+        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        {
+            RecordedCallCatalogSchema.validate(connection);
+            return mStore.searchForward(connection, search, after);
+        }
+    }
+
+    /**
+     * Resolves at most {@link #MAXIMUM_BATCH_SIZE} opaque public call IDs in one SQLite query. Each returned list
+     * position corresponds to the same request position. Missing, expired, and non-record-eligible calls are all
+     * represented by an empty optional, and managed filesystem paths are never returned.
+     */
+    public List<Optional<RecordedCallCatalogMetadata>> resolveCalls(List<String> publicCallIds)
+        throws IOException, SQLException
+    {
+        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        {
+            RecordedCallCatalogSchema.validate(connection);
+            return mStore.resolveCalls(connection, publicCallIds);
         }
     }
 

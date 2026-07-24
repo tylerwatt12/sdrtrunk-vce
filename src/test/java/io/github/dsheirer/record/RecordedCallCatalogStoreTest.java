@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -30,10 +31,16 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -90,6 +97,146 @@ class RecordedCallCatalogStoreTest
             assertNull(pageTwo.nextCursor());
             assertNotEquals(pageOne.calls().get(0).id(), pageTwo.calls().get(0).id());
             assertEquals(2, count(connection, "recorded_call"));
+        }
+    }
+
+    @Test
+    void forwardSearchPagesEqualCompletionTimesWithoutDuplicatesOrOmissions() throws Exception
+    {
+        List<RecordedCallArtifact> artifacts = List.of(
+            artifact(new AudioCallId(2, 1, 0), COMPLETED, true),
+            artifact(new AudioCallId(1, 2, 0), COMPLETED, true),
+            artifact(new AudioCallId(1, 1, 1), COMPLETED, true),
+            artifact(new AudioCallId(1, 1, 0), COMPLETED, true),
+            artifact(new AudioCallId(1, 0, 0), COMPLETED - 1, true),
+            artifact(new AudioCallId(3, 0, 0), COMPLETED + 1, true));
+
+        try(Connection connection = SdrTrunkDatabase.open(mDatabase))
+        {
+            for(RecordedCallArtifact artifact: artifacts)
+            {
+                assertEquals(RecordedCallCatalogStore.AdmissionResult.INSERTED,
+                    mStore.admit(connection, artifact));
+            }
+
+            RecordedCallCatalogSearch filters = RecordedCallCatalogSearch.recent(
+                COMPLETED - 2, COMPLETED + 2, 2);
+            RecordedCallCatalogSearch.Cursor after = null;
+            List<RecordedCallCatalogTokens.CursorValues> returned = new ArrayList<>();
+
+            do
+            {
+                RecordedCallCatalogPage page = mStore.searchForward(connection, filters, after);
+                page.calls().stream()
+                    .map(call -> RecordedCallCatalogTokens.parseCallId(call.id()))
+                    .forEach(returned::add);
+                after = page.nextCursor();
+            }
+            while(after != null);
+
+            assertEquals(6, returned.size());
+            assertEquals(List.of(
+                    new RecordedCallCatalogTokens.CursorValues(COMPLETED - 1, new AudioCallId(1, 0, 0)),
+                    new RecordedCallCatalogTokens.CursorValues(COMPLETED, new AudioCallId(1, 1, 0)),
+                    new RecordedCallCatalogTokens.CursorValues(COMPLETED, new AudioCallId(1, 1, 1)),
+                    new RecordedCallCatalogTokens.CursorValues(COMPLETED, new AudioCallId(1, 2, 0)),
+                    new RecordedCallCatalogTokens.CursorValues(COMPLETED, new AudioCallId(2, 1, 0)),
+                    new RecordedCallCatalogTokens.CursorValues(COMPLETED + 1, new AudioCallId(3, 0, 0))),
+                returned);
+            assertEquals(6, returned.stream().distinct().count());
+
+            List<RecordedCallCatalogTokens.CursorValues> newest = mStore.search(connection,
+                    RecordedCallCatalogSearch.recent(COMPLETED - 2, COMPLETED + 2, 10)).calls().stream()
+                .map(call -> RecordedCallCatalogTokens.parseCallId(call.id()))
+                .toList();
+            List<RecordedCallCatalogTokens.CursorValues> reversed = new ArrayList<>(returned);
+            Collections.reverse(reversed);
+            assertEquals(reversed, newest, "the existing newest-first search remains unchanged");
+
+            RecordedCallCatalogSearch newestCursor = new RecordedCallCatalogSearch(null, null, null, null, null,
+                COMPLETED - 2, COMPLETED + 2, 0, RecordedCallCatalogSearch.MAXIMUM_CALL_DURATION_MS, 2,
+                RecordedCallCatalogSearch.Cursor.create(returned.get(1).completedAtMs(),
+                    returned.get(1).callId()));
+            assertThrows(IllegalArgumentException.class,
+                () -> mStore.searchForward(connection, newestCursor, null));
+        }
+    }
+
+    @Test
+    void batchResolutionIsAlignedBoundedCanonicalAndPathFree() throws Exception
+    {
+        RecordedCallArtifact first = artifact(new AudioCallId(10, 1, 0), COMPLETED, true);
+        RecordedCallArtifact second = artifact(new AudioCallId(10, 2, 0), COMPLETED + 1, true);
+        RecordedCallArtifact ineligible = artifact(new AudioCallId(10, 3, 0), COMPLETED + 2, false);
+
+        try(Connection connection = SdrTrunkDatabase.open(mDatabase))
+        {
+            assertEquals(RecordedCallCatalogStore.AdmissionResult.INSERTED, mStore.admit(connection, first));
+            assertEquals(RecordedCallCatalogStore.AdmissionResult.INSERTED, mStore.admit(connection, second));
+            assertEquals(RecordedCallCatalogStore.AdmissionResult.INSERTED, mStore.admit(connection, ineligible));
+            String firstId = RecordedCallCatalogTokens.callId(first.completedAtMs(), first.callId());
+            String secondId = RecordedCallCatalogTokens.callId(second.completedAtMs(), second.callId());
+            String missingId = RecordedCallCatalogTokens.callId(COMPLETED + 3, new AudioCallId(10, 4, 0));
+            String ineligibleId =
+                RecordedCallCatalogTokens.callId(ineligible.completedAtMs(), ineligible.callId());
+            List<Optional<RecordedCallCatalogMetadata>> resolved =
+                mStore.resolveCalls(connection, List.of(secondId, missingId, firstId, ineligibleId));
+
+            assertEquals(4, resolved.size());
+            assertEquals(secondId, resolved.get(0).orElseThrow().id());
+            assertTrue(resolved.get(1).isEmpty());
+            assertEquals(firstId, resolved.get(2).orElseThrow().id());
+            assertTrue(resolved.get(3).isEmpty(),
+                "non-record-eligible calls must be indistinguishable from unavailable calls");
+            assertTrue(Arrays.stream(RecordedCallCatalogMetadata.class.getRecordComponents())
+                .noneMatch(component -> Path.class.isAssignableFrom(component.getType())));
+
+            try(PreparedStatement expired = connection.prepareStatement("""
+                DELETE FROM recorded_call
+                WHERE completed_at_ms = ? AND producer_id = ? AND call_sequence = ? AND timeslot = ?
+                """))
+            {
+                expired.setLong(1, second.completedAtMs());
+                expired.setLong(2, second.callId().producerId());
+                expired.setLong(3, second.callId().sequence());
+                expired.setInt(4, second.callId().timeslot());
+                assertEquals(1, expired.executeUpdate());
+            }
+
+            assertTrue(mStore.resolveCalls(connection, List.of(secondId, missingId, ineligibleId)).stream()
+                .allMatch(Optional::isEmpty),
+                "expired, missing, and non-record-eligible IDs must have the same unavailable result");
+            assertThrows(IllegalArgumentException.class,
+                () -> mStore.resolveCalls(connection, List.of(firstId, firstId)));
+            assertThrows(IllegalArgumentException.class,
+                () -> mStore.resolveCalls(connection, List.of(firstId + "=")));
+            assertThrows(IllegalArgumentException.class,
+                () -> mStore.resolveCalls(connection, null));
+            assertTrue(mStore.resolveCalls(connection, List.of()).isEmpty());
+
+            List<String> maximum = new ArrayList<>(RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE);
+
+            for(int index = 0; index < RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE; index++)
+            {
+                maximum.add(RecordedCallCatalogTokens.callId(COMPLETED + 10_000 + index,
+                    new AudioCallId(99, index, 0)));
+            }
+
+            RecordedCallCatalogStore.SearchStatement statement =
+                RecordedCallCatalogStore.buildBatchResolveStatement(maximum);
+            assertEquals(1 + RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE * 4,
+                statement.parameters().size());
+            assertTrue(statement.parameters().size() <= 999);
+            List<Optional<RecordedCallCatalogMetadata>> maximumResult =
+                mStore.resolveCalls(connection, maximum);
+            assertEquals(RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE, maximumResult.size());
+            assertTrue(maximumResult.stream().allMatch(Optional::isEmpty));
+
+            List<String> tooMany = new ArrayList<>(maximum);
+            tooMany.add(RecordedCallCatalogTokens.callId(COMPLETED + 20_000,
+                new AudioCallId(99, RecordedCallCatalogStore.MAXIMUM_BATCH_SIZE, 0)));
+            assertThrows(IllegalArgumentException.class,
+                () -> mStore.resolveCalls(connection, tooMany));
         }
     }
 

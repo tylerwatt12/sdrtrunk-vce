@@ -22,6 +22,8 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -59,6 +61,15 @@ class RecordedCallCatalogServiceTest
         assertEquals(2_000, page.calls().get(0).durationMs());
         assertEquals(artifact.path().toRealPath(),
             service.resolveMedia(page.calls().get(0).id()).orElseThrow().toRealPath());
+        RecordedCallCatalogPage forward = service.searchForward(
+            RecordedCallCatalogSearch.recent(COMPLETED - 1, COMPLETED + 1, 10), null);
+        assertEquals(List.of(page.calls().get(0).id()),
+            forward.calls().stream().map(RecordedCallCatalogEntry::id).toList());
+        List<Optional<RecordedCallCatalogMetadata>> resolved = service.resolveCalls(List.of(
+            page.calls().get(0).id(),
+            RecordedCallCatalogTokens.callId(COMPLETED + 1, new AudioCallId(10, 21, 1))));
+        assertEquals(page.calls().get(0).id(), resolved.get(0).orElseThrow().id());
+        assertTrue(resolved.get(1).isEmpty());
 
         service.close();
         assertEquals(RecordedCallCatalogService.State.STOPPED, service.status().state());
