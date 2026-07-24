@@ -25,6 +25,7 @@ import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -265,6 +266,11 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         {
             return protocol(destination) + ":fq:" + fullyQualified.getWacn() + ':' +
                 fullyQualified.getSystem() + ':' + fullyQualified.getTalkgroup();
+        }
+        else if(destination instanceof NXDNFullyQualifiedTalkgroupIdentifier fullyQualified)
+        {
+            return protocol(destination) + ":fq:" + fullyQualified.getSystem() + ':' +
+                fullyQualified.getValue();
         }
         else if(destination instanceof PatchGroupIdentifier patchGroupIdentifier)
         {

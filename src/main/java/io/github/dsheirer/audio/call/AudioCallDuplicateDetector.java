@@ -44,14 +44,13 @@ public final class AudioCallDuplicateDetector
         {
             if(identifier1 instanceof TalkgroupIdentifier talkgroupIdentifier1)
             {
-                int talkgroup1 = talkgroupIdentifier1.getValue();
-
                 for(Identifier<?> identifier2 : identifiers2)
                 {
                     if((identifier2 instanceof TalkgroupIdentifier talkgroupIdentifier2 &&
-                        talkgroupIdentifier2.getValue() == talkgroup1) ||
+                        isSameTalkgroup(talkgroupIdentifier1, talkgroupIdentifier2)) ||
                         (identifier2 instanceof PatchGroupIdentifier patchGroupIdentifier2 &&
-                            patchGroupIdentifier2.getValue().getPatchGroup().getValue() == talkgroup1))
+                            isSameTalkgroup(talkgroupIdentifier1,
+                                patchGroupIdentifier2.getValue().getPatchGroup())))
                     {
                         return true;
                     }
@@ -59,14 +58,15 @@ public final class AudioCallDuplicateDetector
             }
             else if(identifier1 instanceof PatchGroupIdentifier patchGroupIdentifier1)
             {
-                int talkgroup1 = patchGroupIdentifier1.getValue().getPatchGroup().getValue();
+                TalkgroupIdentifier talkgroupIdentifier1 = patchGroupIdentifier1.getValue().getPatchGroup();
 
                 for(Identifier<?> identifier2 : identifiers2)
                 {
                     if((identifier2 instanceof TalkgroupIdentifier talkgroupIdentifier2 &&
-                        talkgroupIdentifier2.getValue() == talkgroup1) ||
+                        isSameTalkgroup(talkgroupIdentifier1, talkgroupIdentifier2)) ||
                         (identifier2 instanceof PatchGroupIdentifier patchGroupIdentifier2 &&
-                            patchGroupIdentifier2.getValue().getPatchGroup().getValue() == talkgroup1))
+                            isSameTalkgroup(talkgroupIdentifier1,
+                                patchGroupIdentifier2.getValue().getPatchGroup())))
                     {
                         return true;
                     }
@@ -87,5 +87,14 @@ public final class AudioCallDuplicateDetector
         }
 
         return false;
+    }
+
+    private static boolean isSameTalkgroup(TalkgroupIdentifier first, TalkgroupIdentifier second)
+    {
+        ResolvedCallPolicy.DestinationIdentity firstIdentity =
+            ResolvedCallPolicy.DestinationIdentity.from(first);
+        ResolvedCallPolicy.DestinationIdentity secondIdentity =
+            ResolvedCallPolicy.DestinationIdentity.from(second);
+        return firstIdentity != null && firstIdentity.matches(secondIdentity);
     }
 }

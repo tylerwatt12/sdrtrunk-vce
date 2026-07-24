@@ -21,6 +21,8 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -39,6 +41,24 @@ class AudioCallDuplicateDetectorTest
         List<Identifier<?>> identifiers2 = List.of(APCO25Talkgroup.create(100));
 
         assertTrue(AudioCallDuplicateDetector.isDuplicate(identifiers1, identifiers2));
+    }
+
+    @Test
+    void nxdnFullyQualifiedTalkgroupsMatchOnlyTheirHomeSystemOrAnUnqualifiedWildcard()
+    {
+        List<Identifier<?>> systemOne =
+            List.of(NXDNFullyQualifiedTalkgroupIdentifier.createTo(1, 100));
+        List<Identifier<?>> sameSystem =
+            List.of(NXDNFullyQualifiedTalkgroupIdentifier.createTo(1, 100));
+        List<Identifier<?>> differentSystem =
+            List.of(NXDNFullyQualifiedTalkgroupIdentifier.createTo(2, 100));
+        List<Identifier<?>> unqualified =
+            List.of(NXDNTalkgroupIdentifier.createTo(100));
+
+        assertTrue(AudioCallDuplicateDetector.isDuplicate(systemOne, sameSystem));
+        assertFalse(AudioCallDuplicateDetector.isDuplicate(systemOne, differentSystem));
+        assertTrue(AudioCallDuplicateDetector.isDuplicate(systemOne, unqualified),
+            "An unqualified talkgroup deliberately leaves its home system as a wildcard");
     }
 
     @Test

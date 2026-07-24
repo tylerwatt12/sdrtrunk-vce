@@ -24,8 +24,22 @@ import java.util.List;
 /**
  * Final immutable representation of a completed audio call.
  */
-public record CompletedAudioCall(AudioCallSnapshot snapshot, List<float[]> audioBuffers)
+public record CompletedAudioCall(AudioCallSnapshot snapshot, List<float[]> audioBuffers,
+                                 ResolvedCallPolicy resolvedPolicy)
 {
+    public CompletedAudioCall(AudioCallSnapshot snapshot, List<float[]> audioBuffers)
+    {
+        this(snapshot, audioBuffers, ResolvedCallPolicy.capture(snapshot));
+    }
+
+    public CompletedAudioCall
+    {
+        if(resolvedPolicy == null)
+        {
+            resolvedPolicy = ResolvedCallPolicy.capture(snapshot);
+        }
+    }
+
     public boolean hasAudio()
     {
         return audioBuffers != null && !audioBuffers.isEmpty();

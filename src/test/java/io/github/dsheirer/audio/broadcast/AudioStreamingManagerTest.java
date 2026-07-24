@@ -27,8 +27,10 @@ import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.dsp.oscillator.ScalarRealOscillator;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.message.TimeslotMessage;
@@ -42,9 +44,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -151,6 +156,72 @@ public class AudioStreamingManagerTest
         assertEquals(1, streamedMetrics.get());
     }
 
+    @Test
+    void mergedPatchRoutesAreAuthoritativeDeduplicatedAndDeterministic() throws Exception
+    {
+        List<AudioRecording> recordings = new CopyOnWriteArrayList<>();
+        CountDownLatch recordingLatch = new CountDownLatch(2);
+        CountDownLatch metricLatch = new CountDownLatch(1);
+        UserPreferences userPreferences = new UserPreferences();
+        userPreferences.getCallManagementPreference().setPatchGroupStreamingOption(
+            PatchGroupStreamingOption.TALKGROUPS);
+        AudioStreamingManager manager = new AudioStreamingManager(recording -> {
+            recordings.add(recording);
+            recordingLatch.countDown();
+        }, BroadcastFormat.MP3, userPreferences, _ -> metricLatch.countDown());
+        RoutingFixture fixture = getMergedRoutingFixture();
+
+        //This current alias addition happens after the completed call froze its merged route set and must be ignored.
+        fixture.firstPatchedAlias().addAliasID(new BroadcastChannel("Late Addition"));
+        manager.start();
+        manager.receive(fixture.call());
+
+        try
+        {
+            assertTrue(recordingLatch.await(5, TimeUnit.SECONDS), "Expected one decomposed and one fallback file");
+            assertTrue(metricLatch.await(5, TimeUnit.SECONDS), "Expected the completed call streaming metric");
+            manager.stop();
+
+            Map<String, List<AudioRecording>> recordingsByRoute = new HashMap<>();
+
+            for(AudioRecording recording : recordings)
+            {
+                for(BroadcastChannel broadcastChannel : recording.getBroadcastChannels())
+                {
+                    recordingsByRoute.computeIfAbsent(broadcastChannel.getChannelName(), _ -> new ArrayList<>())
+                        .add(recording);
+                }
+            }
+
+            assertEquals(Set.of("Route A", "Route B", "Shared"), recordingsByRoute.keySet(),
+                "Only the frozen merged routes may be submitted");
+            assertEquals(1, recordingsByRoute.get("Route A").size());
+            assertEquals(1, recordingsByRoute.get("Route B").size());
+            assertEquals(1, recordingsByRoute.get("Shared").size(),
+                "A provider present under multiple patched aliases must be claimed once");
+            assertEquals(2, recordings.size(),
+                "Route A and Shared share one deterministic member; loser-only Route B uses one fallback");
+
+            Identifier routeADestination =
+                recordingsByRoute.get("Route A").getFirst().getIdentifierCollection().getToIdentifier();
+            Identifier sharedDestination =
+                recordingsByRoute.get("Shared").getFirst().getIdentifierCollection().getToIdentifier();
+            Identifier routeBFallback =
+                recordingsByRoute.get("Route B").getFirst().getIdentifierCollection().getToIdentifier();
+            assertTrue(routeADestination instanceof TalkgroupIdentifier);
+            assertEquals(TALKGROUP_2, routeADestination.getValue());
+            assertEquals(routeADestination, sharedDestination,
+                "Stable identifier order must assign Shared to talkgroup 200 even when patch insertion is reversed");
+            assertTrue(routeBFallback instanceof PatchGroupIdentifier,
+                "A loser-only route unavailable in the winner alias list must retain original patch metadata");
+        }
+        finally
+        {
+            manager.stop();
+            cleanupStreamingDirectory(userPreferences.getDirectoryPreference().getDirectoryStreaming());
+        }
+    }
+
     /**
      * Cleanup any generated streaming recordings.
      * @param streamingDirectory
@@ -195,7 +266,8 @@ public class AudioStreamingManagerTest
         identifierCollection.update(getRadio());
 
         Set<BroadcastChannel> broadcastChannels = new HashSet<>();
-        broadcastChannels.add(new BroadcastChannel("Stream A"));
+        broadcastChannels.add(new BroadcastChannel("Stream B"));
+        broadcastChannels.add(new BroadcastChannel("Stream C"));
 
         long now = System.currentTimeMillis();
         AudioCallSnapshot snapshot = new AudioCallSnapshot(
@@ -217,6 +289,45 @@ public class AudioStreamingManagerTest
             100,
             false);
         return new CompletedAudioCall(snapshot, audioBuffers);
+    }
+
+    private static RoutingFixture getMergedRoutingFixture()
+    {
+        AliasList aliasList = new AliasList("merged-routing-test");
+        Alias firstPatchedAlias = new Alias("talkgroup 200");
+        firstPatchedAlias.addAliasID(new Talkgroup(Protocol.APCO25, TALKGROUP_2));
+        firstPatchedAlias.addAliasID(new BroadcastChannel("Route A"));
+        firstPatchedAlias.addAliasID(new BroadcastChannel("Shared"));
+        aliasList.addAlias(firstPatchedAlias);
+
+        Alias secondPatchedAlias = new Alias("talkgroup 300");
+        secondPatchedAlias.addAliasID(new Talkgroup(Protocol.APCO25, TALKGROUP_3));
+        secondPatchedAlias.addAliasID(new BroadcastChannel("Shared"));
+        aliasList.addAlias(secondPatchedAlias);
+
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(TALKGROUP_1));
+        //Reverse insertion proves that provider claiming does not depend on decoder update arrival order.
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(TALKGROUP_3));
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(TALKGROUP_2));
+        MutableIdentifierCollection identifierCollection = new MutableIdentifierCollection();
+        identifierCollection.setTimeslot(TimeslotMessage.TIMESLOT_0);
+        identifierCollection.update(APCO25PatchGroup.create(patchGroup));
+        identifierCollection.update(getRadio());
+        Set<BroadcastChannel> frozenRoutes = Set.of(new BroadcastChannel("Route A"),
+            new BroadcastChannel("Route B"), new BroadcastChannel("Shared"));
+        List<float[]> audioBuffers = new ArrayList<>();
+        ScalarRealOscillator oscillator = new ScalarRealOscillator(1000, 8000);
+
+        for(int x = 0; x < 100; x++)
+        {
+            audioBuffers.add(oscillator.generate(500));
+        }
+
+        long now = System.currentTimeMillis();
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(
+            new AudioCallId(2L, 1L, TimeslotMessage.TIMESLOT_0), null, aliasList, identifierCollection,
+            frozenRoutes, now, now, 1, 1, now, now, false, true, false, false, 100, false);
+        return new RoutingFixture(new CompletedAudioCall(snapshot, audioBuffers), firstPatchedAlias);
     }
 
     private static AliasList getAliasList()
@@ -264,5 +375,9 @@ public class AudioStreamingManagerTest
     private static RadioIdentifier getRadio()
     {
         return APCO25RadioIdentifier.createFrom(RADIO_1);
+    }
+
+    private record RoutingFixture(CompletedAudioCall call, Alias firstPatchedAlias)
+    {
     }
 }

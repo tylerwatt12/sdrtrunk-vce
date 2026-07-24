@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -39,10 +40,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Comparator;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -183,6 +188,151 @@ public class AudioStreamingManager
         }
 
         /**
+         * Decomposes a patch group without allowing current alias state to expand the frozen routing decisions carried
+         * by the completed call. Each routing key is claimed once in stable identifier order. A key contributed by a
+         * losing receiver copy, or whose alias was removed after completion, is sent once with the original patch
+         * identifiers instead of being dropped or sprayed across every member.
+         */
+        private boolean processPatchGroupTalkgroups(CompletedAudioCall completedAudioCall,
+                                                    IdentifierCollection identifiers,
+                                                    PatchGroup patchGroup)
+        {
+            Map<String, BroadcastChannel> frozenChannels =
+                indexFrozenBroadcastChannels(completedAudioCall.snapshot().broadcastChannels());
+
+            if(frozenChannels.isEmpty())
+            {
+                return false;
+            }
+
+            List<Identifier> patchIdentifiers = new ArrayList<>();
+            patchIdentifiers.addAll(patchGroup.getPatchedTalkgroupIdentifiers());
+            patchIdentifiers.addAll(patchGroup.getPatchedRadioIdentifiers());
+            patchIdentifiers.sort(Comparator.comparingInt(this::stableIdentifierCategory)
+                .thenComparing(this::stableIdentifierKey));
+            AliasList aliasList = completedAudioCall.snapshot().aliasList();
+
+            if(patchIdentifiers.isEmpty() || aliasList == null)
+            {
+                return processAudioCall(completedAudioCall, identifiers,
+                    Set.copyOf(frozenChannels.values()));
+            }
+
+            Set<String> unclaimedRoutingKeys = new LinkedHashSet<>(frozenChannels.keySet());
+            boolean sentToStreamer = false;
+
+            for(Identifier identifier : patchIdentifiers)
+            {
+                Set<String> identifierRoutingKeys = new TreeSet<>();
+
+                for(Alias alias : aliasList.getAliases(identifier))
+                {
+                    for(BroadcastChannel broadcastChannel : alias.getBroadcastChannels())
+                    {
+                        String routingKey = normalizeRoutingKey(broadcastChannel);
+
+                        if(routingKey != null && unclaimedRoutingKeys.contains(routingKey))
+                        {
+                            identifierRoutingKeys.add(routingKey);
+                        }
+                    }
+                }
+
+                if(!identifierRoutingKeys.isEmpty())
+                {
+                    Set<BroadcastChannel> claimedChannels = new LinkedHashSet<>();
+
+                    for(String routingKey : identifierRoutingKeys)
+                    {
+                        if(unclaimedRoutingKeys.remove(routingKey))
+                        {
+                            claimedChannels.add(frozenChannels.get(routingKey));
+                        }
+                    }
+
+                    MutableIdentifierCollection decomposedIdentifiers =
+                        new MutableIdentifierCollection(identifiers.getIdentifiers());
+                    //Remove patch group TO identifier and replace it with the deterministic patched member.
+                    decomposedIdentifiers.remove(Role.TO);
+                    decomposedIdentifiers.update(identifier);
+                    sentToStreamer |= processAudioCall(completedAudioCall, decomposedIdentifiers,
+                        Set.copyOf(claimedChannels));
+                }
+            }
+
+            if(!unclaimedRoutingKeys.isEmpty())
+            {
+                Set<BroadcastChannel> fallbackChannels = new LinkedHashSet<>();
+
+                for(String routingKey : unclaimedRoutingKeys)
+                {
+                    fallbackChannels.add(frozenChannels.get(routingKey));
+                }
+
+                sentToStreamer |= processAudioCall(completedAudioCall, identifiers,
+                    Set.copyOf(fallbackChannels));
+            }
+
+            return sentToStreamer;
+        }
+
+        private Map<String, BroadcastChannel> indexFrozenBroadcastChannels(
+            Set<BroadcastChannel> broadcastChannels)
+        {
+            Map<String, BroadcastChannel> frozenChannels = new TreeMap<>();
+
+            if(broadcastChannels != null)
+            {
+                for(BroadcastChannel broadcastChannel : broadcastChannels)
+                {
+                    String routingKey = normalizeRoutingKey(broadcastChannel);
+
+                    if(routingKey != null)
+                    {
+                        frozenChannels.putIfAbsent(routingKey, broadcastChannel);
+                    }
+                }
+            }
+
+            return frozenChannels;
+        }
+
+        private String normalizeRoutingKey(BroadcastChannel broadcastChannel)
+        {
+            if(broadcastChannel == null || broadcastChannel.getChannelName() == null)
+            {
+                return null;
+            }
+
+            String routingKey = broadcastChannel.getChannelName().trim();
+            return routingKey.isEmpty() ? null : routingKey;
+        }
+
+        private String stableIdentifierKey(Identifier identifier)
+        {
+            if(identifier == null)
+            {
+                return "";
+            }
+
+            String protocol = identifier.getProtocol() != null ? identifier.getProtocol().name() : "";
+            String form = identifier.getForm() != null ? identifier.getForm().name() : "";
+            String value = identifier.getValue() != null ? identifier.getValue().toString() : "";
+            return protocol + '\u0000' + form + '\u0000' + value;
+        }
+
+        private int stableIdentifierCategory(Identifier identifier)
+        {
+            if(identifier == null || identifier.getForm() == null)
+            {
+                return 2;
+            }
+
+            return identifier.getForm() == Form.TALKGROUP ? 0 :
+                identifier.getForm() == Form.RADIO ? 1 : 2;
+        }
+
+        /**
          * Main processing method to process completed calls.
          */
         private void processAudioSegments()
@@ -215,45 +365,8 @@ public class AudioStreamingManager
                             if(mUserPreferences.getCallManagementPreference()
                                 .getPatchGroupStreamingOption() == PatchGroupStreamingOption.TALKGROUPS)
                             {
-                                //Decompose the patch group into the individual (patched) talkgroups and process the
-                                //completed call for each patched talkgroup.
-                                PatchGroup patchGroup = patchGroupIdentifier.getValue();
-
-                                List<Identifier> ids = new ArrayList<>();
-                                ids.addAll(patchGroup.getPatchedTalkgroupIdentifiers());
-                                ids.addAll(patchGroup.getPatchedRadioIdentifiers());
-
-                                //If there are no patched radios/talkgroups, override user preference and stream as a patch group
-                                if(ids.isEmpty() || completedAudioCall.snapshot().aliasList() == null)
-                                {
-                                    sentToStreamer |= processAudioCall(completedAudioCall, identifiers,
-                                        completedAudioCall.snapshot().broadcastChannels());
-                                }
-                                else
-                                {
-                                    AliasList aliasList = completedAudioCall.snapshot().aliasList();
-
-                                    for(Identifier identifier: ids)
-                                    {
-                                        List<Alias> aliases = aliasList.getAliases(identifier);
-                                        Set<BroadcastChannel> broadcastChannels = new HashSet<>();
-                                        for(Alias alias: aliases)
-                                        {
-                                            broadcastChannels.addAll(alias.getBroadcastChannels());
-                                        }
-
-                                        if(!broadcastChannels.isEmpty())
-                                        {
-                                            MutableIdentifierCollection decomposedIdentifiers =
-                                                new MutableIdentifierCollection(identifiers.getIdentifiers());
-                                            //Remove patch group TO identifier & replace with the patched talkgroup/radio
-                                            decomposedIdentifiers.remove(Role.TO);
-                                            decomposedIdentifiers.update(identifier);
-                                            sentToStreamer |= processAudioCall(completedAudioCall,
-                                                decomposedIdentifiers, broadcastChannels);
-                                        }
-                                    }
-                                }
+                                sentToStreamer |= processPatchGroupTalkgroups(completedAudioCall, identifiers,
+                                    patchGroupIdentifier.getValue());
                             }
                             else
                             {
