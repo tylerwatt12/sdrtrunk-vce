@@ -26,6 +26,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import javafx.collections.ListChangeListener;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -121,6 +122,58 @@ public class BroadcastModelLifecycleTest
         assertFalse(currentBroadcaster.isActive());
     }
 
+    @Test
+    public void delayedCreationThatOverlapsDeleteCannotPublishOrLeakBroadcaster() throws Exception
+    {
+        TestBroadcastModel model = new TestBroadcastModel();
+        TestBroadcastConfiguration configuration = createConfiguration("Delayed creation delete");
+
+        model.addBroadcastConfiguration(configuration);
+        model.runAllStarts();
+        TestAudioBroadcaster originalBroadcaster = model.getCreatedBroadcasters().getFirst();
+        assertTrue(originalBroadcaster.isActive());
+
+        model.process(new BroadcastEvent(configuration, BroadcastEvent.Event.CONFIGURATION_CHANGE));
+        assertFalse(originalBroadcaster.isActive());
+
+        CountDownLatch factoryEntered = new CountDownLatch(1);
+        CountDownLatch releaseFactory = new CountDownLatch(1);
+        CountDownLatch configurationRemoved = new CountDownLatch(1);
+        model.blockNextBroadcasterFactory(factoryEntered, releaseFactory);
+        model.getConfiguredBroadcasts().addListener(
+            (ListChangeListener<ConfiguredBroadcast>)change -> configurationRemoved.countDown());
+
+        Thread restartThread = new Thread(model.removeNextRestart(), "broadcast-delayed-create-test");
+        restartThread.start();
+        assertTrue(factoryEntered.await(2, TimeUnit.SECONDS));
+
+        Thread deleteThread = new Thread(() -> model.removeBroadcastConfiguration(configuration),
+            "broadcast-delayed-delete-test");
+        deleteThread.start();
+
+        /*
+         * The fixed implementation keeps list removal behind the lifecycle lock held by broadcaster creation.
+         * A short timeout therefore proves delete cannot expose a half-removed configuration while the factory is
+         * still publishing.  Releasing the factory then lets delete invalidate and detach the created instance.
+         */
+        assertFalse(configurationRemoved.await(100, TimeUnit.MILLISECONDS));
+        releaseFactory.countDown();
+        restartThread.join(TimeUnit.SECONDS.toMillis(2));
+        deleteThread.join(TimeUnit.SECONDS.toMillis(2));
+
+        assertFalse(restartThread.isAlive());
+        assertFalse(deleteThread.isAlive());
+        assertEquals(2, model.getCreatedBroadcasters().size());
+        TestAudioBroadcaster racedBroadcaster = model.getCreatedBroadcasters().getLast();
+        model.runAllStarts();
+
+        assertEquals(0, racedBroadcaster.getStartCount());
+        assertEquals(1, racedBroadcaster.getStopCount());
+        assertEquals(1, racedBroadcaster.getDisposeCount());
+        assertFalse(racedBroadcaster.isActive());
+        assertNull(model.getBroadcaster(configuration.getName()));
+    }
+
     private static TestBroadcastConfiguration createConfiguration(String name)
     {
         TestBroadcastConfiguration configuration = new TestBroadcastConfiguration();
@@ -136,6 +189,8 @@ public class BroadcastModelLifecycleTest
         private final List<TestAudioBroadcaster> mCreatedBroadcasters = new ArrayList<>();
         private CountDownLatch mNextStartEntered;
         private CountDownLatch mNextStartRelease;
+        private CountDownLatch mNextFactoryEntered;
+        private CountDownLatch mNextFactoryRelease;
 
         private TestBroadcastModel()
         {
@@ -145,6 +200,25 @@ public class BroadcastModelLifecycleTest
         @Override
         protected AbstractAudioBroadcaster<?> createAudioBroadcaster(BroadcastConfiguration broadcastConfiguration)
         {
+            CountDownLatch factoryEntered = mNextFactoryEntered;
+            CountDownLatch factoryRelease = mNextFactoryRelease;
+            mNextFactoryEntered = null;
+            mNextFactoryRelease = null;
+
+            if(factoryEntered != null && factoryRelease != null)
+            {
+                factoryEntered.countDown();
+                try
+                {
+                    assertTrue(factoryRelease.await(2, TimeUnit.SECONDS));
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("Broadcaster factory was interrupted", exception);
+                }
+            }
+
             TestAudioBroadcaster broadcaster = new TestAudioBroadcaster(
                 (TestBroadcastConfiguration)broadcastConfiguration, mNextStartEntered, mNextStartRelease);
             mNextStartEntered = null;
@@ -171,6 +245,12 @@ public class BroadcastModelLifecycleTest
             mNextStartRelease = releaseStart;
         }
 
+        private void blockNextBroadcasterFactory(CountDownLatch factoryEntered, CountDownLatch releaseFactory)
+        {
+            mNextFactoryEntered = factoryEntered;
+            mNextFactoryRelease = releaseFactory;
+        }
+
         private List<TestAudioBroadcaster> getCreatedBroadcasters()
         {
             return mCreatedBroadcasters;
@@ -179,6 +259,11 @@ public class BroadcastModelLifecycleTest
         private Runnable removeNextStart()
         {
             return mPendingStarts.removeFirst();
+        }
+
+        private Runnable removeNextRestart()
+        {
+            return mPendingRestarts.removeFirst();
         }
 
         private int getPendingRestartCount()

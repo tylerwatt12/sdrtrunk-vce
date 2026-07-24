@@ -285,23 +285,35 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
 
     public void removeBroadcastConfiguration(BroadcastConfiguration broadcastConfiguration)
     {
-        ConfiguredBroadcast configuredBroadcast = getConfiguredBroadcast(broadcastConfiguration);
+        ConfiguredBroadcast configuredBroadcast;
+        int index;
 
-        if(configuredBroadcast != null)
+        /*
+         * Delayed broadcaster creation also holds this lock while it verifies model membership and publishes the
+         * new instance.  Invalidate the generation and remove the configuration under the same lock so creation
+         * cannot slip between list removal and broadcaster detachment.
+         */
+        synchronized(mBroadcasterLifecycleLock)
         {
-            int index = mConfiguredBroadcasts.indexOf(configuredBroadcast);
+            configuredBroadcast = getConfiguredBroadcast(broadcastConfiguration);
 
-            mConfiguredBroadcasts.remove(configuredBroadcast);
-
-            if(configuredBroadcast.hasAudioBroadcaster())
+            if(configuredBroadcast == null)
             {
-                deleteBroadcaster(configuredBroadcast);
+                return;
             }
 
-            process(new BroadcastEvent(broadcastConfiguration, BroadcastEvent.Event.CONFIGURATION_DELETE));
-
-            fireTableRowsDeleted(index, index);
+            index = mConfiguredBroadcasts.indexOf(configuredBroadcast);
+            invalidateBroadcasterGeneration(broadcastConfiguration);
+            mConfiguredBroadcasts.remove(configuredBroadcast);
         }
+
+        //Stop/dispose outside the lifecycle lock.  A raced start remains detached from routing and performs its
+        //own final cleanup as soon as start() returns.
+        deleteBroadcaster(configuredBroadcast);
+
+        process(new BroadcastEvent(broadcastConfiguration, BroadcastEvent.Event.CONFIGURATION_DELETE));
+
+        fireTableRowsDeleted(index, index);
     }
 
     /**
