@@ -134,13 +134,35 @@ public class ControlRsp2 extends ControlRsp<Rsp2Device> implements IControlRsp2
     {
         if(hasDevice())
         {
-            getDevice().getTuner().setAmPort(selection.getAmPort());
-            getDevice().getTuner().setAntenna(selection.getAntenna());
+            mAntennaSelection = applyAntennaSelection(selection, requested ->
+            {
+                getDevice().getTuner().setAmPort(requested.getAmPort());
+                getDevice().getTuner().setAntenna(requested.getAntenna());
+            });
         }
         else
         {
             throw new SDRPlayException("Device is not initialized");
         }
+    }
+
+    static Rsp2AntennaSelection applyAntennaSelection(Rsp2AntennaSelection selection,
+                                                       AntennaSelectionWriter writer)
+        throws SDRPlayException
+    {
+        if(selection == null)
+        {
+            throw new IllegalArgumentException("Antenna selection cannot be null");
+        }
+
+        writer.apply(selection);
+        return selection;
+    }
+
+    @FunctionalInterface
+    interface AntennaSelectionWriter
+    {
+        void apply(Rsp2AntennaSelection selection) throws SDRPlayException;
     }
 
     /**
