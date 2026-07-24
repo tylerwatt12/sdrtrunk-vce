@@ -5,11 +5,14 @@
  */
 package io.github.dsheirer.record;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -131,6 +134,70 @@ class ManagedRecordingPathTest
         Files.createDirectories(recording.getParent());
         Files.write(recording, new byte[] {1});
         assertTrue(ManagedRecordingPath.inspect(aliasRoot, recording).isPresent());
+    }
+
+    @Test
+    void opensAValidatedManagedFileThroughThePlatformContainmentStrategy() throws Exception
+    {
+        Path recording = mTemporaryFolder.resolve(VALID_RECORDING);
+        byte[] expected = {1, 2, 3};
+        Files.createDirectories(recording.getParent());
+        Files.write(recording, expected);
+
+        try(SeekableByteChannel channel = ManagedRecordingPath.openReadOnly(
+            mTemporaryFolder, recording, expected.length, RecordFormat.WAVE).orElseThrow())
+        {
+            ByteBuffer actual = ByteBuffer.allocate(expected.length);
+
+            while(actual.hasRemaining())
+            {
+                channel.read(actual);
+            }
+
+            assertArrayEquals(expected, actual.array());
+        }
+    }
+
+    @Test
+    void managedOpenRejectsAnAncestorReplacedAfterInspection() throws Exception
+    {
+        Path recordingRoot = Files.createDirectory(mTemporaryFolder.resolve("recordings"));
+        Path recording = recordingRoot.resolve(VALID_RECORDING);
+        Files.createDirectories(recording.getParent());
+        Files.write(recording, new byte[] {1, 2, 3});
+        Path outsideSystem = Files.createDirectory(mTemporaryFolder.resolve("outside-system"));
+        Path outsideRecording = outsideSystem.resolve(
+            VALID_RECORDING.subpath(6, VALID_RECORDING.getNameCount()));
+        Files.createDirectories(outsideRecording.getParent());
+        Files.write(outsideRecording, new byte[] {9, 8, 7});
+        Path linkProbe = mTemporaryFolder.resolve("link-probe");
+
+        try
+        {
+            Files.createSymbolicLink(linkProbe, outsideSystem);
+            Files.delete(linkProbe);
+        }
+        catch(UnsupportedOperationException | IOException | SecurityException exception)
+        {
+            Assumptions.assumeTrue(false, "Symbolic links are unavailable for this filesystem");
+            return;
+        }
+
+        Path managedSystem = recordingRoot.resolve(VALID_RECORDING.subpath(0, 6));
+        Path heldSystem = managedSystem.resolveSibling(managedSystem.getFileName() + ".held");
+
+        assertTrue(ManagedRecordingPath.openReadOnly(recordingRoot, recording, 3, RecordFormat.WAVE, () ->
+        {
+            try
+            {
+                Files.move(managedSystem, heldSystem);
+                Files.createSymbolicLink(managedSystem, outsideSystem);
+            }
+            catch(IOException exception)
+            {
+                throw new AssertionError(exception);
+            }
+        }).isEmpty());
     }
 
     @Test

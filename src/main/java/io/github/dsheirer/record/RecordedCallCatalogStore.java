@@ -568,12 +568,18 @@ final class RecordedCallCatalogStore
      */
     Optional<Path> resolveMedia(Connection connection, String publicCallId) throws IOException, SQLException
     {
+        return resolveMediaDescriptor(connection, publicCallId).map(ResolvedMedia::path);
+    }
+
+    Optional<ResolvedMedia> resolveMediaDescriptor(Connection connection, String publicCallId)
+        throws IOException, SQLException
+    {
         Objects.requireNonNull(connection, "SQLite connection cannot be null");
         RecordedCallCatalogTokens.CursorValues values = RecordedCallCatalogTokens.parseCallId(publicCallId);
         AudioCallId callId = values.callId();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT c.format_code, b.relative_directory
+            SELECT c.byte_size, c.format_code, b.relative_directory
             FROM recorded_call AS c
             JOIN recorded_call_bucket AS b ON b.id = c.bucket_id
             WHERE c.completed_at_ms = ? AND c.producer_id = ? AND c.call_sequence = ? AND c.timeslot = ?
@@ -598,13 +604,27 @@ final class RecordedCallCatalogStore
 
                     if(inspected.isPresent() && inspected.get().relativePath().equals(relative))
                     {
-                        return Optional.of(candidate);
+                        return Optional.of(new ResolvedMedia(candidate, resultSet.getLong("byte_size"), format));
                     }
                 }
             }
         }
 
         return Optional.empty();
+    }
+
+    record ResolvedMedia(Path path, long byteSize, RecordFormat format)
+    {
+        ResolvedMedia
+        {
+            Objects.requireNonNull(path, "Recorded-call media path cannot be null");
+            Objects.requireNonNull(format, "Recorded-call media format cannot be null");
+
+            if(byteSize < 1)
+            {
+                throw new IllegalArgumentException("Recorded-call media size is invalid");
+            }
+        }
     }
 
     List<RecordedCallIdentity> listIdentities(Connection connection, RecordedCallIdentityKind kind, String scopeKey,

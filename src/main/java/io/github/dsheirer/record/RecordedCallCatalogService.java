@@ -13,6 +13,7 @@ package io.github.dsheirer.record;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import java.io.IOException;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -320,6 +321,32 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
         }
     }
 
+    /**
+     * Resolves and safely opens one eligible retained call without exposing its managed path to the caller.
+     */
+    public Optional<OpenedMedia> openMedia(String publicCallId) throws IOException, SQLException
+    {
+        RecordedCallCatalogStore.ResolvedMedia media;
+
+        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        {
+            RecordedCallCatalogSchema.validate(connection);
+            Optional<RecordedCallCatalogStore.ResolvedMedia> resolved =
+                mStore.resolveMediaDescriptor(connection, publicCallId);
+
+            if(resolved.isEmpty())
+            {
+                return Optional.empty();
+            }
+
+            media = resolved.get();
+        }
+
+        Optional<SeekableByteChannel> channel = ManagedRecordingPath.openReadOnly(mRecordingRoot,
+            media.path(), media.byteSize(), media.format());
+        return channel.map(value -> new OpenedMedia(value, media.byteSize(), media.format()));
+    }
+
     public Status status()
     {
         return new Status(mState, mRetentionDays, mMaximumRetainedBytes, mRetainedBytes.get(),
@@ -327,6 +354,41 @@ public final class RecordedCallCatalogService implements AutoCloseable, Recorded
             mQueue.remainingCapacity() + mQueue.size(),
             mAccepted.get(), mRejected.get(), mDropped.get(), mInserted.get(), mDuplicate.get(), mInvalid.get(),
             mWriteFailures.get(), mRetentionRowsDeleted.get(), mLastSuccessfulWriteMs, mLastCleanupMs, mLastError);
+    }
+
+    public static final class OpenedMedia implements AutoCloseable
+    {
+        private final SeekableByteChannel mChannel;
+        private final long mLength;
+        private final RecordFormat mFormat;
+
+        private OpenedMedia(SeekableByteChannel channel, long length, RecordFormat format)
+        {
+            mChannel = Objects.requireNonNull(channel, "Recorded-call media channel cannot be null");
+            mLength = length;
+            mFormat = Objects.requireNonNull(format, "Recorded-call media format cannot be null");
+        }
+
+        public SeekableByteChannel channel()
+        {
+            return mChannel;
+        }
+
+        public long length()
+        {
+            return mLength;
+        }
+
+        public RecordFormat format()
+        {
+            return mFormat;
+        }
+
+        @Override
+        public void close() throws IOException
+        {
+            mChannel.close();
+        }
     }
 
     @Override

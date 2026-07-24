@@ -12,9 +12,14 @@ package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.call.AudioCallId;
 import java.io.IOException;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.SecureDirectoryStream;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.DateTimeException;
 import java.time.Instant;
@@ -252,6 +257,155 @@ final class ManagedRecordingPath
         }
 
         return parsed;
+    }
+
+    /**
+     * Opens one inspected managed file without allowing a replaced managed-tree ancestor to redirect the read.
+     *
+     * <p>Filesystems with secure directory streams resolve every component relative to an already-open directory
+     * handle. Windows holds no-share-delete handles on each verified directory while opening the file. Providers
+     * without either containment primitive fail closed. Every successful path verifies the immutable catalog byte
+     * size before returning the channel.</p>
+     */
+    static Optional<SeekableByteChannel> openReadOnly(Path recordingRoot, Path candidate, long expectedByteSize,
+                                                      RecordFormat expectedFormat) throws IOException
+    {
+        return openReadOnly(recordingRoot, candidate, expectedByteSize, expectedFormat, () -> {});
+    }
+
+    static Optional<SeekableByteChannel> openReadOnly(Path recordingRoot, Path candidate, long expectedByteSize,
+                                                      RecordFormat expectedFormat, Runnable afterInspection)
+        throws IOException
+    {
+        Objects.requireNonNull(afterInspection, "Managed recording open observer cannot be null");
+
+        if(expectedByteSize < 1 || expectedFormat == null)
+        {
+            throw new IllegalArgumentException("Managed recording open metadata is invalid");
+        }
+
+        Optional<ManagedRecordingPath> inspected = inspect(recordingRoot, candidate);
+
+        if(inspected.isEmpty() || inspected.get().format() != expectedFormat)
+        {
+            return Optional.empty();
+        }
+
+        Path realRoot = recordingRoot.toAbsolutePath().normalize().toRealPath();
+        Path relative = inspected.get().relativePath();
+        afterInspection.run();
+        Optional<SeekableByteChannel> opened = Optional.empty();
+        boolean secureProvider = false;
+
+        try(DirectoryStream<Path> directory = Files.newDirectoryStream(realRoot))
+        {
+            if(directory instanceof SecureDirectoryStream<?> secureDirectory)
+            {
+                secureProvider = true;
+                @SuppressWarnings("unchecked")
+                SecureDirectoryStream<Path> secure = (SecureDirectoryStream<Path>)secureDirectory;
+                opened = openSecurely(secure, relative, expectedByteSize);
+            }
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            closeQuietly(opened);
+            throw exception;
+        }
+
+        if(secureProvider)
+        {
+            return opened;
+        }
+
+        if(isWindows())
+        {
+            return WindowsManagedRecordingOpen.open(realRoot, candidate, relative, expectedByteSize,
+                expectedFormat);
+        }
+
+        return Optional.empty();
+    }
+
+    private static Optional<SeekableByteChannel> openSecurely(SecureDirectoryStream<Path> root, Path relative,
+                                                               long expectedByteSize)
+    {
+        SecureDirectoryStream<Path> current = root;
+        java.util.ArrayList<SecureDirectoryStream<Path>> opened = new java.util.ArrayList<>();
+        SeekableByteChannel channel = null;
+
+        try
+        {
+            for(int index = 0; index < relative.getNameCount() - 1; index++)
+            {
+                SecureDirectoryStream<Path> child =
+                    current.newDirectoryStream(relative.getName(index), LinkOption.NOFOLLOW_LINKS);
+                opened.add(child);
+                current = child;
+            }
+
+            Set<OpenOption> options = Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+            channel = current.newByteChannel(relative.getFileName(), options);
+
+            if(channel.size() != expectedByteSize)
+            {
+                channel.close();
+                return Optional.empty();
+            }
+
+            SeekableByteChannel openedChannel = channel;
+            channel = null;
+            return Optional.of(openedChannel);
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            if(channel != null)
+            {
+                try
+                {
+                    channel.close();
+                }
+                catch(IOException closeException)
+                {
+                    exception.addSuppressed(closeException);
+                }
+            }
+
+            return Optional.empty();
+        }
+        finally
+        {
+            for(int index = opened.size() - 1; index >= 0; index--)
+            {
+                try
+                {
+                    opened.get(index).close();
+                }
+                catch(IOException ignored)
+                {
+                }
+            }
+        }
+    }
+
+    private static void closeQuietly(Optional<SeekableByteChannel> opened)
+    {
+        if(opened != null && opened.isPresent())
+        {
+            try
+            {
+                opened.get().close();
+            }
+            catch(IOException ignored)
+            {
+            }
+        }
+    }
+
+    private static boolean isWindows()
+    {
+        String name = System.getProperty("os.name", "");
+        return name.regionMatches(true, 0, "windows", 0, "windows".length());
     }
 
     /**

@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -61,6 +62,15 @@ class RecordedCallCatalogServiceTest
         assertEquals(2_000, page.calls().get(0).durationMs());
         assertEquals(artifact.path().toRealPath(),
             service.resolveMedia(page.calls().get(0).id()).orElseThrow().toRealPath());
+
+        try(RecordedCallCatalogService.OpenedMedia media =
+                service.openMedia(page.calls().get(0).id()).orElseThrow())
+        {
+            assertEquals(64, media.length());
+            assertEquals(RecordFormat.WAVE, media.format());
+            assertEquals(64, media.channel().read(ByteBuffer.allocate(64)));
+        }
+
         RecordedCallCatalogPage forward = service.searchForward(
             RecordedCallCatalogSearch.recent(COMPLETED - 1, COMPLETED + 1, 10), null);
         assertEquals(List.of(page.calls().get(0).id()),
