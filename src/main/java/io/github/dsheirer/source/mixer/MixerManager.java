@@ -23,7 +23,6 @@ import io.github.dsheirer.sample.adapter.RealChannelShortAdapter;
 import io.github.dsheirer.sample.adapter.RealShortAdapter;
 import io.github.dsheirer.source.config.SourceConfigMixer;
 import io.github.dsheirer.source.config.SourceConfiguration;
-import io.github.dsheirer.source.tuner.MixerTunerType;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -193,49 +192,6 @@ public class MixerManager
         }
 
         return outputMixers;
-    }
-
-    /**
-     * Obtains a target data line for the specified mixer tuner type
-     * @param mixerTunerType to find
-     * @return target data line or null.
-     */
-    public static TargetDataLine getTunerTargetDataLine(MixerTunerType mixerTunerType)
-    {
-        for(Mixer.Info mixerInfo : AudioSystem.getMixerInfo())
-        {
-            MixerTunerType type = MixerTunerType.getMixerTunerType(mixerInfo);
-
-            if(type != null && type == mixerTunerType)
-            {
-                Mixer mixer = AudioSystem.getMixer(mixerInfo);
-
-                if(mixer != null)
-                {
-                    for(Line.Info info : mixer.getTargetLineInfo())
-                    {
-                        if(info instanceof DataLine.Info)
-                        {
-                            try
-                            {
-                                Line line = mixer.getLine(info);
-
-                                if(line instanceof TargetDataLine)
-                                {
-                                    return (TargetDataLine)line;
-                                }
-                            }
-                            catch(LineUnavailableException lue)
-                            {
-                                mLog.error("Line Unavailable. Unable to get TargetDataLine for Mixer Tuner: " + mixerTunerType);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
     }
 
     /**

@@ -24,8 +24,6 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerConfiguration;
-import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerConfiguration;
-import io.github.dsheirer.source.tuner.fcd.proplusV2.FCD2TunerConfiguration;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerConfiguration;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerConfiguration;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
@@ -44,8 +42,6 @@ import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
         @JsonSubTypes.Type(value = AirspyHfTunerConfiguration.class, name = "airspyHfTunerConfiguration"),
         @JsonSubTypes.Type(value = E4KTunerConfiguration.class, name = "e4KTunerConfiguration"),
         @JsonSubTypes.Type(value = FC0013TunerConfiguration.class, name = "fc0013TunerConfiguration"),
-        @JsonSubTypes.Type(value = FCD1TunerConfiguration.class, name = "fcd1TunerConfiguration"),
-        @JsonSubTypes.Type(value = FCD2TunerConfiguration.class, name = "fcd2TunerConfiguration"),
         @JsonSubTypes.Type(value = HackRFTunerConfiguration.class, name = "hackRFTunerConfiguration"),
         @JsonSubTypes.Type(value = HydraSdrTunerConfiguration.class, name = "hydraSdrTunerConfiguration"),
         @JsonSubTypes.Type(value = RecordingTunerConfiguration.class, name = "recordingTunerConfiguration"),
