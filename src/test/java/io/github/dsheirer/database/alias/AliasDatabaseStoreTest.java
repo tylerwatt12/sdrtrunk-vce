@@ -160,6 +160,33 @@ class AliasDatabaseStoreTest
     }
 
     @Test
+    void ignoresRetiredScriptActionsInExistingDatabases() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("retired-script-action.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        AliasDatabaseStore store = new AliasDatabaseStore(database);
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (sort_order, name, alias_list_name, group_name, color, icon_name,
+                    stream_as_talkgroup)
+                VALUES (0, 'Legacy Script Alias', 'Legacy List', NULL, 0, NULL, NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_action (alias_id, sort_order, type, interval, period, path, script)
+                SELECT id, 0, 'SCRIPT', 'ONCE', 0, NULL, '/tmp/retired-script' FROM alias
+                """);
+        }
+
+        List<Alias> aliases = store.loadAliases();
+        assertEquals(1, aliases.size());
+        assertTrue(aliases.get(0).getAliasActions().isEmpty(),
+            "retired script rows must never be restored or executed");
+    }
+
+    @Test
     void keepsIdentifiersAndActionsAttachedToOwningAliasRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("multi-alias.sqlite");

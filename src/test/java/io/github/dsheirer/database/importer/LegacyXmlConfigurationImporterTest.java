@@ -154,6 +154,25 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
+    void skipsRetiredScriptActionsWhileImportingTheRestOfALegacyAlias() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("retired-script.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="Dispatch" list="County">
+                <id type="talkgroup" protocol="APCO25" value="1234"/>
+                <action type="scriptAction" interval="ONCE" period="0" script="/tmp/retired-script"/>
+              </alias>
+            </playlist>
+            """);
+
+        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        assertEquals(1, state.getAliases().size());
+        assertTrue(state.getAliases().get(0).getAliasActions().isEmpty());
+        assertTrue(state.getAliases().get(0).getAliasIdentifiers().stream().anyMatch(Talkgroup.class::isInstance));
+    }
+
+    @Test
     void classifiesLegacyP25ChannelsUsingTrunkedIndicators()
     {
         ConfigurationState state = new ConfigurationState();

@@ -42,6 +42,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -123,6 +124,8 @@ public class LegacyXmlConfigurationImporter
             ConfigurationState state = new ConfigurationState();
             state.setVersion(ConfigurationManager.CONFIGURATION_CURRENT_VERSION);
             state.setAliases(nonNull(playlist.getAliases()));
+            state.getAliases().forEach(alias ->
+                alias.setAliasActions(alias.getAliasActions().stream().filter(Objects::nonNull).toList()));
             state.setBroadcastConfigurations(nonNull(playlist.getBroadcastConfigurations()));
             state.setChannelMaps(nonNull(playlist.getChannelMaps()));
             state.setChannels(nonNull(playlist.getChannels()));
@@ -135,7 +138,8 @@ public class LegacyXmlConfigurationImporter
         JacksonXmlModule xmlModule = new JacksonXmlModule();
         xmlModule.setDefaultUseWrapper(false);
         ObjectMapper objectMapper = new XmlMapper(xmlModule)
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+            .configure(DeserializationFeature.FAIL_ON_INVALID_SUBTYPE, false);
         objectMapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         return objectMapper;
     }

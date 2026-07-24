@@ -28,7 +28,6 @@ import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.action.AliasActionType;
 import io.github.dsheirer.alias.action.beep.BeepAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
-import io.github.dsheirer.alias.action.script.ScriptAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -545,8 +544,7 @@ public class AliasItemEditor extends Editor<Alias>
             mAddActionButton = new MenuButton("Add Action");
             mAddActionButton.setDisable(true);
             mAddActionButton.setMaxWidth(Double.MAX_VALUE);
-            mAddActionButton.getItems().addAll(new AddAudioClipActionItem(), new AddBeepActionItem(),
-                new AddScriptActionItem());
+            mAddActionButton.getItems().addAll(new AddAudioClipActionItem(), new AddBeepActionItem());
         }
 
         return mAddActionButton;
@@ -1450,28 +1448,6 @@ public class AliasItemEditor extends Editor<Alias>
                     getActionsList().getItems().add(clipAction);
                     getActionsList().getSelectionModel().select(clipAction);
                     getActionsList().scrollTo(clipAction);
-                    modifiedProperty().set(true);
-                }
-            });
-        }
-    }
-
-    /**
-     * Menu item to add a new script alias action
-     */
-    public class AddScriptActionItem extends MenuItem
-    {
-        public AddScriptActionItem()
-        {
-            super("Script");
-
-            setOnAction(event -> {
-                if(getItem() != null)
-                {
-                    ScriptAction scriptAction = new ScriptAction();
-                    getActionsList().getItems().add(scriptAction);
-                    getActionsList().getSelectionModel().select(scriptAction);
-                    getActionsList().scrollTo(scriptAction);
                     modifiedProperty().set(true);
                 }
             });
