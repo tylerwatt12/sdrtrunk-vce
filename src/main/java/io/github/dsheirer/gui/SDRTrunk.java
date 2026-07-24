@@ -25,9 +25,11 @@ import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
+import io.github.dsheirer.audio.call.DuplicateCallPriorityProvider;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
+import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
@@ -60,6 +62,7 @@ import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.record.AudioRecordingManager;
+import io.github.dsheirer.record.RecordedCallCatalogService;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.Tuner;
@@ -154,7 +157,9 @@ public class SDRTrunk implements Listener<TunerEvent>
     private P25ActivityLogService mP25ActivityLogService;
     private StatsWebServerService mStatsWebServerService;
     private AudioRecordingManager mAudioRecordingManager;
+    private RecordedCallCatalogService mRecordedCallCatalogService;
     private AudioStreamingManager mAudioStreamingManager;
+    private ControlChannelQualityRegistry mControlChannelQualityRegistry;
     private BroadcastStatusPanel mBroadcastStatusPanel;
     private ControllerPanel mControllerPanel;
     private IconModel mIconModel;
@@ -259,9 +264,18 @@ public class SDRTrunk implements Listener<TunerEvent>
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
+        Path recordingRoot =
+            mUserPreferences.getDirectoryPreference().lockRecordingDirectoryForRuntime();
 
-        mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
-            mP25ActivityLogService::receiveRecordedCall);
+        mRecordedCallCatalogService = new RecordedCallCatalogService(
+            SdrTrunkDatabasePath.getDatabasePath(mUserPreferences),
+            recordingRoot,
+            mUserPreferences.getRecordPreference().getRecordedCallRetentionDays(),
+            mUserPreferences.getRecordPreference().getRecordedCallMaximumRetainedBytes());
+        mRecordedCallCatalogService.start();
+
+        mAudioRecordingManager = AudioRecordingManager.withCatalogHandoff(mUserPreferences,
+            mP25ActivityLogService::receiveRecordedCall, mRecordedCallCatalogService);
         mAudioRecordingManager.start();
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
@@ -269,17 +283,22 @@ public class SDRTrunk implements Listener<TunerEvent>
         mAudioStreamingManager.start();
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
-            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
+            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
+            mRecordedCallCatalogService);
+        mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         //Receiver-node speaker playback is retired.  Completed calls continue to flow independently to recording,
         //streaming providers, and bounded browser Listen-list delivery.
         mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioRecordingManager,
-            mAudioStreamingManager, mStatsWebServerService::receive);
+            mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE,
+            mControlChannelQualityRegistry);
 
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
         mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(
             mP25ActivityLogService.getDecodeEventListener());
         mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
             mP25ActivityLogService.getControlChannelQualityListener());
+        mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
+            mControlChannelQualityRegistry);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mP25ActivityLogService);
         mConfigurationManager.getChannelProcessingManager().addProtocolSiteMetadataListener(mP25ActivityLogService);
         mP25ActivityLogService.addActivityCommitListener(mStatsWebServerService);
@@ -874,6 +893,11 @@ public class SDRTrunk implements Listener<TunerEvent>
                 .removeProtocolSiteMetadataListener(mP25ActivityLogService);
             mP25ActivityLogService.dispose();
         }
+        if(mControlChannelQualityRegistry != null)
+        {
+            mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
+                mControlChannelQualityRegistry);
+        }
         mConfigurationManager.getChannelProcessingManager().shutdown();
         EventLogger.flushPendingWrites();
         if(mAudioCallCoordinator != null)
@@ -881,6 +905,16 @@ public class SDRTrunk implements Listener<TunerEvent>
             mAudioCallCoordinator.dispose();
         }
         mAudioRecordingManager.stop();
+        if(mRecordedCallCatalogService != null)
+        {
+            //The recorder's final synchronous drain publishes its last artifacts before the catalog stops accepting
+            //and drains its own bounded queues.
+            mRecordedCallCatalogService.close();
+        }
+        if(mControlChannelQualityRegistry != null)
+        {
+            mControlChannelQualityRegistry.clear();
+        }
         mResourceMonitor.stop();
 
         mLog.info("Stopping spectral display ...");

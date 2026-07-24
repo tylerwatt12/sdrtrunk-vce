@@ -26,6 +26,7 @@ import io.github.dsheirer.sample.Listener;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Objects;
 import java.util.prefs.Preferences;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +37,7 @@ import org.slf4j.LoggerFactory;
 public class DirectoryPreference extends Preference
 {
     private static final Logger mLog = LoggerFactory.getLogger(DirectoryPreference.class);
-    private Preferences mPreferences = Preferences.userNodeForPackage(DirectoryPreference.class);
+    private final Preferences mPreferences;
 
     private static final int DEFAULT_USAGE_THRESHOLD_RECORDINGS_MB = 2000;
     private static final int DEFAULT_USAGE_THRESHOLD_EVENT_LOGS_MB = 200;
@@ -64,6 +65,7 @@ public class DirectoryPreference extends Preference
     private Path mDirectoryRecording;
     private Path mDirectoryScreenCapture;
     private Path mDirectoryStreaming;
+    private volatile Path mRuntimeRecordingDirectory;
     private Integer mDirectoryMaxUsageRecordings;
     private Integer mDirectoryMaxUsageEventLogs;
 
@@ -73,7 +75,16 @@ public class DirectoryPreference extends Preference
      */
     public DirectoryPreference(Listener<PreferenceType> updateListener)
     {
+        this(updateListener, Preferences.userNodeForPackage(DirectoryPreference.class));
+    }
+
+    /**
+     * Constructs an instance with an isolated preference node for testing.
+     */
+    DirectoryPreference(Listener<PreferenceType> updateListener, Preferences preferences)
+    {
         super(updateListener);
+        mPreferences = Objects.requireNonNull(preferences, "Preferences cannot be null");
     }
 
     @Override
@@ -277,8 +288,20 @@ public class DirectoryPreference extends Preference
     /**
      * Sets the path to the recordings folder
      */
-    public void setDirectoryRecording(Path path)
+    public synchronized void setDirectoryRecording(Path path)
     {
+        Objects.requireNonNull(path, "Recording directory cannot be null");
+
+        if(mRuntimeRecordingDirectory != null)
+        {
+            if(!isSameRecordingDirectory(path, mRuntimeRecordingDirectory))
+            {
+                mLog.warn("Ignoring recording-directory change while the managed recording catalog is active");
+            }
+
+            return;
+        }
+
         mDirectoryRecording = path;
         mPreferences.put(PREFERENCE_KEY_DIRECTORY_RECORDING, path.toString());
         notifyPreferenceUpdated();
@@ -287,11 +310,64 @@ public class DirectoryPreference extends Preference
     /**
      * Removes a stored recording directory preference so that the default path can be used again
      */
-    public void resetDirectoryRecording()
+    public synchronized void resetDirectoryRecording()
     {
+        if(mRuntimeRecordingDirectory != null)
+        {
+            mLog.warn("Ignoring recording-directory reset while the managed recording catalog is active");
+            return;
+        }
+
         mPreferences.remove(PREFERENCE_KEY_DIRECTORY_RECORDING);
         mDirectoryRecording = null;
         notifyPreferenceUpdated();
+    }
+
+    /**
+     * Fixes the recording directory for this application process. Managed recordings and their catalog use relative
+     * paths, so changing this directory requires an explicit offline migration of both existing files and ownership.
+     */
+    public synchronized Path lockRecordingDirectoryForRuntime()
+    {
+        if(mRuntimeRecordingDirectory == null)
+        {
+            Path configured = getDirectoryRecording().toAbsolutePath().normalize();
+            createDirectory(configured);
+
+            try
+            {
+                mRuntimeRecordingDirectory = configured.toRealPath();
+            }
+            catch(Exception exception)
+            {
+                throw new IllegalStateException("Unable to lock the recording directory: " + configured, exception);
+            }
+        }
+
+        return mRuntimeRecordingDirectory;
+    }
+
+    /**
+     * Indicates that live directory changes are disabled to keep recording and retention ownership aligned.
+     */
+    public boolean isRecordingDirectoryRuntimeLocked()
+    {
+        return mRuntimeRecordingDirectory != null;
+    }
+
+    private static boolean isSameRecordingDirectory(Path first, Path second)
+    {
+        Path normalizedFirst = first.toAbsolutePath().normalize();
+        Path normalizedSecond = second.toAbsolutePath().normalize();
+
+        try
+        {
+            return normalizedFirst.toRealPath().equals(normalizedSecond.toRealPath());
+        }
+        catch(Exception exception)
+        {
+            return normalizedFirst.equals(normalizedSecond);
+        }
     }
 
     /**

@@ -14,6 +14,8 @@ package io.github.dsheirer.record;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
@@ -23,6 +25,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
@@ -34,13 +37,16 @@ import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -235,15 +241,15 @@ class AudioRecordingManagerTest
     }
 
     @Test
-    void technicalRecordingWithoutDestinationRecordDoesNotEnterTheCatalog()
+    void channelLevelRecordingWithoutDestinationRecordStillEntersRetentionCatalog()
     {
         UserPreferences preferences = new UserPreferences();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
         AtomicInteger recorded = new AtomicInteger();
-        AtomicInteger cataloged = new AtomicInteger();
+        AtomicReference<RecordedCallArtifact> cataloged = new AtomicReference<>();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, call -> recorded.incrementAndGet(),
-            artifact -> cataloged.incrementAndGet(), scheduler);
+            cataloged::set, scheduler);
 
         try
         {
@@ -252,7 +258,53 @@ class AudioRecordingManagerTest
             manager.receive(completedCall(1, false, false, List.of(new float[80])));
             manager.stop();
             assertEquals(1, recorded.get());
-            assertEquals(0, cataloged.get());
+            assertNotNull(cataloged.get());
+            assertFalse(cataloged.get().destinationTalkgroupRecordEnabled());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
+
+    @Test
+    void activeManagerKeepsWritingToItsStartupRecordingRoot() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        Path startupRoot = mTemporaryFolder.resolve("startup-recordings");
+        Path changedRoot = mTemporaryFolder.resolve("changed-recordings");
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<RecordedCallArtifact> artifacts = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AudioRecordingManager manager =
+            new AudioRecordingManager(preferences, null, artifacts::add, scheduler);
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(startupRoot);
+            manager.start();
+            manager.receive(completedCall(1, true, false, List.of(new float[80])));
+            preferences.getDirectoryPreference().setDirectoryRecording(changedRoot);
+            manager.receive(completedCall(2, true, false, List.of(new float[80])));
+            manager.stop();
+
+            assertEquals(2, artifacts.size());
+            Path realStartupRoot = startupRoot.toRealPath();
+
+            for(RecordedCallArtifact artifact: artifacts)
+            {
+                assertTrue(artifact.path().toRealPath().startsWith(realStartupRoot));
+            }
+
+            if(Files.exists(changedRoot))
+            {
+                try(var paths = Files.walk(changedRoot))
+                {
+                    assertEquals(0, paths.filter(Files::isRegularFile).count());
+                }
+            }
         }
         finally
         {
@@ -335,6 +387,162 @@ class AudioRecordingManagerTest
         }
     }
 
+    @Test
+    void rejectedCatalogHandoffPausesNewFilesUntilBoundedRecoverySucceeds() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        Path recordingRoot = mTemporaryFolder.resolve("recordings");
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        ControllableCatalogHandoff catalog = new ControllableCatalogHandoff();
+        catalog.mAcceptNew.set(false);
+        catalog.mAcceptRecovery.set(false);
+        AudioRecordingManager manager =
+            AudioRecordingManager.withCatalogHandoff(preferences, null, catalog, scheduler);
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(recordingRoot);
+            manager.start();
+            manager.receive(completedCall(1, true, false, List.of(new float[80])));
+            manager.new QueueProcessor().run();
+
+            assertTrue(manager.getQueueStatus().catalogPaused());
+            assertEquals(1, manager.getQueueStatus().pendingCatalogRecoveries());
+            assertEquals(1, countManagedAudioFiles(recordingRoot));
+
+            manager.receive(completedCall(2, true, false, List.of(new float[80])));
+            assertEquals(1, manager.getQueueStatus().catalogPausedRecordings());
+            assertEquals(1, manager.getQueueStatus().droppedRecordings());
+            assertEquals(0, manager.getQueueStatus().queuedCalls());
+            assertEquals(1, countManagedAudioFiles(recordingRoot),
+                "catalog backpressure must bound uncataloged audio instead of continuing to publish files");
+
+            catalog.mAcceptRecovery.set(true);
+            catalog.mAcceptNew.set(true);
+            scheduler.runReconciliation();
+            assertFalse(manager.getQueueStatus().catalogPaused());
+            assertEquals(0, manager.getQueueStatus().pendingCatalogRecoveries());
+            assertFalse(catalog.mRecovered.isEmpty());
+
+            manager.receive(completedCall(3, true, false, List.of(new float[80])));
+            manager.new QueueProcessor().run();
+            assertEquals(1, catalog.mAccepted.size());
+            assertEquals(2, countManagedAudioFiles(recordingRoot));
+            assertTimeoutPreemptively(Duration.ofSeconds(2), manager::stop);
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
+
+    @Test
+    void failedCatalogDropsCompletedCallsBeforeCreatingUnownedAudio() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        Path recordingRoot = mTemporaryFolder.resolve("recordings");
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        ControllableCatalogHandoff catalog = new ControllableCatalogHandoff();
+        catalog.mAccepting.set(false);
+        AudioRecordingManager manager =
+            AudioRecordingManager.withCatalogHandoff(preferences, null, catalog, scheduler);
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(recordingRoot);
+            manager.start();
+            manager.receive(completedCall(1, true, false, List.of(new float[80])));
+            AudioRecordingManager.RecordingQueueStatus status = manager.getQueueStatus();
+            assertTrue(status.catalogPaused());
+            assertFalse(status.acceptingCalls());
+            assertEquals(1, status.catalogPausedRecordings());
+            assertEquals(1, status.droppedRecordings());
+            assertEquals(0, status.pendingCatalogRecoveries());
+            assertEquals(0, countManagedAudioFiles(recordingRoot));
+            assertTimeoutPreemptively(Duration.ofSeconds(2), manager::stop);
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
+
+    @Test
+    void runtimeCatalogReceivesStartupRecoveryAndFinalRecordingDrainBeforeShutdown() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        ManualRecordingScheduler writerScheduler = new ManualRecordingScheduler();
+        ManualRecordingScheduler runtimeScheduler = new ManualRecordingScheduler();
+        AtomicReference<RecordedCallArtifact> written = new AtomicReference<>();
+        AudioRecordingManager writer =
+            new AudioRecordingManager(preferences, null, written::set, writerScheduler);
+        RecordedCallCatalogService catalog = null;
+        AudioRecordingManager runtime = null;
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.WAVE);
+            writer.start();
+            writer.receive(completedCall(91, true, false, List.of(new float[80])));
+            writer.stop();
+            assertNotNull(written.get());
+            assertTrue(Files.isRegularFile(written.get().path()));
+            ManagedRecordingPath inspected =
+                ManagedRecordingPath.inspect(mTemporaryFolder, written.get().path()).orElseThrow();
+            RecordedCallManifest recoveredManifest =
+                RecordedCallManifest.readFromAudioFile(written.get().path(), written.get().format()).orElseThrow();
+            assertTrue(recoveredManifest.recordEligible());
+            assertTrue(recoveredManifest.metadata().destinationTalkgroupRecordEnabled());
+            assertEquals(recoveredManifest.completedAtMs(), inspected.completedAtMs());
+            assertEquals(written.get().callId(), recoveredManifest.callId());
+            assertNull(new RecordedCallCatalogStore(mTemporaryFolder)
+                .prepareRecovered(written.get().path()).result());
+
+            Path database = mTemporaryFolder.resolve("database/sdrtrunk.sqlite");
+            SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+            catalog = new RecordedCallCatalogService(database, mTemporaryFolder, 30);
+            catalog.start();
+            runtime = AudioRecordingManager.withCatalogHandoff(preferences, null, catalog, runtimeScheduler);
+            runtime.start();
+            runtime.receive(completedCall(92, true, false, List.of(new float[80])));
+
+            //This order is the application contract: finish the recording writer first, then let the catalog drain.
+            runtime.stop();
+            catalog.close();
+            RecordedCallCatalogPage page = catalog.search(RecordedCallCatalogSearch.recent(
+                written.get().startAtMs() - 1_000, System.currentTimeMillis() + 10_000, 10));
+            assertEquals(2, page.calls().size(), catalog.status().toString());
+            assertEquals(2, catalog.status().inserted());
+        }
+        finally
+        {
+            if(runtime != null)
+            {
+                runtime.stop();
+            }
+
+            if(catalog != null)
+            {
+                catalog.close();
+            }
+
+            writer.stop();
+            runtimeScheduler.shutdownNow();
+            writerScheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+        }
+    }
+
     private static CompletedAudioCall completedCall()
     {
         return completedCall(1, true, false, List.of(new float[800]));
@@ -367,8 +575,26 @@ class AudioRecordingManagerTest
         return new CompletedAudioCall(snapshot, audioBuffers);
     }
 
+    private static long countManagedAudioFiles(Path root) throws Exception
+    {
+        if(!Files.exists(root))
+        {
+            return 0;
+        }
+
+        try(var paths = Files.walk(root))
+        {
+            return paths.filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".wav") ||
+                    path.getFileName().toString().endsWith(".mp3"))
+                .count();
+        }
+    }
+
     private static class ManualRecordingScheduler extends ScheduledThreadPoolExecutor
     {
+        private Runnable mReconciliation;
+
         ManualRecordingScheduler()
         {
             super(1);
@@ -384,7 +610,53 @@ class AudioRecordingManagerTest
         public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay,
                                                          TimeUnit unit)
         {
+            mReconciliation = command;
             return super.scheduleWithFixedDelay(command, 1, 1, TimeUnit.DAYS);
+        }
+
+        void runReconciliation()
+        {
+            assertNotNull(mReconciliation);
+            mReconciliation.run();
+        }
+    }
+
+    private static class ControllableCatalogHandoff implements RecordedCallCatalogHandoff
+    {
+        private final AtomicBoolean mAccepting = new AtomicBoolean(true);
+        private final AtomicBoolean mAcceptNew = new AtomicBoolean(true);
+        private final AtomicBoolean mAcceptRecovery = new AtomicBoolean(true);
+        private final List<RecordedCallArtifact> mAccepted = new CopyOnWriteArrayList<>();
+        private final List<Path> mRecovered = new CopyOnWriteArrayList<>();
+
+        @Override
+        public boolean isAccepting()
+        {
+            return mAccepting.get();
+        }
+
+        @Override
+        public boolean submit(RecordedCallArtifact artifact)
+        {
+            if(mAccepting.get() && mAcceptNew.get())
+            {
+                mAccepted.add(artifact);
+                return true;
+            }
+
+            return false;
+        }
+
+        @Override
+        public boolean submitRecovery(Path path)
+        {
+            if(mAccepting.get() && mAcceptRecovery.get())
+            {
+                mRecovered.add(path);
+                return true;
+            }
+
+            return false;
         }
     }
 }
