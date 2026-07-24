@@ -304,6 +304,7 @@ class RecordedCallCatalogServiceTest
         try
         {
             start.countDown();
+            long readDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
 
             do
             {
@@ -315,7 +316,7 @@ class RecordedCallCatalogServiceTest
                 assertTrue(first || second, "retention readers must observe one complete settings request");
                 reads++;
             }
-            while(!writer.isDone() || reads < 10_000);
+            while(reads < 10_000 || (!writer.isDone() && System.nanoTime() < readDeadline));
 
             writer.get(5, TimeUnit.SECONDS);
             assertTrue(reads >= 10_000);
