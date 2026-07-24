@@ -23,7 +23,6 @@ import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.SourceException;
-import io.github.dsheirer.source.mixer.MixerManager;
 import io.github.dsheirer.source.tuner.airspy.AirspyTuner;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
@@ -33,13 +32,6 @@ import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerController;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerEditor;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
-import io.github.dsheirer.source.tuner.fcd.FCDTuner;
-import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerConfiguration;
-import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerController;
-import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerEditor;
-import io.github.dsheirer.source.tuner.fcd.proplusV2.FCD2TunerConfiguration;
-import io.github.dsheirer.source.tuner.fcd.proplusV2.FCD2TunerController;
-import io.github.dsheirer.source.tuner.fcd.proplusV2.FCD2TunerEditor;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTuner;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerConfiguration;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController;
@@ -131,8 +123,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.sound.sampled.TargetDataLine;
 
 /**
  * Factory for creating tuners and tuner configurations
@@ -361,22 +351,6 @@ public class TunerFactory
                 return new AirspyTuner(new AirspyTunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
             case AIRSPY_HF:
                 return new AirspyHfTuner(new AirspyHfTunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
-            case FUNCUBE_DONGLE_PRO:
-                TargetDataLine tdl1 = MixerManager.getTunerTargetDataLine(MixerTunerType.FUNCUBE_DONGLE_PRO);
-                if(tdl1 != null)
-                {
-                    FCD1TunerController controller = new FCD1TunerController(tdl1, bus, portAddress, tunerErrorListener);
-                    return new FCDTuner(controller, tunerErrorListener);
-                }
-                throw new SourceException("Unable to find matching tuner sound card mixer");
-            case FUNCUBE_DONGLE_PRO_PLUS:
-                TargetDataLine tdl2 = MixerManager.getTunerTargetDataLine(MixerTunerType.FUNCUBE_DONGLE_PRO_PLUS);
-                if(tdl2 != null)
-                {
-                    FCD2TunerController controller = new FCD2TunerController(tdl2, bus, portAddress, tunerErrorListener);
-                    return new FCDTuner(controller, tunerErrorListener);
-                }
-                throw new SourceException("Unable to find matching tuner sound card mixer");
             case HACKRF:
                 return new HackRFTuner(new HackRFTunerController(bus, portAddress, tunerErrorListener), tunerErrorListener, channelizerType);
             case HYDRASDR:
@@ -422,10 +396,6 @@ public class TunerFactory
                 return new E4KTunerConfiguration(uniqueID);
             case FITIPOWER_FC0013:
                 return new FC0013TunerConfiguration(uniqueID);
-            case FUNCUBE_DONGLE_PRO:
-                return new FCD1TunerConfiguration(uniqueID);
-            case FUNCUBE_DONGLE_PRO_PLUS:
-                return new FCD2TunerConfiguration(uniqueID);
             case HACKRF_JAWBREAKER:
             case HACKRF_ONE:
             case HACKRF_RAD1O:
@@ -469,10 +439,6 @@ public class TunerFactory
                 return new AirspyTunerEditor(userPreferences, tunerManager, discoveredTuner);
             case AIRSPY_HF:
                 return new AirspyHfTunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case FUNCUBE_DONGLE_PRO:
-                return new FCD1TunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case FUNCUBE_DONGLE_PRO_PLUS:
-                return new FCD2TunerEditor(userPreferences, tunerManager, discoveredTuner);
             case HACKRF:
                 return new HackRFTunerEditor(userPreferences, tunerManager, discoveredTuner);
             case HYDRASDR:

@@ -73,6 +73,31 @@ class TunerSettingsDeserializerTest
     }
 
     @Test
+    void preservesSupportedEntriesWhenRetiredFuncubeEntriesArePresent() throws Exception
+    {
+        TunerSettings settings = mObjectMapper.readValue("""
+            {
+              "disabledTuners": [
+                {"tunerClass": "RTL2832", "id": "rtl-current"},
+                {"tunerClass": "FUNCUBE_DONGLE_PRO", "id": "fcd-retired"},
+                {"tunerClass": "FUNCUBE_DONGLE_PRO_PLUS", "id": "fcd-plus-retired"}
+              ],
+              "tunerConfigurations": [
+                {"type": "airspyTunerConfiguration", "uniqueID": "airspy-current"},
+                {"type": "fcd1TunerConfiguration", "uniqueID": "fcd-retired"},
+                {"type": "fcd2TunerConfiguration", "uniqueID": "fcd-plus-retired"}
+              ]
+            }
+            """, TunerSettings.class);
+
+        assertEquals(1, settings.getDisabledTuners().size());
+        assertEquals(TunerClass.RTL2832, settings.getDisabledTuners().getFirst().tunerClass());
+        assertEquals(1, settings.getTunerConfigurations().size());
+        assertEquals("airspy-current", settings.getTunerConfigurations().getFirst().getUniqueID());
+        assertEquals(4, settings.getIgnoredEntryCount());
+    }
+
+    @Test
     void rejectsMalformedTopLevelPayload()
     {
         assertThrows(JsonMappingException.class, () -> mObjectMapper.readValue("[]", TunerSettings.class));

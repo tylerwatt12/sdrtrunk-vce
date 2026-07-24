@@ -45,7 +45,6 @@ import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
-import io.github.dsheirer.util.ThreadPool;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,7 +56,6 @@ import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.usb4java.Context;
@@ -862,17 +860,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                             DiscoveredUSBTuner discoveredUSBTuner = new DiscoveredUSBTuner(tunerClass, bus,
                                     portAddress, channelizerType);
 
-                            if(tunerClass.isFuncubeTuner())
-                            {
-                                //Funcube tuners take a few moments to init the sound card interface.  Delay adding
-                                //the tuner so that it can be started correctly.
-                                ThreadPool.SCHEDULED.schedule(() ->
-                                    addUsbTuner(discoveredUSBTuner), 2, TimeUnit.SECONDS);
-                            }
-                            else
-                            {
-                                addUsbTuner(discoveredUSBTuner);
-                            }
+                            addUsbTuner(discoveredUSBTuner);
                         }
                     }
                 }
