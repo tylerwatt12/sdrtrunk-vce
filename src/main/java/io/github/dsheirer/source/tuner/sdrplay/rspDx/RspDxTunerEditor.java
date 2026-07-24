@@ -185,10 +185,14 @@ public class RspDxTunerEditor extends RspTunerEditor<RspDxTunerConfiguration>
         try
         {
             getHdrModeCheckBox().setSelected(hasTuner() && getTunerController().getControlRsp().isHighDynamicRange());
+            getHdrModeBandwidthCombo().setEnabled(hasTuner() && getHdrModeCheckBox().isSelected());
+            getHdrModeBandwidthCombo().setSelectedItem(hasTuner() ?
+                getTunerController().getControlRsp().getHdrModeBandwidth() : null);
         }
         catch(SDRPlayException se)
         {
             mLog.error("Error setting HDR mode enabled state in editor");
+            getHdrModeBandwidthCombo().setEnabled(false);
         }
 
         getRfNotchCheckBox().setEnabled(hasTuner());
@@ -236,17 +240,29 @@ public class RspDxTunerEditor extends RspTunerEditor<RspDxTunerConfiguration>
             getConfiguration().setFrequencyCorrection(value);
             getConfiguration().setAutoPPMCorrectionEnabled(getAutoPPMCheckBox().isSelected());
             getConfiguration().setSampleRate((RspSampleRate)getSampleRateCombo().getSelectedItem());
-            getConfiguration().setBiasT(getBiasTCheckBox().isSelected());
-            getConfiguration().setHdrMode(getHdrModeCheckBox().isSelected());
-            getConfiguration().setRfDabNotch(getRfNotchCheckBox().isSelected());
-            getConfiguration().setRfNotch(getRfNotchCheckBox().isSelected());
-            getConfiguration().setAntenna((RspDxAntenna) getAntennaCombo().getSelectedItem());
+            applyDeviceSettings(getConfiguration(), getBiasTCheckBox().isSelected(),
+                getHdrModeCheckBox().isSelected(),
+                (HdrModeBandwidth)getHdrModeBandwidthCombo().getSelectedItem(),
+                getRfNotchCheckBox().isSelected(), getRfDabNotchCheckBox().isSelected(),
+                (RspDxAntenna)getAntennaCombo().getSelectedItem());
             getConfiguration().setLNA(getLNASlider().getLNA());
             getConfiguration().setBasebandGainReduction(getIfGainSlider().getGR());
             getConfiguration().setAgcMode(getAgcButton().isSelected() ? AgcMode.ENABLE : AgcMode.DISABLE);
 
             saveConfiguration();
         }
+    }
+
+    static void applyDeviceSettings(RspDxTunerConfiguration configuration, boolean biasT, boolean hdrMode,
+                                    HdrModeBandwidth hdrModeBandwidth, boolean rfNotch, boolean rfDabNotch,
+                                    RspDxAntenna antenna)
+    {
+        configuration.setBiasT(biasT);
+        configuration.setHdrMode(hdrMode);
+        configuration.setHdrModeBandwidth(hdrModeBandwidth);
+        configuration.setRfNotch(rfNotch);
+        configuration.setRfDabNotch(rfDabNotch);
+        configuration.setAntenna(antenna);
     }
 
     /**
@@ -326,6 +342,7 @@ public class RspDxTunerEditor extends RspTunerEditor<RspDxTunerConfiguration>
                     try
                     {
                         getTunerController().getControlRsp().setHighDynamicRange(mHdrModeCheckBox.isSelected());
+                        getHdrModeBandwidthCombo().setEnabled(mHdrModeCheckBox.isSelected());
                         save();
                     }
                     catch(SDRPlayException se)

@@ -214,12 +214,18 @@ public abstract class ControlRspDuo<T extends RspDuoTuner> extends ControlRsp<Rs
     @Override
     public void setGain(int lna, int gr) throws SDRPlayException
     {
-        if(mLNA != lna && mBasebandGainReduction != gr)
+        if(hasGainChanged(mLNA, mBasebandGainReduction, lna, gr))
         {
+            getTuner().setGain(lna, gr);
             mLNA = lna;
             mBasebandGainReduction = gr;
-            getTuner().setGain(lna, gr);
         }
+    }
+
+    static boolean hasGainChanged(int currentLna, int currentGainReduction, int requestedLna,
+                                  int requestedGainReduction)
+    {
+        return currentLna != requestedLna || currentGainReduction != requestedGainReduction;
     }
 
     @Override

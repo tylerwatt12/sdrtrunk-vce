@@ -217,15 +217,25 @@ public class Rsp2TunerEditor extends RspTunerEditor<Rsp2TunerConfiguration>
             getConfiguration().setFrequencyCorrection(value);
             getConfiguration().setAutoPPMCorrectionEnabled(getAutoPPMCheckBox().isSelected());
             getConfiguration().setSampleRate((RspSampleRate)getSampleRateCombo().getSelectedItem());
-            getConfiguration().setBiasT(getBiasTCheckBox().isSelected());
-            getConfiguration().setRfNotch(getRfNotchCheckBox().isSelected());
-            getConfiguration().setAntennaSelection((Rsp2AntennaSelection)getAntennaSelectionCombo().getSelectedItem());
+            applyDeviceSettings(getConfiguration(), getBiasTCheckBox().isSelected(),
+                getExternalReferenceOutputCheckBox().isSelected(), getRfNotchCheckBox().isSelected(),
+                (Rsp2AntennaSelection)getAntennaSelectionCombo().getSelectedItem());
             getConfiguration().setLNA(getLNASlider().getLNA());
             getConfiguration().setBasebandGainReduction(getIfGainSlider().getGR());
             getConfiguration().setAgcMode(getAgcButton().isSelected() ? AgcMode.ENABLE : AgcMode.DISABLE);
 
             saveConfiguration();
         }
+    }
+
+    static void applyDeviceSettings(Rsp2TunerConfiguration configuration, boolean biasT,
+                                    boolean externalReferenceOutput, boolean rfNotch,
+                                    Rsp2AntennaSelection antennaSelection)
+    {
+        configuration.setBiasT(biasT);
+        configuration.setExternalReferenceOutput(externalReferenceOutput);
+        configuration.setRfNotch(rfNotch);
+        configuration.setAntennaSelection(antennaSelection);
     }
 
     /**
