@@ -18,8 +18,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.map.ChannelMap;
-import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -66,7 +64,6 @@ public final class LegacyXmlConfigurationMerger
             channelKeys.add(channelKey(channel));
         }
 
-        Set<String> mapNames = names(existing.getChannelMaps().stream().map(ChannelMap::getName).toList());
         Set<String> streamNames = names(existing.getBroadcastConfigurations().stream()
             .map(BroadcastConfiguration::getName).toList());
         Set<String> aliasLists = names(existing.getAliases().stream().map(Alias::getAliasListName).toList());
@@ -80,16 +77,13 @@ public final class LegacyXmlConfigurationMerger
             }
         }
 
-        int mapConflicts = countAndAddConflicts(mapNames,
-            imported.getChannelMaps().stream().map(ChannelMap::getName).toList());
         int streamConflicts = countAndAddConflicts(streamNames,
             imported.getBroadcastConfigurations().stream().map(BroadcastConfiguration::getName).toList());
         int aliasListConflicts = (int)imported.getAliases().stream().map(Alias::getAliasListName)
             .map(LegacyXmlConfigurationMerger::normalize).distinct().filter(aliasLists::contains).count();
 
         return new Preview(imported.getAliases().size(), imported.getChannels().size(),
-            imported.getChannelMaps().size(), imported.getBroadcastConfigurations().size(), aliasListConflicts,
-            channelConflicts, mapConflicts, streamConflicts);
+            imported.getBroadcastConfigurations().size(), aliasListConflicts, channelConflicts, streamConflicts);
     }
 
     public static MergeResult merge(ConfigurationState existing, ConfigurationState imported, ConflictPolicy policy)
@@ -98,7 +92,6 @@ public final class LegacyXmlConfigurationMerger
         merged.setVersion(ConfigurationManager.CONFIGURATION_CURRENT_VERSION);
         merged.setAliases(new ArrayList<>(existing.getAliases()));
         merged.setChannels(new ArrayList<>(existing.getChannels()));
-        merged.setChannelMaps(new ArrayList<>(existing.getChannelMaps()));
         merged.setBroadcastConfigurations(new ArrayList<>(existing.getBroadcastConfigurations()));
 
         MutableSummary summary = new MutableSummary();
@@ -108,10 +101,6 @@ public final class LegacyXmlConfigurationMerger
         Map<String,String> streamRenames = mergeStreams(merged.getBroadcastConfigurations(),
             imported.getBroadcastConfigurations(), policy, summary);
         applyStreamRenames(imported.getAliases(), streamRenames);
-
-        Map<String,String> channelMapRenames = mergeChannelMaps(merged.getChannelMaps(), imported.getChannelMaps(),
-            policy, summary);
-        applyChannelMapRenames(imported.getChannels(), channelMapRenames);
 
         mergeChannels(merged.getChannels(), imported.getChannels(), policy, summary);
         return new MergeResult(merged, summary.toSummary());
@@ -202,47 +191,6 @@ public final class LegacyXmlConfigurationMerger
 
             existing.add(stream);
             used.add(normalize(stream.getName()));
-        }
-
-        return renames;
-    }
-
-    private static Map<String,String> mergeChannelMaps(List<ChannelMap> existing, List<ChannelMap> imported,
-                                                        ConflictPolicy policy, MutableSummary summary)
-    {
-        Set<String> used = names(existing.stream().map(ChannelMap::getName).toList());
-        Map<String,String> renames = new HashMap<>();
-
-        for(ChannelMap map: imported)
-        {
-            String key = normalize(map.getName());
-            boolean conflict = used.contains(key);
-
-            if(conflict && policy == ConflictPolicy.SKIP)
-            {
-                summary.skipped++;
-                continue;
-            }
-
-            if(conflict && policy == ConflictPolicy.REPLACE)
-            {
-                existing.removeIf(item -> normalize(item.getName()).equals(key));
-                summary.replaced++;
-            }
-            else if(conflict)
-            {
-                String renamed = uniqueName(map.getName(), used);
-                renames.put(key, renamed);
-                map.setName(renamed);
-                summary.renamed++;
-            }
-            else
-            {
-                summary.added++;
-            }
-
-            existing.add(map);
-            used.add(normalize(map.getName()));
         }
 
         return renames;
@@ -354,21 +302,6 @@ public final class LegacyXmlConfigurationMerger
         }
     }
 
-    private static void applyChannelMapRenames(List<Channel> channels, Map<String,String> renames)
-    {
-        for(Channel channel: channels)
-        {
-            if(channel.getDecodeConfiguration() instanceof DecodeConfigMPT1327 mpt1327)
-            {
-                String renamed = renames.get(normalize(mpt1327.getChannelMapName()));
-                if(renamed != null)
-                {
-                    mpt1327.setChannelMapName(renamed);
-                }
-            }
-        }
-    }
-
     private static Set<String> names(List<String> values)
     {
         Set<String> names = new HashSet<>();
@@ -416,13 +349,12 @@ public final class LegacyXmlConfigurationMerger
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
-    public record Preview(int aliasCount, int channelCount, int channelMapCount, int streamCount,
-                          int aliasListConflicts, int channelConflicts, int channelMapConflicts,
-                          int streamConflicts)
+    public record Preview(int aliasCount, int channelCount, int streamCount, int aliasListConflicts,
+                          int channelConflicts, int streamConflicts)
     {
         public int totalConflicts()
         {
-            return aliasListConflicts + channelConflicts + channelMapConflicts + streamConflicts;
+            return aliasListConflicts + channelConflicts + streamConflicts;
         }
     }
 

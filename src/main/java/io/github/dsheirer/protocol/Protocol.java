@@ -42,7 +42,7 @@ public enum Protocol
     LTR_NET("LTR-Net", "LTRNET", 300),
     NBFM("NBFM", "NBFM", 0),
     MDC1200("MDC-1200", "MDC1200", 1200),
-    MPT1327("MPT-1327", "MPT1327", 1200),
+    MPT1327("MPT-1327", "MPT1327", 0, Availability.RETIRED_COMPATIBILITY),
     NXDN("NXDN", "NXDN", 9600),
     PASSPORT("Passport", "PASSPORT", 300),
     TAIT1200("Tait 1200", "TAIT1200", 1200),
@@ -52,18 +52,31 @@ public enum Protocol
     private String mLabel;
     private String mFileNameLabel;
     private int mBitRate;
+    private Availability mAvailability;
 
     Protocol(String label, String fileNameLabel, int bitRate)
+    {
+        this(label, fileNameLabel, bitRate, Availability.ACTIVE);
+    }
+
+    Protocol(String label, String fileNameLabel, int bitRate, Availability availability)
     {
         mLabel = label;
         mFileNameLabel = fileNameLabel;
         mBitRate = bitRate;
+        mAvailability = availability;
     }
 
-    public static final Set<Protocol> TALKGROUP_PROTOCOLS = Collections.unmodifiableSet(EnumSet.of(AM, APCO25, DMR,
-        FLEETSYNC, LTR, LTR_NET, MDC1200, MPT1327, NBFM, NXDN, PASSPORT));
+    public static final Set<Protocol> TALKGROUP_PROTOCOLS = activeOnly(EnumSet.of(AM, APCO25, DMR, FLEETSYNC, LTR,
+        LTR_NET, MDC1200, MPT1327, NBFM, NXDN, PASSPORT));
 
     private static final Set<Protocol> RADIO_ID_PROTOCOLS = EnumSet.of(APCO25, DMR, NXDN, PASSPORT);
+
+    private static Set<Protocol> activeOnly(EnumSet<Protocol> candidates)
+    {
+        candidates.removeIf(protocol -> !protocol.isActive());
+        return Collections.unmodifiableSet(candidates);
+    }
 
     @Override
     public String toString()
@@ -79,5 +92,21 @@ public enum Protocol
     public int getBitRate()
     {
         return mBitRate;
+    }
+
+    public boolean isActive()
+    {
+        return mAvailability == Availability.ACTIVE;
+    }
+
+    public boolean isRetiredCompatibility()
+    {
+        return mAvailability == Availability.RETIRED_COMPATIBILITY;
+    }
+
+    public enum Availability
+    {
+        ACTIVE,
+        RETIRED_COMPATIBILITY
     }
 }

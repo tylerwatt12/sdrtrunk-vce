@@ -24,7 +24,6 @@ package io.github.dsheirer.configuration;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.map.ChannelMap;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,7 +34,6 @@ public class ConfigurationState
     private List<Alias> mAliases = new ArrayList<>();
     private List<BroadcastConfiguration> mBroadcastConfigurations = new ArrayList<>();
     private List<Channel> mChannels = new ArrayList<>();
-    private List<ChannelMap> mChannelMaps = new ArrayList<>();
 
     /**
      * Version number for this configuration state.
@@ -71,16 +69,6 @@ public class ConfigurationState
     public void setChannels(List<Channel> channels)
     {
         mChannels = channels;
-    }
-
-    public List<ChannelMap> getChannelMaps()
-    {
-        return mChannelMaps;
-    }
-
-    public void setChannelMaps(List<ChannelMap> channelMaps)
-    {
-        mChannelMaps = channelMaps;
     }
 
     public List<BroadcastConfiguration> getBroadcastConfigurations()

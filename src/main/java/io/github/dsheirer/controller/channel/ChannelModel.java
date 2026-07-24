@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.controller.channel;
 
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
@@ -304,7 +305,7 @@ public class ChannelModel implements Listener<ChannelEvent>
 
         for(Channel channel: getChannels())
         {
-            if(channel.isAutoStart())
+            if(channel.isAutoStart() && ChannelConfigurationPolicy.isActive(channel))
             {
                 autoStartChannels.add(channel);
             }

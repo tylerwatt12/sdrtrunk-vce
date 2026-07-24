@@ -320,7 +320,7 @@ public class AliasModel
             {
                 for(AliasID aliasID: alias.getAliasIdentifiers())
                 {
-                    if(aliasID.getType() == type)
+                    if(aliasID.getType() == type && AliasIdentifierPolicy.isUserVisible(aliasID))
                     {
                         aliases.add(alias);
                         break;
