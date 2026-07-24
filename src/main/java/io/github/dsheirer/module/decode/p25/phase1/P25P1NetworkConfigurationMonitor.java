@@ -303,6 +303,11 @@ public class P25P1NetworkConfigurationMonitor
             case OSP_IDENTIFIER_UPDATE_TDMA:
                 if(ambtc instanceof AMBTCFrequencyBandUpdateTDMA tdma)
                 {
+                    if(!tdma.getHeader().isValid() || !tdma.hasDataBlock(0))
+                    {
+                        return null;
+                    }
+
                     P25NetworkConfigurationSnapshot.ForeignSystemBand band = getForeignSystemBandSnapshot(tdma);
                     mForeignSystemBands.put(foreignSystemBandKey(band), band);
                     return foreignSystemBandObservation(band);
