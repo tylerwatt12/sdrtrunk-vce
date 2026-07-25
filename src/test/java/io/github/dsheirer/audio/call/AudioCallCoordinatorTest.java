@@ -909,7 +909,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void destinationRecordingPolicyCarriesRecordEnabledMembersCatalogIdentity() throws Exception
+    void destinationRecordingPolicyCarriesRecordEnabledMembersRecordingIdentity() throws Exception
     {
         long now = System.currentTimeMillis();
         String winnerGuid = "00000000-0000-0000-0000-000000000141";
@@ -924,11 +924,11 @@ class AudioCallCoordinatorTest
 
         try
         {
-            AudioCallSnapshot winner = withCatalogMetadata(
+            AudioCallSnapshot winner = withRecordingMetadata(
                 snapshot(241, 1, 1200, 9001, "Test System", winnerGuid,
                     1_000L, 2_000L, 1, false),
                 "Winner Alias List", "Winner Talkgroup", "exact:APCO25:1200", false, "Winner Radio");
-            AudioCallSnapshot recordingMember = withCatalogMetadata(
+            AudioCallSnapshot recordingMember = withRecordingMetadata(
                 snapshot(242, 2, 1300, 9001, "Test System", recordingGuid,
                     1_000L, 2_000L, 1, false),
                 "Recording Alias List", "Recorded Talkgroup", "exact:APCO25:1300", true, "Losing Radio");
@@ -974,15 +974,15 @@ class AudioCallCoordinatorTest
 
         try
         {
-            AudioCallSnapshot winner = withCatalogMetadata(
+            AudioCallSnapshot winner = withRecordingMetadata(
                 snapshot(251, 1, 1200, 9001, "Test System", winnerGuid,
                     1_000L, 2_000L, 1, false),
                 "Winner List", "Winner Unrecorded", "exact:APCO25:1200", false, "Winner Radio");
-            AudioCallSnapshot otherDestination = withCatalogMetadata(
+            AudioCallSnapshot otherDestination = withRecordingMetadata(
                 snapshot(252, 2, 1100, 9001, "Test System", otherGuid,
                     1_000L, 2_000L, 1, false),
                 "Other List", "Other Recorded", "exact:APCO25:1100", true, "Other Radio");
-            AudioCallSnapshot sameDestination = withCatalogMetadata(
+            AudioCallSnapshot sameDestination = withRecordingMetadata(
                 snapshot(253, 3, 1200, 9001, "Test System", sameGuid,
                     1_000L, 2_000L, 1, false),
                 "Same List", "Same Recorded", "exact:APCO25:1200", true, "Same Radio");
@@ -1271,14 +1271,14 @@ class AudioCallCoordinatorTest
             policyMetadata);
     }
 
-    private static AudioCallSnapshot withCatalogMetadata(AudioCallSnapshot snapshot, String aliasListName,
-                                                         String destinationAlias,
-                                                         String destinationMatcherIdentity,
-                                                         boolean destinationRecordEnabled,
-                                                         String sourceAlias)
+    private static AudioCallSnapshot withRecordingMetadata(AudioCallSnapshot snapshot, String aliasListName,
+                                                           String destinationAlias,
+                                                           String destinationMatcherIdentity,
+                                                           boolean destinationRecordEnabled,
+                                                           String sourceAlias)
     {
         AudioCallRecordingMetadata metadata = snapshot.recordingMetadata();
-        AudioCallRecordingMetadata catalogMetadata = new AudioCallRecordingMetadata(metadata.systemName(),
+        AudioCallRecordingMetadata recordingMetadata = new AudioCallRecordingMetadata(metadata.systemName(),
             metadata.systemIdentity(), metadata.siteName(), metadata.siteIdentity(), metadata.channelName(),
             metadata.channelIdentity(), aliasListName, metadata.destinationProtocol(), metadata.destinationValue(),
             destinationAlias, destinationMatcherIdentity, destinationRecordEnabled, metadata.sourceProtocol(),
@@ -1288,7 +1288,7 @@ class AudioCallCoordinatorTest
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
             snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.monitorPriority(),
-            snapshot.duplicate(), catalogMetadata);
+            snapshot.duplicate(), recordingMetadata);
     }
 
     private static ControlChannelQualitySnapshot quality(String siteGuid, long observedAt, boolean active,

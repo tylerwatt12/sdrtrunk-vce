@@ -157,8 +157,8 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     }
 
     /**
-     * Immutable recording/catalog metadata. Destination and source Alias decisions are frozen when those identifiers
-     * first join the call so later administrator edits cannot change the historical call.
+     * Immutable recording metadata. Destination and source Alias decisions are frozen when those identifiers first
+     * join the call so later administrator edits cannot change the historical call.
      */
     public AudioCallRecordingMetadata getRecordingMetadata()
     {

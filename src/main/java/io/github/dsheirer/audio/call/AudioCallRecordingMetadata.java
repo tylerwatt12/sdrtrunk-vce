@@ -33,8 +33,8 @@ import java.util.List;
  * Compact immutable call metadata captured while aliases are matched.
  *
  * <p>This object deliberately contains no Alias, AliasList, IdentifierCollection, or other mutable runtime graph.
- * The recording writer, retained-call catalog, and recovery metadata can therefore all use the same historical
- * decision even if an administrator edits aliases while a call is active or queued for disk.</p>
+ * The standard recording writer can therefore use the same historical decision even if an administrator edits
+ * aliases while a call is active or queued for disk.</p>
  */
 public record AudioCallRecordingMetadata(String systemName, String systemIdentity, String siteName,
                                          String siteIdentity, String channelName, String channelIdentity,

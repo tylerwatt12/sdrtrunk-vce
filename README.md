@@ -12,6 +12,17 @@ This project is currently an **alpha release**. Back up important receiver data 
 > SDRTrunk VCE used 8.5% less CPU and triggered 25% fewer Java cleanup pauses than the latest tested mainline
 > build—all while providing enhanced signal, decode-health, web, and portability features.
 
+## Supported Product Scope
+
+VCE retains receiver-local desktop audio playback, including Hold, Avoid, Clear, persistent mute, output-device
+selection, a queue counter, and a bounded backlog. Standard per-call recording also remains supported and writes to
+the configured recording directory; VCE does not add a separate managed recording catalog, manifest store, replay
+query service, or automatic recording time/space retention.
+
+The distribution intentionally omits alias script actions, Funcube Dongle Pro/Pro+ tuners, MPT-1327, heterodyne
+channelization, and sound-card capture sources. The legacy named Channel Maps removed with MPT-1327 are not DMR
+channel maps: DMR channel maps remain supported, including editing, cloning, and legacy XML import.
+
 ## Highlights
 
 1. **Systems-based activity screen**
@@ -376,6 +387,26 @@ Cross-platform package tasks:
 Build output is written under `build/image`.
 
 ## Changelog
+
+### Unreleased
+
+#### Changed
+
+- Keep receiver-local desktop playback and its Hold, Avoid, Clear, persistent mute, output-device, queue-counter, and
+  bounded-backlog controls.
+- Keep standard per-call recording in the configured recording directory with a bounded asynchronous writer. The
+  unfinished managed recording catalog, manifests, replay queries, and automatic time/space retention are not included.
+
+#### Fixed
+
+- Load RadioReference sites and talkgroups independently for large trunked systems instead of blocking both on optional
+  county and category enrichment. Directory calls now use bounded endpoint-specific timeouts and safer retry handling.
+
+#### Removed
+
+- Alias script actions, Funcube Dongle Pro/Pro+ support, the MPT-1327 runtime and editor, heterodyne channelization, and
+  sound-card capture sources.
+- Legacy generic Channel Maps that existed for MPT-1327. DMR channel maps remain supported.
 
 ### 0.6.2-alpha-6 - 2026-07-21
 

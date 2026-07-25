@@ -1346,7 +1346,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
     /**
      * Retains the elected receiver copy's system/site/channel/source metadata, while ensuring that a recording
-     * decision contributed by another cohort member carries that member's matching destination into the catalog.
+     * decision contributed by another cohort member carries that member's matching destination into the recording.
      * Otherwise setting only the winner's record flag could mislabel a recording with an unrelated talkgroup.
      */
     private AudioCallRecordingMetadata mergeRecordingMetadata(AudioCallSnapshot winnerSnapshot,
