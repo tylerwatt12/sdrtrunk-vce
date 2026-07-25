@@ -2,18 +2,23 @@
 
 ## Website functions
 
-The persistent records in this design serve five bounded website queries:
+The persistent records in this design serve seven bounded website queries:
 
 1. The Systems & Sites directory lists DMR and NXDN systems with their observed receiver sites.
 2. A site information page shows the most recently decoded identity and service details.
 3. A site channel page lists the bounded set of logical channels or repeaters observed for that site.
 4. A site neighbors page lists the bounded set of adjacent sites advertised by that site.
 5. The shared Quality page charts retained control-channel signal and decode health for P25, DMR, and NXDN sites.
+6. A conventional DMR channel page lists talkgroups observed on each carrier and timeslot.
+7. A conventional DMR channel page lists source and private-call target radios observed on each carrier and timeslot.
 
 Live calls, current control-channel signal, decode health, and full protocol metadata use the bounded `/live/systems`
 and `/live/sites` in-memory streams. Persistent site details are exposed through `/api/system-directory`, `/api/site`,
-`/api/site/channels`, `/api/site/neighbors`, and the protocol-neutral `/api/quality` response. This design does not
-retain raw messages, per-call rows, site-change events, JSON, or general activity history for DMR/NXDN.
+`/api/site/channels`, `/api/site/neighbors`, and the protocol-neutral `/api/quality` response. Conventional DMR
+talkgroup and radio views use `/api/conventional/talkgroups` and `/api/conventional/radios` to read the compact
+summaries described below. Both require one receiver context, default to 100 rows, and enforce the shared 500-row
+server maximum. This design does not retain raw messages, per-call rows, site-change events, JSON, or general trunked
+DMR/NXDN activity history.
 
 ## Tables
 
@@ -89,6 +94,57 @@ site_id, channel_number, frequency_hz)` to select at most 1,000 expired primary 
 time-first covering index adds approximately one compact index entry of comparable key size per neighbor row and avoids
 a full-table retention scan.
 
+### `dmr_conventional_talkgroup_summary`
+
+One mutable row per `(receiver context, frequency, timeslot, talkgroup)` observed on an explicitly conventional DMR
+channel. It stores only first/last timestamps, call and encrypted-call counters, and the last source radio ID. The
+carrier and timeslot are part of the key because the same numeric talkgroup can be unrelated on different repeaters or
+slots.
+
+Concrete query:
+
+```sql
+SELECT ... FROM dmr_conventional_talkgroup_summary
+WHERE context_id = ?
+ORDER BY last_seen_ms DESC, frequency_hz, timeslot, talkgroup_id
+LIMIT ?
+```
+
+`idx_dmr_conventional_talkgroup_context` supports this bounded recent-activity query. The normal expected cardinality
+is tens or hundreds of talkgroups per configured repeater. Admission is defensively capped at 4,096 rows per receiver
+context. Existing identities continue to update at the cap; new identities are ignored until retention or an
+administrator clear frees capacity. Budgeting 100–140 bytes per table row and context-index entry gives a conservative
+upper estimate of roughly 0.4–0.6 MiB per fully saturated context.
+
+### `dmr_conventional_radio_summary`
+
+One mutable row per `(receiver context, frequency, timeslot, radio)` observed on an explicitly conventional DMR
+channel. It stores first/last timestamps, total participation, source/target, group/private, and encrypted-call
+counters, plus the last talkgroup or private-call peer ID. Both participants in a private call are updated, while a
+group call updates its source radio and talkgroup summary. Alias text remains administrator-owned configuration and is
+resolved through the channel's stored alias-list name rather than copied into this hot table.
+
+Concrete query:
+
+```sql
+SELECT ... FROM dmr_conventional_radio_summary
+WHERE context_id = ?
+ORDER BY last_seen_ms DESC, frequency_hz, timeslot, radio_id
+LIMIT ?
+```
+
+`idx_dmr_conventional_radio_context` supports this query. Normal cardinality is expected to be hundreds or a few
+thousand radios per receiver context. Admission is defensively capped at 32,768 rows per context with the same
+existing-row update behavior as talkgroups. Budgeting 130–180 bytes per table row and context-index entry gives a
+conservative upper estimate of roughly 4–6 MiB per saturated context. A pathological installation with 100 contexts
+all at both identity caps would therefore consume approximately 440–660 MiB for these summaries and indexes; normal
+installations should remain far below that bound.
+
+The existing conventional frequency/hour summaries cannot answer either identity query because they intentionally
+contain only action counters by carrier and timeslot. These two compact lifetime tables add the minimum identity
+dimensions required by the Conventional page; no radio-to-talkgroup relationship table or per-talkgroup time-series
+bucket is stored.
+
 ## Write behavior
 
 Decoder threads publish immutable snapshots only. The existing bounded statistics queue and single background writer
@@ -108,12 +164,22 @@ persistent site and active configured-control `last_seen_ms` close enough to liv
 active receiver from an offline one; cumulative learned channels and neighbors are not rewritten unless their stable
 snapshot hash changes.
 
+Conventional DMR uses a separate immutable completed-call observation. The mutable decode event may be broadcast many
+times while a call is active, but the completion observation is published once when that call closes. Each completed
+call performs one conventional carrier/hour counter update, at most one talkgroup upsert, and at most two radio
+upserts. Two consecutive calls with identical participants therefore count twice without a time-window dedupe, while
+continuation bursts for one call count once. An active conventional repeater averaging one completed call every five
+seconds produces 17,280 small in-place summary updates per day plus its source/target identity upserts, not 17,280
+immutable rows.
+
 No normal runtime path creates or repairs these tables or indexes. New databases create the independent
 `trunked_site_schema_version=2` subsystem in the single startup schema routine. The subsystem was introduced publicly
 at v2, so no public v1 migration is supported. The bundled Application Migrator adds v2 when the subsystem is absent,
 and it does so only in a backed-up staged copy before validation and atomic promotion. An existing active database is
 otherwise validation-only at startup. The P25 activity schema is v21; the same Application Migrator updates supported
-v19 or v20 databases.
+v19 or v20 databases. Conventional DMR summaries use the independent `dmr_activity_schema_version=1` subsystem. New
+databases create it in the same global routine; existing supported databases receive it only through the backed-up,
+staged Application Migrator.
 
 ## Retention
 
@@ -123,6 +189,7 @@ These are mutable summaries, not time-series events, and they use the existing S
 - neighbor facts with `last_seen_ms` older than the cutoff are deleted independently;
 - site rows with `last_seen_ms` older than the cutoff are deleted after child cleanup, with the foreign key cascade
   removing any remaining descendants.
+- conventional DMR talkgroup and radio summaries with `last_seen_ms` older than the cutoff are deleted independently.
 
 Each SQL delete selects at most 1,000 rows through its time-first index. A maintenance pass repeats bounded batches until
 the expired set is empty. Cleanup runs through the single statistics database writer at startup, periodically while the
@@ -131,8 +198,9 @@ active site can retain current facts while obsolete frequencies and neighbors ag
 eventually disappears.
 
 Site-specific clear and full statistics reset remove these learned rows consistently with P25. They do not delete
-administrator-owned channels, aliases, preferences, or settings. No DMR/NXDN talkgroups, radios, calls, raw messages,
-JSON payloads, or permanent history are added.
+administrator-owned channels, aliases, preferences, or settings. Conventional DMR adds only the two bounded identity
+summaries; no trunked DMR/NXDN talkgroups, radios, calls, raw messages, JSON payloads, or permanent call history are
+added.
 
 ## Query-plan verification
 
@@ -142,10 +210,18 @@ Representative-volume tests must populate 100 sites, 102,400 channel facts, and 
 - channel lookup uses the channel table primary key with `guid=?`;
 - neighbor lookup uses the neighbor table primary key with `guid=?`;
 - each bounded retention selection uses its corresponding `last_seen_ms` index and does not scan the summary table;
+- conventional DMR recent-context queries use their `context_id, last_seen_ms` indexes;
+- conventional DMR retention selections use their time-first indexes, and admission never exceeds 4,096 talkgroups
+  or 32,768 radios per context;
 - every API limit is bounded even when the database contains more rows.
 
 The directory's bounded summary-table scan is intentional: it reads at most one compact row per configured site and
 does not touch channel, neighbor, call, or detailed-event tables.
+
+The conventional DMR plan fixture fills one context to both admission caps. SQLite reports
+`SEARCH ... USING COVERING INDEX idx_dmr_conventional_*_context (context_id=?)` for recent identity lists and
+`SEARCH ... USING COVERING INDEX idx_dmr_conventional_*_last_seen (last_seen_ms<?)` for retention selection. These
+plans avoid full summary-table scans at the documented worst-case per-context volume.
 
 ## Shared control-channel quality buckets
 
@@ -166,11 +242,12 @@ representative volume (100 sites and 102,400 buckets), `EXPLAIN QUERY PLAN` repo
 
 At most one mutable row is retained per `(guid, frequency, 10-second bucket)`: 360 rows/hour, 8,640 rows/day, 259,200
 rows at the default 30-day retention, and 3,153,600 rows at the maximum 365-day retention for a continuously monitored
-site. DMR/NXDN samples are accepted only after the shared metadata classifier has identified a known trunking variant
-on that exact running channel and decoder configuration, so conventional or unknown DMR/NXDN channels do not create
-quality history. Evidence remains valid through sustained decode loss and is cleared by the quality monitor's inactive
-shutdown snapshot, channel/configuration replacement, statistics disablement, or writer shutdown. Samples use the
-existing bounded statistics queue and single database writer. Existing retention, site-specific clear, and full reset
-paths already operate on this shared GUID-keyed table. New databases create the v21 index in the single startup schema
-routine. The Application Migrator adds it to supported v19 and v20 databases only on a backed-up staged copy; ordinary
-application services never create or repair the index.
+site. Explicitly trunked DMR channels are accepted immediately; explicitly conventional DMR channels never create
+control-channel quality history. NXDN samples are accepted only after the shared metadata classifier has identified a
+known trunking variant on that exact running channel and decoder configuration. Evidence remains valid through
+sustained decode loss and is cleared by the quality monitor's inactive shutdown snapshot, channel/configuration
+replacement, statistics disablement, or writer shutdown. Samples use the existing bounded statistics queue and single
+database writer. Existing retention, site-specific clear, and full reset paths already operate on this shared
+GUID-keyed table. New databases create the v21 index in the single startup schema routine. The Application Migrator
+adds it to supported v19 and v20 databases only on a backed-up staged copy; ordinary application services never create
+or repair the index.

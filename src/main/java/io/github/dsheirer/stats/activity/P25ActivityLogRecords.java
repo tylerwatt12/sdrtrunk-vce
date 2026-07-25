@@ -29,6 +29,7 @@ final class P25ActivityLogRecords
     {
         TRUNKED_SITE,
         CONVENTIONAL_P25,
+        CONVENTIONAL_DMR,
         CONVENTIONAL_ANALOG
     }
 
@@ -115,6 +116,30 @@ final class P25ActivityLogRecords
         {
             return callStartEpochMilliseconds;
         }
+    }
+
+    /**
+     * One completed conventional DMR call. This writer message updates compact lifetime summaries and existing
+     * conventional channel/hour totals; it is never stored as an immutable per-call row.
+     */
+    record DmrConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String contextKey,
+                               String guid, String channelName, String aliasListName, long frequencyHertz,
+                               int timeslot, DmrTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
+                               Integer targetRadioId, boolean encrypted)
+        implements P25ActivityLogRecord
+    {
+        @Override
+        public long observedAtEpochMilliseconds()
+        {
+            return callEndEpochMilliseconds;
+        }
+    }
+
+    enum DmrTargetKind
+    {
+        GROUP,
+        PRIVATE,
+        UNKNOWN
     }
 
     record SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,

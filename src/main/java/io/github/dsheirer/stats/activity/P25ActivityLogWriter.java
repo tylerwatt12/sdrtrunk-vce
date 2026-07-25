@@ -592,6 +592,11 @@ class P25ActivityLogWriter implements AutoCloseable
                         writtenRecords++;
                     }
                 }
+                else if(record instanceof P25ActivityLogRecords.DmrConventionalCall dmrCall)
+                {
+                    P25ActivityLogSchema.recordDmrConventionalCall(connection, dmrCall);
+                    writtenRecords++;
+                }
                 else if(record instanceof P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)
                 {
                     long childRetentionCutoff = System.currentTimeMillis() -

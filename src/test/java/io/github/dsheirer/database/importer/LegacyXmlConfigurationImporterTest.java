@@ -30,6 +30,7 @@ import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -148,6 +149,7 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(78, dmr.getTimeslotMap().get(77).getNumber());
         assertEquals(451_975_000L, dmr.getTimeslotMap().get(77).getDownlinkFrequency());
         assertEquals(30, dmr.getTrafficChannelPoolSize());
+        assertEquals(DMRChannelMode.TRUNKED, dmr.getChannelMode());
         assertTrue(dmr.getIgnoreCRCChecksums());
         assertTrue(dmr.isUseCompressedTalkgroups());
     }
@@ -205,6 +207,8 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(1, state.getChannels().size());
         assertEquals("Supported DMR", state.getChannels().get(0).getName());
         assertEquals(DecoderType.DMR, state.getChannels().get(0).getDecodeConfiguration().getDecoderType());
+        assertEquals(DMRChannelMode.CONVENTIONAL,
+            ((DecodeConfigDMR)state.getChannels().get(0).getDecodeConfiguration()).getChannelMode());
     }
 
     @Test

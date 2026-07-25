@@ -16,6 +16,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
@@ -52,6 +53,7 @@ public final class ApplicationMigrationService
     public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(2, 3);
     public static final int CURRENT_P25_VERSION = 21;
     public static final int CURRENT_ALIAS_VERSION = 3;
+    public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
 
     private static final String P25_VERSION_KEY = "p25_activity_schema_version";
     private static final String ALIAS_VERSION_KEY = "alias_schema_version";
@@ -231,7 +233,9 @@ public final class ApplicationMigrationService
             int p25Version = readRequiredVersion(connection, P25_VERSION_KEY, "P25 activity");
             Integer trunkedSiteVersion = readOptionalVersion(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY,
                 "trunked-site");
-            return new MigrationState(aliasVersion, p25Version, trunkedSiteVersion);
+            Integer dmrVersion = readOptionalVersion(connection, DmrActivitySchema.SCHEMA_VERSION_KEY,
+                "DMR activity");
+            return new MigrationState(aliasVersion, p25Version, trunkedSiteVersion, dmrVersion);
         }
     }
 
@@ -250,7 +254,8 @@ public final class ApplicationMigrationService
         if(!state.supported())
         {
             throw new IOException("The Application Migrator supports Alias schema v2 or v3, P25 activity schema " +
-                "v19, v20, or v21, and an absent or v2 trunked-site schema. Found " + state.description() + ".");
+                "v19, v20, or v21, an absent or v2 trunked-site schema, and an absent or v" +
+                CURRENT_DMR_VERSION + " DMR activity schema. Found " + state.description() + ".");
         }
 
         return state;
@@ -306,6 +311,7 @@ public final class ApplicationMigrationService
         {
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
+            DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
             requireIntegrity(connection);
             requireForeignKeysValid(connection);
@@ -667,25 +673,33 @@ public final class ApplicationMigrationService
             throws IOException, InterruptedException;
     }
 
-    public record MigrationState(int aliasVersion, int p25Version, Integer trunkedSiteVersion)
+    public record MigrationState(int aliasVersion, int p25Version, Integer trunkedSiteVersion, Integer dmrVersion)
     {
+        public MigrationState(int aliasVersion, int p25Version, Integer trunkedSiteVersion)
+        {
+            this(aliasVersion, p25Version, trunkedSiteVersion, null);
+        }
+
         public boolean supported()
         {
             return SUPPORTED_ALIAS_VERSIONS.contains(aliasVersion) &&
                 SUPPORTED_P25_VERSIONS.contains(p25Version) &&
-                (trunkedSiteVersion == null || trunkedSiteVersion == TrunkedSiteSchema.SCHEMA_VERSION);
+                (trunkedSiteVersion == null || trunkedSiteVersion == TrunkedSiteSchema.SCHEMA_VERSION) &&
+                (dmrVersion == null || dmrVersion == CURRENT_DMR_VERSION);
         }
 
         public boolean requiresMigration()
         {
             return aliasVersion != CURRENT_ALIAS_VERSION || p25Version != CURRENT_P25_VERSION ||
-                !Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion);
+                !Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion) ||
+                !Integer.valueOf(CURRENT_DMR_VERSION).equals(dmrVersion);
         }
 
         public String description()
         {
-            return "Alias v" + aliasVersion + ", P25 activity v" + p25Version + ", and trunked-site " +
-                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion);
+            return "Alias v" + aliasVersion + ", P25 activity v" + p25Version + ", trunked-site " +
+                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion) +
+                ", and DMR activity " + (dmrVersion == null ? "not installed" : "v" + dmrVersion);
         }
 
         public String requiredChanges()
@@ -710,6 +724,15 @@ public final class ApplicationMigrationService
             {
                 changes.add("trunked-site v" + trunkedSiteVersion + " -> v" +
                     TrunkedSiteSchema.SCHEMA_VERSION);
+            }
+
+            if(dmrVersion == null)
+            {
+                changes.add("DMR activity not installed -> v" + CURRENT_DMR_VERSION);
+            }
+            else if(dmrVersion != CURRENT_DMR_VERSION)
+            {
+                changes.add("DMR activity v" + dmrVersion + " -> v" + CURRENT_DMR_VERSION);
             }
 
             return String.join(", ", changes);

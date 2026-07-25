@@ -14,6 +14,7 @@ package io.github.dsheirer.stats.activity;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import java.sql.Connection;
@@ -51,6 +52,7 @@ public class P25ActivityLogSchema
 
     private static final int CONTEXT_TRUNKED_SITE = 1;
     private static final int CONTEXT_CONVENTIONAL_P25 = 2;
+    private static final int CONTEXT_CONVENTIONAL_DMR = 3;
     private static final int CONTEXT_CONVENTIONAL_ANALOG = 10;
 
     private static final int PROTOCOL_UNKNOWN = 0;
@@ -292,6 +294,42 @@ public class P25ActivityLogSchema
         }
 
         return true;
+    }
+
+    /**
+     * Aggregates one exactly-once completed DMR conventional call into the shared conventional channel totals and
+     * the compact DMR identity summaries.
+     */
+    static void recordDmrConventionalCall(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
+        throws SQLException
+    {
+        if(call == null)
+        {
+            return;
+        }
+
+        DmrActivitySchema.validateCompletedCall(call);
+        int contextId = upsertReceiverContext(connection, call);
+        String targetId = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP &&
+            call.talkgroupId() != null ? call.talkgroupId().toString() :
+            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE &&
+                call.targetRadioId() != null ? call.targetRadioId().toString() : null;
+        String targetKind = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP ? Form.TALKGROUP.name() :
+            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE ? Form.RADIO.name() : null;
+        String eventType = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP ?
+            (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
+            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE ?
+                (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
+                    DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
+                (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
+        P25ActivityLogRecords.ActivityEvent activity = new P25ActivityLogRecords.ActivityEvent(
+            call.callEndEpochMilliseconds(), call.contextKey(), call.guid(),
+            P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, "DMR", P25ActivityLogRecords.Action.CALL,
+            eventType, call.sourceRadioId() != null ? call.sourceRadioId().toString() : null, targetId, targetKind,
+            call.frequencyHertz(), null, call.timeslot(), call.encrypted(), null, null, null, null, null, null, null,
+            call.channelName(), "DMR", null, true, null, null);
+        upsertConventionalSummary(connection, activity, contextId);
+        DmrActivitySchema.recordCompletedCall(connection, contextId, call);
     }
 
     static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
@@ -1677,6 +1715,48 @@ public class P25ActivityLogSchema
         return selectContextId(connection, contextKey);
     }
 
+    private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO receiver_context (
+                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder, first_seen_ms,
+                last_seen_ms, primary_frequency_hz
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(context_key) DO UPDATE SET
+                guid = coalesce(excluded.guid, receiver_context.guid),
+                kind_code = excluded.kind_code,
+                protocol_code = excluded.protocol_code,
+                channel_name = excluded.channel_name,
+                alias_list_name = excluded.alias_list_name,
+                decoder = excluded.decoder,
+                first_seen_ms = min(receiver_context.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
+                system_key = NULL,
+                nac = NULL,
+                rfss = NULL,
+                site = NULL,
+                primary_frequency_hz = coalesce(
+                    excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
+                current_control_hz = NULL
+            """))
+        {
+            statement.setString(1, call.contextKey());
+            statement.setString(2, call.guid());
+            statement.setInt(3, CONTEXT_CONVENTIONAL_DMR);
+            statement.setInt(4, PROTOCOL_DMR);
+            statement.setString(5, call.channelName());
+            statement.setString(6, call.aliasListName());
+            statement.setString(7, "DMR");
+            statement.setLong(8, call.callStartEpochMilliseconds());
+            statement.setLong(9, call.callEndEpochMilliseconds());
+            statement.setLong(10, call.frequencyHertz());
+            statement.executeUpdate();
+        }
+
+        return selectContextId(connection, call.contextKey());
+    }
+
     private static void upsertSiteSnapshot(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
                                            Integer systemKey) throws SQLException
     {
@@ -2552,6 +2632,7 @@ public class P25ActivityLogSchema
     private static boolean isConventional(P25ActivityLogRecords.ContextKind contextKind)
     {
         return contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 ||
+            contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR ||
             contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
     }
 
@@ -2612,6 +2693,11 @@ public class P25ActivityLogSchema
         if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG)
         {
             return CONTEXT_CONVENTIONAL_ANALOG;
+        }
+
+        if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR)
+        {
+            return CONTEXT_CONVENTIONAL_DMR;
         }
 
         return CONTEXT_CONVENTIONAL_P25;

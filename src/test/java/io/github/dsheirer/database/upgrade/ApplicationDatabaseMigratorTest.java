@@ -11,12 +11,15 @@
 
 package io.github.dsheirer.database.upgrade;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.ByteArrayOutputStream;
@@ -35,6 +38,7 @@ class ApplicationDatabaseMigratorTest
 {
     private static final String ALIAS_VERSION_KEY = "alias_schema_version";
     private static final String VERSION_KEY = "p25_activity_schema_version";
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     @TempDir
     Path mTemporaryFolder;
@@ -208,6 +212,8 @@ class ApplicationDatabaseMigratorTest
             assertTrue(tableExists(connection, "p25_foreign_system_band_summary"));
             assertTrue(indexExists(connection, "idx_p25_control_quality_retention"));
             assertEquals(1, count(connection, "alias"));
+            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            DmrActivitySchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             assertFalse(hasRows(connection, "PRAGMA foreign_key_check"));
@@ -240,8 +246,182 @@ class ApplicationDatabaseMigratorTest
             assertEquals("21", metadata(connection, VERSION_KEY));
             assertTrue(indexExists(connection, "idx_p25_control_quality_retention"));
             assertEquals(1, count(connection, "p25_control_channel_quality"));
+            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            DmrActivitySchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+        }
+    }
+
+    @Test
+    void migratesV21DmrChannelsAutomaticallyAndPreservesRetiredRows() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        removeDmrActivitySchema(database);
+        String retainedJson = "{\"type\":\"retired-sound-card\",\"payload\":\"keep-byte-for-byte\"}";
+        String incompleteJson = "{\"name\":\"Incomplete\",\"decodeConfiguration\":null}";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.prepareStatement("""
+                INSERT INTO configuration_channel(
+                    id, sort_order, decoder_type, source_type, config_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """))
+        {
+            insertChannel(statement, 101, 0, null, "TUNER", """
+                {
+                  "decodeConfiguration": {
+                    "type": "decodeConfigDMR",
+                    "timeslotMap": [{"number": 0, "downlinkFrequency": 0}]
+                  },
+                  "migrationMarker": "conventional-preserved"
+                }
+                """);
+            insertChannel(statement, 102, 1, "DMR", "TUNER_MULTIPLE_FREQUENCIES", """
+                {
+                  "decodeConfiguration": {
+                    "type": "decodeConfigDMR",
+                    "timeslotMap": [{"number": 7, "downlinkFrequency": 451000000}]
+                  }
+                }
+                """);
+            insertChannel(statement, 103, 2, "DMR", "TUNER", """
+                {
+                  "decodeConfiguration": {
+                    "type": "decodeConfigDMR",
+                    "channelMode": "CONVENTIONAL",
+                    "timeslotMap": [{"number": 9, "downlinkFrequency": 452000000}]
+                  }
+                }
+                """);
+            insertChannel(statement, 104, 3, "DMR", "MIXER", retainedJson);
+            insertChannel(statement, 105, 4, null, "TUNER", incompleteJson);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
+        assertTrue(result.output().contains("DMR activity schema migration complete: absent -> v1"));
+        assertTrue(result.output().contains("2 conventional, 1 trunked"));
+        assertTrue(result.error().isEmpty());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals("CONVENTIONAL", channelMode(connection, 101));
+            assertEquals("TRUNKED", channelMode(connection, 102));
+            assertEquals("CONVENTIONAL", channelMode(connection, 103),
+                "an existing explicit mode must not be replaced by map inference");
+            assertEquals("conventional-preserved",
+                channelJson(connection, 101).path("migrationMarker").asText());
+            assertEquals("DMR", scalar(connection,
+                "SELECT decoder_type FROM configuration_channel WHERE id=101"));
+            assertEquals(retainedJson, scalar(connection,
+                "SELECT config_json FROM configuration_channel WHERE id=104"));
+            assertEquals(incompleteJson, scalar(connection,
+                "SELECT config_json FROM configuration_channel WHERE id=105"));
+            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+            DmrActivitySchema.validate(connection);
+            assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+            assertFalse(hasRows(connection, "PRAGMA foreign_key_check"));
+        }
+    }
+
+    @Test
+    void refusesPartialDmrSchemaBeforeChangingLegacyChannelJson() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.prepareStatement("""
+                INSERT INTO configuration_channel(
+                    id, sort_order, decoder_type, source_type, config_json
+                ) VALUES (201, 0, 'DMR', 'TUNER', ?)
+                """))
+        {
+            statement.setString(1, """
+                {"decodeConfiguration":{"type":"decodeConfigDMR","timeslotMap":[]}}
+                """);
+            statement.executeUpdate();
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.prepareStatement(
+                "DELETE FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, DmrActivitySchema.SCHEMA_VERSION_KEY);
+            statement.executeUpdate();
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertTrue(result.error().contains("already contains DMR activity object"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertFalse(channelJson(connection, 201).path("decodeConfiguration").has("channelMode"));
+            assertNull(metadataOrNull(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+        }
+    }
+
+    @Test
+    void refusesMissingModeAfterDmrSchemaIsInstalled() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.prepareStatement("""
+                INSERT INTO configuration_channel(
+                    id, sort_order, decoder_type, source_type, config_json
+                ) VALUES (301, 0, 'DMR', 'TUNER', ?)
+                """))
+        {
+            statement.setString(1, """
+                {"decodeConfiguration":{"type":"decodeConfigDMR","timeslotMap":[]}}
+                """);
+            statement.executeUpdate();
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertTrue(result.error().contains("does not have an explicit channelMode"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertFalse(channelJson(connection, 301).path("decodeConfiguration").has("channelMode"));
+            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
+        }
+    }
+
+    @Test
+    void refusesCurrentDmrSchemaWithIncorrectIndexDirection() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_CONTEXT_INDEX);
+            statement.executeUpdate("""
+                CREATE INDEX idx_dmr_conventional_talkgroup_context
+                ON dmr_conventional_talkgroup_summary(
+                    context_id, last_seen_ms, frequency_hz, timeslot, talkgroup_id)
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertTrue(result.error().contains("incorrect ordered columns"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
         }
     }
 
@@ -404,6 +584,9 @@ class ApplicationDatabaseMigratorTest
             assertFalse(tableExists(connection, "p25_foreign_system_band"));
             assertFalse(indexExists(connection, "idx_p25_control_quality_retention"));
             assertFalse(tableExists(connection, "trunked_site_snapshot"));
+            assertFalse(tableExists(connection, DmrActivitySchema.TALKGROUP_TABLE));
+            assertFalse(tableExists(connection, DmrActivitySchema.RADIO_TABLE));
+            assertNull(metadataOrNull(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
         }
     }
 
@@ -456,6 +639,7 @@ class ApplicationDatabaseMigratorTest
             SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "19");
         }
 
+        removeDmrActivitySchema(database);
         return database;
     }
 
@@ -471,6 +655,7 @@ class ApplicationDatabaseMigratorTest
             SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "20");
         }
 
+        removeDmrActivitySchema(database);
         return database;
     }
 
@@ -500,6 +685,53 @@ class ApplicationDatabaseMigratorTest
             statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
                 TrunkedSiteSchema.SCHEMA_VERSION_KEY + "'");
         }
+    }
+
+    private static void removeDmrActivitySchema(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RETENTION_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_RETENTION_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_CONTEXT_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_CONTEXT_INDEX);
+            statement.executeUpdate("DROP TABLE " + DmrActivitySchema.TALKGROUP_TABLE);
+            statement.executeUpdate("DROP TABLE " + DmrActivitySchema.RADIO_TABLE);
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
+                DmrActivitySchema.SCHEMA_VERSION_KEY + "'");
+        }
+    }
+
+    private static void insertChannel(java.sql.PreparedStatement statement, long id, int sortOrder,
+                                      String decoderType, String sourceType, String json) throws Exception
+    {
+        statement.setLong(1, id);
+        statement.setInt(2, sortOrder);
+        statement.setString(3, decoderType);
+        statement.setString(4, sourceType);
+        statement.setString(5, json);
+        statement.executeUpdate();
+    }
+
+    private static JsonNode channelJson(Connection connection, long id) throws Exception
+    {
+        try(var statement = connection.prepareStatement(
+            "SELECT config_json FROM configuration_channel WHERE id=?"))
+        {
+            statement.setLong(1, id);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                return OBJECT_MAPPER.readTree(resultSet.getString(1));
+            }
+        }
+    }
+
+    private static String channelMode(Connection connection, long id) throws Exception
+    {
+        return channelJson(connection, id).path("decodeConfiguration").path("channelMode").asText();
     }
 
     private CommandResult run(Path database)
@@ -533,6 +765,19 @@ class ApplicationDatabaseMigratorTest
             {
                 assertTrue(resultSet.next());
                 return resultSet.getString(1);
+            }
+        }
+    }
+
+    private static String metadataOrNull(Connection connection, String key) throws Exception
+    {
+        try(var statement = connection.prepareStatement("SELECT value FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, key);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next() ? resultSet.getString(1) : null;
             }
         }
     }

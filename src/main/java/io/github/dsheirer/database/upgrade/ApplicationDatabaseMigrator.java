@@ -12,10 +12,14 @@
 package io.github.dsheirer.database.upgrade;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
@@ -60,6 +64,7 @@ public final class ApplicationDatabaseMigrator
     private static final String P25_SOURCE_VERSION_19 = "19";
     private static final String P25_SOURCE_VERSION_20 = "20";
     private static final String P25_TARGET_VERSION = "21";
+    private static final String DMR_TARGET_VERSION = Integer.toString(DmrActivitySchema.SCHEMA_VERSION);
     private static final String TRUNKED_SITE_TARGET_VERSION = Integer.toString(TrunkedSiteSchema.SCHEMA_VERSION);
     private static final List<String> TRUNKED_SITE_TABLES = List.of(
         "trunked_site_snapshot", "trunked_site_channel_summary", "trunked_site_neighbor_summary");
@@ -186,7 +191,7 @@ public final class ApplicationDatabaseMigrator
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            int rebased = migrateInTransaction(connection, state, relocation, aliasCount);
+            MigrationWork migrationWork = migrateInTransaction(connection, state, relocation, aliasCount);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
@@ -213,7 +218,15 @@ public final class ApplicationDatabaseMigrator
                 output.println("RESULT: Trunked-site schema migration complete: absent -> v2.");
             }
 
-            output.println("Portable directory preferences updated: " + rebased + ".");
+            if(state.dmrVersion() == null)
+            {
+                output.println("RESULT: DMR activity schema migration complete: absent -> v" +
+                    DmrActivitySchema.SCHEMA_VERSION + ". DMR channels classified: " +
+                    migrationWork.dmrModes().conventional() + " conventional, " +
+                    migrationWork.dmrModes().trunked() + " trunked.");
+            }
+
+            output.println("Portable directory preferences updated: " + migrationWork.rebasedPreferences() + ".");
             output.println("RESULT: Application database migration and validation complete.");
         }
     }
@@ -288,12 +301,23 @@ public final class ApplicationDatabaseMigrator
             TrunkedSiteSchema.validate(connection);
         }
 
+        if(state.dmrVersion() == null)
+        {
+            DmrActivitySchema.validateAbsentForUpgrade(connection);
+            validateDmrChannelModes(connection, true);
+        }
+        else
+        {
+            DmrActivitySchema.validate(connection);
+            validateDmrChannelModes(connection, false);
+        }
+
         requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
         requireForeignKeysValid(connection);
     }
 
-    private static int migrateInTransaction(Connection connection, SchemaState state,
-                                            DataRootRelocation relocation, int aliasCount)
+    private static MigrationWork migrateInTransaction(Connection connection, SchemaState state,
+                                                      DataRootRelocation relocation, int aliasCount)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -331,7 +355,16 @@ public final class ApplicationDatabaseMigrator
                     TrunkedSiteSchema.create(connection);
                 }
 
+                DmrChannelModes dmrModes = DmrChannelModes.NONE;
+
+                if(state.dmrVersion() == null)
+                {
+                    dmrModes = migrateLegacyDmrChannelModes(connection);
+                    DmrActivitySchema.create(connection);
+                }
+
                 validateCurrentDatabase(connection);
+                validateDmrChannelModes(connection, false);
 
                 if(aliasCount >= 0 && aliasCount != count(connection, "alias"))
                 {
@@ -342,7 +375,7 @@ public final class ApplicationDatabaseMigrator
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 statement.execute("COMMIT");
                 transactionOpen = false;
-                return rebased;
+                return new MigrationWork(rebased, dmrModes);
             }
             catch(IOException | SQLException | RuntimeException e)
             {
@@ -469,7 +502,287 @@ public final class ApplicationDatabaseMigrator
     {
         SdrTrunkDatabaseSchema.validate(connection);
         P25ActivityLogSchema.validate(connection);
+        DmrActivitySchema.validate(connection);
         TrunkedSiteSchema.validate(connection);
+    }
+
+    /**
+     * Writes an explicit mode into each active legacy DMR channel. A usable LCN/frequency mapping is positive
+     * trunking evidence; channels without one are intentionally classified as conventional.
+     */
+    private static DmrChannelModes migrateLegacyDmrChannelModes(Connection connection) throws SQLException
+    {
+        int conventional = 0;
+        int trunked = 0;
+
+        try(PreparedStatement select = connection.prepareStatement("""
+                SELECT id, decoder_type, source_type, config_json
+                FROM configuration_channel
+                ORDER BY id
+                """);
+            PreparedStatement update = connection.prepareStatement("""
+                UPDATE configuration_channel
+                SET decoder_type='DMR', config_json=?
+                WHERE id=?
+                """);
+            ResultSet resultSet = select.executeQuery())
+        {
+            while(resultSet.next())
+            {
+                String decoderType = resultSet.getString("decoder_type");
+                String sourceType = resultSet.getString("source_type");
+
+                if(ChannelConfigurationPolicy.isRetiredPersisted(decoderType, sourceType))
+                {
+                    continue;
+                }
+
+                if(decoderType != null && !decoderType.isBlank() && !"DMR".equalsIgnoreCase(decoderType))
+                {
+                    continue;
+                }
+
+                long id = resultSet.getLong("id");
+                ObjectNode channel = parseChannelJson(id, resultSet.getString("config_json"));
+                ObjectNode decodeConfiguration = decodeConfiguration(id, channel,
+                    "DMR".equalsIgnoreCase(decoderType));
+
+                if(decodeConfiguration == null)
+                {
+                    continue;
+                }
+
+                boolean isDmr = isDmrConfiguration(decodeConfiguration);
+
+                if(!isDmr)
+                {
+                    if("DMR".equalsIgnoreCase(decoderType))
+                    {
+                        throw new SQLException("DMR channel row [" + id +
+                            "] does not contain a DMR decode configuration.");
+                    }
+
+                    continue;
+                }
+
+                JsonNode existingMode = decodeConfiguration.get("channelMode");
+                String mode;
+
+                if(existingMode == null || existingMode.isNull())
+                {
+                    mode = hasValidDmrFrequencyMap(decodeConfiguration) ? "TRUNKED" : "CONVENTIONAL";
+                    decodeConfiguration.put("channelMode", mode);
+                }
+                else
+                {
+                    mode = requireDmrMode(id, existingMode);
+                }
+
+                try
+                {
+                    update.setString(1, OBJECT_MAPPER.writeValueAsString(channel));
+                }
+                catch(IOException e)
+                {
+                    throw new SQLException("DMR channel row [" + id + "] could not be serialized safely.", e);
+                }
+
+                update.setLong(2, id);
+
+                if(update.executeUpdate() != 1)
+                {
+                    throw new SQLException("DMR channel row [" + id + "] changed while it was being migrated.");
+                }
+
+                if("TRUNKED".equals(mode))
+                {
+                    trunked++;
+                }
+                else
+                {
+                    conventional++;
+                }
+            }
+        }
+
+        return new DmrChannelModes(conventional, trunked);
+    }
+
+    /**
+     * Validates the DMR configuration semantic state without repairing it. Missing modes are accepted only during
+     * preflight for a database that has not installed the DMR activity schema.
+     */
+    private static void validateDmrChannelModes(Connection connection, boolean allowLegacyMissing)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, decoder_type, source_type, config_json
+                FROM configuration_channel
+                ORDER BY id
+                """);
+            ResultSet resultSet = statement.executeQuery())
+        {
+            while(resultSet.next())
+            {
+                String decoderType = resultSet.getString("decoder_type");
+                String sourceType = resultSet.getString("source_type");
+
+                if(ChannelConfigurationPolicy.isRetiredPersisted(decoderType, sourceType))
+                {
+                    continue;
+                }
+
+                if(decoderType != null && !decoderType.isBlank() && !"DMR".equalsIgnoreCase(decoderType))
+                {
+                    continue;
+                }
+
+                long id = resultSet.getLong("id");
+                ObjectNode channel = parseChannelJson(id, resultSet.getString("config_json"));
+                ObjectNode decodeConfiguration = decodeConfiguration(id, channel,
+                    "DMR".equalsIgnoreCase(decoderType));
+
+                if(decodeConfiguration == null)
+                {
+                    continue;
+                }
+
+                if(isDmrConfiguration(decodeConfiguration))
+                {
+                    if(!"DMR".equalsIgnoreCase(decoderType) && !allowLegacyMissing)
+                    {
+                        throw new SQLException("DMR channel row [" + id +
+                            "] does not identify DMR in its derived decoder_type field.");
+                    }
+
+                    JsonNode mode = decodeConfiguration.get("channelMode");
+
+                    if(mode == null || mode.isNull())
+                    {
+                        if(!allowLegacyMissing)
+                        {
+                            throw new SQLException("DMR channel row [" + id +
+                                "] does not have an explicit channelMode.");
+                        }
+                    }
+                    else
+                    {
+                        requireDmrMode(id, mode);
+                    }
+                }
+                else if("DMR".equalsIgnoreCase(decoderType))
+                {
+                    throw new SQLException("DMR channel row [" + id +
+                        "] does not contain a DMR decode configuration.");
+                }
+            }
+        }
+    }
+
+    private static ObjectNode parseChannelJson(long id, String json) throws SQLException
+    {
+        final JsonNode parsed;
+
+        try
+        {
+            parsed = OBJECT_MAPPER.readTree(json);
+        }
+        catch(IOException | RuntimeException e)
+        {
+            throw new SQLException("Channel row [" + id + "] contains invalid configuration JSON.", e);
+        }
+
+        if(!(parsed instanceof ObjectNode object))
+        {
+            throw new SQLException("Channel row [" + id + "] configuration JSON must be an object.");
+        }
+
+        return object;
+    }
+
+    private static ObjectNode decodeConfiguration(long id, ObjectNode channel, boolean required)
+        throws SQLException
+    {
+        JsonNode decodeConfiguration = channel.get("decodeConfiguration");
+
+        if(decodeConfiguration == null || decodeConfiguration.isNull())
+        {
+            if(!required)
+            {
+                return null;
+            }
+
+            throw new SQLException("DMR channel row [" + id +
+                "] does not contain a decodeConfiguration object.");
+        }
+
+        if(!(decodeConfiguration instanceof ObjectNode object))
+        {
+            throw new SQLException("Channel row [" + id +
+                "] configuration JSON does not contain a decodeConfiguration object.");
+        }
+
+        return object;
+    }
+
+    private static boolean isDmrConfiguration(ObjectNode decodeConfiguration)
+    {
+        return "decodeConfigDMR".equals(decodeConfiguration.path("type").asText());
+    }
+
+    private static String requireDmrMode(long id, JsonNode mode) throws SQLException
+    {
+        if(!mode.isTextual() ||
+            (!"CONVENTIONAL".equals(mode.textValue()) && !"TRUNKED".equals(mode.textValue())))
+        {
+            throw new SQLException("DMR channel row [" + id +
+                "] has invalid channelMode; expected CONVENTIONAL or TRUNKED.");
+        }
+
+        return mode.textValue();
+    }
+
+    private static boolean hasValidDmrFrequencyMap(ObjectNode decodeConfiguration)
+    {
+        JsonNode mappings = decodeConfiguration.get("timeslotMap");
+
+        if(mappings == null)
+        {
+            mappings = decodeConfiguration.get("timeslot");
+        }
+
+        if(mappings == null || !mappings.isArray())
+        {
+            return false;
+        }
+
+        for(JsonNode mapping : mappings)
+        {
+            if(positiveIntegral(mapping, "number", "lsn") &&
+                positiveIntegral(mapping, "downlinkFrequency", "downlink"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean positiveIntegral(JsonNode object, String primaryName, String legacyName)
+    {
+        if(object == null || !object.isObject())
+        {
+            return false;
+        }
+
+        JsonNode value = object.get(primaryName);
+
+        if(value == null)
+        {
+            value = object.get(legacyName);
+        }
+
+        return value != null && value.isIntegralNumber() && value.canConvertToLong() && value.longValue() > 0;
     }
 
     private static void requireTrunkedSiteSubsystemAbsent(Connection connection) throws SQLException
@@ -637,18 +950,20 @@ public final class ApplicationDatabaseMigrator
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
-    private record SchemaState(String aliasVersion, String p25Version, String trunkedSiteVersion)
+    private record SchemaState(String aliasVersion, String p25Version, String trunkedSiteVersion, String dmrVersion)
     {
         private static SchemaState read(Connection connection) throws SQLException
         {
             return new SchemaState(metadata(connection, ALIAS_VERSION_KEY), metadata(connection, P25_VERSION_KEY),
-                metadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY));
+                metadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY),
+                metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
         }
 
         private boolean requiresMigration()
         {
             return !ALIAS_TARGET_VERSION.equals(aliasVersion) || !P25_TARGET_VERSION.equals(p25Version) ||
-                !TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion);
+                !TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion) ||
+                !DMR_TARGET_VERSION.equals(dmrVersion);
         }
 
         private void requireSupported() throws UnsupportedSchemaVersionException
@@ -673,15 +988,33 @@ public final class ApplicationDatabaseMigrator
                     "Expected trunked-site schema to be absent or v2, found [" + trunkedSiteVersion +
                         "]. Refusing migration.");
             }
+
+            if(dmrVersion != null && !DMR_TARGET_VERSION.equals(dmrVersion))
+            {
+                throw new UnsupportedSchemaVersionException(
+                    "Expected DMR activity schema to be absent or v" + DMR_TARGET_VERSION + ", found [" +
+                        dmrVersion + "]. Refusing migration.");
+            }
         }
 
         private String description()
         {
             return "Alias schema v" + (aliasVersion == null ? "unknown" : aliasVersion) +
                 ", P25 activity schema v" + (p25Version == null ? "unknown" : p25Version) +
-                ", and trunked-site schema " +
-                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion);
+                ", trunked-site schema " +
+                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion) +
+                ", and DMR activity schema " +
+                (dmrVersion == null ? "not installed" : "v" + dmrVersion);
         }
+    }
+
+    private record MigrationWork(int rebasedPreferences, DmrChannelModes dmrModes)
+    {
+    }
+
+    private record DmrChannelModes(int conventional, int trunked)
+    {
+        private static final DmrChannelModes NONE = new DmrChannelModes(0, 0);
     }
 
     private static final class UnsupportedSchemaVersionException extends Exception

@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
@@ -52,6 +53,16 @@ class ApplicationMigrationServiceTest
     {
         ApplicationMigrationService.MigrationState state =
             new ApplicationMigrationService.MigrationState(3, 21, 3);
+
+        assertFalse(state.supported());
+        assertTrue(state.requiresMigration());
+    }
+
+    @Test
+    void unsupportedDmrStateCannotBeMistakenForCurrent()
+    {
+        ApplicationMigrationService.MigrationState state =
+            new ApplicationMigrationService.MigrationState(3, 21, 2, 2);
 
         assertFalse(state.supported());
         assertTrue(state.requiresMigration());
@@ -104,6 +115,7 @@ class ApplicationMigrationServiceTest
         assertTrue(tableExists(targetDatabase, "p25_foreign_system_band"));
         assertTrue(tableExists(targetDatabase, "p25_foreign_system_band_summary"));
         assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
+        assertEquals(1, ApplicationMigrationService.readMigrationState(targetDatabase).dmrVersion());
         validateTrunkedSiteSchema(targetDatabase);
         assertEquals(1, count(EncryptionKeyVaultPath.getVaultPath(targetRoot), "vault_payload"));
         assertArrayEquals(jmbeContents, Files.readAllBytes(targetRoot.resolve("jmbe/jmbe.jar")));
@@ -119,6 +131,7 @@ class ApplicationMigrationServiceTest
         assertArrayEquals(jmbeContents, Files.readAllBytes(jmbe));
         assertArrayEquals(moduleContents, Files.readAllBytes(module));
         assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(sourceDatabase));
+        assertNull(ApplicationMigrationService.readMigrationState(sourceDatabase).dmrVersion());
         assertFalse(tableExists(sourceDatabase, "p25_foreign_system_band"));
         assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
     }
@@ -144,10 +157,12 @@ class ApplicationMigrationServiceTest
         assertEquals(21, ApplicationMigrationService.readP25ActivitySchemaVersion(targetDatabase));
         assertEquals(1, count(targetDatabase, "alias"));
         assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
+        assertEquals(1, ApplicationMigrationService.readMigrationState(targetDatabase).dmrVersion());
         validateTrunkedSiteSchema(targetDatabase);
 
         assertArrayEquals(sourceDatabaseHash, sha256(sourceDatabase));
         assertEquals(20, ApplicationMigrationService.readP25ActivitySchemaVersion(sourceDatabase));
+        assertNull(ApplicationMigrationService.readMigrationState(sourceDatabase).dmrVersion());
         assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
     }
 
@@ -176,14 +191,55 @@ class ApplicationMigrationServiceTest
         try(Connection connection = open(database))
         {
             P25ActivityLogSchema.validate(connection);
+            DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
         }
 
         assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(result.safetyBackup()));
+        assertNull(ApplicationMigrationService.readMigrationState(result.safetyBackup()).dmrVersion());
         assertEquals(1, count(result.safetyBackup(), "alias"));
         assertFalse(tableExists(result.safetyBackup(), "p25_foreign_system_band"));
         assertFalse(tableExists(result.safetyBackup(), "trunked_site_snapshot"));
         assertEquals("ok", scalar(result.safetyBackup(), "PRAGMA quick_check"));
+    }
+
+    @Test
+    void migratesCurrentV21DmrModesAndRetainsUnchangedSafetyBackup() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("current-v21-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        removeDmrActivitySchema(database);
+        insertDmrChannel(database, 501, """
+            {
+              "decodeConfiguration": {
+                "type": "decodeConfigDMR",
+                "timeslotMap": [{"number": 0, "downlinkFrequency": 0}]
+              }
+            }
+            """);
+        insertDmrChannel(database, 502, """
+            {
+              "decodeConfiguration": {
+                "type": "decodeConfigDMR",
+                "timeslotMap": [{"number": 4, "downlinkFrequency": 463000000}]
+              }
+            }
+            """);
+
+        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+            .migrateCurrent(dataRoot, null);
+
+        assertEquals(21, result.sourceVersion());
+        assertNull(result.sourceState().dmrVersion());
+        assertTrue(result.helperOutput().contains("DMR activity schema migration complete: absent -> v1"));
+        assertEquals("CONVENTIONAL", channelMode(database, 501));
+        assertEquals("TRUNKED", channelMode(database, 502));
+        assertEquals(1, ApplicationMigrationService.readMigrationState(database).dmrVersion());
+        assertNotNull(result.safetyBackup());
+        assertNull(ApplicationMigrationService.readMigrationState(result.safetyBackup()).dmrVersion());
+        assertFalse(channelJson(result.safetyBackup(), 501).path("decodeConfiguration").has("channelMode"));
+        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
     }
 
     @Test
@@ -200,6 +256,7 @@ class ApplicationMigrationServiceTest
         assertEquals(2, before.aliasVersion());
         assertEquals(21, before.p25Version());
         assertEquals(2, before.trunkedSiteVersion());
+        assertEquals(1, before.dmrVersion());
         assertTrue(before.requiresMigration());
         assertTrue(before.supported());
 
@@ -216,6 +273,7 @@ class ApplicationMigrationServiceTest
         assertEquals(3, after.aliasVersion());
         assertEquals(21, after.p25Version());
         assertEquals(2, after.trunkedSiteVersion());
+        assertEquals(1, after.dmrVersion());
         assertFalse(after.requiresMigration());
         assertEquals(1, count(database, "alias"));
         assertTrue(columnExists(database, "alias", "description"));
@@ -316,6 +374,7 @@ class ApplicationMigrationServiceTest
             SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "19");
         }
 
+        removeDmrActivitySchema(database);
         removeTrunkedSiteSchema(database);
         return database;
     }
@@ -331,6 +390,7 @@ class ApplicationMigrationServiceTest
             SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "20");
         }
 
+        removeDmrActivitySchema(database);
         removeTrunkedSiteSchema(database);
         return database;
     }
@@ -344,6 +404,21 @@ class ApplicationMigrationServiceTest
             statement.executeUpdate("DROP TABLE trunked_site_snapshot");
             statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
                 TrunkedSiteSchema.SCHEMA_VERSION_KEY + "'");
+        }
+    }
+
+    private static void removeDmrActivitySchema(Path database) throws Exception
+    {
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RETENTION_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_RETENTION_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_CONTEXT_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_CONTEXT_INDEX);
+            statement.executeUpdate("DROP TABLE " + DmrActivitySchema.TALKGROUP_TABLE);
+            statement.executeUpdate("DROP TABLE " + DmrActivitySchema.RADIO_TABLE);
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
+                DmrActivitySchema.SCHEMA_VERSION_KEY + "'");
         }
     }
 
@@ -382,6 +457,40 @@ class ApplicationMigrationServiceTest
             statement.setString(1, name);
             statement.executeUpdate();
         }
+    }
+
+    private static void insertDmrChannel(Path database, long id, String json) throws Exception
+    {
+        try(Connection connection = open(database); var statement = connection.prepareStatement("""
+            INSERT INTO configuration_channel(id, sort_order, decoder_type, source_type, config_json)
+            VALUES (?, ?, 'DMR', 'TUNER', ?)
+            """))
+        {
+            statement.setLong(1, id);
+            statement.setLong(2, id);
+            statement.setString(3, json);
+            statement.executeUpdate();
+        }
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode channelJson(Path database, long id) throws Exception
+    {
+        try(Connection connection = open(database); var statement = connection.prepareStatement(
+            "SELECT config_json FROM configuration_channel WHERE id=?"))
+        {
+            statement.setLong(1, id);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                return new ObjectMapper().readTree(resultSet.getString(1));
+            }
+        }
+    }
+
+    private static String channelMode(Path database, long id) throws Exception
+    {
+        return channelJson(database, id).path("decodeConfiguration").path("channelMode").asText();
     }
 
     private static void makeAliasV2(Path database) throws Exception

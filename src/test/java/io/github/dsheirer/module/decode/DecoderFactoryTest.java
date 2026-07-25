@@ -11,7 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -22,6 +24,7 @@ class DecoderFactoryTest
     void deepCopiesDmrConfigurationAndFrequencyMap()
     {
         DecodeConfigDMR original = new DecodeConfigDMR();
+        original.setChannelMode(DMRChannelMode.TRUNKED);
         original.setIgnoreDataCalls(false);
         original.setIgnoreCRCChecksums(true);
         original.setUseCompressedTalkgroups(true);
@@ -35,6 +38,7 @@ class DecoderFactoryTest
         DecodeConfigDMR copy = (DecodeConfigDMR)DecoderFactory.copy(original);
 
         assertNotSame(original, copy);
+        assertEquals(DMRChannelMode.TRUNKED, copy.getChannelMode());
         assertFalse(copy.getIgnoreDataCalls());
         assertTrue(copy.getIgnoreCRCChecksums());
         assertTrue(copy.isUseCompressedTalkgroups());
@@ -45,5 +49,33 @@ class DecoderFactoryTest
 
         copy.getTimeslotMap().get(0).setDownlinkFrequency(460_000_000L);
         assertEquals(452_125_000L, original.getTimeslotMap().get(0).getDownlinkFrequency());
+    }
+
+    @Test
+    void keepsConventionalDmrRotationOnActiveCallsAndData()
+    {
+        DecodeConfigDMR conventional = new DecodeConfigDMR();
+        conventional.setChannelMode(DMRChannelMode.CONVENTIONAL);
+        DecodeConfigDMR trunked = new DecodeConfigDMR();
+        trunked.setChannelMode(DMRChannelMode.TRUNKED);
+
+        assertEquals(List.of(State.CALL, State.ENCRYPTED, State.DATA),
+            DecoderFactory.dmrRotationActiveStates(conventional));
+        assertEquals(List.of(State.CONTROL), DecoderFactory.dmrRotationActiveStates(trunked));
+    }
+
+    @Test
+    void usesInferredLegacyDmrModeForRotationStates()
+    {
+        DecodeConfigDMR noMap = new DecodeConfigDMR();
+        DecodeConfigDMR withMap = new DecodeConfigDMR();
+        TimeslotFrequency mapping = new TimeslotFrequency();
+        mapping.setNumber(1);
+        mapping.setDownlinkFrequency(452_125_000L);
+        withMap.setTimeslotMap(List.of(mapping));
+
+        assertEquals(List.of(State.CALL, State.ENCRYPTED, State.DATA),
+            DecoderFactory.dmrRotationActiveStates(noMap));
+        assertEquals(List.of(State.CONTROL), DecoderFactory.dmrRotationActiveStates(withMap));
     }
 }

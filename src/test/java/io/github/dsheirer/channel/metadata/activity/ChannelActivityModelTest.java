@@ -22,6 +22,7 @@ import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -44,11 +45,11 @@ import org.junit.jupiter.api.Test;
 class ChannelActivityModelTest
 {
     @Test
-    void keepsDmrConventionalUntilFirstTrunkedTrafficEvent() throws Exception
+    void startsConfiguredTrunkedDmrInSystemsImmediately() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
         ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
-        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", new DecodeConfigDMR(), 139_781_250L);
+        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
         SwingUtilities.invokeAndWait(() -> {
@@ -56,14 +57,13 @@ class ChannelActivityModelTest
             model.channelStarted(parent, List.of(metadata));
         });
 
-        assertEquals(1, model.getTables().size());
-        assertEquals(1, model.getConventionalTable().getRows().size());
+        assertEquals(2, model.getTables().size());
+        assertTrue(model.getConventionalTable().getRows().isEmpty());
 
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
         SwingUtilities.invokeAndWait(() -> model.trunkedTrafficEvent(parent, null, traffic, 1,
             new IdentifierCollection(), DecodeEventType.CALL_GROUP, 139_781_250L));
 
-        assertTrue(model.getConventionalTable().getRows().isEmpty());
         assertEquals(2, model.getTables().size());
         ChannelActivityTableModel table = model.getTables().get(1);
         assertSame(parent, table.getOwnerChannel());
@@ -81,6 +81,26 @@ class ChannelActivityModelTest
         assertEquals(139_968_750L, call.getFrequency());
         assertEquals(1, call.getTimeslot());
         assertEquals(State.CALL, call.getState());
+    }
+
+    @Test
+    void configuredConventionalDmrCannotBePromotedByTrunkedTrafficEvent() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(12, 1, 452_012_500L, 0);
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.channelStarted(parent, List.of(metadata));
+            model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
+                DecodeEventType.CALL_GROUP, 451_012_500L);
+        });
+
+        assertEquals(1, model.getTables().size());
+        assertEquals(1, model.getConventionalTable().getRows().size());
     }
 
     @Test
@@ -109,10 +129,10 @@ class ChannelActivityModelTest
     void knownDmrAndNxdnMetadataPromotesQuietControlAndAcceptsQuality() throws Exception
     {
         List<Map.Entry<DecodeConfiguration,SiteMetadataSnapshot>> cases = List.of(
-            Map.entry(new DecodeConfigDMR(), new DMRNetworkConfigurationSnapshot(
+            Map.entry(trunkedDmrConfig(), new DMRNetworkConfigurationSnapshot(
                 "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
                 1, 2, List.of(), List.of())),
-            Map.entry(new DecodeConfigDMR(), new DMRNetworkConfigurationSnapshot(
+            Map.entry(trunkedDmrConfig(), new DMRNetworkConfigurationSnapshot(
                 "DMR", "CAPACITY_PLUS", null, 20, "Motorola Capacity+", null, null, "Control",
                 1, 2, List.of(), List.of())),
             Map.entry(new DecodeConfigNXDN(), new NXDNNetworkConfigurationSnapshot(
@@ -174,7 +194,7 @@ class ChannelActivityModelTest
     {
         ChannelActivityModel model = new ChannelActivityModel(new AliasModel(),
             new NowPlayingPreference(type -> {}));
-        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", new DecodeConfigDMR(), 139_781_250L);
+        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
 
         SwingUtilities.invokeAndWait(() -> {
@@ -197,7 +217,7 @@ class ChannelActivityModelTest
     {
         ChannelActivityModel model = new ChannelActivityModel(new AliasModel(),
             new NowPlayingPreference(type -> {}));
-        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", new DecodeConfigDMR(), 139_781_250L);
+        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
         DMRAbsoluteChannel timeslotOne = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
         DMRAbsoluteChannel timeslotTwo = new DMRAbsoluteChannel(838, 2, 139_968_750L, 0);
 
@@ -404,6 +424,13 @@ class ChannelActivityModelTest
         source.setFrequency(frequency);
         channel.setSourceConfiguration(source);
         return channel;
+    }
+
+    private static DecodeConfigDMR trunkedDmrConfig()
+    {
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.TRUNKED);
+        return configuration;
     }
 
     private static ControlChannelQualitySnapshot quality(Channel channel, long frequency, long timestamp,

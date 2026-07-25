@@ -40,6 +40,7 @@ import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.TrunkedSiteMetadataClassifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25EncryptionDetails;
@@ -233,7 +234,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         runOnSwingIfEnabled(() -> {
             mClosedTrunkedChannelIds.remove(channel.getChannelID());
 
-            if(isP25TrunkedControlParent(channel))
+            if(isConfiguredTrunkedControlParent(channel))
             {
                 ensureConfiguredControlRow(channel, "channel-started-control");
             }
@@ -312,11 +313,10 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         runOnSwingIfEnabled(() -> {
             /*
-             * P25 is explicitly configured as a trunked control parent, so quality can create its initial site
-             * session.  DMR and NXDN use the same decoder configuration for conventional and trunked channels:
-             * quality alone must never promote a conventional channel into Systems.
+             * P25 and explicitly trunked DMR channels can create their initial site session from quality. NXDN still
+             * relies on positively identified trunking activity.
              */
-            SiteActivitySession session = isP25TrunkedControlParent(snapshot.channel()) ?
+            SiteActivitySession session = isConfiguredTrunkedControlParent(snapshot.channel()) ?
                 getOrCreateSiteSession(snapshot.channel()) : mSiteSessions.get(snapshot.channel());
             ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
 
@@ -501,9 +501,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     }
 
     /**
-     * Promotes a standard DMR or NXDN channel only after the decoder has positively identified a known trunking
-     * variant. This allows a quiet control channel to expose control quality without allowing quality alone to
-     * misclassify conventional DMR/NXDN channels.
+     * Applies positively identified trunking metadata to an explicitly trunked DMR channel or an NXDN channel.
+     * Conventional DMR is never promoted by over-the-air signaling.
      */
     public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
@@ -513,6 +512,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         Channel parentChannel = event.channel();
+
+        if(parentChannel != null && parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr &&
+            !dmr.isTrunked())
+        {
+            return;
+        }
 
         runOnSwingIfEnabled(() -> {
             SiteActivitySession session = getOrCreateSiteSession(parentChannel);
@@ -541,9 +546,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     }
 
     /**
-     * Publishes a DMR or NXDN trunked call event into the shared Systems activity model. DMR and NXDN use the same
-     * decoder configuration for conventional and trunked channels, so either positively identified trunking metadata
-     * or the first actual traffic-manager call event can promote the parent into a trunked Systems table.
+     * Publishes a DMR or NXDN trunked call event into the shared Systems activity model. DMR requires explicit trunked
+     * configuration; NXDN can still be promoted by positively identified metadata or traffic-manager activity.
      *
      * @param parentChannel control channel that owns the traffic-channel manager
      * @param trafficChannel allocated child channel, or null when the grant could not be allocated
@@ -722,13 +726,21 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         runOnSwingIfEnabled(() -> {
             updateTrunkedTitle(channel);
 
-            if(isP25TrunkedControlParent(channel))
+            if(isConfiguredTrunkedControlParent(channel))
             {
+                removeConventionalRows(channel);
                 ensureConfiguredControlRow(channel, "channel-configuration-control-seed");
                 reconcileConfiguredControlRows(channel);
             }
             else
             {
+                ChannelActivityTableModel trunkedTable = mTrunkedTables.get(channel);
+
+                if(trunkedTable != null && channel.getDecodeConfiguration() instanceof DecodeConfigDMR)
+                {
+                    close(trunkedTable);
+                }
+
                 for(ChannelActivityRow row: mConventionalTable.getRows())
                 {
                     if(row.getChannel() == channel)
@@ -1365,12 +1377,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             (decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2);
     }
 
+    private boolean isConfiguredTrunkedControlParent(Channel channel)
+    {
+        return isP25TrunkedControlParent(channel) || channel != null && channel.isStandardChannel() &&
+            channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr && dmr.isTrunked();
+    }
+
     private boolean isTrunkingCapableParent(Channel channel)
     {
         DecoderType decoder = channel != null && channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
         return channel != null && channel.isStandardChannel() &&
-            (decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2 || decoder == DecoderType.DMR ||
+            (decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2 ||
+                channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr && dmr.isTrunked() ||
                 decoder == DecoderType.NXDN);
     }
 

@@ -84,6 +84,80 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void writesEachCompletedDmrConventionalCallExactlyOnce() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("dmr-conventional.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
+        P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
+            1_000L, 2_000L, "GUID:dmr-writer", "dmr-writer", "DMR Repeater",
+            "County DMR", 461_125_000L, 1, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false);
+        writer.start();
+        writer.enqueue(call);
+        writer.enqueue(call);
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(writer.getWrittenRecords() < 2 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        assertEquals(2, writer.getWrittenRecords());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            try(ResultSet resultSet = statement.executeQuery(
+                "SELECT call_count FROM dmr_conventional_talkgroup_summary"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(2, resultSet.getInt(1));
+            }
+
+            try(ResultSet resultSet = statement.executeQuery(
+                "SELECT call_count FROM conventional_activity_summary"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(2, resultSet.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void failsAndRollsBackBatchContainingInvalidDmrIdentity() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("invalid-dmr.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
+        writer.start();
+        writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
+            1_000L, 2_000L, "GUID:valid-dmr", "valid-dmr", "Valid DMR", null, 461_125_000L, 1,
+            P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false));
+        writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
+            3_000L, 4_000L, "GUID:invalid-dmr", "invalid-dmr", "Invalid DMR", null, 461_125_000L, 1,
+            P25ActivityLogRecords.DmrTargetKind.GROUP, DmrActivitySchema.MAXIMUM_DMR_ID + 1, 102, null, false));
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(writer.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+            System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        assertEquals(P25ActivityLogStatus.State.FAILED, writer.getStatus().state());
+        assertEquals(0, writer.getWrittenRecords());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "receiver_context", 0);
+            assertCount(connection, "dmr_conventional_talkgroup_summary", 0);
+            assertCount(connection, "conventional_activity_summary", 0);
+        }
+    }
+
+    @Test
     void reportsWriterFailure() throws Exception
     {
         Path missingDatabase = mTemporaryFolder.resolve("missing.sqlite");

@@ -138,8 +138,11 @@ const SERVER_TABLE_DEFAULT_SORTS = {
   'talker-aliases': 'talker_alias',
   'talkgroup-radios': 'last_seen',
   'radio-talkgroups': 'last_seen',
-  conventional: 'frequency'
+  conventional: 'frequency',
+  'conventional-talkgroups': 'calls',
+  'conventional-radios': 'calls'
 };
+const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;
 let serviceStatus = null;
 let tableWidthPreferences = readTableWidthPreferences();
 
@@ -3138,7 +3141,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
 
 async function renderConventional() {
   const page = await api('/api/conventional', pageParameters());
-  content.append(pageHeader('Conventional', 'Started conventional analog and P25 channel history'));
+  content.append(pageHeader('Conventional', 'Started conventional analog, P25, and DMR channel summaries'));
   const columns = [
     { label: 'Name', render: (row) => anchor(row.channel_name || row.context_key,
       href('conventional-detail', { context: row.context_key, tab: 'info' })), className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.context_key },
@@ -3153,20 +3156,140 @@ async function renderConventional() {
   content.append(pagedSection('Conventional Channels', page, columns, 'Search name or frequency', 'conventional'));
 }
 
+function conventionalCapability(context, capability) {
+  const capabilities = context?.capabilities;
+  if (!capabilities) return capability === 'info';
+  const normalized = normalizedSiteCapability(capability);
+  if (Array.isArray(capabilities)) {
+    return capabilities.some((value) => normalizedSiteCapability(value) === normalized);
+  }
+  if (typeof capabilities === 'string') {
+    return capabilities.split(',').some((value) => normalizedSiteCapability(value) === normalized);
+  }
+  if (typeof capabilities !== 'object') return false;
+  const entry = Object.entries(capabilities)
+    .find(([key]) => normalizedSiteCapability(key) === normalized);
+  return entry ? siteCapabilityValue(entry[1]) : false;
+}
+
+function conventionalTabItems(context) {
+  const values = { context: context.context_key };
+  const items = [];
+  if (conventionalCapability(context, 'info')) {
+    items.push({ id: 'info', label: 'Info',
+      href: href('conventional-detail', { ...values, tab: 'info' }) });
+  }
+  if (conventionalCapability(context, 'talkgroups')) {
+    items.push({ id: 'talkgroups', label: 'Talkgroups',
+      href: href('conventional-detail', { ...values, tab: 'talkgroups' }) });
+  }
+  if (conventionalCapability(context, 'radios')) {
+    items.push({ id: 'radios', label: 'Radios',
+      href: href('conventional-detail', { ...values, tab: 'radios' }) });
+  }
+  if (conventionalCapability(context, 'activity')) {
+    items.push({ id: 'activity', label: 'Activity',
+      href: href('conventional-detail', { ...values, tab: 'activity' }),
+      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });
+  }
+  return items.length ? items : [
+    { id: 'info', label: 'Info', href: href('conventional-detail', { ...values, tab: 'info' }) }
+  ];
+}
+
+function conventionalTalkgroupColumns() {
+  return [
+    { id: 'talkgroup-id', label: 'Talkgroup', key: 'talkgroup_id', className: 'numeric',
+      sort: 'talkgroup' },
+    { id: 'talkgroup-name', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
+    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
+      render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency',
+      sortValue: (row) => Number(row.frequency_hz || 0) },
+    { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot' },
+    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
+      sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
+    { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
+      className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+    { id: 'source', label: 'Last Source', key: 'last_source_radio_id', className: 'numeric' },
+    { id: 'source-alias', label: 'Source Alias', key: 'last_source_alias_name', className: 'alias-cell' },
+    { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
+      render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
+      sortValue: (row) => Number(row.first_seen_ms || 0) },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+      render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen',
+      sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ];
+}
+
+function conventionalRadioColumns() {
+  return [
+    { id: 'radio', label: 'Radio', key: 'radio_id', className: 'numeric', sort: 'radio' },
+    { id: 'radio-alias', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
+    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
+      render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency',
+      sortValue: (row) => Number(row.frequency_hz || 0) },
+    { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot' },
+    { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
+      sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
+    { id: 'source-calls', label: 'As Source', render: (row) => number(row.source_call_count),
+      className: 'numeric', sort: 'source_calls', sortValue: (row) => Number(row.source_call_count || 0) },
+    { id: 'target-calls', label: 'As Target', render: (row) => number(row.target_call_count),
+      className: 'numeric', sort: 'target_calls', sortValue: (row) => Number(row.target_call_count || 0) },
+    { id: 'group-calls', label: 'Group', render: (row) => number(row.group_call_count),
+      className: 'numeric', sort: 'group_calls', sortValue: (row) => Number(row.group_call_count || 0) },
+    { id: 'private-calls', label: 'Private', render: (row) => number(row.private_call_count),
+      className: 'numeric', sort: 'private_calls', sortValue: (row) => Number(row.private_call_count || 0) },
+    { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
+      className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+    { id: 'last-talkgroup', label: 'Last Talkgroup', key: 'last_talkgroup_id', className: 'numeric' },
+    { id: 'talkgroup-name', label: 'Talkgroup Alias', key: 'last_talkgroup_alias_name',
+      className: 'alias-cell' },
+    { id: 'last-peer', label: 'Last Peer', key: 'last_peer_radio_id', className: 'numeric' },
+    { id: 'peer-alias', label: 'Peer Alias', key: 'last_peer_alias_name', className: 'alias-cell' },
+    { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
+      render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
+      sortValue: (row) => Number(row.first_seen_ms || 0) },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+      render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen',
+      sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ];
+}
+
+async function renderConventionalTalkgroups(contextKey) {
+  const page = await api('/api/conventional/talkgroups', pageParameters({
+    context: contextKey,
+    limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
+  }));
+  content.append(pagedSection('Talkgroups', page, conventionalTalkgroupColumns(),
+    'Search talkgroup ID or alias', 'conventional-talkgroups'));
+}
+
+async function renderConventionalRadios(contextKey) {
+  const page = await api('/api/conventional/radios', pageParameters({
+    context: contextKey,
+    limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
+  }));
+  content.append(pagedSection('Radios', page, conventionalRadioColumns(),
+    'Search radio ID or alias', 'conventional-radios'));
+}
+
 async function renderConventionalDetail() {
   const contextKey = route.get('context');
   if (!contextKey) throw new Error('Conventional context is missing from the URL');
   const data = await api('/api/conventional/detail', { context: contextKey });
   const context = data.context;
-  const tab = route.get('tab') || 'info';
-  content.append(pageHeader(context.channel_name || context.context_key, protocol(context.protocol_code)), tabs([
-    { id: 'info', label: 'Info', href: href('conventional-detail', { context: contextKey, tab: 'info' }) },
-    { id: 'activity', label: 'Activity', href: href('conventional-detail', { context: contextKey, tab: 'activity' }),
-      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' }
-  ], tab));
+  const tabItems = conventionalTabItems(context);
+  const requestedTab = route.get('tab') || 'info';
+  const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : tabItems[0].id;
+  content.append(pageHeader(context.channel_name || context.context_key, protocol(context.protocol_code)),
+    tabs(tabItems, tab));
 
   if (tab === 'activity') {
     await renderActivity({ context: contextKey });
+  } else if (tab === 'talkgroups') {
+    await renderConventionalTalkgroups(contextKey);
+  } else if (tab === 'radios') {
+    await renderConventionalRadios(contextKey);
   } else {
     content.append(section('Channel Info', keyValues([
       ['Name', context.channel_name], ['Context', context.context_key], ['GUID', context.guid],

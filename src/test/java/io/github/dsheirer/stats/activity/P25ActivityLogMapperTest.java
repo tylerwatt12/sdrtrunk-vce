@@ -29,6 +29,7 @@ import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifi
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
@@ -58,6 +59,26 @@ import org.junit.jupiter.api.Test;
 class P25ActivityLogMapperTest
 {
     private static final String GUID = "123e4567-e89b-12d3-a456-426614174000";
+
+    @Test
+    void mapsImmutableDmrConventionalCompletion()
+    {
+        DMRConventionalCallEvent event = new DMRConventionalCallEvent(1_000L, 2_000L, "configuration-id",
+            GUID, "County Repeater", "County DMR", 461_125_000L, 2,
+            DMRConventionalCallEvent.TargetKind.PRIVATE, null, 101, 202, true);
+
+        P25ActivityLogRecords.DmrConventionalCall record = new P25ActivityLogMapper().map(event);
+
+        assertNotNull(record);
+        assertEquals("GUID:" + GUID, record.contextKey());
+        assertEquals("County DMR", record.aliasListName());
+        assertEquals(461_125_000L, record.frequencyHertz());
+        assertEquals(2, record.timeslot());
+        assertEquals(P25ActivityLogRecords.DmrTargetKind.PRIVATE, record.targetKind());
+        assertEquals(101, record.sourceRadioId());
+        assertEquals(202, record.targetRadioId());
+        assertTrue(record.encrypted());
+    }
 
     @Test
     void mapsEncryptedGrant()

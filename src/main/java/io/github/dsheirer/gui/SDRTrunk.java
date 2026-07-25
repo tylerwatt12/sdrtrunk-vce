@@ -873,6 +873,12 @@ public class SDRTrunk implements Listener<TunerEvent>
 
             mStatsWebServerService.close();
         }
+        if(mControlChannelQualityRegistry != null)
+        {
+            mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
+                mControlChannelQualityRegistry);
+        }
+        mConfigurationManager.getChannelProcessingManager().shutdown();
         if(mP25ActivityLogService != null)
         {
             mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
@@ -884,12 +890,6 @@ public class SDRTrunk implements Listener<TunerEvent>
                 .removeProtocolSiteMetadataListener(mP25ActivityLogService);
             mP25ActivityLogService.dispose();
         }
-        if(mControlChannelQualityRegistry != null)
-        {
-            mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
-                mControlChannelQualityRegistry);
-        }
-        mConfigurationManager.getChannelProcessingManager().shutdown();
         EventLogger.flushPendingWrites();
         if(mAudioCallCoordinator != null)
         {

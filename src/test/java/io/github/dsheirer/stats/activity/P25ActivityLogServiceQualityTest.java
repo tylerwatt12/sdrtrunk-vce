@@ -13,6 +13,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -29,7 +30,9 @@ class P25ActivityLogServiceQualityTest
         assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
             quality(new DecodeConfigP25Phase2())));
         assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
-            quality(new DecodeConfigDMR())));
+            quality(dmr(DMRChannelMode.TRUNKED))));
+        assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(
+            quality(dmr(DMRChannelMode.CONVENTIONAL))));
         assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
             quality(new DecodeConfigNXDN())));
         assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(null));
@@ -39,11 +42,13 @@ class P25ActivityLogServiceQualityTest
         assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
             quality(new DecodeConfigP25Phase2()), false));
         assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
-            quality(new DecodeConfigDMR()), false));
+            quality(dmr(DMRChannelMode.CONVENTIONAL)), false));
         assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
             quality(new DecodeConfigNXDN()), false));
         assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
-            quality(new DecodeConfigDMR()), true));
+            quality(dmr(DMRChannelMode.TRUNKED)), false));
+        assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
+            quality(dmr(DMRChannelMode.CONVENTIONAL)), true));
         assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
             quality(new DecodeConfigNXDN()), true));
         assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(null, true));
@@ -52,9 +57,9 @@ class P25ActivityLogServiceQualityTest
     @Test
     void requiresEvidenceFromTheSameChannelAndDecoderConfiguration()
     {
-        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        DecodeConfigDMR configuration = dmr(DMRChannelMode.TRUNKED);
         Channel trunked = channel(configuration);
-        Channel sameGuidConventional = channel(new DecodeConfigDMR());
+        Channel sameGuidConventional = channel(dmr(DMRChannelMode.CONVENTIONAL));
         P25ActivityLogService.TrunkedSiteEvidence evidence =
             new P25ActivityLogService.TrunkedSiteEvidence(trunked, configuration, DecoderType.DMR);
 
@@ -63,7 +68,7 @@ class P25ActivityLogServiceQualityTest
         assertFalse(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
             quality(sameGuidConventional), evidence));
 
-        trunked.setDecodeConfiguration(new DecodeConfigDMR());
+        trunked.setDecodeConfiguration(dmr(DMRChannelMode.TRUNKED));
         assertFalse(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
             quality(trunked), evidence));
     }
@@ -71,6 +76,13 @@ class P25ActivityLogServiceQualityTest
     private static ControlChannelQualitySnapshot quality(DecodeConfiguration configuration)
     {
         return quality(channel(configuration));
+    }
+
+    private static DecodeConfigDMR dmr(DMRChannelMode mode)
+    {
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(mode);
+        return configuration;
     }
 
     private static Channel channel(DecodeConfiguration configuration)

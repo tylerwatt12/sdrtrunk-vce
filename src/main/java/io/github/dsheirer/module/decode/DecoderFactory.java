@@ -610,10 +610,15 @@ public class DecoderFactory
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
             sctmf.hasMultipleFrequencies())
         {
-            List<State> activeStates = new ArrayList<>();
-            activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(), userPreferences));
+            modules.add(new ChannelRotationMonitor(dmrRotationActiveStates(decodeConfig),
+                sctmf.getFrequencyRotationDelay(), userPreferences));
         }
+    }
+
+    static List<State> dmrRotationActiveStates(DecodeConfigDMR decodeConfig)
+    {
+        return decodeConfig != null && decodeConfig.isConventional() ?
+            List.of(State.CALL, State.ENCRYPTED, State.DATA) : List.of(State.CONTROL);
     }
 
     /**
@@ -791,6 +796,7 @@ public class DecoderFactory
                 case DMR:
                     DecodeConfigDMR originalDMR = (DecodeConfigDMR)config;
                     DecodeConfigDMR copyDMR = new DecodeConfigDMR();
+                    copyDMR.setChannelMode(originalDMR.getChannelMode());
                     copyDMR.setIgnoreDataCalls(originalDMR.getIgnoreDataCalls());
                     copyDMR.setIgnoreCRCChecksums(originalDMR.getIgnoreCRCChecksums());
                     copyDMR.setUseCompressedTalkgroups(originalDMR.isUseCompressedTalkgroups());

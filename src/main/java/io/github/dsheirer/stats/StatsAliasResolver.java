@@ -29,7 +29,7 @@ import java.util.Set;
 class StatsAliasResolver
 {
     private static final long CACHE_MILLISECONDS = 30_000L;
-    private volatile Snapshot mSnapshot = new Snapshot(List.of(), List.of(), Map.of(), 0);
+    private volatile Snapshot mSnapshot = new Snapshot(List.of(), List.of(), List.of(), List.of(), Map.of(), 0);
 
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
@@ -82,6 +82,24 @@ class StatsAliasResolver
         enrich(rows, snapshot.talkgroups(), snapshot.aliasLists(), "talkgroup_id", "talkgroup_alias_");
     }
 
+    /**
+     * Resolves conventional DMR aliases only from the exact alias list assigned to each receiver context.
+     */
+    void enrichDmrTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
+                             String prefix) throws SQLException
+    {
+        enrichDmr(rows, snapshot(connection).dmrTalkgroups(), identifierColumn, prefix);
+    }
+
+    /**
+     * Resolves conventional DMR aliases only from the exact alias list assigned to each receiver context.
+     */
+    void enrichDmrRadios(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
+                         String prefix) throws SQLException
+    {
+        enrichDmr(rows, snapshot(connection).dmrRadios(), identifierColumn, prefix);
+    }
+
     private void enrich(List<Map<String,Object>> rows, List<Rule> rules, Map<Integer,Set<String>> aliasLists,
                         String identifierColumn, String prefix)
     {
@@ -129,6 +147,43 @@ class StatsAliasResolver
         }
     }
 
+    private void enrichDmr(List<Map<String,Object>> rows, List<Rule> rules, String identifierColumn, String prefix)
+    {
+        for(Map<String,Object> row: rows)
+        {
+            Integer identifier = integer(row.get(identifierColumn));
+            Object aliasListValue = row.get("alias_list_name");
+
+            if(identifier == null || !(aliasListValue instanceof String aliasList) || aliasList.isBlank())
+            {
+                continue;
+            }
+
+            Rule best = null;
+
+            for(Rule rule: rules)
+            {
+                if(!aliasList.equals(rule.aliasList()) || !rule.matchesIdentifier(identifier))
+                {
+                    continue;
+                }
+
+                if(best == null || rule.isPreferredDmrTo(best))
+                {
+                    best = rule;
+                }
+            }
+
+            if(best != null)
+            {
+                row.put(prefix + "name", best.name());
+                row.put(prefix + "group", best.group());
+                row.put(prefix + "color", best.color());
+                row.put(prefix + "list_name", best.aliasList());
+            }
+        }
+    }
+
     private Map<Integer,Set<String>> loadAliasLists(Connection connection) throws SQLException
     {
         Map<Integer,Set<String>> aliasLists = new HashMap<>();
@@ -165,8 +220,9 @@ class StatsAliasResolver
 
             if(now - snapshot.loadedAt() > CACHE_MILLISECONDS)
             {
-                snapshot = new Snapshot(load(connection, "alias_talkgroup"), load(connection, "alias_radio"),
-                    loadAliasLists(connection), now);
+                snapshot = new Snapshot(load(connection, "alias_talkgroup", false),
+                    load(connection, "alias_radio", false), load(connection, "alias_talkgroup", true),
+                    load(connection, "alias_radio", true), loadAliasLists(connection), now);
                 mSnapshot = snapshot;
             }
         }
@@ -174,7 +230,7 @@ class StatsAliasResolver
         return snapshot;
     }
 
-    private List<Rule> load(Connection connection, String identifierTable) throws SQLException
+    private List<Rule> load(Connection connection, String identifierTable, boolean dmr) throws SQLException
     {
         List<Rule> rules = new ArrayList<>();
 
@@ -184,9 +240,10 @@ class StatsAliasResolver
                 alias.group_name, alias.color, alias.alias_list_name, alias.sort_order
             FROM %s identifier
             JOIN alias ON alias.id = identifier.alias_id
-            WHERE identifier.protocol IN ('APCO25', 'APCO25_PHASE2')
+            WHERE %s
             ORDER BY alias.sort_order, alias.id
-            """.formatted(identifierTable)))
+            """.formatted(identifierTable, dmr ? "identifier.protocol = 'DMR'" :
+                "identifier.protocol IN ('APCO25', 'APCO25_PHASE2')")))
         {
             while(resultSet.next())
             {
@@ -207,8 +264,8 @@ class StatsAliasResolver
         return value instanceof Number number ? number.intValue() : null;
     }
 
-    private record Snapshot(List<Rule> talkgroups, List<Rule> radios, Map<Integer,Set<String>> aliasLists,
-                            long loadedAt)
+    private record Snapshot(List<Rule> talkgroups, List<Rule> radios, List<Rule> dmrTalkgroups,
+                            List<Rule> dmrRadios, Map<Integer,Set<String>> aliasLists, long loadedAt)
     {
     }
 
@@ -226,6 +283,19 @@ class StatsAliasResolver
             int specificity = specificity();
             int otherSpecificity = other.specificity();
             return specificity > otherSpecificity || (specificity == otherSpecificity && sortOrder < other.sortOrder);
+        }
+
+        boolean isPreferredDmrTo(Rule other)
+        {
+            int specificity = ranged ? 0 : 1;
+            int otherSpecificity = other.ranged ? 0 : 1;
+            return specificity > otherSpecificity || (specificity == otherSpecificity && sortOrder < other.sortOrder);
+        }
+
+        boolean matchesIdentifier(int identifier)
+        {
+            return ranged ? minimum != null && maximum != null && identifier >= minimum && identifier <= maximum :
+                value != null && identifier == value;
         }
 
         private int specificity()

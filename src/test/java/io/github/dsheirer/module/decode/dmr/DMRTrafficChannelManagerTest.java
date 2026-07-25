@@ -32,6 +32,7 @@ class DMRTrafficChannelManagerTest
         Channel parent = new Channel("2.2", Channel.ChannelType.STANDARD);
         parent.setSystem("bus");
         DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
         config.setTrafficChannelPoolSize(0);
         parent.setDecodeConfiguration(config);
         SourceConfigTuner source = new SourceConfigTuner();
@@ -71,5 +72,39 @@ class DMRTrafficChannelManagerTest
         assertTrue(activityModel.getTables().get(1).getRows().stream()
             .anyMatch(row -> row.getRole() == ChannelActivityRow.Role.TRAFFIC &&
                 row.getFrequency() == 139_518_750L && row.getTimeslot() == 2));
+    }
+
+    @Test
+    void conventionalModeDoesNotAllocateOrPromoteTrunking() throws Exception
+    {
+        ChannelActivityModel activityModel = new ChannelActivityModel(new AliasModel(),
+            new NowPlayingPreference(type -> {}));
+        Channel parent = new Channel("Repeater", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.CONVENTIONAL);
+        config.setTrafficChannelPoolSize(20);
+        parent.setDecodeConfiguration(config);
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(451_012_500L);
+        parent.setSourceConfiguration(source);
+
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        manager.setInterModuleEventBus(new EventBus());
+        manager.setChannelActivityModel(activityModel);
+        manager.setCurrentControlFrequency(451_012_500L, parent);
+
+        DMRTier3Channel grant = new DMRTier3Channel(12, 1);
+        TimeslotFrequency mapping = new TimeslotFrequency();
+        mapping.setNumber(12);
+        mapping.setDownlinkFrequency(452_012_500L);
+        grant.setTimeslotFrequency(mapping);
+
+        SwingUtilities.invokeAndWait(() -> activityModel.setEnabled(true));
+        manager.processChannelGrant(grant, new MutableIdentifierCollection(),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+        SwingUtilities.invokeAndWait(() -> {});
+
+        assertEquals(1, activityModel.getTables().size());
+        assertTrue(activityModel.getConventionalTable().getRows().isEmpty());
     }
 }

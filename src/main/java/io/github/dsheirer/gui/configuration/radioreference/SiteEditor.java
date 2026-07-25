@@ -28,6 +28,7 @@ import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -243,6 +244,7 @@ public class SiteEditor extends GridPane
         {
             case DMR:
                 DecodeConfigDMR dmr = new DecodeConfigDMR();
+                dmr.setChannelMode(DMRChannelMode.TRUNKED);
                 List<TimeslotFrequency> timeslotFrequencies = mRadioReferenceDecoder
                     .getTimeslotFrequencies(systemInformation, site);
                 dmr.setTimeslotMap(timeslotFrequencies);

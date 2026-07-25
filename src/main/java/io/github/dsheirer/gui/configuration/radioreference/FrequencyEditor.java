@@ -24,6 +24,8 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -415,6 +417,10 @@ public class FrequencyEditor extends VBox
             if(decodeConfiguration instanceof DecodeConfigNBFM && modeDecoderType == ModeDecoderType.FM)
             {
                 ((DecodeConfigNBFM)decodeConfiguration).setBandwidth(DecodeConfigNBFM.Bandwidth.BW_25_0);
+            }
+            else if(decodeConfiguration instanceof DecodeConfigDMR dmr)
+            {
+                dmr.setChannelMode(DMRChannelMode.CONVENTIONAL);
             }
             channel.setDecodeConfiguration(decodeConfiguration);
             return channel;

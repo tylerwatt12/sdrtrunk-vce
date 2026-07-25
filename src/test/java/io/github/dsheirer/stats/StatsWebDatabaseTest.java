@@ -195,6 +195,103 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesConventionalDmrIdentitiesWithExactContextAliases() throws Exception
+    {
+        seedDmrConventionalRows(mDatabasePath);
+
+        Map<String,Object> detail = mDatabase.conventionalDetail(request(
+            "/api/conventional/detail?context=conventional-dmr-county"));
+        Map<String,Object> capabilities = map(map(detail, "context"), "capabilities");
+        assertTrue((Boolean)capabilities.get("info"));
+        assertTrue((Boolean)capabilities.get("talkgroups"));
+        assertTrue((Boolean)capabilities.get("radios"));
+        assertFalse((Boolean)capabilities.get("activity"));
+
+        Map<String,Object> analogDetail = mDatabase.conventionalDetail(request(
+            "/api/conventional/detail?context=conventional-fire"));
+        Map<String,Object> analogCapabilities = map(map(analogDetail, "context"), "capabilities");
+        assertTrue((Boolean)analogCapabilities.get("info"));
+        assertTrue((Boolean)analogCapabilities.get("activity"));
+        assertFalse((Boolean)analogCapabilities.get("talkgroups"));
+        assertFalse((Boolean)analogCapabilities.get("radios"));
+
+        Map<String,Object> talkgroups = mDatabase.conventionalTalkgroups(request(
+            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=talkgroup&direction=asc"));
+        assertEquals(2, rows(talkgroups).size());
+        Map<String,Object> dispatch = rows(talkgroups).getFirst();
+        assertEquals(91L, number(dispatch.get("talkgroup_id")));
+        assertEquals("DMR Dispatch", dispatch.get("alias_name"));
+        assertEquals("County DMR", dispatch.get("alias_list_name"));
+        assertEquals("DMR Engine 1", dispatch.get("last_source_alias_name"));
+        assertEquals(451_012_500L, number(dispatch.get("frequency_hz")));
+        assertEquals(1L, number(dispatch.get("timeslot")));
+        assertEquals(10L, number(dispatch.get("call_count")));
+        assertEquals(2L, number(dispatch.get("encrypted_count")));
+
+        Map<String,Object> radios = mDatabase.conventionalRadios(request(
+            "/api/conventional/radios?context=conventional-dmr-county&sort=radio&direction=asc"));
+        assertEquals(2, rows(radios).size());
+        Map<String,Object> engine = rows(radios).getFirst();
+        assertEquals(123_456L, number(engine.get("radio_id")));
+        assertEquals("DMR Engine 1", engine.get("alias_name"));
+        assertEquals("DMR Dispatch", engine.get("last_talkgroup_alias_name"));
+        assertEquals("DMR Engine 2", engine.get("last_peer_alias_name"));
+        assertEquals(7L, number(engine.get("source_call_count")));
+        assertEquals(3L, number(engine.get("target_call_count")));
+        assertFalse(engine.values().contains("Other Dispatch"));
+        assertFalse(engine.values().contains("Other Engine"));
+    }
+
+    @Test
+    void conventionalDmrIdentityPagesSortSearchAndStayContextScoped() throws Exception
+    {
+        seedDmrConventionalRows(mDatabasePath);
+
+        Map<String,Object> firstPage = mDatabase.conventionalTalkgroups(request(
+            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=calls&limit=1"));
+        assertEquals(92L, number(rows(firstPage).getFirst().get("talkgroup_id")));
+        assertEquals(1L, number(firstPage.get("limit")));
+        assertEquals(0L, number(firstPage.get("offset")));
+        assertTrue((Boolean)firstPage.get("hasMore"));
+        assertEquals(1L, number(firstPage.get("nextOffset")));
+
+        Map<String,Object> secondPage = mDatabase.conventionalTalkgroups(request(
+            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=calls&limit=1&offset=1"));
+        assertEquals(91L, number(rows(secondPage).getFirst().get("talkgroup_id")));
+        assertFalse((Boolean)secondPage.get("hasMore"));
+
+        Map<String,Object> aliasSearch = mDatabase.conventionalTalkgroups(request(
+            "/api/conventional/talkgroups?context=conventional-dmr-county&q=dispatch"));
+        assertEquals(List.of(91L), rows(aliasSearch).stream()
+            .map(row -> number(row.get("talkgroup_id"))).toList());
+        assertEquals("DMR Dispatch", rows(mDatabase.conventionalTalkgroups(request(
+            "/api/conventional/talkgroups?context=conventional-dmr-county&sort=alias&direction=asc&limit=1")))
+            .getFirst().get("alias_name"));
+
+        Map<String,Object> radioSearch = mDatabase.conventionalRadios(request(
+            "/api/conventional/radios?context=conventional-dmr-county&q=engine%202"));
+        assertEquals(List.of(234_567L), rows(radioSearch).stream()
+            .map(row -> number(row.get("radio_id"))).toList());
+        assertEquals("DMR Engine 2", rows(mDatabase.conventionalRadios(request(
+            "/api/conventional/radios?context=conventional-dmr-county&sort=alias&limit=1")))
+            .getFirst().get("alias_name"));
+
+        Map<String,Object> otherContext = mDatabase.conventionalTalkgroups(request(
+            "/api/conventional/talkgroups?context=conventional-dmr-other"));
+        assertEquals(1, rows(otherContext).size());
+        assertEquals(999L, number(rows(otherContext).getFirst().get("call_count")));
+        assertEquals("Other Dispatch", rows(otherContext).getFirst().get("alias_name"));
+
+        StatsApiException wrongProtocol = assertThrows(StatsApiException.class,
+            () -> mDatabase.conventionalTalkgroups(request(
+                "/api/conventional/talkgroups?context=conventional-fire")));
+        assertEquals(404, wrongProtocol.status());
+        StatsApiException missingContext = assertThrows(StatsApiException.class,
+            () -> mDatabase.conventionalRadios(request("/api/conventional/radios")));
+        assertEquals(400, missingContext.status());
+    }
+
+    @Test
     void statusReportsRetainedDetailedHistory()
     {
         Map<String,Object> status = mDatabase.status();
@@ -1357,6 +1454,67 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
                     last_seen_ms, call_count) VALUES (2, 154310000, -1, 1000, 2000, 4)
+                """);
+        }
+    }
+
+    private static void seedDmrConventionalRows(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
+                    alias_list_name, decoder, first_seen_ms, last_seen_ms, primary_frequency_hz)
+                VALUES (5, 'conventional-dmr-county', 'dmr-county-guid', 3, 3, 'County DMR',
+                        'County DMR', 'DMR', 1000, 5000, 451012500),
+                       (6, 'conventional-dmr-other', 'dmr-other-guid', 3, 3, 'Other DMR',
+                        'Other DMR', 'DMR', 1000, 6000, 461012500)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
+                    last_seen_ms, call_count)
+                VALUES (5, 451012500, 1, 1000, 5000, 10),
+                       (5, 451012500, 2, 2000, 5000, 20),
+                       (6, 461012500, 1, 1000, 6000, 999)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_talkgroup_summary (
+                    context_id, frequency_hz, timeslot, talkgroup_id, first_seen_ms, last_seen_ms,
+                    call_count, encrypted_count, last_source_radio_id
+                ) VALUES (5, 451012500, 1, 91, 1000, 5000, 10, 2, 123456),
+                         (5, 451012500, 2, 92, 2000, 5000, 20, 0, 234567),
+                         (6, 461012500, 1, 91, 1000, 6000, 999, 0, 123456)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_radio_summary (
+                    context_id, frequency_hz, timeslot, radio_id, first_seen_ms, last_seen_ms, call_count,
+                    source_call_count, target_call_count, group_call_count, private_call_count,
+                    encrypted_count, last_talkgroup_id, last_peer_radio_id
+                ) VALUES (5, 451012500, 1, 123456, 1000, 5000, 10, 7, 3, 8, 2, 1, 91, 234567),
+                         (5, 451012500, 2, 234567, 2000, 5000, 20, 15, 5, 18, 2, 0, 92, 123456),
+                         (6, 461012500, 1, 123456, 1000, 6000, 999, 999, 0, 999, 0, 0, 91, 234567)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (id, sort_order, name, alias_list_name, group_name, color)
+                VALUES (100, 100, 'DMR Dispatch', 'County DMR', 'Fire Dispatch', 255),
+                       (101, 101, 'DMR Operations', 'County DMR', 'Fire Operations', 255),
+                       (102, 102, 'DMR Engine 1', 'County DMR', 'Fire Units', 65280),
+                       (103, 103, 'DMR Engine 2', 'County DMR', 'Fire Units', 65280),
+                       (104, 104, 'Other Dispatch', 'Other DMR', 'Other Dispatch', 255),
+                       (105, 105, 'Other Engine', 'Other DMR', 'Other Units', 65280)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_talkgroup (alias_id, sort_order, protocol, value, fully_qualified, ranged)
+                VALUES (100, 0, 'DMR', 91, 0, 0),
+                       (101, 0, 'DMR', 92, 0, 0),
+                       (104, 0, 'DMR', 91, 0, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_radio (alias_id, sort_order, protocol, value, fully_qualified, ranged)
+                VALUES (102, 0, 'DMR', 123456, 0, 0),
+                       (103, 0, 'DMR', 234567, 0, 0),
+                       (105, 0, 'DMR', 123456, 0, 0)
                 """);
         }
     }

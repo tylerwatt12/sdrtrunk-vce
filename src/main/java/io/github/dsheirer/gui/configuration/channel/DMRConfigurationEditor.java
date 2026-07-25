@@ -29,6 +29,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.log.EventLogType;
 import io.github.dsheirer.module.log.config.EventLogConfiguration;
@@ -58,6 +59,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -90,6 +92,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     private ToggleSwitch mIgnoreDataCallsButton;
     private ToggleSwitch mIgnoreCRCChecksumsButton;
     private ToggleSwitch mUseCompressedTalkgroupsToggle;
+    private ComboBox<DMRChannelMode> mChannelModeComboBox;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
     private TableView<TimeslotFrequency> mTimeslotFrequencyTable;
     private IntegerTextField mLogicalChannelNumberField;
@@ -148,9 +151,17 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
 
             int row = 0;
 
+            Label channelModeLabel = new Label("Channel Type");
+            GridPane.setHalignment(channelModeLabel, HPos.RIGHT);
+            GridPane.setConstraints(channelModeLabel, 0, row);
+            gridPane.getChildren().add(channelModeLabel);
+
+            GridPane.setConstraints(getChannelModeComboBox(), 1, row);
+            gridPane.getChildren().add(getChannelModeComboBox());
+
             Label poolSizeLabel = new Label("Max Traffic Channels");
             GridPane.setHalignment(poolSizeLabel, HPos.RIGHT);
-            GridPane.setConstraints(poolSizeLabel, 0, row);
+            GridPane.setConstraints(poolSizeLabel, 0, ++row);
             gridPane.getChildren().add(poolSizeLabel);
 
             GridPane.setConstraints(getTrafficChannelPoolSizeSpinner(), 1, row);
@@ -335,10 +346,11 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     {
         //Preserve the current modified flag state since setting values in the editor will change it.
         boolean modified = modifiedProperty().get();
+        boolean trunked = getChannelModeComboBox().getValue() == DMRChannelMode.TRUNKED;
 
-        getLogicalChannelNumberField().setDisable(timeslot == null);
-        getDownlinkFrequencyField().setDisable(timeslot == null);
-        getDeleteTimeslotFrequencyButton().setDisable(timeslot == null);
+        getLogicalChannelNumberField().setDisable(!trunked || timeslot == null);
+        getDownlinkFrequencyField().setDisable(!trunked || timeslot == null);
+        getDeleteTimeslotFrequencyButton().setDisable(!trunked || timeslot == null);
 
         if(timeslot != null)
         {
@@ -692,6 +704,46 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         return mUseCompressedTalkgroupsToggle;
     }
 
+    /**
+     * Conventional/trunked channel mode selection.
+     */
+    private ComboBox<DMRChannelMode> getChannelModeComboBox()
+    {
+        if(mChannelModeComboBox == null)
+        {
+            mChannelModeComboBox = new ComboBox<>(FXCollections.observableArrayList(DMRChannelMode.values()));
+            mChannelModeComboBox.setDisable(true);
+            mChannelModeComboBox.setMaxWidth(Double.MAX_VALUE);
+            mChannelModeComboBox.setTooltip(new Tooltip(
+                "Conventional decodes activity on the configured frequency. Trunked follows channel grants."));
+            mChannelModeComboBox.valueProperty().addListener((observable, oldValue, newValue) -> {
+                updateTrunkingControls(getItem() != null && getItem().getDecodeConfiguration() != null);
+                modifiedProperty().set(true);
+            });
+        }
+
+        return mChannelModeComboBox;
+    }
+
+    /**
+     * Enables trunk-only settings without clearing their dormant values.
+     */
+    private void updateTrunkingControls(boolean hasConfiguration)
+    {
+        boolean trunked = hasConfiguration && getChannelModeComboBox().getValue() == DMRChannelMode.TRUNKED;
+        getTrafficChannelPoolSizeSpinner().setDisable(!trunked);
+        getIgnoreDataCallsButton().setDisable(!trunked);
+        getUseCompressedTalkgroupsToggle().setDisable(!trunked);
+        getTimeslotTable().setDisable(!trunked);
+        getAddTimeslotFrequencyButton().setDisable(!trunked);
+        getCopyTimeslotMapButton().setDisable(!trunked);
+        getPasteTimeslotMapButton().setDisable(!trunked);
+        TimeslotFrequency selected = getTimeslotTable().getSelectionModel().getSelectedItem();
+        getDeleteTimeslotFrequencyButton().setDisable(!trunked || selected == null);
+        getLogicalChannelNumberField().setDisable(!trunked || selected == null);
+        getDownlinkFrequencyField().setDisable(!trunked || selected == null);
+    }
+
     private Spinner<Integer> getTrafficChannelPoolSizeSpinner()
     {
         if(mTrafficChannelPoolSizeSpinner == null)
@@ -756,15 +808,9 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     @Override
     protected void setDecoderConfiguration(DecodeConfiguration config)
     {
+        getChannelModeComboBox().setDisable(config == null || getItem() != null && getItem().isProcessing());
         getIgnoreCRCChecksumsButton().setDisable(config == null);
-        getIgnoreDataCallsButton().setDisable(config == null);
-        getUseCompressedTalkgroupsToggle().setDisable(config == null);
-        getTrafficChannelPoolSizeSpinner().setDisable(config == null);
         getTimeslotTable().getItems().clear();
-        getTimeslotTable().setDisable(config == null);
-        getAddTimeslotFrequencyButton().setDisable(config == null);
-        getCopyTimeslotMapButton().setDisable(config == null);
-        getPasteTimeslotMapButton().setDisable(config == null);
         getDeleteTimeslotFrequencyButton().setDisable(true);
         getLogicalChannelNumberField().set(0);
         getLogicalChannelNumberField().setDisable(true);
@@ -776,6 +822,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         {
             DecodeConfigDMR decodeConfig = (DecodeConfigDMR)config;
 
+            getChannelModeComboBox().setValue(decodeConfig.getChannelMode());
             getIgnoreDataCallsButton().setSelected(decodeConfig.getIgnoreDataCalls());
             getIgnoreCRCChecksumsButton().setSelected(decodeConfig.getIgnoreCRCChecksums());
             getUseCompressedTalkgroupsToggle().setSelected(decodeConfig.isUseCompressedTalkgroups());
@@ -785,15 +832,26 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             {
                 getTimeslotTable().getItems().add(timeslotFrequency.copy());
             }
+
+            updateTrunkingControls(true);
         }
         else
         {
+            getChannelModeComboBox().setValue(DMRChannelMode.CONVENTIONAL);
             getIgnoreCRCChecksumsButton().setSelected(false);
             getIgnoreDataCallsButton().setSelected(false);
             getUseCompressedTalkgroupsToggle().setSelected(false);
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(0);
             getChannelRotationDelaySpinner().getValueFactory().setValue(200);
+            updateTrunkingControls(false);
         }
+    }
+
+    @Override
+    protected void channelProcessingStateChanged(boolean processing)
+    {
+        getChannelModeComboBox().setDisable(processing || getItem() == null ||
+            getItem().getDecodeConfiguration() == null);
     }
 
     @Override
@@ -810,6 +868,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             config = new DecodeConfigDMR();
         }
 
+        config.setChannelMode(getChannelModeComboBox().getValue());
         config.setIgnoreCRCChecksums(getIgnoreCRCChecksumsButton().isSelected());
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());

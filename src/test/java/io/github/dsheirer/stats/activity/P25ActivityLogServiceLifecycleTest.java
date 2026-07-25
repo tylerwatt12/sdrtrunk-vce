@@ -19,6 +19,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.PreferenceType;
@@ -161,7 +162,7 @@ class P25ActivityLogServiceLifecycleTest
     }
 
     @Test
-    void persistsDmrQualityOnlyAfterTrunkedSiteMetadataIsObserved() throws Exception
+    void persistsExplicitTrunkedDmrQualityWithoutPromotingConventionalDmr() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -173,22 +174,22 @@ class P25ActivityLogServiceLifecycleTest
         try
         {
             long now = System.currentTimeMillis();
-            Channel trunked = dmrChannel("00000000-0000-0000-0000-000000000201");
+            Channel trunked = dmrChannel("00000000-0000-0000-0000-000000000201", DMRChannelMode.TRUNKED);
             service.getControlChannelQualityListener().receive(quality(trunked, now));
-            awaitCount(database, "p25_control_channel_quality", 0);
+            awaitCount(database, "p25_control_channel_quality", 1);
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", null, 10, 20, null, null, null, null,
                     1, 2, List.of(), List.of()), System.currentTimeMillis()));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 10_000L));
-            awaitCount(database, "p25_control_channel_quality", 0);
+            awaitCount(database, "p25_control_channel_quality", 2);
             assertEquals(0, count(database, "trunked_site_snapshot"));
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 20_000L));
-            awaitCount(database, "p25_control_channel_quality", 1);
+            awaitCount(database, "p25_control_channel_quality", 3);
             assertEquals(1, count(database, "trunked_site_snapshot"));
 
             applicationPreference.setCollectionEnabled(false);
@@ -200,14 +201,14 @@ class P25ActivityLogServiceLifecycleTest
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
-            Channel reusedGuid = dmrChannel(trunked.getRadresGuid());
+            Channel reusedGuid = dmrChannel(trunked.getRadresGuid(), DMRChannelMode.TRUNKED);
             service.getControlChannelQualityListener().receive(quality(reusedGuid, now + 60_000L));
 
             service.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(trunked,
                 new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 10, 20, "Tier III Trunking",
                     "SMALL", null, "Control", 1, 2, List.of(), List.of()), System.currentTimeMillis()));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 600_000L));
-            awaitCount(database, "p25_control_channel_quality", 2);
+            awaitCount(database, "p25_control_channel_quality", 6);
 
             service.getControlChannelQualityListener().receive(quality(trunked, now + 610_000L, false));
             service.getControlChannelQualityListener().receive(quality(trunked, now + 620_000L));
@@ -222,8 +223,7 @@ class P25ActivityLogServiceLifecycleTest
 
             Channel conventional = dmrChannel("00000000-0000-0000-0000-000000000202");
             service.getControlChannelQualityListener().receive(quality(conventional, now + 660_000L));
-            Thread.sleep(1_100);
-            assertEquals(2, count(database, "p25_control_channel_quality"));
+            awaitCount(database, "p25_control_channel_quality", 8);
         }
         finally
         {
@@ -274,9 +274,16 @@ class P25ActivityLogServiceLifecycleTest
 
     private static Channel dmrChannel(String guid)
     {
+        return dmrChannel(guid, DMRChannelMode.CONVENTIONAL);
+    }
+
+    private static Channel dmrChannel(String guid, DMRChannelMode mode)
+    {
         Channel channel = new Channel("DMR", Channel.ChannelType.STANDARD);
         channel.setRadresGuid(guid);
-        channel.setDecodeConfiguration(new DecodeConfigDMR());
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(mode);
+        channel.setDecodeConfiguration(configuration);
         return channel;
     }
 
