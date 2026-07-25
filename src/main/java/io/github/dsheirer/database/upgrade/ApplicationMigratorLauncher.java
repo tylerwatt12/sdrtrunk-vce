@@ -23,20 +23,19 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Runs the compiled database upgrade helpers in child Java processes.
+ * Runs the compiled application database migrator in a child Java process.
  */
-public final class UpgradeHelperLauncher
+public final class ApplicationMigratorLauncher
 {
-    private static final String P25_HELPER_CLASS = P25ActivitySchemaUpgrade.class.getName();
-    private static final String TRUNKED_SITE_HELPER_CLASS = TrunkedSiteSchemaInstaller.class.getName();
+    private static final String APPLICATION_MIGRATOR_CLASS = ApplicationDatabaseMigrator.class.getName();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
 
-    private UpgradeHelperLauncher()
+    private ApplicationMigratorLauncher()
     {
     }
 
     /**
-     * Upgrades and validates a staged database. The live database must never be passed to this method.
+     * Migrates and validates a staged database. The live database must never be passed to this method.
      *
      * @return the helper's diagnostic output
      */
@@ -46,7 +45,7 @@ public final class UpgradeHelperLauncher
     }
 
     /**
-     * Upgrades a staged database and rebases portable paths that point inside the previous data root.
+     * Migrates a staged database and rebases portable paths that point inside the previous data root.
      */
     public static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
         throws IOException, InterruptedException
@@ -58,24 +57,10 @@ public final class UpgradeHelperLauncher
             throw new IOException("Staged SQLite database does not exist: " + normalized);
         }
 
-        String p25Output = runHelper(command(normalized, P25_HELPER_CLASS, sourceDataRoot, targetDataRoot),
-            "P25 activity");
-        String trunkedSiteOutput = runHelper(command(normalized, TRUNKED_SITE_HELPER_CLASS, null, null),
-            "trunked-site");
-
-        if(p25Output.isBlank())
-        {
-            return trunkedSiteOutput;
-        }
-        else if(trunkedSiteOutput.isBlank())
-        {
-            return p25Output;
-        }
-
-        return p25Output + System.lineSeparator() + trunkedSiteOutput;
+        return runMigrator(command(normalized, sourceDataRoot, targetDataRoot));
     }
 
-    private static String runHelper(List<String> command, String label) throws IOException, InterruptedException
+    private static String runMigrator(List<String> command) throws IOException, InterruptedException
     {
         Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
         boolean completed;
@@ -95,7 +80,7 @@ public final class UpgradeHelperLauncher
         {
             process.destroyForcibly();
             process.waitFor(10, TimeUnit.SECONDS);
-            throw new IOException("The database upgrade helper did not finish the " + label + " upgrade within " +
+            throw new IOException("The application database migrator did not finish within " +
                 PROCESS_TIMEOUT.toMinutes() + " minutes.");
         }
 
@@ -103,7 +88,7 @@ public final class UpgradeHelperLauncher
 
         if(process.exitValue() != 0)
         {
-            throw new IOException("The database upgrade helper failed for the " + label + " upgrade with exit code " +
+            throw new IOException("The application database migrator failed with exit code " +
                 process.exitValue() + (output.isBlank() ? "." : ":\n" + output));
         }
 
@@ -116,12 +101,6 @@ public final class UpgradeHelperLauncher
     }
 
     static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot) throws IOException
-    {
-        return command(stagedDatabase, P25_HELPER_CLASS, sourceDataRoot, targetDataRoot);
-    }
-
-    private static List<String> command(Path stagedDatabase, String helperClass, Path sourceDataRoot,
-                                        Path targetDataRoot) throws IOException
     {
         if((sourceDataRoot == null) != (targetDataRoot == null))
         {
@@ -137,7 +116,7 @@ public final class UpgradeHelperLauncher
             throw new IOException("The packaged Java executable was not found: " + java);
         }
 
-        Module module = P25ActivitySchemaUpgrade.class.getModule();
+        Module module = ApplicationDatabaseMigrator.class.getModule();
         List<String> command = new ArrayList<>();
         command.add(java.toString());
 
@@ -154,7 +133,7 @@ public final class UpgradeHelperLauncher
             command.add("--module-path");
             command.add(modulePath);
             command.add("-m");
-            command.add(module.getName() + "/" + helperClass);
+            command.add(module.getName() + "/" + APPLICATION_MIGRATOR_CLASS);
         }
         else
         {
@@ -162,13 +141,13 @@ public final class UpgradeHelperLauncher
 
             if(classPath == null || classPath.isBlank())
             {
-                throw new IOException("The Java class path is unavailable for the database upgrade helper.");
+                throw new IOException("The Java class path is unavailable for the Application Migrator.");
             }
 
             command.add("--enable-native-access=ALL-UNNAMED");
             command.add("-cp");
             command.add(classPath);
-            command.add(helperClass);
+            command.add(APPLICATION_MIGRATOR_CLASS);
         }
 
         command.add(stagedDatabase.toAbsolutePath().normalize().toString());

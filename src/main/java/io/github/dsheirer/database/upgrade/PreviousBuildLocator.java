@@ -39,7 +39,8 @@ public final class PreviousBuildLocator
     private static final String MAC_APPLICATION_SUFFIX = ".app";
     private static final String MAC_DATA_SUFFIX = "-data";
     private static final Pattern INTERNAL_STAGING_DIRECTORY =
-        Pattern.compile("^\\..+\\.upgrade-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+        Pattern.compile("^\\..+\\.(?:upgrade|migration)-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-" +
+            "[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     private static final Comparator<Path> PATH_COMPARATOR =
         Comparator.comparing(Path::toString, String.CASE_INSENSITIVE_ORDER).thenComparing(Path::toString);
 

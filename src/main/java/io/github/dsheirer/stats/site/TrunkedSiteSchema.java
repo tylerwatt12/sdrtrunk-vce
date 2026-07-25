@@ -29,7 +29,7 @@ import java.util.TreeMap;
  * Compact retention-bound summaries for DMR and NXDN trunked sites.
  *
  * <p>This is an independent schema subsystem. New databases create it from the single global startup schema owner,
- * while existing databases must be upgraded with the explicit backed-up external migration.</p>
+ * while supported existing databases are updated only by the backed-up application migrator.</p>
  */
 public final class TrunkedSiteSchema
 {

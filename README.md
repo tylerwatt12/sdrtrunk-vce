@@ -341,8 +341,8 @@ Select any screenshot to view it at full resolution.
   - macOS: `sdrtrunk-vce-data` beside the application bundle
 - Keeps logs, recordings, event logs, screenshots, streaming files, JMBE, and application data under that portable data
   root.
-- Validates existing schemas at startup but does not alter or upgrade them. Version changes use explicit external,
-  one-time maintenance tools.
+- Keeps normal runtime services validation-only for existing schemas. Supported version changes are owned exclusively
+  by the bundled Application Migrator, which works on a backed-up staged copy before startup continues.
 - Builds self-contained Windows, Linux, and macOS packages for x86-64 and ARM64 with a curated Java 25 runtime.
 - Excludes development test frameworks from release packages.
 
@@ -361,7 +361,8 @@ Select any screenshot to view it at full resolution.
 - The named MPT Channel Map subsystem is not included. DMR LCN and NXDN channel-number maps remain supported in their
   channel configurations.
 - Legacy diagnostic monitors and temporary network/file debug feeds are not included in release behavior.
-- Schema repair and schema migration are not performed from normal application services.
+- Schema repair and schema migration are not performed from normal application services. The bundled Application
+  Migrator is the only supported database-migration entry point.
 
 ## Installation And First Launch
 
@@ -421,14 +422,17 @@ Build output is written under `build/image`.
 - Alias script actions, Funcube Dongle Pro/Pro+ support, the MPT-1327 runtime and editor, heterodyne channelization, and
   sound-card capture sources.
 - Legacy generic Channel Maps that existed for MPT-1327. DMR channel maps remain supported.
+- Standalone database migration and reset utilities, along with separate subsystem upgrade entry points. The bundled
+  Application Migrator is the single supported path for every eligible existing database.
 
 #### Upgrade Notes
 
 - This release advances the Alias schema from version 2 to version 3 by adding one optional description value per
-  configured Alias. Existing databases must use the supplied external `migrate-v2-to-v3-description` tool while
-  SDRTrunk is stopped.
-- The migration checkpoints WAL data, checks integrity, creates a timestamped backup, preserves every Alias row, and
-  validates the complete result. Normal application startup does not alter an existing schema.
+  configured Alias. On first launch, the bundled Application Migrator detects an eligible v2 database and offers the
+  migration before the receiver starts.
+- The Application Migrator checkpoints WAL data, checks integrity, creates a timestamped backup, migrates a staged
+  copy, preserves every Alias row, and validates the complete result before atomically installing it. No standalone
+  migration script is required or included.
 
 ### 0.6.2-alpha-6 - 2026-07-21
 
@@ -472,10 +476,11 @@ Build output is written under `build/image`.
 
 #### Upgrade Notes
 
-- Alpha 6 advances the P25 activity schema from version 19 to version 20. Existing Alpha 5 databases must be migrated
-  with the supplied external `migrate-v19-to-v20-foreign-system-bands` tool while SDRTrunk is stopped.
-- The migration checks database integrity, creates a timestamped backup, applies the bounded foreign-system band tables,
-  and verifies the result. Normal application startup does not alter an existing schema.
+- Alpha 6 advanced the P25 activity schema from version 19 to version 20. The standalone migration tool originally
+  supplied with that release has been retired; current builds route supported database changes through the bundled
+  Application Migrator.
+- The Application Migrator checks database integrity, creates a timestamped backup, updates a staged copy, and verifies
+  the result before startup continues.
 - Back up the complete portable data directory before upgrading. Returning to Alpha 5 requires restoring the
   pre-migration database backup as well as the earlier application.
 - The experimental `webfirst` browser spectrum and web-first interface work is not included in this release.
@@ -531,7 +536,8 @@ Build output is written under `build/image`.
 - Talkgroup activity history with retained Recorded and Sent to Streamer counters and plain-language metric guides.
 - Dashboard hourly call-output chart and a 24-hour site-activity comparison chart.
 - Bounded native tuner-buffer processing that discards stale queued IQ during sustained overload.
-- External P25 history v17-to-v18 and v18-to-v19 migration tooling.
+- P25 history schema transitions from v17 through v19. The standalone helpers originally shipped for those transitions
+  are retired from current builds.
 - Detailed talker-alias implementation documentation and expanded lifecycle, selection, buffer, and web regression tests.
 
 #### Changed
@@ -557,11 +563,10 @@ Build output is written under `build/image`.
 
 #### Upgrade Notes
 
-- This release uses P25 history schema v19. Stop SDRTrunk and back up the portable database before upgrading.
-- Schema v18 databases can use the external `migrate-v18-to-v19-talkgroup-output-summary` tool.
-- Schema v17 databases must migrate to v18 and then to v19.
-- Alpha 3 databases use schema v17 and must run both external migrations while SDRTrunk is stopped.
-- Existing v14, v15, or v16 databases must follow each documented migration in order through v19.
+- This release used P25 history schema v19. The standalone migration helpers originally supplied for older schemas are
+  retired from current builds.
+- A database older than the Application Migrator's supported range must first be opened with an appropriate
+  intermediate release; current packages do not include separate migration utilities.
 
 ### 0.6.2-alpha-3 - 2026-07-15
 
@@ -570,7 +575,8 @@ Build output is written under `build/image`.
 - Live Signal Health dashboard with current P25 receiver status and retained signal and decode-quality charts.
 - Expanded P25 site telemetry for BSI callsigns, LRA, MFID, broadcast clock, service availability, data access,
   Working Unit ID lease time, TDMA/u-Slots, and registration status.
-- External P25 history v16-to-v17 migration tooling.
+- P25 history schema transition from v16 to v17. The standalone helper originally shipped for that transition is
+  retired from current builds.
 
 #### Changed
 
@@ -590,11 +596,10 @@ Build output is written under `build/image`.
 
 #### Upgrade Notes
 
-- This release uses P25 history schema v17. Stop SDRTrunk and back up the portable database before upgrading.
-- Alpha 2 databases can use the external `migrate-v16-to-v17-site-status` tool.
-- Existing v14 or v15 databases must first migrate to v16 and then migrate to v17.
-- Alpha 1 used schema v13; use the external Stats Server reset tool when upgrading from Alpha 1. The reset preserves
-  configuration, channels, aliases, streams, preferences, and vault data, but starts Stats Server history fresh.
+- This release used P25 history schema v17. The standalone migration and reset helpers originally supplied for older
+  schemas are retired from current builds.
+- A database older than the Application Migrator's supported range must first be opened with an appropriate
+  intermediate release; current packages do not include separate migration utilities.
 
 ### 0.6.2-alpha-2 - 2026-07-13
 
@@ -604,7 +609,8 @@ Build output is written under `build/image`.
 - Non-exclusive channel usage tags for control, alternate, data, and traffic activity.
 - Talker aliases, conventional channel names, and richer channel details in Systems and web views.
 - Expanded Stats Server history, logging status, database health, and activity summaries.
-- A documented release checklist and explicit SQLite migration tooling.
+- A documented release checklist and P25 schema-transition support. The standalone utilities from this release are
+  retired from current builds.
 
 #### Changed
 
@@ -621,10 +627,10 @@ Build output is written under `build/image`.
 
 #### Upgrade Notes
 
-- This release uses P25 history schema v16. Stop SDRTrunk and back up the portable database before upgrading.
-- Existing v14 or v15 databases can use the external `migrate-v14-or-v15-to-v16-channel-tags` tool.
-- Alpha 1 used schema v13; use the external Stats Server reset tool when upgrading from Alpha 1. The reset preserves
-  configuration, channels, aliases, streams, preferences, and vault data, but starts Stats Server history fresh.
+- This release used P25 history schema v16. The standalone migration and reset helpers originally supplied for older
+  schemas are retired from current builds.
+- A database older than the Application Migrator's supported range must first be opened with an appropriate
+  intermediate release; current packages do not include separate migration utilities.
 
 ### 0.6.2-alpha-1 - 2026-07-11
 
@@ -656,7 +662,8 @@ Build output is written under `build/image`.
 - Flat Now Playing table and main-window Playlist Editor tab.
 - Details/Activity Summary panel.
 - Shoutcast v2/Ultravox provider.
-- Runtime XML playlist manager and automatic in-process schema upgrades.
+- Runtime XML playlist manager and schema changes performed by ordinary application services. Supported database
+  changes now run only through the bundled Application Migrator before receiver startup.
 - Separate system-properties and tuner-configuration files.
 - Temporary debug servers, diagnostic hooks, and release test-library dependencies.
 

@@ -41,17 +41,20 @@ import java.util.UUID;
 import org.sqlite.SQLiteConfig;
 
 /**
- * Stages, upgrades, validates, and promotes portable data from an earlier sdrtrunk-vce build.
+ * Stages, migrates, validates, and promotes portable data from an earlier sdrtrunk-vce build.
  *
- * <p>The schema-changing helper always runs in a child process and only receives a staged database. Normal startup
- * remains validation-only for an existing SQLite schema.</p>
+ * <p>The Application Migrator always runs in a child process and only receives a staged database. Normal startup
+ * services remain validation-only for an existing SQLite schema.</p>
  */
-public final class PreviousBuildUpgradeService
+public final class ApplicationMigrationService
 {
-    public static final Set<Integer> SUPPORTED_SOURCE_VERSIONS = Set.of(19, 20);
-    public static final int CURRENT_VERSION = 21;
+    public static final Set<Integer> SUPPORTED_P25_VERSIONS = Set.of(19, 20, 21);
+    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(2, 3);
+    public static final int CURRENT_P25_VERSION = 21;
+    public static final int CURRENT_ALIAS_VERSION = 3;
 
-    private static final String VERSION_KEY = "p25_activity_schema_version";
+    private static final String P25_VERSION_KEY = "p25_activity_schema_version";
+    private static final String ALIAS_VERSION_KEY = "alias_schema_version";
     private static final long FREE_SPACE_MARGIN_BYTES = 64L * 1024L * 1024L;
     private static final DateTimeFormatter BACKUP_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final List<String> COPIED_DIRECTORIES = List.of("jmbe", "modules");
@@ -59,12 +62,12 @@ public final class PreviousBuildUpgradeService
     private final Snapshotter mSnapshotter;
     private final MigrationRunner mMigrationRunner;
 
-    public PreviousBuildUpgradeService()
+    public ApplicationMigrationService()
     {
-        this(SqliteDatabaseSnapshot::create, UpgradeHelperLauncher::run);
+        this(SqliteDatabaseSnapshot::create, ApplicationMigratorLauncher::run);
     }
 
-    PreviousBuildUpgradeService(Snapshotter snapshotter, MigrationRunner migrationRunner)
+    ApplicationMigrationService(Snapshotter snapshotter, MigrationRunner migrationRunner)
     {
         mSnapshotter = Objects.requireNonNull(snapshotter);
         mMigrationRunner = Objects.requireNonNull(migrationRunner);
@@ -73,7 +76,7 @@ public final class PreviousBuildUpgradeService
     /**
      * Imports a previous portable profile into a data root that does not yet have a database.
      */
-    public UpgradeResult importPrevious(Path sourceDataRoot, Path targetDataRoot, ProgressListener progress)
+    public MigrationResult importPrevious(Path sourceDataRoot, Path targetDataRoot, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
         ProgressListener listener = progress == null ? ignored -> { } : progress;
@@ -93,7 +96,7 @@ public final class PreviousBuildUpgradeService
         }
 
         listener.update("Checking previous data");
-        int sourceVersion = requireSupportedVersion(sourceDatabase);
+        MigrationState sourceState = requireSupportedState(sourceDatabase);
         requireEmptyOrMissing(targetRoot);
         Path targetParent = targetRoot.getParent();
 
@@ -104,7 +107,7 @@ public final class PreviousBuildUpgradeService
 
         Files.createDirectories(targetParent);
         ensureFreeSpace(targetParent, requiredImportSpace(sourceRoot));
-        Path stageRoot = targetParent.resolve("." + targetRoot.getFileName() + ".upgrade-" + UUID.randomUUID());
+        Path stageRoot = targetParent.resolve("." + targetRoot.getFileName() + ".migration-" + UUID.randomUUID());
         boolean promoted = false;
 
         try
@@ -131,7 +134,7 @@ public final class PreviousBuildUpgradeService
             removeEmptyTreeIfPresent(targetRoot);
             moveAtomically(stageRoot, targetRoot);
             promoted = true;
-            return new UpgradeResult(true, null, sourceVersion, helperOutput);
+            return new MigrationResult(true, null, sourceState, helperOutput);
         }
         finally
         {
@@ -143,9 +146,9 @@ public final class PreviousBuildUpgradeService
     }
 
     /**
-     * Upgrades a supported earlier database already in the current portable data root and retains a standalone backup.
+     * Migrates a supported earlier database already in the current portable data root and retains a safety backup.
      */
-    public UpgradeResult upgradeCurrent(Path dataRoot, ProgressListener progress)
+    public MigrationResult migrateCurrent(Path dataRoot, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
         ProgressListener listener = progress == null ? ignored -> { } : progress;
@@ -153,13 +156,7 @@ public final class PreviousBuildUpgradeService
         Path database = SdrTrunkDatabasePath.getDatabasePath(normalizedRoot);
 
         listener.update("Checking previous data");
-        int sourceVersion = readP25ActivitySchemaVersion(database);
-
-        if(!isSupportedSourceVersion(sourceVersion))
-        {
-            throw new IOException("This upgrade supports P25 activity database versions " +
-                supportedSourceVersionsLabel() + " only. Found v" + sourceVersion + ".");
-        }
+        MigrationState sourceState = requireSupportedState(database);
 
         Path databaseDirectory = database.getParent();
         ensureFreeSpace(databaseDirectory,
@@ -168,8 +165,8 @@ public final class PreviousBuildUpgradeService
         Files.createDirectories(backupDirectory);
         String identity = BACKUP_TIME.format(LocalDateTime.now()) + "-" +
             UUID.randomUUID().toString().substring(0, 8);
-        Path backup = backupDirectory.resolve("sdrtrunk-before-v21-" + identity + ".sqlite");
-        Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".upgrade-" +
+        Path backup = backupDirectory.resolve("sdrtrunk-before-application-migration-" + identity + ".sqlite");
+        Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".migration-" +
             UUID.randomUUID());
 
         try
@@ -208,7 +205,7 @@ public final class PreviousBuildUpgradeService
                 throw validationFailure;
             }
 
-            return new UpgradeResult(false, backup, sourceVersion, helperOutput);
+            return new MigrationResult(false, backup, sourceState, helperOutput);
         }
         finally
         {
@@ -217,9 +214,9 @@ public final class PreviousBuildUpgradeService
     }
 
     /**
-     * Reads the P25 activity schema version without creating or repairing anything.
+     * Reads all application-migrator schema versions without creating or repairing anything.
      */
-    public static int readP25ActivitySchemaVersion(Path database) throws IOException, SQLException
+    public static MigrationState readMigrationState(Path database) throws IOException, SQLException
     {
         Path normalized = database.toAbsolutePath().normalize();
 
@@ -228,16 +225,60 @@ public final class PreviousBuildUpgradeService
             throw new IOException("SDRTrunk SQLite database does not exist: " + normalized);
         }
 
-        try(Connection connection = openReadOnly(normalized);
-            var statement = connection.prepareStatement("SELECT value FROM database_metadata WHERE key=?"))
+        try(Connection connection = openReadOnly(normalized))
         {
-            statement.setString(1, VERSION_KEY);
+            int aliasVersion = readRequiredVersion(connection, ALIAS_VERSION_KEY, "Alias");
+            int p25Version = readRequiredVersion(connection, P25_VERSION_KEY, "P25 activity");
+            Integer trunkedSiteVersion = readOptionalVersion(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY,
+                "trunked-site");
+            return new MigrationState(aliasVersion, p25Version, trunkedSiteVersion);
+        }
+    }
+
+    /**
+     * Compatibility accessor for callers that only need the P25 component.
+     */
+    public static int readP25ActivitySchemaVersion(Path database) throws IOException, SQLException
+    {
+        return readMigrationState(database).p25Version();
+    }
+
+    private MigrationState requireSupportedState(Path database) throws IOException, SQLException
+    {
+        MigrationState state = readMigrationState(database);
+
+        if(!state.supported())
+        {
+            throw new IOException("The Application Migrator supports Alias schema v2 or v3, P25 activity schema " +
+                "v19, v20, or v21, and an absent or v2 trunked-site schema. Found " + state.description() + ".");
+        }
+
+        return state;
+    }
+
+    private static int readRequiredVersion(Connection connection, String key, String label) throws SQLException
+    {
+        Integer version = readOptionalVersion(connection, key, label);
+
+        if(version == null)
+        {
+            throw new SQLException("The database does not identify its " + label + " schema version.");
+        }
+
+        return version;
+    }
+
+    private static Integer readOptionalVersion(Connection connection, String key, String label) throws SQLException
+    {
+        try(var statement = connection.prepareStatement("SELECT value FROM database_metadata WHERE key=?"))
+        {
+            statement.setString(1, key);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(!resultSet.next())
                 {
-                    throw new SQLException("The database does not identify its P25 activity schema version.");
+                    return null;
                 }
 
                 String value = resultSet.getString(1);
@@ -248,33 +289,10 @@ public final class PreviousBuildUpgradeService
                 }
                 catch(NumberFormatException e)
                 {
-                    throw new SQLException("Invalid P25 activity schema version: " + value, e);
+                    throw new SQLException("Invalid " + label + " schema version: " + value, e);
                 }
             }
         }
-    }
-
-    private int requireSupportedVersion(Path database) throws IOException, SQLException
-    {
-        int version = readP25ActivitySchemaVersion(database);
-
-        if(!isSupportedSourceVersion(version) && version != CURRENT_VERSION)
-        {
-            throw new IOException("Previous-build import supports P25 activity database versions " +
-                supportedSourceVersionsLabel() + " or v" + CURRENT_VERSION + ". Found v" + version + ".");
-        }
-
-        return version;
-    }
-
-    public static boolean isSupportedSourceVersion(int version)
-    {
-        return SUPPORTED_SOURCE_VERSIONS.contains(version);
-    }
-
-    public static String supportedSourceVersionsLabel()
-    {
-        return "v19 or v20";
     }
 
     private static void validateGlobalDatabase(Path database) throws IOException, SQLException
@@ -399,7 +417,7 @@ public final class PreviousBuildUpgradeService
         try
         {
             Files.copy(backup, restore);
-            requireNoSidecars(database, "The upgraded database is still active, so its safety backup cannot be " +
+            requireNoSidecars(database, "The migrated database is still active, so its safety backup cannot be " +
                 "restored automatically.");
             moveAtomicallyReplacing(restore, database);
         }
@@ -517,7 +535,7 @@ public final class PreviousBuildUpgradeService
         catch(AtomicMoveNotSupportedException e)
         {
             throw new IOException("This drive does not support the atomic database replacement required for a " +
-                "safe upgrade.", e);
+                "safe migration.", e);
         }
     }
 
@@ -574,7 +592,7 @@ public final class PreviousBuildUpgradeService
 
         if(usable < required)
         {
-            throw new IOException("Not enough free space for a safe upgrade. Required approximately " +
+            throw new IOException("Not enough free space for a safe migration. Required approximately " +
                 humanSize(required) + "; available " + humanSize(usable) + ".");
         }
     }
@@ -649,8 +667,61 @@ public final class PreviousBuildUpgradeService
             throws IOException, InterruptedException;
     }
 
-    public record UpgradeResult(boolean importedPreviousProfile, Path safetyBackup, int sourceVersion,
-                                String helperOutput)
+    public record MigrationState(int aliasVersion, int p25Version, Integer trunkedSiteVersion)
     {
+        public boolean supported()
+        {
+            return SUPPORTED_ALIAS_VERSIONS.contains(aliasVersion) &&
+                SUPPORTED_P25_VERSIONS.contains(p25Version) &&
+                (trunkedSiteVersion == null || trunkedSiteVersion == TrunkedSiteSchema.SCHEMA_VERSION);
+        }
+
+        public boolean requiresMigration()
+        {
+            return aliasVersion != CURRENT_ALIAS_VERSION || p25Version != CURRENT_P25_VERSION ||
+                !Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion);
+        }
+
+        public String description()
+        {
+            return "Alias v" + aliasVersion + ", P25 activity v" + p25Version + ", and trunked-site " +
+                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion);
+        }
+
+        public String requiredChanges()
+        {
+            List<String> changes = new java.util.ArrayList<>();
+
+            if(aliasVersion != CURRENT_ALIAS_VERSION)
+            {
+                changes.add("Alias v" + aliasVersion + " -> v" + CURRENT_ALIAS_VERSION);
+            }
+
+            if(p25Version != CURRENT_P25_VERSION)
+            {
+                changes.add("P25 activity v" + p25Version + " -> v" + CURRENT_P25_VERSION);
+            }
+
+            if(trunkedSiteVersion == null)
+            {
+                changes.add("trunked-site not installed -> v" + TrunkedSiteSchema.SCHEMA_VERSION);
+            }
+            else if(trunkedSiteVersion != TrunkedSiteSchema.SCHEMA_VERSION)
+            {
+                changes.add("trunked-site v" + trunkedSiteVersion + " -> v" +
+                    TrunkedSiteSchema.SCHEMA_VERSION);
+            }
+
+            return String.join(", ", changes);
+        }
+    }
+
+    public record MigrationResult(boolean importedPreviousProfile, Path safetyBackup, MigrationState sourceState,
+                                  String helperOutput)
+    {
+        public int sourceVersion()
+        {
+            return sourceState.p25Version();
+        }
     }
 }

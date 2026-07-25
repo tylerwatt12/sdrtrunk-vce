@@ -22,38 +22,13 @@ import java.util.List;
 public final class SdrTrunkDatabaseSchema
 {
     public static final int ALIAS_SCHEMA_VERSION = 3;
+    public static final int PREVIOUS_ALIAS_SCHEMA_VERSION = 2;
     public static final int CONFIGURATION_SCHEMA_VERSION = 2;
     public static final int SETTINGS_SCHEMA_VERSION = 2;
     public static final int ICON_SCHEMA_VERSION = 2;
 
-    private static final List<SqliteSchemaValidator.Table> TABLES = List.of(
-        new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
-        new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "description", "alias_list_name",
-            "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable",
-            "priority"),
-        new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "sort_order",
-            "channel_name"),
-        new SqliteSchemaValidator.Table("alias_talkgroup", "id", "alias_id", "sort_order", "protocol", "value",
-            "min_value", "max_value", "wacn", "system_id", "fully_qualified", "ranged"),
-        new SqliteSchemaValidator.Table("alias_radio", "id", "alias_id", "sort_order", "protocol", "value",
-            "min_value", "max_value", "wacn", "system_id", "fully_qualified", "ranged"),
-        new SqliteSchemaValidator.Table("alias_status", "id", "alias_id", "sort_order", "status_kind", "status"),
-        new SqliteSchemaValidator.Table("alias_tone_sequence", "id", "alias_id", "sort_order", "tone_sequence"),
-        new SqliteSchemaValidator.Table("alias_text_identifier", "id", "alias_id", "sort_order",
-            "identifier_type", "text_value", "text_value_2", "numeric_value"),
-        new SqliteSchemaValidator.Table("alias_action", "id", "alias_id", "sort_order", "type", "interval",
-            "period", "path", "script"),
-        new SqliteSchemaValidator.Table("configuration_channel", "id", "sort_order", "system_name", "site_name",
-            "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
-            "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",
-            "event_logging_enabled", "config_json"),
-        new SqliteSchemaValidator.Table("configuration_channel_map", "id", "sort_order", "name", "config_json"),
-        new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "sort_order", "name",
-            "server_type", "enabled", "host", "port", "delay_ms", "maximum_recording_age_ms", "config_json"),
-        new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
-        new SqliteSchemaValidator.Table("application_icons", "key", "icons_json", "updated_at_ms")
-    );
-
+    private static final List<SqliteSchemaValidator.Table> TABLES = tables(true);
+    private static final List<SqliteSchemaValidator.Table> ALIAS_V2_TABLES = tables(false);
     private static final List<String> INDEXES = List.of(
         "idx_alias_sort",
         "idx_alias_list_name",
@@ -79,17 +54,59 @@ public final class SdrTrunkDatabaseSchema
         "idx_configuration_broadcast_sort",
         "idx_configuration_broadcast_type"
     );
-
-    private static final List<SqliteSchemaValidator.Metadata> METADATA = List.of(
-        new SqliteSchemaValidator.Metadata("alias_schema_version", Integer.toString(ALIAS_SCHEMA_VERSION)),
-        new SqliteSchemaValidator.Metadata("configuration_schema_version",
-            Integer.toString(CONFIGURATION_SCHEMA_VERSION)),
-        new SqliteSchemaValidator.Metadata("settings_schema_version", Integer.toString(SETTINGS_SCHEMA_VERSION)),
-        new SqliteSchemaValidator.Metadata("icon_schema_version", Integer.toString(ICON_SCHEMA_VERSION))
-    );
+    private static final List<SqliteSchemaValidator.Metadata> METADATA = metadata(ALIAS_SCHEMA_VERSION);
+    private static final List<SqliteSchemaValidator.Metadata> ALIAS_V2_METADATA =
+        metadata(PREVIOUS_ALIAS_SCHEMA_VERSION);
 
     private SdrTrunkDatabaseSchema()
     {
+    }
+
+    private static List<SqliteSchemaValidator.Table> tables(boolean includeAliasDescription)
+    {
+        SqliteSchemaValidator.Table aliasTable = includeAliasDescription ?
+            new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "description", "alias_list_name",
+                "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable",
+                "priority") :
+            new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "alias_list_name", "group_name",
+                "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable", "priority");
+
+        return List.of(
+            new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
+            aliasTable,
+            new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "sort_order",
+                "channel_name"),
+            new SqliteSchemaValidator.Table("alias_talkgroup", "id", "alias_id", "sort_order", "protocol", "value",
+                "min_value", "max_value", "wacn", "system_id", "fully_qualified", "ranged"),
+            new SqliteSchemaValidator.Table("alias_radio", "id", "alias_id", "sort_order", "protocol", "value",
+                "min_value", "max_value", "wacn", "system_id", "fully_qualified", "ranged"),
+            new SqliteSchemaValidator.Table("alias_status", "id", "alias_id", "sort_order", "status_kind", "status"),
+            new SqliteSchemaValidator.Table("alias_tone_sequence", "id", "alias_id", "sort_order", "tone_sequence"),
+            new SqliteSchemaValidator.Table("alias_text_identifier", "id", "alias_id", "sort_order",
+                "identifier_type", "text_value", "text_value_2", "numeric_value"),
+            new SqliteSchemaValidator.Table("alias_action", "id", "alias_id", "sort_order", "type", "interval",
+                "period", "path", "script"),
+            new SqliteSchemaValidator.Table("configuration_channel", "id", "sort_order", "system_name", "site_name",
+                "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
+                "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",
+                "event_logging_enabled", "config_json"),
+            new SqliteSchemaValidator.Table("configuration_channel_map", "id", "sort_order", "name", "config_json"),
+            new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "sort_order", "name",
+                "server_type", "enabled", "host", "port", "delay_ms", "maximum_recording_age_ms", "config_json"),
+            new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
+            new SqliteSchemaValidator.Table("application_icons", "key", "icons_json", "updated_at_ms")
+        );
+    }
+
+    private static List<SqliteSchemaValidator.Metadata> metadata(int aliasSchemaVersion)
+    {
+        return List.of(
+            new SqliteSchemaValidator.Metadata("alias_schema_version", Integer.toString(aliasSchemaVersion)),
+            new SqliteSchemaValidator.Metadata("configuration_schema_version",
+                Integer.toString(CONFIGURATION_SCHEMA_VERSION)),
+            new SqliteSchemaValidator.Metadata("settings_schema_version", Integer.toString(SETTINGS_SCHEMA_VERSION)),
+            new SqliteSchemaValidator.Metadata("icon_schema_version", Integer.toString(ICON_SCHEMA_VERSION))
+        );
     }
 
     public static void create(Connection connection) throws SQLException
@@ -301,5 +318,15 @@ public final class SdrTrunkDatabaseSchema
     public static void validate(Connection connection) throws SQLException
     {
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, List.of(), METADATA);
+    }
+
+    /**
+     * Validates the previous Alias v2 shape before the application migrator updates a staged database.
+     *
+     * <p>Normal startup must continue to call {@link #validate(Connection)} and accept only the current schema.</p>
+     */
+    public static void validateAliasV2ForUpgrade(Connection connection) throws SQLException
+    {
+        SqliteSchemaValidator.validate(connection, ALIAS_V2_TABLES, INDEXES, List.of(), ALIAS_V2_METADATA);
     }
 }

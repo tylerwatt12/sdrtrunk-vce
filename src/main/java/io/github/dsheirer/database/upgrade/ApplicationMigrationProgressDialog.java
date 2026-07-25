@@ -29,11 +29,11 @@ import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 
 /**
- * Small modal progress window for the pre-startup database upgrade.
+ * Small modal progress window for the pre-startup Application Migrator.
  */
-public final class UpgradeProgressDialog
+public final class ApplicationMigrationProgressDialog
 {
-    private UpgradeProgressDialog()
+    private ApplicationMigrationProgressDialog()
     {
     }
 
@@ -84,7 +84,7 @@ public final class UpgradeProgressDialog
     {
         JDialog dialog = new JDialog(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-        JLabel status = new JLabel("Preparing upgrade...");
+        JLabel status = new JLabel("Preparing migration...");
         JProgressBar progress = new JProgressBar();
         progress.setIndeterminate(true);
         JPanel content = new JPanel(new BorderLayout(0, 12));
@@ -144,6 +144,6 @@ public final class UpgradeProgressDialog
     @FunctionalInterface
     public interface Operation<T>
     {
-        T run(PreviousBuildUpgradeService.ProgressListener progress) throws Exception;
+        T run(ApplicationMigrationService.ProgressListener progress) throws Exception;
     }
 }

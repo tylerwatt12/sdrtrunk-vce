@@ -12,9 +12,9 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.PreviousBuildLocator;
-import io.github.dsheirer.database.upgrade.PreviousBuildUpgradeService;
-import io.github.dsheirer.database.upgrade.UpgradeProgressDialog;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import java.awt.GraphicsEnvironment;
@@ -34,7 +34,7 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 public final class SdrTrunkDatabaseBootstrap
 {
     private static final String TITLE = "sdrtrunk-vce Setup";
-    private static final String UPGRADE_TITLE = "sdrtrunk-vce Upgrade Assistant";
+    private static final String MIGRATOR_TITLE = "sdrtrunk-vce Application Migrator";
 
     private SdrTrunkDatabaseBootstrap()
     {
@@ -54,35 +54,43 @@ public final class SdrTrunkDatabaseBootstrap
                     "--upgrade-data or choose a new data folder.");
             }
 
-            int version = PreviousBuildUpgradeService.readP25ActivitySchemaVersion(databasePath);
+            ApplicationMigrationService.MigrationState state =
+                ApplicationMigrationService.readMigrationState(databasePath);
 
-            if(PreviousBuildUpgradeService.isSupportedSourceVersion(version))
+            if(!state.supported())
+            {
+                throw new IOException("The Application Migrator cannot update this database. Supported inputs " +
+                    "are Alias v2 or v3, P25 activity v19, v20, or v21, and an absent or v2 trunked-site " +
+                    "schema. Found " + state.description() + ".");
+            }
+
+            if(state.requiresMigration())
             {
                 if(GraphicsEnvironment.isHeadless() && !options.upgradeCurrent())
                 {
-                    throw new IOException("The portable database is P25 activity schema v" + version +
-                        ". Start once with --upgrade-current to create a safety backup and upgrade it to v" +
-                        PreviousBuildUpgradeService.CURRENT_VERSION + ".");
+                    throw new IOException("The portable database requires these changes: " +
+                        state.requiredChanges() + ". Start once with --upgrade-current to let the Application " +
+                        "Migrator create a safety backup and update it.");
                 }
 
-                if(!options.upgradeCurrent() && !confirmCurrentUpgrade(databasePath))
+                if(!options.upgradeCurrent() && !confirmCurrentMigration(databasePath, state))
                 {
                     return BootstrapResult.cancelled();
                 }
 
-                PreviousBuildUpgradeService service = new PreviousBuildUpgradeService();
-                PreviousBuildUpgradeService.UpgradeResult result;
+                ApplicationMigrationService service = new ApplicationMigrationService();
+                ApplicationMigrationService.MigrationResult result;
 
                 if(GraphicsEnvironment.isHeadless())
                 {
-                    result = service.upgradeCurrent(dataRoot, System.out::println);
+                    result = service.migrateCurrent(dataRoot, System.out::println);
                 }
                 else
                 {
                     try
                     {
-                        result = UpgradeProgressDialog.run(null, UPGRADE_TITLE,
-                            progress -> service.upgradeCurrent(dataRoot, progress));
+                        result = ApplicationMigrationProgressDialog.run(null, MIGRATOR_TITLE,
+                            progress -> service.migrateCurrent(dataRoot, progress));
                     }
                     catch(InterruptedException e)
                     {
@@ -95,18 +103,13 @@ public final class SdrTrunkDatabaseBootstrap
                     }
                     catch(Exception e)
                     {
-                        throw new IOException("Database upgrade failed: " + message(e), e);
+                        throw new IOException("Database migration failed: " + message(e), e);
                     }
 
                     JOptionPane.showMessageDialog(null,
-                        "Your database was upgraded successfully.\n\nSafety backup:\n" + result.safetyBackup(),
-                        UPGRADE_TITLE, JOptionPane.INFORMATION_MESSAGE);
+                        "Your database was migrated successfully.\n\nSafety backup:\n" + result.safetyBackup(),
+                        MIGRATOR_TITLE, JOptionPane.INFORMATION_MESSAGE);
                 }
-            }
-            else if(options.upgradeCurrent())
-            {
-                throw new IOException("--upgrade-current supports P25 activity database " +
-                    PreviousBuildUpgradeService.supportedSourceVersionsLabel() + " only. Found v" + version + ".");
             }
 
             SdrTrunkDatabaseStartup.validateGlobalDatabase(databasePath);
@@ -136,7 +139,7 @@ public final class SdrTrunkDatabaseBootstrap
             Path source = PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
                 new IOException("The selected location does not contain portable sdrtrunk-vce data: " +
                     options.upgradeData()));
-            new PreviousBuildUpgradeService().importPrevious(source, dataRoot, System.out::println);
+            new ApplicationMigrationService().importPrevious(source, dataRoot, System.out::println);
             result = BootstrapResult.existingProfile();
         }
         else if(GraphicsEnvironment.isHeadless())
@@ -210,7 +213,7 @@ public final class SdrTrunkDatabaseBootstrap
                                 "That location does not contain database/" +
                                     SdrTrunkDatabasePath.DATABASE_FILENAME + ".\n\nChoose the previous app, " +
                                     "install folder, data folder, or SQLite database.",
-                                UPGRADE_TITLE, JOptionPane.WARNING_MESSAGE);
+                                    MIGRATOR_TITLE, JOptionPane.WARNING_MESSAGE);
                             continue;
                         }
 
@@ -259,7 +262,7 @@ public final class SdrTrunkDatabaseBootstrap
     {
         if(!previousBuilds.isEmpty())
         {
-            Object[] buttons = {"Upgrade Using Previous Data", "Choose Another...", "Import Older XML...",
+            Object[] buttons = {"Migrate Previous Data", "Choose Another...", "Import Older XML...",
                 "Set Up as New", "Quit"};
             String found = previousBuilds.size() == 1 ? previousBuilds.get(0).toString() :
                 previousBuilds.size() + " nearby data folders";
@@ -315,32 +318,33 @@ public final class SdrTrunkDatabaseBootstrap
     private static boolean importPrevious(Path source, Path target) throws Exception
     {
         int confirmation = JOptionPane.showConfirmDialog(null,
-            "Close the previous sdrtrunk-vce app before continuing.\n\nThe Upgrade Assistant will copy its setup, " +
+            "Close the previous sdrtrunk-vce app before continuing.\n\nThe Application Migrator will copy its setup, " +
                 "update the copied database, and leave the previous data unchanged.\n\nPrevious data:\n" + source +
-                "\n\nContinue?", UPGRADE_TITLE, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+                "\n\nContinue?", MIGRATOR_TITLE, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
 
         if(confirmation != JOptionPane.OK_OPTION)
         {
             return false;
         }
 
-        PreviousBuildUpgradeService service = new PreviousBuildUpgradeService();
-        UpgradeProgressDialog.run(null, UPGRADE_TITLE,
+        ApplicationMigrationService service = new ApplicationMigrationService();
+        ApplicationMigrationProgressDialog.run(null, MIGRATOR_TITLE,
             progress -> service.importPrevious(source, target, progress));
         JOptionPane.showMessageDialog(null,
-            "Upgrade complete. Your previous installation and its data were left unchanged.", UPGRADE_TITLE,
+            "Migration complete. Your previous installation and its data were left unchanged.", MIGRATOR_TITLE,
             JOptionPane.INFORMATION_MESSAGE);
         return true;
     }
 
-    private static boolean confirmCurrentUpgrade(Path database)
+    private static boolean confirmCurrentMigration(Path database, ApplicationMigrationService.MigrationState state)
     {
-        Object[] buttons = {"Upgrade and Start", "Quit"};
+        Object[] buttons = {"Migrate and Start", "Quit"};
         int result = JOptionPane.showOptionDialog(null,
             "This database was created by an earlier alpha and must be updated before this build can start.\n\n" +
+                "Required changes: " + state.requiredChanges() + "\n\n" +
                 "Close every other sdrtrunk-vce window first. A safety backup will be created before the staged " +
                 "copy is updated.\n\nDatabase:\n" + database,
-            UPGRADE_TITLE, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, buttons, buttons[0]);
+            MIGRATOR_TITLE, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, buttons, buttons[0]);
         return result == 0;
     }
 
@@ -352,7 +356,7 @@ public final class SdrTrunkDatabaseBootstrap
         }
 
         Object selected = JOptionPane.showInputDialog(null, "Choose the previous data you want to use:",
-            UPGRADE_TITLE, JOptionPane.QUESTION_MESSAGE, null, previousBuilds.toArray(), previousBuilds.get(0));
+            MIGRATOR_TITLE, JOptionPane.QUESTION_MESSAGE, null, previousBuilds.toArray(), previousBuilds.get(0));
         return selected instanceof Path path ? path : null;
     }
 

@@ -86,16 +86,20 @@ class PreviousBuildLocatorTest
     }
 
     @Test
-    void ignoresIncompleteInternalUpgradeStagingDirectories() throws Exception
+    void ignoresCurrentAndLegacyInternalMigrationStagingDirectories() throws Exception
     {
         Path releases = Files.createDirectories(mTemporaryFolder.resolve("releases"));
         Path currentInstall = Files.createDirectories(releases.resolve("sdrtrunk-vce-alpha-6"));
         Path currentData = createPortableDataRoot(currentInstall.resolve("data"));
         Path staleStage = createPortableDataRoot(releases.resolve(
             ".sdrtrunk-vce-alpha-6-data.upgrade-12345678-1234-1234-1234-123456789abc"));
+        Path currentStage = createPortableDataRoot(releases.resolve(
+            ".sdrtrunk-vce-alpha-6-data.migration-12345678-1234-1234-1234-123456789abc"));
 
         assertTrue(PreviousBuildLocator.resolveSelection(staleStage).isEmpty());
         assertTrue(PreviousBuildLocator.resolveSelection(SdrTrunkDatabasePath.getDatabasePath(staleStage)).isEmpty());
+        assertTrue(PreviousBuildLocator.resolveSelection(currentStage).isEmpty());
+        assertTrue(PreviousBuildLocator.resolveSelection(SdrTrunkDatabasePath.getDatabasePath(currentStage)).isEmpty());
         assertEquals(List.of(), PreviousBuildLocator.discover(currentInstall, currentData));
     }
 

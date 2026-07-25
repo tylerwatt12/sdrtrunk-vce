@@ -110,10 +110,10 @@ snapshot hash changes.
 
 No normal runtime path creates or repairs these tables or indexes. New databases create the independent
 `trunked_site_schema_version=2` subsystem in the single startup schema routine. The subsystem was introduced publicly
-at v2, so no public v1 migration is supported. Older databases selected through the Upgrade Assistant have no
-trunked-site subsystem; the bundled helper installs v2 only in the staged copy before validation and atomic promotion.
-An existing active database is validation-only at startup and must already contain the current schemas. The P25
-activity schema is v21; existing v19 or v20 databases use the backed-up staged-copy upgrade path described below.
+at v2, so no public v1 migration is supported. The bundled Application Migrator adds v2 when the subsystem is absent,
+and it does so only in a backed-up staged copy before validation and atomic promotion. An existing active database is
+otherwise validation-only at startup. The P25 activity schema is v21; the same Application Migrator updates supported
+v19 or v20 databases.
 
 ## Retention
 
@@ -172,5 +172,5 @@ quality history. Evidence remains valid through sustained decode loss and is cle
 shutdown snapshot, channel/configuration replacement, statistics disablement, or writer shutdown. Samples use the
 existing bounded statistics queue and single database writer. Existing retention, site-specific clear, and full reset
 paths already operate on this shared GUID-keyed table. New databases create the v21 index in the single startup schema
-routine. Existing public v19 and v20 databases are upgraded only by the explicit backed-up staged-copy helper; normal
-application startup never creates or repairs the index.
+routine. The Application Migrator adds it to supported v19 and v20 databases only on a backed-up staged copy; ordinary
+application services never create or repair the index.

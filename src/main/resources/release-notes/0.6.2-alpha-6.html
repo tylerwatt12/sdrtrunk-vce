@@ -40,8 +40,8 @@
 <h2>Before You Upgrade</h2>
 
 <ul>
-  <li><b>A database migration is required from Alpha 5.</b> Alpha 6 advances the P25 activity schema from version 19 to version 20. Stop SDRTrunk and run the supplied external <code>migrate-v19-to-v20-foreign-system-bands</code> tool before launching Alpha 6 against an existing Alpha 5 portable database.</li>
-  <li><b>Normal startup will not perform the migration.</b> The external tool checks database integrity, checkpoints pending WAL data, creates a timestamped backup, adds the bounded foreign-system band tables, updates the schema version, and verifies the result.</li>
+  <li><b>A database migration is required from Alpha 5.</b> Alpha 6 advanced the P25 activity schema from version 19 to version 20. The standalone utility originally supplied with Alpha 6 is retired from current builds; supported database changes now run only through the bundled Application Migrator.</li>
+  <li>The Application Migrator checkpoints pending WAL data, checks database integrity, creates a timestamped backup, migrates a staged copy, and verifies the complete result before startup continues.</li>
   <li>Back up the complete portable <code>data</code> folder before upgrading. Returning to Alpha 5 requires restoring the pre-migration database backup as well as the earlier application.</li>
   <li>Replace the application files instead of merging two releases together. Keep the portable data directory in its existing location.</li>
   <li>The legacy-playlist importer creates its own pre-import database backup, but that does not replace the full data-directory backup required before an application upgrade.</li>

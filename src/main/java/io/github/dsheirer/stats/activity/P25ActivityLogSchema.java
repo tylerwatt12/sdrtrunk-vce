@@ -163,8 +163,18 @@ public class P25ActivityLogSchema
     }
 
     /**
-     * Validates the public v20 shape for an explicit external upgrade. Normal application startup validates only the
-     * current schema through {@link #validate(Connection)}.
+     * Validates the v19 shape before the application migrator updates a staged database. Normal application startup
+     * validates only the current schema through {@link #validate(Connection)}.
+     */
+    public static void validateV19ForUpgrade(Connection connection) throws SQLException
+    {
+        SqliteSchemaValidator.validate(connection, V19_TABLES, V20_INDEXES, VIEWS,
+            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "19")));
+    }
+
+    /**
+     * Validates the v20 shape before the application migrator updates a staged database. Normal application startup
+     * validates only the current schema through {@link #validate(Connection)}.
      */
     public static void validateV20ForUpgrade(Connection connection) throws SQLException
     {
@@ -885,7 +895,7 @@ public class P25ActivityLogSchema
 
     /**
      * Creates the current and retained foreign-system band tables. This is called only by the startup schema creator
-     * for a new database and by the explicit external v19-to-v20 migration.
+     * for a new database and by the application migrator for a staged v19 database.
      */
     public static void createForeignSystemBandTables(Statement statement) throws SQLException
     {
@@ -923,7 +933,7 @@ public class P25ActivityLogSchema
 
     /**
      * Creates the retention-first index for the shared P25/DMR/NXDN control-channel quality buckets. This is called
-     * only by the startup schema creator for a new database and by the explicit external P25 activity schema upgrade.
+     * only by the startup schema creator for a new database and by the application migrator for a staged database.
      */
     public static void createControlChannelQualityRetentionIndex(Statement statement) throws SQLException
     {
@@ -1031,6 +1041,10 @@ public class P25ActivityLogSchema
             "dropped_bits", "last_valid_decode_ms"),
         table("logger_status", "key", "value", "updated_at_ms")
     );
+    private static final List<SqliteSchemaValidator.Table> V19_TABLES = TABLES.stream()
+        .filter(table -> !"p25_foreign_system_band".equals(table.name()) &&
+            !"p25_foreign_system_band_summary".equals(table.name()))
+        .toList();
 
     private static final List<String> V20_INDEXES = List.of(
         "idx_receiver_context_guid",

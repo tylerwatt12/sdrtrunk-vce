@@ -40,12 +40,22 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class PreviousBuildUpgradeServiceTest
+class ApplicationMigrationServiceTest
 {
     private static final String VERSION_KEY = "p25_activity_schema_version";
 
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void unsupportedTrunkedStateCannotBeMistakenForCurrent()
+    {
+        ApplicationMigrationService.MigrationState state =
+            new ApplicationMigrationService.MigrationState(3, 21, 3);
+
+        assertFalse(state.supported());
+        assertTrue(state.requiresMigration());
+    }
 
     @Test
     void importsV19ProfileWithRealChildHelperAndLeavesSourceUnchanged() throws Exception
@@ -77,7 +87,7 @@ class PreviousBuildUpgradeServiceTest
         Path targetRoot = mTemporaryFolder.resolve("sdrtrunk-vce-alpha6-data");
         List<String> progress = new ArrayList<>();
 
-        PreviousBuildUpgradeService.UpgradeResult result = new PreviousBuildUpgradeService()
+        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
             .importPrevious(sourceRoot, targetRoot, progress::add);
 
         assertTrue(result.importedPreviousProfile());
@@ -89,7 +99,7 @@ class PreviousBuildUpgradeServiceTest
             "Updating database", "Checking updated data", "Finishing"), progress);
 
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-        assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(targetDatabase));
+        assertEquals(21, ApplicationMigrationService.readP25ActivitySchemaVersion(targetDatabase));
         assertEquals(1, count(targetDatabase, "alias"));
         assertTrue(tableExists(targetDatabase, "p25_foreign_system_band"));
         assertTrue(tableExists(targetDatabase, "p25_foreign_system_band_summary"));
@@ -108,7 +118,7 @@ class PreviousBuildUpgradeServiceTest
         assertArrayEquals(sourceVaultHash, sha256(sourceVault));
         assertArrayEquals(jmbeContents, Files.readAllBytes(jmbe));
         assertArrayEquals(moduleContents, Files.readAllBytes(module));
-        assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(sourceDatabase));
+        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(sourceDatabase));
         assertFalse(tableExists(sourceDatabase, "p25_foreign_system_band"));
         assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
     }
@@ -122,7 +132,7 @@ class PreviousBuildUpgradeServiceTest
         byte[] sourceDatabaseHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("sdrtrunk-vce-current-data");
 
-        PreviousBuildUpgradeService.UpgradeResult result = new PreviousBuildUpgradeService()
+        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
@@ -131,25 +141,25 @@ class PreviousBuildUpgradeServiceTest
         assertTrue(result.helperOutput().contains("absent -> v2"));
 
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-        assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(targetDatabase));
+        assertEquals(21, ApplicationMigrationService.readP25ActivitySchemaVersion(targetDatabase));
         assertEquals(1, count(targetDatabase, "alias"));
         assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
         validateTrunkedSiteSchema(targetDatabase);
 
         assertArrayEquals(sourceDatabaseHash, sha256(sourceDatabase));
-        assertEquals(20, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(sourceDatabase));
+        assertEquals(20, ApplicationMigrationService.readP25ActivitySchemaVersion(sourceDatabase));
         assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
     }
 
     @Test
-    void upgradesCurrentV19DatabaseAndRetainsV19SafetyBackup() throws Exception
+    void migratesCurrentV19DatabaseAndRetainsV19SafetyBackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-data");
         Path database = createV19Database(dataRoot);
         insertAlias(database, "Fireground");
 
-        PreviousBuildUpgradeService.UpgradeResult result = new PreviousBuildUpgradeService()
-            .upgradeCurrent(dataRoot, null);
+        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+            .migrateCurrent(dataRoot, null);
 
         assertFalse(result.importedPreviousProfile());
         assertEquals(19, result.sourceVersion());
@@ -158,8 +168,10 @@ class PreviousBuildUpgradeServiceTest
         assertNotNull(result.safetyBackup());
         assertTrue(Files.isRegularFile(result.safetyBackup()));
         assertTrue(result.safetyBackup().startsWith(database.getParent().resolve("backups")));
+        assertTrue(result.safetyBackup().getFileName().toString()
+            .startsWith("sdrtrunk-before-application-migration-"));
 
-        assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(database));
+        assertEquals(21, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
         assertEquals(1, count(database, "alias"));
         try(Connection connection = open(database))
         {
@@ -167,11 +179,48 @@ class PreviousBuildUpgradeServiceTest
             TrunkedSiteSchema.validate(connection);
         }
 
-        assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(result.safetyBackup()));
+        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(result.safetyBackup()));
         assertEquals(1, count(result.safetyBackup(), "alias"));
         assertFalse(tableExists(result.safetyBackup(), "p25_foreign_system_band"));
         assertFalse(tableExists(result.safetyBackup(), "trunked_site_snapshot"));
         assertEquals("ok", scalar(result.safetyBackup(), "PRAGMA quick_check"));
+    }
+
+    @Test
+    void migratesCurrentAliasV2WhenOtherSchemasAreCurrent() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("alias-v2-current-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        makeAliasV2(database);
+        insertAlias(database, "Description Migration");
+
+        ApplicationMigrationService.MigrationState before =
+            ApplicationMigrationService.readMigrationState(database);
+        assertEquals(2, before.aliasVersion());
+        assertEquals(21, before.p25Version());
+        assertEquals(2, before.trunkedSiteVersion());
+        assertTrue(before.requiresMigration());
+        assertTrue(before.supported());
+
+        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+            .migrateCurrent(dataRoot, null);
+
+        assertFalse(result.importedPreviousProfile());
+        assertEquals(before, result.sourceState());
+        assertTrue(result.helperOutput().contains("Alias schema migration complete: v2 -> v3"));
+        assertNotNull(result.safetyBackup());
+
+        ApplicationMigrationService.MigrationState after =
+            ApplicationMigrationService.readMigrationState(database);
+        assertEquals(3, after.aliasVersion());
+        assertEquals(21, after.p25Version());
+        assertEquals(2, after.trunkedSiteVersion());
+        assertFalse(after.requiresMigration());
+        assertEquals(1, count(database, "alias"));
+        assertTrue(columnExists(database, "alias", "description"));
+        assertEquals(1, count(result.safetyBackup(), "alias"));
+        assertFalse(columnExists(result.safetyBackup(), "alias", "description"));
     }
 
     @Test
@@ -188,11 +237,11 @@ class PreviousBuildUpgradeServiceTest
 
         byte[] before = sha256(database);
         IOException exception = assertThrows(IOException.class,
-            () -> new PreviousBuildUpgradeService().upgradeCurrent(dataRoot, null));
+            () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains("database upgrade helper failed"));
+        assertTrue(exception.getMessage().contains("application database migrator failed"));
         assertArrayEquals(before, sha256(database));
-        assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(database));
+        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
         assertEquals(1, count(database, "alias"));
         assertFalse(tableExists(database, "p25_foreign_system_band"));
 
@@ -202,7 +251,7 @@ class PreviousBuildUpgradeServiceTest
         {
             List<Path> paths = backups.toList();
             assertEquals(1, paths.size());
-            assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(paths.getFirst()));
+            assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(paths.getFirst()));
             assertEquals(1, count(paths.getFirst(), "alias"));
         }
     }
@@ -221,12 +270,12 @@ class PreviousBuildUpgradeServiceTest
 
         byte[] before = sha256(database);
         IOException exception = assertThrows(IOException.class,
-            () -> new PreviousBuildUpgradeService().upgradeCurrent(dataRoot, null));
+            () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains("database upgrade helper failed"));
+        assertTrue(exception.getMessage().contains("application database migrator failed"));
         assertTrue(exception.getMessage().contains("ambiguous partial schema"));
         assertArrayEquals(before, sha256(database));
-        assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(database));
+        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
         assertEquals(1, count(database, "alias"));
         assertFalse(tableExists(database, "p25_foreign_system_band"));
         assertTrue(tableExists(database, "trunked_site_snapshot"));
@@ -247,9 +296,9 @@ class PreviousBuildUpgradeServiceTest
             statement.executeQuery("SELECT COUNT(*) FROM alias").close();
 
             IOException exception = assertThrows(IOException.class,
-                () -> new PreviousBuildUpgradeService().upgradeCurrent(dataRoot, null));
+                () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
             assertTrue(exception.getMessage().contains("still active"));
-            assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(database));
+            assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
             assertEquals(1, count(database, "alias"));
         }
     }
@@ -335,6 +384,15 @@ class PreviousBuildUpgradeServiceTest
         }
     }
 
+    private static void makeAliasV2(Path database) throws Exception
+    {
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE alias DROP COLUMN description");
+            SdrTrunkDatabaseStartup.setMetadata(connection, "alias_schema_version", "2");
+        }
+    }
+
     private static void storePortableDirectoryPreferences(Path database, Map<String,String> directories)
         throws Exception
     {
@@ -410,6 +468,24 @@ class PreviousBuildUpgradeServiceTest
             {
                 return resultSet.next();
             }
+        }
+    }
+
+    private static boolean columnExists(Path database, String table, String column) throws Exception
+    {
+        try(Connection connection = open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + table + ")"))
+        {
+            while(resultSet.next())
+            {
+                if(column.equals(resultSet.getString("name")))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 

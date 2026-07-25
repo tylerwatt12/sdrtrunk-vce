@@ -148,7 +148,7 @@ def publicPackagingTasks = ['runtimeZipCurrent', 'runtimeZipWindows', 'runtimeZi
 tasks.configureEach { candidate ->
     if(publicPackagingTasks.contains(candidate.name)) {
         candidate.dependsOn('verifyApprovedReleaseNotes')
-        candidate.dependsOn('verifyBundledDatabaseUpgradeHelper')
+        candidate.dependsOn('verifyBundledApplicationDatabaseMigrator')
     }
 }
 
@@ -413,17 +413,21 @@ jar {
     }
 }
 
-tasks.register('verifyBundledDatabaseUpgradeHelper') {
+tasks.register('verifyBundledApplicationDatabaseMigrator') {
     group = 'verification'
-    description = 'Verifies that packaged builds contain the compiled SQLite upgrade helper.'
+    description = 'Verifies that packaged builds contain the single application database migrator.'
     dependsOn jar
     inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
 
     doLast {
         def archive = inputs.files.singleFile
         def helperEntries = [
+            'io/github/dsheirer/database/upgrade/ApplicationDatabaseMigrator.class'
+        ]
+        def retiredEntries = [
             'io/github/dsheirer/database/upgrade/P25ActivitySchemaUpgrade.class',
-            'io/github/dsheirer/database/upgrade/TrunkedSiteSchemaInstaller.class'
+            'io/github/dsheirer/database/upgrade/TrunkedSiteSchemaInstaller.class',
+            'io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultMigrationTool.class'
         ]
         def zip = new java.util.zip.ZipFile(archive)
 
@@ -431,7 +435,13 @@ tasks.register('verifyBundledDatabaseUpgradeHelper') {
             helperEntries.each { helperEntry ->
                 if(zip.getEntry(helperEntry) == null) {
                     throw new GradleException(
-                        "Packaged database upgrade helper ${helperEntry} is missing from ${archive.name}")
+                        "Packaged application database migrator ${helperEntry} is missing from ${archive.name}")
+                }
+            }
+            retiredEntries.each { retiredEntry ->
+                if(zip.getEntry(retiredEntry) != null) {
+                    throw new GradleException(
+                        "Retired standalone migration entry point ${retiredEntry} is still present in ${archive.name}")
                 }
             }
         } finally {
@@ -476,7 +486,7 @@ tasks.register('verifyNoBundledVoiceDecryption') {
 }
 
 check.dependsOn tasks.named('verifyNoBundledVoiceDecryption')
-check.dependsOn tasks.named('verifyBundledDatabaseUpgradeHelper')
+check.dependsOn tasks.named('verifyBundledApplicationDatabaseMigrator')
 
 idea {
     module {
