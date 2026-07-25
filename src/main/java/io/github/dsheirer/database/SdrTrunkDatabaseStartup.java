@@ -12,7 +12,6 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
-import io.github.dsheirer.record.RecordedCallCatalogSchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
@@ -50,11 +49,9 @@ public final class SdrTrunkDatabaseStartup
             SdrTrunkDatabaseSchema.create(connection);
             P25ActivityLogSchema.create(connection);
             TrunkedSiteSchema.create(connection);
-            RecordedCallCatalogSchema.create(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
-            RecordedCallCatalogSchema.validate(connection);
         }
     }
 
@@ -68,7 +65,6 @@ public final class SdrTrunkDatabaseStartup
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
-            RecordedCallCatalogSchema.validate(connection);
         }
     }
 

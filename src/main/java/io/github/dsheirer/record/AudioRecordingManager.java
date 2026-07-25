@@ -20,22 +20,26 @@
 package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.string.StringIdentifier;
+import io.github.dsheirer.identifier.tone.Tone;
+import io.github.dsheirer.identifier.tone.ToneIdentifier;
+import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.util.StringUtils;
 import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.Objects;
-import java.util.Set;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.List;
+import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,38 +50,13 @@ import org.slf4j.LoggerFactory;
 public class AudioRecordingManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioRecordingManager.class);
-    private static final int MAXIMUM_QUEUED_CALLS = 128;
-    private static final long MAXIMUM_SOURCE_BYTES_PER_CALL = 64L * 1024L * 1024L;
-    private static final long MAXIMUM_QUEUED_SOURCE_BYTES = 256L * 1024L * 1024L;
-    private static final int RECONCILIATION_BATCH_ENTRIES = 128;
-    private static final int MAXIMUM_PENDING_CATALOG_RECOVERIES =
-        RECONCILIATION_BATCH_ENTRIES + MAXIMUM_QUEUED_CALLS;
-    private static final long RECONCILIATION_INTERVAL_SECONDS = 30;
-    private static final Duration STALE_WORK_AGE = Duration.ofHours(1);
-    private final ArrayBlockingQueue<QueuedCall> mCompletedAudioCallQueue =
-        new ArrayBlockingQueue<>(MAXIMUM_QUEUED_CALLS);
-    private final ArrayBlockingQueue<Path> mPendingCatalogRecoveries =
-        new ArrayBlockingQueue<>(MAXIMUM_PENDING_CATALOG_RECOVERIES);
-    private final AtomicLong mQueuedSourceBytes = new AtomicLong();
-    private final AtomicLong mDroppedRecordings = new AtomicLong();
-    private final AtomicLong mCatalogPausedRecordings = new AtomicLong();
-    private final AtomicBoolean mCatalogBackpressured = new AtomicBoolean();
-    private final ReentrantLock mProcessingLock = new ReentrantLock();
-    private final ReentrantLock mHandoffLock = new ReentrantLock();
-    private final ReentrantLock mReconciliationLock = new ReentrantLock();
-    private final Set<Path> mActiveRecordingPaths = ConcurrentHashMap.newKeySet();
-    private volatile boolean mAcceptingCalls;
+    private LinkedTransferQueue<CompletedAudioCall> mCompletedAudioCallQueue = new LinkedTransferQueue<>();
     private ScheduledFuture<?> mQueueProcessorHandle;
-    private ScheduledFuture<?> mReconciliationHandle;
-    private ManagedRecordingReconciler mReconciler;
-    private Path mReconciliationRoot;
-    private volatile Path mRecordingBasePath;
-    private final UserPreferences mUserPreferences;
-    private final ScheduledExecutorService mScheduler;
+    private UserPreferences mUserPreferences;
     private final Consumer<CompletedAudioCall> mRecordedCallConsumer;
-    private final Consumer<RecordedCallArtifact> mRecordedArtifactConsumer;
-    private final Consumer<Path> mRecoveredArtifactConsumer;
-    private final RecordedCallCatalogHandoff mCatalogHandoff;
+    private int mUnknownAudioRecordingIndex = 1;
+    private int mDuplicateAudioRecordingSuffix = 1;
+    private String mPreviousRecordingPath = null;
 
     /**
      * Constructs an instance
@@ -85,173 +64,38 @@ public class AudioRecordingManager
      */
     public AudioRecordingManager(UserPreferences userPreferences)
     {
-        this(userPreferences, null, null, null, null, ThreadPool.SCHEDULED);
+        this(userPreferences, null);
     }
 
     public AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer)
     {
-        this(userPreferences, recordedCallConsumer, null, null, null, ThreadPool.SCHEDULED);
-    }
-
-    public AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer,
-                                 Consumer<RecordedCallArtifact> recordedArtifactConsumer)
-    {
-        this(userPreferences, recordedCallConsumer, recordedArtifactConsumer, null, null, ThreadPool.SCHEDULED);
-    }
-
-    /**
-     * Constructs a recording manager with non-blocking handoffs for newly completed and startup-recovered artifacts.
-     */
-    public AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer,
-                                 Consumer<RecordedCallArtifact> recordedArtifactConsumer,
-                                 Consumer<Path> recoveredArtifactConsumer)
-    {
-        this(userPreferences, recordedCallConsumer, recordedArtifactConsumer, recoveredArtifactConsumer, null,
-            ThreadPool.SCHEDULED);
-    }
-
-    /**
-     * Creates a manager whose new and recovered recordings must be accepted by the bounded retention catalog.
-     */
-    public static AudioRecordingManager withCatalogHandoff(UserPreferences userPreferences,
-                                                            Consumer<CompletedAudioCall> recordedCallConsumer,
-                                                            RecordedCallCatalogHandoff catalogHandoff)
-    {
-        return new AudioRecordingManager(userPreferences, recordedCallConsumer, null, null,
-            Objects.requireNonNull(catalogHandoff, "Catalog handoff cannot be null"), ThreadPool.SCHEDULED);
-    }
-
-    AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer,
-                          Consumer<RecordedCallArtifact> recordedArtifactConsumer,
-                          ScheduledExecutorService scheduler)
-    {
-        this(userPreferences, recordedCallConsumer, recordedArtifactConsumer, null, null, scheduler);
-    }
-
-    AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer,
-                          Consumer<RecordedCallArtifact> recordedArtifactConsumer,
-                          Consumer<Path> recoveredArtifactConsumer, ScheduledExecutorService scheduler)
-    {
-        this(userPreferences, recordedCallConsumer, recordedArtifactConsumer, recoveredArtifactConsumer, null,
-            scheduler);
-    }
-
-    static AudioRecordingManager withCatalogHandoff(UserPreferences userPreferences,
-                                                     Consumer<CompletedAudioCall> recordedCallConsumer,
-                                                     RecordedCallCatalogHandoff catalogHandoff,
-                                                     ScheduledExecutorService scheduler)
-    {
-        return new AudioRecordingManager(userPreferences, recordedCallConsumer, null, null,
-            Objects.requireNonNull(catalogHandoff, "Catalog handoff cannot be null"), scheduler);
-    }
-
-    private AudioRecordingManager(UserPreferences userPreferences,
-                                  Consumer<CompletedAudioCall> recordedCallConsumer,
-                                  Consumer<RecordedCallArtifact> recordedArtifactConsumer,
-                                  Consumer<Path> recoveredArtifactConsumer,
-                                  RecordedCallCatalogHandoff catalogHandoff,
-                                  ScheduledExecutorService scheduler)
-    {
-        mUserPreferences = Objects.requireNonNull(userPreferences, "User preferences cannot be null");
+        mUserPreferences = userPreferences;
         mRecordedCallConsumer = recordedCallConsumer;
-        mRecordedArtifactConsumer = recordedArtifactConsumer;
-        mRecoveredArtifactConsumer = recoveredArtifactConsumer;
-        mCatalogHandoff = catalogHandoff;
-        mScheduler = Objects.requireNonNull(scheduler, "Recording scheduler cannot be null");
     }
 
     /**
      * Starts the manager and begins completed-call recording.
      */
-    public synchronized void start()
+    public void start()
     {
         if(mQueueProcessorHandle == null)
         {
-            mHandoffLock.lock();
-
-            try
-            {
-                if(mRecordingBasePath == null)
-                {
-                    //The managed recording root is fixed for this manager's lifetime. Directory changes require an
-                    //explicit offline migration so the writer and retention catalog can never diverge.
-                    mRecordingBasePath = ManagedRecordingPath.prepareRoot(
-                        mUserPreferences.getDirectoryPreference().getDirectoryRecording());
-                }
-
-                reconcileManagedRecordings();
-
-                try
-                {
-                    mQueueProcessorHandle = mScheduler.scheduleAtFixedRate(new QueueProcessor(),
-                        0, 1, TimeUnit.SECONDS);
-                    mReconciliationHandle = mScheduler.scheduleWithFixedDelay(new ReconciliationProcessor(),
-                        RECONCILIATION_INTERVAL_SECONDS, RECONCILIATION_INTERVAL_SECONDS, TimeUnit.SECONDS);
-                    mAcceptingCalls = true;
-                }
-                catch(RuntimeException exception)
-                {
-                    mAcceptingCalls = false;
-                    ScheduledFuture<?> processor = mQueueProcessorHandle;
-                    mQueueProcessorHandle = null;
-
-                    if(processor != null)
-                    {
-                        processor.cancel(false);
-                    }
-
-                    closeReconciler();
-                    throw exception;
-                }
-            }
-            finally
-            {
-                mHandoffLock.unlock();
-            }
+            mQueueProcessorHandle = ThreadPool.SCHEDULED.scheduleAtFixedRate(new QueueProcessor(),
+                0, 1, TimeUnit.SECONDS);
         }
     }
 
     /**
      * Stops the manager and records any remaining queued completed calls.
      */
-    public synchronized void stop()
+    public void stop()
     {
-        mHandoffLock.lock();
-
-        try
+        if(mQueueProcessorHandle != null)
         {
-            mAcceptingCalls = false;
+            mQueueProcessorHandle.cancel(true);
+            processAudioSegments();
+            mQueueProcessorHandle = null;
         }
-        finally
-        {
-            mHandoffLock.unlock();
-        }
-
-        ScheduledFuture<?> processor = mQueueProcessorHandle;
-        mQueueProcessorHandle = null;
-        ScheduledFuture<?> reconciliation = mReconciliationHandle;
-        mReconciliationHandle = null;
-
-        if(processor != null)
-        {
-            //Do not interrupt a file write.  The processing lock waits for an in-flight run before the final drain.
-            processor.cancel(false);
-        }
-
-        if(reconciliation != null)
-        {
-            reconciliation.cancel(false);
-        }
-
-        processAudioSegments();
-
-        if(mRecordingBasePath != null && (mCatalogHandoff != null || mRecoveredArtifactConsumer != null))
-        {
-            //Give any final published file one bounded ownership retry before the catalog is closed by the caller.
-            reconcileManagedRecordings();
-        }
-
-        closeReconciler();
     }
 
     /**
@@ -259,194 +103,45 @@ public class AudioRecordingManager
      */
     private void processAudioSegments()
     {
-        mProcessingLock.lock();
+        RecordFormat recordFormat = mUserPreferences.getRecordPreference().getAudioRecordFormat();
+        CompletedAudioCall completedAudioCall = mCompletedAudioCallQueue.poll();
 
-        try
+        while(completedAudioCall != null)
         {
-            RecordFormat recordFormat = mUserPreferences.getRecordPreference().getAudioRecordFormat();
-            QueuedCall queuedCall = mCompletedAudioCallQueue.poll();
-
-            while(queuedCall != null)
+            if(!(completedAudioCall.snapshot().duplicate() &&
+                mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled()))
             {
-                CompletedAudioCall completedAudioCall = queuedCall.call();
+                Path path = getAudioRecordingPath(completedAudioCall.snapshot().identifierCollection(), recordFormat);
 
                 try
                 {
-                    if(!catalogCanOwnNewRecording())
-                    {
-                        mDroppedRecordings.incrementAndGet();
-                        mCatalogPausedRecordings.incrementAndGet();
-                    }
-                    else if(!(completedAudioCall.snapshot().duplicate() &&
-                        mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled()))
-                    {
-                        try(ManagedCallRecording recording = ManagedCallRecording.prepare(getRecordingBasePath(),
-                            completedAudioCall, recordFormat, queuedCall.pathMetadata(), mActiveRecordingPaths))
-                        {
-                            RecordedCallManifest manifest = new RecordedCallManifest(
-                                completedAudioCall.snapshot().callId(),
-                                completedAudioCall.snapshot().recordingMetadata(),
-                                completedAudioCall.snapshot().startTimestamp(),
-                                recording.completedAtMs(),
-                                completedAudioCall.getDuration(),
-                                completedAudioCall.snapshot().encrypted(),
-                                recording.destinationTalkgroupRecordEnabled());
-                            AudioCallRecorder.write(completedAudioCall, recording.stagingPath(), recordFormat,
-                                mUserPreferences, completedAudioCall.snapshot().identifierCollection(), manifest);
-                            Path path = recording.commit();
+                    AudioCallRecorder.write(completedAudioCall, path, recordFormat, mUserPreferences);
 
-                            if(Files.isRegularFile(path) && Files.size(path) > 0)
-                            {
-                                long byteSize = Files.size(path);
-                                RecordedCallArtifact artifact = new RecordedCallArtifact(path,
-                                    recording.relativePath(), recordFormat, byteSize, manifest.callId(),
-                                    manifest.metadata(), manifest.startAtMs(), manifest.completedAtMs(),
-                                    manifest.durationMs(), manifest.encrypted(), manifest.recordEligible());
-                                notifyRecorded(completedAudioCall, artifact);
-                            }
-                        }
-                        catch(IOException | RuntimeException exception)
-                        {
-                            mLog.error("Error recording completed audio call", exception);
-                        }
+                    if(Files.isRegularFile(path) && Files.size(path) > 0)
+                    {
+                        notifyRecorded(completedAudioCall);
                     }
                 }
-                finally
+                catch(IOException ioe)
                 {
-                    mQueuedSourceBytes.addAndGet(-queuedCall.sourceBytes());
+                    mLog.error("Error recording completed audio call to [" + path.toString() + "]");
                 }
-
-                //Grab the next one to record
-                queuedCall = mCompletedAudioCallQueue.poll();
             }
-        }
-        finally
-        {
-            mProcessingLock.unlock();
+
+            //Grab the next one to record
+            completedAudioCall = mCompletedAudioCallQueue.poll();
         }
     }
 
     public void receive(CompletedAudioCall completedAudioCall)
     {
-        if(completedAudioCall != null && completedAudioCall.snapshot() != null &&
-            completedAudioCall.snapshot().recordAudio())
+        if(completedAudioCall != null && completedAudioCall.snapshot().recordAudio())
         {
-            long sourceBytes = sourceBytes(completedAudioCall);
-
-            if(sourceBytes <= 0 || sourceBytes > MAXIMUM_SOURCE_BYTES_PER_CALL)
-            {
-                mDroppedRecordings.incrementAndGet();
-                return;
-            }
-
-            //A completed-call handoff must never wait behind disk or shutdown work.
-            if(!mHandoffLock.tryLock())
-            {
-                mDroppedRecordings.incrementAndGet();
-                return;
-            }
-
-            try
-            {
-                if(!mAcceptingCalls)
-                {
-                    mDroppedRecordings.incrementAndGet();
-                    return;
-                }
-
-                if(!catalogCanOwnNewRecording())
-                {
-                    mDroppedRecordings.incrementAndGet();
-                    mCatalogPausedRecordings.incrementAndGet();
-                    return;
-                }
-
-                if(!reserveSourceBytes(sourceBytes))
-                {
-                    mDroppedRecordings.incrementAndGet();
-                    return;
-                }
-
-                ManagedCallRecording.CallPathMetadata pathMetadata =
-                    ManagedCallRecording.CallPathMetadata.capture(completedAudioCall);
-
-                if(!mCompletedAudioCallQueue.offer(new QueuedCall(completedAudioCall, sourceBytes, pathMetadata)))
-                {
-                    mQueuedSourceBytes.addAndGet(-sourceBytes);
-                    mDroppedRecordings.incrementAndGet();
-                }
-            }
-            catch(RuntimeException _)
-            {
-                mQueuedSourceBytes.addAndGet(-sourceBytes);
-                mDroppedRecordings.incrementAndGet();
-            }
-            finally
-            {
-                mHandoffLock.unlock();
-            }
+            mCompletedAudioCallQueue.add(completedAudioCall);
         }
     }
 
-    public RecordingQueueStatus getQueueStatus()
-    {
-        boolean catalogPaused = isCatalogPaused();
-        return new RecordingQueueStatus(mCompletedAudioCallQueue.size(), mQueuedSourceBytes.get(),
-            mDroppedRecordings.get(), mAcceptingCalls && !catalogPaused,
-            catalogPaused, mPendingCatalogRecoveries.size(), mCatalogPausedRecordings.get());
-    }
-
-    long getQueuedSourceBytes()
-    {
-        return mQueuedSourceBytes.get();
-    }
-
-    long getDroppedRecordingCount()
-    {
-        return mDroppedRecordings.get();
-    }
-
-    private boolean reserveSourceBytes(long sourceBytes)
-    {
-        long current = mQueuedSourceBytes.get();
-
-        while(current <= MAXIMUM_QUEUED_SOURCE_BYTES - sourceBytes)
-        {
-            if(mQueuedSourceBytes.compareAndSet(current, current + sourceBytes))
-            {
-                return true;
-            }
-
-            current = mQueuedSourceBytes.get();
-        }
-
-        return false;
-    }
-
-    private static long sourceBytes(CompletedAudioCall call)
-    {
-        long samples = 0;
-
-        if(call.audioBuffers() != null)
-        {
-            for(float[] buffer: call.audioBuffers())
-            {
-                if(buffer != null)
-                {
-                    if(samples > Long.MAX_VALUE - buffer.length)
-                    {
-                        return -1;
-                    }
-
-                    samples += buffer.length;
-                }
-            }
-        }
-
-        return samples > 0 && samples <= Long.MAX_VALUE / Float.BYTES ? samples * Float.BYTES : -1;
-    }
-
-    private void notifyRecorded(CompletedAudioCall completedAudioCall, RecordedCallArtifact artifact)
+    private void notifyRecorded(CompletedAudioCall completedAudioCall)
     {
         if(mRecordedCallConsumer != null)
         {
@@ -459,115 +154,6 @@ public class AudioRecordingManager
                 mLog.warn("Recorded-call stats listener failed", e);
             }
         }
-
-        if(mRecordedArtifactConsumer != null)
-        {
-            try
-            {
-                mRecordedArtifactConsumer.accept(artifact);
-            }
-            catch(RuntimeException e)
-            {
-                mLog.warn("Recorded-call artifact listener failed", e);
-            }
-        }
-
-        if(mCatalogHandoff != null)
-        {
-            boolean accepted = false;
-
-            try
-            {
-                accepted = mCatalogHandoff.submit(artifact);
-            }
-            catch(RuntimeException exception)
-            {
-                mLog.warn("Recorded-call catalog handoff failed", exception);
-            }
-
-            if(!accepted)
-            {
-                retainCatalogRecovery(artifact.path());
-            }
-        }
-    }
-
-    private boolean catalogCanOwnNewRecording()
-    {
-        if(mCatalogHandoff == null)
-        {
-            return true;
-        }
-
-        if(mCatalogBackpressured.get())
-        {
-            return false;
-        }
-
-        try
-        {
-            boolean accepting = mCatalogHandoff.isAccepting();
-
-            if(!accepting)
-            {
-                mCatalogBackpressured.set(true);
-            }
-
-            return accepting;
-        }
-        catch(RuntimeException exception)
-        {
-            if(mCatalogBackpressured.compareAndSet(false, true))
-            {
-                mLog.warn("Recorded-call catalog availability check failed", exception);
-            }
-
-            return false;
-        }
-    }
-
-    private void retainCatalogRecovery(Path path)
-    {
-        if(path == null)
-        {
-            mCatalogBackpressured.set(true);
-            return;
-        }
-
-        Path normalized = path.toAbsolutePath().normalize();
-
-        if(!mPendingCatalogRecoveries.offer(normalized))
-        {
-            //Never delete a rejected or unknown managed file. Pausing new recording bounds any uncataloged files,
-            //and the normal filesystem reconciler can rediscover this exact path after catalog recovery.
-            mLog.warn("Recorded-call catalog recovery queue is full; recording remains paused");
-        }
-
-        //Set this after publishing the retry path so a concurrent reconciliation pass cannot clear the pause between
-        //the state change and the bounded queue offer.
-        mCatalogBackpressured.set(true);
-    }
-
-    private boolean isCatalogPaused()
-    {
-        if(mCatalogBackpressured.get())
-        {
-            return true;
-        }
-
-        if(mCatalogHandoff == null)
-        {
-            return false;
-        }
-
-        try
-        {
-            return !mCatalogHandoff.isAccepting();
-        }
-        catch(RuntimeException _)
-        {
-            return true;
-        }
     }
 
     /**
@@ -576,9 +162,166 @@ public class AudioRecordingManager
      */
     public Path getRecordingBasePath()
     {
-        Path recordingBasePath = mRecordingBasePath;
-        return recordingBasePath != null ? recordingBasePath :
-            mUserPreferences.getDirectoryPreference().getDirectoryRecording();
+        return mUserPreferences.getDirectoryPreference().getDirectoryRecording();
+    }
+
+    /**
+     * Provides a formatted audio recording filename to use as the final audio filename.
+     */
+    private Path getAudioRecordingPath(IdentifierCollection identifierCollection, RecordFormat recordFormat)
+    {
+        StringBuilder sb = new StringBuilder();
+
+        if(identifierCollection != null)
+        {
+            Identifier system = identifierCollection.getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
+
+            if(system != null)
+            {
+                sb.append(((StringIdentifier)system).getValue()).append("_");
+            }
+
+            Identifier site = identifierCollection.getIdentifier(IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY);
+
+            if(site != null)
+            {
+                sb.append(((StringIdentifier)site).getValue()).append("_");
+            }
+
+            Identifier channel = identifierCollection.getIdentifier(IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY);
+
+            if(channel != null)
+            {
+                sb.append(((StringIdentifier)channel).getValue()).append("_");
+            }
+
+            Identifier to = identifierCollection.getIdentifier(IdentifierClass.USER, Form.TALKGROUP, Role.TO);
+
+            if(to != null)
+            {
+                sb.append("_TO_").append(clean(to.toString()));
+            }
+            else
+            {
+                List<Identifier> toIdentifiers = identifierCollection.getIdentifiers(Role.TO);
+
+                if(!toIdentifiers.isEmpty())
+                {
+                    sb.append("_TO_").append(clean(toIdentifiers.get(0).toString()));
+                }
+            }
+
+            Identifier from = identifierCollection.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+
+            if(from != null)
+            {
+                sb.append("_FROM_").append(clean(from.toString()));
+            }
+            else
+            {
+                List<Identifier> fromIdentifiers = identifierCollection.getIdentifiers(Role.FROM);
+
+                if(!fromIdentifiers.isEmpty())
+                {
+                    for(Identifier identifier: fromIdentifiers)
+                    {
+                        if(identifier.getForm() != Form.TONE)
+                        {
+                            sb.append("_FROM_").append(clean(identifier.toString()));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            List<Identifier> toneIdentifiers = identifierCollection.getIdentifiers(IdentifierClass.USER, Form.TONE);
+
+            if(!toneIdentifiers.isEmpty())
+            {
+                try
+                {
+                    Identifier identifier = toneIdentifiers.get(0);
+
+                    if(identifier instanceof ToneIdentifier)
+                    {
+                        ToneIdentifier toneIdentifier = (ToneIdentifier)identifier;
+                        ToneSequence toneSequence = toneIdentifier.getValue();
+
+                        if(toneSequence.hasTones())
+                        {
+                            sb.append("_TONES");
+
+                            for(Tone tone: toneIdentifier.getValue().getTones())
+                            {
+                                String label = tone.getAmbeTone().toString();
+                                label = label.replace("TONE", "").trim();
+                                label = label.replace(" ", "_");
+                                sb.append("_").append(label);
+                            }
+                        }
+                    }
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error appending tones to audio recording filename");
+                }
+            }
+        }
+        else
+        {
+            sb.append("audio_recording_no_metadata_").append(mUnknownAudioRecordingIndex++);
+
+            if(mUnknownAudioRecordingIndex < 0)
+            {
+                mUnknownAudioRecordingIndex = 1;
+            }
+        }
+
+        StringBuilder sbFinal = new StringBuilder();
+        sbFinal.append(TimeStamp.getTimeStamp("_")).append("_");
+
+        //Remove any illegal filename characters
+        String cleaned = StringUtils.replaceIllegalCharacters(sb.toString());
+
+        //Ensure total length doesn't exceed 255 characters.  Allow room for timestamp, versioning and extension.
+        int maxLength = 255 - sbFinal.length() - ("_V" + mDuplicateAudioRecordingSuffix).length() -
+            recordFormat.getExtension().length();
+
+        if(cleaned.length() > maxLength)
+        {
+            cleaned = cleaned.substring(0, maxLength);
+        }
+
+        sbFinal.append(cleaned);
+
+        if(mPreviousRecordingPath != null && mPreviousRecordingPath.contentEquals(sbFinal.toString()))
+        {
+            sbFinal.append("_V").append(mDuplicateAudioRecordingSuffix++);
+        }
+        else
+        {
+            mDuplicateAudioRecordingSuffix = 2;
+            mPreviousRecordingPath = sbFinal.toString();
+        }
+
+        sbFinal.append(recordFormat.getExtension());
+
+        return getRecordingBasePath().resolve(sbFinal.toString());
+    }
+
+    public static String clean(String value)
+    {
+        if(value != null)
+        {
+            return value.replace(":", "")
+                    .replace(".", "_")
+                    .replace("(", "_")
+                    .replace(")", "")
+                    .replace("ROAM ", "")
+                    .replace("ISSI ", "");
+        }
+
+        return null;
     }
 
     /**
@@ -598,193 +341,5 @@ public class AudioRecordingManager
                 mLog.error("Error while processing queued audio segments to recordings", e);
             }
         }
-    }
-
-    private void reconcileManagedRecordings()
-    {
-        mReconciliationLock.lock();
-
-        try
-        {
-            if(mCatalogHandoff != null && !retryPendingCatalogRecoveries())
-            {
-                return;
-            }
-
-            Path root = getRecordingBasePath().toAbsolutePath().normalize();
-
-            if(mReconciler == null || !root.equals(mReconciliationRoot))
-            {
-                if(mReconciler != null)
-                {
-                    mReconciler.close();
-                }
-
-                mReconciliationRoot = root;
-                mReconciler = new ManagedRecordingReconciler(root, STALE_WORK_AGE, mActiveRecordingPaths);
-            }
-
-            ManagedRecordingReconciler.Batch batch = mReconciler.reconcile(RECONCILIATION_BATCH_ENTRIES);
-
-            if(mCatalogHandoff != null)
-            {
-                for(int index = 0; index < batch.recordings().size(); index++)
-                {
-                    Path path = mReconciliationRoot.resolve(batch.recordings().get(index).relativePath());
-                    boolean accepted = false;
-
-                    try
-                    {
-                        accepted = mCatalogHandoff.submitRecovery(path);
-                    }
-                    catch(RuntimeException exception)
-                    {
-                        mLog.debug("Recorded-call recovery handoff failed", exception);
-                    }
-
-                    if(!accepted)
-                    {
-                        retainCatalogRecovery(path);
-
-                        //The reconciler cursor has already advanced over this bounded batch. Preserve each remaining
-                        //known managed path for direct retry instead of waiting for a full filesystem scan to wrap.
-                        for(int remaining = index + 1; remaining < batch.recordings().size(); remaining++)
-                        {
-                            retainCatalogRecovery(mReconciliationRoot.resolve(
-                                batch.recordings().get(remaining).relativePath()));
-                        }
-
-                        break;
-                    }
-                }
-            }
-            else if(mRecoveredArtifactConsumer != null)
-            {
-                for(ManagedRecordingPath recording: batch.recordings())
-                {
-                    try
-                    {
-                        mRecoveredArtifactConsumer.accept(mReconciliationRoot.resolve(recording.relativePath()));
-                    }
-                    catch(RuntimeException exception)
-                    {
-                        mLog.debug("Recorded-call recovery handoff failed", exception);
-                    }
-                }
-            }
-
-            if(batch.errors() > 0)
-            {
-                mLog.debug("Managed recording reconciliation encountered {} bounded filesystem error(s)",
-                    batch.errors());
-            }
-        }
-        catch(RuntimeException exception)
-        {
-            mLog.debug("Unable to reconcile managed recording work files", exception);
-        }
-        finally
-        {
-            mReconciliationLock.unlock();
-        }
-    }
-
-    private boolean retryPendingCatalogRecoveries()
-    {
-        if(mCatalogHandoff == null)
-        {
-            return true;
-        }
-
-        try
-        {
-            if(!mCatalogHandoff.isAccepting())
-            {
-                mCatalogBackpressured.set(true);
-                return false;
-            }
-        }
-        catch(RuntimeException exception)
-        {
-            mCatalogBackpressured.set(true);
-            mLog.debug("Recorded-call catalog availability check failed during recovery", exception);
-            return false;
-        }
-
-        int attempted = 0;
-        Path pending = mPendingCatalogRecoveries.peek();
-
-        while(pending != null && attempted < RECONCILIATION_BATCH_ENTRIES)
-        {
-            boolean accepted = false;
-
-            try
-            {
-                accepted = mCatalogHandoff.submitRecovery(pending);
-            }
-            catch(RuntimeException exception)
-            {
-                mLog.debug("Recorded-call recovery retry failed", exception);
-            }
-
-            if(!accepted)
-            {
-                mCatalogBackpressured.set(true);
-                return false;
-            }
-
-            mPendingCatalogRecoveries.poll();
-            attempted++;
-            pending = mPendingCatalogRecoveries.peek();
-        }
-
-        if(mPendingCatalogRecoveries.isEmpty())
-        {
-            mCatalogBackpressured.set(false);
-            return true;
-        }
-
-        //A bounded maintenance pass never drains more than one reconciliation batch.
-        mCatalogBackpressured.set(true);
-        return false;
-    }
-
-    private void closeReconciler()
-    {
-        mReconciliationLock.lock();
-
-        try
-        {
-            if(mReconciler != null)
-            {
-                mReconciler.close();
-                mReconciler = null;
-                mReconciliationRoot = null;
-            }
-        }
-        finally
-        {
-            mReconciliationLock.unlock();
-        }
-    }
-
-    private class ReconciliationProcessor implements Runnable
-    {
-        @Override
-        public void run()
-        {
-            reconcileManagedRecordings();
-        }
-    }
-
-    public record RecordingQueueStatus(int queuedCalls, long queuedSourceBytes, long droppedRecordings,
-                                       boolean acceptingCalls, boolean catalogPaused,
-                                       int pendingCatalogRecoveries, long catalogPausedRecordings)
-    {
-    }
-
-    private record QueuedCall(CompletedAudioCall call, long sourceBytes,
-                              ManagedCallRecording.CallPathMetadata pathMetadata)
-    {
     }
 }

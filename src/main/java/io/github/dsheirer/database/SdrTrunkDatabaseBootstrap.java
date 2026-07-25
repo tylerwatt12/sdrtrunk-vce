@@ -55,16 +55,14 @@ public final class SdrTrunkDatabaseBootstrap
             }
 
             int version = PreviousBuildUpgradeService.readP25ActivitySchemaVersion(databasePath);
-            boolean upgradeRequired =
-                PreviousBuildUpgradeService.requiresCurrentUpgrade(databasePath, version);
 
-            if(upgradeRequired)
+            if(PreviousBuildUpgradeService.isSupportedSourceVersion(version))
             {
                 if(GraphicsEnvironment.isHeadless() && !options.upgradeCurrent())
                 {
-                    throw new IOException("The portable database requires a staged schema update. Start once with " +
-                        "--upgrade-current to create a safety backup, update a copied database, and install it only " +
-                        "after validation.");
+                    throw new IOException("The portable database is P25 activity schema v" + version +
+                        ". Start once with --upgrade-current to create a safety backup and upgrade it to v" +
+                        PreviousBuildUpgradeService.CURRENT_VERSION + ".");
                 }
 
                 if(!options.upgradeCurrent() && !confirmCurrentUpgrade(databasePath))
@@ -108,9 +106,7 @@ public final class SdrTrunkDatabaseBootstrap
             else if(options.upgradeCurrent())
             {
                 throw new IOException("--upgrade-current supports P25 activity database " +
-                    PreviousBuildUpgradeService.supportedSourceVersionsLabel() +
-                    ", or v21 when its recorded-call catalog is wholly absent. Found v" + version +
-                    " with no supported pending upgrade.");
+                    PreviousBuildUpgradeService.supportedSourceVersionsLabel() + " only. Found v" + version + ".");
             }
 
             SdrTrunkDatabaseStartup.validateGlobalDatabase(databasePath);

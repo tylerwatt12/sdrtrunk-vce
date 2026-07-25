@@ -22,7 +22,6 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
-import io.github.dsheirer.record.RecordedCallCatalogService;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
@@ -59,7 +58,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
-    private final RecordedCallCatalogService mRecordedCallCatalogService;
     private HttpServer mServer;
     private ExecutorService mExecutorService;
     private Path mAssetRoot;
@@ -68,28 +66,20 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
-        this(userPreferences, null, null, null);
+        this(userPreferences, null, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager)
     {
-        this(userPreferences, channelProcessingManager, null, null);
+        this(userPreferences, channelProcessingManager, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
                                  P25ActivityLogService activityLogService)
     {
-        this(userPreferences, channelProcessingManager, activityLogService, null);
-    }
-
-    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
-                                 RecordedCallCatalogService recordedCallCatalogService)
-    {
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
-        mRecordedCallCatalogService = recordedCallCatalogService;
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         MyEventBus.getGlobalEventBus().register(this);
@@ -99,25 +89,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     @Subscribe
     public void preferenceUpdated(PreferenceType preferenceType)
     {
-        if(preferenceType == PreferenceType.RECORD && mRecordedCallCatalogService != null)
-        {
-            mRecordedCallCatalogService.setRetentionLimits(
-                mUserPreferences.getRecordPreference().getRecordedCallRetentionDays(),
-                mUserPreferences.getRecordPreference().getRecordedCallMaximumRetainedBytes());
-        }
-
         if(preferenceType == PreferenceType.APPLICATION || preferenceType == PreferenceType.DIRECTORY)
         {
             updateServerState();
         }
-    }
-
-    /**
-     * Shared catalog used by the future bounded recordings routes.  This service does not own its lifecycle.
-     */
-    public RecordedCallCatalogService getRecordedCallCatalogService()
-    {
-        return mRecordedCallCatalogService;
     }
 
     private synchronized void updateServerState()

@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
-import io.github.dsheirer.record.RecordedCallCatalogSchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
@@ -86,7 +85,6 @@ class PreviousBuildUpgradeServiceTest
         assertNull(result.safetyBackup());
         assertTrue(result.helperOutput().contains("v19 -> v21"));
         assertTrue(result.helperOutput().contains("absent -> v2"));
-        assertTrue(result.helperOutput().contains("Recorded-call catalog schema installation complete: absent -> v1"));
         assertEquals(List.of("Checking previous data", "Copying setup", "Creating safety backup",
             "Updating database", "Checking updated data", "Finishing"), progress);
 
@@ -97,7 +95,6 @@ class PreviousBuildUpgradeServiceTest
         assertTrue(tableExists(targetDatabase, "p25_foreign_system_band_summary"));
         assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
         validateTrunkedSiteSchema(targetDatabase);
-        validateRecordedCallCatalog(targetDatabase);
         assertEquals(1, count(EncryptionKeyVaultPath.getVaultPath(targetRoot), "vault_payload"));
         assertArrayEquals(jmbeContents, Files.readAllBytes(targetRoot.resolve("jmbe/jmbe.jar")));
         assertArrayEquals(moduleContents, Files.readAllBytes(targetRoot.resolve("modules/optional.jar")));
@@ -114,7 +111,6 @@ class PreviousBuildUpgradeServiceTest
         assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(sourceDatabase));
         assertFalse(tableExists(sourceDatabase, "p25_foreign_system_band"));
         assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
-        assertFalse(tableExists(sourceDatabase, "recorded_call"));
     }
 
     @Test
@@ -133,19 +129,16 @@ class PreviousBuildUpgradeServiceTest
         assertEquals(20, result.sourceVersion());
         assertTrue(result.helperOutput().contains("v20 -> v21 indexed quality retention"));
         assertTrue(result.helperOutput().contains("absent -> v2"));
-        assertTrue(result.helperOutput().contains("Recorded-call catalog schema installation complete: absent -> v1"));
 
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(targetDatabase));
         assertEquals(1, count(targetDatabase, "alias"));
         assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
         validateTrunkedSiteSchema(targetDatabase);
-        validateRecordedCallCatalog(targetDatabase);
 
         assertArrayEquals(sourceDatabaseHash, sha256(sourceDatabase));
         assertEquals(20, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(sourceDatabase));
         assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
-        assertFalse(tableExists(sourceDatabase, "recorded_call"));
     }
 
     @Test
@@ -162,7 +155,6 @@ class PreviousBuildUpgradeServiceTest
         assertEquals(19, result.sourceVersion());
         assertTrue(result.helperOutput().contains("v19 -> v21"));
         assertTrue(result.helperOutput().contains("absent -> v2"));
-        assertTrue(result.helperOutput().contains("Recorded-call catalog schema installation complete: absent -> v1"));
         assertNotNull(result.safetyBackup());
         assertTrue(Files.isRegularFile(result.safetyBackup()));
         assertTrue(result.safetyBackup().startsWith(database.getParent().resolve("backups")));
@@ -173,93 +165,13 @@ class PreviousBuildUpgradeServiceTest
         {
             P25ActivityLogSchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
-            RecordedCallCatalogSchema.validate(connection);
         }
 
         assertEquals(19, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(result.safetyBackup()));
         assertEquals(1, count(result.safetyBackup(), "alias"));
         assertFalse(tableExists(result.safetyBackup(), "p25_foreign_system_band"));
         assertFalse(tableExists(result.safetyBackup(), "trunked_site_snapshot"));
-        assertFalse(tableExists(result.safetyBackup(), "recorded_call"));
         assertEquals("ok", scalar(result.safetyBackup(), "PRAGMA quick_check"));
-    }
-
-    @Test
-    void upgradesCurrentV21OnlyWhenCatalogIsWhollyAbsentAndRetainsBackup() throws Exception
-    {
-        Path dataRoot = mTemporaryFolder.resolve("current-v21-data");
-        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        insertAlias(database, "Keep V21");
-        removeRecordedCallCatalog(database);
-
-        assertTrue(PreviousBuildUpgradeService.requiresCurrentUpgrade(database, 21));
-        PreviousBuildUpgradeService.UpgradeResult result =
-            new PreviousBuildUpgradeService().upgradeCurrent(dataRoot, null);
-
-        assertEquals(21, result.sourceVersion());
-        assertFalse(result.importedPreviousProfile());
-        assertTrue(result.helperOutput().contains("already valid at P25 activity schema v21"));
-        assertTrue(result.helperOutput().contains("already valid at trunked-site schema v2"));
-        assertTrue(result.helperOutput().contains(
-            "Recorded-call catalog schema installation complete: absent -> v1"));
-        assertNotNull(result.safetyBackup());
-        assertFalse(tableExists(result.safetyBackup(), "recorded_call"));
-        assertEquals(1, count(result.safetyBackup(), "alias"));
-        assertEquals(21, PreviousBuildUpgradeService.readP25ActivitySchemaVersion(result.safetyBackup()));
-        validateRecordedCallCatalog(database);
-        assertEquals(1, count(database, "alias"));
-        assertFalse(PreviousBuildUpgradeService.requiresCurrentUpgrade(database, 21));
-    }
-
-    @Test
-    void refusesCurrentV21PartialOrUnknownCatalogWithoutRepair() throws Exception
-    {
-        Path partialRoot = mTemporaryFolder.resolve("partial-v21-data");
-        Path partial = SdrTrunkDatabasePath.getDatabasePath(partialRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(partial);
-
-        try(Connection connection = open(partial); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                RecordedCallCatalogSchema.SCHEMA_VERSION_KEY + "'");
-            statement.executeUpdate("DROP TABLE recorded_call");
-        }
-
-        byte[] partialBefore = sha256(partial);
-        Exception partialFailure = assertThrows(java.sql.SQLException.class,
-            () -> PreviousBuildUpgradeService.requiresCurrentUpgrade(partial, 21));
-        assertTrue(partialFailure.getMessage().contains("ambiguous partial schema"));
-        assertArrayEquals(partialBefore, sha256(partial));
-
-        Path unknownRoot = mTemporaryFolder.resolve("unknown-v21-data");
-        Path unknown = SdrTrunkDatabasePath.getDatabasePath(unknownRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(unknown);
-
-        try(Connection connection = open(unknown))
-        {
-            SdrTrunkDatabaseStartup.setMetadata(connection, RecordedCallCatalogSchema.SCHEMA_VERSION_KEY, "9");
-        }
-
-        byte[] unknownBefore = sha256(unknown);
-        Exception unknownFailure = assertThrows(java.sql.SQLException.class,
-            () -> PreviousBuildUpgradeService.requiresCurrentUpgrade(unknown, 21));
-        assertTrue(unknownFailure.getMessage().contains("Unsupported recorded-call catalog schema version [9]"));
-        assertArrayEquals(unknownBefore, sha256(unknown));
-    }
-
-    @Test
-    void refusesUpgradeCurrentWhenV21CatalogIsAlreadyCurrent() throws Exception
-    {
-        Path dataRoot = mTemporaryFolder.resolve("already-current-data");
-        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-
-        assertFalse(PreviousBuildUpgradeService.requiresCurrentUpgrade(database, 21));
-        IOException exception = assertThrows(IOException.class,
-            () -> new PreviousBuildUpgradeService().upgradeCurrent(dataRoot, null));
-        assertTrue(exception.getMessage().contains("does not require an upgrade"));
-        assertFalse(Files.isDirectory(database.getParent().resolve("backups")));
     }
 
     @Test
@@ -356,7 +268,6 @@ class PreviousBuildUpgradeServiceTest
         }
 
         removeTrunkedSiteSchema(database);
-        removeRecordedCallCatalog(database);
         return database;
     }
 
@@ -372,7 +283,6 @@ class PreviousBuildUpgradeServiceTest
         }
 
         removeTrunkedSiteSchema(database);
-        removeRecordedCallCatalog(database);
         return database;
     }
 
@@ -388,30 +298,11 @@ class PreviousBuildUpgradeServiceTest
         }
     }
 
-    private static void removeRecordedCallCatalog(Path database) throws Exception
-    {
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DROP TABLE recorded_call");
-            statement.executeUpdate("DROP TABLE recorded_call_bucket");
-            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                RecordedCallCatalogSchema.SCHEMA_VERSION_KEY + "'");
-        }
-    }
-
     private static void validateTrunkedSiteSchema(Path database) throws Exception
     {
         try(Connection connection = open(database))
         {
             TrunkedSiteSchema.validate(connection);
-        }
-    }
-
-    private static void validateRecordedCallCatalog(Path database) throws Exception
-    {
-        try(Connection connection = open(database))
-        {
-            RecordedCallCatalogSchema.validate(connection);
         }
     }
 

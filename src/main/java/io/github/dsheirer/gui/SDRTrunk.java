@@ -62,7 +62,6 @@ import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.record.AudioRecordingManager;
-import io.github.dsheirer.record.RecordedCallCatalogService;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.Tuner;
@@ -157,7 +156,6 @@ public class SDRTrunk implements Listener<TunerEvent>
     private P25ActivityLogService mP25ActivityLogService;
     private StatsWebServerService mStatsWebServerService;
     private AudioRecordingManager mAudioRecordingManager;
-    private RecordedCallCatalogService mRecordedCallCatalogService;
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
     private BroadcastStatusPanel mBroadcastStatusPanel;
@@ -264,18 +262,9 @@ public class SDRTrunk implements Listener<TunerEvent>
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
-        Path recordingRoot =
-            mUserPreferences.getDirectoryPreference().lockRecordingDirectoryForRuntime();
 
-        mRecordedCallCatalogService = new RecordedCallCatalogService(
-            SdrTrunkDatabasePath.getDatabasePath(mUserPreferences),
-            recordingRoot,
-            mUserPreferences.getRecordPreference().getRecordedCallRetentionDays(),
-            mUserPreferences.getRecordPreference().getRecordedCallMaximumRetainedBytes());
-        mRecordedCallCatalogService.start();
-
-        mAudioRecordingManager = AudioRecordingManager.withCatalogHandoff(mUserPreferences,
-            mP25ActivityLogService::receiveRecordedCall, mRecordedCallCatalogService);
+        mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
+            mP25ActivityLogService::receiveRecordedCall);
         mAudioRecordingManager.start();
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
@@ -283,8 +272,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mAudioStreamingManager.start();
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
-            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
-            mRecordedCallCatalogService);
+            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         //Receiver-node speaker playback is retired.  Completed calls continue to flow independently to recording,
         //streaming providers, and bounded browser Listen-list delivery.
@@ -905,12 +893,6 @@ public class SDRTrunk implements Listener<TunerEvent>
             mAudioCallCoordinator.dispose();
         }
         mAudioRecordingManager.stop();
-        if(mRecordedCallCatalogService != null)
-        {
-            //The recorder's final synchronous drain publishes its last artifacts before the catalog stops accepting
-            //and drains its own bounded queues.
-            mRecordedCallCatalogService.close();
-        }
         if(mControlChannelQualityRegistry != null)
         {
             mControlChannelQualityRegistry.clear();

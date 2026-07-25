@@ -23,8 +23,6 @@ import com.google.common.base.Joiner;
 import com.mpatric.mp3agic.ID3v24Tag;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
-import io.github.dsheirer.record.RecordedCallManifest;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -41,9 +39,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -180,109 +176,6 @@ public class AudioMetadataUtils
         audioMetadata.put(AudioMetadata.COMMENTS, comments.toString());
 
         return audioMetadata;
-    }
-
-    /**
-     * Creates audio tags for a retained call from the immutable metadata captured while the call was active.
-     *
-     * <p>Alias names and the destination Record decision must not be looked up again here.  An administrator can edit
-     * aliases while a completed call is waiting in the bounded recording queue.</p>
-     */
-    public static Map<AudioMetadata, String> getMetadataMap(IdentifierCollection identifierCollection,
-                                                            AudioCallRecordingMetadata metadata,
-                                                            RecordedCallManifest manifest)
-    {
-        Map<AudioMetadata, String> audioMetadata = new EnumMap<>(AudioMetadata.class);
-        StringBuilder comments = new StringBuilder();
-        audioMetadata.put(AudioMetadata.COMPOSER, ApplicationInfo.getDisplayName());
-        LocalDateTime created = LocalDateTime.ofInstant(Instant.ofEpochMilli(manifest.startAtMs()),
-            ZoneId.systemDefault());
-        String dateCreated = SDF.format(created);
-        audioMetadata.put(AudioMetadata.DATE_CREATED, dateCreated);
-        audioMetadata.put(AudioMetadata.YEAR, YEAR_SDF.format(created));
-        audioMetadata.put(AudioMetadata.GENRE, GENRE_SCANNER_AUDIO);
-        comments.append("Date:").append(dateCreated).append(COMMENT_SEPARATOR);
-
-        String destination = displayValue(metadata.destinationValue(), metadata.destinationAlias());
-
-        if(destination != null)
-        {
-            audioMetadata.put(AudioMetadata.TRACK_TITLE, destination);
-        }
-
-        String source = displayValue(metadata.sourceValue(), metadata.sourceAlias());
-
-        if(source != null)
-        {
-            audioMetadata.put(AudioMetadata.ARTIST_NAME, source);
-        }
-
-        if(hasText(metadata.systemName()))
-        {
-            audioMetadata.put(AudioMetadata.GROUPING, metadata.systemName());
-            comments.append("System:").append(metadata.systemName()).append(COMMENT_SEPARATOR);
-        }
-
-        if(hasText(metadata.siteName()))
-        {
-            comments.append("Site:").append(metadata.siteName()).append(COMMENT_SEPARATOR);
-        }
-
-        if(hasText(metadata.channelName()))
-        {
-            audioMetadata.put(AudioMetadata.ALBUM_TITLE, metadata.channelName());
-            comments.append("Name:").append(metadata.channelName()).append(COMMENT_SEPARATOR);
-        }
-
-        appendTechnicalMetadata(comments, identifierCollection);
-        comments.append(manifest.toTaggedValue());
-        audioMetadata.put(AudioMetadata.COMMENTS, comments.toString());
-        return audioMetadata;
-    }
-
-    private static void appendTechnicalMetadata(StringBuilder comments, IdentifierCollection identifiers)
-    {
-        if(identifiers == null)
-        {
-            return;
-        }
-
-        Identifier decoder = identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY);
-
-        if(decoder instanceof DecoderTypeConfigurationIdentifier decoderType)
-        {
-            comments.append("Decoder:").append(decoderType.getValue().getDisplayString()).append(COMMENT_SEPARATOR);
-        }
-
-        Identifier channelName = identifiers.getIdentifier(IdentifierClass.DECODER, Form.CHANNEL_NAME, Role.BROADCAST);
-
-        if(channelName instanceof DecoderLogicalChannelNameIdentifier logicalChannel)
-        {
-            comments.append("Channel:").append(logicalChannel.getValue()).append(COMMENT_SEPARATOR);
-        }
-
-        Identifier frequency =
-            identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.CHANNEL_FREQUENCY, Role.ANY);
-
-        if(frequency instanceof FrequencyConfigurationIdentifier frequencyIdentifier)
-        {
-            comments.append("Frequency:").append(frequencyIdentifier.getValue()).append(COMMENT_SEPARATOR);
-        }
-    }
-
-    private static String displayValue(String value, String alias)
-    {
-        if(hasText(value) && hasText(alias))
-        {
-            return value + " \"" + alias + '"';
-        }
-
-        return hasText(value) ? value : hasText(alias) ? alias : null;
-    }
-
-    private static boolean hasText(String value)
-    {
-        return value != null && !value.isBlank();
     }
 
 

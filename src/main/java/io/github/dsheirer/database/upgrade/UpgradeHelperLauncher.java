@@ -29,8 +29,6 @@ public final class UpgradeHelperLauncher
 {
     private static final String P25_HELPER_CLASS = P25ActivitySchemaUpgrade.class.getName();
     private static final String TRUNKED_SITE_HELPER_CLASS = TrunkedSiteSchemaInstaller.class.getName();
-    private static final String RECORDED_CALL_CATALOG_HELPER_CLASS =
-        RecordedCallCatalogSchemaInstaller.class.getName();
     private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
 
     private UpgradeHelperLauncher()
@@ -64,12 +62,17 @@ public final class UpgradeHelperLauncher
             "P25 activity");
         String trunkedSiteOutput = runHelper(command(normalized, TRUNKED_SITE_HELPER_CLASS, null, null),
             "trunked-site");
-        String recordedCallOutput = runHelper(
-            command(normalized, RECORDED_CALL_CATALOG_HELPER_CLASS, null, null), "recorded-call catalog");
-        List<String> output = List.of(p25Output, trunkedSiteOutput, recordedCallOutput).stream()
-            .filter(value -> !value.isBlank()).toList();
 
-        return String.join(System.lineSeparator(), output);
+        if(p25Output.isBlank())
+        {
+            return trunkedSiteOutput;
+        }
+        else if(trunkedSiteOutput.isBlank())
+        {
+            return p25Output;
+        }
+
+        return p25Output + System.lineSeparator() + trunkedSiteOutput;
     }
 
     private static String runHelper(List<String> command, String label) throws IOException, InterruptedException
