@@ -37,9 +37,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.LinkedTransferQueue;
+import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,10 +54,21 @@ import org.slf4j.LoggerFactory;
 public class AudioRecordingManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioRecordingManager.class);
-    private LinkedTransferQueue<CompletedAudioCall> mCompletedAudioCallQueue = new LinkedTransferQueue<>();
+    static final int MAXIMUM_QUEUED_CALLS = 128;
+    static final long MAXIMUM_SOURCE_BYTES_PER_CALL = 64L * 1024L * 1024L;
+    static final long MAXIMUM_QUEUED_SOURCE_BYTES = 256L * 1024L * 1024L;
+    private final ArrayBlockingQueue<QueuedCall> mCompletedAudioCallQueue =
+        new ArrayBlockingQueue<>(MAXIMUM_QUEUED_CALLS);
+    private final AtomicLong mQueuedSourceBytes = new AtomicLong();
+    private final AtomicLong mDroppedRecordings = new AtomicLong();
+    private final ReentrantLock mProcessingLock = new ReentrantLock();
+    private final ReentrantLock mHandoffLock = new ReentrantLock();
+    private volatile boolean mAcceptingCalls;
     private ScheduledFuture<?> mQueueProcessorHandle;
-    private UserPreferences mUserPreferences;
+    private final UserPreferences mUserPreferences;
     private final Consumer<CompletedAudioCall> mRecordedCallConsumer;
+    private final ScheduledExecutorService mScheduler;
+    private final RecordingWriter mRecordingWriter;
     private int mUnknownAudioRecordingIndex = 1;
     private int mDuplicateAudioRecordingSuffix = 1;
     private String mPreviousRecordingPath = null;
@@ -69,33 +84,72 @@ public class AudioRecordingManager
 
     public AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer)
     {
-        mUserPreferences = userPreferences;
+        this(userPreferences, recordedCallConsumer, ThreadPool.SCHEDULED, AudioCallRecorder::write);
+    }
+
+    AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer,
+                          ScheduledExecutorService scheduler, RecordingWriter recordingWriter)
+    {
+        mUserPreferences = Objects.requireNonNull(userPreferences, "User preferences cannot be null");
         mRecordedCallConsumer = recordedCallConsumer;
+        mScheduler = Objects.requireNonNull(scheduler, "Recording scheduler cannot be null");
+        mRecordingWriter = Objects.requireNonNull(recordingWriter, "Recording writer cannot be null");
     }
 
     /**
      * Starts the manager and begins completed-call recording.
      */
-    public void start()
+    public synchronized void start()
     {
         if(mQueueProcessorHandle == null)
         {
-            mQueueProcessorHandle = ThreadPool.SCHEDULED.scheduleAtFixedRate(new QueueProcessor(),
-                0, 1, TimeUnit.SECONDS);
+            mHandoffLock.lock();
+
+            try
+            {
+                mQueueProcessorHandle = mScheduler.scheduleAtFixedRate(new QueueProcessor(),
+                    0, 1, TimeUnit.SECONDS);
+                mAcceptingCalls = true;
+            }
+            catch(RuntimeException exception)
+            {
+                mAcceptingCalls = false;
+                mQueueProcessorHandle = null;
+                throw exception;
+            }
+            finally
+            {
+                mHandoffLock.unlock();
+            }
         }
     }
 
     /**
      * Stops the manager and records any remaining queued completed calls.
      */
-    public void stop()
+    public synchronized void stop()
     {
-        if(mQueueProcessorHandle != null)
+        ScheduledFuture<?> processor;
+        mHandoffLock.lock();
+
+        try
         {
-            mQueueProcessorHandle.cancel(true);
-            processAudioSegments();
+            mAcceptingCalls = false;
+            processor = mQueueProcessorHandle;
             mQueueProcessorHandle = null;
         }
+        finally
+        {
+            mHandoffLock.unlock();
+        }
+
+        if(processor != null)
+        {
+            //Do not interrupt a file write.  The processing lock waits for an in-flight run before the final drain.
+            processor.cancel(false);
+        }
+
+        processAudioSegments();
     }
 
     /**
@@ -103,42 +157,172 @@ public class AudioRecordingManager
      */
     private void processAudioSegments()
     {
-        RecordFormat recordFormat = mUserPreferences.getRecordPreference().getAudioRecordFormat();
-        CompletedAudioCall completedAudioCall = mCompletedAudioCallQueue.poll();
+        mProcessingLock.lock();
 
-        while(completedAudioCall != null)
+        try
         {
-            if(!(completedAudioCall.snapshot().duplicate() &&
-                mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled()))
+            RecordFormat recordFormat = mUserPreferences.getRecordPreference().getAudioRecordFormat();
+            QueuedCall queuedCall = mCompletedAudioCallQueue.poll();
+
+            while(queuedCall != null)
             {
-                Path path = getAudioRecordingPath(completedAudioCall.snapshot().identifierCollection(), recordFormat);
+                CompletedAudioCall completedAudioCall = queuedCall.call();
+                Path path = null;
 
                 try
                 {
-                    AudioCallRecorder.write(completedAudioCall, path, recordFormat, mUserPreferences);
-
-                    if(Files.isRegularFile(path) && Files.size(path) > 0)
+                    if(!(completedAudioCall.snapshot().duplicate() &&
+                        mUserPreferences.getCallManagementPreference().isDuplicateRecordingSuppressionEnabled()))
                     {
-                        notifyRecorded(completedAudioCall);
+                        path = getAudioRecordingPath(completedAudioCall.snapshot().identifierCollection(), recordFormat);
+                        mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
+
+                        if(Files.isRegularFile(path) && Files.size(path) > 0)
+                        {
+                            notifyRecorded(completedAudioCall);
+                        }
                     }
                 }
-                catch(IOException ioe)
+                catch(IOException | RuntimeException exception)
                 {
-                    mLog.error("Error recording completed audio call to [" + path.toString() + "]");
+                    mLog.error("Error recording completed audio call" +
+                        (path != null ? " to [" + path + "]" : ""), exception);
                 }
-            }
+                finally
+                {
+                    mQueuedSourceBytes.addAndGet(-queuedCall.sourceBytes());
+                }
 
-            //Grab the next one to record
-            completedAudioCall = mCompletedAudioCallQueue.poll();
+                queuedCall = mCompletedAudioCallQueue.poll();
+            }
+        }
+        finally
+        {
+            mProcessingLock.unlock();
         }
     }
 
     public void receive(CompletedAudioCall completedAudioCall)
     {
-        if(completedAudioCall != null && completedAudioCall.snapshot().recordAudio())
+        if(completedAudioCall != null && completedAudioCall.snapshot() != null &&
+            completedAudioCall.snapshot().recordAudio())
         {
-            mCompletedAudioCallQueue.add(completedAudioCall);
+            long sourceBytes = sourceBytes(completedAudioCall);
+
+            if(sourceBytes <= 0 || sourceBytes > MAXIMUM_SOURCE_BYTES_PER_CALL)
+            {
+                dropRecording("invalid or oversized source audio");
+                return;
+            }
+
+            //A completed-call handoff must never wait behind disk or shutdown work.
+            if(!mHandoffLock.tryLock())
+            {
+                dropRecording("recording manager is stopping");
+                return;
+            }
+
+            boolean sourceBytesReserved = false;
+
+            try
+            {
+                if(!mAcceptingCalls)
+                {
+                    dropRecording("recording manager is not accepting calls");
+                    return;
+                }
+
+                if(!reserveSourceBytes(sourceBytes))
+                {
+                    dropRecording("queued source-audio limit reached");
+                    return;
+                }
+
+                sourceBytesReserved = true;
+
+                if(!mCompletedAudioCallQueue.offer(new QueuedCall(completedAudioCall, sourceBytes)))
+                {
+                    mQueuedSourceBytes.addAndGet(-sourceBytes);
+                    sourceBytesReserved = false;
+                    dropRecording("recording queue is full");
+                    return;
+                }
+
+                //The queue now owns this reservation until the single recording drain releases it.
+                sourceBytesReserved = false;
+            }
+            catch(RuntimeException exception)
+            {
+                if(sourceBytesReserved)
+                {
+                    mQueuedSourceBytes.addAndGet(-sourceBytes);
+                }
+
+                dropRecording("unexpected queue handoff failure");
+                mLog.warn("Unable to queue completed call recording", exception);
+            }
+            finally
+            {
+                mHandoffLock.unlock();
+            }
         }
+    }
+
+    public RecordingQueueStatus getQueueStatus()
+    {
+        return new RecordingQueueStatus(mCompletedAudioCallQueue.size(), mQueuedSourceBytes.get(),
+            mDroppedRecordings.get(), mAcceptingCalls, mProcessingLock.isLocked(),
+            mProcessingLock.getQueueLength());
+    }
+
+    private void dropRecording(String reason)
+    {
+        long dropped = mDroppedRecordings.incrementAndGet();
+
+        if(dropped == 1 || dropped % 100 == 0)
+        {
+            mLog.warn("Dropped completed call recording because {} ({} dropped since startup)", reason, dropped);
+        }
+    }
+
+    private boolean reserveSourceBytes(long sourceBytes)
+    {
+        long current = mQueuedSourceBytes.get();
+
+        while(current <= MAXIMUM_QUEUED_SOURCE_BYTES - sourceBytes)
+        {
+            if(mQueuedSourceBytes.compareAndSet(current, current + sourceBytes))
+            {
+                return true;
+            }
+
+            current = mQueuedSourceBytes.get();
+        }
+
+        return false;
+    }
+
+    private static long sourceBytes(CompletedAudioCall call)
+    {
+        long samples = 0;
+
+        if(call.audioBuffers() != null)
+        {
+            for(float[] buffer: call.audioBuffers())
+            {
+                if(buffer != null)
+                {
+                    if(samples > Long.MAX_VALUE - buffer.length)
+                    {
+                        return -1;
+                    }
+
+                    samples += buffer.length;
+                }
+            }
+        }
+
+        return samples > 0 && samples <= Long.MAX_VALUE / Float.BYTES ? samples * Float.BYTES : -1;
     }
 
     private void notifyRecorded(CompletedAudioCall completedAudioCall)
@@ -341,5 +525,21 @@ public class AudioRecordingManager
                 mLog.error("Error while processing queued audio segments to recordings", e);
             }
         }
+    }
+
+    public record RecordingQueueStatus(int queuedCalls, long queuedSourceBytes, long droppedRecordings,
+                                       boolean acceptingCalls, boolean writerActive, int waitingDrains)
+    {
+    }
+
+    private record QueuedCall(CompletedAudioCall call, long sourceBytes)
+    {
+    }
+
+    @FunctionalInterface
+    interface RecordingWriter
+    {
+        void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
+                   UserPreferences userPreferences) throws IOException;
     }
 }
